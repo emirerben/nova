@@ -38,7 +38,7 @@ import KriaMediaEngine
         let image = try await frame(live.preview.playerItem.asset, composition: live.preview.playerItem.videoComposition, at: 0.2)
         try save(image, name: "overlap-negative-control")
         XCTAssertGreaterThan(try inkPixels(image), 40, "The negative control must render visible overlapping glyphs")
-        XCTAssertNotEqual(try recognized(image), "apple", "Stacked text must fail the one-word content oracle")
+        XCTAssertNotEqual(try recognized(image), ["apple"], "Stacked text must fail the one-word content oracle")
     }
     private func fixture(_ name: String) throws -> Fixture {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -142,7 +142,7 @@ import KriaMediaEngine
             let time = (row.startS + row.endS) / 2
             let previewImage = try await frame(live.preview.playerItem.asset, composition: live.preview.playerItem.videoComposition, at: time)
             let exportImage = try await frame(exported, at: time)
-            let previewText = try recognized(previewImage); let exportText = try recognized(exportImage)
+            let texts = try recognized(previewImage, exportImage); let previewText = texts[0], exportText = texts[1]
             try save(previewImage, name: "\(name)-preview-\(row.text)")
             try save(exportImage, name: "\(name)-export-\(row.text)")
             XCTAssertEqual(previewText, row.text, "preview at \(time)")
@@ -180,13 +180,64 @@ import KriaMediaEngine
         generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
         return try generator.copyCGImage(at: CMTime(seconds: seconds, preferredTimescale: 60_000), actualTime: nil)
     }
-    private func recognized(_ image: CGImage) throws -> String {
+    /// Reads each frame's text in one Vision pass. On the simulator an accurate pass costs
+    /// ~0.5 s on a full 1080x1920 frame and ~0.1 s on a small canvas, whatever it holds, so
+    /// each frame is cropped to its ink and the crops share one canvas, one tile per frame.
+    private func recognized(_ frames: CGImage...) throws -> [String] {
+        let tiles = try frames.map(inkCrop)
+        var spans: [Range<Int>?] = [], height = 0
+        for tile in tiles {
+            spans.append(tile.map { height..<height + $0.height })
+            if let tile { height += tile.height + 64 }
+        }
+        guard height > 0 else { return frames.map { _ in "" } }
+        let canvas = try XCTUnwrap(CGContext(data: nil, width: tiles.compactMap { $0?.width }.max() ?? 0, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        canvas.setFillColor(gray: 0, alpha: 1); canvas.fill(CGRect(x: 0, y: 0, width: canvas.width, height: height))
+        for case let (tile?, span?) in zip(tiles, spans) {
+            canvas.draw(tile, in: CGRect(x: 0, y: height - span.upperBound, width: tile.width, height: tile.height))
+        }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
         request.recognitionLanguages = ["en-US"]
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            .joined().lowercased().filter { !$0.isWhitespace }
+        try VNImageRequestHandler(cgImage: try XCTUnwrap(canvas.makeImage())).perform([request])
+        var readings = frames.map { _ in "" }
+        for line in request.results ?? [] {
+            let top = Double(height) * (1 - line.boundingBox.maxY), bottom = Double(height) * (1 - line.boundingBox.minY)
+            let index = try XCTUnwrap(spans.firstIndex { span in
+                span.map { Double($0.lowerBound) - 4 <= top && bottom <= Double($0.upperBound) + 4 } ?? false
+            }, "A recognized line must lie inside one frame's tile")
+            readings[index] += (line.topCandidates(1).first?.string ?? "").lowercased().filter { !$0.isWhitespace }
+        }
+        return readings
+    }
+    /// The bounding box of every non-black pixel, padded, so the crop holds everything the frame renders.
+    private func inkCrop(_ image: CGImage) throws -> CGImage? {
+        let width = image.width, height = image.height, rowBytes = width * 4
+        var pixels = [UInt8](repeating: 0, count: rowBytes * height)
+        let blackRow = (0..<rowBytes).map { $0 % 4 == 3 ? UInt8(255) : 0 }
+        var minX = width, maxX = -1, minY = height, maxY = -1
+        try pixels.withUnsafeMutableBytes { bytes in
+            let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: rowBytes, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let base = try XCTUnwrap(bytes.baseAddress)
+            for y in 0..<height where memcmp(base + y * rowBytes, blackRow, rowBytes) != 0 {
+                let row = y * rowBytes
+                let ink = { (x: Int) in
+                    bytes[row + x * 4] | bytes[row + x * 4 + 1] | bytes[row + x * 4 + 2] | ~bytes[row + x * 4 + 3] != 0
+                }
+                minY = min(minY, y); maxY = y
+                if let first = (0..<minX).first(where: ink) { minX = first }
+                if let last = (maxX + 1..<width).reversed().first(where: ink) { maxX = last }
+            }
+        }
+        guard maxY >= 0 else { return nil }
+        let pad = 32, left = max(0, minX - pad), top = max(0, minY - pad)
+        return image.cropping(to: CGRect(x: left, y: top,
+            width: min(width, maxX + pad + 1) - left, height: min(height, maxY + pad + 1) - top))
     }
     private func inkPixels(_ image: CGImage) throws -> Int {
         var pixels = [UInt8](repeating: 0, count: 270 * 480 * 4)

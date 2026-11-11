@@ -418,9 +418,9 @@ def test_a_caption_on_two_neighbouring_clips_retains_both_source_bindings() -> N
         brief=_brief(PLUS),
     )
     assert contract is not None and not contract.unresolved
-    assert [(t.role, t.text, t.media_id) for t in contract.exact_texts] == [
-        ("clip", PLUS, BOWLS),
-        ("clip", PLUS, POINTS),
+    # KRI-1331: one pin for the caption's chapter, never one per member clip.
+    assert [(t.role, t.text, t.media_id, t.chapter_media_ids) for t in contract.exact_texts] == [
+        ("clip", PLUS, None, (BOWLS, POINTS))
     ]
 
 
@@ -650,7 +650,10 @@ def _group_recipe(media_ids: list[str], placements: list[tuple[float, float]], t
         ([BOWLS, POINTS, WAITER], [(0.1, 1.9)], True),
         ([BOWLS, POINTS, WAITER], [(0.1, 0.9), (1.1, 1.9)], True),
         ([BOWLS, POINTS, WAITER], [(2.1, 2.9)], False),
-        ([BOWLS, POINTS, WAITER], [(0.1, 0.9)], False),
+        # KRI-1331: a caption is its chapter's one title, so the chapter's first clip holds it.
+        ([BOWLS, POINTS, WAITER], [(0.1, 0.9)], True),
+        ([BOWLS, POINTS, WAITER], [(1.1, 1.9)], False),
+        ([WAITER, BOWLS, POINTS], [(0.1, 2.9)], False),
         ([BOWLS, WAITER, POINTS], [(0.1, 2.9)], False),
         ([BOWLS, WAITER, POINTS], [(0.1, 0.9), (2.1, 2.9)], True),
         ([BOWLS, POINTS, WAITER], [(0.1, 2.9)], False),
@@ -660,7 +663,9 @@ def _group_recipe(media_ids: list[str], placements: list[tuple[float, float]], t
         "shared-adjacent",
         "separate-adjacent",
         "wrong-source",
-        "missing-member",
+        "first-member-only",
+        "second-member-only",
+        "starts-before-the-chapter",
         "unrelated-gap",
         "separate-groups",
         "outside-group",

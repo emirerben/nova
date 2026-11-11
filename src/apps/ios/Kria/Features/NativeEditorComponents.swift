@@ -16,12 +16,16 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     case sounds = "Sounds"
     /// KRI-589: shown only when the variant opens `drawings.add`.
     case draw = "Draw"
+    /// KRI-1335: the only way into split screen. Always the last tool; shown only when the variant can edit split screens.
+    case split = "Split"
 
     var id: String { rawValue }
 
-    /// The tools the rail offers: Draw and Background appear only when the server opens them for this variant.
-    static func railTools(showsDraw: Bool, showsBackground: Bool) -> [NativeEditorTool] {
-        allCases.filter { $0 != .kria && ($0 != .draw || showsDraw) && ($0 != .background || showsBackground) }
+    /// The tools the rail offers: Draw, Background and Split appear only when the server opens them for this variant.
+    static func railTools(showsDraw: Bool, showsBackground: Bool, showsSplit: Bool = false) -> [NativeEditorTool] {
+        allCases.filter {
+            $0 != .kria && ($0 != .draw || showsDraw) && ($0 != .background || showsBackground) && ($0 != .split || showsSplit)
+        }
     }
 
     var icon: String {
@@ -33,6 +37,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .background: "photo.on.rectangle"
         case .sounds: "waveform"
         case .draw: "pencil.tip"
+        case .split: "rectangle.split.1x2"
         }
     }
 
@@ -45,6 +50,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .background: "Put a photo or video behind you"
         case .sounds: "Adjust music and add sound effects"
         case .draw: "Draw on the video with your finger"
+        case .split: "Show two or three clips on screen at once"
         }
     }
 }
@@ -243,17 +249,48 @@ struct NativeEditorRefreshIndicator: View {
 /// editor so the two stay identical. The caller owns the accessibility identifier.
 struct KriaAIButton: View {
     let identifier: String
+    var activity: NativeEditorAIStatus? = nil
+    var animatesActivity = false
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var animatesHalo: Bool {
+        animatesActivity && !KriaMotion.isReduced(reduceMotion) && !KriaTransparency.isReduced(reduceTransparency)
+    }
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 23))
-                .foregroundStyle(.white)
-                .frame(width: 52, height: 52)
-                .background(KriaColor.ink, in: Circle())
+            HStack(spacing: 10) {
+                if let activity {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(activity.title).font(KriaFont.body(13).weight(.medium))
+                        Text("Open conversation").font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
+                    }
+                    .foregroundStyle(KriaColor.ink)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: 170, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 16)
+                }
+                Image(systemName: "sparkles")
+                    .font(.system(size: 23))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(KriaColor.ink, in: Circle())
+            }
+            .background {
+                if activity != nil {
+                    KriaGlassBackground(shape: Capsule(), whiteness: 0.8, shadowOpacity: 0.06, shadowRadius: 6, shadowY: 2)
+                }
+            }
+            .overlay {
+                if activity != nil { NativeEditorAIHalo(animates: animatesHalo) }
+            }
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Open Kria conversation")
+        .accessibilityValue(activity?.title ?? "")
         .accessibilityIdentifier(identifier)
         .padding(.trailing, 16)
         .padding(.bottom, 14)
@@ -285,6 +322,87 @@ struct NativeEditorBannerRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier(identifier)
     }
+}
+
+struct NativeEditorNoticeAction {
+    let title: String
+    let identifier: String
+    let handler: () -> Void
+}
+
+/// The editor's top notice: a `fill` card inset from the screen edges, a title and one plain sentence,
+/// and at most a primary button beside a tertiary one. No borders.
+struct NativeEditorNoticeCard: View {
+    var title: String?
+    let message: String
+    var primary: NativeEditorNoticeAction?
+    var secondary: NativeEditorNoticeAction?
+    var isDisabled = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                if let title {
+                    Text(title)
+                        .kriaType(.button)
+                        .foregroundStyle(KriaColor.ink)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                Text(message)
+                    .kriaType(.label)
+                    .foregroundStyle(title == nil ? KriaColor.ink : KriaColor.mutedInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            if primary != nil || secondary != nil {
+                let layout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .center, spacing: 8))
+                    : AnyLayout(HStackLayout(spacing: 8))
+                layout {
+                    if let primary {
+                        Button(primary.title, action: primary.handler)
+                            .buttonStyle(KriaButtonStyle(role: .primary, size: .medium, fullWidth: true))
+                            .accessibilityIdentifier(primary.identifier)
+                    }
+                    if let secondary {
+                        Button(secondary.title, action: secondary.handler)
+                            .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: typeSize.isAccessibilitySize))
+                            .accessibilityIdentifier(secondary.identifier)
+                    }
+                }
+                .disabled(isDisabled)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+}
+
+#Preview("Editor notices") {
+    VStack(spacing: 12) {
+        NativeEditorNoticeCard(
+            title: "Review conflicting changes",
+            message: "You and the latest version changed the same content. Choose which one to keep.",
+            primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {},
+            secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-merge-local") {})
+        NativeEditorNoticeCard(
+            title: "Review conflicting changes",
+            message: "The latest version may use a different song. Use it, then edit the song.",
+            primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {})
+        NativeEditorNoticeCard(
+            title: "A new version of your video is ready",
+            message: "Switching discards your unsaved edits.",
+            primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-switch-job") {},
+            secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-keep-editing") {})
+        NativeEditorNoticeCard(message: "The latest version could not be checked. Your edits are still here.")
+    }
+    .padding(.horizontal, 16)
+    .frame(maxHeight: .infinity, alignment: .top)
+    .background(KriaColor.paper)
 }
 
 struct NativeEditorTransport: View {
@@ -548,6 +666,8 @@ struct NativeEditorContextStrip: View {
         .frame(height: NativeEditorIslandMetrics.contextHeight)
         .clipShape(Capsule())
         .nativeEditorIslandSurface()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("native-editor-clip-context")
     }
 }
 
@@ -631,8 +751,10 @@ struct NativeEditorToolRail: View {
     var showsDraw = false
     /// The Background tool is offered only when the server opens `speaker_background` for this variant.
     var showsBackground = false
+    /// The Split tool is offered only when the variant can edit split screens. It is always the last tool.
+    var showsSplit = false
     let onSelect: (NativeEditorTool) -> Void
-    private var tools: [NativeEditorTool] { NativeEditorTool.railTools(showsDraw: showsDraw, showsBackground: showsBackground) }
+    private var tools: [NativeEditorTool] { NativeEditorTool.railTools(showsDraw: showsDraw, showsBackground: showsBackground, showsSplit: showsSplit) }
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"

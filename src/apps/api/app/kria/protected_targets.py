@@ -389,10 +389,11 @@ def mark_request_text(label: str) -> str:
     from app.kria.reply_language import say  # noqa: PLC0415
 
     return say(
-        en=f"Mark the {label} on one frame so I can keep the text off it. "
+        en="Mark the {label} on one frame so I can keep the text off it. "
         "Or tell me the text can go anywhere.",
-        tr=f"Yazıyı uzak tutabilmem için {label} bir karede işaretle. "
+        tr="Yazıyı uzak tutabilmem için {label} bir karede işaretle. "
         "Ya da yazının her yere gelebileceğini söyle.",
+        label=label,
     )
 
 

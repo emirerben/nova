@@ -27,8 +27,10 @@ from app.kria.brief_checks import (
     build_receipts,
     defers_caption_words_to_phone_render,
     defers_text_to_phone,
+    defers_to_narrated_render,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
+    speaker_background_waits_for_render,
 )
 from app.kria.contracts import RequirementReceipt
 from app.kria.order_replacement_receipts import with_verified_order_execution
@@ -45,6 +47,7 @@ from app.services.creator_render_contract import (
     _pin_not_found,
     build_render_contract,
     field_matrix_for_strategy,
+    unresolved_field_path,
 )
 from app.services.creator_sessions import resolve_item_creator_context
 from app.services.length_planning import read_length_plan
@@ -124,6 +127,23 @@ _PROMISE_TEXTS = frozenset(
 )
 
 
+def _selected_clip_audible(strategy: Mapping[str, Any], media: Mapping[str, Any]) -> bool:
+    """False only when every selected video is known to have no sound (KRI-1365).
+
+    Reads the media snapshot's ``has_audio`` (the upload probe); an empty selection is every
+    clip. Unknown audio counts as audible, so a snapshot without the field proves what it did.
+    """
+    rows = [
+        row
+        for row in media.get("clip_assignments") or []
+        if isinstance(row, Mapping) and row.get("kind", "video") == "video"
+    ]
+    chosen = {str(media_id) for media_id in strategy.get("selected_media_ids") or []}
+    if chosen and strategy.get("media_scope") != "all":
+        rows = [row for row in rows if str(row.get("media_id")) in chosen]
+    return not rows or any(row.get("has_audio") is not False for row in rows)
+
+
 def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, facts: Any) -> bool:
     """KRI-1235: an ask whose only shortfall is what the render (or approval) does, then says.
 
@@ -146,7 +166,11 @@ def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, fact
     reason = receipt.full_reason
     if receipt.status != "partial" or not reason or receipt.requirement_id != req.id:
         return False
-    return _only_promises(reason) or reason == _pinned_promise(req, facts)
+    return (
+        _only_promises(reason)
+        or reason == _pinned_promise(req, facts)
+        or speaker_background_waits_for_render(req, facts)
+    )
 
 
 def _only_promises(reason: str) -> bool:
@@ -266,6 +290,7 @@ def _planned_order_basis(
     media: Mapping[str, Any],
     manifest: ResolvedCreatorManifest | None,
     creator_id: object,
+    talking_writer: bool = False,
 ) -> str | None:
     """The order the draft's writer commits to before it renders, when it is a server rule.
 
@@ -287,7 +312,37 @@ def _planned_order_basis(
     places every clip and Visual the edit shows (the contract pins it as ``creator_list``):
     the planner seats exactly those rows (`apply_sequence`) and the verifier refuses any
     other order.
+
+    S3 Yorum2 (prod thread cc0e3706): so is a pinned order on the phone Talking writer
+    (``talking_writer``) with several takes: it plays them in the contract's order
+    (`generative_build._speakers_in_pinned_order`) and the same verifier refuses any other.
+    It never shuffles, so a random stamp is no promise there.
     """
+    if (
+        talking_writer
+        and strategy.get("edit_format") == "subtitled"
+        and strategy.get("ordering_choice") not in {"random", "group_first"}
+        and contract is not None
+        and contract.order_required
+        and contract.order_ids
+        and contract.order_basis in {"capture_time", CREATOR_LIST_ORDER_BASIS}
+    ):
+        from app.kria.protected_targets import speaker_candidates  # noqa: PLC0415
+        from app.services.phone_rollout import phone_talking_multi_clip_supported  # noqa: PLC0415
+
+        videos = [
+            row
+            for row in media.get("clip_assignments") or ()
+            if isinstance(row, Mapping) and row.get("kind", "video") == "video"
+        ]
+        # Only when every clip may talk: a clip that can't plays as a cutaway, which the phone
+        # verifier counts in the picture order, so the order is no writer's promise there.
+        every_clip_talks = len(speaker_candidates(videos)) == len(videos)
+        return (
+            contract.order_basis
+            if every_clip_talks and phone_talking_multi_clip_supported()
+            else None
+        )
     if strategy.get("ordering_choice") == "random":
         planned = "random"
     elif (
@@ -449,6 +504,9 @@ def assess_readiness(
     requirements = brief.live() if brief is not None else []
     strategy = strategy or {}
     policy_problem = None
+    # S3 Yorum2 (Bug F): contract lines that are one order ask's own, by its id. That ask is
+    # held; every other ask keeps its own verdict, so one reply names every blocker.
+    order_problems: dict[str, str] = {}
     contract = None
     if manifest is None:
         policy_problem = say(
@@ -495,7 +553,11 @@ def assess_readiness(
                 media_snapshot=media,
             )
             if contract is not None and contract.unresolved:
-                policy_problem = contract.unresolved[0]
+                order_problems = _order_problems(
+                    requirements, contract.unresolved, stated_anchors(brief)
+                )
+                if not order_problems:
+                    policy_problem = contract.unresolved[0]
         except ValueError:
             policy_problem = say(
                 en="The proposed edit isn't supported by the current renderer or footage.",
@@ -534,6 +596,19 @@ def assess_readiness(
         audio_strategy=strategy.get("audio_strategy"),
         clip_paths=media.get("clip_paths") or (),
     )
+    # KRI-1358: the draft turn marks a phone Voiceover draft (`phone_narrated`, kria_runtime) so
+    # one clip's own sound under the voice is judged against what that compiler plays. Readiness
+    # read the default False and refused the same ask as "only works in a voiceover edit made on
+    # your iPhone" for a creator on the iPhone.
+    narrated_writer = bool(
+        settings.narrated_readiness_phone_facts_enabled
+        and defers_to_narrated_render(
+            creator_id=creator_id,
+            edit_format=talking_edit_format,
+            audio_strategy=strategy.get("audio_strategy"),
+            clip_paths=media.get("clip_paths") or (),
+        )
+    )
     facts = (
         plan_facts_from_editor_payload(editor_payload, editor_text_diff)
         if editor_payload is not None
@@ -553,15 +628,22 @@ def assess_readiness(
             # KRI-980/981: the draft turn judges a Talking edit's length and clip sound against
             # which clips can speak; readiness reads the same clips or it disagrees with it.
             media_snapshot=media
-            if talking_writer and talking_edit_format in {"subtitled", "talking_head"}
+            if (talking_writer and talking_edit_format in {"subtitled", "talking_head"})
+            or narrated_writer
             else None,
+            phone_narrated=narrated_writer,
         )
     )
     if editor_payload is None and facts.ordering_basis is None:
         facts = dataclasses.replace(
             facts,
             ordering_basis=_planned_order_basis(
-                contract, strategy, media=media, manifest=manifest, creator_id=creator_id
+                contract,
+                strategy,
+                media=media,
+                manifest=manifest,
+                creator_id=creator_id,
+                talking_writer=talking_writer,
             ),
         )
     # Use the existing source-bounded execution plan, never the model's duration
@@ -661,6 +743,7 @@ def assess_readiness(
             and contract.original_audio == "require"
             and strategy.get("audio_strategy") == "original_audio"
             and not strategy.get("licensed_music")
+            and _selected_clip_audible(strategy, media)
         ):
             proven, owner = True, FIELD_MATRIX["audio_strategy"].owner
         checked = receipt is not None and receipt.verification == "checked"
@@ -730,6 +813,8 @@ def assess_readiness(
                 en="Original camera audio is required by the render contract.",
                 tr="Oluşturma sözleşmesi kameranın özgün sesini zorunlu tutuyor.",
             )
+        if req.id in order_problems:
+            disposition, reason = "unsupported", order_problems[req.id]
         rows.append(
             {
                 "requirement_id": req.id,
@@ -752,7 +837,9 @@ def assess_readiness(
         rows = _approve_undecidable(rows, requirements)
     report = {
         "schema_version": 1,
-        "ready": not policy_problem and all(r["disposition"] in APPROVABLE for r in rows),
+        "ready": not policy_problem
+        and not order_problems
+        and all(r["disposition"] in APPROVABLE for r in rows),
         "brief_version": brief.version if brief else 0,
         "brief_digest": digest(brief.model_dump(mode="json") if brief else None),
         "strategy_digest": digest(
@@ -981,8 +1068,11 @@ def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
         if row["disposition"] in APPROVABLE:
             continue
         name = by_id[row["requirement_id"]].text()
+        reason = str(row["reason"] or "")
         lines.append(
-            f"- {name}" if policy and row["reason"] == policy else f"- {name}: {row['reason']}"
+            f"- {name}"
+            if policy and reason == policy
+            else f"- {name}: {reason} {_pin_next_step(brief, reason)}".rstrip()
         )
     return "\n".join(lines)
 
@@ -992,12 +1082,34 @@ def _pin_next_step(brief: CreativeBrief | None, problem: str) -> str:
 
     Compares the problem with the contract's own sentence for each clip the brief states, so
     it reads no words and any other problem gets no next step."""
-    if any(problem == _pin_not_found(words) for words in stated_anchors(brief).values()):
+    if any(_pin_not_found(words) in problem for words in stated_anchors(brief).values()):
         return say(
             en="Tell me which clip you mean, and I'll make a new draft.",
             tr="Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım.",
         )
     return ""
+
+
+def _order_problems(
+    requirements: Sequence[BriefRequirement],
+    unresolved: Sequence[str],
+    anchors: Mapping[str, str],
+) -> dict[str, str]:
+    """S3 Yorum2 (Bug F): every contract line that is the one live order ask's, by its id.
+
+    A first / last clip the contract could not place (`_pin_not_found` over the brief's stated
+    ends) or an order basis it could not pin (`unresolved_field_path`) is that ask's problem,
+    not the whole draft's: the gate used to copy it onto every requirement, hiding the cleanup
+    and photo verdicts the same reply had to give (prod thread cc0e3706, turns 2-3). Empty when
+    there is not exactly one live order ask, or any line is not its own (a text whose clip is
+    unknown, a hidden part): those still hold the whole draft."""
+    orders = [req for req in requirements if req.kind == "order"]
+    if len(orders) != 1:
+        return {}
+    pins = {_pin_not_found(words) for words in anchors.values()}
+    if not all(line in pins or unresolved_field_path(line) for line in unresolved):
+        return {}
+    return {orders[0].id: " ".join(dict.fromkeys(unresolved))}
 
 
 class ApprovalReadinessError(ValueError):

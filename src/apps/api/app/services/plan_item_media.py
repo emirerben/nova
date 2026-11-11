@@ -185,12 +185,24 @@ def active_narration_request(
             manifest_identity=identity,
             foreground=True,
         )
+    edit_format = str(getattr(item, "edit_format", "") or "")
+    clips = _registered_clips(item)
+    extra: dict[str, Any] = {}
+    if edit_format.strip().lower() == "subtitled" and len(clips) > 1:
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            phone_talking_multi_take_cleanup_supported,
+        )
+
+        # KRI-720: several Talking takes resolve to one source per take (flag off: unchanged).
+        if phone_talking_multi_take_cleanup_supported():
+            extra["multi_take"] = True
     return ActiveNarrationRequest(
-        edit_format=str(getattr(item, "edit_format", "") or ""),
+        edit_format=edit_format,
         audio_mode=str(getattr(item, "audio_mode", "") or ""),
         detector_policy=detector_policy,
-        clips=_registered_clips(item),
+        clips=clips,
         voiceover=voiceover,
+        **extra,
     )
 
 

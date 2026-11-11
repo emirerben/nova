@@ -29,6 +29,20 @@ PHONE_SOURCES_FIELD = "_phone_sources_v1"
 PHONE_VISUALS_FIELD = "_phone_visuals_v1"
 
 
+class PoolSource(BaseModel):
+    """KRI-1340: where a talking take attached through Visuals keeps its bytes.
+
+    The take's ``original`` was hashed from this Visuals-pool object at this generation
+    (`app.services.visual_talking_takes`), so the phone downloads it through the Visuals
+    grant instead of looking for a camera-roll original it never bound."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    asset_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    gcs_path: str = Field(min_length=1)
+    generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+
+
 class PhoneSourceBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
@@ -36,6 +50,8 @@ class PhoneSourceBinding(BaseModel):
     proxy_path: str = Field(min_length=1)
     generation: str = Field(min_length=1)
     original: OriginalMediaDescriptor
+    # KRI-1340: set only for a take adopted from Visuals; omitted otherwise (byte-identical).
+    pool_source: PoolSource | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def require_proxy(self) -> PhoneSourceBinding:
@@ -43,7 +59,19 @@ class PhoneSourceBinding(BaseModel):
             raise ValueError("phone source requires a reserved analysis proxy")
         return self
 
-    def render_asset(self) -> OriginalRenderAsset:
+    def render_asset(self) -> OriginalRenderAsset | VisualRenderAsset:
+        if self.pool_source is not None:
+            # Keyed by the take's media id like every footage take, so recipe code that
+            # maps main-track clips back to bindings by media id needs no special case.
+            return VisualRenderAsset(
+                id=self.media_id,
+                visual_id=self.pool_source.asset_id,
+                generation=self.pool_source.generation,
+                media_kind="video",
+                fingerprint=RenderFingerprint(
+                    sha256=self.original.sha256, byte_count=self.original.byte_count
+                ),
+            )
         return OriginalRenderAsset(
             id=self.media_id,
             media_id=self.media_id,
@@ -84,11 +112,13 @@ def bind_phone_sources(
         if not math.isfinite(duration):
             raise ValueError("phone source duration must be finite")
         contract.proxy.verify_registered(duration, has_audio)
+        pool_source = assignment.get("pool_source")
         binding = PhoneSourceBinding(
             media_id=assignment.get("media_id"),
             proxy_path=assignment["gcs_path"],
             generation=assignment.get("storage_generation"),
             original=contract.proxy.original,
+            pool_source=PoolSource.model_validate(pool_source) if pool_source else None,
         )
         if assignment.get("manifest_identity") != binding.media_id:
             raise ValueError("phone source manifest identity mismatch")

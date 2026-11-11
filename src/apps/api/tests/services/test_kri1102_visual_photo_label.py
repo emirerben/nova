@@ -362,7 +362,10 @@ def _shared_caption_world():
 def test_a_caption_shared_by_a_photo_and_a_clip_passes() -> None:
     contract, recipe = _shared_caption_world()
 
-    assert {t.media_id for t in contract.exact_texts} == {_asset(SCOREBOARD), TOR_CLIP[0]}
+    # KRI-1331: the caption is pinned once, for its chapter of both sources.
+    assert [t.chapter_media_ids for t in contract.exact_texts] == [
+        (_asset(SCOREBOARD), TOR_CLIP[0])
+    ]
     assert _labels(recipe)
     assert _verify(contract, recipe)
 

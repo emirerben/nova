@@ -29,6 +29,7 @@ from app.services.device_render import published_source_generation
 from app.services.phone_editor import _StagedJob
 
 _DIRECT_SECTIONS = (
+    "editor_split_screen_origin",
     "text_elements",
     "speech_timing_basis",
     "caption_cues",
@@ -216,6 +217,10 @@ def stage_saved_draft_baseline(job: Job, variant_id: str, body: Any) -> _StagedJ
         # The saved snapshot is the authoritative baseline for a second
         # delete; the public empty projection intentionally exposes no clips.
         effective["user_timeline"] = {"slots": copy.deepcopy(sections["timeline_slots"])}
+        if sections.get("split_screen_sections"):
+            effective["user_timeline"]["split_screen_sections"] = copy.deepcopy(
+                sections["split_screen_sections"]
+            )
     # Retain the last nonempty render recipe solely as a source/identity
     # baseline. Callers must explicitly provide a new timeline to render.
     effective.pop("editor_state", None)
@@ -498,6 +503,12 @@ async def stage_prepared_editor_draft(
             exact = {**admitted, **row.model_dump(mode="json", exclude_unset=True)}
             if not row.removed:
                 exact["slot_id"] = admitted["slot_id"]
+            if (
+                "speaker_background" in body.model_fields_set
+                and body.speaker_background is None
+                and admitted.get("speaker_frame_override") is not None
+            ):
+                exact["speaker_frame_override"] = copy.deepcopy(admitted["speaker_frame_override"])
             if admitted.get("source_start_locked"):
                 exact["source_start_locked"] = True
             exact_rows.append(exact)
@@ -640,4 +651,8 @@ def public_saved_editor_variant(job: Job, variant: dict[str, Any]) -> dict[str, 
             result[key] = copy.deepcopy(sections[key])
     if "timeline_slots" in sections:
         result["user_timeline"] = {"slots": copy.deepcopy(sections["timeline_slots"])}
+        if sections.get("split_screen_sections"):
+            result["user_timeline"]["split_screen_sections"] = copy.deepcopy(
+                sections["split_screen_sections"]
+            )
     return result

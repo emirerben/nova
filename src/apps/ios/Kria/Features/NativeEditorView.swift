@@ -9,8 +9,7 @@ struct NativeEditorView: View {
     private let conversationAcceptedID: UUID?
     /// Changes when the conversation asks to close its sheet (its "Open editor" while this editor is open).
     private let conversationCloseID: UUID?
-    /// AI suggestion blocks for this edit, read from the chat that owns the set. Nil = nothing to improve (or no chat).
-    private let improve: SuggestionCardsPresentation?
+    private let conversationActivity: NativeEditorAIActivity?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -37,9 +36,6 @@ struct NativeEditorView: View {
     @State private var opensRetryConversation = false
     @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
-    @State private var showsImprove = false
-    /// A card was tapped in the Improve sheet: once it has closed, the conversation opens so the creator sees the message land.
-    @State private var opensConversationAfterImprove = false
     /// KRI-589: Draw mode. `appendingTo` is the drawing "Draw more" adds to; nil starts a new drawing.
     @State private var drawMode: DrawMode?
     @StateObject private var sketch = NativeDrawingSketch()
@@ -85,8 +81,8 @@ struct NativeEditorView: View {
         sharedSession: NativeEditorSession? = nil,
         conversationAcceptedID: UUID? = nil,
         conversationCloseID: UUID? = nil,
+        conversationActivity: NativeEditorAIActivity? = nil,
         conversation: (() -> AnyView)? = nil,
-        improve: SuggestionCardsPresentation? = nil,
         onBack: @escaping () -> Void
     ) {
         self.project = project
@@ -95,7 +91,7 @@ struct NativeEditorView: View {
         self.conversation = conversation
         self.conversationAcceptedID = conversationAcceptedID
         self.conversationCloseID = conversationCloseID
-        self.improve = improve
+        self.conversationActivity = conversationActivity
         _session = StateObject(
             wrappedValue: sharedSession ?? initialDraft.map {
                 NativeEditorSession(
@@ -116,7 +112,31 @@ struct NativeEditorView: View {
         GeometryReader { viewport in
             editorLifecycle(editorExitControls(editorPresentations(editorSurface(viewport: viewport))))
         }
+        .overlay(alignment: .topLeading) {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-document-snapshot") {
+                Text("Editor document snapshot")
+                    .font(.system(size: 1))
+                    .frame(width: 1, height: 1)
+                    .clipped()
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel("Editor document snapshot")
+                    .accessibilityValue(testDocumentSnapshot)
+                    .accessibilityIdentifier("native-editor-test-document")
+            }
+            #endif
+        }
     }
+
+    #if DEBUG
+    private var testDocumentSnapshot: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(session.document.encodeSnapshot()) else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+    #endif
 
     private func editorSurface(viewport: GeometryProxy) -> some View {
         Group {
@@ -219,29 +239,6 @@ struct NativeEditorView: View {
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
             }
-            .sheet(isPresented: $showsImprove, onDismiss: {
-                guard opensConversationAfterImprove else { return }
-                opensConversationAfterImprove = false
-                showsConversation = true
-            }) {
-                if let improve {
-                    ImproveSheet(
-                        presentation: SuggestionCardsPresentation(
-                            cards: improve.cards,
-                            tap: { card in
-                                guard improve.tap(card) else { return false }
-                                opensConversationAfterImprove = true
-                                showsImprove = false
-                                return true
-                            },
-                            dismiss: improve.dismiss, refresh: improve.refresh, sendingID: improve.sendingID
-                        ),
-                        close: { showsImprove = false }
-                    )
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                }
-            }
             .sheet(isPresented: $showsConversation) {
                 if let conversation {
                     conversation()
@@ -264,45 +261,57 @@ struct NativeEditorView: View {
             // creator closes it); `conversationAcceptedID` is intentionally unused here.
             // A re-plan can finish as a NEW job while this editor is open: show it.
             .onChange(of: project.activeJobID) { _, _ in Task { await loadEditor() } }
-            .safeAreaInset(edge: .top) {
-                if let conflict = session.mergeConflictMessage {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Review conflicting changes").font(KriaFont.body().weight(.semibold))
-                        Text(conflict).font(.footnote)
-                        HStack {
-                            Button("Keep my conflicting changes") { session.resolveMergeConflicts(keepingLocal: true) }
-                                .accessibilityIdentifier("native-editor-merge-local")
-                                .disabled(!session.canKeepLocalMergeConflicts)
-                            Button("Use latest conflicting changes") { session.resolveMergeConflicts(keepingLocal: false) }
-                                .accessibilityIdentifier("native-editor-merge-remote")
-                        }
-                        .disabled(session.isSaving)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(KriaColor.paper)
-                } else if let newer = session.newerJobPrompt {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("A new version of your video is ready")
-                            .font(KriaFont.body().weight(.semibold))
-                        Text("Switching discards your unsaved edits.")
-                            .font(.footnote)
-                        HStack {
-                            Button("Switch") { Task { await session.switchToLatestJob(newer, api: model.api) } }
-                                .accessibilityIdentifier("native-editor-switch-job")
-                            Button("Keep editing") { session.keepEditingCurrentJob() }
-                                .accessibilityIdentifier("native-editor-keep-editing")
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(KriaColor.paper)
-                } else if let message = session.latestJobRefreshMessage {
-                    Text(message).font(.footnote).padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(KriaColor.paper)
-                }
+            .safeAreaInset(edge: .top) { topNotice }
+    }
+
+    @ViewBuilder private var topNotice: some View {
+        let reduced = KriaMotion.isReduced(reduceMotion)
+        // Padding belongs to the notice: an empty inset must take no height from the editor.
+        Group {
+            if topNoticeKey != "none" {
+                noticeCard
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .transition(reduced ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
+        }
+        .animation(reduced ? nil : .easeOut(duration: 0.25), value: topNoticeKey)
+    }
+
+    @ViewBuilder private var noticeCard: some View {
+        Group {
+            if let conflict = session.mergeConflictMessage {
+                NativeEditorNoticeCard(
+                    title: "Review conflicting changes",
+                    message: conflict,
+                    primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {
+                        session.resolveMergeConflicts(keepingLocal: false)
+                    },
+                    secondary: session.canKeepLocalMergeConflicts
+                        ? NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-merge-local") {
+                            session.resolveMergeConflicts(keepingLocal: true)
+                        } : nil,
+                    isDisabled: session.isSaving)
+            } else if let newer = session.newerJobPrompt {
+                NativeEditorNoticeCard(
+                    title: "A new version of your video is ready",
+                    message: "Switching discards your unsaved edits.",
+                    primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-switch-job") {
+                        Task { await session.switchToLatestJob(newer, api: model.api) }
+                    },
+                    secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-keep-editing") {
+                        session.keepEditingCurrentJob()
+                    })
+            } else if let message = session.latestJobRefreshMessage {
+                NativeEditorNoticeCard(message: message)
+            }
+        }
+    }
+
+    private var topNoticeKey: String {
+        if let conflict = session.mergeConflictMessage { return "conflict:\(conflict):\(session.canKeepLocalMergeConflicts)" }
+        if let newer = session.newerJobPrompt { return "newer:\(newer.id)" }
+        return session.latestJobRefreshMessage.map { "refresh:\($0)" } ?? "none"
     }
 
     private func editorExitControls<Content: View>(_ content: Content) -> some View {
@@ -333,6 +342,13 @@ struct NativeEditorView: View {
                     VStack {
                         Text(session.gamedayFixtureSummary).font(.system(size: 1)).frame(height: 1)
                             .accessibilityIdentifier("gameday-fixture-state")
+                        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import") {
+                            SwiftUI.TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                                Button("Release registered import") { NativeEditorUITestCommitTransport.releaseSplitImport() }
+                                    .disabled(!NativeEditorUITestCommitTransport.splitImportWaiting)
+                                    .accessibilityIdentifier("split-import-release")
+                            }
+                        }
                         Button("Retain fixture edit") { Task { await session.saveGamedayFixture() } }
                             .accessibilityIdentifier("gameday-fixture-save")
                     }
@@ -361,8 +377,10 @@ struct NativeEditorView: View {
             .onReceive(NetworkReachability.shared.$isOnline.removeDuplicates()) { online in
                 if online { Task { await session.resumeRefreshSync() } }
             }
+            .onAppear { session.beginPreviewPresentation() }
             .onDisappear {
                 session.setObserversVisible(false)
+                session.endPreviewPresentation()
                 finishPanelEditing()
                 session.suspendEditorImports()
                 session.pausePlayback()
@@ -472,22 +490,25 @@ struct NativeEditorView: View {
                 .overlay {
                     // KRI-589: the finger canvas in Draw mode, else the selected drawing's move / scale / rotate layer.
                     // After the preview's identifier: a parent's identifier masks its children's.
-                    if drawMode != nil {
+                    if !session.isShowingPreviousPreview, drawMode != nil {
                         NativeDrawingCanvas(sketch: sketch)
-                    } else if let selection = session.selection, selection.kind == .drawing {
+                    } else if !session.isShowingPreviousPreview, let selection = session.selection, selection.kind == .drawing {
                         NativeDrawingTransformLayer(session: session, id: selection.id)
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
-                .overlay(alignment: .bottomTrailing) {
-                    if conversation != nil, session.pendingText == nil, !lineEditing {
-                        KriaAIButton(identifier: "native-editor-conversation") { showsConversation = true }
-                    }
-                }
-                .overlay(alignment: .bottomLeading) {
-                    if let improve, session.pendingText == nil, !lineEditing {
-                        ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
+                .overlay(alignment: .bottom) {
+                    if session.pendingText == nil, !lineEditing {
+                        HStack(alignment: .bottom, spacing: 0) {
+                            Spacer(minLength: 8)
+                            if conversation != nil {
+                                KriaAIButton(
+                                    identifier: "native-editor-conversation", activity: aiStatus,
+                                    animatesActivity: scenePhase == .active && !showsConversation && !previewFullscreen
+                                ) { showsConversation = true }
+                            }
+                        }
                     }
                 }
                 // The centered preview leaves horizontal editor margins on
@@ -730,7 +751,7 @@ struct NativeEditorView: View {
                                     .transition(panelTransition)
                             }
                             if !keyboardVisible && !lineEditing {
-                                NativeEditorToolRail(selected: panel?.tool, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, onSelect: selectTool)
+                                NativeEditorToolRail(selected: panel?.tool, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, showsSplit: session.canEditSplitScreen, onSelect: selectTool)
                             }
                         }
                         .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
@@ -804,6 +825,8 @@ struct NativeEditorView: View {
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .drawing(let id):
             NativeDrawingPanel(session: session, id: id, onDrawMore: { enterDrawMode(appendingTo: id) }, onDone: { changePanel(to: nil) }).id(id)
+        case .split:
+            NativeSplitPanel(session: session) { changePanel(to: nil) }
         case nil:
             EmptyView()
         }
@@ -828,7 +851,7 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .captions, .visuals, .background, .sounds, .drawing: changePanel(to: nil)
+        case .captions, .visuals, .background, .sounds, .drawing, .split: changePanel(to: nil)
         case .speaker:
             if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
             changePanel(to: nil)
@@ -883,6 +906,7 @@ struct NativeEditorView: View {
             session.select(nil)
         case .background: changePanel(to: .background)
         case .sounds: changePanel(to: .sounds)
+        case .split: changePanel(to: .split)
         case .draw: enterDrawMode()
         default:
             changePanel(to: nil)
@@ -1003,6 +1027,8 @@ struct NativeEditorView: View {
             return
         }
         selectedTextForActions = nil
+        // The Split panel selects clips itself (this clip, a panel's member); that must not close it.
+        if panel == .split, selection.kind == .clip { return }
         changePanel(to: nil)
         if selection.kind != .clip { inspector = .selection(selection) }
     }
@@ -1030,6 +1056,17 @@ struct NativeEditorView: View {
     private var deviceLocalFile: URL? {
         guard let key = session.deviceRenderKey else { return nil }
         return model.deviceRenders.presentations[key]?.localFile
+    }
+
+    private var aiStatus: NativeEditorAIStatus? {
+        let render = session.deviceRenderKey.flatMap { key in
+            key.projectID == project.id ? model.deviceRenders.presentations[key] : nil
+        }
+        return NativeEditorAIStatus.current(
+            projectID: project.id, conversation: conversationActivity,
+            refresh: session.refreshSync, preview: session.sourcePreviewState,
+            previewIsUpdating: session.isPreparingCurrentPreview, render: render
+        )
     }
 
     private func loadEditor() async {
@@ -1063,25 +1100,8 @@ struct NativeEditorView: View {
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
-        session.useDeviceRendering(model.deviceRenders)
-        session.useMediaUploads(model.uploads)
-        if session.isBehindActiveJob(project) {
-            await session.adoptLatestJob(project, api: model.api)
-            return
-        }
-        guard session.needsReload(for: project) else {
-            // Already loaded: a chat draft may have landed while this tab was hidden.
-            if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }
-            return
-        }
-        let lifetime = session.editorLifetimeID
-        if libraryJobID == nil {
-            // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
-            if await session.reconcileOnOpen(project: project, api: model.api) { return }
-        }
-        guard let loadedLifetime = await session.loadForEditorOpen(project: project, libraryJobID: libraryJobID,
-            api: model.api, expectedLifetime: lifetime), session.editorLifetimeID == loadedLifetime else { return }
-        if let file = deviceLocalFile { session.showDeviceOutput(file) }
+        await session.openOrWarm(project: project, libraryJobID: libraryJobID, api: model.api,
+                                 deviceRenders: model.deviceRenders, uploads: model.uploads)
     }
 
     private func blockedReason(_ deletion: NativeEditorSession.TextDeletion) -> String? {

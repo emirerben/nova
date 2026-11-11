@@ -231,8 +231,31 @@ enum KriaCropFrameLoader {
 
 // MARK: - View
 
-/// One Crop experience for every media type (KRI-44): the real frame, a dimmed surround, a rule-of-thirds grid, drag to
-/// move, pinch to scale, corner handles and shape presets. `crop == nil` means "no crop" (a plain centred cover fill).
+struct KriaCropGestureState {
+    enum Kind { case drag, pinch }
+    private var dragBase: NormalizedSourceRect?
+    private var pinchBase: NormalizedSourceRect?
+
+    func base(for kind: Kind) -> NormalizedSourceRect? {
+        kind == .drag ? dragBase : pinchBase
+    }
+
+    mutating func begin(_ kind: Kind, at rect: NormalizedSourceRect) -> Bool {
+        let wasIdle = dragBase == nil && pinchBase == nil
+        if base(for: kind) == nil {
+            if kind == .drag { dragBase = rect } else { pinchBase = rect }
+        }
+        return wasIdle
+    }
+
+    mutating func end(_ kind: Kind) -> Bool {
+        guard base(for: kind) != nil else { return false }
+        if kind == .drag { dragBase = nil } else { pinchBase = nil }
+        return dragBase == nil && pinchBase == nil
+    }
+}
+
+/// `crop == nil` preserves the ordinary centered cover fill.
 struct KriaCropEditor: View {
     enum Mode: String, CaseIterable, Identifiable {
         case fill = "Fill frame", free = "Free", original = "Original"
@@ -249,11 +272,12 @@ struct KriaCropEditor: View {
 
     @State private var mode: Mode = .fill
     @State private var working = KriaCropGeometry.full
-    @State private var gestureBase: NormalizedSourceRect?
-    @State private var pinchBase: NormalizedSourceRect?
+    @State private var gestures = KriaCropGestureState()
     @State private var didSetUp = false
 
     private var imageAspect: Double { image.size.height > 0 ? Double(image.size.width / image.size.height) : 1 }
+    private var gestureBase: NormalizedSourceRect? { gestures.base(for: .drag) }
+    private var pinchBase: NormalizedSourceRect? { gestures.base(for: .pinch) }
     private var ratio: Double { KriaCropGeometry.lockedRatio(imageAspect: imageAspect, outputAspect: Double(outputAspect)) }
     private var lockedRatio: Double? { mode == .fill ? ratio : nil }
     private var fill: NormalizedSourceRect { KriaCropGeometry.fillCrop(imageAspect: imageAspect, outputAspect: Double(outputAspect)) }
@@ -423,7 +447,7 @@ struct KriaCropEditor: View {
         .position(point)
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { value in
-                if gestureBase == nil { gestureBase = working; onEditingChanged(true) }
+                if gestures.begin(.drag, at: working) { onEditingChanged(true) }
                 guard let base = gestureBase else { return }
                 working = KriaCropGeometry.resized(base, corner: corner, dx: value.translation.width / frame.width,
                                                    dy: value.translation.height / frame.height, lockedRatio: lockedRatio)
@@ -436,7 +460,7 @@ struct KriaCropEditor: View {
     private func moveGesture(frame: CGRect) -> some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
-                if gestureBase == nil { gestureBase = working; onEditingChanged(true) }
+                if gestures.begin(.drag, at: working) { onEditingChanged(true) }
                 guard let base = gestureBase else { return }
                 working = KriaCropGeometry.moved(base, dx: value.translation.width / frame.width, dy: value.translation.height / frame.height)
             }
@@ -446,18 +470,16 @@ struct KriaCropEditor: View {
     private func pinchGesture() -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                if pinchBase == nil { pinchBase = working; onEditingChanged(true) }
+                if gestures.begin(.pinch, at: working) { onEditingChanged(true) }
                 guard let base = pinchBase else { return }
                 // Pinching out zooms in, so the crop window shrinks.
                 working = KriaCropGeometry.scaled(base, factor: 1 / Double(max(value.magnification, 0.01)))
             }
-            .onEnded { _ in pinchBase = nil; finishGesture() }
+            .onEnded { _ in finishGesture(.pinch) }
     }
 
-    private func finishGesture() {
-        let wasEditing = gestureBase != nil || pinchBase != nil
-        gestureBase = nil
-        guard wasEditing else { return }
+    private func finishGesture(_ kind: KriaCropGestureState.Kind = .drag) {
+        guard gestures.end(kind) else { return }
         commit()
         onEditingChanged(false)
     }

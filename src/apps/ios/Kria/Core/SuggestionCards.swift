@@ -1,10 +1,11 @@
 import Foundation
 
-/// AI suggestion blocks: the v2 `suggestions` array of `SuggestionSetOut`, drawn as cards in the chat's ready
-/// stage and in the editor's Improve sheet. Both surfaces read the one set the chat holds.
+/// AI suggestion blocks: the v2 `suggestions` array of `SuggestionSetOut`, drawn as AI chips in the chat's ready
+/// stage, which the editor's chat sheet shows too. Both read the one set the chat holds.
 ///
-/// The server decides what a card says and what its tap does. The app decodes, renders in rank order, and sends
-/// `prompt` as the creator's chat message together with `{set_id, id}`. Decoding is tolerant by contract: an
+/// The server decides what a card says and what its tap does. The app decodes, renders in rank order, and puts
+/// `prompt` in the composer on tap. A draft that is exactly one card's prompt is sent as the creator's chat message
+/// together with `{set_id, id}`; any other draft is a plain message. Decoding is tolerant by contract: an
 /// unknown `kind` or `action_type` still renders (by its own title), unknown keys are ignored, and a card that
 /// cannot be trusted is dropped on its own, never the set.
 struct SuggestionCard: Decodable, Equatable, Identifiable, Sendable {
@@ -108,14 +109,7 @@ struct SuggestionCard: Decodable, Equatable, Identifiable, Sendable {
         if let why { parts.append(why) }
         if let evidence = evidence.first { parts.append(evidence) }
         if let copyText { parts.append("Text: \(copyText)") }
-        if let cost = costLabel { parts.append("Costs \(cost)") }
         return parts.joined(separator: ". ")
-    }
-
-    /// "$0.04": generated media states its price before the tap. Nil when the card is free.
-    var costLabel: String? {
-        guard let costUSD, costUSD > 0 else { return nil }
-        return String(format: "$%.2f", costUSD)
     }
 
     /// SF Symbol for the kind; an unknown kind gets the generic one rather than no card.
@@ -145,7 +139,6 @@ enum SuggestionCardPhase: Equatable, Sendable {
     case sending
     /// The tap was accepted. The card leaves until the next set.
     case applied
-    case dismissed
 }
 
 /// What happened to a card's tap once it left the phone. A tap that never reached the server reports nothing.
@@ -157,16 +150,15 @@ enum SuggestionTapOutcome: Equatable, Sendable {
 @MainActor
 final class SuggestionCardLedger: ObservableObject {
     @Published private(set) var phases: [String: SuggestionCardPhase] = [:]
-    /// Bumped to make the chat ask the server again (after an editor Save or the Improve sheet's "Check again").
+    /// Bumped to make the chat ask the server again (after an editor Save).
     @Published private(set) var refreshToken = 0
-    /// The set the phases belong to. A new set clears everything but dismissals, which stay for the chat's life.
+    /// The set the phases belong to. A new set clears everything but taps still in flight.
     private var setID: String?
-    private var dismissed: Set<String> = []
-    func phase(of id: String) -> SuggestionCardPhase { dismissed.contains(id) ? .dismissed : phases[id] ?? .idle }
+    func phase(of id: String) -> SuggestionCardPhase { phases[id] ?? .idle }
 
     /// Cards still worth drawing, in the order given. A card in `.sending` stays so the creator sees it settle.
     func visible(_ cards: [SuggestionCard]) -> [SuggestionCard] {
-        cards.filter { switch phase(of: $0.id) { case .idle, .sending: true; case .applied, .dismissed: false } }
+        cards.filter { switch phase(of: $0.id) { case .idle, .sending: true; case .applied: false } }
     }
 
     /// A set arrived. Handled cards come back only for a different set: a tapped card is still the same card in
@@ -192,9 +184,11 @@ final class SuggestionCardLedger: ObservableObject {
         phases[card.id] = accepted ? .applied : .idle
     }
 
-    func dismiss(_ card: SuggestionCard) {
-        dismissed.insert(card.id)
-        phases[card.id] = .dismissed
+    /// A message that carried this card's prompt went out as plain text. The card is handled for this set; a tap
+    /// still in flight settles through `finish`.
+    func markApplied(_ card: SuggestionCard) {
+        guard phases[card.id] != .sending else { return }
+        phases[card.id] = .applied
     }
 
     /// An editor Save changes the Job without a thread revision, so the chat has to be told to ask again.
@@ -228,13 +222,44 @@ enum SuggestionReadyContent: Equatable {
     }
 }
 
-extension KriaAPI {
-    /// `POST creation-threads/{id}/suggestions/dismiss`. The creator already lost the card on this phone; this
-    /// tells the server so it never offers it again. A server without the route (404/405) or any other failure is
-    /// not the creator's problem, so it never throws.
-    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async {
-        let body = (try? JSONEncoder().encode(SuggestionTap(setID: setID, chipID: suggestionID))) ?? Data()
-        _ = try? await request(path: "creation-threads/\(threadID.uuidString)/suggestions/dismiss", method: "POST",
-                               bodyData: body, decode: EmptyProjectResponse.self)
+/// The composer draft is the selection. A suggestion is selected when one line of the draft is its prompt, so a
+/// creator who deletes the line by hand unselects the chip and nothing else has to agree with it. Lines compare the
+/// way the server matches a tapped message (`_norm`: casefold, collapsed whitespace), so a pin still resolves.
+enum SuggestionDraft {
+    private static func normalized(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+    }
+
+    private static func lines(_ draft: String) -> [String] {
+        draft.components(separatedBy: .newlines)
+    }
+
+    static func isSelected(_ card: SuggestionCard, in draft: String) -> Bool {
+        let wanted = normalized(card.prompt)
+        return lines(draft).contains { normalized($0) == wanted }
+    }
+
+    /// Selected: drops that card's line and keeps every other line. Not selected: appends the prompt on a new line.
+    static func toggle(_ card: SuggestionCard, in draft: String) -> String {
+        if isSelected(card, in: draft) {
+            let wanted = normalized(card.prompt)
+            let kept = lines(draft).filter { normalized($0) != wanted }
+            return kept.allSatisfy { normalized($0).isEmpty } ? "" : kept.joined(separator: "\n")
+        }
+        if normalized(draft).isEmpty { return card.prompt }
+        return draft.hasSuffix("\n") ? draft + card.prompt : draft + "\n" + card.prompt
+    }
+
+    /// The one card the whole draft says, or nil. Only then may Send carry the card's pin: a prompt with other words
+    /// or other prompts is a plain message the planner reads.
+    static func pinnedCard(for draft: String, among cards: [SuggestionCard]) -> SuggestionCard? {
+        let whole = normalized(draft)
+        guard !whole.isEmpty else { return nil }
+        return cards.first { normalized($0.prompt) == whole }
+    }
+
+    /// Every card whose prompt is a line of the draft, in the order the cards are offered.
+    static func cards(in draft: String, among cards: [SuggestionCard]) -> [SuggestionCard] {
+        cards.filter { isSelected($0, in: draft) }
     }
 }

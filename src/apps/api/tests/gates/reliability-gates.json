@@ -4436,6 +4436,289 @@
       "journey": "kria-continued-turn-paid-calls"
     },
     {
+      "id": "kri-1331-event-titles-once",
+      "tickets": [
+        "KRI-1331"
+      ],
+      "symptom": "Prod job f6671587 (2026-11): \"Add a title at the beginning of each event. Football, dodgeball, beach volleyball and pub\" plus an intro title rendered 21 texts instead of 5 on the phone: the composer's four titles on clips it guessed, 13 \"beach volleyball\" labels back to back (one per event clip) and \"Football\", \"dodgeball\", \"pub\" stacked on one clip at the same height.",
+      "boundary": "contract",
+      "status": "open_pr",
+      "owner": "KRI-1331",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/cloud_render_contract.py",
+        "src/apps/api/app/pipeline/phone_plan_repair.py",
+        "src/apps/api/app/pipeline/phone_speech_montage_plan.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/app/services/phone_editor.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri1331_event_titles_once.py",
+        "tests/kria/test_kri804_label_text_reply.py",
+        "tests/services/test_kri1102_visual_photo_label.py",
+        "tests/services/test_phone_speech_montage_job.py",
+        "tests/tasks/test_phone_plan_contract_repair.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod job f6671587's approved strategy, brief, timeline and the text composer's six recorded operations through the real contract builder, replay_text_composition, compile_phone_guided_repaired and verify_phone_recipe. On origin/main 5e9be6765 prod's own resolution draws 21 texts (the incident count) and proper event members draw 42; with the fix both draw the intro plus one title per event, each starting on its event's first clip, none overlapping in time and height.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "Not run on a device: the checks read the compiled phone recipe's text layers (what the phone draws), not an exported video.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "events with proper member clips (7, 2, 15 and 13 clips) and prod's own resolution (three events on one clip, KRI-1330)",
+        "the composer moved the montage's titles to guessed clips: its rows are moved back, never copied",
+        "the montage's own title across each event is kept and nothing is added",
+        "a per-clip label ask keeps one pin per clip",
+        "wrong-content controls: a title on its event's second clip, on another event's first clip, or running past its event is refused",
+        "phone and cloud verifiers share the chapter rule (KRI-804 source-affinity matrix)",
+        "spoken-excerpt montage draws a chapter title once, on the first cut",
+        "editor Save with an untouched timeline keeps the chapter",
+        "a contract without a chapter title stays readable by an older worker"
+      ],
+      "neighbours_gap": [
+        "The composer still guesses where its titles go (it never sees the resolved event clips); the repair moves them, so its own placement is not used.",
+        "Several events resolved to one clip (KRI-1330) still draw their titles on that clip, stacked clear of each other.",
+        "A duplicate the composer writes beside a planner title that already shows the words is not removed.",
+        "Titles do not yet follow their clip when the creator reorders in the editor (KRI-1332 reads source_params.source_asset_id / source_timeline_id).",
+        "An older or rolled-back worker refuses a contract that has a chapter title until the deploy completes."
+      ],
+      "follow_ups": [
+        "KRI-1332 titles follow their clips in the editor",
+        "Phone re-send of the Emir Olympics request after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1332-titles-follow-clips",
+      "tickets": [
+        "KRI-1332"
+      ],
+      "symptom": "Thread 1894f8d0 (2026-11): after \"make it 60 seconds\" (set_total_duration) and \"make them 0.5 seconds\" (patch_slots on six clips) every event title stayed at its old second while its clip moved; \"match the sports with the videos again\" then deleted all twenty texts (remove_texts group free) because nothing marked them as bound to a clip.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-1332",
+      "fix_prs": [],
+      "journey": "kri-1332-titles-follow-clips",
+      "paths": [
+        "src/apps/api/app/services/kria_editor_ops.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/app/services/kria_editor_timeline.py",
+        "src/apps/api/app/agents/editor_ops_v2/text.py",
+        "src/apps/api/app/agents/edit_copilot.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_kri1332_titles_follow_clips.py",
+        "tests/services/test_kri1332_link_side_effects.py",
+        "tests/services/test_kria_editor_realign_labels.py",
+        "tests/services/test_kria_editor_guided_timeline.py",
+        "tests/services/test_guided_label_rebase_vectors.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The KRI-1331 titles for the prod request (fixture timeline, strategy and composer operations through compile_phone_guided_repaired, so each title carries its source_params clip link), then the incident's chat edits through the copilot parser, compile_editor_ops and project_editor_draft on the authored phone variant. On 85e68a697 every title keeps its old second after both edits, the planner input lists the titles as free text, remove_texts group free targets all four and realign_labels finds no clip labels; with the fix each title starts on its event's first clip after both edits and stays within its event, and realign_labels re-attaches the drifted titles.",
+        "live_model": "Not run; no paid calls. No prompt changed: the planner input now lists each title as selector_group 'labels' with label_for_clip, the case text.txt routes to realign_labels.",
+        "native_output": "Not run on a device: the checks read the compiled editor draft's text windows, not an exported video.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "set_total_duration proportional, then a duration-only patch_slots that shrinks an event's first clips to 0.5 s",
+        "titles that run on past their first clip keep running on within their event; titles that fit their clip follow it like a label",
+        "a creator's own text with no clip link keeps its absolute time on a duration edit",
+        "several titles on one clip (prod's KRI-1330 resolution) all follow it",
+        "realign_labels on an authored phone timeline (no stored output times) and its honest no-op when titles already sit on their clips",
+        "a reorder on a guided story keeps a run-on title from stretching back to the footage it ran on over",
+        "participant labels (PLAYER N) bound by the same link: follow their clip on a duration edit, fill their clip on realign, never withhold visual_media, never absorb the hour from label_each_clip, still allow a label of their own on the clip",
+        "linked event titles are not the clip's fact label: label_each_clip and add_text clip_id treat the clip as unlabelled",
+        "legacy clip-label-* / montage-text-* rows unchanged (guided timeline, realign and iPhone parity vector suites)"
+      ],
+      "neighbours_gap": [
+        "On an authored phone timeline a chat trim, reorder or clip delete still re-times no text at all (kria_editor_ops compiles only duration and speed edits with text there); realign_labels is the recovery.",
+        "The iPhone editor re-times a linked title as free text (GuidedLabelRebase.swift does not read the link): a hand reorder can stretch a run-on title like before.",
+        "A variant rendered before PR #2241 has no clip links, so its titles still behave as free text.",
+        "realign_labels keeps a title's length but does not know its event's member clips: a run-on title is capped at the next clip-bound text, not at its event's last clip."
+      ],
+      "follow_ups": [
+        "Phone re-send of the Emir Olympics request and its edits after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1352-researched-text-layers",
+      "tickets": ["KRI-1352"],
+      "symptom": "A montage request for an explanation of a public date shown word by word in the middle, with an English translation word by word at the bottom, failed as phone_plan_failed. The text composer asked for research, and research replaced its work with footage-window captions ('Label: fact') that can be neither a word sequence nor a second layer; every caption answer listed the bilingual ask as unmet, and the last one ran one character over its reading budget.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1352",
+      "paths": [
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/researched_text.py",
+        "src/apps/api/app/schemas/text_composition.py",
+        "src/apps/api/app/schemas/research.py",
+        "src/apps/api/app/kria/research_preview.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/kria/text_sequence.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/pipeline/unified_montage.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_approved_long_sequence_copy.py",
+        "tests/kria/test_legacy_overflow_literal_recovery.py",
+        "tests/kria/test_legacy_overflow_retry_planner.py",
+        "tests/kria/test_legacy_overflow_retry_postgres.py",
+        "tests/evals/request_following/test_research_feeds_text_sequences.py",
+        "tests/evals/request_following/test_researched_text.py",
+        "tests/evals/request_following/test_kri881_research_before_approval.py",
+        "tests/evals/request_following/test_creation_composition.py"
+      ],
+      "harness": "mocked_provider",
+      "evidence": {
+        "offline_replay": "Synthetic founder-day fixture through the real composer parse, op coercion, text replay and plan compile, with provider answers stubbed: the incident shape (research decided at render, no approved research) writes reviewed layers, splits them into two concurrent cited word sequences and keeps the footage-window path for plain explanations. Wrong-facts, invented-date, uncited-fact, unlabelled-identity, changed-number and mistranslation answers fail; shaping that writes, rewords, moves, retimes or mis-splits reviewed text fails at compose and on saved replay; approved layers on re-cut footage fail without a new search.",
+        "live_model": "One approved text-only replay ran on 2026-11-10 (3 calls, USD 0.102215 settled, no unknown spend) and failed before shaping: the layer writer reported that the facts it received did not mention the date. Facts and layers were not captured, so the cause is unknown. Stubbed reviewer approvals prove orchestration only, not translation or factual accuracy.",
+        "native_output": "Not run on a device: the checks read the compiled text lane, not an exported video.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "a translation listed before its original layer",
+        "a literal title shown word by word next to a researched explanation keeps footage-window research",
+        "phrase units with multiword pieces and word build-up (cumulative) pass",
+        "a pre-approval preview prepares reviewed layers, and the render replays them with no search, writer or reviewer call",
+        "an approval that pinned footage explanations before this change fails plainly for an authored word sequence instead of an opaque replay error",
+        "a program without reviewed layers serializes exactly as before",
+        "a regeneration turn on a brief written before 280-character sequence literals restores the legacy over-length paragraph as a new brief version; question turns, the creator's own change or removal, non-open requirements and malformed markers are left alone"
+      ],
+      "neighbours_gap": [
+        "Live layer writing, translation fidelity and claim review are unverified without a paid run.",
+        "The pre-approval preview does not run the shaping pass, so an approved layer set can still fail at render when the split cannot fit its window.",
+        "Naming who is pictured still needs the creator's words or a visible label; a real request may be held back by the claim review for that reason.",
+        "The legacy footage-caption replay still binds only clip ids, not source cuts."
+      ],
+      "follow_ups": [
+        "One approved live text-only replay of the incident request (USD 3 cap), then a phone render after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1352-refusal-names-real-limit",
+      "tickets": ["KRI-1352"],
+      "symptom": "Found in the KRI-1352 investigation: after a creator approved a hook for a single talking clip, approval readiness asked 'I can't keep that exact photo and video timing in this edit', though the request named no timing. Every MixedMediaTimingUnavailableError, including phone-format and unverified-source limits, was worded as a photo and video timing problem.",
+      "boundary": "verifier",
+      "status": "open_pr",
+      "owner": "KRI-1352",
+      "paths": [
+        "src/apps/api/app/kria/strategy_policy.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_refusal_names_real_limit.py",
+        "tests/kria/test_strategy_policy.py",
+        "tests/kria/test_turkish_chat_guard.py"
+      ],
+      "harness": "real_contract",
+      "evidence": {
+        "offline_replay": "A synthetic single-clip montage with an unverified phone source through check_strategy_for_runtime_v2: the base code asks the timing question; with the fix it asks the existing 'edit isn't available' question. A real timing contract still gets the timing question.",
+        "live_model": "Not needed: no prompt changed.",
+        "native_output": "Not run on a device.",
+        "production": "Not deployed. Which limit fired in the original turn is not recorded server-side."
+      },
+      "neighbours_covered": [
+        "phone-format limit is not called a timing problem",
+        "a requested photo and video timing contract keeps its timing question"
+      ],
+      "neighbours_gap": [
+        "The replacement question is generic; the exact non-timing cause is not named to the creator and was not established for the original turn."
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1365-follow-up-edits-ready-video",
+      "tickets": [
+        "KRI-1365"
+      ],
+      "symptom": "After approved wording, 'make the text faster' / 'make the video shorter' re-planned the whole video with a new approval, and a revert after a failed re-plan render could not reach the last ready video.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1365",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/creative_copy_gate.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/prompts/brief_extractor.txt",
+        "src/apps/api/prompts/edit_copilot_ops/text.txt",
+        "src/apps/api/prompts/edit_copilot_ops/timeline.txt"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1365_last_ready_edit_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "make kria-replay FIXTURE=kri1365_edit_route: real planner, editor target loader, copilot parser, op compiler and copy gate on the incident's clip durations and a reconstructed bilingual word lane; assumed extractor and copilot outputs. Postgres submit-to-commit test for the ready and revert cases plus the approved-word rewrite control.",
+        "live_model": "Not run. Whether the live extractor and copilot follow the new prompt rules is unverified.",
+        "native_output": "Not checked. The iPhone export of the shorter draft after Save is unverified.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "open wording question still re-plans",
+        "approved word rewrite refused with nothing changed (ready and revert)",
+        "paired word sequences retimed to the same window"
+      ],
+      "neighbours_gap": [
+        "approved words split across separate non-sequence bars are not recognised as approved",
+        "a failed render that left failed variants (not none) does not fall back to the last ready video"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1365-word-sequence-text-timing",
+      "tickets": [
+        "KRI-1365"
+      ],
+      "symptom": "A bilingual word-by-word request (about 26 Turkish words in the middle, the English translation at the bottom, over 15 clips, asked for a faster 12 s video) failed twice in the text pass: research for approved literal sequences went to the footage-explanation writer (180 characters in a clip window) and its unwrapped ResearchUnavailable showed as a bug; and the composer paced each paragraph at its own ~0.45 s per word, so the two sequences ended at different times and missed the 'shown together' check. The plan length also ignored how long the sentence needs to be read.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1365",
+      "paths": [
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/app/services/length_planning.py",
+        "src/apps/api/app/kria/text_sequence.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_word_sequence_server_timing.py",
+        "tests/kria/test_approved_long_sequence_copy.py",
+        "tests/kria/test_paired_sequence_retime.py",
+        "tests/services/test_sequence_reading_floor_length.py"
+      ],
+      "harness": "mocked_provider",
+      "evidence": {
+        "offline_replay": "Synthetic incident shape (26 Turkish and 42 English words, middle and bottom, 15 clips of 2 to 12 s, creator length 12 s) through the real brief, planner, composer parse, replay and compile with provider answers stubbed: a research request for approved sequences never calls the footage writer; a composer that paces each paragraph alone ends on one shared span; a saved program replays with no model call. Controls: changed approved wording is rejected, words that cannot fit at 0.25 s a piece fail with a typed reason, a failing plain research ask is a typed creation_text failure. The plan length is checked through _enrich_best_parts_snapshot.",
+        "live_model": "Not run; no paid calls and no prompt changed.",
+        "native_output": "Not run on a device: the checks read the compiled text lane and the length plan, not an exported video.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "a lone approved word sequence, a pair at two places, and two at one place (left to the composer)",
+        "phrase units and build-ups keep the composer's pacing and set no word floor on the length",
+        "a creator's stated length is never stretched for the text; text that cannot fit is reported",
+        "retiming one of two sequences shown together moves the other; a sequence at another time or place is left alone"
+      ],
+      "neighbours_gap": [
+        "The worker's own free-total plan (unified_montage with no approved length plan) does not apply the reading floor.",
+        "A sequence research writes (no approved wording) has no length to plan for before it is written.",
+        "The typed length planner still asks 'which sequence' when two sequences are present (editor_sequence_timing)."
+      ],
+      "follow_ups": [
+        "Phone re-send of the Atatürk request and a 'make the text faster' edit after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-1294-choice-request",
       "tickets": [
         "KRI-1294",

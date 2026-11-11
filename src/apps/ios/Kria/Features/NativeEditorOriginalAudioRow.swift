@@ -72,6 +72,15 @@ struct NativeClipAudioSection: View {
             .disabled(!session.canEditClipAudio || !session.canEditOriginalAudio)
             .accessibilityIdentifier("native-editor-clip-audio-toggle")
             .accessibilityValue(isOn ? "On" : "Off")
+            if session.selection?.id == clipID, session.canEditTimeline {
+                NativeEditorSlider(session: session, value: Binding(
+                    get: { session.selectedClipSourceVolume },
+                    set: { session.setSelectedClipSourceVolume($0) }
+                ), in: 0...2, step: 0.05) { Text("Source volume") }
+                .disabled(!isOn)
+                .accessibilityIdentifier("native-editor-clip-source-volume")
+                .accessibilityValue(String(format: "%.0f percent", session.selectedClipSourceVolume * 100))
+            }
             if session.canEditClipAudio, session.originalAudioLevel <= 0 {
                 Text("Original audio is off for the whole video. Turning this clip on also turns the others off, so you hear just this one.")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)

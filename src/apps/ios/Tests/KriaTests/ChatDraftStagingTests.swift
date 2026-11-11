@@ -10,7 +10,7 @@ final class ChatDraftStagingTests: XCTestCase {
     private static let jobID = "5b1d2f0a-6c0e-4b8e-9d0a-1c2d3e4f5a6b"
     private static let musicID = "8c9c1e0e-2d62-4a44-8d0c-2f4d3a0a9b11"
 
-    private static func variant(generation: String = "g1") -> [String: JSONValue] {
+    private static func variant(generation: String = "g1", output: String = "file:///tmp/kria-chat-draft.mp4") -> [String: JSONValue] {
         func slot(_ id: String, _ index: Double) -> JSONValue {
             .object(["slot_id": .string(id), "clip_index": .number(index), "in_s": .number(0), "duration_s": .number(2),
                      "source_duration_s": .number(6), "removed": .bool(false)])
@@ -18,7 +18,7 @@ final class ChatDraftStagingTests: XCTestCase {
         return [
             "variant_id": .string("initial"), "render_generation_id": .string(generation),
             "render_status": .string("ready"), "duration_s": .number(6),
-            "output_url": .string("file:///tmp/kria-chat-draft.mp4"),
+            "output_url": .string(output),
             "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
             "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(true)]),
             "user_timeline": .object(["slots": .array([slot("s1", 0), slot("s2", 1), slot("s3", 2)])]),
@@ -35,14 +35,14 @@ final class ChatDraftStagingTests: XCTestCase {
 
     /// Chat draft in the server's real shape: flat commit-shaped keys for the
     /// lanes chat touched + the nested `sections` overlaid with the same state.
-    private static func chatPayload(base: String = "g1", textOnly: Bool = false, shape: Shape = .nested) -> [String: JSONValue] {
+    private static func chatPayload(base: String = "g1", textOnly: Bool = false, shape: Shape = .nested, effect: String = "karaoke-line") -> [String: JSONValue] {
         func wire(_ id: String, _ index: Double, _ duration: Double, removed: Bool = false) -> JSONValue {
             .object(["slot_id": .string(id), "clip_index": .number(index), "in_s": .number(0), "duration_s": .number(duration),
                      "removed": .bool(removed), "look_preset": .string("none"), "transition_after": .string("cut")])
         }
         let slots: [JSONValue] = [wire("s3", 2, 2), wire("s1", 0, 1.5), wire("s2", 1, 2, removed: true)]
         let text: JSONValue = .array([.object(["id": .string("t1"), "text": .string("changed"), "start_s": .number(0), "end_s": .number(3600),
-                                               "role": .string("generative_intro"), "effect": .string("karaoke-line"), "x_frac": .number(0.5), "y_frac": .number(0.2),
+                                               "role": .string("generative_intro"), "effect": .string(effect), "x_frac": .number(0.5), "y_frac": .number(0.2),
                                                "color": .null, "glow_color": .null])])
         let mix: JSONValue = .object(["music_level": .number(0.3)])
         var payload: [String: JSONValue] = [
@@ -71,11 +71,12 @@ final class ChatDraftStagingTests: XCTestCase {
         return payload
     }
 
-    private static func chatSnapshot(base: String = "g1", revision: Int = 3, textOnly: Bool = false, shape: Shape = .nested) -> DraftSnapshot {
+    private static func chatSnapshot(base: String = "g1", revision: Int = 3, textOnly: Bool = false, shape: Shape = .nested,
+                                     effect: String = "karaoke-line") -> DraftSnapshot {
         DraftSnapshot(draftID: "d\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision,
             snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: base,
             snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
-                       "editor_payload": .object(chatPayload(base: base, textOnly: textOnly, shape: shape))], canUndo: true, createdAt: .now)
+                       "editor_payload": .object(chatPayload(base: base, textOnly: textOnly, shape: shape, effect: effect))], canUndo: true, createdAt: .now)
     }
 
     private static func bootstrapSnapshot() -> DraftSnapshot {
@@ -426,6 +427,69 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertFalse(stale.hasUnsavedChanges)
     }
 
+    // MARK: KRI-1333 — thread 1894f8d0: a later chat turn rebuilt on the published video
+
+    /// The head a chat turn stores from the phone's state: flat lanes plus the Save defaults
+    /// every phone state carries (`editor_state_version: 2`, `remove_music: false`), no `sections`.
+    private static func incidentHead(revision: Int = 7) -> DraftSnapshot {
+        var payload = chatPayload(shape: .flatOnly)
+        payload["editor_state_version"] = .number(2)
+        return DraftSnapshot(draftID: "d\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision,
+            snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
+                       "editor_payload": .object(payload)], canUndo: true, createdAt: .now)
+    }
+
+    private static func encoded(_ state: EditorStateRequest) throws -> [String: JSONValue] {
+        try XCTUnwrap(JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(state)).objectValue)
+    }
+
+    func testAChatHeadIsNotACommittedSnapshotSoTheCleanDocumentIsTheVariant() throws {
+        let draft = Self.incidentHead().editorDraft(projectID: UUID(), authoritativeVariant: Self.variant())
+        let clean = EditorDocument(snapshot: draft.serverSnapshot)
+        XCTAssertEqual(clean.textElements.map(\.text), ["hello"], "the published text, not the chat head's")
+        XCTAssertEqual(clean.clips.compactMap(\.id), ["s1", "s2", "s3"])
+        XCTAssertNotNil(clean.music)
+    }
+
+    func testUndoingAStagedChatHeadReturnsToThePublishedDocument() async throws {
+        let (session, _) = await loaded(Self.incidentHead())
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        session.undo()
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.textElements.map(\.text), ["hello"])
+        XCTAssertEqual(session.document.clips.compactMap(\.id), ["s1", "s2", "s3"])
+    }
+
+    func testJobPathOpenWhoseDraftReadFailedStagesTheHeadBeforeExport() async throws {
+        let (session, fake) = await openedProject(Self.incidentHead(), draftError: .conflict)
+        XCTAssertFalse(session.hasUnsavedChanges, "the best-effort open read lost the chat head")
+        fake.draftError = nil
+        let exported = await session.exportEditorStateSyncingDraft()
+        let state = try XCTUnwrap(exported)
+        XCTAssertNotNil(state.lanes.textElements)
+        XCTAssertNotNil(state.lanes.timelineSlots)
+        XCTAssertEqual(try Self.encoded(state)["draft_revision"], .number(7), "names the chat draft it carries")
+    }
+
+    func testAStateThatNeverSawTheHeadNamesNoRevisionSoTheServerDecides() async throws {
+        let (session, _) = await openedProject(Self.incidentHead(), draftError: .conflict)
+        let exported = await session.exportEditorStateSyncingDraft()
+        let state = try XCTUnwrap(exported)
+        XCTAssertNil(state.lanes.textElements)
+        XCTAssertNil(try Self.encoded(state)["draft_revision"])
+    }
+
+    func testUndoingTheStagedChatEditDeclaresTheRevisionItDiscarded() async throws {
+        let (session, _) = await openedProject(Self.incidentHead())
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        session.undo()
+        let exported = await session.exportEditorStateSyncingDraft()
+        let state = try XCTUnwrap(exported)
+        XCTAssertNil(state.lanes.textElements, "the creator discarded it")
+        XCTAssertEqual(try Self.encoded(state)["draft_revision"], .number(7))
+    }
+
     func testReturningToALoadedEditorStagesTheLatestDraft() async throws {
         let (session, fake) = await openedProject(Self.bootstrapSnapshot())
         XCTAssertFalse(session.hasUnsavedChanges)
@@ -517,8 +581,8 @@ final class ChatDraftStagingTests: XCTestCase {
 
     /// Opens the editor while the source preview is held in `.preparing`, the window in which
     /// the OLD rendered video used to be shown as if it were current.
-    private func openedWhilePreparing(_ snapshot: DraftSnapshot) async throws -> (NativeEditorSession, EditorCommitSpy, Task<Void, Never>) {
-        let fake = EditorCommitSpy(draftSnapshot: snapshot, authoritativeVariant: Self.variant())
+    private func openedWhilePreparing(_ snapshot: DraftSnapshot, variant: [String: JSONValue] = ChatDraftStagingTests.variant()) async throws -> (NativeEditorSession, EditorCommitSpy, Task<Void, Never>) {
+        let fake = EditorCommitSpy(draftSnapshot: snapshot, authoritativeVariant: variant)
         fake.suspendNextSourcePool = true
         let project = threadProject(UUID(), revision: 5)
         let session = NativeEditorSession(project: project)
@@ -561,6 +625,97 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertFalse(session.canDownloadCurrentVideo, "the obsolete render must not export as current")
         XCTAssertTrue(session.hasUnsavedChanges, "the staged AI edit is still there to save")
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
+    }
+
+    private static func finishedVideo() throws -> URL {
+        try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+    }
+
+    private static func playingURL(_ session: NativeEditorSession) -> URL? {
+        (session.player?.currentItem?.asset as? AVURLAsset)?.url
+    }
+
+    /// Prod, build 1934: a 50-clip edit with a staged AI change never finished its live preview, and Play did nothing.
+    func testPlayWhileAStagedEditsPreviewNeverFinishesPlaysTheVersionBeforeItLabelled() async throws {
+        let finished = try Self.finishedVideo()
+        let (session, fake, loading) = try await openedWhilePreparing(Self.chatSnapshot(shape: .flatOnly),
+                                                                      variant: Self.variant(output: finished.absoluteString))
+        XCTAssertEqual(session.sourcePreviewState, .preparing)
+        XCTAssertFalse(session.isShowingVersionBeforeStagedEdit, "nothing old is shown until the creator asks to play")
+
+        session.togglePlayback()
+
+        XCTAssertTrue(session.isPlaying, "Play must do something while the edit is still being applied")
+        XCTAssertEqual(Self.playingURL(session), finished, "the last finished video plays")
+        XCTAssertTrue(session.isShowingVersionBeforeStagedEdit, "and it is labelled as the version before the AI edit")
+        XCTAssertFalse(session.canDisplayCurrentPlayer, "it is never presented as the edited video")
+        XCTAssertFalse(session.canDownloadCurrentVideo, "the finished video does not export as the edited one")
+        XCTAssertNotNil(session.exportBlockReason)
+        session.pausePlayback()
+        fake.resumeSourcePool()
+        await loading.value
+    }
+
+    func testAFailedStagedEditPreviewOffersRetryOverThePlayableVersionBeforeIt() async throws {
+        let finished = try Self.finishedVideo()
+        let fake = EditorCommitSpy(draftSnapshot: Self.chatSnapshot(shape: .flatOnly),
+                                   authoritativeVariant: Self.variant(output: finished.absoluteString))
+        fake.sourcePoolResult = nil  // the live preview cannot be built
+        let project = threadProject(UUID(), revision: 5)
+        let session = NativeEditorSession(project: project)
+        session.sourcePreviewQuietRetryDelay = .milliseconds(10)
+        await session.load(project: project, api: fake)
+        for _ in 0..<100 where !session.sourcePreviewState.isFailure { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(session.sourcePreviewState.isFailure)
+
+        XCTAssertTrue(session.isShowingVersionBeforeStagedEdit, "the finished video stays watchable, labelled as before the AI edit")
+        XCTAssertTrue(session.fallbackOffersRetry, "the failure keeps its Retry")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        XCTAssertEqual(Self.playingURL(session), finished)
+        XCTAssertFalse(session.isShowingRenderedFallback, "it is not the current video")
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+        XCTAssertTrue(session.hasUnsavedChanges, "the staged AI edit is still there to save")
+        session.pausePlayback()
+    }
+
+    /// An open editor receives the chat edit while its live preview is showing; the rebuild is slow.
+    func testPlayDuringAStagedEditsRebuildHandsTheRetainedFrameToTheVersionBeforeItThenToTheLiveEdit() async throws {
+        let finished = try Self.finishedVideo()
+        var variant = Self.variant(output: finished.absoluteString)
+        variant["music_track_id"] = nil; variant["music_window"] = nil  // the fixture preview has no song source
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: variant)
+        let project = threadProject(UUID(), revision: 5)
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        session.beginPreviewPresentation()
+        defer { session.endPreviewPresentation() }
+        await session.prepareFixtureSourcePreview(url: finished)
+        XCTAssertEqual(session.sourcePreviewState, .ready, "the live preview is up before the chat edit arrives")
+        XCTAssertEqual(session.loadState, .loaded)
+        for _ in 0..<250 where session.player?.currentItem?.status != .readyToPlay { try await Task.sleep(for: .milliseconds(20)) }
+        let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
+        XCTAssertTrue(session.previewFrameWasShown(player: try XCTUnwrap(session.player), ticket: ticket))
+
+        fake.draftSnapshot = Self.chatSnapshot(textOnly: true, effect: "none")
+        await session.synchronizePromptRevision()
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        session.retainAdmittedPreview()
+        let rebuild = Task { await session.prepareFixtureSourcePreview(url: finished, delayedLoad: true) }
+        for _ in 0..<50 where session.sourcePreviewState != .preparing { await Task.yield() }
+        XCTAssertEqual(session.previousPreviewPresentation?.status, .updating)
+
+        session.togglePlayback()
+
+        XCTAssertTrue(session.isPlaying, "Play is not a silent no-op while the edit is applied")
+        XCTAssertNil(session.previousPreviewPresentation, "the frozen frame gives way to a playing video")
+        XCTAssertTrue(session.isShowingVersionBeforeStagedEdit)
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+        await rebuild.value
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertTrue(session.canDisplayCurrentPlayer, "the live preview with the AI edit takes over")
+        XCTAssertFalse(session.isShowingVersionBeforeStagedEdit)
+        session.pausePlayback()
     }
 
     func testReopenMergesANewerRenderWithoutDiscardingIndependentManualEdits() async throws {
@@ -683,6 +838,86 @@ final class ChatDraftStagingTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
+    }
+
+    private static func transitionDraft(revision: Int, base: String = "g1", transitions: [String: String], echo: String? = nil) -> DraftSnapshot {
+        let slots: [JSONValue] = [("s1", 0.0), ("s2", 1.0), ("s3", 2.0)].map { id, index in
+            .object(["slot_id": .string(id), "clip_index": .number(index), "in_s": .number(0), "duration_s": .number(2),
+                     "removed": .bool(false), "transition_after": .string(transitions[id] ?? "cut")])
+        }
+        let draft = DraftSnapshot(draftID: "t\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision,
+            snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: base,
+            snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                "base_generation": .string(base), "timeline_slots": .array(slots)])], canUndo: true, createdAt: .now)
+        return echo.map { Self.echoing($0, draft) } ?? draft
+    }
+
+    private static func transition(_ session: NativeEditorSession, _ id: String) -> String? {
+        session.document.clips.first { $0.id == id }?.transitionAfter
+    }
+
+    func testChatStagedTransitionSurvivesSuccessiveRendersOfTheSameJobWithoutConflict() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        fake.draftSnapshot = Self.transitionDraft(revision: 3, transitions: ["s1": "crossfade"])
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+
+        for (revision, generation) in [(4, "g2"), (5, "g3")] {
+            fake.authoritativeVariant = Self.variant(generation: generation)
+            fake.draftSnapshot = Self.transitionDraft(revision: revision, base: generation, transitions: ["s1": "crossfade"])
+            await session.synchronizePromptRevision()
+            XCTAssertNil(session.mergeConflictMessage, generation)
+            XCTAssertEqual(session.document.revision.baseGeneration, generation)
+            XCTAssertEqual(Self.transition(session, "s1"), "crossfade", generation)
+            XCTAssertTrue(session.hasOnlyChatStagedChanges, "the AI's edit is still the AI's after \(generation)")
+        }
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testTwoDraftRevisionsEchoingTheSameSubmittedStateReplaceEachOtherWithoutConflict() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let sent = try XCTUnwrap(session.exportEditorState())
+        fake.draftSnapshot = Self.transitionDraft(revision: 3, transitions: ["s1": "crossfade"], echo: sent.clientStateID)
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.mergeConflictMessage)
+        XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+
+        fake.draftSnapshot = Self.transitionDraft(revision: 4, transitions: ["s1": "crossfade", "s2": "dip_to_black"], echo: sent.clientStateID)
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.mergeConflictMessage, "the AI never conflicts with its own earlier revision")
+        XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
+        XCTAssertEqual(Self.transition(session, "s2"), "dip_to_black")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testManualTransitionEditStillConflictsWithADifferentChatTransition() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let sent = try XCTUnwrap(session.exportEditorState())
+        session.setClipTransition(clipID: "s1", transition: "flash")
+        let before = session.document
+        fake.draftSnapshot = Self.transitionDraft(revision: 3, transitions: ["s1": "crossfade"], echo: sent.clientStateID)
+        await session.synchronizePromptRevision()
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertEqual(session.document, before, "neither side is applied before the creator chooses")
+        XCTAssertFalse(session.hasOnlyChatStagedChanges)
+    }
+
+    func testManualTransitionEditStillConflictsWithANewerRenderChangingTheSameTransition() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.setClipTransition(clipID: "s1", transition: "flash")
+        let before = session.document
+        var latest = Self.variant(generation: "g2")
+        guard case var .object(timeline)? = latest["user_timeline"], case var .array(slots)? = timeline["slots"],
+              case var .object(first) = slots[0] else { return XCTFail("timeline fixture missing") }
+        first["transition_after"] = .string("crossfade"); slots[0] = .object(first)
+        timeline["slots"] = .array(slots); latest["user_timeline"] = .object(timeline)
+        fake.authoritativeVariant = latest
+        await session.synchronizePromptRevision()
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertEqual(session.document, before)
     }
 
     func testSaveCommitsChatAndManualLanesThenTheStaleDraftIsIgnored() async throws {

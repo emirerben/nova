@@ -28,6 +28,7 @@ from app.services.creator_render_contract import (
     CreatorRenderContractError,
     Decline,
     DeclineReason,
+    chapter_text_matches,
     plan_voiceover_path,
     read_render_contract,
     source_group_text_matches,
@@ -587,7 +588,14 @@ def _verify_text(
             elif requirement.media_id:
                 targets = [seg for seg in timeline if seg.media_id == requirement.media_id]
             group = text_source_group(contract.exact_texts, requirement)
-            if group:
+            if requirement.chapter_media_ids:
+                matches = chapter_text_matches(
+                    matches,
+                    members=frozenset(requirement.chapter_media_ids),
+                    spans=[(seg.media_id, seg.start_s, seg.end_s) for seg in timeline],
+                    tolerance_s=tolerance,
+                )
+            elif group:
                 matches = source_group_text_matches(
                     matches,
                     group=group,

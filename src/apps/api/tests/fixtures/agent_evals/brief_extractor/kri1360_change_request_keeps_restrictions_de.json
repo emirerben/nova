@@ -1,0 +1,154 @@
+{
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "fingerprint (KRI-1360)",
+  "input": {
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] Deutsche Untertitel, Wort für Wort\n- [r2] [style/global] Zeig die Nürnberger Fans bei '1. FC Nürnberg'\n- [r3] [style/global] den Lichtshow-Clip bei 'das Licht aus'\n- [r4] [style/global] das Aufstellungsblatt bei 'Aufstellung'\n- [r5] [style/global] das 0:0-Foto bei 'Null zu null'\n- [r6] [select/global] Das Spielerfoto brauchst du nicht\n- [r7] [audio/clip:analysis-proxy-de1-lightshow.mp4] Lass den Stadionsprecher im Lichtshow-Clip leise unter meiner Stimme laufen\n- [r8] [text/title] Kein Titel",
+    "user_message": "Deutsche Untertitel, Wort für Wort. Zeig das Aufstellungsblatt bei \"Aufstellung\" und das 0:0-Foto bei \"Null zu null\".",
+    "conversation": [
+      {
+        "role": "user",
+        "content": "Mein Voiceover ist auf Deutsch. Deutsche Untertitel, Wort für Wort. Zeig die Nürnberger Fans bei \"1. FC Nürnberg\", den Lichtshow-Clip bei \"das Licht aus\", das Aufstellungsblatt bei \"Aufstellung\" und das 0:0-Foto bei \"Null zu null\". Das Spielerfoto brauchst du nicht. Lass den Stadionsprecher im Lichtshow-Clip leise unter meiner Stimme laufen und schalte alles andere stumm. Kein Titel."
+      },
+      {
+        "role": "assistant",
+        "content": "This voiceover edit uses all of your project's clips. Photos and videos from Visuals show up only on a word you say, so I left out the ones not tied to a word. Should I make a simpler version?"
+      },
+      {
+        "role": "user",
+        "content": "Change my request"
+      },
+      {
+        "role": "assistant",
+        "content": "Nothing is made yet. Tell me what to do differently."
+      },
+      {
+        "role": "user",
+        "content": "Deutsche Untertitel, Wort für Wort. Zeig das Aufstellungsblatt bei \"Aufstellung\" und das 0:0-Foto bei \"Null zu null\"."
+      }
+    ],
+    "current_brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "style",
+          "facts": {
+            "captions": "word_by_word",
+            "caption_language": "de"
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "Deutsche Untertitel, Wort für Wort",
+          "source_turn_id": "de1-turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "style",
+          "facts": {
+            "triggers": [
+              "1. FC Nürnberg"
+            ]
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "Zeig die Nürnberger Fans bei '1. FC Nürnberg'",
+          "source_turn_id": "de1-turn-1"
+        },
+        {
+          "id": "r3",
+          "kind": "style",
+          "facts": {
+            "triggers": [
+              "das Licht aus"
+            ]
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "den Lichtshow-Clip bei 'das Licht aus'",
+          "source_turn_id": "de1-turn-1"
+        },
+        {
+          "id": "r4",
+          "kind": "style",
+          "facts": {
+            "triggers": [
+              "Aufstellung"
+            ],
+            "display_mode": "fullscreen"
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "das Aufstellungsblatt bei 'Aufstellung'",
+          "source_turn_id": "de1-turn-1"
+        },
+        {
+          "id": "r5",
+          "kind": "style",
+          "facts": {
+            "triggers": [
+              "Null zu null"
+            ],
+            "display_mode": "fullscreen"
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "das 0:0-Foto bei 'Null zu null'",
+          "source_turn_id": "de1-turn-1"
+        },
+        {
+          "id": "r6",
+          "kind": "select",
+          "facts": {},
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "Das Spielerfoto brauchst du nicht",
+          "source_turn_id": "de1-turn-1"
+        },
+        {
+          "id": "r7",
+          "kind": "audio",
+          "facts": {
+            "clip_sound": "under_voice"
+          },
+          "scope": "clip:analysis-proxy-de1-lightshow.mp4",
+          "status": "open",
+          "literal": null,
+          "description": "Lass den Stadionsprecher im Lichtshow-Clip leise unter meiner Stimme laufen",
+          "source_turn_id": "de1-turn-1"
+        },
+        {
+          "id": "r8",
+          "kind": "text",
+          "facts": {},
+          "scope": "title",
+          "status": "open",
+          "literal": null,
+          "description": "Kein Titel",
+          "source_turn_id": "de1-turn-1"
+        }
+      ]
+    },
+    "require_request_scope": true,
+    "changes_request": true
+  },
+  "raw_text": "{\"brief_updates\": [{\"operation\": \"remove\", \"target_requirement_id\": \"r2\"}, {\"operation\": \"remove\", \"target_requirement_id\": \"r3\"}], \"request_scope\": \"edit\"}",
+  "output": null,
+  "meta": {
+    "source": "hand_authored_golden",
+    "note": "KRI-1360 (de1 Leverkusen N3): after \"Change my request\" the creator restates captions and two pop-ins. The content asks it no longer makes (the fans and light-show pop-ins, r2/r3) are removed; the restrictions it does not repeat (r6 leave out the player photo, r7 announcer under the voice + mute the rest, r8 no title) stay. Hand-authored golden answer: replay re-parses this recorded answer and proves its shape only; it does not prove the live model writes it.",
+    "live_after_change": [
+      "r1",
+      "r4",
+      "r5",
+      "r6",
+      "r7",
+      "r8"
+    ]
+  }
+}

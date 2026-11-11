@@ -171,11 +171,14 @@ def _brief_unread(ctx: SuggestionContext) -> SuggestionContext:
 # ── The v2 kinds' inputs (each read isolated: one failing never drops the others) ────────
 
 # Kinds whose card reads something the editor snapshot and the clip rows cannot say.
-INPUT_KINDS = ("hook", "mute_clip", "filler_words", "duplicates")
+INPUT_KINDS = ("hook", "mute_clip", "filler_words", "duplicates", "generated_overlay")
 # The kinds whose tap re-drafts the thread's plan (a brief update or an item setting). They are
 # only the variant's next revision while its head draft IS the plan (``pinned.restate_base``), and
 # only while the saved video is one the agent has read (``pinned.save_unread``).
 RESTATING_KINDS = frozenset({"mute_clip", "filler_words"})
+# The cards whose tap spends instead of editing (an ``async_generate`` action): no draft, so the
+# draft commit's gates (creative-copy consent, request length) are not theirs to ask.
+SPEND_KINDS = frozenset({"generated_overlay"})
 # The cards whose tap writes the on-screen title (a ``copy_decision`` action: one ``set_title`` op).
 # Every other editor-ops card runs only ops that leave the title lane alone, so the consent gate
 # reads its ops, not the mere existence of a title decision (``creative_copy_gate``).
@@ -257,6 +260,8 @@ def scheduler_will_redo(row: Any, item: Any, source: Any) -> bool:
     payload = row.analysis_payload
     if not isinstance(payload, dict):
         return False
+    if payload.get("schema_version") == 2:
+        return False  # KRI-720: several takes are never redone for language (see preflight)
     diagnostics = payload.get("diagnostics")
     if isinstance(diagnostics, dict) and "language_crosscheck" in diagnostics:
         return False
@@ -313,6 +318,32 @@ def duplicates_input(item: Any, brief: Any) -> dict[str, Any]:
         "capture_times": times,
         "exposure": exposure,
     }
+
+
+async def generated_overlay_input(
+    db: Any, thread: Any, item: Any, ctx: SuggestionContext
+) -> dict[str, Any]:
+    from sqlalchemy import func, select  # noqa: PLC0415
+
+    from app.models import GeneratedMediaOperation  # noqa: PLC0415
+    from app.services.generated_media import generated_images_available  # noqa: PLC0415
+
+    owner = getattr(thread, "creator_id", None)
+    allowed = generated_images_available(owner, ctx.client_protocol)
+    existing = False
+    if allowed:
+        found = await db.scalar(
+            select(func.count())
+            .select_from(GeneratedMediaOperation)
+            .where(
+                GeneratedMediaOperation.user_id == owner,
+                GeneratedMediaOperation.plan_item_id == item.id,
+                GeneratedMediaOperation.capability == "image",
+                GeneratedMediaOperation.state != "failed",
+            )
+        )
+        existing = bool(found)
+    return {"allowed": allowed, "existing": existing, "subject": str(item.idea or "")}
 
 
 async def _hook_input(db: Any, thread: Any, item: Any, ctx: SuggestionContext, brief: Any) -> Any:
@@ -455,6 +486,7 @@ async def _with_v2_inputs(
             reads["mute_clip"] = lambda: mute_clip.loader_input(brief)
             reads["duplicates"] = lambda: duplicates_input(item, brief)
             reads["hook"] = lambda: _hook_input(db, thread, item, ctx, brief)
+        reads["generated_overlay"] = lambda: generated_overlay_input(db, thread, item, ctx)
         for name, read in reads.items():
             if name not in kinds:
                 continue
@@ -655,7 +687,7 @@ async def _copy_gate_dead(
     events = await planner._load_thread_events(db, thread.id, release=False)
     media = snapshot_media(item)
     dead: dict[str, str] = {}
-    editor_ops = kinds - RESTATING_KINDS
+    editor_ops = kinds - RESTATING_KINDS - SPEND_KINDS
     # A card that writes the title is gated under any decision; one that leaves it alone (every
     # op it can run is on the gate's allow-list, which the tap enforces) only under an open
     # discussion. The commit asks the same function with the op names of the draft it carries.
@@ -887,7 +919,9 @@ async def dead_card_kinds(
         if item is None:
             return {**dead, **dict.fromkeys(left, "no_item")}
         dead.update(await _copy_gate_dead(db, thread, ctx, item, left))
-        dead.update(await _request_budget_dead(db, thread, ctx, left - dead.keys(), cards))
+        dead.update(
+            await _request_budget_dead(db, thread, ctx, left - dead.keys() - SPEND_KINDS, cards)
+        )
     except Exception:  # noqa: BLE001 - what cannot be proven is not offered
         log.warning("suggestion_chips.error", stage="dead_cards", exc_info=True)
         return {**dead, **dict.fromkeys(left - dead.keys(), "check_failed")}

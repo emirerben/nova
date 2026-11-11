@@ -3,7 +3,7 @@ actually changes in a render.
 
 Free, offline: the signal is the real ``audio_quality`` measurement over the committed calibration
 clips (ffmpeg, no network, no model); the execution proofs run the real phone montage writer
-(``tests/tasks/test_kri942_clip_sound_toggle.py``'s harness) and the real editor commit.
+(``tests/tasks/test_kri942_clip_sound_toggle.py``'s harness).
 
 Ways this can fail, each pinned below (written before the kind):
 
@@ -19,25 +19,22 @@ Ways this can fail, each pinned below (written before the kind):
    the brief cannot scope.
 7. A stale or tampered action is applied: the brief moved since the card was built, the update was
    edited to turn sound ON, a non-brief action.
-8. **The tap does nothing.** A phone editor-ops re-render and a cloud render never read a new
-   ``clip_sound`` fact; only a fresh phone montage plan does. ``test_execution_*`` pins both, and
-   ties the dark ``PINNED_TAP_APPLIES_CLIP_SOUND`` constant to what the editor commit really does.
+8. **The tap does nothing.** Only a fresh phone montage plan reads a new ``clip_sound`` fact, and a
+   restating card's approval dispatches one: ``test_execution_*`` pins the writer here, and
+   ``tests/e2e_suggestions/test_r8_mute_render.py`` pins tap -> dispatch -> writer.
 9. The kind ships on a measurement that is not good enough: ``test_the_calibration_gate_*``.
 10. Flag off is not byte-identical: the kind is absent from ``kinds_for`` by default.
 """
 
 from __future__ import annotations
 
-import copy
 import shutil
-import uuid
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from app.kria.brief import BriefRequirement, BriefUpdate, CreativeBrief, apply_updates
-from app.kria.brief_binding import BriefBinding
 from app.kria.clip_sound_toggle_ask import SOUND_OFF
 from app.kria.narrated_clip_sound_ask import CLIP_SOUND_FACT
 from app.services.clip_signals import audio_quality
@@ -657,69 +654,3 @@ def test_execution_a_phone_montage_replan_applies_the_clip_sound_fact(
 
 def _brief_of(ctx: SuggestionContext) -> CreativeBrief:
     return mute_clip._brief(ctx)
-
-
-@needs_ffmpeg
-def test_execution_an_editor_commit_does_not_apply_the_clip_sound_fact(
-    measured, monkeypatch
-) -> None:
-    """The route a pinned tap takes: the editor commit with the new brief bound to it. The
-    recipe is recompiled from the saved plan, so the noisy clip keeps its sound and the receipt
-    re-judges the ask as NOT met. That is why ``PINNED_TAP_APPLIES_CLIP_SOUND`` is False."""
-    shipped = mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND
-    monkeypatch.setattr(mute_clip, "PINNED_TAP_APPLIES_CLIP_SOUND", True)  # to build the card
-    from app.routes import generative_jobs as gj
-    from app.services.device_render import device_status
-    from app.services.kria_editor_ops import compile_editor_ops
-    from app.services.phone_clip_sound_toggle import rendered_toggle_receipt
-    from tests.routes._editor_save_matrix import guided_phone_job
-    from tests.routes.test_phone_guided_timeline_commit import _shorten_ops
-
-    job, variant, revision = guided_phone_job(monkeypatch)
-    ids = [s["media_id"] for s in variant_slots(job)]
-    noisy = ids[1]
-    ctx = _ctx(
-        measured,
-        clips=[_clip(m, i + 1) for i, m in enumerate(ids)],
-        signals={noisy: {"audio_quality": measured["wind"]}},
-        snapshot=_snapshot(ids, music=True),
-    )
-    action = mute_clip.KIND.build_action(ctx, [_target(noisy, 2)], None)
-    assert action is not None and mute_clip.KIND.witness(action, ctx).ok
-    brief = apply_updates(
-        _brief_of(ctx), [BriefUpdate.model_validate(action.updates[0])], source_turn_id=None
-    )
-    binding = BriefBinding.create(
-        uuid.uuid5(uuid.NAMESPACE_URL, "mute-clip-eval"),
-        brief,
-        latest_message="Mute the sound of clip 2",
-        media_snapshot={"clip_assignments": [{"media_id": m, "kind": "video"} for m in ids]},
-    ).model_dump(mode="json")
-
-    payload = compile_editor_ops(job, variant, _shorten_ops(21)).payload
-    payload.guided_revision_number = revision["revision_number"]
-    gj.prepare_editor_commit(
-        job, "guided_story", payload, creator_brief_binding=copy.deepcopy(binding)
-    )
-
-    recipe = device_status(job, "guided_story").request.recipe
-    story = next(t for t in recipe.tracks if t.kind == "video")
-    gain = recipe.audio.original_volume
-    volumes = {c.id: round(c.volume * gain, 3) for c in story.clips}
-    assert set(volumes.values()) == {1.0}, volumes  # nothing was muted
-    assert not recipe.audio.mute_windows
-    judged = rendered_toggle_receipt(
-        {**job.assembly_plan, "creator_brief_binding": binding},
-        job.assembly_plan["variants"][0],
-        recipe,
-    )
-    assert judged is not None and all(r["status"] != "met" for r in judged["rows"]), judged
-    # The dark constant must say exactly this; flipping it needs a route that re-plans.
-    assert shipped is False
-
-
-def variant_slots(job) -> list[dict]:
-    from app.services.kria_editor_ops import build_editor_snapshot
-
-    variant = job.assembly_plan["variants"][0]
-    return build_editor_snapshot(job, variant)["slots"]

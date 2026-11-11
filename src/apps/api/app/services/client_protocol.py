@@ -56,8 +56,29 @@ SPEAKER_FULL_OPENING_PROTOCOL = 41
 BACKGROUND_FOCUS_PROTOCOL = 42
 
 # KRI-1264: the first build that decodes a placed picture card's `visual_placement.editor_style`
-# (a Talking card's zoom and animation) and edits them. 43 is the split-screen build (KRI-1231).
+# (a Talking card's zoom and animation) and edits them. 46 is the split-screen build (KRI-1231).
 CARD_STYLE_PROTOCOL = 44
+
+# KRI-1291: the first protocol whose every build leads the cleanup card with "Keep original
+# speech" on `speech_cleanup.recommended_choice` (KRI-971). That card (#2164) merged while the
+# protocol was 42 and #2163 raised it to 44 after it, so a 42 build may still lead with cleanup.
+KEEP_ORIGINAL_CARD_PROTOCOL = 44
+
+# KRI-1253: the first build that asks the creator before it sends a suggestion card whose action
+# is `async_generate` (a tap that spends). An older build would spend on one touch.
+GENERATED_CARD_CONSENT_PROTOCOL = 45
+
+# KRI-1231: the first build that decodes and edits split-screen sections. TestFlight 1926 is 45.
+SPLIT_SCREEN_PROTOCOL = 46
+
+# KRI-1335: the first build that decodes `collapse_empty_panels` on a split section (the
+# `splitCollapse` capability): ended panels give their height to the panels still playing. An
+# older build would draw the fixed layout and drop the field on its next Save.
+SPLIT_COLLAPSE_PROTOCOL = 47
+
+# KRI-1350: the first build that decodes and draws `color_moments` / `end_fade` (48: after
+# KRI-1335's split collapse at 47).
+COLOR_MOMENTS_PROTOCOL = 48
 
 
 def caption_style_scope_supported() -> bool:
@@ -102,3 +123,10 @@ def current_client_protocol() -> int | None:
 
 def in_http_request() -> bool:
     return _in_http_request.get()
+
+
+def cleanup_card_ignores_keep_original() -> bool:
+    """KRI-1291: the calling native build's cleanup card leads with "Clean up speech" whatever
+    `recommended_choice` says. The web and work outside a request declare no build: False."""
+    protocol = current_client_protocol()
+    return protocol is not None and protocol < KEEP_ORIGINAL_CARD_PROTOCOL

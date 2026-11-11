@@ -14,7 +14,9 @@ from pydantic import (
     model_validator,
 )
 
+from app.kria.portable_speaker_background import SpeakerFrameOverride
 from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
+from app.kria.split_screen import SplitScreenMembership
 
 
 class _RecipeModel(BaseModel):
@@ -129,6 +131,8 @@ class ClipBackdrop(_RecipeModel):
 
 
 class TimelineClip(_RecipeModel):
+    speaker_frame_override: SpeakerFrameOverride | None = None
+    split_screen: SplitScreenMembership | None = None
     id: str = Field(min_length=1, max_length=160)
     source_asset_id: str = Field(min_length=1, max_length=160)
     source_start: float = Field(ge=0)
@@ -170,6 +174,8 @@ class TimelineClip(_RecipeModel):
     def _optional_look(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         result = handler(self)
         for key in (
+            "split_screen",
+            "speaker_frame_override",
             "overlay_dissolve_seed",
             "visual_placement",
             "hold_duration",
@@ -286,6 +292,10 @@ MediaCapability = Literal[
     # Qendresa item 18: `speaker_background.focus` / `.windows[].focus` -- a background picture
     # aimed at its readable text ({x, y, zoom}). Derived from the layer; own verified token.
     "backgroundFocus",
+    "splitScreen",
+    # Protocol 47: a split section whose ended panels give their height to the rest
+    # (`split_screen_sections[].collapse_empty_panels`). Always accompanies `splitScreen`.
+    "splitCollapse",
     # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
     # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
     "clipTilt",
@@ -295,6 +305,9 @@ MediaCapability = Literal[
     # KRI-1192: a text run drawn in a script-fallback face (Noto Sans KR / Noto Sans Arabic),
     # bundled in the app from protocol 35. Derived from the run's font asset file.
     "scriptFonts",
+    # KRI-1350: `color_moments` (whole-frame tone windows with flash / light-leak / dip edges)
+    # and/or `end_fade` on the V2 recipe root, drawn on device by `ColorMomentPainter`.
+    "colorMoments",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
@@ -336,6 +349,14 @@ class EditRecipeV1(_RecipeModel):
         clips = [clip for track in self.tracks for clip in track.clips]
         for track in self.tracks:
             for clip in track.clips:
+                if clip.speaker_frame_override is not None and (
+                    self.schema_version != 2 or track.kind != "video"
+                ):
+                    raise ValueError("speaker frame overrides require a V2 video track")
+                if clip.split_screen is not None and (
+                    self.schema_version != 2 or track.kind != "video"
+                ):
+                    raise ValueError("split panels require a V2 video track")
                 if clip.visual_placement is not None:
                     placement = clip.visual_placement
                     if (

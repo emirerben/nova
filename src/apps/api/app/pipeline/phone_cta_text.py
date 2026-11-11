@@ -42,6 +42,17 @@ def cta_ending_parts(text: str | None) -> tuple[str, str] | None:
     return match.group(1), keyword
 
 
+# KRI-1286: arrow glyphs (and emoji variation selectors) a model tacks onto the end of a CTA.
+_TRAILING_ARROW_RE = re.compile(r"[\s→↘⤵➡⬇⬇️↓➜➝↗\ufe0f\u200d]+$")
+
+
+def strip_trailing_arrow_glyphs(text: str) -> str:
+    """``text`` without arrow glyphs at its end ("comment REPO ⬇️" -> "comment REPO").
+
+    Only the tail is touched, so a keyword that is itself made of letters is unchanged."""
+    return _TRAILING_ARROW_RE.sub("", text).strip()
+
+
 _QUOTED_RE = re.compile(r'"[^"]*"|“[^”]*”')
 _ARROW_RES = (
     re.compile(r"\barrows?\b", re.IGNORECASE),

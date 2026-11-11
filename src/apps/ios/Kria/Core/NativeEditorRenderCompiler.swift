@@ -85,6 +85,7 @@ enum NativeEditorRenderError: Error, Equatable {
                  songCaptionShift: NativeSongCaptionShift? = nil,
                  skippedMediaOverlayIDs: Set<String> = [],
                  talkingCutaways: [NativePhoneTalkingSource.Cutaway] = []) throws -> NativeEditorRenderProgram {
+        guard document.splitScreenIsValid else { throw RecipeError.invalidTimeline }
         if NativeSpeechTimelineProjection.requiresCaptionTiming(document) {
             throw NativeEditorRenderError.missingSpeechCaptionTiming
         }
@@ -112,14 +113,6 @@ enum NativeEditorRenderError: Error, Equatable {
         let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
         let hasExplicitOriginalGain = document.mix["original_level"] != nil
         let activeSlots = document.clips.filter { !$0.removed }
-        // Voiceover renders normally silence every camera clip. A new server
-        // projection may opt one or more slots back in with this field: it is
-        // the clip-level half of the mix, while `originalGain` below remains
-        // the global creator-controlled bed gain. Its *presence* is the
-        // feature gate so older narrated documents stay byte-for-byte silent.
-        let hasExplicitNarratedSourceAudio = activeSlots.contains {
-            $0.raw["source_audio_volume"]?.numberValue != nil
-        }
         // The creator's song replaces the camera audio unless they explicitly turned the original
         // audio up (Sounds > Original audio): then the camera plays WITH the song at that level
         // (the song keeps its own level). An unset level, or an explicit 0, keeps the camera silent.
@@ -143,15 +136,12 @@ enum NativeEditorRenderError: Error, Equatable {
                 guard let end = authoredSlot.raw["source_end_s"]?.numberValue,
                       end.isFinite, end > authoredSlot.inS else { throw RecipeError.invalidTimeline }
             }
-            guard authoredSlot?.raw["layout"]?.stringValue != "supporting_card" else {
-                throw NativeEditorRenderError.unsupportedLane("supporting card")
-            }
             guard authoredSlot?.lookAdjustments == nil || authoredSlot?.lookAdjustments?.isEmpty == true,
                   [nil, "none", "golden_hour"].contains(authoredSlot?.lookPreset) else {
                 throw NativeEditorRenderError.unsupportedLane("look")
             }
             var transition: Transition?
-            if index > 0, let previous = slot(for: clips[index - 1], index: index - 1),
+            if index > 0, authoredSlot?.splitSectionID == nil, let previous = slot(for: clips[index - 1], index: index - 1), previous.splitSectionID == nil,
                previous.transitionAfter != "cut" {
                 let kind: Transition.Kind
                 switch previous.transitionAfter {
@@ -171,6 +161,24 @@ enum NativeEditorRenderError: Error, Equatable {
                 // transition when it actually left room for one.
                 let overlap = clips[index - 1].end - clip.start
                 if overlap > 0.000_001 { transition = Transition(kind: kind, duration: overlap) }
+            }
+            if let section = authoredSlot?.splitSectionID, let panel = authoredSlot?.splitPanelIndex,
+               let prior = clips.enumerated().filter({ pair in
+                   let candidate = slot(for: pair.element, index: pair.offset)
+                   return candidate?.splitSectionID == section && candidate?.splitPanelIndex == panel && pair.element.start < clip.start
+               }).max(by: { $0.element.start < $1.element.start }),
+               let priorSlot = slot(for: prior.element, index: prior.offset), priorSlot.transitionAfter != "cut" {
+                let overlap = prior.element.end - clip.start
+                if overlap > 0.000001 {
+                    let kind: Transition.Kind
+                    switch priorSlot.transitionAfter {
+                    case "crossfade": kind = .crossfade
+                    case "dip_to_black": kind = .fadeBlack
+                    case "flash": kind = .fadeWhite
+                    default: throw NativeEditorRenderError.unsupportedLane("transition")
+                    }
+                    transition = Transition(kind: kind, duration: overlap)
+                }
             }
             let explicitRate = authoredSlot?.raw["playback_rate"]?.numberValue
             if let explicitRate {
@@ -202,15 +210,16 @@ enum NativeEditorRenderError: Error, Equatable {
             // room to move (the leading half of a split) plays with no hold.
             var freezeHold = authoredSlot?.raw["freeze_hold_s"]?.numberValue ?? 0
             if freezeHold > 0, let frame = authoredSlot?.raw["freeze_frame_s"]?.numberValue, frame.isFinite {
-                let motion = frame - sourceStart
+                let motion = (frame - sourceStart) / (explicitRate ?? 1)
                 let hold = ((authoredMovingDuration - motion) * 30).rounded() / 30
-                freezeHold = motion >= 0.1 - 0.000_001 && hold >= 1.0 / 30 - 0.000_001 ? hold : 0
+                let minimumMotion = authoredSlot?.parentSegmentID != nil ? 1.0 / 30 : 0.1
+                freezeHold = motion >= minimumMotion - 0.000_001 && hold >= 1.0 / 30 - 0.000_001 ? hold : 0
             }
-            let freezes = explicitRate == nil && freezeHold.isFinite && freezeHold > 0
+            let freezes = freezeHold.isFinite && freezeHold > 0
                 && authoredMovingDuration - freezeHold > 0
             if freezes {
-                requestedRate = 1
-                sourceSpan = authoredMovingDuration - freezeHold
+                requestedRate = explicitRate ?? 1
+                sourceSpan = (authoredMovingDuration - freezeHold) * requestedRate
             }
             // Narration and legacy projections can intentionally carry a
             // shorter moving span plus a hold. Only an unchanged authored
@@ -269,14 +278,15 @@ enum NativeEditorRenderError: Error, Equatable {
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
             let narratedSourceLevel: Double
-            if audioSources["narration"] != nil, hasExplicitNarratedSourceAudio {
-                let requested = authoredSlot?.raw["source_audio_volume"]?.numberValue ?? 0
+            if let requested = authoredSlot?.raw["source_audio_volume"]?.numberValue {
                 // Selected sources carry unit gains; clip-scoped sound may
                 // carry a fractional gain. Clamp rather than fail a preview;
                 // AudioMixRecipe.originalVolume applies the global
                 // original-audio gain exactly once after this value.
-                narratedSourceLevel = requested.isFinite ? min(max(0, requested), 1) : 0
+                narratedSourceLevel = requested.isFinite ? min(max(0, requested), 2) : 0
             } else {
+                // Narrated projects opt each source in explicitly; an absent
+                // per-clip gain must preserve legacy camera silence.
                 narratedSourceLevel = audioSources["narration"] != nil ? 0 : sourceGain
             }
             let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) ? 0 : narratedSourceLevel
@@ -287,16 +297,45 @@ enum NativeEditorRenderError: Error, Equatable {
                 volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
+            if let raw = authoredSlot?.raw["speaker_frame_override"], raw != .null {
+                video[video.count - 1].speakerFrameOverride = try RecipeJSON.decoder().decode(SpeakerFrameOverride.self,
+                    from: JSONEncoder().encode(raw))
+            }
+            if authoredSlot?.raw["layout"]?.stringValue == "supporting_card" {
+                video[video.count - 1].stillLayout = .supportingCard
+            }
+            if let sectionID = authoredSlot?.splitSectionID, let panel = authoredSlot?.splitPanelIndex {
+                video[video.count - 1].splitScreen = SplitScreenMembership(sectionID: sectionID, panelIndex: panel)
+            }
             // KRI-306: letterbox a sideways clip when the creator chose black
             // bars. Cropped and graded clips keep the engine's cover-fill: the
             // engine rejects a look combined with a non-identity transform, and
             // the backend refuses that combination for the same reason.
             // Guided stories apply their authored fit before adding a final-frame hold
             // (`phone_guided_plan`); other formats retain `_fit_eligible` behavior.
-            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, (guidedStory || holdDuration <= 0),
-               authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
-                video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
+            var footageCanvas = canvas
+            // Fit uses the full layout's panel height. A collapse section grows the panel later, so a sideways clip's
+            // bars there are approximate (the compositor still clips to the panel it draws).
+            if let sectionID = authoredSlot?.splitSectionID, let panel = authoredSlot?.splitPanelIndex,
+               let section = document.splitScreenSections.first(where: { $0.id == sectionID }) {
+                let height = (1 - section.gutter * Double(section.panelCount - 1)) * section.panelWeights[panel] / section.panelWeights.reduce(0, +)
+                footageCanvas = .init(width: canvas.width, height: max(16, Int((Double(canvas.height) * height).rounded())))
             }
+            if video[video.count - 1].stillLayout == nil, document.previewLetterboxesSidewaysClips, footageCanvas.height > footageCanvas.width, (guidedStory || holdDuration <= 0),
+               authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
+                video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: footageCanvas, landscapeFit: "fit")
+            }
+            if let raw = authoredSlot?.raw["media_transform"]?.objectValue {
+                let transform = MediaTransform(scale: raw["scale"]?.numberValue ?? 1,
+                    rotationDegrees: raw["rotation_degrees"]?.numberValue ?? 0,
+                    positionX: raw["position_x"]?.numberValue ?? 0, positionY: raw["position_y"]?.numberValue ?? 0)
+                video[video.count - 1].transform.scale = transform.scale
+                video[video.count - 1].transform.rotationDegrees = transform.rotationDegrees
+                video[video.count - 1].transform.positionX = transform.positionX
+                video[video.count - 1].transform.positionY = transform.positionY
+            }
+            video[video.count - 1].audioFadeIn = authoredSlot?.raw["audio_fade_in"]?.numberValue
+            video[video.count - 1].audioFadeOut = authoredSlot?.raw["audio_fade_out"]?.numberValue
             // KRI-1136: the creator's tilt turns the clip about the canvas centre AFTER the letterbox scale, so a
             // tilted sideways clip keeps its bars. A graded clip stays upright, like the server's refusal.
             // KRI-1169: the zoom multiplies that letterbox scale (never replaces it).
@@ -314,7 +353,9 @@ enum NativeEditorRenderError: Error, Equatable {
         // No editor document legitimately previews without a video clip.
         guard !video.isEmpty else { throw NativeEditorRenderError.missingVideoTrack }
         var audioTracks: [TimelineTrack] = []
-        let total = video.map { $0.timelineStart + $0.duration }.max() ?? 0
+        let splitProjection = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: document.carouselMoment, splitSections: document.splitScreenSections)
+        let videoEnd = video.map { $0.timelineStart + $0.duration }.max() ?? 0
+        let total = document.splitScreenSections.isEmpty ? videoEnd : max(videoEnd, splitProjection.totalDuration)
         func addAudio(id: String, lane: String, start: Double, length: Double, gain: Double, timelineStart: Double = 0, catalog: RenderAssetCatalog = .music) throws {
             guard length > 0, let source = audioSources[id], let fingerprint = source.asset.fingerprint,
                   let available = source.asset.duration, start >= 0, start + length <= available + 0.01 else {
@@ -394,11 +435,22 @@ enum NativeEditorRenderError: Error, Equatable {
             let length = min(total, max(0, (bed.endS ?? (start + total)) - start))
             try addAudio(id: id, lane: "background-music", start: start, length: length, gain: pow(10, (bed.gainDB ?? -18) / 20))
         }
+        // KRI-1350: the stored colour moments on the current Range edit (the server moves them the same way at Save),
+        // and each moment's own sound re-pinned to its edge, dropped when its moment is gone.
+        let colorMomentLane = NativeSpeechTimelineProjection.colorMomentsLane(document.colorMoments,
+            baseSlots: document.colorMomentsBaseSlots, document: document)
+        let colorMomentEdges = NativeSpeechTimelineProjection.colorMomentEdges(colorMomentLane)
         for effect in document.soundEffects {
             let id = "sfx:" + effect.id
+            let ownedByMoment = effect.id.hasPrefix(NativeSpeechTimelineProjection.colorMomentSoundPrefix)
+            if ownedByMoment, colorMomentEdges[effect.id] == nil { continue }
             guard let source = audioSources[id], let available = source.asset.duration,
-                  let item = items.first(where: { $0.kind == .soundEffect && $0.id == effect.id }) else {
+                  var item = items.first(where: { $0.kind == .soundEffect && $0.id == effect.id }) else {
                 throw MediaEngineError.missingAsset(id)
+            }
+            if ownedByMoment, let edge = colorMomentEdges[effect.id], edge != item.start {
+                item = NativeEditorTimelineItem(selection: item.selection, start: edge, end: edge + (item.end - item.start),
+                                                zIndex: item.zIndex, sourceIndex: item.sourceIndex)
             }
             let start = effect.raw["trim_start_s"]?.numberValue ?? 0
             let end = min(available, effect.raw["trim_end_s"]?.numberValue ?? available)
@@ -774,8 +826,22 @@ enum NativeEditorRenderError: Error, Equatable {
                 }
                 if item.start >= total { continue }
                 guard item.end > item.start else { throw RecipeError.invalidTimeline }
-                let cueEnd = min(item.end, clampedCueEnd[cue.id] ?? item.end)
-                if cueEnd <= item.start { continue }
+                let fullCueEnd = min(item.end, clampedCueEnd[cue.id] ?? item.end)
+                if fullCueEnd <= item.start { continue }
+                // KRI-1344: `hidden_spans` (seconds from the cue's own start) are the parts of the line's time it
+                // is not drawn: generation hides a line over a text-dense full-screen picture, and the editor keeps
+                // it hidden there. One layer per visible part; a line without spans is one part, exactly as before.
+                let captionSpans = Self.visibleCaptionSpans(cue.raw["hidden_spans"], cueStart: cue.startS,
+                                                            cueEnd: cue.endS, start: item.start, end: fullCueEnd)
+                let spanCut = captionSpans.count != 1 || captionSpans.first.map { $0.0 != item.start || $0.1 != fullCueEnd } ?? true
+                let cueWordFloor = previousWordEnd
+                for (spanIndex, captionSpan) in captionSpans.enumerated() {
+                // Each visible part times its words from the same floor (the previous line's last word); the
+                // part's own start then holds back the words before it.
+                if spanCut { previousWordEnd = cueWordFloor }
+                let spanStart = captionSpan.0
+                let cueEnd = captionSpan.1
+                let layerID = "caption-" + cue.id + (spanIndex == 0 ? "" : "-\(spanIndex)")
                 let phases = Self.captionPhases(cue.raw["animation_phases"]) ?? defaultCaptionPhases
                 // Qendresa item 12: `caption_meta.shape` is the creator's typed caption shape. A box draws each
                 // 1-2-word cue as one static layer on a rounded box; a karaoke layer would paint the box per word.
@@ -800,20 +866,20 @@ enum NativeEditorRenderError: Error, Equatable {
                     let stored = wordValues.compactMap { $0.objectValue }
                     let matches = stored.map { $0["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" } == tokens
                     var windows: [(Double, Double)] = []
-                    let scale = (cueEnd - item.start) / max(0.01, cue.endS - cue.startS)
+                    let scale = (fullCueEnd - item.start) / max(0.01, cue.endS - cue.startS)
                     var synthesizedEnd = 0.0
                     for index in tokens.indices {
                         if matches, let begin = stored[index]["start_s"]?.numberValue, let end = stored[index]["end_s"]?.numberValue {
                             windows.append((item.start + (begin - cue.startS) * scale, item.start + (end - cue.startS) * scale))
                         } else {
-                            let next = max(Double(index + 1) * (cueEnd - item.start) / Double(tokens.count), synthesizedEnd + 0.05)
+                            let next = max(Double(index + 1) * (fullCueEnd - item.start) / Double(tokens.count), synthesizedEnd + 0.05)
                             windows.append((item.start + synthesizedEnd, item.start + next))
                             synthesizedEnd = next
                         }
                     }
                     var starts: [Double] = []
                     for index in windows.indices {
-                        let start = max(0, windows[index].0, previousWordEnd)
+                        let start = max(0, spanCut ? spanStart : 0, windows[index].0, previousWordEnd)
                         let next = index + 1 < windows.count ? windows[index + 1].0 : windows[index].1
                         previousWordEnd = max(start + 0.01, next)
                         starts.append(start)
@@ -826,7 +892,7 @@ enum NativeEditorRenderError: Error, Equatable {
                     if wordStyle, let highlighted = explicitHighlight {
                         let layerEnd = min(total, min(cueEnd, previousWordEnd))
                         if layerEnd > first,
-                           let singles = try AuthoredTextLayout.compileSingleWords(id: "caption-" + cue.id, text: cue.text,
+                           let singles = try AuthoredTextLayout.compileSingleWords(id: layerID, text: cue.text,
                                start: first, end: layerEnd, starts: starts.map { $0 - first },
                                highlight: highlighted ? try ink(meta["highlight_color"], fallback: "#C5F82A") : captionStyle.color,
                                style: captionStyle, fontURL: font, canvas: canvas) {
@@ -836,23 +902,24 @@ enum NativeEditorRenderError: Error, Equatable {
                         }
                         if layerEnd <= first { continue }
                     }
-                    text.append(Self.layer(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
-                        start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
+                    text.append(Self.layer(try AuthoredTextLayout.compileHighlightedWords(id: layerID, text: cue.text,
+                        start: first, end: min(total, spanCut ? cueEnd : .infinity, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
                         highlight: explicitHighlight == false ? captionStyle.color : try ink(meta["highlight_color"], fallback: "#C5F82A"),
                         style: dimmedStyle, fontURL: font, canvas: canvas), phases: phases))
                 } else if let phases {
-                    text.append(try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
-                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: phases))
+                    text.append(try AuthoredTextLayout.compile(id: layerID, text: cue.text,
+                        start: spanStart, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: phases))
                 } else {
                     let captionPhases = try appearance["animation_phases"].map {
                         try JSONDecoder().decode(TextAnimationPhases.self, from: JSONEncoder().encode($0))
                     }
-                    let layout = try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
-                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: captionPhases)
+                    let layout = try AuthoredTextLayout.compile(id: layerID, text: cue.text,
+                        start: spanStart, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: captionPhases)
                     if captionPhases != nil { text.append(layout); continue }
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
                         effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none, background: layout.background))
+                }
                 }
             }
         }
@@ -977,7 +1044,14 @@ enum NativeEditorRenderError: Error, Equatable {
         // that name; under any other name the preview drew the room with no background and no error.
         var speakerBackground: SpeakerBackgroundLayer?
         if let background = document.speakerBackground {
-            let layer = background.layer
+            let explicitSubjects = !document.splitScreenSections.isEmpty || document.clips.contains { $0.raw["speaker_subject"] != nil }
+            let subjectIDs: [String]? = explicitSubjects ? video.compactMap { clip in
+                guard let slot = document.clips.first(where: { $0.id == clip.id }) else { return nil }
+                let isSpeaker = slot.raw["speaker_subject"]?.boolValue
+                    ?? (NativePhoneTalkingSource.isSourceSlot(slot) || slot.parentSegmentID?.hasPrefix(NativePhoneTalkingSource.slotID) == true)
+                return isSpeaker ? clip.id : nil
+            } : nil
+            let layer = background.layer(subjectClipIDs: subjectIDs)
             // KRI-1162: the fill and every window visual are pinned pool assets (one entry per media id, however
             // many windows reuse it).
             // KRI-1173: a solid-colour fill has no pool visual, so `mediaRequirements` lists only the windows and the
@@ -1009,10 +1083,27 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         // Past the cap `recipe.validate()` would throw a bare `invalidTimeline`, which reads as a transient failure.
         guard text.count <= Self.maxTextLayers else { throw NativeEditorRenderError.tooManyTextLayers }
+        var videoTracks: [TimelineTrack] = []
+        let fullScreen = video.filter { $0.splitScreen == nil }
+        if !fullScreen.isEmpty { videoTracks.append(TimelineTrack(id: speakerBackground?.subjectTrackID ?? "video", kind: .video, clips: fullScreen)) }
+        for section in document.splitScreenSections {
+            for panel in 0..<section.panelCount {
+                let members = video.filter { $0.splitScreen?.sectionID == section.id && $0.splitScreen?.panelIndex == panel }
+                if !members.isEmpty { videoTracks.append(TimelineTrack(id: "split-\(section.id)-\(panel)", kind: .video, clips: members)) }
+            }
+        }
         var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
-            assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: speakerBackground?.subjectTrackID ?? "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
+            assets: assets.values.sorted { $0.id < $1.id }, tracks: videoTracks + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
             audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),
             assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills, speakerBackground: speakerBackground)
+        recipe.splitScreenSections = document.splitScreenSections.compactMap { section in
+            guard let index = document.clips.firstIndex(where: { $0.splitSectionID == section.id }),
+                  let window = splitProjection.clipWindows.first(where: { $0.sourceIndex == index }) else { return nil }
+            let start = window.start - document.clips[index].splitOffsetS
+            return SplitScreenSection(id: section.id, start: start, end: start + section.durationS,
+                                      panelWeights: section.panelWeights, gutter: section.gutter, backgroundColor: section.backgroundColor,
+                                      collapseEmptyPanels: section.collapseEmptyPanels)
+        }
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
         // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.
         recipe.drawingLayers = NativeDrawingCompile.layers(document.drawings.map { drawing in
@@ -1020,8 +1111,31 @@ enum NativeEditorRenderError: Error, Equatable {
             if let item = items.first(where: { $0.kind == .drawing && $0.id == drawing.id }) { placed.startS = item.start; placed.endS = item.end }
             return placed
         }, timelineDuration: TimelineMath.totalDuration(of: recipe))
+        (recipe.colorMoments, recipe.endFade) = Self.colorMoments(colorMomentLane, duration: TimelineMath.totalDuration(of: recipe))
         try recipe.validate()
         return NativeEditorRenderProgram(recipe: recipe, assetURLs: urls)
+    }
+
+    /// KRI-1350: the stored colour-moments lane for the PREVIEW, clamped to this edit's length exactly as the server's
+    /// `compile_color_moments` does (a moment a shorter cut pushed past the end is shortened, or dropped under 0.5 s;
+    /// an end fade longer than the video is dropped). An unreadable lane previews without moments, never fails.
+    static func colorMoments(_ raw: JSONValue?, duration: Double) -> ([ColorMoment], EndFade?) {
+        guard let raw, raw != .null, case let .object(lane) = raw else { return ([], nil) }
+        var moments: [ColorMoment] = []
+        if case let .array(rows)? = lane["moments"] {
+            for row in rows {
+                guard let data = try? JSONEncoder().encode(row), var moment = try? JSONDecoder().decode(ColorMoment.self, from: data) else { continue }
+                moment.end = min(moment.end, duration)
+                guard moment.end - moment.start >= ColorMoment.minimumLength - 1e-9,
+                      moments.last.map({ moment.start >= $0.end - 1e-6 }) ?? true else { continue }
+                moments.append(moment)
+            }
+        }
+        var fade: EndFade?
+        if let row = lane["end_fade"], row != .null, let data = try? JSONEncoder().encode(row),
+           let decoded = try? JSONDecoder().decode(EndFade.self, from: data),
+           EndFade.durationRange.contains(decoded.duration), decoded.duration <= duration { fade = decoded }
+        return (Array(moments.prefix(ColorMoment.maxMoments)), fade)
     }
 
     static func visualEditorStyle(_ raw: JSONValue?) throws -> VisualEditorStyle? {
@@ -1260,6 +1374,30 @@ enum NativeEditorRenderError: Error, Equatable {
     static let captionBoxPadYEm = 0.18
     static let captionBoxRadiusEm = 0.35
     static let captionDimFactor = 0.65
+
+    /// KRI-1344: the parts of a caption line's timeline window `[start, end]` outside its `hidden_spans`
+    /// (`[[from, to], ...]`, seconds from the cue's own start, mapped onto the window like its words). Parts
+    /// under 0.2 s are dropped, as the server does (`caption_legibility.trim_cue_out_of`); no spans, or none
+    /// readable, is the whole window.
+    static func visibleCaptionSpans(_ value: JSONValue?, cueStart: Double, cueEnd: Double,
+                                    start: Double, end: Double) -> [(Double, Double)] {
+        guard case .array(let rows) = value, !rows.isEmpty else { return [(start, end)] }
+        let scale = (end - start) / max(0.01, cueEnd - cueStart)
+        var parts = [(start, end)]
+        for row in rows.prefix(8) {
+            guard case .array(let pair) = row, pair.count == 2,
+                  let from = pair[0].numberValue, let to = pair[1].numberValue, from.isFinite, to.isFinite, to > from else { continue }
+            let hideStart = start + from * scale, hideEnd = start + to * scale
+            parts = parts.flatMap { part -> [(Double, Double)] in
+                if hideEnd <= part.0 || part.1 <= hideStart { return [part] }
+                var kept: [(Double, Double)] = []
+                if part.0 < hideStart { kept.append((part.0, hideStart)) }
+                if hideEnd < part.1 { kept.append((hideEnd, part.1)) }
+                return kept
+            }
+        }
+        return parts.filter { $0.1 - $0.0 >= 0.2 }
+    }
 
     private static func layer(_ layer: PortableTextLayer, phases: TextAnimationPhases?) -> PortableTextLayer {
         var layer = layer

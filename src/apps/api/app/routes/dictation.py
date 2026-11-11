@@ -72,8 +72,8 @@ _LOCALE_TERMS: dict[str, tuple[str, ...]] = {
 # Whisper hallucinates on silence/noise, more so with a vocabulary prompt. A transcript whose
 # every segment is this likely non-speech is dropped (KRI-653: a dead mic invented words).
 _NO_SPEECH_PROB = 0.6
-# Kria's non-English languages: the only ones Whisper is ever forced to (KRI-780 review).
-_FORCED_LANGUAGES = SUPPORTED_REPLY_LANGUAGES - {"en"}
+# Kria's non-English languages: they pick the spelling-bias word list, never Whisper's language.
+_VOCABULARY_LANGUAGES = SUPPORTED_REPLY_LANGUAGES - {"en"}
 # Turkish Whisper's silence hallucinations: subtitle credits and YouTube sign-offs it learned
 # from subtitled video. Loose-folded word tuples, dropped only from the END of a take, so a
 # creator who keeps holding the mic after "klipleri sırala" does not send the credit along.
@@ -90,6 +90,8 @@ class DictationOut(BaseModel):
     text: str
     # Set only when ``text`` is empty, so the app can say why.
     reason: Literal["no_speech"] | None = None
+    # ISO-639-1 code of the language Whisper heard; the app previews the next take in it.
+    language: str | None = None
 
 
 def _dictation_rate_key(request: Request) -> str:
@@ -130,28 +132,16 @@ def _locale_tags(locale_hint: str) -> list[str]:
     return [tag for tag in tags if tag][:4]
 
 
-def whisper_language(locale_hint: str) -> str | None:
-    """The language Whisper is told to transcribe, from the app's ``locale_hint``.
-
-    Only the top preference counts, and only when it is a Kria language other than English
-    (today ``"tr-TR"`` -> ``"tr"``). Everything else stays ``None`` (auto-detect): forcing a
-    language on someone speaking another makes Whisper translate, and device codes Whisper
-    does not know (iOS Norwegian "nb") would fail the call outright.
-    """
-    tags = _locale_tags(locale_hint)
-    lang = tags[0].split("-", 1)[0] if tags else ""
-    return lang if lang in _FORCED_LANGUAGES else None
-
-
 def vocabulary_language(locale_hint: str) -> str | None:
     """The language whose words join the prompt: the first Kria language the creator lists.
 
-    A phone in English with Turkish second ("en-TR,tr-TR") still gets the Turkish spelling
-    bias, without Whisper being forced to Turkish.
+    Spelling bias only. Whisper is never told the language (KRI-1328): the phone's settings say
+    what the creator reads, not what they speak, and a forced language makes Whisper translate
+    speech in any other language into it.
     """
     for tag in _locale_tags(locale_hint):
         lang = tag.split("-", 1)[0]
-        if lang in _FORCED_LANGUAGES:
+        if lang in _VOCABULARY_LANGUAGES:
             return lang
     return None
 
@@ -269,7 +259,6 @@ async def transcribe_dictation(
                 tr="Kayıt çok uzun, iki dakikanın altında tut",
             )
 
-        lang = whisper_language(locale_hint)
         prompt = build_vocabulary_prompt(
             _parse_terms(context_terms), vocabulary_language(locale_hint)
         )
@@ -279,7 +268,7 @@ async def transcribe_dictation(
             run_in_threadpool(
                 transcribe_whisper,
                 local_path,
-                language=lang,
+                language=None,
                 verbatim_prompt=prompt,
             ),
             timeout=_TRANSCRIPTION_TIMEOUT_S,
@@ -316,4 +305,4 @@ async def transcribe_dictation(
         chars=len(text),
         language=transcript.language or "unknown",
     )
-    return DictationOut(text=text)
+    return DictationOut(text=text, language=transcript.language or None)

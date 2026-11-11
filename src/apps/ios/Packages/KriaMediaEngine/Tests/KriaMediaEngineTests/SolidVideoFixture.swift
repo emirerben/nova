@@ -7,7 +7,7 @@ import XCTest
 /// an original whose picture starts ~21 ms after its sound (KRI-811).
 enum SolidVideoFixture {
     @MainActor static func make(directory: URL, name: String, color: CGColor, seconds: Double, size: (Int, Int) = (96, 160), fps: Int32 = 30, videoStartOffset: Double = 0,
-                                frameColor: ((Int) -> CGColor)? = nil) async throws -> URL {
+                                frameColor: ((Int) -> CGColor)? = nil, audioFrequency: Double = 440, framePaint: ((CGContext, Int) -> Void)? = nil) async throws -> URL {
         let (width, height) = size
         let (w, h) = (width, height)
         let videoURL = directory.appendingPathComponent("\(name)-video.mp4")
@@ -26,6 +26,7 @@ enum SolidVideoFixture {
             let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: w, height: h, bitsPerComponent: 8,
                 bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue))
             context.setFillColor(frameColor?(index) ?? color); context.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            framePaint?(context, index)
             CVPixelBufferUnlockBaseAddress(pixel, [])
             XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: fps)))
         }
@@ -35,7 +36,7 @@ enum SolidVideoFixture {
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
         let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(seconds * 48_000)))
         pcm.frameLength = pcm.frameCapacity
-        for index in 0..<Int(pcm.frameLength) { pcm.floatChannelData![0][index] = 0.2 * Float(sin(Double(index) * 2 * .pi * 440 / 48_000)) }
+        for index in 0..<Int(pcm.frameLength) { pcm.floatChannelData![0][index] = 0.2 * Float(sin(Double(index) * 2 * .pi * audioFrequency / 48_000)) }
         do {
             let file = try AVAudioFile(forWriting: audioURL, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000,
                 AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 128_000], commonFormat: .pcmFormatFloat32, interleaved: false)

@@ -238,8 +238,9 @@ def _reply(status: str, *, revision: int, checks: Sequence[ScriptCheck]) -> str:
         return f"{lead} {tail}"
     listed = ", ".join(f"“{check.phrase}”" for check in checks)
     check_line = say(
-        en=f"Check before recording, I couldn't confirm these from your clips: {listed}.",
-        tr=f"Kaydetmeden önce kontrol et, bunları kliplerinden doğrulayamadım: {listed}.",
+        en="Check before recording, I couldn't confirm these from your clips: {listed}.",
+        tr="Kaydetmeden önce kontrol et, bunları kliplerinden doğrulayamadım: {listed}.",
+        listed=listed,
     )
     return f"{lead} {check_line} {tail}"
 

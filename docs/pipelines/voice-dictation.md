@@ -17,6 +17,12 @@ chat, the editor copilot, the slide-post AI sheet and the Review sheet.
 
 ## Invariants
 
+- **The spoken language is detected, never taken from the phone** (KRI-1328). Whisper is always called
+  with `language=None`; `locale_hint` only picks the Turkish spelling word list. Forcing a language makes
+  Whisper translate speech in any other language into it (English on a Turkish phone came back Turkish).
+  The response's `language` is stored on the phone (`DictationLanguage`) so the next take's live preview
+  uses what the creator last spoke. Guard: `test_whisper_is_never_told_the_language`.
+
 - **Silence never becomes text** (KRI-653 class). The route returns `{"text": "", "reason": "no_speech"}`
   when every segment has `no_speech_prob >= 0.6`, or when Whisper only echoes the vocabulary prompt.
 - **Audio is a throwaway.** It lives in a request-scoped temp file; nothing is stored or logged beyond

@@ -30,21 +30,37 @@ from typing import Any
 # 60 s margin for the persist transaction. Video adds the 360 s budget its
 # transient-provider retries historically had.
 _RUN_WINDOW = {"image": timedelta(seconds=360), "video": timedelta(seconds=720)}
-# Waiting in the broker before a worker claims the row. The base covers an
-# autostopped autoplace machine cold-starting plus a short line; the window then
-# grows with the analyses already ahead of this one on the shared
-# visuals-analysis queue (all creators), one worst-case run per wave of the
-# autoplace process's concurrency, so healthy work that is only waiting in line
-# never becomes a user-facing timeout. Capped at the pre-KRI-820 60-minute
-# queued window so a lost broker message still terminates. Only the run window
-# after a claim is tight.
+# Waiting in the broker before a worker claims the row: a cold start plus a
+# short line (image 10 min; video 30 min), plus the lane already busy with one
+# other task, plus the analyses already ahead on the shared visuals-analysis
+# queue (all creators). Healthy work that is only waiting in line must never
+# become a user-facing timeout: the reaper fails an expired `queued` row
+# without asking the broker whether its message is still there. Capped so a
+# lost broker message still terminates. Only the run window after a claim is
+# tight.
 _CLAIM_WINDOW = {"image": timedelta(minutes=10), "video": timedelta(minutes=30)}
-_CLAIM_WINDOW_CAP = timedelta(minutes=60)
-# `autoplace` process in fly.toml: `--concurrency=2 -Q autoplace-jobs,visuals-analysis`.
-_QUEUE_CONCURRENCY = 2
-# One queued analysis ahead occupies a slot for at most the task's 300 s hard
-# limit (image) or one full video run window.
-_QUEUE_SLOT = {"image": timedelta(seconds=300), "video": timedelta(seconds=720)}
+# Large enough for 14 videos queued behind a busy lane (30 + 40 + 13 x 13 min
+# = 239 min); a lost message on a quiet lane still ends after base + occupant.
+_CLAIM_WINDOW_CAP = timedelta(hours=4)
+# Budget only the consumer that is always there: the unified `worker` process
+# in fly.toml (`--concurrency=1`), one slot shared with renders, Drive imports
+# and footage/speech analysis. A dedicated Visuals group (KRI-1240; #2183
+# removes it for cost) can be draining, restarting or gone, and extra
+# consumers only finish work sooner. tests/test_pool_asset_fly_contract.py pins this to the
+# worker's --concurrency.
+_QUEUE_CONCURRENCY = 1
+# One analysis ahead holds the lane for at most its run window plus the
+# soft-to-hard limit gap (`_AUTOPLACE_TASK_LIMITS` 240/300 s): a retry may
+# start just inside its deadline and run to the hard limit. Pinned by
+# tests/test_pool_asset_fly_contract.py.
+_QUEUE_SLOT = {"image": timedelta(seconds=420), "video": timedelta(seconds=780)}
+# The shared lane may already be running one non-analysis task when an
+# analysis is dispatched: up to the longest hard time limit of any task the
+# worker consumes (`tasks.batch_import_from_drive`, 2400 s; renders 1800 s).
+# Pinned >= that maximum by tests/test_pool_asset_fly_contract.py. Not
+# covered: further non-analysis tasks interleaved into a burst (Celery cycles
+# the worker's queues); the cap and a retryable timeout are the backstop.
+_LANE_OCCUPANT = timedelta(seconds=2400)
 
 IN_FLIGHT_STATUSES = frozenset({"queued", "analyzing"})
 TIMED_OUT_CODE = "analysis_timed_out"
@@ -59,13 +75,16 @@ def run_window(kind: str | None) -> timedelta:
     return _RUN_WINDOW[_kind(kind)]
 
 
-def claim_window(kind: str | None, queue_ahead: int = 0) -> timedelta:
-    """Time a dispatched attempt may wait for a worker, given how many other
-    in-flight analyses are already ahead of it on the shared queue."""
-    k = _kind(kind)
-    waves = -(-max(0, int(queue_ahead)) // _QUEUE_CONCURRENCY)
-    backlog = _QUEUE_SLOT[k] * waves
-    return min(max(_CLAIM_WINDOW[k], backlog + _CLAIM_WINDOW["image"]), _CLAIM_WINDOW_CAP)
+def queue_slot_s(kind: str | None) -> int:
+    """Lane seconds one in-flight analysis of this kind can hold the slot."""
+    return int(_QUEUE_SLOT[_kind(kind)].total_seconds())
+
+
+def claim_window(kind: str | None, backlog_s: int = 0) -> timedelta:
+    """Time a dispatched attempt may wait for a worker, given the lane seconds
+    (`queue_backlog_stmt`) of the in-flight analyses already ahead of it."""
+    backlog = timedelta(seconds=max(0, int(backlog_s)) / _QUEUE_CONCURRENCY)
+    return min(_CLAIM_WINDOW[_kind(kind)] + _LANE_OCCUPANT + backlog, _CLAIM_WINDOW_CAP)
 
 
 def max_dispatch_window() -> timedelta:
@@ -73,20 +92,25 @@ def max_dispatch_window() -> timedelta:
     return max(_CLAIM_WINDOW_CAP + run_window(k) for k in _RUN_WINDOW)
 
 
-def dispatch_deadline(kind: str | None, now: datetime, queue_ahead: int = 0) -> datetime:
-    return now + claim_window(kind, queue_ahead) + run_window(kind)
+def dispatch_deadline(kind: str | None, now: datetime, backlog_s: int = 0) -> datetime:
+    return now + claim_window(kind, backlog_s) + run_window(kind)
 
 
 def queue_backlog_stmt(now: datetime, *, exclude_id: Any = None):
-    """COUNT of live in-flight pool analyses (served by the partial
-    `idx_plan_item_assets_in_flight_deadline` index). Built here, executed by
-    the caller (sync or async), so every dispatch site sizes the window alike."""
-    from sqlalchemy import func, or_, select  # noqa: PLC0415
+    """Lane seconds (`queue_slot_s` per kind) of the live in-flight pool
+    analyses (served by the partial `idx_plan_item_assets_in_flight_deadline`
+    index). Built here, executed by the caller (sync or async), so every
+    dispatch site sizes the window alike."""
+    from sqlalchemy import case, func, or_, select  # noqa: PLC0415
 
     from app.models import PlanItemAsset  # noqa: PLC0415
 
+    slot = case(
+        (PlanItemAsset.kind == "video", queue_slot_s("video")),
+        else_=queue_slot_s("image"),
+    )
     stmt = (
-        select(func.count())
+        select(func.coalesce(func.sum(slot), 0))
         .select_from(PlanItemAsset)
         .where(
             PlanItemAsset.status.in_(tuple(IN_FLIGHT_STATUSES)),
@@ -137,11 +161,12 @@ def is_expired(asset: Any, now: datetime | None = None) -> bool:
     return deadline is not None and (now or datetime.now(UTC)) > deadline
 
 
-def begin_attempt(asset: Any, *, now: datetime, attempt_count: int, queue_ahead: int = 0) -> str:
+def begin_attempt(asset: Any, *, now: datetime, attempt_count: int, backlog_s: int = 0) -> str:
     """Stamp a fresh fenced `queued` attempt with its deadline; return the token.
 
-    `queue_ahead` is the live in-flight backlog (`queue_backlog_stmt`) so the
-    claim window covers the line this attempt joins."""
+    `backlog_s` is the live in-flight backlog in lane seconds
+    (`queue_backlog_stmt`) so the claim window covers the line this attempt
+    joins."""
     token = uuid.uuid4().hex
     asset.status = "queued"
     asset.error_code = None
@@ -151,7 +176,7 @@ def begin_attempt(asset: Any, *, now: datetime, attempt_count: int, queue_ahead:
     asset.analysis_attempt_count = attempt_count
     asset.analysis_last_dispatched_at = now
     asset.analysis_started_at = None
-    asset.analysis_deadline_at = dispatch_deadline(getattr(asset, "kind", None), now, queue_ahead)
+    asset.analysis_deadline_at = dispatch_deadline(getattr(asset, "kind", None), now, backlog_s)
     return token
 
 

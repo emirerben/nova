@@ -88,7 +88,7 @@ from app.kria.brief import (
     start_fresh_updates,
     wants_clip_descriptions,
 )
-from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
+from app.kria.brief_checks import ask_text, spoken_text_literals, whole_line_quotes
 from app.kria.brief_route import loose_text
 from app.kria.clip_exclusions import (
     carry_forward_exclusions,
@@ -180,9 +180,11 @@ from app.services.choice_questions import (
     choice_question_text,
     detect_order_vs_group,
     fold_choice_answers,
+    follows_change_request,
     length_inputs_waiting,
     resolve_choices,
     simpler_version_accepted,
+    simpler_version_carried,
     simpler_version_question,
     tag_event,
     without_length_answer_echo,
@@ -209,6 +211,7 @@ from app.services.creative_copy_decisions import (
     CreativeCopyState,
     authorship_question,
     bind_approved_copy,
+    chat_button_language,
     creator_quoted,
     fold_creative_copy,
     localize_question,
@@ -216,6 +219,7 @@ from app.services.creative_copy_decisions import (
     question_message,
     wording_question,
 )
+from app.services.creative_copy_gate import OPEN_COPY_STATES
 from app.services.creator_capabilities import insert_clip_candidates
 from app.services.creator_model_comparison import configure_creator_agent
 from app.services.creator_sessions import (
@@ -342,7 +346,10 @@ async def _snapshot_visual_rows(db: AsyncSession, item: PlanItem) -> list:
         )
         .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
     )
-    return list(rows.scalars())
+    from app.services.visual_talking_takes import without_adopted  # noqa: PLC0415
+
+    # KRI-1340: a Visual adopted as a Talking take is footage now, never also a Visual.
+    return without_adopted(rows.scalars(), item.clip_assignments)
 
 
 def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | None:
@@ -451,6 +458,9 @@ def _enrich_best_parts_snapshot(
         if strategy.get("edit_format") == "montage" and recording is None
         else None
     )
+    from app.kria.text_sequence import sequence_read_floor_s  # noqa: PLC0415
+
+    text_floor_s = sequence_read_floor_s(brief.live()) if brief is not None else None
     held = _held_closing_ids(closing_quote)
     whole_take_ids = _whole_take_ids(
         strategy,
@@ -578,6 +588,7 @@ def _enrich_best_parts_snapshot(
             ),
             story_floor_s=story_floor_s,
             whole_take_ids=whole_take_ids,
+            text_floor_s=text_floor_s,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -779,8 +790,11 @@ def _moment_count_notice(
     else:
         return None
     return say(
-        en=f"I could fit {planned} {'moment' if planned == 1 else 'moments'}, not {count}.",
-        tr=f"{count} değil, {planned} an sığdırabildim.",
+        en="I could fit {planned} {v1}, not {count}.",
+        tr="{count} değil, {planned} an sığdırabildim.",
+        planned=planned,
+        v1="moment" if planned == 1 else "moments",
+        count=count,
     )
 
 
@@ -1316,13 +1330,15 @@ def adapt_creator_action(
         # KRI-458: the draft must not claim an order the footage cannot back.
         summary = say(
             en=(
-                f"{summary} I found no clips of {', '.join(unplaced)}, "
+                "{summary} I found no clips of {join_unplaced}, "
                 "so I can't place them where you asked."
             ),
             tr=(
-                f"{summary} {', '.join(unplaced)} ile ilgili klip bulamadım, "
+                "{summary} {join_unplaced} ile ilgili klip bulamadım, "
                 "bu yüzden onları istediğin yere yerleştiremiyorum."
             ),
+            summary=summary,
+            join_unplaced=", ".join(unplaced),
         )
     requested_intents = (
         server_clip_intents
@@ -1352,8 +1368,9 @@ def adapt_creator_action(
         reconciled_story = [] if unresolved else list(result.rows)
         omitted = ", ".join(selection.intent.attribute for selection in server_rejected_selections)
         summary = say(
-            en=f"I left out {omitted} based on your clip answer.",
-            tr=f"Klip yanıtına göre {omitted} bölümünü çıkardım.",
+            en="I left out {omitted} based on your clip answer.",
+            tr="Klip yanıtına göre {omitted} bölümünü çıkardım.",
+            omitted=omitted,
         )
         if unresolved:
             summary += " " + say(
@@ -1501,15 +1518,16 @@ def _labels_need_voiceover_reply() -> str:
 def _clips_still_checking_reply(count: int) -> str:
     return say(
         en=(
-            f"I'm still checking {count} of your clips. "
+            "I'm still checking {count} of your clips. "
             "Your request and completed answers are saved. "
             "Ask me to continue once those clips are ready."
         ),
         tr=(
-            f"Kliplerinden {count} tanesini hâlâ kontrol ediyorum. "
+            "Kliplerinden {count} tanesini hâlâ kontrol ediyorum. "
             "İsteğin ve tamamlanan yanıtlar kaydedildi. "
             "Bu klipler hazır olunca devam etmemi iste."
         ),
+        count=count,
     )
 
 
@@ -2129,6 +2147,9 @@ class _EditorTarget:
     # the dev harness (`app.cli.kria_ask`) reads it, to dry-run the compiler.
     variant: dict | None = None
     recovery_basis: EditorDraftBasis | None = None
+    # Set when the current job failed outright and the target is the earlier ready video
+    # (``_last_ready_render``): {"job_id", "variant_id", "failed_job_id"}.
+    last_ready: dict | None = None
 
 
 async def _copilot_clip_context(
@@ -2202,6 +2223,21 @@ async def _copilot_clip_context(
     except Exception:  # noqa: BLE001 - fail closed: empty pool => no set_background
         log.warning(
             "kria_copilot_background_pool_unavailable", thread_id=str(thread_id), exc_info=True
+        )
+    try:
+        # KRI-1253: the generated images the creator accepted, which chat may place as a picture
+        # card. No query unless the card's flag is on and this is a phone Talking edit.
+        from app.services import generated_overlay_pool  # noqa: PLC0415
+
+        if generated_overlay_pool.enabled_for(variant):
+            generated = await generated_overlay_pool.load_pool(db, item.id, thread.creator_id)
+            if generated:
+                context["generated_overlay_pool"] = generated
+    except Exception:  # noqa: BLE001 - fail closed: empty pool => no add_overlay
+        log.warning(
+            "kria_copilot_generated_overlay_pool_unavailable",
+            thread_id=str(thread_id),
+            exc_info=True,
         )
     return context
 
@@ -2325,7 +2361,7 @@ _FAILED_JOB_STATUSES = frozenset(
 )
 
 
-def _job_never_rendered(job: Any) -> bool:
+def job_never_rendered(job: Any) -> bool:
     """The item's current job FAILED and never produced (or started) a variant.
 
     There is nothing to edit in place and nothing in flight, so a follow-up is a
@@ -2340,6 +2376,49 @@ def _job_never_rendered(job: Any) -> bool:
         and (row.get("render_status") == "ready" or row.get("render_status") in _IN_FLIGHT_STATUSES)
         for row in variants
     )
+
+
+async def _last_ready_render(
+    db: AsyncSession, *, thread_id: uuid.UUID, item: PlanItem, job: Any
+) -> tuple[Job, dict] | None:
+    """The ready video the creator still has when the item's current job failed outright.
+
+    A re-plan points the item at its new job before rendering it; when that render fails
+    without producing anything, the session's ``last_good`` names the earlier ready variant on
+    the same item. ``draft.apply_editor_ops`` moves the item back to it under the commit locks.
+    """
+    if job is None or not job_never_rendered(job):
+        return None
+    thread = await db.get(CreationThread, thread_id)
+    if thread is None or thread.active_creator_agent_session_id is None:
+        return None
+    session = await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
+    last = getattr(session, "last_good", None)
+    if (
+        not isinstance(last, dict)
+        or session.target_job_id != job.id
+        or session.plan_item_id != item.id
+        or session.creator_id != thread.creator_id
+    ):
+        return None
+    try:
+        ready_id = uuid.UUID(str(last.get("job_id")))
+    except ValueError:
+        return None
+    ready = await db.get(Job, ready_id) if ready_id != job.id else None
+    if ready is None or ready.content_plan_item_id != item.id or ready.user_id != thread.creator_id:
+        return None
+    variant = next(
+        (
+            row
+            for row in (ready.assembly_plan or {}).get("variants") or []
+            if isinstance(row, dict)
+            and row.get("variant_id") == last.get("variant_id")
+            and row.get("render_status") == "ready"
+        ),
+        None,
+    )
+    return (ready, variant) if variant is not None else None
 
 
 # KRI-1111: the brief's first / last clips this turn's clip inventory left out instead of
@@ -2502,7 +2581,24 @@ async def _load_editor_target(
             render_status=target_row.get("render_status"),
         )
         return None
-    if variant is None and _job_never_rendered(job):
+    last_ready = (
+        await _last_ready_render(db, thread_id=thread_id, item=item, job=job)
+        if variant is None
+        else None
+    )
+    if last_ready is not None:
+        job, variant = last_ready
+        head = (
+            await db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.item_id == item_id,
+                    CreatorEditDraft.variant_key == variant.get("variant_id"),
+                    CreatorEditDraft.base_job_id == job.id,
+                    CreatorEditDraft.is_head.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+    if variant is None and job_never_rendered(job):
         # Not in _GUARDED_MISSES: nothing exists to edit, so the follow-up re-plans.
         _miss("no_render", session_id=str(session.id), job_status=job.status)
         return None
@@ -2580,6 +2676,15 @@ async def _load_editor_target(
         conversation=conversation,
         variant=variant,
         recovery_basis=recovery_basis,
+        last_ready=(
+            {
+                "job_id": str(job.id),
+                "variant_id": last_ready[1].get("variant_id"),
+                "failed_job_id": str(job_id),
+            }
+            if last_ready is not None
+            else None
+        ),
     )
 
 
@@ -2710,7 +2815,7 @@ async def _plan_editor_revision(
                 }
             )
     if response.ops:
-        return adapt_editor_action(
+        plan = adapt_editor_action(
             reply=_phone_editor_reply(response.reply),
             ops=response.ops,
             # This portable operation invokes server speech processing; ordinary
@@ -2718,6 +2823,13 @@ async def _plan_editor_revision(
             request_render=any(op.get("op") == "apply_speech_cut_candidate" for op in response.ops),
             unmet_requests=getattr(response, "unmet_requests", None) or (),
             notes=getattr(response, "reply_notes", None) or None,
+        )
+        if target.last_ready is None:
+            return plan
+        return plan.model_copy(
+            update={
+                "diagnostics": {**(plan.diagnostics or {}), "editor_last_ready": target.last_ready}
+            }
         )
     if response.outcome in {"unsupported", "no_effect"} and is_overlay_display_ask(user_message):
         # KRI-297: a display-mode change (full-screen overlays) is not an in-place
@@ -2980,10 +3092,12 @@ async def _load_creator_inputs(
     from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
 
     creative_copy_digest = media_digest(snapshot_media(item))
-    decision_states = fold_creative_copy(
-        await _load_thread_events(db, thread_id, release=False),
-        dependency_digest=creative_copy_digest,
-    )
+    thread_events = await _load_thread_events(db, thread_id, release=False)
+    decision_states = fold_creative_copy(thread_events, dependency_digest=creative_copy_digest)
+    if brief_on and _change_request_context(thread_events):
+        # KRI-1360: the brief model reads this message as the new request after "Change my
+        # request" and removes the earlier asks it no longer includes. Unset: input unchanged.
+        extra["changes_request"] = True
     compact_copy_state = [
         {
             "target": target,
@@ -3147,6 +3261,8 @@ async def _call_brief_extractor(
         current_brief=prior_brief,
         require_request_scope=True,
         insert_clips_open=_insert_clips_open(inputs),
+        # KRI-1360: the same "Change my request" marker the Main Creator input carries.
+        changes_request=getattr(inputs.agent_input, "changes_request", False),
     )
 
     def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -3640,6 +3756,136 @@ async def _plan_voiceover_script(
     return PlannedKriaTurn(plan=plan, **hashes)
 
 
+def _creator_asks_arrow(text: str) -> bool:
+    """KRI-1286: the creator's own message asks for an arrow (quoted words don't count)."""
+    from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
+
+    class _Ask:
+        description = text
+        literal = None
+        facts = None
+
+    return requirement_asks_arrow(_Ask())
+
+
+# KRI-1324: characters that ride on an arrow or emoji grapheme without being one themselves
+# (variation selectors, zero-width joiner, skin tones, the keycap mark).
+_GLYPH_MODIFIERS = frozenset("\ufe0e\ufe0f\u200d\u20e3") | frozenset(
+    chr(c) for c in range(0x1F3FB, 0x1F400)
+)
+
+
+def _is_arrow_grapheme(grapheme: str) -> bool:
+    """An arrow or pointing-hand glyph ("➔", "⇨", "👇🏽"), never a letter or digit."""
+    marks = [ch for ch in grapheme if ch not in _GLYPH_MODIFIERS]
+    return bool(marks) and all(
+        unicodedata.category(ch).startswith("S")
+        and any(word in unicodedata.name(ch, "") for word in ("ARROW", "POINTING"))
+        for ch in marks
+    )
+
+
+def _strip_trailing_arrows(text: str) -> str:
+    """KRI-1324: ``text`` without the arrow glyphs at its end, whichever arrow it is.
+
+    The pipeline's own list (`strip_trailing_arrow_glyphs`) named a few arrows; prod's
+    "comment REPO ➔" (U+2794) was not one of them. Read from the character's Unicode name."""
+    import regex  # noqa: PLC0415
+
+    from app.pipeline.phone_cta_text import strip_trailing_arrow_glyphs  # noqa: PLC0415
+
+    graphemes = regex.findall(r"\X", strip_trailing_arrow_glyphs(text))
+    while graphemes and (graphemes[-1].isspace() or _is_arrow_grapheme(graphemes[-1])):
+        graphemes.pop()
+    return "".join(graphemes).strip()
+
+
+def _without_undrawable_symbols(text: str) -> str:
+    """KRI-1324: ``text`` without the symbol glyphs no curated phone font draws.
+
+    Prod job 4620fd7c failed `phone_plan_unsupported` ("No phone font can draw '➔'") on a
+    wording Kria had suggested and the creator approved. Only symbols go (arrows, dingbats):
+    a letter no font draws stays, so the draft names it (KRI-1024) instead of the words
+    silently changing; colour emoji are the phone's own emoji face and are never named."""
+    import regex  # noqa: PLC0415
+
+    from app.pipeline.phone_text_style import undrawable_text  # noqa: PLC0415
+
+    try:
+        found = undrawable_text([text])
+    except Exception:  # noqa: BLE001 - font coverage unknown: change nothing
+        log.warning("kria_copy_glyph_check_failed")
+        return text
+    if found is None:
+        return text
+    undrawable = set(regex.findall(r"\X", found[1]))
+
+    def symbol(grapheme: str) -> bool:
+        marks = [ch for ch in grapheme if ch not in _GLYPH_MODIFIERS]
+        return bool(marks) and all(unicodedata.category(ch).startswith("S") for ch in marks)
+
+    kept = [g for g in regex.findall(r"\X", text) if not (g in undrawable and symbol(g))]
+    return " ".join("".join(kept).split())
+
+
+def _picture_key(name: str) -> str:
+    """A picture's name without its file extension, folded ("GitHub logo.png" -> "github logo")."""
+    stem, dot, ext = name.strip().rpartition(".")
+    if dot and stem and ext.casefold() in {"png", "jpg", "jpeg", "webp", "heic", "gif", "svg"}:
+        name = stem
+    return " ".join(name.casefold().split())
+
+
+def _with_title_picture_beats(
+    strategy: Any, brief: CreativeBrief | None, manifest: Any
+) -> Any | None:
+    """KRI-1322: the strategy with a title-anchored beat for each picture the brief names by its
+    exact file name next to the title ("the GitHub logo above it" -> Visuals "GitHub logo.png"),
+    or None when nothing is missing.
+
+    The phone render places a logo above the title only from such a beat (``anchor: "title"``,
+    ``visual_id`` = the Visuals image). The Main Creator is taught to write it while the title
+    look is on; this is the server's backstop when it does not. Only an exact name match on an
+    owned Visuals image counts (never words read for meaning, KRI-667), and a literal that is
+    part of the opening title is that title's own words, not a picture.
+    """
+    if not settings.title_look_enabled or brief is None or not strategy.opening_title:
+        return None
+    from app.agents._schemas.reaction_beats import ReactionBeat  # noqa: PLC0415
+
+    title_key = _picture_key(strategy.opening_title)
+    images: dict[str, list[str]] = {}
+    for media in getattr(manifest, "media", ()) or ():
+        label = getattr(media, "label", None)
+        if getattr(media, "kind", None) == "image" and str(media.media_id).startswith("asset-"):
+            if label and label.strip():
+                images.setdefault(_picture_key(label), []).append(media.media_id)
+    beats = list(strategy.reaction_beats or [])
+    added = False
+    for req in brief.live():
+        literal = (req.literal or "").strip()
+        key = _picture_key(literal)
+        if req.scope != "title" or not key or key in title_key or len(images.get(key, [])) != 1:
+            continue
+        (visual_id,) = images[key]
+        if any(
+            beat.anchor == "title"
+            and (beat.visual_id == visual_id or _picture_key(beat.trigger) == key)
+            for beat in beats
+        ):
+            continue
+        beats.append(
+            ReactionBeat(
+                beat_id=f"title-picture-{len(beats) + 1}",
+                trigger=literal[:80],
+                visual_id=visual_id,
+                anchor="title",
+            )
+        )
+        added = True
+    return strategy.model_copy(update={"reaction_beats": beats}) if added else None
+
+
 def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -> PlannedKriaTurn:
     """KRI-802: ask a held title-wording question in the same reply as a clip picker.
 
@@ -3894,11 +4140,16 @@ async def _change_request_turn(db: AsyncSession, thread_id: uuid.UUID) -> Planne
         return None
     held = {str(req_id) for req_id in question.get(SIMPLER_OMITTED_IDS_KEY) or ()}
     brief = await load_latest_brief(db, thread_id) if held else None
-    listed = "; ".join(req.text() for req in brief.live() if req.id in held) if brief else ""
+    listed = (
+        "; ".join(ask_text(req).rstrip(".") for req in brief.live() if req.id in held)
+        if brief
+        else ""
+    )
     response = (
         say(
-            en=f"Nothing is made yet. Tell me what to do differently for: {listed}.",
-            tr=f"Henüz bir şey yapılmadı. Şunlar için neyi farklı yapmamı istersin: {listed}.",
+            en="Nothing is made yet. Tell me what to do differently for: {listed}.",
+            tr="Henüz bir şey yapılmadı. Şunlar için neyi farklı yapmamı istersin: {listed}.",
+            listed=listed,
         )
         if listed
         else say(
@@ -3922,7 +4173,23 @@ async def _simpler_version_accepted(
         return False
     if not isinstance(db, AsyncSession):
         return False  # no live session (a planner harness), so no thread to read an answer from
-    return simpler_version_accepted(await _load_thread_events(db, thread_id), fields)
+    return _simpler_version_consented(await _load_thread_events(db, thread_id), fields)
+
+
+def _simpler_version_consented(events: Sequence[tuple[str, Any]], fields: Sequence[str]) -> bool:
+    """This turn's tap, or (KRI-1354) an earlier tap on a policy refusal's card that only
+    choice taps have followed, with no draft since (`simpler_version_carried`)."""
+    if simpler_version_accepted(events, fields):
+        return True
+    return settings.narrated_simpler_consent_fixes_enabled and simpler_version_carried(
+        events, fields
+    )
+
+
+def _change_request_context(events: Sequence[tuple[str, Any]]) -> bool:
+    """KRI-1360: this message answers a "Change my request" tap, so the brief model reads it
+    as the creator's new request (it decides which earlier asks it drops, never the server)."""
+    return settings.change_request_fresh_brief_enabled and follows_change_request(events)
 
 
 async def _plan_turn_clip_intents(
@@ -4268,6 +4535,44 @@ async def _plan_creator_action(
                 if row.get("role") == "user"
             ],
         ]
+        titled = _with_title_picture_beats(action.strategy, effective_brief, manifest)
+        if titled is not None:
+            log.info("kria_title_picture_beat_added", thread_id=str(thread_id))
+            action = action.model_copy(update={"strategy": titled})
+        # KRI-1286: the drawn arrow already points at "comment WORD"; an arrow emoji the model
+        # added to the words is not the creator's text, and would make her confirm words she
+        # gave exactly (and show two arrows). Drop it when she asked for an arrow.
+        closing = action.strategy.closing_title
+        if closing:
+            from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
+
+            bare = _strip_trailing_arrows(closing)
+            if (
+                bare != closing
+                and cta_ending_parts(bare) is not None
+                and any(_creator_asks_arrow(source) for source in user_sources)
+            ):
+                log.info("kria_closing_arrow_glyph_dropped", thread_id=str(thread_id))
+                action = action.model_copy(
+                    update={"strategy": action.strategy.model_copy(update={"closing_title": bare})}
+                )
+        # KRI-1324: a title or ending Kria wrote never holds a glyph no phone font draws: it
+        # is dropped before the wording question (and before the draft), so the creator is
+        # never asked to approve words the render then refuses. Her own quoted text is hers.
+        quote_sources = [*user_sources, getattr(inputs, "raw_creator_request", None) or ""]
+        drawable = {
+            target: cleaned
+            for target in ("opening_title", "closing_title")
+            if (value := getattr(action.strategy, target))
+            and not creator_quoted(value, quote_sources)
+            and (cleaned := _without_undrawable_symbols(value))
+            and cleaned != value
+        }
+        if drawable:
+            log.info("kria_copy_undrawable_glyph_dropped", thread_id=str(thread_id))
+            action = action.model_copy(
+                update={"strategy": action.strategy.model_copy(update=drawable)}
+            )
         for target in ("opening_title", "closing_title"):
             value = getattr(action.strategy, target)
             state = (getattr(inputs, "creative_copy_state", None) or {}).get(target)
@@ -4422,19 +4727,43 @@ async def _plan_creator_action(
                 selected=len(scoped.selected_media_ids),
             )
             action = action.model_copy(update={"strategy": scoped})
+        from app.kria.draft_sound_carry import (  # noqa: PLC0415
+            asks_camera_sound,
+            carry_draft_audio_strategy,
+            carry_draft_sound,
+            has_sound_ask,
+        )
+
+        # Only a camera-audio strategy (or a kept sound route) can need the draft's sound.
+        draft_strategy = (
+            await _load_draft_strategy(db, item_id)
+            if keeps_sound or action.strategy.audio_strategy == "original_audio"
+            else None
+        )
         if keeps_sound:
             # KRI-942: a turn that didn't touch the sound asks keeps the draft's sound choice
             # (the route it picks), like a confirmed label (KRI-766).
-            from app.kria.draft_sound_carry import carry_draft_sound  # noqa: PLC0415
-
-            carried = carry_draft_sound(action.strategy, await _load_draft_strategy(db, item_id))
-            if carried is not action.strategy:
-                log.info("kria_draft_sound_kept", thread_id=str(thread_id))
-                action = action.model_copy(update={"strategy": carried})
+            carried = carry_draft_sound(action.strategy, draft_strategy)
+        elif not has_sound_ask(effective_brief):
+            # KRI-1365: a turn with no sound ask never flips music to camera audio.
+            carried = carry_draft_audio_strategy(action.strategy, draft_strategy)
+        else:
+            carried = action.strategy
+        if carried is not action.strategy:
+            log.info("kria_draft_sound_kept", thread_id=str(thread_id))
+            action = action.model_copy(update={"strategy": carried})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
         check_kwargs: dict[str, Any] = {
             "simplify_unsupported": True,
+            # KRI-1365: on footage with no sound, a camera-audio strategy falls back to the
+            # draft's sound (or music), unless the creator asked for the camera sound.
+            **(
+                {"draft_audio_strategy": draft_strategy["audio_strategy"]}
+                if draft_strategy and draft_strategy.get("audio_strategy")
+                else {}
+            ),
+            **({"creator_asked_camera_sound": True} if asks_camera_sound(effective_brief) else {}),
             **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
             # KRI-476: also ask before a repair drops a title hold / full-screen ask the
             # creator stated. Off with the choice-questions flag: identical to before.
@@ -5050,8 +5379,9 @@ def _creative_copy_turn(
         )
         candidate = question["candidate"]
         message = response or say(
-            en=f"I’d try “{candidate}”. Does this wording work?",
-            tr=f"Şunu deneyebilirim: “{candidate}”. Bu ifade sana uyar mı?",
+            en="I’d try “{candidate}”. Does this wording work?",
+            tr="Şunu deneyebilirim: “{candidate}”. Bu ifade sana uyar mı?",
+            candidate=candidate,
         )
         if candidate not in message:
             message = f"“{candidate}” — {message}"
@@ -5063,7 +5393,7 @@ def _creative_copy_turn(
         )
     # KRI-520: a Turkish chat gets Turkish option labels whatever language the wording is
     # in (English labels stay as aliases, so typed English answers still match).
-    localize_question(question, "tr" if current_reply_language() == "tr" else decision.language)
+    localize_question(question, chat_button_language() or decision.language)
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="respond",
@@ -5347,10 +5677,12 @@ def _request_recovery(
             turn_value="question",
             response=say(
                 en=(
-                    f"{detail} Your complete request is saved and your draft is unchanged. "
-                    f"{follow_up}"
+                    "{detail} Your complete request is saved and your draft is unchanged. "
+                    "{follow_up}"
                 ),
-                tr=f"{detail} Tüm isteğin kaydedildi ve taslağın değişmedi. {follow_up}",
+                tr="{detail} Tüm isteğin kaydedildi ve taslağın değişmedi. {follow_up}",
+                detail=detail,
+                follow_up=follow_up,
             ),
         ),
         manifest_hash=manifest.manifest_hash,
@@ -5813,13 +6145,14 @@ async def _gate_unresolved_choices(
                     target=state.target, dependency_digest=media_digest(planned.media_snapshot)
                 )
             )
-            if current_reply_language() == "tr":
+            if (button_language := chat_button_language()) is not None:
                 # KRI-520: English option labels stay as aliases.
-                localize_question(question, "tr")
+                localize_question(question, button_language)
             message = (
                 say(
-                    en=f"“{state.candidate}” — does this wording work?",
-                    tr=f"“{state.candidate}” — bu ifade sana uyar mı?",
+                    en="“{state_candidate}” — does this wording work?",
+                    tr="“{state_candidate}” — bu ifade sana uyar mı?",
+                    state_candidate=state.candidate,
                 )
                 if state.candidate
                 else say(
@@ -6140,8 +6473,8 @@ async def _gate_unresolved_choices(
                 target="opening_title",
                 dependency_digest=media_digest(planned.media_snapshot),
             )
-            if current_reply_language() == "tr":
-                localize_question(title_question, "tr")
+            if (button_language := chat_button_language()) is not None:
+                localize_question(title_question, button_language)
             return replace(
                 planned,
                 plan=KriaTurnPlan(
@@ -6313,13 +6646,17 @@ def _clip_moment_notice(
         lines.append(
             say(
                 en=(
-                    f"I couldn't find {moment.words} in clip {n} on my own, so clip {n} plays "
-                    f"from {start:.1f} s to {end:.1f} s and may not show it."
+                    "I couldn't find {moment_words} in clip {n} on my own, so clip {n} plays "
+                    "from {start:.1f} s to {end:.1f} s and may not show it."
                 ),
                 tr=(
-                    f"{n}. klipte \u201c{moment.words}\u201d kısmını kendim bulamadım; {n}. "
-                    f"klibin {start:.1f}-{end:.1f} sn arası oynuyor ve bunu göstermeyebilir."
+                    "{n}. klipte “{moment_words}” kısmını kendim bulamadım; {n}. "
+                    "klibin {start:.1f}-{end:.1f} sn arası oynuyor ve bunu göstermeyebilir."
                 ),
+                moment_words=moment.words,
+                n=n,
+                start=start,
+                end=end,
             )
         )
     return " ".join(lines[:2]) or None
@@ -6521,8 +6858,9 @@ async def _plan_scoped_turn(
                 )
             )
         reply = say(
-            en=f"Updated {plan_review.scope_phrase(sorted(covered, key=scope.index))}.",
-            tr=f"{plan_review.scope_phrase(sorted(covered, key=scope.index))} güncellendi.",
+            en="Updated {v1}.",
+            tr="{v1} güncellendi.",
+            v1=plan_review.scope_phrase(sorted(covered, key=scope.index)),
         )
 
     dropped: list[dict[str, str]] = []
@@ -6630,6 +6968,30 @@ _UNSAVED_EDITS_REPLY_TR = (
 )
 
 
+_GENERATION_READY_REPLY = (
+    "Your image is ready. Review it before it goes in your video. Nothing in the edit changed."
+)
+_GENERATION_READY_REPLY_TR = (
+    "Görselin hazır. Videoya girmeden önce gözden geçir. Düzenlemede hiçbir şey değişmedi."
+)
+_GENERATION_STARTED_REPLY = (
+    "I started your image. It shows up on the card when it is ready, and you review it before it "
+    "goes in your video."
+)
+_GENERATION_STARTED_REPLY_TR = (
+    "Görselini hazırlamaya başladım. Hazır olunca kartta görünür, videoya girmeden önce sen "
+    "gözden geçirirsin."
+)
+_GENERATION_FAILED_REPLY = "I couldn't make the image this time. Nothing in the edit changed."
+_GENERATION_FAILED_REPLY_TR = "Bu sefer görseli yapamadım. Düzenlemede hiçbir şey değişmedi."
+_GENERATION_BUDGET_REPLY = (
+    "Image generation is paused right now, so I didn't make one. Nothing in the edit changed."
+)
+_GENERATION_BUDGET_REPLY_TR = (
+    "Görsel üretimi şu an durduruldu, bu yüzden görsel yapmadım. Düzenlemede hiçbir şey değişmedi."
+)
+
+
 async def plan_pinned_suggestion_turn(
     db: AsyncSession,
     *,
@@ -6708,11 +7070,12 @@ async def plan_pinned_suggestion_turn(
     suggestion = card.suggestion
     action = suggestion.action
     restate = pinned.restates_strategy(action)
+    spends = pinned.spends(action)
     ops = pinned.editor_ops(action)
     allow = pinned.PINNED_OP_ALLOW
     if ops is None and (ops := pinned.copy_ops(action)) is not None:
         allow = pinned.COPY_OP_ALLOW
-    if ops is None and not restate:
+    if ops is None and not restate and not spends:
         return _no_longer_fits(pinned.ACTION_UNSUPPORTED)
     if (ops is not None and pinned.disallowed_op(ops, allow) is not None) or (
         not pinned.kind_enabled(suggestion)
@@ -6781,14 +7144,72 @@ async def plan_pinned_suggestion_turn(
         )
         if rebuilt is None or type(rebuilt) is not type(action):
             return _no_longer_fits(pinned.BASE_MOVED)
+        if spends and getattr(rebuilt, "cost_usd", None) != getattr(action, "cost_usd", None):
+            return _no_longer_fits(pinned.BASE_MOVED)
         action = rebuilt
         ops = pinned.editor_ops(action)
         if ops is None:
             ops = pinned.copy_ops(action)
-        if (ops is None and not restate) or (
+        if (ops is None and not restate and not spends) or (
             ops is not None and pinned.disallowed_op(ops, allow) is not None
         ):
             return _no_longer_fits(pinned.BASE_MOVED)
+
+    if spends:
+        # The card quotes a price; the tap is the creator's yes (the app asks first, and only a
+        # build that does is offered the card). One operation per card: a repeat finds it.
+        from app.services import generated_media  # noqa: PLC0415
+        from app.services.suggestions.kinds import generated_overlay  # noqa: PLC0415
+
+        if pinned.is_consumed(thread.state, set_id, suggestion_id):
+            return _no_longer_fits(pinned.CONSUMED)
+        prompt = str(action.spec.get("prompt") or "")
+        if not prompt or not generated_media.generated_images_available(
+            creator_id, client_protocol
+        ):
+            return _no_longer_fits(pinned.GENERATION_UNAVAILABLE)
+        made = await asyncio.to_thread(
+            generated_media.generate_image_for_card,
+            owner_id=creator_id,
+            item_id=item_id,
+            prompt=prompt,
+            event_id=generated_overlay.event_id(set_id, suggestion_id),
+        )
+        log.info(
+            "suggestion_pin.spent",
+            thread_id=str(thread_id),
+            kind=suggestion.kind,
+            state=made.state,
+            failure_code=made.failure_code,
+        )
+        if made.state == "failed":
+            budget = made.failure_code == "budget_unavailable"
+            return _reply(
+                say(
+                    en=_GENERATION_BUDGET_REPLY if budget else _GENERATION_FAILED_REPLY,
+                    tr=_GENERATION_BUDGET_REPLY_TR if budget else _GENERATION_FAILED_REPLY_TR,
+                ),
+                pinned.BUDGET_UNAVAILABLE if budget else pinned.GENERATION_FAILED,
+            )
+        ready = made.state == "ready"
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="review",
+                response=say(
+                    en=_GENERATION_READY_REPLY if ready else _GENERATION_STARTED_REPLY,
+                    tr=_GENERATION_READY_REPLY_TR if ready else _GENERATION_STARTED_REPLY_TR,
+                ),
+                diagnostics=_record(
+                    "generated",
+                    operation_id=str(made.operation_id),
+                    state=made.state,
+                    event_id=str(generated_overlay.event_id(set_id, suggestion_id)),
+                ),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
 
     brief_fields: dict[str, Any] = {}
     parsed: list[dict] | None = None
@@ -7016,9 +7437,12 @@ async def _plan_live_turn(
         await _load_thread_events(db, thread_id, release=False),
         dependency_digest=media_digest(snapshot_media(item)),
     )
-    # A copy-bearing edit stays on the planner path, including revisions: editor
-    # text rewrites cannot silently replace separately approved words.
-    creative_copy_pending = bool(creative_copy_states)
+    # Only a wording question still being answered keeps the turn on the planner path. Settled
+    # words stay protected at draft commit, which refuses an editor draft that changes them
+    # (`creative_copy_problem(editor_text=...)`).
+    creative_copy_pending = any(
+        state.status in OPEN_COPY_STATES for state in creative_copy_states.values()
+    )
     brief_on = settings.creative_brief_for(creator_id)
     binding_on = settings.brief_binding_for(creator_id)
     latest_job_failed = False
@@ -7026,6 +7450,12 @@ async def _plan_live_turn(
     if item.current_job_id is not None:
         latest_job = await db.get(Job, item.current_job_id)
         latest_job_failed = str(getattr(latest_job, "status", "") or "").endswith("failed")
+    # A re-plan whose render failed leaves the video the creator still has on an earlier job.
+    last_ready = (
+        await _last_ready_render(db, thread_id=thread_id, item=item, job=latest_job)
+        if latest_job_failed
+        else None
+    )
     latest_variants = [
         row
         for row in (getattr(latest_job, "assembly_plan", None) or {}).get("variants") or []
@@ -7095,7 +7525,7 @@ async def _plan_live_turn(
     extract_first = (
         brief_on
         and item.current_job_id is not None
-        and (not latest_job_failed or failed_editor_correction)
+        and (not latest_job_failed or failed_editor_correction or last_ready is not None)
         and not creative_copy_pending
         and manifest.capabilities["dispatch_render"].available
     )
@@ -7523,6 +7953,13 @@ async def _plan_live_turn(
         updates=updates,
         states=inputs.creative_copy_state or {},
     )
+    from app.kria.text_sequence import recover_overflowed_literals  # noqa: PLC0415
+
+    # KRI-1352: regenerating from a brief written before 280-character sequence literals gets its
+    # approved paragraph back as the literal, as a new brief version before approval. Only a turn
+    # that proposes a draft: a question or answer turn does not rewrite the brief.
+    if output.action.kind == "propose_strategy":
+        updates = recover_overflowed_literals(prior_brief, updates)
     updates, pin_notices = await _withdraw_stuck_pins(
         db, thread_id=thread_id, prior=prior_brief, updates=updates, user_message=user_message
     )

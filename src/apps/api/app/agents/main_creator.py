@@ -93,6 +93,7 @@ MAIN_CREATOR_PROMPT_SOURCES = (
     "app/agents/skills/grounded-hook/SKILL.md",
     "app/agents/skills/meaningful-moment/SKILL.md",
     "prompts/main_creator.txt",
+    "prompts/main_creator_split_screen.txt",
     "prompts/main_creator_turn.txt",
 )
 MAIN_CREATOR_PROMPT_VERSION = prompt_fingerprint("mc", MAIN_CREATOR_PROMPT_SOURCES)
@@ -261,9 +262,9 @@ for it full screen: only then set `display_mode` "fullscreen" ("show the grill p
 when I say Argentinian", "'oblea' dediğinde fotoğraf tam ekran gelsin"); a small card, "in the
 corner" or no mention is "pip" (omit it). Do this only when the manifest advertises
 `media_overlays:fullscreen`; otherwise keep the photo a corner card and say so plainly in
-`summary`. "For a moment", "briefly" or "bir an" means `hold_s` 1.0 to 1.5. A full-screen photo
-at a spoken word is a beat with `display_mode` "fullscreen", never `overlay_display`
-"fullscreen_images" (that spreads photos evenly, not at a word).
+`summary`. For a photo beat, "for a moment", "briefly" or "bir an" means `hold_s` 1.0 to 1.5. A
+full-screen photo at a spoken word is a beat with `display_mode` "fullscreen", never
+`overlay_display` "fullscreen_images" (that spreads photos evenly, not at a word).
 This edit always stays `edit_format: "subtitled"`. Beats never
 replace a title: when the creator asks for a hook/opening title or closing text, still set
 `opening_title` / `closing_title` by the title rules above, alongside the beats.
@@ -597,17 +598,25 @@ When the creator wants each photo or video to show while they talk about it ("wh
 video I'm talking about", "when I mention it", "hangi fotoğraftan bahsediyorsam o arkamda
 olsun"), give every entry a `spoken_phrase`: the few words from THIS take that name what it shows,
 copied as spoken from the speaker clip's timed `segments` (or transcript) in
-`analysis_only_not_copy` (e.g. "the night market", "her new tablet", "drones"). List the entries
+`analysis_only_not_copy` (e.g. "the night market", "her new tablet", "drones"). Take them from the
+sentence that is ABOUT what it shows: its people, product, place, or the names and text on it (a
+post by two brands' accounts goes on the line that names their partnership). Never move one to a
+later or closing line just to fill time; the one before staying on longer is fine. List the entries
 in the order those words are spoken; each one shows on its words and stays until the next. Two
 photos or videos of the same thing get the same spoken_phrase and play one after the other in the
 order listed. Leave out any photo or video they never talk about and name it in `summary` ("I left
-out the lunch photo: you don't talk about it"). When the creator pairs only some photos with words
+out the lunch photo: you don't talk about it"). Also list each one in `background_media.left_out`
+as {"name": "<its name, in their language>", "why": "no_recording" (they talk about it but no
+photo or video for it is attached, so the previous one stays on) or "not_said" (one is attached
+but they never mention it)}; the finished video's reply tells them, `summary` is not shown then.
+Leave `left_out` out when nothing is left out. When the creator pairs only some photos with words
 ("the beach photo when I say beach"), give only those a `spoken_phrase`. Otherwise (a plain
 rotation such as "change every 3 seconds") leave it out and the photos take turns in the order
 listed. Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the
 creator names one ("every 3 seconds", "5 saniyede bir"), and use the midpoint of a range ("3-5
-seconds" = 4). List each photo or video once unless the creator wants repeats; the list repeats by
-itself until the talk ends. Copy exact `media_id`s from `media_context`, never invent one, never
+seconds" = 4). Set it with `spoken_phrase`s too: the finished video's reply checks it. List
+each photo or video once unless the creator wants repeats; the list repeats by itself until the
+talk ends. Copy exact `media_id`s from `media_context`, never invent one, never
 use the speaker's own clips. With a `sequence`, `background_media.media_id` is the FILL shown
 wherever no window covers the time: use the first entry's id unless the creator names a different
 fill. `speaker_frame` places the speaker (cut out of their own background) as a small picture over
@@ -949,6 +958,9 @@ follow-up requests to remove extra text: preserve existing subtitle language and
 Only an explicit request to remove captions/subtitles, or all writing INCLUDING
 subtitles, turns off that speech-caption requirement. A named smaller heading under a
 title remains authored text. Keep explicit wording, scope and later corrections intact.
+An explicit ask for NO title, in any language ("no title", "kein Titel", "başlık olmasın"), is
+{"kind": "text", "scope": "title", "literal": null, "description": "<their words>", "facts":
+{"title": "off"}}: never a wish for a title the creator did not word. Only that ask sets it.
 
 Words shown on screen a piece at a time are NOT captions. When the creator quotes words, or
 says show / display / title / write, and asks for them one word (or phrase) at a time ("show
@@ -1006,7 +1018,10 @@ behind them, "speaker_small": true when they want to be small in a corner and "b
 "<the colour as said, or its hex>" for a plain colour instead of a photo or video ("a plain white
 background", "arkam düz yeşil olsun"). Sound that merely
 plays in the background ("background music", "arka plan müziği") is NOT this and records no such
-fact. How on-screen text should look goes in the
+fact. When they also ask to zoom into the recordings behind them so the text can be
+read ("zoom into the recordings so the text is readable", "kayıtlara yakınlaş, yazılar
+okunsun"), add "background_zoom": true to that same requirement. How on-screen text should look
+goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
@@ -1031,8 +1046,16 @@ sticker, sound or on-screen text timed to spoken words ("show the medal photo wh
 the creator wrote them, never translated, plus "speaker" (the creator's words for who) only when
 someone other than the creator says them: "Show MEROPE in big letters the first time she says
 Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], "speaker":
-"she"}; a photo or video shown full screen ("tam ekran", "full screen") or as a small card
-("in the corner") => add "display_mode": "fullscreen" or "pip" to those same facts, nothing when
+"she"}; how long a text at a spoken word stays => "hold_s", the seconds as a number from their
+own words ("put PROVOLETA big on screen for about a second" when he says "grilled cheese" =>
+{"triggers": ["grilled cheese"], "hold_s": 1.0}; "bir saniye boyunca" => 1.0), the last length
+they state when they correct themselves ("for 1 second, no, 2 seconds" => 2.0); a later message
+that changes the length ("make it 3 seconds") MUST put the new `hold_s` in that same change,
+because the old `hold_s` stays when the change omits it; no `hold_s` when they name no length (for
+a text, "for a moment" or "a bit longer") or the seconds time the word, not the text ("within the
+first 5 seconds", "a second after he says it", "for a second time"); a photo or video shown full
+screen ("tam ekran", "full screen") or as a small card ("in the corner") => add "display_mode":
+"fullscreen" or "pip" to those same facts, nothing when
 the creator says neither; two photos shown differently in one message => ONE requirement per
 photo, each with its own display_mode; keep a take whole, uncut ("use the whole clip as it is",
 "don't trim anything", "keep everything") => {"keep_whole_take": true} plus
@@ -1096,7 +1119,10 @@ later answer that question in their own words, record it on that same requiremen
 translated; brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
-light yet, so never say in `summary` that it is brightened or darkened; how sideways
+light yet, so never say in `summary` that it is brightened or darkened; a line, outline or glow
+drawn around the creator or another person ("put an orange line around me", "etrafıma turuncu bir
+çizgi çiz") => a `style` requirement with {"subject_outline": true} (scoped to the clip it names);
+no edit can draw one yet, so never say in `summary` that it is drawn; how sideways
 (horizontal) clips sit in a vertical video => a `style` requirement with {"landscape_fit": "fill"}
 when the creator wants them cropped to fill the frame ("make it all vertical", "no black bars",
 "hepsini dikey yap", "siyah bant olmasın") or {"landscape_fit": "fit"} when they want them whole
@@ -1332,6 +1358,20 @@ def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: boo
     return with_full_opening_brief(section) if full_opening_open else section
 
 
+# KRI-1360: appended to the Main Creator and brief extractor prompts only for the message that
+# answers a "Change my request" tap. The model decides what the new request drops.
+CHANGED_REQUEST_SECTION = """CHANGED REQUEST
+The creator just tapped "Change my request" on a draft that was held. Read the CURRENT USER
+MESSAGE as their new request for the CONTENT of the edit: what to show, where or when to show
+it, which clips or photos to use, the order, the length, the text to print. `remove` each
+earlier content requirement in the contract that this message changes or no longer asks for,
+unless it says to keep it or only adds to it. Restrictions the creator set stay in force even
+when this message does not repeat them: no title, no captions, muted or kept-down sound, a clip
+or photo to leave out, anything they said not to do. Change or remove a restriction only when
+this message contradicts it or asks for that very thing. Record what the message asks as
+usual."""
+
+
 class MainCreatorInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1358,6 +1398,9 @@ class MainCreatorInput(BaseModel):
     # gates contradict (`app.kria.ask_refusals`). Empty => the prompt is byte-identical and the
     # field is left out of input dumps. Server-authored; never the creator's words.
     server_note: str = Field(default="", max_length=1000, exclude_if=lambda v: not v)
+    # KRI-1360: this message answers the creator's "Change my request" tap. False => the prompt
+    # is byte-identical and the field is left out of input dumps.
+    changes_request: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class MainCreatorOutput(BaseModel):
@@ -1598,6 +1641,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
             ),
         )
+        split_capability = input.capability_manifest.capabilities.get("split_screen")
+        if split_capability is not None and split_capability.available:
+            prompt += "\n" + load_prompt("main_creator_split_screen")
         turn = load_prompt(
             "main_creator_turn",
             creator_context=input.creator_context or "(not available)",
@@ -1636,6 +1682,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         language_line = prompt_language_line(input.reply_language)
         if input.server_note:
             prompt = f"{prompt.rstrip(chr(10))}\n\nSERVER CHECK\n{input.server_note}\n"
+        if input.changes_request and input.brief_enabled:
+            prompt = f"{prompt.rstrip(chr(10))}\n\n{CHANGED_REQUEST_SECTION}\n"
         return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002

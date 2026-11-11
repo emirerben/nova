@@ -35,6 +35,9 @@ LIST_LABEL_SOURCE = "list_label"
 LIST_LABEL_ELEMENT_PREFIX = "list-label-"
 # The variant's receipt of every list-label ask: placed (where and when) or why not.
 LIST_LABEL_FIELD = "list_label_placement"
+# KRI-1284: a spoken-text row drawn in the list-label look (a numbered list on spoken words). The
+# restyle leaves it as placed, like a list label.
+LIST_LABEL_LOOK_PARAM = "list_label_look"
 
 # Her labels stay 2.5-3 s; the shortest worth drawing (no flicker); her spot (bottom, centred).
 HOLD_S = 3.0
@@ -294,7 +297,8 @@ def _hearings(stream: Sequence[Any], timed: list[dict], item: str) -> list[tuple
 
     phrase = _split_camel(item.replace("-", " "))
     exact = [
-        (float(a), float(b)) for a, b, _heard in grounding._phrase_windows(stream, timed, phrase)
+        (float(a), float(b))
+        for a, b, _heard in grounding._phrase_windows(stream, timed, phrase, joined=True)
     ]  # noqa: SLF001
     return (
         exact
@@ -612,35 +616,23 @@ class LabelTooLong(ValueError):
     """The whole label does not fit the label band even at the smallest size."""
 
 
-def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: Any) -> dict:
-    """The label's text row: ALL of ``ask.text`` (never cut, so never cut mid-word), wrapped and
-    shrunk into the label band; `LabelTooLong` when even the smallest size does not fit."""
-    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+def label_look(row: dict, *, canvas: Any) -> dict:
+    """``row`` in her list-label look: bold cream letters with a dark outline (her V5), its WHOLE
+    text (never cut, so never cut mid-word) wrapped and shrunk into the label band. The row's
+    spot (``y_frac``) is left as it is. `LabelTooLong` when even the smallest size does not fit.
+
+    KRI-1284: the spoken-text lane draws a numbered list in this look too, so every label of one
+    list reads the same over a light README page and a dark terminal alike."""
     from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
 
-    text = ask.text
-    fields = {**narrated_title_placement(text, canvas=canvas, explicit=True)}
-    fields["y_frac"] = LABEL_Y_FRAC  # her spot (bottom, centred) unless a face/caption is there
-    # Her look (V5): bold cream letters with a dark outline, readable over a screen recording
-    # (thin white serif text vanished into README text on the simulator). Drawn with the
-    # outline the portable text layer already supports: no new phone capability.
-    fields.update(
-        font_family=LABEL_FONT_FAMILY,
-        color=LABEL_COLOR,
-        stroke_color=LABEL_STROKE_COLOR,
-        stroke_width=LABEL_STROKE_WIDTH,
-    )
-    element = TextElement(
-        id=f"{LIST_LABEL_ELEMENT_PREFIX}{ask.requirement_id}",
-        text=text,
-        start_s=start_s,
-        end_s=end_s,
-        role="generative_intro",
-        **fields,
-        effect="fade-in",
-        source_params={"source": LIST_LABEL_SOURCE, "requirement_id": ask.requirement_id},
-    )
-    row = element.model_dump(mode="json", exclude_none=True)
+    # Drawn with the outline the portable text layer already supports: no new phone capability.
+    row = {
+        **row,
+        "font_family": LABEL_FONT_FAMILY,
+        "color": LABEL_COLOR,
+        "stroke_color": LABEL_STROKE_COLOR,
+        "stroke_width": LABEL_STROKE_WIDTH,
+    }
 
     def _in_band(box: NormalizedBox) -> bool:
         return (
@@ -661,8 +653,28 @@ def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: A
     row["size_px"] = max(size, _MIN_LABEL_SIZE_PX)
     if not fits and not _in_band(_measure_title_box(row, canvas=canvas)):
         # Review of #2116: her words are never cut to make the label fit; the receipt says why.
-        raise LabelTooLong(f"{len(text)} characters do not fit the label band")
+        raise LabelTooLong(f"{len(row.get('text') or '')} characters do not fit the label band")
     return row
+
+
+def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: Any) -> dict:
+    """The label's text row at her spot, in her look (`label_look`)."""
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+    text = ask.text
+    fields = {**narrated_title_placement(text, canvas=canvas, explicit=True)}
+    fields["y_frac"] = LABEL_Y_FRAC  # her spot (bottom, centred) unless a face/caption is there
+    element = TextElement(
+        id=f"{LIST_LABEL_ELEMENT_PREFIX}{ask.requirement_id}",
+        text=text,
+        start_s=start_s,
+        end_s=end_s,
+        role="generative_intro",
+        **fields,
+        effect="fade-in",
+        source_params={"source": LIST_LABEL_SOURCE, "requirement_id": ask.requirement_id},
+    )
+    return label_look(element.model_dump(mode="json", exclude_none=True), canvas=canvas)
 
 
 def list_label_rows(
@@ -861,6 +873,7 @@ __all__ = [
     "LABEL_Y_FRAC",
     "LIST_LABEL_ELEMENT_PREFIX",
     "LIST_LABEL_FIELD",
+    "LIST_LABEL_LOOK_PARAM",
     "LIST_LABEL_SOURCE",
     "MIN_S",
     "LabelAnchor",
@@ -870,6 +883,7 @@ __all__ = [
     "find_spoken_list",
     "ground_on_words",
     "label_item",
+    "label_look",
     "label_start",
     "list_label_asks",
     "list_label_rows",

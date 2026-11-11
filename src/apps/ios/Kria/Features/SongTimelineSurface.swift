@@ -34,11 +34,18 @@ struct SongTimelineSurfaceActions {
     var seek: (Double) -> Void
 }
 
-/// Where the clips are on screen (global coordinates), so the lane recognizer can tell at touch-down whether a finger
-/// landed on a clip (it then drags that clip) or on empty lane (it scrubs). Plain storage, not state: it is read on
-/// the very first touch sample, before SwiftUI could re-render.
+/// Where the clips are, so the lane recognizer can tell at touch-down whether a finger landed on a clip (it then
+/// drags that clip) or on empty lane (it scrubs). Plain storage, not state: it is read on the very first touch
+/// sample, before SwiftUI could re-render. The rects are lane-local and `origin` is the lane's live global origin,
+/// because scrolling the chat moves the lane without re-rendering it.
 final class SongTimelineLaneGate {
     var blocks: [(mediaID: String, rect: CGRect)] = []
+    var origin: CGPoint = .zero
+
+    func blockID(atGlobal point: CGPoint) -> String? {
+        let local = CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+        return blocks.last { $0.rect.contains(local) }?.mediaID
+    }
     /// The clip under the finger at touch-down, nil for empty lane or ruler.
     var touchedBlockID: String?
 }
@@ -127,7 +134,7 @@ struct SongTimelineSurface: View {
                 .onChange(of: width) { _, newWidth in clock.fit(viewportWidth: newWidth) }
         }
         .frame(height: Layout.total)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { scratch.globalFrame = $0 }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { scratch.globalFrame = $0; gate.origin = $0.origin }
         .onDisappear { cancelLift() }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("song-timeline-scroll")
@@ -162,13 +169,11 @@ struct SongTimelineSurface: View {
         }
     }
 
-    /// Each clip's rectangle in global coordinates, topmost last, for the lane recognizer's touch-down test.
+    /// Each clip's rectangle in lane coordinates, topmost last, for the lane recognizer's touch-down test.
     private func blockRects(_ segments: [SongTimelineState.Segment], _ axis: Axis) -> [(mediaID: String, rect: CGRect)] {
-        let origin = scratch.globalFrame.origin
-        return segments.map { segment in
+        segments.map { segment in
             let width = max(44, CGFloat(segment.end - segment.start) * axis.pps)
-            let local = CGRect(x: axis.x(segment.start), y: Layout.clipTop, width: width, height: Layout.clipHeight)
-            return (segment.mediaID, local.offsetBy(dx: origin.x, dy: origin.y))
+            return (segment.mediaID, CGRect(x: axis.x(segment.start), y: Layout.clipTop, width: width, height: Layout.clipHeight))
         }
     }
 
@@ -622,7 +627,7 @@ struct SongTimelineLaneRecognizer: UIGestureRecognizerRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
             let point = touch.location(in: nil)
-            gate.touchedBlockID = gate.blocks.last { $0.rect.contains(point) }?.mediaID
+            gate.touchedBlockID = gate.blockID(atGlobal: point)
             return true
         }
 

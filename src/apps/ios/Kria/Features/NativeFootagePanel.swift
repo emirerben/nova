@@ -8,6 +8,9 @@ struct NativeFootagePanel: View {
 
     var body: some View {
         Group {
+            if selection.kind == .clip {
+                NativeSplitScreenControls(session: session, selection: selection)
+            }
             if session.rendersOnDevice {
                 deviceControls
             } else {
@@ -16,7 +19,6 @@ struct NativeFootagePanel: View {
         }
         // Recreate the controls when the inspector follows another item.
         .id(selection)
-        .sheet(isPresented: $showCrop) { NativeCropSheet(session: session, selection: selection) }
     }
 
     /// Crop opens the shared editor; the clip's `clips.source_crop` capability (or, for an overlay, its section) decides.
@@ -31,6 +33,7 @@ struct NativeFootagePanel: View {
         }
         .disabled(blocked != nil)
         .accessibilityIdentifier("native-editor-footage-crop")
+        .sheet(isPresented: $showCrop) { NativeCropSheet(session: session, selection: selection) }
         if let blocked { Text(blocked).font(.footnote).foregroundStyle(.secondary) }
     }
 
@@ -96,6 +99,95 @@ struct NativeFootagePanel: View {
         // A clip is cropped only where the server explicitly lists `clips.source_crop`; an overlay or visual keeps its section gate.
         if selection.kind != .clip || session.serverOffersClipCrop || session.footageCrop(for: selection) != nil {
             Section("Crop") { cropRow }
+        }
+    }
+}
+
+/// The per-clip actions of the Adjust sheet. Creating and laying out a split moved to the Split tool (`NativeSplitPanel`);
+/// panel heights are dragged on the preview and panels are reordered there too.
+struct NativeSplitScreenControls: View {
+    @ObservedObject var session: NativeEditorSession
+    let selection: EditorSelection
+    @Environment(\.dismiss) private var dismiss
+    @State private var showsReplace = false
+
+    private var slot: EditorTimelineSlot? {
+        guard let clip = session.timelineClips.first(where: { $0.id.uuidString == selection.id }) else { return nil }
+        return session.document.clips.first { $0.id == clip.slotID }
+    }
+
+    private var isSplitMember: Bool { slot?.splitSectionID != nil }
+
+    var body: some View {
+        Section("Clip") {
+            actionError
+            clipActions
+        }
+        .disabled(isSplitMember ? !session.canEditSplitScreen : !session.canEditTimeline)
+    }
+
+    @ViewBuilder private var actionError: some View {
+        if let error = session.splitScreenActionError {
+            Text(error).foregroundStyle(KriaColor.failureText)
+                .accessibilityIdentifier("native-editor-split-error")
+        }
+    }
+
+    @ViewBuilder private var clipActions: some View {
+        if let speaker = session.speakerSelection(forClip: selection) {
+            Button("Speaker position") {
+                dismiss()
+                session.select(speaker, seekToStart: false)
+            }
+            .accessibilityIdentifier("native-editor-clip-speaker-position")
+        }
+        LabeledContent("Footage", value: session.splitScreenSourceChoices.first { $0.clipIndex == slot?.clipIndex }?.label ?? "Clip")
+            .accessibilityIdentifier("native-editor-split-source")
+        Button("Cut at playhead") { session.splitSelectedClip() }
+            .disabled(!session.canSplitSelectedClip)
+            .accessibilityIdentifier("native-editor-split-cut")
+            .accessibilityHint("Move the playhead inside this clip to cut it into two clips")
+        Button("Duplicate clip") { session.duplicateSelectedClip() }
+            .disabled(!session.canDuplicateSelectedClip)
+            .accessibilityIdentifier("native-editor-split-duplicate")
+            .accessibilityHint(isSplitMember ? "Requires enough unused time after this clip in the same panel" : "Adds another copy after this clip")
+        replaceFootage
+        if let error = session.addClipError {
+            Text(error).font(.footnote).foregroundStyle(KriaColor.failureText)
+                .accessibilityIdentifier("native-editor-split-source-error")
+        }
+    }
+
+    /// A clip inside a split swaps its footage through the Gallery | Saved picker, or from footage already in the edit. An ordinary clip still picks from
+    /// the footage already in the edit.
+    @ViewBuilder private var replaceFootage: some View {
+        if isSplitMember, let slotID = slot?.id {
+            Button("Replace footage") { showsReplace = true }
+                .disabled((!session.canAddTimelineMedia && session.splitScreenSourceChoices.isEmpty) || session.isAddingClip)
+                .accessibilityIdentifier("native-editor-split-replace")
+                .sheet(isPresented: $showsReplace) { NativeSplitReplaceSheet(session: session, slotID: slotID) }
+            if let reason = session.addClipUnavailableReason {
+                Text(reason).font(.footnote).foregroundStyle(.secondary)
+            }
+        } else {
+            Menu {
+                ForEach(session.splitScreenSourceChoices, id: \.clipIndex) { source in
+                    Button(source.label) { session.replaceSelectedClipSource(clipIndex: source.clipIndex) }
+                }
+            } label: {
+                HStack {
+                    Text("Replace footage")
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down").foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .disabled(session.splitScreenSourceChoices.isEmpty)
+            .accessibilityIdentifier("native-editor-split-replace")
+            if session.splitScreenSourceChoices.isEmpty {
+                Text("Replacement footage is not available yet.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
         }
     }
 }

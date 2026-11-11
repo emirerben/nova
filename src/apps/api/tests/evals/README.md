@@ -53,6 +53,7 @@ pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 | `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |
 | `nova.compose.narrated_clip_alignment` | ✓ | `rubrics/narrated_clip_alignment.md` | live-captured goldens (cacio e pepe, locked + free order; Cappadocia pinned-last, re-sorted from prod 38caaebd) | — |
+| `nova.compose.spoken_cue_resolver` | ✓ | — | hand-authored replay golden (de1 "Null zu null" → "0 zu 0", "1. FC Nürnberg" → "FC Nürnberg", a cue never said → null); no live capture yet (KRI-1356) | — |
 
 ## Layer-2 text-overlay pipeline eval
 
@@ -326,6 +327,62 @@ pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_suggestion_ag
   (budget, call cap, timeout, refusal, truncation, provider error, empty ranking) comes from its
   real cause and makes exactly one paid attempt.
 
+### Live run of the suggestion agent (`test_live_thread`, KRI-1254)
+
+Ten anonymized thread inputs (`tests/fixtures/agent_evals/suggestion_agent_threads/*.json`: five
+first-prompt, five ready, English and Turkish, photos, a 12-clip pile, a noisy-audio clip, typed
+requests; transcripts and measured signals are keyed by clip ordinal) go through the REAL task body
+`kria_suggester._run_agent`, the real prompt and strict schema, and the real serve join. In
+`--eval-mode=live` the model is the production `ModelDispatcher` on `KRIA_SUGGESTER_MODEL`
+(OpenAI, so `OPENAI_API_KEY`, not the Gemini key), and the reservation is the real ledger. The task's
+`RunContext` is swapped for the conftest attribution (`live_eval`, the run id, the approved cap, the
+acknowledgement), so the run books under the `suggestions` capability and
+`AI_OPENAI_SUGGESTIONS_BUDGET_USD` must be set for it, and so must the provider-wide
+`AI_OPENAI_MONTHLY_BUDGET_USD` (the ledger checks both; each defaults to 0 = no spend; the file
+refuses to start when either is below the batch worst case). The conftest gate refuses a run without all
+four flags or over $2; the file also refuses a batch whose worst case exceeds `--max-cost-usd`
+before the first call. Without `--eval-mode=live` the same ten threads run against a zero-cost
+stand-in model and `test_live_thread` skips.
+
+```bash
+cd src/apps/api
+NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+AI_OPENAI_MONTHLY_BUDGET_USD=2 AI_OPENAI_SUGGESTIONS_BUDGET_USD=2 \
+pytest tests/evals/test_suggestion_agent_evals.py --eval-mode=live --usage-purpose=live_eval \
+  --test-run-id=suggestion-agent-<date> --max-cost-usd=2 --approve-reservation
+```
+
+The run writes `.suggestion-agent-live/<run id>/report.json` (git-ignored): per-thread picks, served
+cards, drop reasons, cost, latency and the raw answer, plus the summary below. A run that ends in
+`provider_error`, `timeout` or `budget` fails (no usable paid call); `refusal`, `truncated`,
+`schema_error`, `empty_ranking` and `no_usable_picks` are measured outcomes and are reported.
+
+Reading the numbers:
+
+- `cost_usd_*` is the ledger-settled cost of each run; `estimated_cost_usd_total` is the worst-case
+  preflight. Monthly budget = cost per run x runs per day (the KRI-1249 funnel) x 30, with 2x headroom.
+- `witness_pass_share` is the task's own `n_out / n_in` (a pick the engine or registry accepts).
+  `ready_cards_per_pick` is stricter: picks that became a proven v2 card in a finished edit. Hook
+  picks still drop as `no_action` (stub builder), which pulls that second number down by design.
+
+Recorded runs (fill from `report.json`):
+
+| Date | Run id | Model | Prompt | Cost / run (mean, max) | p50 / p95 latency | witness_pass_share | ready_cards_per_pick |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-08 | `suggestion-agent-2026-11-08` | `gpt-6.1-sol` | `2026-11-04.1` | $0.0084, $0.0114 ($0.0842 for the 10 runs; preflight worst case $0.313) | 10.3 s / 22.0 s | 1.00 (26 of 26 picks) | 0.75 |
+
+The 10 runs all finished `ok` (no fallback, 0 contract problems). The p95 of 10 runs is the slowest
+one (`t09_hafta_sonu_titled_ready_tr`, 22.0 s; every other run is 5.8 to 14.1 s), so read it as a
+ceiling for this sample, not a tail estimate. The only drop reason is `no_action`
+(20 picks, the stub builder described above). The run used a scratch local Postgres as its development
+ledger (`createdb` plus `alembic upgrade head`; the repo `.env` role `postgres` does not exist on a
+dev machine, which shows up as a `budget` fallback with no spend).
+
+Budget read: mean cost x 30 x 2 headroom = $0.51 per (runs per day), so a $10 sub-budget covers
+about 20 agent runs a day with headroom (about 40 with none). Past that the agent fails closed to
+the deterministic set (`fallback_reason=budget`), never an error. No production run count has been
+measured yet (the KRI-1249 funnel read of prod is pending), so revisit the number when it is.
+
 ### Telemetry (contract section 8), asserted with `structlog.testing.capture_logs`
 
 `suggestion_chips.shown` (once per final `set_id`; the pending set does not emit),
@@ -354,9 +411,8 @@ flag-on cohort, not a tap rate.
    preference, founder agrees on 10. UNMEASURED.
 4. **Agent-picked vs deterministic order A/B** by `wording` in real taps (needs the flag on for a
    cohort).
-5. **Live replay of `nova.chat.suggestion_agent`** (gpt-6.1-sol, about 10 real threads, approved
-   development-ledger run, cap $2, `AI_OPENAI_SUGGESTIONS_BUDGET_USD` set for the run) to record
-   real outputs, cost per run, latency and the share of picks that pass their witness.
+5. **Live replay of `nova.chat.suggestion_agent`** (KRI-1254). Run 2026-11-08, numbers in
+   "Live run of the suggestion agent" above.
 6. **`opener_clip` cassette** proving filename-to-hero resolution through the planner; only then
    may `CLIP_ORDINAL_PROVEN` flip.
 

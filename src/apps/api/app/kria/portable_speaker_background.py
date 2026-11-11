@@ -81,6 +81,29 @@ class SpeakerFrame(BaseModel):
     y_fraction: float = Field(ge=0.0, le=1.0)
 
 
+class SpeakerFrameOverride(BaseModel):
+    """Occurrence frame: inherit the global frame, disable inset, or supply custom geometry."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    mode: Literal["inherit", "full", "custom"]
+    frame: SpeakerFrame | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_override(self, handler):
+        data = handler(self)
+        if self.frame is None:
+            data.pop("frame", None)
+        return data
+
+    @model_validator(mode="after")
+    def valid_frame(self):
+        if self.mode == "custom" and self.frame is None:
+            raise ValueError("custom speaker frame requires geometry")
+        if self.mode != "custom" and self.frame is not None:
+            raise ValueError("full/inherit speaker frame must omit geometry")
+        return self
+
+
 def speaker_frame_for_preset(preset: str | None) -> SpeakerFrame | None:
     """The frame a preset names; ``None`` for ``full``, ``None`` or an unknown name."""
     values = SPEAKER_FRAME_PRESETS.get(preset or "")
@@ -97,6 +120,34 @@ class SpeakerBackgroundFocus(BaseModel):
     x: float = Field(ge=0.0, le=1.0)
     y: float = Field(ge=0.0, le=1.0)
     zoom: float = Field(ge=MIN_FOCUS_ZOOM, le=MAX_FOCUS_ZOOM)
+
+
+# KRI-1307: how far from the centre an aim must be to count as aimed (the measure rounds x to
+# 3 decimals; a centred 1.0x focus is never written, `_FocusResolver` drops it).
+_AIM_EPS = 1e-3
+
+
+def focus_zooms_onto_text(focus: SpeakerBackgroundFocus | Any) -> bool:
+    """KRI-1307: is this background picture zoomed onto its text?
+
+    Zoomed in past the cover fit (``zoom > 1``), or -- since 88ca72bb7 floors the measured zoom at
+    the cover fit so a 16:9 recording fills the 9:16 frame -- filled to the frame (``zoom >= 1``)
+    AND aimed off-centre at its text column (``x != 0.5``): a 1920x1080 README cover-filled on
+    1080x1920 is ~3.2x a contain fit, its column brought into view. An un-aimed centre 1.0x is
+    today's plain crop (not zoomed); below cover is zoomed OUT (bars), never zoomed. Takes the
+    recipe model or the editor document's plain ``{"x", "y", "zoom"}`` mapping; anything else
+    (no focus) is False."""
+    if isinstance(focus, SpeakerBackgroundFocus):
+        x, zoom = focus.x, focus.zoom
+    elif isinstance(focus, dict):
+        x, zoom = focus.get("x", 0.5), focus.get("zoom")
+    else:
+        x, zoom = getattr(focus, "x", None), getattr(focus, "zoom", None)
+    if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in (x, zoom)):
+        return False
+    if zoom > 1.0:
+        return True
+    return zoom >= 1.0 - 1e-9 and abs(float(x) - 0.5) > _AIM_EPS
 
 
 class SpeakerBackgroundWindow(BaseModel):
@@ -156,6 +207,7 @@ class SpeakerBackgroundLayer(BaseModel):
     source_start: float = Field(default=0.0, ge=0, le=MAX_SOURCE_START_S)
     loop: bool = True
     subject_track_id: str = Field(default=DEFAULT_SUBJECT_TRACK_ID, min_length=1, max_length=160)
+    subject_clip_ids: list[str] | None = Field(default=None, max_length=500)
     # KRI-1162, both omitted from the wire while unused (never ``[]`` / ``null``).
     windows: list[SpeakerBackgroundWindow] | None = Field(
         default=None, min_length=1, max_length=MAX_BACKGROUND_WINDOWS
@@ -178,6 +230,14 @@ class SpeakerBackgroundLayer(BaseModel):
 
     @model_validator(mode="after")
     def fill_matches_its_kind(self) -> SpeakerBackgroundLayer:
+        if self.subject_clip_ids is not None and (
+            len(set(self.subject_clip_ids)) != len(self.subject_clip_ids)
+            or any(
+                not key or len(key) > 160 or any(char.isspace() for char in key)
+                for key in self.subject_clip_ids
+            )
+        ):
+            raise ValueError("speaker subject clip ids must be unique and nonempty")
         if self.media_kind == "color":
             if self.color is None:
                 raise ValueError("a colour background needs a color")
@@ -235,6 +295,18 @@ class SpeakerBackgroundLayer(BaseModel):
         return self.focus is not None or any(w.focus is not None for w in self.windows or ())
 
     @property
+    def all_pictures_zoomed(self) -> bool:
+        """KRI-1307: every picture drawn (a media fill and each window) is zoomed onto its text
+        (`focus_zooms_onto_text`: past the cover fit, or filled and aimed at its column).
+
+        Any focus at all is not enough: a recording drawn at a centred 1x, or one window left with
+        no focus, is not zoomed onto its text. A recipe with no picture at all is False.
+        """
+        pictures = [] if self.media_kind == "color" else [self.focus]
+        pictures += [w.focus for w in self.windows or ()]
+        return bool(pictures) and all(focus_zooms_onto_text(f) for f in pictures)
+
+    @property
     def uses_color(self) -> bool:
         """True when the fill is a flat colour (needs the ``speakerBackgroundColor`` capability)."""
         return self.media_kind == "color"
@@ -242,6 +314,8 @@ class SpeakerBackgroundLayer(BaseModel):
     @model_serializer(mode="wrap")
     def _omit_unused(self, handler):  # noqa: ANN001, ANN202
         data = handler(self)
+        if self.subject_clip_ids is None:
+            data.pop("subject_clip_ids", None)
         if data.get("asset_id") is None:
             data.pop("asset_id", None)
         if data.get("color") is None:

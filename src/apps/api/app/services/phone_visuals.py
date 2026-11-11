@@ -289,3 +289,7 @@ def bind_phone_visual_assets(
                 )
             )
     return tuple(visuals)
+
+
+# KRI-1340: a Visuals video adopted as a Talking take passes the same checks a cutaway does.
+probed_phone_video = _probed_video

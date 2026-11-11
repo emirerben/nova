@@ -38,10 +38,10 @@ still driven by the KRI-756 engine unchanged; the v2 path uses `build_action` (N
 | `captions`, `sfx`, `transition`, `music_level` | KRI-756 kinds | `EditorOpsAction` from the row's own `op`, proved by `editor_ops_witness` | ported, live in the engine and as v2 cards |
 | `default_edit`, `opener_clip`, `title_animation`, `pinned_text` | KRI-756 kinds | none | ported, legacy only |
 | `hook` | KRI-756 kind | `CopyDecisionAction`: the agent's exact text, applied as one `set_title` op; the tap records the creative-copy decision (`source="suggestion"`) | v2 card behind `KRIA_SUGGESTION_HOOK_COPY_ENABLED`; the chip stays the only first-prompt hook |
-| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) + the staged render approval | implemented but **dark by design** (`mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND = False`): a pinned tap stages the typed requirement and the approval, but only a phone re-plan from the brief applies it. Run `verify-phone-render` or a device, plus the real-clip audio calibration, before the constant flips |
+| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) + the staged render approval | implemented but **dark by design** (`mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND = False`): a tap stages the typed requirement and the render approval; approving it dispatches a new phone render whose writer applies the ask (`tests/e2e_suggestions/test_r8_mute_render.py`). The constant flips when the real-clip audio calibration (`scripts/clip_signal_calibration.py report --real-dir`) clears precision 0.9 |
 | `filler_words` | new | `ItemSettingAction` (`speech_cleanup_enabled`) + the staged render approval | v2 card behind `KRIA_SUGGESTION_FILLER_WORDS_ENABLED`; evidence is the speech-cleanup preflight row, no second detector |
 | `duplicates` | new | `EditorOpsAction` (`remove_clip` on the weaker take) | v2 card behind `KRIA_SUGGESTION_DUPLICATES_ENABLED`; evidence is the `near_dup_hash` signal |
-| `generated_overlay` | new | `AsyncGenerateAction` | stub, never served (last phase) |
+| `generated_overlay` | new | `AsyncGenerateAction` (prompt from the plan item's idea, quoted `cost_usd`) | v2 card behind `KRIA_SUGGESTION_GENERATED_OVERLAY_ENABLED`, offered only to protocol 45+ builds (they ask for consent first); a tap spends, it never edits (see "Generated-image card") |
 
 Skill: `agents/skills/edit-improver/SKILL.md` (real body, under the 6000-character budget; proven by
 `tests/evals/test_edit_improver_skill.py`).
@@ -280,6 +280,59 @@ between those two points, the stamp is ignored and the card's words go to the le
 same as a KRI-756 chip. Turning the flag off therefore means "legacy behavior from now on", not
 "finish what was pinned". `request_digest` follows the flag too, so a client retry of the same
 `client_event_id` across a flip is a digest conflict, not a replay.
+
+## Generated-image card (`generated_overlay`, KRI-1253)
+
+The one card whose tap spends money. It is offered only while `generated_media.generated_images_available`
+holds (native client, ledger, image budget, billing organisation, `visualBlocks` in
+`PHONE_RENDER_VERIFIED_FEATURES`: the same gate as `POST generated-media`), the plan item has an idea to
+draw from, the thread has no generated image yet, and the build is protocol 45 or newer.
+
+- **Consent.** The card quotes `cost_usd` (`generated_overlay.QUOTED_COST_USD`, a ceiling; the settled cost
+  is metered from provider usage). A protocol 45 build shows a consent sheet ("Costs $X") before it sends the
+  tap; a build that does not is never offered the card (`requires_protocol`). Declining sends nothing.
+- **Tap** (`planner.plan_pinned_suggestion_turn`, spend branch). The same proofs as every card (kind switch,
+  witness or rebuild), then `consumed` and the generated-images gate again, then `generate_image_for_card`
+  (off the event loop, behind `reserve_paid_call` inside `execute_generated_media`). The operation is keyed on
+  `generated_overlay.event_id(set_id, card_id)` (UUIDv5), so a duplicate send, a retried turn or a second tap
+  finds the first image and never pays twice; the phone derives the same id and polls
+  `GET generated-media/by-event/{id}`. The turn is a reply, not a draft: nothing in the edit changes, the
+  card is marked consumed in the reply's transaction (`pinned_spend`), and there is nothing for Undo to take back.
+- **Outcome record.** `suggestion_pin.outcome` is `generated` (with `operation_id`, `state`, `event_id`) or
+  `refused` with `generation_failed`, `budget_unavailable` or `generation_unavailable`. A refusal marks the
+  card refused (not transient): a failed operation is keyed on the card and would only answer the same failure.
+- **Review is native, placement is shared.** The phone previews the image in `GeneratedOverlaySet` and the
+  creator accepts it (the existing `accept` route marks the operation accepted; the image is a ready row in
+  the pool). Placement then has two routes. The native editor places it as before. Chat places it with
+  `add_overlay` on a phone Talking edit, only while the flag is on: `generated_overlay_pool` lists the
+  accepted generated images as `overlays.asset_pool` (ids and labels, never paths), the `add_overlay` handler
+  (`agents/editor_ops_v2/overlays.py`) takes the card's path from the server's rows (`compile_editor_ops(...,
+  pool_assets=)`, built only for a turn that carries an `add_overlay`), and the Save pins the image
+  (`pin_generated_overlays_for_commit`, called from `pin_background_for_commit`) before
+  `phone_subtitled_editor._overlays_from_sections` accepts the card. Any other new photo is still refused
+  there. The parity row `generated_overlay_approval` is `agent_ops` for that reason: the approval stays
+  native, chat only places an image the creator already accepted. Proof:
+  `tests/e2e_suggestions/test_r9_place_generated_image.py`.
+- **Serve and tap agree.** The card skips the creative-copy and request-length gates (no draft is committed;
+  `suggestion_serve.SPEND_KINDS`) and keeps the kind switch, the witness/rebuild proof and the consumed mark.
+
+Failure modes the card was written against:
+
+1. **Double tap / duplicate send / retried turn**: one operation per card (`event_id`), the ledger allows one
+   send at a time, the reply marks the card consumed.
+2. **Consent declined**: no request leaves the phone; the card stays idle and can be dismissed.
+3. **Old build**: never offered (`requires_protocol` 45), and the tap re-checks the gate at the server.
+4. **Budget exhausted / ledger off / flag pulled**: `budget_unavailable` or `generation_unavailable`, a reply
+   that says nothing changed; no provider call (`reserve_paid_call` raises before contact).
+5. **Generation fails or is rejected**: `failed` operation -> `generation_failed`, card refused, no charge
+   recorded for a rejected request (`release_paid_call`).
+6. **Outcome unknown** (provider answered nothing usable): the operation is `unknown`, the card is consumed
+   (it may have been billed), and the phone shows the existing "Check again" state instead of paying again.
+7. **Stale base**: the idea changed since the set was served -> the witness refuses `prompt_changed`, the
+   rebuild builds the new prompt on the same quoted price; a thread with a generated image already is
+   `already_generated` and the card leaves.
+8. **Result never reviewed**: the image sits in the operation until the phone's recovery record reopens it;
+   `reconcile_generated_media` / `cleanup_expired_generated_media` own its lifetime, unchanged.
 
 ## Flags (all default off; subordinate to `KRIA_SUGGESTION_CHIPS_ENABLED`)
 

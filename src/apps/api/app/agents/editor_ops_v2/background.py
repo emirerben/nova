@@ -128,8 +128,9 @@ def _coerce_set_background_color(
             "a plain colour behind you isn't available right now"
         )
         detail = say(
-            en=f"I can't put a plain colour behind you: {reason}.",
+            en="I can't put a plain colour behind you: {reason}.",
             tr="Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
+            reason=reason,
         )
         state.reject(op=name, reason="capability_unavailable", detail=detail)
         state.reply_notes.append(detail)
@@ -189,10 +190,12 @@ def _coerce_set_background_focus(
         if clamped != number:
             state.reply_notes.append(
                 say(
-                    en=f"I kept the zoom between {MIN_CHAT_FOCUS_ZOOM:g}x and "
-                    f"{MAX_CHAT_FOCUS_ZOOM:g}x.",
-                    tr=f"Yakınlaştırmayı {MIN_CHAT_FOCUS_ZOOM:g}x ile "
-                    f"{MAX_CHAT_FOCUS_ZOOM:g}x arasında tuttum.",
+                    en="I kept the zoom between {min_chat_focus_zoom:g}x and "
+                    "{max_chat_focus_zoom:g}x.",
+                    tr="Yakınlaştırmayı {min_chat_focus_zoom:g}x ile "
+                    "{max_chat_focus_zoom:g}x arasında tuttum.",
+                    min_chat_focus_zoom=MIN_CHAT_FOCUS_ZOOM,
+                    max_chat_focus_zoom=MAX_CHAT_FOCUS_ZOOM,
                 )
             )
         cleaned["zoom"] = clamped
@@ -244,23 +247,61 @@ def _coerce_set_background_sequence(
     }
 
 
-def _coerce_set_speaker_frame(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
-    from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS  # noqa: PLC0415
+def _frame_selector(name, payload, snapshot, state):
+    from app.agents import edit_copilot as ec
+    from app.agents.editor_ops_v2.timeline import _clean_selector
 
-    preset = payload.get("preset")
-    if not isinstance(preset, str) or preset not in SPEAKER_FRAME_PRESETS:
+    if not snapshot.get("split_screen_available"):
         state.invalid_value()
         return None
-    return {"op": name, "preset": preset}
+    slots = [s for s in ec._snapshot_list(snapshot, ec._SLOT_INDEX_KEYS) if isinstance(s, dict)]
+    return _clean_selector(name, payload.get("selector"), slots, state)
+
+
+def _coerce_set_speaker_frame(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS, SpeakerFrame
+
+    targeted = "selector" in payload
+    preset = payload.get("preset")
+    frame = payload.get("frame")
+    if (preset is None) == (frame is None):
+        state.invalid_value()
+        return None
+    out = {"op": name}
+    if targeted:
+        selector = _frame_selector(name, payload, snapshot, state)
+        if selector is None:
+            return None
+        out["selector"] = selector
+    if frame is not None:
+        if not targeted:
+            state.invalid_value()
+            return None
+        try:
+            out["frame"] = SpeakerFrame.model_validate(frame).model_dump()
+        except ValueError:
+            state.invalid_value()
+            return None
+    elif not isinstance(preset, str) or (
+        preset not in SPEAKER_FRAME_PRESETS and not (targeted and preset == "inherit")
+    ):
+        state.invalid_value()
+        return None
+    else:
+        out["preset"] = preset
+    return out
 
 
 def _coerce_clear_speaker_frame(
-    name: str,
-    payload: dict,
-    snapshot: dict,
-    state: Any,  # noqa: ARG001
+    name: str, payload: dict, snapshot: dict, state: Any
 ) -> dict | None:
-    return {"op": name}
+    out = {"op": name}
+    if "selector" in payload:
+        selector = _frame_selector(name, payload, snapshot, state)
+        if selector is None:
+            return None
+        out["selector"] = selector
+    return out
 
 
 def _coerce_remove_background(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
@@ -317,15 +358,15 @@ SPECS: list[OpSpec] = [
     ),
     OpSpec(
         name="set_speaker_frame",
-        required=frozenset({"preset"}),
-        fields=frozenset({"preset"}),
+        required=frozenset(),
+        fields=frozenset({"preset", "frame", "selector"}),
         family=frozenset({"background_windows"}),
         coerce=_coerce_set_speaker_frame,
     ),
     OpSpec(
         name="clear_speaker_frame",
         required=frozenset(),
-        fields=frozenset(),
+        fields=frozenset({"selector"}),
         family=frozenset({"background_windows"}),
         coerce=_coerce_clear_speaker_frame,
     ),
@@ -555,10 +596,55 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     )
 
 
+def _set_occurrence_frame(state, op, override):
+    from copy import deepcopy
+
+    from app.agents.editor_ops_v2.timeline import _select
+    from app.kria.portable_speaker_background import SpeakerFrameOverride
+    from app.services.kria_editor_ops import (
+        KriaEditorOpError,
+        copy_source_occurrence,
+        split_screen_available,
+    )
+
+    if not split_screen_available(state.job, state.variant):
+        raise KriaEditorOpError("Independent speaker frames are unavailable on this client")
+    value = SpeakerFrameOverride.model_validate(override).model_dump(exclude_none=True)
+    rows = [state.slots[index] for index in _select(state, op["selector"])]
+    if value["mode"] != "inherit":
+        working = _working_document(state)
+        if not isinstance(working, dict) or not (working.get("media_id") or working.get("color")):
+            raise KriaEditorOpError("Set a speaker background before framing an occurrence")
+        if any(
+            copy_source_occurrence(row).get("speaker_subject") is not True
+            or row.get("media_kind", "video") != "video"
+            for row in rows
+        ):
+            raise KriaEditorOpError(
+                "Select video speaker occurrences, or reset their frame to inherit first"
+            )
+    for row in rows:
+        if value["mode"] != "inherit":
+            row["speaker_subject"] = True
+        row["speaker_frame_override"] = deepcopy(value)
+    state.changed.add("timeline")
+    state.summary = "Updated the selected speaker frames"
+
+
 def _op_set_speaker_frame(state: Any, op: dict[str, Any]) -> None:
     from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS  # noqa: PLC0415
     from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
 
+    if "selector" in op:
+        if op.get("preset") == "inherit":
+            override = {"mode": "inherit"}
+        else:
+            override = {
+                "mode": "custom",
+                "frame": op.get("frame") or SPEAKER_FRAME_PRESETS[op["preset"]],
+            }
+        _set_occurrence_frame(state, op, override)
+        return
     working = _working_document(state)
     if not isinstance(working, dict) or not (working.get("media_id") or working.get("color")):
         raise KriaEditorOpError(
@@ -575,6 +661,9 @@ def _op_set_speaker_frame(state: Any, op: dict[str, Any]) -> None:
 def _op_clear_speaker_frame(state: Any, op: dict[str, Any]) -> None:  # noqa: ARG001
     from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
 
+    if "selector" in op:
+        _set_occurrence_frame(state, op, {"mode": "full"})
+        return
     working = _working_document(state)
     if not isinstance(working, dict) or not working.get("speaker_frame"):
         raise KriaEditorOpError("You're already full screen")
@@ -592,6 +681,10 @@ def _op_remove_background(state: Any, op: dict[str, Any]) -> None:  # noqa: ARG0
 
     if state.speaker_background is None and background_current(state.job, state.variant) is None:
         raise KriaEditorOpError("There is no background behind you to remove")
+    for row in state.slots:
+        if row.get("speaker_frame_override") is not None:
+            row["speaker_frame_override"] = {"mode": "inherit"}
+            state.changed.add("timeline")
     state.speaker_background = None
     state.changed.add("speaker_background")
     state.summary = "Removed the background behind you"

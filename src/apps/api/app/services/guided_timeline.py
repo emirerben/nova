@@ -345,33 +345,64 @@ def make_time_projector(
     window = _segment_window
     fps = GUIDED_FPS
 
-    def old_anchor(time_s: float) -> tuple[dict[str, Any], float] | None:
+    new_segment_ids = {str(s.get("segment_id") or "") for s in new_segments} | {
+        str(s.get("parent_segment_id") or "") for s in new_segments
+    }
+    new_media_ids = {str(s.get("media_id")) for s in new_segments}
+
+    def survives(segment: dict[str, Any]) -> bool:
+        segment_id = str(segment.get("segment_id") or "")
+        if segment_id:
+            return segment_id in new_segment_ids
+        return str(segment.get("media_id")) in new_media_ids
+
+    def covering(time_s: float) -> list[dict[str, Any]]:
+        found = []
         for segment in reversed(old_segments):
-            output_start, output_end, source_start, source_end = window(segment)
+            output_start, output_end, _, _ = window(segment)
             contains = (
                 output_start < time_s <= output_end
                 if interval_end
                 else output_start <= time_s < output_end
             )
             if contains and output_end > output_start:
-                source_time = min(
-                    source_end,
-                    source_start
-                    + max(0.0, time_s - output_start)
-                    * (source_end - source_start)
-                    / (output_end - output_start),
-                )
-                return segment, source_time
+                found.append(segment)
+        # Split-screen panels play at once. Later segments still win, but never a panel
+        # the edit removed while another one under the same instant remains.
+        return sorted(found, key=lambda segment: not survives(segment))
+
+    def old_anchor(time_s: float) -> tuple[dict[str, Any], float, float | None] | None:
+        anchors = covering(time_s)
+        if anchors:
+            segment = anchors[0]
+            output_start, output_end, source_start, source_end = window(segment)
+            hold = min(float(segment.get("freeze_hold_s") or 0), output_end - output_start)
+            moving = output_end - output_start - hold
+            held_offset = (
+                max(0.0, time_s - (output_end - hold))
+                if hold and time_s >= output_end - hold
+                else None
+            )
+            source_time = min(
+                source_end,
+                source_start
+                + max(0.0, time_s - output_start) * (source_end - source_start) / max(moving, 1e-9),
+            )
+            return segment, source_time, held_offset
         if old_segments and abs(time_s - window(old_segments[-1])[1]) <= 1e-6:
             segment = old_segments[-1]
-            return segment, window(segment)[3]
+            return (
+                segment,
+                window(segment)[3],
+                float(segment.get("freeze_hold_s")) if segment.get("freeze_hold_s") else None,
+            )
         return None
 
     def project(time_s: float) -> tuple[float, str] | None:
         anchored = old_anchor(time_s)
         if anchored is None:
             return None
-        old_segment, source_time = anchored
+        old_segment, source_time, held_offset = anchored
         old_segment_id = str(old_segment.get("segment_id") or "")
         if old_segment_id:
             candidates = [
@@ -407,11 +438,11 @@ def make_time_projector(
         output_start, output_end, source_start, source_end = window(segment)
         clamped_source = min(source_end, max(source_start, source_time))
         source_span = source_end - source_start
-        offset = (
-            (clamped_source - source_start) * (output_end - output_start) / source_span
-            if source_span > 0
-            else 0
-        )
+        hold = min(float(segment.get("freeze_hold_s") or 0), output_end - output_start)
+        moving = output_end - output_start - hold
+        offset = (clamped_source - source_start) * moving / source_span if source_span > 0 else 0
+        if held_offset is not None and hold and abs(source_time - source_end) <= 1e-6:
+            offset = moving + min(held_offset, hold)
         projected = min(output_end, max(output_start, output_start + offset))
         return round(round(projected * fps) / fps, 6), str(segment["segment_id"])
 

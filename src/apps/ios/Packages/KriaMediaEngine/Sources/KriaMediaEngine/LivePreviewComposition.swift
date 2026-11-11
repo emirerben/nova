@@ -18,6 +18,7 @@ public struct LivePreviewExportSnapshot: Sendable {
     public private(set) var recipe: EditRecipe
     public let preview: PreviewComposition
     private var assetURLs: [String: URL]
+    private var playbackRevision: UUID?
 
     public init(recipe: EditRecipe, assetURLs: [String: URL], branding: KriaBranding.Options = .none) async throws {
         self.recipe = recipe
@@ -54,7 +55,11 @@ public struct LivePreviewExportSnapshot: Sendable {
         // handles stay on the visible pixels after asymmetric source crops.
         var rectangle = RecipeVideoCompositor.positionedSource(
             CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: naturalSize)),
-            layer: unrotated, canvas: instruction.canvas, time: time).extent
+            layer: unrotated, canvas: layer.panelViewport.map { CGRect(origin: .zero, size: $0.size) } ?? instruction.canvas, time: time).extent
+        if let viewport = layer.panelViewport {
+            rectangle = rectangle.intersection(CGRect(origin: .zero, size: viewport.size))
+                .offsetBy(dx: viewport.minX, dy: viewport.minY)
+        }
         if layer.visualPlacement != nil { rectangle = rectangle.intersection(instruction.canvas) }
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
@@ -68,20 +73,42 @@ public struct LivePreviewExportSnapshot: Sendable {
     }
 
     /// The instruction drawing `time` when it shows a framed Talk-to-camera speaker (SF2), with that frame.
-    private func framedSpeakerInstruction(at time: Double, timescale: Int32 = 60_000) -> (composition: AVVideoComposition, instructions: [RecipeVideoInstruction], instruction: RecipeVideoInstruction, frame: SpeakerFrame)? {
+    private func framedSpeakerInstruction(at time: Double, clipID: String? = nil, timescale: Int32 = 60_000) -> (composition: AVVideoComposition, instructions: [RecipeVideoInstruction], instruction: RecipeVideoInstruction, frame: SpeakerFrame)? {
         guard let composition = preview.playerItem.videoComposition,
               let instructions = composition.instructions as? [RecipeVideoInstruction],
               let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: timescale)) }),
-              instruction.showsFramedSpeaker(at: time), let frame = instruction.speakerFrame else { return nil }
+              instruction.showsFramedSpeaker(at: time),
+              let layer = instruction.layers.first(where: { $0.speakerRole == .speaker && $0.start <= time && time < $0.end
+                  && (clipID == nil || $0.clipID == clipID) && $0.effectiveSpeakerFrame(instruction.speakerFrame) != nil }),
+              let frame = layer.effectiveSpeakerFrame(instruction.speakerFrame) else { return nil }
         return (composition, instructions, instruction, frame)
     }
 
     /// Where the framed speaker is on screen at `time`, clipped to the canvas so its handles stay reachable (SF10).
     /// Nil without a frame, or where no speaker clip is drawn (the ending clip; SF2). The box is the whole scaled
     /// speaker picture, the same box `RecipeVideoCompositor.framed` draws into.
-    public func speakerSelectionBounds(time: Double) -> TextSelectionBounds? {
-        guard let found = framedSpeakerInstruction(at: time) else { return nil }
-        let rect = found.frame.canvasRect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    public func activeSpeakerClipIDs(time: Double) -> [String] {
+        guard let found = framedSpeakerInstruction(at: time) else { return [] }
+        return found.instruction.layers.filter { $0.speakerRole == .speaker && $0.start <= time && time < $0.end && $0.effectiveSpeakerFrame(found.instruction.speakerFrame) != nil }.compactMap(\.clipID)
+    }
+
+    public func speakerViewport(time: Double, clipID: String? = nil) -> CGRect? {
+        guard let found = framedSpeakerInstruction(at: time, clipID: clipID),
+              let layer = found.instruction.layers.first(where: {
+                  $0.speakerRole == .speaker && $0.start <= time && time < $0.end && (clipID == nil || $0.clipID == clipID)
+                      && $0.effectiveSpeakerFrame(found.instruction.speakerFrame) != nil
+              }) else { return nil }
+        guard let viewport = layer.panelViewport else { return CGRect(x: 0, y: 0, width: 1, height: 1) }
+        let canvas = found.instruction.canvas
+        return CGRect(x: viewport.minX / canvas.width, y: 1 - viewport.maxY / canvas.height,
+            width: viewport.width / canvas.width, height: viewport.height / canvas.height)
+    }
+
+    public func speakerSelectionBounds(time: Double, clipID: String? = nil) -> TextSelectionBounds? {
+        guard let found = framedSpeakerInstruction(at: time, clipID: clipID), let viewport = speakerViewport(time: time, clipID: clipID) else { return nil }
+        let local = found.frame.canvasRect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        let rect = CGRect(x: viewport.minX + local.minX * viewport.width, y: viewport.minY + local.minY * viewport.height,
+            width: local.width * viewport.width, height: local.height * viewport.height)
         guard !rect.isNull, rect.width > 0, rect.height > 0 else { return nil }
         return TextSelectionBounds(centerX: rect.midX, centerY: rect.midY, width: rect.width, height: rect.height, rotationDegrees: 0)
     }
@@ -90,16 +117,29 @@ public struct LivePreviewExportSnapshot: Sendable {
     /// cut-out alone and everything above it (both on a clear canvas), each a slice of the instruction that draws
     /// `time`, so the three stills composited back are the frame the player shows. `rect` is the whole scaled speaker
     /// picture in canvas fractions (top-left origin), NOT clipped: the editor scales the speaker still about its centre.
-    public func speakerInteractionLayers(time: Double) throws -> (below: AVVideoComposition, above: AVVideoComposition, speaker: AVVideoComposition, rect: CGRect) {
-        guard let found = framedSpeakerInstruction(at: time, timescale: 600) else { throw MediaEngineError.exportFailed }
+    public func speakerInteractionLayers(time: Double, clipID: String? = nil) throws -> (below: AVVideoComposition, above: AVVideoComposition, speaker: AVVideoComposition, rect: CGRect) {
+        guard let found = framedSpeakerInstruction(at: time, clipID: clipID, timescale: 600), let viewport = speakerViewport(time: time, clipID: clipID) else { throw MediaEngineError.exportFailed }
+        let selectedID = clipID ?? activeSpeakerClipIDs(time: time).first
+        if let selected = found.instruction.layers.first(where: { $0.clipID == selectedID }),
+           clipID != nil || found.instruction.layers.contains(where: { $0.speakerFrameOverride != nil && $0.speakerFrameOverride?.mode != .inherit }) {
+            let overlapping = found.instruction.layers.filter {
+                $0.speakerRole == .speaker && $0.start <= time && time < $0.end && $0.panelViewport == selected.panelViewport
+            }
+            // A gesture's single cutout cannot retain both sides of a same-panel
+            // transition. Keep the live composition instead of reordering its subjects.
+            guard overlapping.count <= 1 else { throw NativePreviewFeatureError("speaker-interaction-overlap") }
+        }
         func slice(_ part: SpeakerSlice) -> AVVideoComposition {
             let copy = found.composition.mutableCopy() as! AVMutableVideoComposition
             copy.instructions = found.instructions.map { original in
-                original.timeRange == found.instruction.timeRange ? original.slicedAroundSpeaker(part) : original
+                original.timeRange == found.instruction.timeRange ? original.slicedAroundSpeaker(part, clipID: selectedID) : original
             }
             return copy
         }
-        return (slice(.belowSpeaker), slice(.aboveSpeaker), slice(.speakerOnly), found.frame.canvasRect)
+        let local = found.frame.canvasRect
+        let rect = CGRect(x: viewport.minX + local.minX * viewport.width, y: viewport.minY + local.minY * viewport.height,
+            width: local.width * viewport.width, height: local.height * viewport.height)
+        return (slice(.belowSpeaker), slice(.aboveSpeaker), slice(.speakerOnly), rect)
     }
 
     public func textSelectionBounds(id: String, time: Double) -> TextSelectionBounds? {
@@ -148,7 +188,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                     // The dragged text itself paints plain while the finger is down (F8); the scene below keeps its occlusion.
                     subjectMatte: above ? nil : original.subjectMatte, speakerMatte: above ? nil : original.speakerMatte,
                     speakerFrame: above ? nil : original.speakerFrame,
-                    fullScreenWindows: above ? [] : original.fullScreenWindows)
+                    fullScreenWindows: above ? [] : original.fullScreenWindows,
+                    colorMoments: above ? nil : original.colorMoments)
             }
             return copy
         }
@@ -182,7 +223,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                     drawings: paintsDrawings ? original.drawings : nil, transparentBackground: transparent,
                     subjectMatte: transparent ? nil : original.subjectMatte, speakerMatte: transparent ? nil : original.speakerMatte,
                     speakerFrame: transparent ? nil : original.speakerFrame,
-                    fullScreenWindows: transparent ? [] : original.fullScreenWindows)
+                    fullScreenWindows: transparent ? [] : original.fullScreenWindows,
+                    colorMoments: transparent ? nil : original.colorMoments)
             }
             return copy
         }
@@ -204,7 +246,20 @@ public struct LivePreviewExportSnapshot: Sendable {
         try updateText(recipe: next)
     }
 
-    public func updateText(recipe next: EditRecipe, assetURLs nextURLs: [String: URL]? = nil) throws {
+    public func cancelPendingPlaybackFrame() {
+        (preview.playerItem.customVideoCompositor as? RecipeVideoCompositor)?.playbackFrameReceipt.cancel()
+    }
+
+    public func observeNextPlaybackFrame(_ callback: @escaping @Sendable (Double) -> Void) throws {
+        guard let playbackRevision,
+              let compositor = preview.playerItem.customVideoCompositor as? RecipeVideoCompositor else {
+            throw NativePreviewFeatureError("LivePreviewComposition-playback-receipt-unavailable")
+        }
+        compositor.playbackFrameReceipt.arm(revision: playbackRevision, callback: callback)
+    }
+
+    public func updateText(recipe next: EditRecipe, assetURLs nextURLs: [String: URL]? = nil,
+                           onPlaybackFrame: (@Sendable (Double) -> Void)? = nil) throws {
         try next.validate()
         let urls = nextURLs ?? assetURLs
         func nonFontReferences(_ value: EditRecipe) -> [RenderAssetReference] {
@@ -317,7 +372,7 @@ public struct LivePreviewExportSnapshot: Sendable {
         var layers = try sourceLayers.map { layer in
                 guard let id = layer.clipID, let clip = nextClips[id], let size = layer.naturalSize else { return layer }
                 var updated = layer
-                updated.transform = AVPlayerPreviewComposer.transform(naturalSize: size, preferred: layer.preferredTransform, canvas: current.renderSize, clip: clip)
+                updated.transform = AVPlayerPreviewComposer.transform(naturalSize: size, preferred: layer.preferredTransform, canvas: layer.panelViewport?.size ?? current.renderSize, clip: clip)
                 if recipe.tracks.flatMap(\.clips).first(where: { $0.id == id })?.overlayDissolveSeed != clip.overlayDissolveSeed {
                     updated.overlayDissolve = try clip.overlayDissolveSeed.map { seed in
                         try NativeDissolveRenderer(width: next.canvas.width, height: next.canvas.height, seed: seed,
@@ -356,17 +411,29 @@ public struct LivePreviewExportSnapshot: Sendable {
         let total = TimelineMath.totalDuration(of: next)
         // Keep the live matte (and its warmed segmenter) across a text-only edit; drop it when no layer asks any more.
         let subjectMatte = next.textLayers.contains(where: { $0.behindSubject == true }) ? (first.subjectMatte ?? NativeSubjectMatte()) : nil
+        let playbackRevision = UUID()
+        let playbackCompositor = preview.playerItem.customVideoCompositor as? RecipeVideoCompositor
+        if onPlaybackFrame != nil, playbackCompositor == nil {
+            throw NativePreviewFeatureError("LivePreviewComposition-playback-receipt-unavailable")
+        }
         replacement.instructions = RecipeInstructionTiming.tiledRanges(total: total, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
                 cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
                 // The background is unchanged apart from a moved frame (guarded above), so its layer, its matte and its
                 // full-screen windows carry over.
                 speakerMatte: first.speakerMatte, speakerFrame: movesSpeakerFrame ? next.speakerBackground?.speakerFrame : first.speakerFrame,
-                fullScreenWindows: first.fullScreenWindows)
+                fullScreenWindows: first.fullScreenWindows, playbackRevision: playbackRevision,
+                colorMoments: ColorMomentProgram(recipe: next, total: total))
         }
         // Publish only after every layer validates successfully. Never touch
         // `audioMix` here (see `withoutVisuals`).
+        if let onPlaybackFrame {
+            playbackCompositor?.playbackFrameReceipt.arm(revision: playbackRevision, callback: onPlaybackFrame)
+        } else {
+            playbackCompositor?.playbackFrameReceipt.cancel()
+        }
         preview.playerItem.videoComposition = replacement
+        self.playbackRevision = playbackRevision
         assetURLs = urls
         recipe = next
     }

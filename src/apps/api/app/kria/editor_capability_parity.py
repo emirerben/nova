@@ -116,7 +116,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "clip_add_remove": _g(
         "agent_ops",
         "removeClip restoreClip deleteSelectedClip deleteSelection addClip addDeviceTimelineMedia "
-        "addLibraryVisual placeEditorSource removeVisualSelection",
+        "addLibraryVisual placeEditorSource removeVisualSelection splitSelectedClip",
         ("remove_clip", "add_unused_sources", "split_clip", "remove_visual_media"),
     ),
     "clip_look_and_transition": _g(
@@ -126,15 +126,30 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("set_look_preset", "set_transition", "apply_custom_effect"),
     ),
     "clip_speed": _g(
+        "agent_ops",
+        "setFootagePlaybackRate",
+        ("patch_slots",),
+        fields=("playback_rate",),
+    ),
+    "motion_speed": _g(
         "agent_unsupported",
-        "setMotionSpeed setFootagePlaybackRate",
-        reason="Playback speed of a clip has no agent op; the phone montage plays natural speed.",
+        "setMotionSpeed",
+        reason="Generated motion-scene speed has no agent op; footage playback rate is separate.",
     ),
     "clip_crop": _g(
-        "agent_unsupported",
+        "agent_ops",
         "setFootageCrop",
-        reason="Cropping a clip's frame is a hand gesture on the phone; no agent op reframes "
-        "a single clip.",
+        ("patch_slots",),
+        fields=("source_crop",),
+    ),
+    "clip_duplicate": _g(
+        "agent_ops", "duplicateSelectedClip", ("duplicate_clip",), fields=("slot_index",)
+    ),
+    "clip_source_replacement": _g(
+        "agent_ops",
+        "replaceSelectedClipSource",
+        ("replace_clip_source",),
+        fields=("slot_index", "clip_index"),
     ),
     "clip_tilt": _g(
         "agent_ops",
@@ -147,6 +162,40 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "toggleClipAudio setOriginalAudioLevel setOriginalMixLevel",
         ("set_mix",),
     ),
+    "clip_source_gain": _g(
+        "agent_ops",
+        "setSelectedClipSourceVolume",
+        ("patch_slots",),
+        fields=("source_audio_volume",),
+    ),
+    "split_screen_create": _g("agent_ops", "createSplitScreen", ("create_split_screen",)),
+    "split_screen_layout": _g(
+        "agent_ops",
+        "setSplitScreenDuration setSplitScreenPanelCount setSplitScreenPanelWeight "
+        "setSplitScreenGutter setSplitScreenBackgroundColor beginSplitDividerDrag "
+        "updateSplitDividerDrag endSplitDividerDrag cancelSplitDividerDrag setSplitCollapse",
+        ("update_split_screen",),
+        fields=(
+            "duration_s",
+            "panel_count",
+            "panel_weights",
+            "gutter",
+            "background_color",
+            "collapse_empty_panels",
+        ),
+    ),
+    "split_screen_panel_order": _g("agent_ops", "swapSplitPanels", ("swap_split_panels",)),
+    "split_screen_clip_order": _g("agent_ops", "moveSelectedSplitScreenClip", ("move_split_clip",)),
+    "split_screen_section_order": _g(
+        "agent_ops", "moveSelectedSplitScreenSection", ("move_split_screen",)
+    ),
+    "split_screen_clip_offset": _g(
+        "agent_ops",
+        "setSelectedSplitScreenOffset addSplitPanelClip",
+        ("assign_split_panel",),
+        fields=("offset_s",),
+    ),
+    "split_screen_remove": _g("agent_ops", "removeSelectedSplitScreen", ("remove_split_screen",)),
     # ---------------------------------------------------------------- audio
     "music": _g(
         "agent_ops",
@@ -235,15 +284,13 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     # Qendresa item 18: aim a screen-recording background at its text (left / centre / right and a
     # zoom). Chat reaches it with `set_background_focus`; the getter is a read-only query.
     "background_focus": _g("agent_ops", "setSpeakerBackgroundFocus", ("set_background_focus",)),
-    # Moving / resizing the framed speaker by hand on the preview writes free geometry. The
-    # agent picks only the named corners (set_speaker_frame / clear_speaker_frame above):
-    # presets, never raw numbers from the model (KRI-1162 S37). Rows:
-    # docs/reviews/speaker-frame-direct-manipulation-failure-modes.md (SF12).
     "speaker_frame_by_hand": _g(
-        "agent_unsupported",
-        "setSpeakerFrameCenter setSpeakerFrameWidth",
-        reason="Free speaker position and size come from a finger on the preview; the agent "
-        "places the speaker only in a named corner (set_speaker_frame), by design.",
+        "agent_ops",
+        "setSpeakerFrameCenter setSpeakerFrameWidth resetSpeakerFrame",
+        ("set_speaker_frame",),
+        fields=("selector", "frame", "preset"),
+        reason="Selected occurrences accept custom frame geometry and the inherit preset. "
+        "The legacy canvas-global overload still accepts named presets only in chat.",
     ),
     "video_shape": _g(
         "agent_unsupported",
@@ -253,11 +300,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     # --------------------------------------------------------------- history
     "history": _g("agent_ops", "undo redo", ("undo_last_edit", "repeat_last_edit")),
+    # The creator's approval of a generated image stays native (the preview review). Chat places
+    # one the creator already accepted: `overlays.asset_pool` lists only those, and a Save pins the
+    # image before it accepts the card (`generated_overlay_pool`).
     "generated_overlay_approval": _g(
-        "agent_unsupported",
+        "agent_ops",
         "applyOverlayProposal",
-        reason="Generated overlays require explicit native preview approval; chat cannot "
-        "spend on or accept a generated asset through this flow.",
+        ("add_overlay",),
+        fields=("asset_id",),
     ),
     "overlay_planning_and_queries": _g(
         "not_an_edit",
@@ -276,6 +326,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "not_an_edit",
         "load save reconcileOnOpen reconcilePlaybackState needsReload isBehindActiveJob "
         "loadForEditorOpen setObserversVisible "
+        "openOrWarm claimWarm cancelWarm releaseWarmForMemoryPressure "
+        "beginPreviewPresentation endPreviewPresentation previewFrameWasShown "
+        "retainAdmittedPreview "
         "adoptLatestJob adoptActiveJobFromThread switchToLatestJob keepEditingCurrentJob "
         "synchronizePromptRevision resumeRefreshSync refreshDeviceRender retryRender "
         "retryDeviceRender retryPreview retryPreviewRefresh rebaseCleanDraft "
@@ -288,7 +341,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "suspendEditorImports resumeEditorImports resumePendingEditorPlacements "
         "dismissPendingEditorImport retryPendingEditorImport refreshVisualLibrary "
         "pollVisualLibrary retryLibraryVisual loadSoundEffectCatalog end set "
-        "auditPreviewWindow",
+        "auditPreviewWindow configureClipAudioForTesting configureReplacementSourcesForTesting "
+        "discardPlaybackForNewJobForTesting",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
     ),
     "background_tool_navigation": _g(
@@ -298,10 +352,12 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     "playback_and_selection": _g(
         "not_an_edit",
-        "togglePlayback pausePlayback seek select selectClip cycleSelection selectedObject "
-        "inspectorSelection inspectorRoute previewSelectionBounds timelineTime timelineX "
+        "togglePlayback pausePlayback seek select selectClip selectSplitPanel cycleSelection "
+        "selectedObject inspectorSelection inspectorRoute previewSelectionBounds timelineTime "
+        "timelineX "
         "beginTransaction endTransaction beginEditTransaction endEditTransaction "
-        "beginDirectManipulation endDirectManipulation transactDocument markDirty isDirty",
+        "beginDirectManipulation endDirectManipulation transactDocument markDirty isDirty "
+        "cancelTimingGesture setTimelinePinching",
         reason="Playback, selection and the undo transaction brackets are not creative edits.",
     ),
     "capability_and_read_queries": _g(
@@ -317,7 +373,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
         "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
         "tiltBackdropIsMissing "
-        "canRotateVisual canStyleVisual speakerBackgroundFocus",
+        "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame "
+        "speakerEditingFrame speakerFrame speakerFrameRect speakerSelection speakerViewport "
+        "usesScopedSpeakerFrame ownsTimingGesture",
         reason="Read-only queries the UI uses to decide what to offer.",
     ),
 }

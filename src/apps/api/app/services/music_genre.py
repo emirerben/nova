@@ -493,23 +493,33 @@ def music_genre_notice(section: Mapping[str, Any] | None) -> str | None:
     if section.get("status") != "selected" or not title:
         # No song came back: the matcher may simply have failed, so don't blame the library.
         return say(
-            en=f"I couldn't suggest {_a(names[0])} {_join(names, 'or')} track this time.",
-            tr=f"Bu sefer bir {_join(names, 'ya da')} şarkısı öneremedim.",
+            en="I couldn't suggest {a_names_0} {join_names} track this time.",
+            tr="Bu sefer bir {join_names_2} şarkısı öneremedim.",
+            a_names_0=_a(names[0]),
+            join_names=_join(names, "or"),
+            join_names_2=_join(names, "ya da"),
         )
     song_en = f"“{title}” by {artist}" if artist else f"“{title}”"
     song_tr = f"“{title}” ({artist})" if artist else f"“{title}”"
     if section[GENRE_FIT]:
         return say(
-            en=f"For the {genre} song you asked for, I suggest {song_en}. Add it when you post.",
-            tr=f"{song_tr}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin.",
+            en="For the {genre} song you asked for, I suggest {song_en}. Add it when you post.",
+            tr="{song_tr}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin.",
+            genre=genre,
+            song_en=song_en,
+            song_tr=song_tr,
         )
     return say(
         en=(
-            f"I don't have any {_join(names, 'or')} tracks. The closest I have is {song_en}. "
+            "I don't have any {join_names} tracks. The closest I have is {song_en}. "
             "Add it when you post if you like it."
         ),
         tr=(
-            f"Elimde {_join(names, 'ya da')} şarkısı yok. En yakını {song_tr}. "
+            "Elimde {join_names_2} şarkısı yok. En yakını {song_tr}. "
             "Beğenirsen paylaşırken ekleyebilirsin."
         ),
+        join_names=_join(names, "or"),
+        song_en=song_en,
+        join_names_2=_join(names, "ya da"),
+        song_tr=song_tr,
     )

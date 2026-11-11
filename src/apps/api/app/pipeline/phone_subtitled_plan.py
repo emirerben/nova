@@ -50,8 +50,9 @@ cloud's b-roll reframe); only the speaker clip is letterboxed. With
 
 Multi-speaker Talking (KRI-719): ``additional_speakers`` plays more clips WITH
 speech on the same main track, back to back after the first speaker, each
-with its own audio, at full length. The first speaker alone carries any
-cleanup cut (``cut_plan``/``keep_segments``) and the KRI-547 face fill. With
+with its own audio, at full length unless ``additional_speaker_keep_segments`` (KRI-720)
+carries that take's own speech cleanup cut. The first speaker's cut is ``cut_plan``/
+``keep_segments``; it alone carries the KRI-547 face fill. With
 ``additional_speakers=()`` the output is byte-identical.
 
 Insert clips (parent KRI-1151): ``inserts`` pauses the first speaker's take for another clip of the
@@ -67,6 +68,7 @@ take-timeline set onto it. With ``inserts=()`` the output is byte-identical.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -79,7 +81,8 @@ from app.kria.portable_speaker_background import (
     SpeakerFrame,
     SpeakerFullScreenWindow,
 )
-from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
+from app.kria.portable_text import TextInk
+from app.kria.portable_visual import AudioMuteWindow, VisualCanvasFill, VisualMediaPlacement
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -271,8 +274,17 @@ def compile_phone_subtitled_plan(
     requirements: Sequence[Any] = (),
     inserts: tuple[PhoneInsert, ...] = (),
     background_focus_open: bool | None = None,
+    additional_speaker_keep_segments: Mapping[str, Sequence[tuple[float, float]]] | None = None,
+    closing_card: Mapping[str, Any] | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
+
+    ``closing_card`` (KRI-1346, ``{"duration_s", "background_color"}``) appends the creator's
+    colour card AFTER everything else on the main track (the talk, then any ending clip): the
+    last main clip holds its last frame for ``duration_s`` (silent on the device) under a solid
+    ``closing-card`` fill, and every text row tagged ``closing_card`` is timed to that window.
+    Rows tagged ``whole_video`` (corner text, KRI-1342 item 7) run to the new end. ``None``
+    compiles byte-identically to before.
 
     ``strategy`` / ``requirements`` (KRI-1097 wave 2) are the approved plan and the live asks
     of its brief: the title rows in ``text_elements`` enter the way they ask
@@ -414,6 +426,17 @@ def compile_phone_subtitled_plan(
     own ``landscape_fit`` transform. ``caption_cues``, ``text_elements`` and
     ``cutaways`` are then expressed on that combined timeline. Rejects a
     duplicate speaker, a non-video one, or one longer than 300 s.
+
+    ``additional_speaker_keep_segments`` (KRI-720, optional) is the speech cleanup cut of an
+    extra speaker, keyed by its binding's ``media_id``: that take plays as one clip per kept
+    ``(start, end)`` source segment, back to back (``speaker-<n>``, then ``speaker-<n>-1``,
+    ``speaker-<n>-2`` ...; each wears the speaker's own transform and its ``speaker-<n>`` tilt),
+    on a microsecond grid. Segments must be finite, inside the take, sorted and non-overlapping
+    (`UnsupportedPhonePlan` otherwise); empty ones are dropped, and none left is the "removed
+    the entire clip" refusal. A speaker without an entry, or one whose entry keeps the whole
+    take, plays in full exactly as before; ``None``/``{}`` is byte-identical. Captions, text and
+    lanes are then on the cut timeline. The editor Save reads it back with
+    `additional_speaker_keep_segments_from_recipe`.
 
     ``output_orientation`` (``"portrait"`` default, byte-identical to before)
     picks the recipe canvas: ``"landscape"`` is the 1920x1080 canvas guided
@@ -639,25 +662,34 @@ def compile_phone_subtitled_plan(
             continue
         extra_id = f"speaker-{extra_index + 1}"
         extra_transform = fit_transform(extra_width, extra_height, canvas, landscape_fit)
+        # The tilt row is the speaker's, under its base id: every piece of a cut take wears it.
         tilt_patch, backdrop = clip_tilt_fields(
             {"tilt": (clip_tilts or {}).get(extra_id)}, fit_scale=extra_transform.scale
         )
-        main_clips.append(
-            TimelineClip(
-                id=extra_id,
-                source_asset_id=extra_asset.id,
-                source_start=0.0,
-                source_duration=extra_duration,
-                timeline_start=cursor,
-                rate=1.0,
-                transform=extra_transform.model_copy(update=tilt_patch),
-                backdrop=backdrop,
+        # KRI-720: a take speech cleanup cut plays as one clip per kept segment, back to back
+        # (`speaker-<n>`, then `speaker-<n>-1`, ...); an uncut take is one full-length clip,
+        # byte-identical to before.
+        pieces = _extra_speaker_pieces(
+            (additional_speaker_keep_segments or {}).get(extra.media_id), extra_duration
+        ) or [(0.0, extra_duration)]
+        for piece_index, (piece_start, piece_duration) in enumerate(pieces):
+            main_clips.append(
+                TimelineClip(
+                    id=extra_id if piece_index == 0 else f"{extra_id}-{piece_index}",
+                    source_asset_id=extra_asset.id,
+                    source_start=piece_start,
+                    source_duration=piece_duration,
+                    timeline_start=cursor,
+                    rate=1.0,
+                    transform=extra_transform.model_copy(update=tilt_patch),
+                    backdrop=backdrop,
+                )
             )
-        )
-        cursor += extra_duration
+            cursor += piece_duration
     speaker_end = cursor
     from app.services.phone_text_styling import (
         register_generation_background,
+        register_generation_fullscreen,
         register_generation_timeline,
     )
 
@@ -671,6 +703,8 @@ def compile_phone_subtitled_plan(
         else None
     )
     register_generation_background(background_lane, canvas=canvas, focus_for=focus_resolver)
+    # KRI-1343/1344: the full-screen pictures the captions are drawn over, judged before compile.
+    register_generation_fullscreen(lanes.overlays if lanes is not None else (), cutaways)
     register_backdrop_visuals(main_clips, visuals=visuals, assets=assets, manifest=manifest)
 
     try:
@@ -728,6 +762,51 @@ def compile_phone_subtitled_plan(
         main_clips.append(ending_clip)
         timeline_end = speaker_end + ending_duration
         required_capabilities |= {"visualVideos", "audioMix"}
+
+    visual_fills: list[VisualCanvasFill] = []
+    if closing_card is not None and main_clips:
+        from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+            CLOSING_CARD_FILL_ID,
+            CLOSING_CARD_FILL_ORDER,
+            retime_card_rows,
+        )
+
+        card_s = round(float(closing_card["duration_s"]), 3)
+        card_color = str(closing_card["background_color"])
+        last = main_clips[-1]
+        main_clips[-1] = last.model_copy(
+            update={"hold_duration": round((last.hold_duration or 0.0) + card_s, 6)}
+        )
+        card_start = timeline_end
+        timeline_end = round(timeline_end + card_s, 6)
+        visual_fills.append(
+            VisualCanvasFill(
+                id=CLOSING_CARD_FILL_ID,
+                start=round(card_start, 6),
+                end=timeline_end,
+                order=CLOSING_CARD_FILL_ORDER,
+                kind="solid",
+                color=TextInk(
+                    red=int(card_color[1:3], 16) / 255,
+                    green=int(card_color[3:5], 16) / 255,
+                    blue=int(card_color[5:7], 16) / 255,
+                    alpha=1.0,
+                ),
+            )
+        )
+        required_capabilities |= {"freezeFrame", "visualBlocks"}
+        text_elements = retime_card_rows(text_elements, start_s=card_start, end_s=timeline_end)
+    if text_elements and any(
+        (row.get("source_params") or {}).get("whole_video") for row in text_elements
+    ):
+        # KRI-1342 item 7: "for the whole video" ends where the video ends, whatever the
+        # cleanup, the inserts, an ending clip or the card did to its length.
+        text_elements = [
+            {**row, "end_s": round(timeline_end, 3)}
+            if (row.get("source_params") or {}).get("whole_video")
+            else row
+            for row in text_elements
+        ]
 
     if strategy is not None and text_elements:
         from app.pipeline.phone_subtitled_title import talking_title_entrances  # noqa: PLC0415
@@ -897,6 +976,8 @@ def compile_phone_subtitled_plan(
             # `None` is omitted from the recipe wire, so a recipe without a background
             # keeps its exact bytes and digest.
             speaker_background=speaker_background,
+            # KRI-1346: empty (omitted from the wire) unless the creator's closing card.
+            visual_fills=visual_fills,
         )
     except ValidationError as exc:
         # A recipe the device refuses is a plan defect, said in words: left as a pydantic error
@@ -997,6 +1078,50 @@ def take_seams(keep_segments: Sequence[tuple[float, float]]) -> list[float]:
         total += max(0.0, end - start)
         seams.append(total)
     return seams
+
+
+def _round_us(value: float) -> float:
+    return round(value, 6)
+
+
+def _extra_speaker_pieces(
+    segments: Sequence[tuple[float, float]] | None, duration_s: float
+) -> list[tuple[float, float]] | None:
+    """KRI-720: an extra speaker's kept segments as ``(source_start, source_duration)`` pieces
+    on a microsecond grid (so an editor Save reading them back off the recipe recompiles the
+    same bits), or ``None`` when the take plays uncut: no entry, or one segment keeping the
+    whole take. Fails closed on a segment that is not finite, leaves the take, or runs
+    backwards over the one before it; a zero-length segment is dropped, and nothing left is
+    the same refusal as for the first speaker."""
+    if segments is None:
+        return None
+    pieces: list[tuple[float, float]] = []
+    previous_end = 0.0
+    for raw_start, raw_end in segments:
+        start, end = float(raw_start), float(raw_end)
+        if not (math.isfinite(start) and math.isfinite(end)):
+            raise UnsupportedPhonePlan("a speaker's kept segment is not a number")
+        if start < -_GRID_TOL_S or end > duration_s + _GRID_TOL_S:
+            raise UnsupportedPhonePlan("a speaker's kept segment runs outside its clip")
+        start, end = _round_us(max(0.0, start)), _round_us(min(duration_s, end))
+        if end > duration_s:
+            # Rounded up past the clip's last frame: the grid point below it instead.
+            end = math.floor(duration_s * 1e6) / 1e6
+        if end - start <= 0:
+            continue
+        if start < previous_end - _GRID_TOL_S:
+            raise UnsupportedPhonePlan("a speaker's kept segments overlap or are out of order")
+        pieces.append((start, _round_us(end - start)))
+        previous_end = end
+    if not pieces:
+        raise UnsupportedPhonePlan("speech cleanup removed the entire clip")
+    if (
+        len(pieces) == 1
+        and pieces[0][0] <= 1e-6
+        and abs(pieces[0][0] + pieces[0][1] - duration_s) <= 1e-6
+    ):
+        return None
+    return pieces
 
 
 def _onto_seam(insert: PhoneInsert, seams: Sequence[float]) -> PhoneInsert:
@@ -1901,6 +2026,37 @@ def additional_speakers_from_recipe(
         if speaker is not None and speaker not in ordered:
             ordered.append(speaker)
     return tuple(ordered[1:])
+
+
+def additional_speaker_keep_segments_from_recipe(
+    recipe: EditRecipeV2, bindings: tuple[PhoneSourceBinding, ...]
+) -> dict[str, list[tuple[float, float]]]:
+    """KRI-720: the inverse of ``compile_phone_subtitled_plan(additional_speaker_keep_segments=
+    ...)``: each extra speaker's kept ``(source_start, source_end)`` windows on a pinned
+    recipe's main track, in play order, keyed by ``media_id``, so an editor Save never plays a
+    cut take uncut again. Only a speaker that WAS cut gets an entry (several clips, or one that
+    is not the whole take), so an uncut recipe returns ``{}`` and its Save stays
+    byte-identical. Inserted clips are not speakers and never count."""
+    extras = additional_speakers_from_recipe(recipe, bindings)
+    main_track = next((t for t in recipe.tracks if t.id == "subtitled"), None)
+    if not extras or main_track is None:
+        return {}
+    windows: dict[str, list[tuple[float, float]]] = {extra.media_id: [] for extra in extras}
+    for clip in sorted(main_track.clips, key=lambda c: c.timeline_start):
+        if clip.id.startswith(INSERT_CLIP_PREFIX) or clip.source_asset_id not in windows:
+            continue
+        windows[clip.source_asset_id].append(
+            (clip.source_start, clip.source_start + clip.source_duration)
+        )
+    cut: dict[str, list[tuple[float, float]]] = {}
+    for extra in extras:
+        kept = windows[extra.media_id]
+        full = float(extra.original.duration_s)
+        if len(kept) == 1 and abs(kept[0][0]) <= 1e-6 and abs(kept[0][1] - full) <= 1e-6:
+            continue
+        if kept:
+            cut[extra.media_id] = kept
+    return cut
 
 
 def speaker_binding_from_recipe(

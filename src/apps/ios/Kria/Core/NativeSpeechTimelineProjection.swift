@@ -1,4 +1,5 @@
 import Foundation
+import KriaMediaEngine
 
 /// Native adapter of speech_cut_state.reproject_authored_speech_records.
 /// Windows come from the editor's canonical projection; all timed lanes travel
@@ -41,7 +42,16 @@ enum NativeSpeechTimelineProjection {
             let pointOwner = old.last { $0.start <= start && start < $0.end }?.slot.id
             for prior in old {
                 if point && prior.slot.id != pointOwner { continue }
-                guard let target = new.first(where: { $0.slot.id == prior.slot.id && $0.slot.clipIndex == prior.slot.clipIndex }) else { continue }
+                let primary = new.first { $0.slot.id == prior.slot.id && $0.slot.clipIndex == prior.slot.clipIndex }
+                let targets = new.filter { target in
+                    guard target.slot.clipIndex == prior.slot.clipIndex else { return false }
+                    if target.slot.id == prior.slot.id { return true }
+                    guard target.slot.parentSegmentID == prior.slot.id else { return false }
+                    // Duplicating into another panel is a new picture, not a second caption occurrence.
+                    return target.slot.splitSectionID == (primary?.slot.splitSectionID ?? prior.slot.splitSectionID)
+                        && target.slot.splitPanelIndex == (primary?.slot.splitPanelIndex ?? prior.slot.splitPanelIndex)
+                }
+                for target in targets {
                 func project(_ t: Double) -> Double {
                     target.start + (prior.slot.inS + (t - prior.start) * prior.rate - target.slot.inS) / target.rate
                 }
@@ -92,10 +102,15 @@ enum NativeSpeechTimelineProjection {
                 }
                 if !parts.isEmpty, let id = item["id"]?.stringValue { item["id"] = .string("\(id)-part-\(parts.count)") }
                 parts.append(item)
+                }
             }
             output.append(contentsOf: parts)
         }
         return output.sorted { start($0) < start($1) }.map(JSONValue.object)
+    }
+
+    static func ownerID(_ row: [String: JSONValue]) -> String? {
+        row["segment_id"]?.stringValue ?? row["source_params"]?.objectValue?["segment_id"]?.stringValue
     }
 
     private static func sections(_ document: EditorDocument) -> [String: JSONValue] {
@@ -104,12 +119,15 @@ enum NativeSpeechTimelineProjection {
             ?? snapshot["sections"]?.objectValue ?? snapshot
     }
     private static func entry(_ record: JSONValue, slots: [EditorTimelineSlot]) -> JSONValue {
-        let keys = Set(["slot_id", "clip_index", "in_s", "duration_s", "playback_rate", "transition_after", "transition_duration_s", "removed", "source_end_s"])
+        let keys = Set(["slot_id", "clip_index", "in_s", "duration_s", "playback_rate", "transition_after", "transition_duration_s", "removed", "source_end_s", "parent_segment_id", "split_section_id", "split_panel_index", "split_offset_s"])
         let raw = sections(EditorDocument(clips: slots))["timeline_slots"]?.arrayValue ?? []
         let value = record.objectValue ?? [:]
         let low = value["start_s"]?.numberValue ?? value["start"]?.numberValue ?? value["at_s"]?.numberValue
         let high = value["end_s"]?.numberValue ?? value["end"]?.numberValue ?? value["at_s"]?.numberValue
+        let owner = ownerID(value)
         let anchors: [JSONValue] = windows(slots).compactMap { window in
+            if let owner { guard window.slot.id == owner || window.slot.parentSegmentID == owner else { return nil } }
+            else if window.slot.splitSectionID != nil, window.slot.splitPanelIndex != 0 { return nil }
             if let low, let high {
                 if value["at_s"] != nil {
                     guard window.start <= low, low < window.end else { return nil }
@@ -212,11 +230,87 @@ enum NativeSpeechTimelineProjection {
         }
     }
 
+    /// `document.clips` with each one's output start, as the Range projection reads them.
+    static func projectedSlots(_ clips: [EditorTimelineSlot], splitSections: [EditorSplitScreenSection]) -> [EditorTimelineSlot] {
+        let projection = NativeEditorInteraction.timelineProjection(slots: clips, carousel: nil, splitSections: splitSections)
+        return clips.enumerated().map { index, slot in
+            var copy = slot
+            if let window = projection.baseClipWindows.first(where: { $0.sourceIndex == index }) {
+                copy.raw["_speech_output_start_s"] = .number(window.start)
+            }
+            return copy
+        }
+    }
+
+    /// KRI-1350: the stored colour-moments lane moved from the timeline it was saved on onto the current Range edit,
+    /// mirroring the server's `reproject_color_moments`: each moment keeps the span its footage still plays; one whose
+    /// footage is gone, that is now under 0.5 s, or that would overlap the one before is dropped. Unchanged when the
+    /// edit is not a Talking source edit or its timeline has not changed.
+    static func colorMomentsLane(_ lane: JSONValue?, baseSlots: [EditorTimelineSlot], document: EditorDocument) -> JSONValue? {
+        guard let lane, case var .object(object) = lane, case let .array(rows)? = object["moments"], !rows.isEmpty,
+              baseSlots != document.clips,
+              baseSlots.contains(where: { $0.id?.hasPrefix("native-phone-talking-source") == true }) else { return lane }
+        let old = projectedSlots(baseSlots, splitSections: document.splitScreenSections)
+        let new = projectedSlots(document.clips, splitSections: document.splitScreenSections)
+        var moments: [JSONValue] = []
+        var lastEnd: Double?
+        for row in rows {
+            guard var moment = row.objectValue, let start = moment["start"]?.numberValue, let end = moment["end"]?.numberValue else { continue }
+            let parts = records([.object(["id": moment["id"] ?? .null, "start_s": .number(start), "end_s": .number(end)])], oldSlots: old, newSlots: new)
+            guard let a = parts.compactMap({ $0.objectValue?["start_s"]?.numberValue }).min(),
+                  let b = parts.compactMap({ $0.objectValue?["end_s"]?.numberValue }).max(),
+                  b - a >= ColorMoment.minimumLength - 1e-6, lastEnd.map({ a >= $0 - 1e-6 }) ?? true else { continue }
+            moment["start"] = .number(rounded(a)); moment["end"] = .number(rounded(b))
+            moments.append(.object(moment)); lastEnd = b
+        }
+        object["moments"] = .array(moments)
+        return .object(object)
+    }
+
+    /// Sound id (`cmsfx-<moment>-<enter|exit>`) -> its moment's edge, for re-pinning a moment's own sound like the
+    /// server's `rebind_color_moment_sounds`.
+    static func colorMomentEdges(_ lane: JSONValue?) -> [String: Double] {
+        var edges: [String: Double] = [:]
+        for row in lane?.objectValue?["moments"]?.arrayValue ?? [] {
+            guard let moment = row.objectValue, let id = moment["id"]?.stringValue,
+                  let start = moment["start"]?.numberValue, let end = moment["end"]?.numberValue else { continue }
+            edges["\(colorMomentSoundPrefix)\(id)-enter"] = rounded(start)
+            edges["\(colorMomentSoundPrefix)\(id)-exit"] = rounded(end)
+        }
+        return edges
+    }
+    static let colorMomentSoundPrefix = "cmsfx-"
+
     @discardableResult
     static func rebase(_ next: inout EditorDocument, from previous: EditorDocument) -> Bool {
-        guard previous.clips != next.clips,
+        guard previous.clips != next.clips || previous.splitScreenSections != next.splitScreenSections,
               previous.clips.contains(where: { $0.id?.hasPrefix("native-phone-talking-source") == true }) else { return false }
+        func projectedSlots(_ document: EditorDocument) -> [EditorTimelineSlot] {
+            Self.projectedSlots(document.clips, splitSections: document.splitScreenSections)
+        }
+        let previousSlots = projectedSlots(previous), nextSlots = projectedSlots(next)
         var source = sections(next)
+        // KRI-1350: a colour moment's own sound never travels through source time on its own; it is re-pinned to its
+        // moment's edge below (the server's `reproject_lanes` + `rebind_color_moment_sounds`).
+        // The sounds as they are now, plus any loaded one an earlier trim took away with its moment (never one the
+        // creator deleted), so extending the footage back restores both the moment and its sound.
+        let currentMomentSounds = next.soundEffects.filter { $0.id.hasPrefix(colorMomentSoundPrefix) }
+        // Refresh the remembered copy with each visible sound's latest settings (gain, sound trim) before this edit can
+        // hide it, so a sound a later edit restores comes back exactly as the creator left it.
+        for sound in currentMomentSounds {
+            if let index = next.colorMomentSoundsBase.firstIndex(where: { $0.id == sound.id }) {
+                next.colorMomentSoundsBase[index] = sound
+            } else {
+                next.colorMomentSoundsBase.append(sound)
+            }
+        }
+        let deletedSounds = Set(next.deletions.filter { $0.kind == "sound_effect" }.map(\.id))
+        let momentSounds = currentMomentSounds + next.colorMomentSoundsBase.filter { base in
+            !deletedSounds.contains(base.id) && !currentMomentSounds.contains { $0.id == base.id }
+        }
+        if !momentSounds.isEmpty, let lane = source["sound_effects"]?.arrayValue {
+            source["sound_effects"] = .array(lane.filter { $0.objectValue?["id"]?.stringValue?.hasPrefix(colorMomentSoundPrefix) != true })
+        }
         // Legacy cues get the same stable identities as server canonical_caption_rows.
         source["caption_cues"] = .array(next.captionCues.map { cue in
             var raw = cue.raw
@@ -229,22 +323,42 @@ enum NativeSpeechTimelineProjection {
         if let entries = basis["text_elements"]?.arrayValue {
             basis["text_elements"] = .array(entries.filter { $0.objectValue?["record"]?.objectValue?["source_params"]?.objectValue?["source"]?.stringValue != "caption_cue" })
         }
-        if basis["source_windows"] == nil { basis["source_windows"] = entry(.object([:]), slots: previous.clips).objectValue?["slots"] }
+        if basis["source_windows"] == nil { basis["source_windows"] = entry(.object([:]), slots: previousSlots).objectValue?["slots"] }
+        let hasSplit = !previous.splitScreenSections.isEmpty || !next.splitScreenSections.isEmpty
         for field in ["caption_cues", "text_elements", "sound_effects", "media_overlays", "visual_blocks", "motion_scenes", "camera_effects", "drawings"] {
             guard let lane = source[field]?.arrayValue else { continue }
             let kinds = ["caption_cues": "caption_cue", "text_elements": "text", "sound_effects": "sound_effect",
                          "media_overlays": "media_overlay", "visual_blocks": "visual_block", "motion_scenes": "motion_scene",
                          "camera_effects": "camera_effect", "drawings": "drawing"]
             let deleted = Set(next.deletions.filter { $0.kind == kinds[field] }.map(\.id))
-            let entries = synchronize(basis[field]?.arrayValue, records: lane, slots: previous.clips, captions: field == "caption_cues", deleted: deleted)
+            // Captions follow source clocks. Other unowned split-canvas records are
+            // projected once by NativeSplitTimelineRebase, including uncovered panel gaps.
+            let canvasOwned = hasSplit && field != "caption_cues"
+            let canvas = canvasOwned ? lane.filter { ownerID($0.objectValue ?? [:]) == nil } : []
+            let sourceLane = canvasOwned ? lane.filter { ownerID($0.objectValue ?? [:]) != nil } : lane
+            let oldBasis = basis[field]?.arrayValue.map { entries in
+                canvasOwned ? entries.filter { ownerID($0.objectValue?["record"]?.objectValue ?? [:]) != nil } : entries
+            }
+            let entries = synchronize(oldBasis, records: sourceLane, slots: previousSlots, captions: field == "caption_cues", deleted: deleted)
             basis[field] = .array(entries)
-            output[field] = .array(projectBasis(entries, slots: next.clips, captions: field == "caption_cues"))
+            output[field] = .array((projectBasis(entries, slots: nextSlots, captions: field == "caption_cues") + canvas).sorted { start($0.objectValue ?? [:]) < start($1.objectValue ?? [:]) })
         }
         let projected = EditorDocument(snapshot: ["editor_payload": .object(["sections": .object(output)])])
         next.speechTimingBasis = basis
         next.captionCues = projected.captionCues
         next.textElements = projected.textElements
         next.soundEffects = projected.soundEffects
+        if !momentSounds.isEmpty {
+            let edges = colorMomentEdges(colorMomentsLane(next.colorMoments, baseSlots: next.colorMomentsBaseSlots, document: next))
+            next.soundEffects = (projected.soundEffects + momentSounds.compactMap { sound in
+                guard let edge = edges[sound.id] else { return nil }
+                var moved = sound
+                let shift = edge - (sound.pointS ?? sound.startS)
+                moved.pointS = edge; moved.startS += shift; moved.endS += shift
+                moved.raw["at_s"] = .number(edge)
+                return moved
+            }).sorted { ($0.pointS ?? $0.startS) < ($1.pointS ?? $1.startS) }
+        }
         next.mediaOverlays = projected.mediaOverlays
         next.visualBlocks = projected.visualBlocks
         next.motionScenes = projected.motionScenes

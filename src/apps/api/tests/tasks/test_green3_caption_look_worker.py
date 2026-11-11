@@ -146,7 +146,7 @@ def test_green3_first_draft_draws_the_captions_the_creator_asked_for(monkeypatch
     assert job.status == "awaiting_device"
     variant = job.assembly_plan["variants"][0]
     # Prod: 62 px, #767676, right-aligned x 0.78 / y 0.655, margin 662.
-    assert variant["caption_size_px"] == 52
+    assert variant["caption_size_px"] == 42  # "small" (Çiğdem S2: 52 drew 68 px lines)
     assert variant["caption_text_color"] == "#FFFFFF"
     style = variant["caption_editor_style"]
     assert style["alignment"] == "center"
@@ -165,7 +165,7 @@ def test_green3_first_draft_draws_the_captions_the_creator_asked_for(monkeypatch
     assert all(_layer_text(layer) == _layer_text(layer).lower() for layer in layers)
     assert variant["caption_look_receipt"] == {
         "size": "small",
-        "size_px": 52,
+        "size_px": 42,
         "color": "#FFFFFF",
         "position": "middle",
         "case": "lower",
@@ -200,8 +200,11 @@ def test_green3_review_says_what_was_done(monkeypatch):
             [R1, R3, R4], plan_facts_from_phone_variant(variant), include_unchecked=True
         )
     }
-    assert receipts["r1"].status == "met"
+    # Çiğdem S2: three photos cannot change "every 3-5 seconds" over a 30 s talk without a
+    # repeat, so the reply says so instead of "met".
+    assert receipts["r1"].status == "partial"
     assert receipts["r1"].reason.startswith("3 photos or videos take turns behind you")
+    assert "you asked for a change about every 4 s" in receipts["r1"].reason
     # Prod: "I can't check the captions on this draft yet." / KRI-1164's Talking refusal.
     assert receipts["r3"].status == "met", receipts["r3"]
     assert receipts["r3"].reason == "Captions are small, white, lowercase and in the middle."
@@ -239,7 +242,7 @@ def test_an_asked_spot_over_a_face_is_kept_and_said(monkeypatch):
 
     style = variant["caption_editor_style"]
     assert (style["alignment"], style["position_y_frac"]) == ("center", pytest.approx(0.5))
-    assert variant["caption_size_px"] == 52
+    assert variant["caption_size_px"] == 42  # "small" (Çiğdem S2: 52 drew 68 px lines)
     assert variant["caption_look_receipt"]["over_face"] is True
     (receipt,) = build_receipts(
         [R3], plan_facts_from_phone_variant(variant), include_unchecked=True
