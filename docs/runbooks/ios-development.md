@@ -277,23 +277,53 @@ frame with `CNRenderingSession` (Cinematic framework, the focus decisions the
 camera made while filming) into an ordinary HEVC movie with the source's
 orientation transform, colour tags and passthrough audio, verifies it (one video
 track, the source's audio tracks, same length within 0.25 s, not Cinematic), and
-only then replaces the take in place. Review playback, the Photos copy, intake,
-upload and the phone render all read that baked movie, so none of them changed.
+only then replaces the take in place (`replaceItemAt`, atomic).
+
+**The bake runs after Review opens, not before.** Stop reaches Review on the raw
+movie (`talk.stop.toReview` is then the same sub-second path as a standard take)
+and the take's manifest field `cinematic` (`CinematicBakeState`: `raw_review`,
+`baking`, `applied`, `standard`) records where the bake stands.
+`TeleprompterRecordingFlow.reconcileBake()` derives the one bake that should run
+from current state: the take on screen, Review open, app in the foreground.
+Everything else that owes a bake waits as `raw_review`, so there is never more
+than one GPU bake and none beside a new recording. Consequences:
+
+- **Use take** on a take that has not settled waits for the bake, with
+  "Finishing your Cinematic look (N%)", and hands intake the baked movie.
+  Upload, the proxy transcode and the phone render never see a raw Cinematic
+  movie. Record again or Discard stay available and abandon the wait.
+- **Backgrounding / locking** cancels the bake: Metal refuses GPU work from the
+  background (`MTLCommandBufferError.notPermitted`, also treated as "interrupted",
+  never as a failed bake, so it never falls back to the plain copy). The movie is
+  untouched and the bake starts over from frame 0 when the app is active again.
+- **A kill, or closing the screen mid-bake,** leaves the manifest owing a bake;
+  the next opening resets `baking` to `raw_review` and bakes again from the start.
+  If the process died after the atomic replace but before the manifest write, the
+  movie is already ordinary and the next run records it as `applied`.
+- **Retake/Discard** cancel the bake and delete the movie only after the bake task
+  has ended; a late result never rewrites a discarded manifest.
+- **Photos copy** is still made at Stop from the raw movie, so it is the camera's
+  own Cinematic movie (Photos draws the blur and can re-edit focus), not the baked
+  copy. The swap is an atomic rename, so Photos reads a complete file either way.
+- A bake needs `TeleprompterCinematic.bytesNeededToBake` free (1.5x the 16 Mbps
+  file plus 50 MB); otherwise it is skipped and the raw take is kept as standard.
+
 A failed bake keeps the sharp source without the depth tracks (`.standard` on the
 manifest, "Cinematic couldn't be applied to this take" on Review); a failed copy
-keeps the original. A take cut off before baking (crash) is baked when the screen
-restores it. The movie-level Cinematic intent is dropped, so Photos treats the
-baked copy as an ordinary video (its focus cannot be re-edited there).
+keeps the original. The movie-level Cinematic intent is dropped from the baked
+movie, so the exported edit treats it as an ordinary video.
 
 Proof: `TeleprompterCinematicTests` (unavailable refusal, persistence, standard
-take byte-identical, old manifests decode), the unavailable-switch assertions in
+take byte-identical, old manifests decode), `TeleprompterCinematicBakeTests` (the
+state machine and the lifecycle around a faked baker), `TalkBakeUITests` (Review
+opens on the raw take, Use take waits then swaps), the unavailable-switch assertions in
 `TeleprompterUITests.testScriptIsSavedAndCameraFailureKeepsItEditable`, and the
 physical `TeleprompterHardwareUITests.testPhysicalCinematicTake` (Kria Hardware QA
 scheme, same setup as above). Record each physical run here:
 
 | Date | iPhone | iOS | Result |
 | --- | --- | --- | --- |
-| — | iPhone 14 (Yasin) | — | Owed: switch on, take, Review says "Recorded in Cinematic.", blur visible in Review and in the exported edit |
+| — | iPhone 14 (Yasin) | — | Owed: switch on, take, Review opens within 2 s on the raw take saying "Applying your Cinematic look...", then "Recorded in Cinematic."; blur visible in Review and in the exported edit; ffprobe of the pulled take shows one video stream, no data/depth track, about 16 Mbps |
 
 ## Performance gate
 

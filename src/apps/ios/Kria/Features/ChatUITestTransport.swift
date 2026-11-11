@@ -548,7 +548,7 @@ final class CreationChatFixture: @unchecked Sendable {
                 return response(listed)
             }
             if request.httpMethod == "POST" {
-                let id = UUID().uuidString
+                let id = (TalkBench.fixedProjectID ?? UUID()).uuidString
                 let fixtureEvents: [[String: Any]] = PerfFixture.longHistoryCount != nil
                     ? (0..<(PerfFixture.longHistoryCount ?? 24)).map { index in
                         ["id": UUID().uuidString, "sequence": index, "revision": index + 1,

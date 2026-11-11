@@ -23,6 +23,8 @@ tmp/
 
 # Talk-to-camera device bench output (`scripts/ios/talk-bench.sh`)
 .talk-bench/
+# Bake robustness runs (`scripts/ios/talk-bake-robustness.sh`)
+.talk-bake/
 # KRI-827 `make verify-protected-text` outputs
 .protected-verify/
 

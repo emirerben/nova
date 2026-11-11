@@ -16,6 +16,13 @@ final class TalkBench: @unchecked Sendable {
     static let shared = TalkBench()
     static let isEnabled = ProcessInfo.processInfo.environment["KRIA_TALK_BENCH"] == "1"
 
+    /// `KRIA_TALK_BENCH_PROJECT_ID=<uuid>`: the fixture chat opens this project id on every launch, so a relaunch scenario
+    /// reaches the teleprompter store (account + project) the killed launch wrote its take to.
+    static var fixedProjectID: UUID? {
+        guard isEnabled, let value = ProcessInfo.processInfo.environment["KRIA_TALK_BENCH_PROJECT_ID"] else { return nil }
+        return UUID(uuidString: value)
+    }
+
     /// The longest series kept per name. A 60 s preview delivers about 1,800 frames; this is ten times that.
     private static let seriesCap = 20_000
     private static let flushInterval: TimeInterval = 2
@@ -40,7 +47,9 @@ final class TalkBench: @unchecked Sendable {
         guard isEnabled else { return }
         let bench = shared
         // A fresh install each run makes the UI test's script paste misbehave, so old takes (60-80 MB each) are cleared here instead.
-        if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+        // `KRIA_TALK_BENCH_KEEP_TAKES=1` leaves them for a relaunch scenario that must find the take a killed run left.
+        if ProcessInfo.processInfo.environment["KRIA_TALK_BENCH_KEEP_TAKES"] != "1",
+           let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             try? FileManager.default.removeItem(at: support.appendingPathComponent("KriaTeleprompter", isDirectory: true))
         }
         try? FileManager.default.removeItem(at: bench.directory)
