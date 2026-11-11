@@ -908,6 +908,7 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
 
     from app.models import CreatorGenerationReview
     from app.services import render_review_admission as admission
+    from app.tasks import kria_runtime
     from app.tasks.kria_runtime import reconcile_kria_turns
     from app.tasks.render_review import prepare_generation_review
 
@@ -931,9 +932,33 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
         )
         db.commit()
 
+    # Another module's queued turn (its broker was stubbed there, and its 35 s lease runs out while
+    # a slow run is still going) is dispatchable when this test sweeps. A real publish would need
+    # Redis, which the free regression workflow does not run: the sweep is under test, not delivery.
+    stray_user, stray_thread, _ = _seed_runtime_project()
+    await _submit(stray_user, stray_thread, "A turn some other test left queued")
+    with sync_session() as db:
+        db.execute(
+            text(
+                "UPDATE creator_agent_turns SET lease_expires_at = NULL WHERE thread_id = :thread"
+            ),
+            {"thread": stray_thread},
+        )
+        db.commit()
+
+    delivered = Mock()
+    monkeypatch.setattr(kria_runtime.run_kria_turn, "apply_async", delivered)
+    monkeypatch.setattr(kria_runtime.execute_kria_approval, "apply_async", delivered)
     forbidden = Mock(side_effect=AssertionError("review recovery inside the 45s chat reconciler"))
     monkeypatch.setattr(admission, "reconcile_generation_reviews", forbidden)
-    reconcile_kria_turns.run()
+    swept = reconcile_kria_turns.run()
+    assert swept["published"] >= 1, "the sweep saw the leftover turn"
+    with sync_session() as db:
+        stray_turn = db.scalar(
+            text("SELECT id::text FROM creator_agent_turns WHERE thread_id = :thread"),
+            {"thread": stray_thread},
+        )
+    delivered.assert_any_call(args=[stray_turn], task_id=stray_turn, queue="agent-control")
     forbidden.assert_not_called()
     monkeypatch.undo()
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
