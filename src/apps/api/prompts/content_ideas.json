@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-01-research-20",
+  "version": "2026-11-08-research-21",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -402,6 +402,34 @@
         "engagement_rate": 0.107,
         "view_index": 2.67,
         "sampled_at": "2026-11-01"
+      }
+    },
+    {
+      "id": "local-cultural-food-identity-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "core memories",
+      "idea": "a short clip of a local or childhood comfort food captioned with just its name and company — no explanation needed; the food names the culture and the memory",
+      "hook_pattern": "with [local comfort food] & [drink]",
+      "filming_context": "10-15s close-up of the food and drink in natural light; handheld and unhurried — the specificity of the food name is the hook",
+      "source": "tiktok:@izzsiomoi (2026-11)",
+      "performance": {
+        "engagement_rate": 0.085,
+        "view_index": 3.3,
+        "sampled_at": "2026-11-08"
+      }
+    },
+    {
+      "id": "community-fate-participation-01",
+      "niche": "founder / product launch",
+      "pillar": "product design decisions",
+      "idea": "put the fate or final decision for [your product/project] in your community's hands — frame it as 'the decision is yours' and let them feel responsible for the outcome",
+      "hook_pattern": "the fate of [your thing] is in your hands",
+      "filming_context": "show the product or decision itself — a material, colorway, design detail — clearly in frame; the caption is the invitation; no narration needed",
+      "source": "tiktok:@nermozdemir (2026-11)",
+      "performance": {
+        "engagement_rate": 0.034,
+        "view_index": 3.7,
+        "sampled_at": "2026-11-08"
       }
     }
   ]
