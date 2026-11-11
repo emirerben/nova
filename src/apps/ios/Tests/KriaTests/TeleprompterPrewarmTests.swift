@@ -12,6 +12,7 @@ import XCTest
 /// 7. Retake on the pending take leaves its transcode running beside the new recording, and returning to it restarts
 ///    nothing;
 /// 8. signing out leaves a take's transcode and proxy behind for the next account on this phone;
+/// 10. a Photos save that finishes after sign-out rewrites the take on screen and starts its work again;
 /// 9. the screen's resume loop and the Use take hand-over both upload the background at once.
 @MainActor final class TeleprompterPrewarmTests: XCTestCase {
     private var root: URL!
@@ -44,12 +45,13 @@ import XCTest
 
     private struct Saver: PhotoLibrarySaving { func saveVideo(at url: URL) async throws {} }
 
-    private func makeFlow(_ transcodes: Transcodes, background: BackgroundIntake? = nil, gate: UploadAdmissionGate? = nil) -> (TeleprompterRecordingFlow, SourcePrewarmer) {
+    private func makeFlow(_ transcodes: Transcodes, background: BackgroundIntake? = nil, gate: UploadAdmissionGate? = nil,
+                          saver: PhotoLibrarySaving = Saver()) -> (TeleprompterRecordingFlow, SourcePrewarmer) {
         let admission = gate.map { gate in
             SourcePrewarmer.Admission(acquire: { try await gate.acquire() }, release: { Task { @MainActor in gate.release() } })
         }
         let prewarmer = SourcePrewarmer(directory: root.appendingPathComponent("prewarm", isDirectory: true), admission: admission) { try await transcodes.make($0, $1) }
-        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: Saver(), prewarmer: prewarmer,
+        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: saver, prewarmer: prewarmer,
                                              speakerBackgroundEnabled: background != nil, backgroundIntake: background)
         return (flow, prewarmer)
     }
@@ -226,6 +228,33 @@ import XCTest
 
         try await waitFor { transcodes.cancelled == 1 }
         XCTAssertEqual(prewarmer.heldCount, 0)
+    }
+
+    private struct GatedSaver: PhotoLibrarySaving {
+        let gate: AsyncGate
+        func saveVideo(at url: URL) async throws { await gate.wait() }
+    }
+
+    func testAPhotosSaveThatFinishesAfterSignOutDoesNotRestartTheTakesWork() async throws {
+        let photos = AsyncGate()
+        let transcodes = Transcodes()
+        let (flow, prewarmer) = makeFlow(transcodes, saver: GatedSaver(gate: photos))
+        let take = try finalize(flow)
+        try await waitFor { transcodes.started.count == 1 }
+        let store = SessionBox()
+        let auth = AuthStore(tokenStore: store, api: KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store),
+                             defaults: UserDefaults(suiteName: "prewarm-late-save-\(UUID().uuidString)")!, prewarmer: prewarmer)
+        try auth.signIn(with: MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900), displayName: nil)
+        auth.signOut()
+        try await waitFor { transcodes.cancelled == 1 }
+        XCTAssertEqual(prewarmer.heldCount, 0)
+
+        await photos.open() // the Photos save finishes late and rewrites the take (`savedToPhotos`)
+        try await waitFor { flow.selectedTake?.id == take.id && flow.selectedTake?.savedToPhotos == true }
+        try await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(prewarmer.heldCount, 0, "a metadata write is not a reason to prepare the take again")
+        XCTAssertEqual(transcodes.started.count, 1)
     }
 
     func testTheResumeLoopAndTheUseTakeHandOverNeverUploadTheBackgroundTwice() async throws {

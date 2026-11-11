@@ -53,7 +53,12 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     @Published var selectedTake: TeleprompterTakeManifest? {
         didSet {
             reconcileBake()
-            // Hashing and transcoding start the moment a usable take is on screen, not when Use take is tapped.
+            // Hashing and transcoding start the moment a usable take is on screen, not when Use take is tapped. Only a
+            // change that decides whether the take should be prepared (another take, its status, its bake) starts
+            // them: a metadata write such as a Photos save finishing late must never bring back work that Retake,
+            // Discard or sign-out cancelled.
+            if let take = selectedTake, let old = oldValue, old.id == take.id, old.status == take.status,
+               old.cinematic == take.cinematic { return }
             prewarm(selectedTake)
         }
     }
