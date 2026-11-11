@@ -1,4 +1,5 @@
 import AVFoundation
+import KriaMediaEngine
 import XCTest
 @testable import Kria
 
@@ -17,6 +18,8 @@ import XCTest
 /// 8. Settled states are final: replaying an event, or a relaunch, does not change a baked take.
 /// 9. A manifest written before the bake existed still decodes (`applied` / `standard`).
 /// 10. Not enough free space: refused before a long bake starts (the finisher falls back to keeping the raw take).
+/// 12. Review prepares the take for upload (hash and analysis proxy) while the creator watches: never before the bake
+///     has settled, because the bake replaces the movie, and then on the settled movie.
 /// 11. The reader, writer or encoder fails with a non-Metal error because the app is being suspended, and the failure
 ///     lands before the scene phase cancels the task: that is a pause, never the plain-copy fallback. Likewise a cancelled
 ///     plain copy pauses. Only a failure with the app active, task live and no system-interruption error settles standard.
@@ -148,6 +151,45 @@ import XCTest
         XCTAssertFalse(flow.waitingForBake)
     }
 
+    func testReviewPreparesTheMovieOnlyOnceTheBakeHasSettled() async throws {
+        let proxies = ProxyRecorder()
+        let prewarmer = SourcePrewarmer(directory: root.appendingPathComponent("prewarm", isDirectory: true)) { source, destination in
+            proxies.record(source)
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("proxy".utf8).write(to: destination)
+            return destination
+        }
+        let baker = GatedBaker()
+        let flow = try await openFlow(baker: baker, takes: [(.pending, .rawReview)], prewarmer: prewarmer)
+        await waitUntil { baker.calls == 1 }
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(prewarmer.heldCount, 0, "the bake still owes a new movie: nothing is hashed or transcoded yet")
+        XCTAssertEqual(proxies.sources, [])
+
+        baker.finish(.applied)
+        await waitUntil { flow.selectedTake?.cinematic == .baked }
+        await waitUntil { proxies.sources.count == 1 }
+        XCTAssertEqual(proxies.sources, [flow.store.fileURL(for: try XCTUnwrap(flow.selectedTake)).lastPathComponent],
+                       "the settled movie is prepared once, by the take's own file")
+    }
+
+    func testAFailedBakeStillLetsReviewPrepareTheRawMovie() async throws {
+        let proxies = ProxyRecorder()
+        let prewarmer = SourcePrewarmer(directory: root.appendingPathComponent("prewarm", isDirectory: true)) { source, destination in
+            proxies.record(source)
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("proxy".utf8).write(to: destination)
+            return destination
+        }
+        let baker = GatedBaker()
+        let flow = try await openFlow(baker: baker, takes: [(.pending, .rawReview)], prewarmer: prewarmer)
+        await waitUntil { baker.calls == 1 }
+        XCTAssertEqual(prewarmer.heldCount, 0)
+        baker.finish(.standard)
+        await waitUntil { flow.selectedTake?.cinematic == .standardKept }
+        await waitUntil { proxies.sources.count == 1 }
+    }
+
     func testUseTakeOnABakedTakeDoesNotWait() async throws {
         let baker = GatedBaker()
         let flow = try await openFlow(baker: baker, takes: [(.pending, .baked)])
@@ -275,9 +317,10 @@ import XCTest
     // MARK: Helpers
 
     /// Writes the given takes (a placeholder movie each), then opens a flow the way a relaunch does.
-    private func openFlow(baker: any CinematicBaking, takes: [(TeleprompterTakeSlot, CinematicBakeState?)]) async throws -> TeleprompterRecordingFlow {
-        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: projectID, root: root, cinematicAvailability: .available,
-                                             baker: baker, defaults: defaults)
+    private func openFlow(baker: any CinematicBaking, takes: [(TeleprompterTakeSlot, CinematicBakeState?)],
+                          prewarmer: SourcePrewarmer = .shared) async throws -> TeleprompterRecordingFlow {
+        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: projectID, root: root, prewarmer: prewarmer,
+                                             cinematicAvailability: .available, baker: baker, defaults: defaults)
         for (offset, entry) in takes.enumerated() {
             var take = TeleprompterTakeManifest(status: .review, capturedAt: Date(timeIntervalSince1970: Double(offset)),
                                                 script: TeleprompterScriptDraft(), slot: entry.0)
@@ -299,6 +342,12 @@ import XCTest
         while !condition(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(condition(), "timed out waiting", line: line)
     }
+}
+
+private final class ProxyRecorder: @unchecked Sendable {
+    private let lock = NSLock(); private var names: [String] = []
+    func record(_ source: URL) { lock.withLock { names.append(source.lastPathComponent) } }
+    var sources: [String] { lock.withLock { names } }
 }
 
 private actor IntakeProbe {

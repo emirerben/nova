@@ -714,6 +714,9 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             else if let take = selectedTake, take.status == .invalid {
                 try removeTake(take); pendingTake = nil
             }
+            // The kept (pending) take is not on screen while the next recording is made: its transcode must not hold the
+            // shared export slot or run beside the camera. It starts again when the take is shown (`prewarm`).
+            if let take = selectedTake, take.status == .review { prewarmer.cancel(key: take.id) }
             selectedTake = nil; error = nil; script.reset()
             await openCamera()
         } catch { self.error = "Couldn’t discard this candidate. Your previous take is still kept." }

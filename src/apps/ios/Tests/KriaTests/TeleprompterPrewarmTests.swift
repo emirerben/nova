@@ -8,7 +8,11 @@ import XCTest
 /// 3. a take re-recorded into the same slot reuses the previous take's hash or proxy;
 /// 4. the Use take spinner stays up for the second (background) upload;
 /// 5. Use take and a failed intake leave no way to retry with fresh work;
-/// 6. a second take's export runs beside the first's (the app allows one export at a time).
+/// 6. a second take's export runs beside the first's (the app allows one export at a time);
+/// 7. Retake on the pending take leaves its transcode running beside the new recording, and returning to it restarts
+///    nothing;
+/// 8. signing out leaves a take's transcode and proxy behind for the next account on this phone;
+/// 9. the screen's resume loop and the Use take hand-over both upload the background at once.
 @MainActor final class TeleprompterPrewarmTests: XCTestCase {
     private var root: URL!
 
@@ -184,6 +188,87 @@ import XCTest
         await flow.finishBackgroundHandover()
         XCTAssertNotNil(flow.queuedBackground)
         XCTAssertEqual(uploads.count, 1)
+    }
+
+    func testRetakeStopsThePendingTakesWorkAndComingBackToItStartsItAgain() async throws {
+        let transcodes = Transcodes()
+        let (flow, prewarmer) = makeFlow(transcodes)
+        let pending = try finalize(flow)
+        try await waitFor { transcodes.started.count == 1 }
+
+        // Retake ends by opening the camera, which can wait on the device; its first step is what matters here, so it
+        // runs on its own task and the test only ever waits with a deadline.
+        let retaking = Task { await flow.retake() }
+        defer { retaking.cancel() }
+
+        XCTAssertEqual(flow.pendingTake?.id, pending.id, "Retake keeps the pending take until a new one is used")
+        try await waitFor { transcodes.cancelled == 1 }
+        XCTAssertEqual(prewarmer.heldCount, 0, "no transcode runs beside the new recording")
+
+        // Back to the kept take (camera closed, or the new candidate discarded): the work starts again.
+        flow.selectedTake = flow.pendingTake
+        try await waitFor { transcodes.started.count == 2 }
+        XCTAssertEqual(prewarmer.heldCount, 1)
+        transcodes.holds = false
+    }
+
+    func testSigningOutCancelsRunningWorkAndLeavesNoProxy() async throws {
+        let transcodes = Transcodes()
+        let (flow, prewarmer) = makeFlow(transcodes)
+        try finalize(flow)
+        try await waitFor { transcodes.started.count == 1 }
+        let store = SessionBox()
+        let auth = AuthStore(tokenStore: store, api: KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store),
+                             defaults: UserDefaults(suiteName: "prewarm-signout-\(UUID().uuidString)")!, prewarmer: prewarmer)
+        try auth.signIn(with: MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900), displayName: nil)
+
+        auth.signOut()
+
+        try await waitFor { transcodes.cancelled == 1 }
+        XCTAssertEqual(prewarmer.heldCount, 0)
+    }
+
+    func testTheResumeLoopAndTheUseTakeHandOverNeverUploadTheBackgroundTwice() async throws {
+        let gate = AsyncGate()
+        let transcodes = Transcodes(); transcodes.holds = false
+        let uploads = Counter()
+        let (flow, _) = makeFlow(transcodes, background: { _, reference, _ in
+            uploads.bump()
+            await gate.wait()
+            return .queued(CameraBackgroundSelection(projectID: UUID(), itemID: "item", recordID: reference.id, kind: reference.kind, fileName: reference.fileName))
+        })
+        let picked = root.appendingPathComponent("bg-\(UUID().uuidString).png")
+        try Data("photo".utf8).write(to: picked)
+        flow.chooseBackground(from: picked, kind: .image)
+        try finalize(flow)
+        await flow.useTake { _, _ in .queued }
+        try await waitFor { uploads.count == 1 }
+
+        // The screen's loop fires while the hand-over is still uploading, several times over.
+        async let a: Void = flow.uploadBackgroundIfNeeded()
+        async let b: Void = flow.uploadBackgroundIfNeeded()
+        _ = await (a, b)
+        XCTAssertEqual(uploads.count, 1, "a second caller joins nothing and starts nothing")
+
+        await gate.open()
+        await flow.finishBackgroundHandover()
+        await flow.uploadBackgroundIfNeeded()
+        XCTAssertEqual(uploads.count, 1)
+        XCTAssertEqual(flow.background?.uploaded, true)
+    }
+
+    private final class SessionBox: TokenStore, @unchecked Sendable {
+        private let lock = NSLock(); private var session: MobileSession?
+        func read() throws -> MobileSession? { lock.withLock { session } }
+        func write(_ session: MobileSession) throws { lock.withLock { self.session = session } }
+        func delete() throws { lock.withLock { session = nil } }
+        func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+            lock.withLock {
+                guard session == expected else { return SessionStoreUpdate(applied: false, current: session) }
+                session = replacement
+                return SessionStoreUpdate(applied: true, current: session)
+            }
+        }
     }
 
     private actor AsyncGate {
