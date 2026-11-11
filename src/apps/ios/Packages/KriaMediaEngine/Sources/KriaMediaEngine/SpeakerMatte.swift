@@ -130,7 +130,7 @@ final class SpeakerMatte: @unchecked Sendable {
                             lastGood = (.backgroundOnly, time)
                             return (.backgroundOnly, .backgroundOnly)
                         }
-                        if reading.coverage <= config.maxCoverage {
+                        if reading.isUsable(by: config) {
                             let answer = Answer.cutout(reading.mask(canvas: canvas))
                             lastGood = (answer, time)
                             return (answer, .cutout)
@@ -217,6 +217,10 @@ struct SpeakerMaskReading {
         self.buffer = buffer
         self.step = step
     }
+
+    /// False when the mask swallowed the frame (S5). Under `minCoverage` is still usable: it means nobody is in frame (S4).
+    /// The mask cache stores only usable masks, so this is the one place the ceiling lives.
+    func isUsable(by config: SpeakerMatteConfig) -> Bool { coverage <= config.maxCoverage }
 
     /// The mask in canvas space, color-unmanaged so 0.5 stays 0.5 through the linear working space.
     /// Clamped before scaling so the canvas border keeps the mask's edge value instead of fading to 0.
