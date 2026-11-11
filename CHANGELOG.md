@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.164.0] - 2026-11-11
+
+### Changed
+- test: stop keeping a copy of the font list in the shared editor picker contract (KRI-1312) (#2214) <!-- release-pr: 2214 -->
+
 ## [0.88.163.0] - 2026-11-11
 
 ### Changed
