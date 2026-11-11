@@ -1,0 +1,82 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-11-v122",
+  "input": {
+    "utterance": "make 0:16 to 0:22 black and white like the old photos, and come back to colour with a warm light leak flash and a whoosh",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "color_moments",
+        "sfx"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 60.0,
+      "color_moments": {
+        "moments": [],
+        "end_fade_s": null,
+        "duration_s": 60.0
+      },
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {
+            "id": "whoosh-fast",
+            "label": "Whoosh fast",
+            "category": "transition",
+            "duration_s": 0.6
+          },
+          {
+            "id": "cinematic-hit",
+            "label": "Cinematic hit",
+            "category": "impact",
+            "duration_s": 1.2
+          }
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_color_moments\", \"moments\": [{\"start_s\": 16, \"end_s\": 22, \"tone\": \"mono\", \"enter\": \"cut\", \"exit\": \"light_leak\", \"sound\": \"whoosh-fast\", \"sound_at\": \"exit\"}]}], \"confidence\": 0.92, \"reply\": \"The part from 0:16 to 0:22 is now black and white, with a warm flash and a whoosh as the colour comes back.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_color_moments",
+        "moments": [
+          {
+            "id": "cm1",
+            "start": 16.0,
+            "end": 22.0,
+            "tone": "mono",
+            "exit": {
+              "style": "light_leak",
+              "duration": 0.3333333333333333
+            },
+            "sound": {
+              "effect_id": "whoosh-fast",
+              "at": "exit"
+            }
+          }
+        ]
+      }
+    ],
+    "confidence": 0.92,
+    "reply": "The part from 0:16 to 0:22 is now black and white, with a warm flash and a whoosh as the colour comes back.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "EN: one black-and-white window, light-leak exit, a catalog whoosh locked to the exit edge",
+    "lane": "color_moments"
+  }
+}

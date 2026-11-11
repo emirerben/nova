@@ -1140,6 +1140,18 @@ class Settings(BaseSettings):
     # round-trips `zoom`). A save carrying a zoomed tilt from an older build, or one that would
     # overwrite a stored zoom, answers 426 `client_update_required` (`slide_tilt_zoom`).
     media_tilt_zoom_min_client_protocol: int = 33
+    # KRI-1350: colour moments on a phone Talking edit -- black-and-white / warm / faded windows
+    # of the finished video with white-flash, light-leak or dip-to-black edges, an end fade to
+    # black, and an optional library sound locked to an edge. Kill switch for the chat op that
+    # writes them (default off); serving is gated by the verified token below. Also needs the
+    # `colorMoments` token in PHONE_RENDER_VERIFIED_FEATURES and a build declaring
+    # `X-Kria-Client-Protocol` >= `color_moments_min_client_protocol`: older builds cannot decode
+    # `color_moments` / `end_fade` and would fail the whole recipe, so a pinned recipe carrying
+    # them answers 426 `client_update_required` (`color_moments`). Apply: fly secret
+    # COLOR_MOMENTS_ENABLED=true (api + worker) + `colorMoments` in the verified features +
+    # restart. Rollback: the flag false + restart, never a code revert.
+    color_moments_enabled: bool = False
+    color_moments_min_client_protocol: int = 48
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

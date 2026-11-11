@@ -435,11 +435,22 @@ enum NativeEditorRenderError: Error, Equatable {
             let length = min(total, max(0, (bed.endS ?? (start + total)) - start))
             try addAudio(id: id, lane: "background-music", start: start, length: length, gain: pow(10, (bed.gainDB ?? -18) / 20))
         }
+        // KRI-1350: the stored colour moments on the current Range edit (the server moves them the same way at Save),
+        // and each moment's own sound re-pinned to its edge, dropped when its moment is gone.
+        let colorMomentLane = NativeSpeechTimelineProjection.colorMomentsLane(document.colorMoments,
+            baseSlots: document.colorMomentsBaseSlots, document: document)
+        let colorMomentEdges = NativeSpeechTimelineProjection.colorMomentEdges(colorMomentLane)
         for effect in document.soundEffects {
             let id = "sfx:" + effect.id
+            let ownedByMoment = effect.id.hasPrefix(NativeSpeechTimelineProjection.colorMomentSoundPrefix)
+            if ownedByMoment, colorMomentEdges[effect.id] == nil { continue }
             guard let source = audioSources[id], let available = source.asset.duration,
-                  let item = items.first(where: { $0.kind == .soundEffect && $0.id == effect.id }) else {
+                  var item = items.first(where: { $0.kind == .soundEffect && $0.id == effect.id }) else {
                 throw MediaEngineError.missingAsset(id)
+            }
+            if ownedByMoment, let edge = colorMomentEdges[effect.id], edge != item.start {
+                item = NativeEditorTimelineItem(selection: item.selection, start: edge, end: edge + (item.end - item.start),
+                                                zIndex: item.zIndex, sourceIndex: item.sourceIndex)
             }
             let start = effect.raw["trim_start_s"]?.numberValue ?? 0
             let end = min(available, effect.raw["trim_end_s"]?.numberValue ?? available)
@@ -1100,8 +1111,31 @@ enum NativeEditorRenderError: Error, Equatable {
             if let item = items.first(where: { $0.kind == .drawing && $0.id == drawing.id }) { placed.startS = item.start; placed.endS = item.end }
             return placed
         }, timelineDuration: TimelineMath.totalDuration(of: recipe))
+        (recipe.colorMoments, recipe.endFade) = Self.colorMoments(colorMomentLane, duration: TimelineMath.totalDuration(of: recipe))
         try recipe.validate()
         return NativeEditorRenderProgram(recipe: recipe, assetURLs: urls)
+    }
+
+    /// KRI-1350: the stored colour-moments lane for the PREVIEW, clamped to this edit's length exactly as the server's
+    /// `compile_color_moments` does (a moment a shorter cut pushed past the end is shortened, or dropped under 0.5 s;
+    /// an end fade longer than the video is dropped). An unreadable lane previews without moments, never fails.
+    static func colorMoments(_ raw: JSONValue?, duration: Double) -> ([ColorMoment], EndFade?) {
+        guard let raw, raw != .null, case let .object(lane) = raw else { return ([], nil) }
+        var moments: [ColorMoment] = []
+        if case let .array(rows)? = lane["moments"] {
+            for row in rows {
+                guard let data = try? JSONEncoder().encode(row), var moment = try? JSONDecoder().decode(ColorMoment.self, from: data) else { continue }
+                moment.end = min(moment.end, duration)
+                guard moment.end - moment.start >= ColorMoment.minimumLength - 1e-9,
+                      moments.last.map({ moment.start >= $0.end - 1e-6 }) ?? true else { continue }
+                moments.append(moment)
+            }
+        }
+        var fade: EndFade?
+        if let row = lane["end_fade"], row != .null, let data = try? JSONEncoder().encode(row),
+           let decoded = try? JSONDecoder().decode(EndFade.self, from: data),
+           EndFade.durationRange.contains(decoded.duration), decoded.duration <= duration { fade = decoded }
+        return (Array(moments.prefix(ColorMoment.maxMoments)), fade)
     }
 
     static func visualEditorStyle(_ raw: JSONValue?) throws -> VisualEditorStyle? {

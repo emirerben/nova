@@ -1404,7 +1404,12 @@ enum KriaClientProtocolContract {
     /// 47 (KRI-1335) round-trips a split section's `collapse_empty_panels` and renders it: the panels still playing grow
     /// to fill the screen when another panel's clips end. A build below it would drop the key on Save, so the server
     /// offers collapse (and `splitCollapse`) only to this protocol.
-    static let version = 47
+    ///
+    /// 48 (KRI-1350): decodes and draws `color_moments` (black-and-white / warm / faded windows with white-flash,
+    /// light-leak or dip-to-black edges) and `end_fade`, and the `colorMoments` capability. The server serves such a
+    /// recipe only to this protocol (`COLOR_MOMENTS_ENABLED` + `colorMoments` verified) and answers 426
+    /// `client_update_required` (`color_moments`) to an older build.
+    static let version = 48
     static let header = "X-Kria-Client-Protocol"
 }
 

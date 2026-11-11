@@ -124,6 +124,8 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "clear_speaker_frame",
             # Qendresa item 18: aim / zoom the recordings behind the speaker.
             "set_background_focus",
+            # KRI-1350: black-and-white / warm / faded stretches, their flashes and the end fade.
+            "set_color_moments",
         }
     ),
 }
@@ -189,6 +191,7 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
             "background",
             "background_windows",
             "background_focus",
+            "color_moments",
         }
     ),
 }
@@ -218,6 +221,8 @@ FIELD_SECTIONS: dict[str, tuple[str, ...]] = {
     # KRI-1117: the Talking background is a look; a scoped update never touches it unless
     # the look is flagged.
     "speaker_background": ("look",),
+    # KRI-1350: colour moments are part of the look.
+    "color_moments": ("look",),
 }
 # Documentation of the contract table (4.3, last column); the code above is its inverse.
 SECTION_COMMIT_FIELDS: dict[str, tuple[str, ...]] = {

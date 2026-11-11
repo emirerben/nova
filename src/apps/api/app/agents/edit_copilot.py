@@ -116,7 +116,13 @@ log = structlog.get_logger()
 # v121 (KRI-1365): a vague "make the video shorter" acts at once (about 70%, proportional) instead
 # of asking; "make the text faster" / "show each text shorter" retimes every word sequence, a
 # paired one (a text and its translation) over the same window.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-10-v121"
+# v122 (KRI-1350): set_color_moments {moments?, end_fade_s?} sets black-and-white / warm / faded
+# stretches with cut, white-flash, light-leak or dip-to-black edges (a library sound may land on an
+# edge) and the fade to black at the end. Taught in color_moments.txt and printed as COLOR MOMENTS
+# only where the snapshot offers the `color_moments` family (flag + verified token + protocol 48),
+# or, with that gate closed, on an edit that still carries moments, marked REMOVAL ONLY (only
+# taking them off is accepted), so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-11-v122"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2048,6 +2054,32 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
         else:
             lines.append("(none)")
+
+    if isinstance(snapshot.get("color_moments"), dict):
+        lane = snapshot["color_moments"]
+        fade = _fmt_round3(lane.get("end_fade_s")) if lane.get("end_fade_s") else "none"
+        lines.append(
+            f"\nCOLOR MOMENTS (video length {_fmt_round3(lane.get('duration_s'))}s; "
+            f"end fade {fade}):"
+        )
+        for moment in lane.get("moments") or []:
+            sound = (
+                f" sound={_field(moment.get('sound'), max_chars=80)!r}@{moment.get('sound_at')}"
+                if moment.get("sound")
+                else ""
+            )
+            lines.append(
+                f"- {_fmt_round3(moment.get('start_s'))}-{_fmt_round3(moment.get('end_s'))}s "
+                f"tone={moment.get('tone')} enter={moment.get('enter')} exit={moment.get('exit')}"
+                + sound
+            )
+        if not lane.get("moments"):
+            lines.append("(none)")
+        if lane.get("removal_only"):
+            lines.append(
+                'REMOVAL ONLY on this edit: you may take moments off ("moments":[]) or the '
+                'end fade off ("end_fade_s":0); never add or change one.'
+            )
 
     if isinstance(snapshot.get("background"), dict):
         background = snapshot["background"]
@@ -4287,6 +4319,11 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
                 tr="Bunu bu düzenlemede henüz değiştiremiyorum.",
             ),
         )
+        closed_note = _v2.REGISTRY.closed_notes.get(name)
+        if closed_note is not None:
+            note = say(en=closed_note[0], tr=closed_note[1])
+            if note not in state.reply_notes:
+                state.reply_notes.append(note)
         return None
 
     raw_payload = raw_op.get("payload")

@@ -76,6 +76,10 @@ SPLIT_SCREEN_PROTOCOL = 46
 # older build would draw the fixed layout and drop the field on its next Save.
 SPLIT_COLLAPSE_PROTOCOL = 47
 
+# KRI-1350: the first build that decodes and draws `color_moments` / `end_fade` (48: after
+# KRI-1335's split collapse at 47).
+COLOR_MOMENTS_PROTOCOL = 48
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

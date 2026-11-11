@@ -514,11 +514,13 @@ public struct PreviewComposition: @unchecked Sendable {
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.
         let covered = max(brandedTotal, composition.duration.seconds)
+        // `total` is the edit's own length: the end fade finishes there and the outro after it stays untouched.
+        let colorMoments = ColorMomentProgram(recipe: recipe, total: total)
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
                 cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
                 speakerMatte: speakerMatte, speakerFrame: recipe.speakerBackground?.speakerFrame,
-                fullScreenWindows: recipe.speakerBackground?.fullScreenWindows ?? [])
+                fullScreenWindows: recipe.speakerBackground?.fullScreenWindows ?? [], colorMoments: colorMoments)
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters

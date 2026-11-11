@@ -41,6 +41,7 @@ LANES: tuple[str, ...] = (
     "overlays",
     "background",
     "split_screen",
+    "color_moments",
 )
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
 # prompts stay byte-identical (KRI-301).
@@ -57,6 +58,8 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     "background_windows": "speaker_background_windows.txt",
     # Qendresa item 18: aim / zoom the recordings, only while the focus gate is open.
     "background_focus": "speaker_background_focus.txt",
+    # KRI-1350: colour moments, only while the colour-moments gate is open.
+    "color_moments": "color_moments.txt",
 }
 # KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
@@ -103,6 +106,9 @@ class OpSpec:
     coerce: CoerceFn | None = None
     # Extra fragment file under prompts/edit_copilot_ops/ (beyond <lane>.txt).
     prompt_fragment: str | None = None
+    # (en, tr) sentence that REPLACES the model's reply when this op's family is not offered and
+    # nothing else survives, so "Done" is never shown for a closed lane (KRI-1350).
+    closed_note: tuple[str, str] | None = None
 
 
 def lane_specs() -> list[OpSpec]:
@@ -131,6 +137,7 @@ class MergedRegistry:
     new_ops: frozenset[str] = frozenset()
     families: dict[str, frozenset[str]] = field(default_factory=dict)
     coerce: dict[str, CoerceFn] = field(default_factory=dict)
+    closed_notes: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 REGISTRY = MergedRegistry()
@@ -161,6 +168,8 @@ def merge_into_parser(
         op_fields[spec.name] = spec.fields | spec.required
         REGISTRY.families[spec.name] = spec.family
         REGISTRY.coerce[spec.name] = spec.coerce
+        if spec.closed_note is not None:
+            REGISTRY.closed_notes[spec.name] = spec.closed_note
     REGISTRY.new_ops = frozenset(new_ops) | REGISTRY.new_ops
     return REGISTRY
 
@@ -210,7 +219,9 @@ def prompt_fragments(surface: str | None = None) -> str:
     names = [
         f"{lane}.txt"
         for lane in LANES
-        if lane != "split_screen" and SURFACE_ONLY_LANES.get(lane) in (None, surface)
+        # These two lanes' fragments are family-gated (see `family_fragments`).
+        if lane not in ("split_screen", "color_moments")
+        and SURFACE_ONLY_LANES.get(lane) in (None, surface)
     ]
     for spec in lane_specs():
         if spec.prompt_fragment and spec.prompt_fragment not in names:
