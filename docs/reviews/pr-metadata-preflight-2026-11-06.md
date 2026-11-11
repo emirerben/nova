@@ -45,7 +45,8 @@ repository setting changes.
 Before implementation, the six preflight tests failed because the workflow had
 no early ownership step. After implementation, all six passed, including five
 different invalid metadata changes and the corrected-commit recovery.
-The complete offline CI contract suite passed all 167 tests. Scoped Ruff,
+The complete offline CI contract suite passed all 167 tests when written; after
+merging origin/main on 2026-11-11 it passes all 178. Scoped Ruff,
 workflow YAML parsing, the CLAUDE.md size guard, and diff checks also passed.
 
 Reproduce from the feature worktree:
@@ -83,9 +84,9 @@ The following owners are responsibilities for follow-up, not new assignments.
 | Avoid repeated branch-update waves | Shipping coordinator | Current rules and a deliberate integration order; no-conflict status alone does not prove compatibility |
 | Evaluate a merge queue | Repository administrator and CI owner | Confirm plan eligibility, add and verify `merge_group` coverage before any settings change |
 | Profile slow native tests | Native CI owner | Coordinated runner access, preserved export assertions, and critical-path timing |
-| Redesign prompt identities | Runtime and prompt owners | Cache, telemetry, replay, and flag-off compatibility design; KRI-398's canceled lint proposal is not that design |
+| Prompt identities | Runtime and prompt owners | Superseded on main: Main Creator and brief-extractor versions are now automatic fingerprints ([history](../pipelines/prompt-version-history.md)). This row is retained as history; no work is assigned here |
 
-The repository already has scoped suites, stale-run cancellation, one native PR
-leg, manifest checks before Mac allocation, and a separate body-edit evidence
+The repository already has scoped suites, stale-run cancellation, selector-chosen
+native legs (`native_legs`; PRs run the unit leg and affected UI groups), manifest checks before Mac allocation, and a separate body-edit evidence
 workflow. Any further change must account for those existing mechanisms. No
 modeled savings or 10x claim is established by this PR.
