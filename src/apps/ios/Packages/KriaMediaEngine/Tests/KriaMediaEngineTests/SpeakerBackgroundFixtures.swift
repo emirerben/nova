@@ -270,6 +270,22 @@ struct SpeakerTestFrame {
         self.bytes = bytes
     }
     func rgb(_ x: Int, _ y: Int) -> [Int] { (0..<3).map { Int(bytes[(y * width + x) * 4 + $0]) } }
+    /// How far this frame is from `other` (same size): the largest and mean channel difference over RGB, and the
+    /// fraction of pixels where any channel differs by more than `tolerance`.
+    func difference(from other: SpeakerTestFrame, tolerance: Int = 0) -> (maxDelta: Int, meanDelta: Double, differingFraction: Double) {
+        precondition(width == other.width && height == other.height)
+        var maxDelta = 0, total = 0, differing = 0
+        for pixel in 0..<width * height {
+            var worst = 0
+            for channel in 0..<3 {
+                let delta = abs(Int(bytes[pixel * 4 + channel]) - Int(other.bytes[pixel * 4 + channel]))
+                total += delta; worst = max(worst, delta)
+            }
+            maxDelta = max(maxDelta, worst)
+            if worst > tolerance { differing += 1 }
+        }
+        return (maxDelta, Double(total) / Double(width * height * 3), Double(differing) / Double(width * height))
+    }
     /// Fractions of the frame, (0, 0) = top-left.
     func rgb(fx: Double, fy: Double) -> [Int] { rgb(min(width - 1, Int(fx * Double(width))), min(height - 1, Int(fy * Double(height)))) }
 }

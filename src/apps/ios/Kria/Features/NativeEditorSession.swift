@@ -5,6 +5,11 @@ import SwiftUI
 import ImageIO
 import UIKit
 
+struct NativeTimelineGestureID: Equatable, Sendable {
+    private let value = UUID()
+    init() {}
+}
+
 enum NativeSourcePreviewState: Equatable {
     case idle, preparing, ready, failed(String)
     /// KRI-211: the project's original clips are not on this iPhone (made on
@@ -96,11 +101,17 @@ struct NativeEditorTemporaryVideo: Sendable {
 
 /// Local-first state for the Paper native editor. Every edit is a synchronous
 /// value transaction; persistence happens only from the explicit Save action.
+enum EditorOpenIntent { case warm, open }
+
 @MainActor final class NativeEditorSession: ObservableObject {
     /// Canonical mutable editor state. The legacy `draft` accessor below is a
     /// compatibility projection for first-pass views and test fixtures.
     @Published private(set) var document: EditorDocument {
         didSet {
+            if let checkpoint = mergeDecisionCheckpoint, checkpoint.isOpen, document != checkpoint.before {
+                document = checkpoint.before
+                return
+            }
             draftProjectionCache = nil
             timelineItemsCache = nil
             timelineClipsCache = nil
@@ -169,19 +180,133 @@ struct NativeEditorTemporaryVideo: Sendable {
         return player?.currentItem === sourcePreview.preview.playerItem
     }
     @Published var isPlaying = false
-    @Published var isSaving = false
+    @Published var isSaving = false {
+        didSet { if oldValue && !isSaving { drainPendingLatestJob() } }
+    }
+    /// True while an editor open or reload holds `isSaving` as its in-flight fence. The fence stays; the creator
+    /// asked for no save, so the header reads `showsSavingIndicator` instead of `isSaving`.
+    @Published private(set) var isLoadingEditor = false
+    var showsSavingIndicator: Bool { isSaving && !isLoadingEditor }
     @Published var hasUnsavedChanges = false
     @Published var saveState: NativeEditorSaveState = .idle
+    @Published var splitScreenActionError: String?
+    @Published private(set) var mergeConflictMessage: String?
+    @Published private(set) var canKeepLocalMergeConflicts = true
+    private enum MergeOrigin: Equatable { case rendered, submittedChat, unprovenChat }
+    private struct MergeAuthority: Equatable {
+        let identity: EditorOperationIdentity
+        let owner: String?
+        let generation: String
+        let clean: EditorDocument
+        let song: JSONValue?
+    }
+    private var mergeAuthority: MergeAuthority {
+        MergeAuthority(identity: editorOperationIdentity, owner: api?.mediaLibraryOwner,
+            generation: cleanDocument.revision.baseGeneration, clean: cleanDocument,
+            song: Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong,
+                job: jobID, generation: cleanDocument.revision.baseGeneration))
+    }
+    private struct PendingMerge {
+        let id = UUID()
+        var origin: MergeOrigin = .rendered
+        var authority: MergeAuthority? = nil
+        var localOverride: EditorDocument? = nil
+        var stagedSections: Set<EditorSection> = []
+        let base: EditorDocument
+        let clean: EditorDocument
+        let remote: EditorDocument
+        let baseSong: JSONValue?
+        let variant: [String: JSONValue]?
+        let forcePreview: Bool
+        let thread: UUID?
+        let originalJob: UUID?
+        let originalVariant: String?
+        let destinationJob: UUID?
+        let destinationVariant: String?
+        let destinationItem: String?
+        let stagedRevision: Int?
+        let remoteETag: String?
+        let legacySnapshot: [String: JSONValue]?
+    }
+    private var pendingMerge: PendingMerge?
+    /// A decision boundary is not an executable document checkpoint. Reopening it
+    /// shows the original local document read-only until the destination is chosen.
+    private struct MergeDecisionCheckpoint {
+        let context: PendingMerge
+        let before: EditorDocument
+        let after: EditorDocument
+        let authority: MergeAuthority
+        var isOpen = false
+    }
+    private var mergeDecisionCheckpoint: MergeDecisionCheckpoint?
+    private var mutatingDocumentHistory = false
+    var isReviewingPreviousMerge: Bool { mergeDecisionCheckpoint?.isOpen == true }
+    private var decisionIsCurrent: Bool { mergeDecisionCheckpoint?.authority == mergeAuthority }
+    private func clearMergeDecisionCheckpoint() {
+        let checkpoint = mergeDecisionCheckpoint
+        mergeDecisionCheckpoint = nil
+        if let checkpoint, checkpoint.isOpen {
+            document = checkpoint.after
+            pendingMerge = nil; mergeConflictMessage = nil; canKeepLocalMergeConflicts = true
+        }
+    }
+
     @Published private(set) var refreshSync: NativeEditorRefreshSync = .idle
     /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
     var refreshRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(27), .seconds(60)]
-    private var refreshRetryTask: Task<Void, Never>?
+    private(set) var refreshRetryTask: Task<Void, Never>?
+    private struct RefreshRetryScope {
+        let identity: EditorOperationIdentity
+        let owner: String?
+    }
+    private var refreshRetryScope: RefreshRetryScope?
     private var refreshFailureStreak = 0
     /// The project lost this edit target, or the chat runtime is off: further draft reads cannot succeed.
     private var promptSyncStopped = false
     /// Polls for a new job that the thread points at but that is not ready to edit yet.
     private var newVersionWatchTask: Task<Void, Never>?
     private var newVersionWatchTarget: UUID?
+    private var latestJobGate = NativeEditorLatestGate()
+    private var latestJobDrainTask: Task<Void, Never>?
+    private var latestJobTransport: Task<Void, Never>?
+    private var observersVisible = true
+    private var pendingLoadObservation: (@MainActor () async -> Void)?
+    struct ObservationScope: Hashable {
+        let owner: String?
+        let environment: String?
+        let target: String
+    }
+    private func observationScope(api: (any KriaAPIClient)?, target: String) -> ObservationScope {
+        ObservationScope(owner: api?.mediaLibraryOwner, environment: (api as? KriaAPI)?.baseURL.absoluteString, target: target)
+    }
+    private var loadObservationScope: ObservationScope?
+    private var loadObservationCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
+    private var loadObservationCooldown: NativeEditorReadCooldown {
+        get { loadObservationScope.flatMap { loadObservationCooldowns[$0] } ?? NativeEditorReadCooldown() }
+        set { if let scope = loadObservationScope { loadObservationCooldowns[scope] = newValue } }
+    }
+    private var previewObservationCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
+    private var previewObservationTerminal = false
+    private var previewSlowGeneration: String?
+    private var previewTransport: Task<[String: JSONValue], Error>?
+    private struct LoadTransport {
+        let epoch: UInt64
+        let token: UUID
+        let task: Task<Void, Never>
+    }
+    private var loadTransport: LoadTransport?
+    var loadReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
+    var loadReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    var previewReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
+    var previewReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    private var watchedLatestProject: ProjectSummary?
+    private static let latestJobSlowRecheck: Duration = .seconds(300)
+    var latestJobRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9)]
+    var latestJobReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
+    var latestJobReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    private var latestJobCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
+    private var newVersionWatchAttempts = 0
+    @Published private(set) var latestJobRefreshMessage: String?
     /// Shown on the opening screen while a first open waits for its video or for a connection.
     @Published private(set) var loadWaitingMessage: String?
     private var loadRetryTask: Task<Void, Never>?
@@ -276,8 +401,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         case .mediaOverlay: mediaID = "overlay:" + selection.id
         case .visualBlock: mediaID = "visual-\(selection.id)-\(selection.id)"
         case .speaker:
-            guard canMoveSpeakerOnPreview else { return }
-            mediaID = EditorSelection.speakerID
+            guard canMoveSpeakerOnPreview, selection == .speaker, document.splitScreenSections.isEmpty else { return }
+            mediaID = selection.id
         default: return
         }
         let sequence = textInteractionSequence
@@ -290,7 +415,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // The framed speaker splits around the cut-out instead of a media layer (SF4).
                 let layers: (below: AVVideoComposition, above: AVVideoComposition, media: AVVideoComposition, rect: CGRect)
                 if selection.kind == .speaker {
-                    let split = try preview.speakerInteractionLayers(time: time)
+                    let split = try preview.speakerInteractionLayers(time: time, clipID: selection.id == EditorSelection.speakerID ? nil : selection.id)
                     layers = (split.below, split.above, split.speaker, split.rect)
                 } else {
                     layers = try preview.mediaInteractionLayers(id: mediaID, time: time)
@@ -362,6 +487,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// successful empty resolution for this generation so ordinary editor
     /// rebuilds do not repeatedly poll the device-render endpoint.
     private var deviceNarrationResolutionGeneration: String?
+    @Published private var deviceNarrationPresence: (generation: String, present: Bool)?
     /// How the pinned device recipe plays the creator's song (KRI-374); nil when
     /// the recipe has none. Resolved with the narration, from the same recipe.
     @Published private(set) var deviceSongBed: NativeEditorSongBed?
@@ -371,6 +497,17 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Song edits the server has acknowledged since the current variant loaded (KRI-428). They are
     /// folded out of `document.userSong` on Save so a retry or a rebase never sends them again.
     private var acknowledgedUserSong: EditorUserSongState?
+    private struct SavedSongProjectionLag {
+        let thread: UUID?
+        let job: UUID?
+        let item: String?
+        let variant: String?
+        let generation: String
+        let revision: Int?
+        let previousProjection: JSONValue?
+        let acknowledged: EditorUserSongState
+    }
+    private var savedSongProjectionLag: SavedSongProjectionLag?
     /// KRI-432: the built composition plays the song at unity gain and the PLAYER carries the level, so a
     /// volume change is `AVPlayer.volume` (instant, no rebuild, no black frame). Re-assigning the item's
     /// audio mix is not an option: on iPhone any live `audioMix` swap silences the preview (KRI-241).
@@ -422,9 +559,53 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// The server's song (`user_song`) exactly as the loaded variant lists it.
     private var baseUserSong: NativeUserSong? { NativeUserSong(variant: previewVariant) }
     /// The song as last SAVED: the variant plus every edit the server has acknowledged since that
-    /// variant loaded (a refresh of the variant resets the acknowledged edits, see `configureCapabilities`).
+    /// variant loaded. A refresh clears them unless an exact durable Save proves its render plan still lags.
     /// The unsaved edits in `document.userSong` are relative to this. Nil once a removal was saved.
     private var savedUserSong: NativeUserSong? { baseUserSong?.applying(acknowledgedUserSong) }
+    private static func serverSavedSongOverlay(for variant: [String: JSONValue], job: UUID?, variantKey: String?) -> EditorUserSongState? {
+        guard let marker = variant["saved_user_song"]?.objectValue,
+              let job, let variantKey, marker["job_id"]?.stringValue.flatMap(UUID.init(uuidString:)) == job,
+              marker["variant_id"] == .string(variantKey), variant["variant_id"] == .string(variantKey),
+              let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue,
+              !generation.isEmpty, marker["generation"] == .string(generation),
+              case let .number(revision)? = marker["revision_number"], revision.isFinite,
+              revision >= 1, revision.rounded() == revision,
+              variant["editor_revision_number"] == .number(revision),
+              let state = marker["state"]?.objectValue, case let .bool(removed)? = state["removed"] else { return nil }
+        for key in ["volume", "window_start_s", "window_end_s"] {
+            guard let value = state[key], value != .null else { continue }
+            guard case let .number(number) = value, number.isFinite, number >= 0,
+                  key != "volume" || number <= 1,
+                  key != "window_end_s" || number > 0 else { return nil }
+        }
+        return EditorUserSongState(volume: state["volume"]?.numberValue,
+            windowStartS: state["window_start_s"]?.numberValue,
+            windowEndS: state["window_end_s"]?.numberValue, removed: removed)
+    }
+    private func savedSongOverlay(for variant: [String: JSONValue], thread: UUID?, job: UUID?,
+                                  item: String?, variantKey: String?, generation: String) -> EditorUserSongState? {
+        guard let proof = savedSongProjectionLag, !generation.isEmpty,
+              proof.thread == thread, proof.job == job, proof.item == item, proof.variant == variantKey,
+              proof.generation == generation, proof.previousProjection == variant["user_song"] else { return nil }
+        let revision: Int?
+        if let value = variant["editor_revision_number"] {
+            guard case let .number(number) = value, number.isFinite, number >= 1,
+                  number <= Double(Int32.max), number.rounded() == number else { return nil }
+            revision = Int(number)
+        } else { revision = nil }
+        guard proof.revision == revision else { return nil }
+        return proof.acknowledged
+    }
+    private static func mergeSongAuthority(variant: [String: JSONValue], effective: NativeUserSong?, job: UUID?, generation: String) -> JSONValue? {
+        guard var raw = variant["user_song"]?.objectValue, let effective else { return nil }
+        raw["volume"] = .number(effective.volume)
+        raw["window_start_s"] = .number(effective.windowStartS)
+        raw["window_end_s"] = .number(effective.windowEndS)
+        // The public song projection has no asset pin. A different generation
+        // cannot prove that equal title/window metadata still names this song.
+        let fence = job.flatMap { id in generation.isEmpty ? nil : "\(id.uuidString):\(generation)" } ?? UUID().uuidString
+        return .object(["source_fence": .string(fence), "song": .object(raw)])
+    }
     /// The latest start: it must leave `NativeUserSong.minPlayableS` of song. The video no longer bounds it;
     /// a song that runs out before the video does simply stops.
     private func maxUserSongStart(for song: NativeUserSong) -> Double? { NativeUserSong.maxStart(for: song) }
@@ -759,6 +940,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var previewTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
     private var sourcePreviewTask: Task<Void, Never>?
     private var sourcePreviewSequence = 0
+    #if DEBUG
+    private(set) var sourcePreviewBuildCountForTesting = 0
+    #endif
     /// The last `sourcePreviewSequence` a `rebuildSourcePreview` attempt
     /// actually settled (success or failure) — never a superseded/cancelled
     /// attempt. `sourcePreviewTask` itself is never reset to nil on
@@ -775,7 +959,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// The fallback card offers Retry: the live preview failed for a reason a rebuild can fix. A permanent
     /// failure (no video track, an unsupported effect, a missing font) would fail the same way again.
     var fallbackOffersRetry: Bool {
-        guard isShowingRenderedFallback, case .failed = sourcePreviewState else { return false }
+        guard isShowingRenderedFallback || isShowingVersionBeforeStagedEdit, case .failed = sourcePreviewState else { return false }
         return !sourcePreviewFailureIsPermanent
     }
 
@@ -790,6 +974,24 @@ struct NativeEditorTemporaryVideo: Sendable {
               !hasUnsavedChanges, chatStagedDocument == nil else { return false }
         return player != nil && player === finishedRenderPlayer
     }
+
+    /// The creator pressed Play while a staged AI edit's live preview was still building (KRI-1230).
+    private var playsVersionBeforeStagedEdit = false
+
+    /// The canvas shows the last finished video while a staged AI edit's live preview is building (after the
+    /// creator pressed Play) or failed. The canvas labels it as the version before that edit. It is never
+    /// current: `canDisplayCurrentPlayer`, export and Save still refuse it.
+    var isShowingVersionBeforeStagedEdit: Bool {
+        guard chatStagedDocument != nil, !finishedRenderFailed, !isShowingPreviousPreview,
+              let player, player === finishedRenderPlayer else { return false }
+        switch sourcePreviewState {
+        case .failed, .originalsUnavailable: return true
+        case .preparing: return playsVersionBeforeStagedEdit
+        case .idle, .ready: return false
+        }
+    }
+
+    private var canPlayCanvasVideo: Bool { canDisplayCurrentPlayer || isShowingVersionBeforeStagedEdit }
 
     var canDisplayCurrentPlayer: Bool {
         guard player != nil else { return false }
@@ -837,6 +1039,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     @Published private(set) var sourcePreviewFailureIsPermanent = false
     private var deviceRenders: DeviceRenderSessions?
     private var pendingDeviceRenderIdentity: DeviceRenderIdentity?
+    /// The document generation the save that pinned `pendingDeviceRenderIdentity` produced.
+    private var pendingDeviceRenderGeneration: String?
     private var guidedRevisionNumber: Int?
     var deviceRenderKey: DeviceRenderKey? {
         guard rendersOnDevice, let jobID, let variantKey else { return nil }
@@ -928,12 +1132,19 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// A reconcile was skipped because capabilities were never readable; the preview poll retries it.
     private var deviceReconcilePending = false
 
+    private static let deviceCapabilitiesReuse: TimeInterval = 60
+
     func refreshDeviceRender(retry: Bool = false) async {
         guard let key = deviceRenderKey, let api, let deviceRenders else { return }
         let identity = editorOperationIdentity
         let capabilities: PhoneRenderingCapabilities
         do {
-            let response = try await api.creationCapabilities()
+            // Rollouts change these rarely, and the status read below already reports a pause. A read from
+            // the last minute spares every Save one more round trip before its render can start. A creator's
+            // Retry always reads fresh.
+            let recent = retry ? nil : await api.recentCreationCapabilities(maxAge: Self.deviceCapabilitiesReuse)
+            guard editorOperationIdentity == identity else { return }
+            let response = if let recent { recent } else { try await api.creationCapabilities() }
             guard editorOperationIdentity == identity else { return }
             capabilities = response.phoneRendering ?? .disabled
             lastPhoneRenderingCapabilities = capabilities
@@ -970,6 +1181,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private let projectID: UUID
+    /// Every compatibility identity uses the loaded project, including refreshes
+    /// of a session constructed before its thread was known. Storage keeps its
+    /// existing initialization root; this scope is only for document identities.
+    private var editorIdentityProjectID: UUID { threadID ?? projectID }
     private var etag: String = ""
 
     var draft: EditorDraft {
@@ -1001,21 +1216,32 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private let minimumClipDuration: TimeInterval = 0.1
     private let historyLimit = 100
-    private var undoStack: [EditorDocument] = [] { didSet { undoHistoryVersion &+= 1 } }
+    private var undoStack: [EditorDocument] = [] {
+        didSet {
+            undoHistoryVersion &+= 1
+            if !mutatingDocumentHistory { clearMergeDecisionCheckpoint() }
+        }
+    }
     /// KRI-240: changes on every undo-history change (new step, undo, trim at the
     /// limit, clear), so the caption editor's Undo notice can tell its removal is
     /// still the newest step. A count can't: it saturates at `historyLimit`.
     private(set) var undoHistoryVersion = 0
     private var redoStack: [EditorDocument] = []
+    private var saveHistory: EditorSaveHistory<EditorDocument>?
     private var cleanDocument: EditorDocument
+    /// What the live preview was last built from: the server document as it arrived (`raw`) and the clean
+    /// document after source hydration (`hydrated`). Hydration rewrites `cleanDocument`, so a reopen can only
+    /// recognise an unchanged server document by comparing like with like. A save, rebase or merge that
+    /// rewrites `cleanDocument` breaks the second equality, which retires the pair with no hook at those sites.
+    private var serverBaseline: (raw: EditorDocument, hydrated: EditorDocument)?
     private var api: (any KriaAPIClient)?
     private weak var mediaUploads: BackgroundUploadCoordinator?
     private var pendingPlacementIDs: Set<UUID> = []
     private var editorImportsActive = true
-    private var threadID: UUID?
+    private var threadID: UUID? { didSet { if oldValue != threadID { resetPreviewHandoffForTargetChange() } } }
     /// The creation thread this edit belongs to (from open-in-editor for a gallery video).
     var creationThreadID: UUID? { threadID }
-    private var itemID: String?
+    private var itemID: String? { didSet { if oldValue != itemID { resetPreviewHandoffForTargetChange() } } }
     var visualItemID: String? { itemID }
     @Published private(set) var visualLibrary: [CreationVisual] = []
     @Published private(set) var visualLibraryLimit = 20
@@ -1041,6 +1267,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Seam over `UIApplication.beginBackgroundTask` so a test can drive expiration.
     var backgroundActivity: any BackgroundActivityAssertion = UIKitBackgroundActivityAssertion()
     @Published var addClipError: String?
+    /// The Split picker shows `addClipError` inline, so the timeline's "Couldn’t add clip" alert stays quiet while it is open.
+    @Published var addClipAlertSuppressed = false
     /// Default window given to a freshly added timeline clip/photo. The server
     /// has never probed this source, so it can't bound the window itself — see
     /// `resolve_timeline_slots_for_edit`'s "New clips the AI never probed have
@@ -1053,8 +1281,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// a lower number here made edits created with 21+ clips unable to add more.
     static let maxTimelineClips = 50
     private var authoredVisualSources: [String: ResolvedEditorSource] = [:]
-    private var variantKey: String?
-    private var jobID: UUID?
+    private var variantKey: String? { didSet { if oldValue != variantKey { resetPreviewHandoffForTargetChange() } } }
+    private var jobID: UUID? { didSet { if oldValue != jobID { resetPreviewHandoffForTargetChange() } } }
     private var previewRefreshTask: Task<Void, Never>?
     private var pendingPreviewGeneration: String?
     private var changedSections: Set<EditorSection> = []
@@ -1068,11 +1296,17 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// they need no editor-commit before the next chat message.
     private var chatStagedDocument: EditorDocument?
     private var chatStagedSections: Set<EditorSection> = []
+    /// A submitted manual edit is not chat-owned merely because a reply echoes it.
+    private var chatStagedHasNoManualBase = false
 
     /// Editor documents submitted with a chat turn, keyed by the `client_state_id`
     /// the server echoes on the draft it builds from them. The apply path uses the
     /// submitted document as the three-way merge base. In-memory only; bounded.
-    private struct SubmittedEditorState { let document: EditorDocument; let sections: Set<EditorSection> }
+    private struct SubmittedEditorState {
+        let document: EditorDocument
+        let sections: Set<EditorSection>
+        let authority: MergeAuthority
+    }
     private var submittedEditorStates: [String: SubmittedEditorState] = [:]
     private var submittedEditorStateOrder: [String] = []
     private static let submittedEditorStateLimit = 8
@@ -1091,7 +1325,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// must fall back to the legacy save-then-send flow. A clean editor exports
     /// request metadata without changed lanes, meaning "no unsaved edits".
     func exportEditorState(maxBytes: Int? = nil) -> EditorStateRequest? {
-        guard loadState == .loaded, !isSaving else { return nil }
+        guard !isReviewingPreviousMerge else { return nil }
+        guard loadState == .loaded, !isSaving, document.splitScreenIsValid else { return nil }
         // A text field still being typed is part of the creator's current state.
         _ = finishTextCreation()
         refreshDirtyState()
@@ -1104,12 +1339,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         // Save-only: the server rejects these on a turn's editor state.
         lanes.guidedRevisionNumber = nil; lanes.guidedRevision = nil
         lanes.acceptedSuggestionIDs = nil; lanes.copilotReceiptIDs = []; lanes.retryGuidedRevision = false
-        let request = EditorStateRequest(baseGeneration: generation, clientStateID: UUID().uuidString, lanes: lanes)
+        let request = EditorStateRequest(baseGeneration: generation, clientStateID: UUID().uuidString,
+            draftRevision: appliedChatDraftRevision, lanes: lanes)
         if let maxBytes, let encoded = try? JSONEncoder().encode(request), encoded.count > maxBytes {
             Self.stagingLog.debug("editor_state over cap bytes=\(encoded.count, privacy: .public) max=\(maxBytes, privacy: .public); legacy flush")
             return nil
         }
-        submittedEditorStates[request.clientStateID] = SubmittedEditorState(document: document, sections: changedSections)
+        submittedEditorStates[request.clientStateID] = SubmittedEditorState(document: document, sections: changedSections, authority: mergeAuthority)
         submittedEditorStateOrder.append(request.clientStateID)
         while submittedEditorStateOrder.count > Self.submittedEditorStateLimit {
             submittedEditorStates[submittedEditorStateOrder.removeFirst()] = nil
@@ -1124,47 +1360,36 @@ struct NativeEditorTemporaryVideo: Sendable {
         return probe == a
     }
 
-    /// Three-way per-lane merge of a chat draft built on `submitted`. A lane only
-    /// one side changed keeps that side. KRI-935: a lane changed on BOTH sides
-    /// takes the chat's version, because it is the newest edit and the creator
-    /// asked for it; the caller's single Undo step restores their own version.
-    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>), over submitted: EditorDocument) -> (document: EditorDocument, taken: Set<EditorSection>) {
-        var merged = document
-        var taken: Set<EditorSection> = []
-        for section in staged.sections where !lanesEqual(section, staged.document, submitted) {
-            copy(section, from: staged.document, into: &merged); taken.insert(section)
-        }
-        merged.revision.number = staged.document.revision.number ?? merged.revision.number
-        // Deletes made after the chat saw this state stay deleted.
-        let unseen = Set(document.deletions).subtracting(submitted.deletions)
-        return (Self.honoringDeletions(unseen, in: merged), taken)
-    }
-
-    /// A chat lane copied over the creator's own edit never brings back what they
-    /// deleted and the chat never saw deleted (KRI-935).
-    private static func honoringDeletions(_ deletions: Set<EditorDeletion>, in value: EditorDocument) -> EditorDocument {
-        guard !deletions.isEmpty else { return value }
-        func ids(_ kind: String) -> Set<String> { Set(deletions.filter { $0.kind == kind }.map(\.id)) }
-        let text = ids("text"), cues = ids("caption_cue"), sounds = ids("sound_effect")
-        let overlays = ids("media_overlay"), blocks = ids("visual_block")
-        var kept = value
-        kept.textElements.removeAll { text.contains($0.id) || ($0.isCaption && cues.contains($0.id)) }
-        kept.captionCues.removeAll { cues.contains($0.id) }
-        kept.soundEffects.removeAll { sounds.contains($0.id) }
-        kept.mediaOverlays.removeAll { overlays.contains($0.id) }
-        kept.visualBlocks.removeAll { blocks.contains($0.id) }
-        return kept
+    /// Only an echoed, lifetime-scoped submitted state proves the chat's base.
+    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>),
+                                submitted: SubmittedEditorState?, revision: Int) {
+        let proven = submitted.flatMap { $0.authority == mergeAuthority ? $0 : nil }
+        let cumulativeChatOnly = hasOnlyChatStagedChanges
+        // A chat-only editor already holds the earlier draft, which a reused submitted state predates.
+        let base = cumulativeChatOnly ? document : (proven?.document ?? cleanDocument)
+        var remote = base
+        for section in staged.sections { copy(section, from: staged.document, into: &remote) }
+        // Chat changes authored fields; rendered authority remains the current one.
+        remote.revision = document.revision
+        remote.capabilities = document.capabilities
+        let requiresChoice = proven == nil && hasUnsavedChanges && !cumulativeChatOnly
+        let context = PendingMerge(origin: requiresChoice ? .unprovenChat : .submittedChat,
+            authority: mergeAuthority, stagedSections: staged.sections,
+            base: base, clean: cleanDocument, remote: remote, baseSong: mergeAuthority.song,
+            variant: previewVariant, forcePreview: false, thread: threadID,
+            originalJob: jobID, originalVariant: variantKey, destinationJob: jobID,
+            destinationVariant: variantKey, destinationItem: itemID, stagedRevision: revision,
+            remoteETag: nil, legacySnapshot: nil)
+        pendingMerge = context
+        _ = applyMerge(context, preference: nil)
     }
 
     var hasOnlyChatStagedChanges: Bool {
-        guard hasUnsavedChanges, let staged = chatStagedDocument, !changedSections.isEmpty,
+        guard chatStagedHasNoManualBase, hasUnsavedChanges, let staged = chatStagedDocument, !changedSections.isEmpty,
               changedSections.isSubset(of: chatStagedSections), pendingText == nil else { return false }
-        for section in changedSections {
-            var probe = document
-            copy(section, from: staged, into: &probe)
-            if probe != document { return false }
-        }
-        return true
+        return changedSections.allSatisfy { document.snapshot(for: $0) == staged.snapshot(for: $0) }
+            && document.deletions == staged.deletions && document.editorState == staged.editorState
+            && document.userSong == staged.userSong
     }
     private struct EditorOperationIdentity: Equatable {
         let loadEpoch: UInt64
@@ -1176,23 +1401,250 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var editorLoadEpoch: UInt64 = 0
     var editorLifetimeID: UInt64 { editorLoadEpoch }
     private var activeSaveAttemptID: UUID?
+    private struct AdmittedPreview {
+        let ticket: NativeEditorPreviewWork
+        let player: AVPlayer
+        let item: AVPlayerItem
+        let aspectRatio: Double
+        // Keeps the composition's providers alive without mutating it during handoff.
+        let composition: LivePreviewComposition?
+        var stillFrame: UIImage?
+        var stillTime: TimeInterval?
+    }
+    private struct InPlacePreviewFrame {
+        let ticket: NativeEditorPreviewWork
+        let player: AVPlayer
+        let item: AVPlayerItem
+        let composition: AVVideoComposition
+        var layerReady = false
+        var frameProduced = false
+    }
+    @Published private var previewWork = NativeEditorPreviewWorkTracker()
+    @Published private var previousPreviewStatus: NativeEditorPreviousPreviewStatus?
+    @Published private var previewPresentationActive = false
+    @Published private(set) var previewDisplayTicket: NativeEditorPreviewWork?
+    private var admittedPreview: AdmittedPreview?
+    private var retainedPreview: AdmittedPreview?
+    private var inPlacePreviewFrame: InPlacePreviewFrame?
+    private var retainedPreviewTimeout: (ticket: NativeEditorPreviewWork, task: Task<Void, Never>)?
+    /// How long a ready live item may wait for its frame report before the retained picture is dropped.
+    nonisolated static let retainedPreviewBound: Duration = .milliseconds(1500)
+    /// How long a retained picture may say "Updating preview" while the new preview has no ready item yet.
+    /// Past it the picture offers Retry. Internal so tests can shorten it.
+    var retainedPreviewPreparationBound: Duration = .seconds(8)
+    private var retainedPreviewPreparationTask: Task<Void, Never>?
+    /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`.
+    var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> AVPlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
+    private var playbackControlEpoch: UInt64 = 0
+    private var previewResumeIntent: (owner: NativeEditorPreviewOwner, epoch: UInt64)?
+
+    private var previewOwner: NativeEditorPreviewOwner {
+        NativeEditorPreviewOwner(projectID: projectID, lifetime: editorLifetimeID, itemID: itemID,
+                                 jobID: jobID, variant: variantKey, threadID: threadID)
+    }
+    private var currentPreviewWork: NativeEditorPreviewWork {
+        NativeEditorPreviewWork(owner: previewOwner, generation: document.revision.baseGeneration,
+                                sequence: sourcePreviewSequence, documentRevision: document.revision.number)
+    }
+    var isPreparingCurrentPreview: Bool {
+        previewPresentationActive && previewWork.isPending(currentPreviewWork)
+    }
+    var previousPreviewPresentation: (player: AVPlayer, aspectRatio: Double, frame: UIImage?, time: TimeInterval?, status: NativeEditorPreviousPreviewStatus)? {
+        guard previewPresentationActive, let retainedPreview, let previousPreviewStatus,
+              NativeEditorPreviewAdmission.canRetain(shown: retainedPreview.ticket, current: previewOwner,
+                                                    readyFrameShown: retainedPreview.item.status == .readyToPlay),
+              retainedPreview.player.currentItem === retainedPreview.item else { return nil }
+        return (retainedPreview.player, retainedPreview.aspectRatio, retainedPreview.stillFrame,
+                retainedPreview.stillTime, previousPreviewStatus)
+    }
+    var isShowingPreviousPreview: Bool { previousPreviewPresentation != nil }
+
+    func beginPreviewPresentation() {
+        previewPresentationActive = true
+        if loadState == .loaded, sourcePreviewState == .ready, sourcePreviewSettled, canDisplayCurrentPlayer {
+            previewDisplayTicket = currentPreviewWork
+        }
+    }
+    func endPreviewPresentation() {
+        previewPresentationActive = false
+        clearPreviewAdmission()
+    }
+    private func resetPreviewHandoffForTargetChange() {
+        previewWork.reset()
+        clearPreviewAdmission()
+    }
+    private func clearPreviewAdmission() {
+        invalidatePreviewResumeIntent()
+        sourcePreview?.cancelPendingPlaybackFrame()
+        inPlacePreviewFrame = nil
+        retirePreviousPreview()
+        admittedPreview = nil
+        previewDisplayTicket = nil
+    }
+    private func retirePreviousPreview() {
+        retainedPreviewTimeout?.task.cancel()
+        retainedPreviewTimeout = nil
+        retainedPreviewPreparationTask?.cancel()
+        retainedPreviewPreparationTask = nil
+        if let retainedPreview, retainedPreview.player !== player {
+            retainedPreview.player.pause()
+            retainedPreview.player.replaceCurrentItem(with: nil)
+        }
+        retainedPreview = nil
+        previousPreviewStatus = nil
+    }
+    func retainAdmittedPreview() {
+        guard retainedPreview == nil, sourcePreviewSettled, let admittedPreview,
+              admittedPreview.ticket == currentPreviewWork,
+              NativeEditorPreviewAdmission.canRetain(shown: admittedPreview.ticket, current: previewOwner,
+                                                    readyFrameShown: admittedPreview.item.status == .readyToPlay),
+              admittedPreview.player.currentItem === admittedPreview.item else { return }
+        var retained = admittedPreview
+        if scrubFramePlayerItem === admittedPreview.item,
+           scrubFrameComposition === admittedPreview.item.videoComposition {
+            retained.stillFrame = scrubPreviewFrame
+            retained.stillTime = scrubPreviewTime
+        }
+        retainedPreview = retained
+    }
+    /// One shot per candidate, started when its live item is ready. A frame report that never lands (or is
+    /// rejected for good) must not leave the previous picture covering a playable preview.
+    private func armRetainedPreviewTimeout() {
+        let ticket = currentPreviewWork
+        guard retainedPreview != nil, previewWork.awaitingFrame, previewWork.isPending(ticket),
+              retainedPreviewTimeout?.ticket != ticket else { return }
+        retainedPreviewTimeout?.task.cancel()
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.retainedPreviewBound)
+            guard let self, !Task.isCancelled, ticket == self.currentPreviewWork,
+                  self.previewWork.end(ticket) else { return }
+            self.previewResumeIntent = nil
+            self.retirePreviousPreview()
+            NativePreviewDiagnostics.record("retained-preview-timeout")
+        }
+        retainedPreviewTimeout = (ticket, task)
+    }
+
+    private func beginPreviewWork() -> NativeEditorPreviewWork {
+        sourcePreview?.cancelPendingPlaybackFrame()
+        inPlacePreviewFrame = nil
+        let ticket = currentPreviewWork
+        previewWork.begin(ticket)
+        if retainedPreview != nil {
+            previousPreviewStatus = .updating
+            armRetainedPreviewPreparationBound(ticket)
+        }
+        return ticket
+    }
+    /// `armRetainedPreviewTimeout` starts only once the live item is ready. A build stuck before that (a source
+    /// that never resolves) kept "Updating preview" over the old picture for good, with no Retry (KRI-1230).
+    private func armRetainedPreviewPreparationBound(_ ticket: NativeEditorPreviewWork) {
+        retainedPreviewPreparationTask?.cancel()
+        let bound = retainedPreviewPreparationBound
+        retainedPreviewPreparationTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: bound)
+            guard let self, !Task.isCancelled, self.previewWork.isPending(ticket), !self.previewWork.awaitingFrame,
+                  self.previousPreviewStatus == .updating else { return }
+            self.previousPreviewStatus = .slow
+            NativePreviewDiagnostics.record("retained-preview-slow")
+        }
+    }
+    private func abandonPreviewWork(_ ticket: NativeEditorPreviewWork) {
+        guard previewWork.end(ticket) else { return }
+        sourcePreview?.cancelPendingPlaybackFrame()
+        inPlacePreviewFrame = nil
+        previewResumeIntent = nil
+        if retainedPreview != nil { previousPreviewStatus = .cancelled }
+    }
+    var admissiblePreviewDisplayTicket: NativeEditorPreviewWork? {
+        guard loadState == .loaded, sourcePreviewState == .ready, sourcePreviewSettled else { return nil }
+        return previewDisplayTicket
+    }
+    @discardableResult
+    func previewFrameWasShown(player shownPlayer: AVPlayer, ticket: NativeEditorPreviewWork?) -> Bool {
+        if var pending = inPlacePreviewFrame, pending.ticket == ticket {
+            guard pending.player === shownPlayer else { return false }
+            pending.layerReady = true
+            inPlacePreviewFrame = pending
+            finishInPlaceFrameIfReady()
+            return true
+        }
+        return admitPreviewFrame(player: shownPlayer, ticket: ticket)
+    }
+    @discardableResult private func admitPreviewFrame(player shownPlayer: AVPlayer, ticket: NativeEditorPreviewWork?) -> Bool {
+        guard previewPresentationActive, let ticket, ticket == currentPreviewWork,
+              previewDisplayTicket == ticket, player === shownPlayer, canDisplayCurrentPlayer,
+              loadState == .loaded, sourcePreviewState == .ready, sourcePreviewSettled,
+              let item = shownPlayer.currentItem, item.status == .readyToPlay else { return false }
+        admittedPreview = AdmittedPreview(ticket: ticket, player: shownPlayer, item: item,
+                                         aspectRatio: Double(previewAspectRatio), composition: sourcePreview)
+        previewWork.end(ticket)
+        previewResumeIntent = nil
+        retirePreviousPreview()
+        Perf.end("editor.tap.toFrame")
+        return true
+    }
+    private func acceptInPlaceFrame(_ ticket: NativeEditorPreviewWork, item: AVPlayerItem,
+                                    composition: AVVideoComposition, isStill: Bool = false) {
+        guard var pending = inPlacePreviewFrame, pending.ticket == ticket,
+              ticket == currentPreviewWork, player === pending.player, item === pending.item,
+              pending.player.currentItem === item, composition === pending.composition,
+              item.videoComposition === composition else { return }
+        pending.frameProduced = true
+        if isStill { pending.layerReady = true } // The published image is itself the ready presentation.
+        inPlacePreviewFrame = pending
+        finishInPlaceFrameIfReady()
+    }
+    private func finishInPlaceFrameIfReady() {
+        guard let pending = inPlacePreviewFrame, pending.frameProduced, pending.layerReady,
+              pending.ticket == currentPreviewWork, pending.item.videoComposition === pending.composition else { return }
+        if admitPreviewFrame(player: pending.player, ticket: pending.ticket) { inPlacePreviewFrame = nil }
+    }
+    private func playbackFrameWasComposed(_ ticket: NativeEditorPreviewWork) {
+        guard let pending = inPlacePreviewFrame, pending.ticket == ticket, ticket == currentPreviewWork else { return }
+        if isPlaying {
+            acceptInPlaceFrame(ticket, item: pending.item, composition: pending.composition)
+        } else if scrubFrameTask == nil {
+            // A pause won the race with the playback receipt. Publish the current paused image first.
+            _ = requestScrubFrame(at: currentTime)
+        }
+    }
+    private func invalidatePreviewResumeIntent() {
+        playbackControlEpoch &+= 1
+        previewResumeIntent = nil
+    }
+    private func preservePreviewResumeIntent() {
+        if retainedPreview != nil, isPlaying { previewResumeIntent = (previewOwner, playbackControlEpoch) }
+    }
+    private var shouldResumeRetainedPreview: Bool {
+        previewResumeIntent?.owner == previewOwner && previewResumeIntent?.epoch == playbackControlEpoch
+    }
     private var editorOperationIdentity: EditorOperationIdentity {
         EditorOperationIdentity(loadEpoch: editorLoadEpoch, itemID: itemID, jobID: jobID,
                                 variantKey: variantKey, threadID: threadID)
     }
     private func beginEditorLoad() -> UInt64 {
+        clearMergeDecisionCheckpoint()
+        clipIDsBySlot.removeAll()
         editorLoadEpoch &+= 1
+        resetLatestJobDrain()
+        pendingLoadObservation = nil
+        saveHistory = nil
+        previewWork.reset()
+        clearPreviewAdmission()
         resetBackgroundRefresh()
         previewRefreshTask?.cancel(); previewRefreshTask = nil; pendingPreviewGeneration = nil
         sourcePreviewTask?.cancel(); sourcePreviewQuietRetryTask?.cancel()
         editAppliedTask?.cancel(); showsEditApplied = false
         promptRefreshSequence &+= 1; sourcePreviewSequence &+= 1
         pendingDeviceRenderIdentity = nil
+        pendingDeviceRenderGeneration = nil
+        playsVersionBeforeStagedEdit = false
         activeSaveAttemptID = nil
         saveHitNewerVersion = false
         songRemovalAlreadyApplied = false
         userSongRetry = nil
-        isSaving = true
+        isSaving = true; isLoadingEditor = true
         return editorLoadEpoch
     }
 
@@ -1206,8 +1658,12 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// at construction can be trusted before `load()` confirms it. See
     /// `canDisplayCurrentPlayer`'s `.idle` case.
     private let seedIsTrusted: Bool
+    private var timelinePinching = false
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
+    private var splitDividerDrag: (sectionID: String, upper: Int, lower: Int, active: [Int], weights: [Double], ownsTransaction: Bool)?
+    /// Imports bound for a split panel, by placement id. In memory only: a relaunch places them as ordinary clips.
+    private var splitPanelPlacements: [UUID: (sectionID: String, panel: Int, offset: Double)] = [:]
     private var draftProjectionCache: EditorDraft?
     private var activeTimedEdit: ActiveTimedEdit?
     private var timelineItemsCache: [NativeEditorTimelineItem]?
@@ -1262,6 +1718,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private let playbackEndTolerance: TimeInterval = 0.05
 
     var videoDownloadTarget: NativeEditorVideoDownloadTarget? {
+        guard !isReviewingPreviousMerge else { return nil }
         guard let jobID, let variantKey else { return nil }
         let generation = document.revision.baseGeneration.isEmpty ? nil : document.revision.baseGeneration
         return NativeEditorVideoDownloadTarget(
@@ -1273,7 +1730,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     var canDownloadCurrentVideo: Bool {
+        guard !isShowingPreviousPreview, !isReviewingPreviousMerge else { return false }
         guard document.editorState != "empty" else { return false }
+        if savedEditDeviceRenderFile() != nil { return true }
         let displayedVideoIsCurrent: Bool
         switch sourcePreviewState {
         case .ready:
@@ -1293,7 +1752,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// conditions ``canDownloadCurrentVideo`` checks, explained. `nil` exactly
     /// when export is available.
     var exportBlockReason: String? {
+        if isShowingPreviousPreview { return "The preview shows the previous version. Check the preview update before exporting." }
         guard !canDownloadCurrentVideo else { return nil }
+        if isReviewingPreviousMerge { return "Choose which changes to keep, or Redo, before exporting." }
         if document.editorState == "empty" { return "Add a clip before exporting." }
         if isSaving { return "Saving your changes…" }
         if hasUnsavedChanges { return "Save your changes to export the current video." }
@@ -1312,7 +1773,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
-        if let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile) { return rendered }
+        guard !isShowingPreviousPreview, !isReviewingPreviousMerge else { throw NativeEditorVideoDownloadError.unavailable }
+        let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile)
+        if let rendered, case .localFile = rendered { return rendered }
+        if let own = savedEditDeviceRenderFile() { return .localFile(own) }
+        if let rendered { return rendered }
         switch sourcePreviewState {
         case .ready:
             guard sourcePreviewSettled, let sourcePreview,
@@ -1334,6 +1799,27 @@ struct NativeEditorTemporaryVideo: Sendable {
             return .server(target)
         }
         throw NativeEditorVideoDownloadError.unavailable
+    }
+
+    /// The video this phone rendered for the edit the creator just saved, once that render is finished.
+    ///
+    /// Saving, sharing and Save to Photos used to wait for the render to upload and the server to publish
+    /// it, then download that same video again from the server (`applyPreviewVariant` swaps the phone's
+    /// own file for the published URL). The phone already holds exactly that video, so it is the copy to
+    /// hand over, as soon as it exists.
+    ///
+    /// Only the render of THIS session's latest save counts: its request identity is the one the save
+    /// pinned, which any newer save, chat edit or other-device save replaces. An unsaved edit, a staged
+    /// chat edit or a save in flight means the file is not what is on screen, so those never match.
+    /// `DeviceRenderSessions` hides the file while the server still has to check it.
+    private func savedEditDeviceRenderFile() -> URL? {
+        guard !hasUnsavedChanges, !isSaving, chatStagedDocument == nil, document.editorState != "empty",
+              let key = deviceRenderKey, let renders = deviceRenders,
+              let savedGeneration = pendingDeviceRenderGeneration,
+              let receipt = renders.savedRenderReceipt(for: key),
+              receipt.baseGeneration == savedGeneration,
+              [savedGeneration, receipt.publishedGeneration].contains(document.revision.baseGeneration) else { return nil }
+        return receipt.file
     }
 
     /// KRI-1032: with no edit on top of the finished render, the creator's saved or shared copy IS
@@ -1366,7 +1852,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// throws through to the caller rather than falling back to the last
     /// cloud render. The user must always get what the preview shows.
     func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)? = nil) async throws -> NativeEditorTemporaryVideo {
-        guard sourcePreviewState == .ready, sourcePreviewSettled,
+        guard !isShowingPreviousPreview else { throw NativeEditorVideoDownloadError.unavailable }
+        guard !isReviewingPreviousMerge, sourcePreviewState == .ready, sourcePreviewSettled,
               let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else {
             throw NativeEditorVideoDownloadError.unavailable
@@ -1415,6 +1902,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private struct ActiveTrim {
+        let gestureID: NativeTimelineGestureID?
+        var undoBaseline: [EditorDocument]
         let clipID: UUID
         let edge: NativeTrimEdge
         var baseline: EditorDocument
@@ -1426,6 +1915,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private enum TimedEditKind { case move, trim }
     private struct ActiveTimedEdit {
+        let gestureID: NativeTimelineGestureID?
+        var undoBaseline: [EditorDocument]
         let selection: EditorSelection
         let edge: NativeTrimEdge?
         let kind: TimedEditKind
@@ -1579,10 +2070,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             }
             cleanDocument = document
         }
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
-            // KRI-1118: same stub commit transport; the pool visuals are canned (see `refreshVisualLibrary`).
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence") {
             api = NativeEditorUITestCommitTransport.api()
-            itemID = "fixture-speaker-background-item"
+            itemID = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence")
+                ? "fixture-split-controls-item" : "fixture-speaker-background-item"
             variantKey = "initial"
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
@@ -1619,7 +2111,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         // tab's device-only Media restriction is exactly the thing this
         // ticket needs regression coverage against on the real (device)
         // rendering path, not just the untested cloud one.
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-device") {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-device") || draft.serverSnapshot["render_destination"] == .string("device") {
             rendersOnDevice = true
         }
         // KRI-211: a project whose originals live on another device. The recovery sheet derives its
@@ -1703,12 +2195,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
         finishedRenderRecoveryTask?.cancel()
         sourcePreviewQuietRetryTask?.cancel()
+        latestJobDrainTask?.cancel()
     }
 
-    var canUndo: Bool { !undoStack.isEmpty }
+    var canUndo: Bool { !isReviewingPreviousMerge && (!undoStack.isEmpty || (mergeDecisionCheckpoint != nil && decisionIsCurrent)) }
     var undoHistoryCount: Int { undoStack.count }
     var isTimingGestureActive: Bool { activeTimedEdit != nil || activeTrim != nil }
-    var canRedo: Bool { !redoStack.isEmpty }
+    var canRedo: Bool { isReviewingPreviousMerge ? decisionIsCurrent : !redoStack.isEmpty }
     var selectedClipID: UUID? {
         get { guard selection?.kind == .clip else { return nil }; return UUID(uuidString: selection?.id ?? "") }
         set { selection = newValue.map { EditorSelection(kind: .clip, id: $0.uuidString) } }
@@ -1741,6 +2234,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// typed mutation APIs while a transaction is open update the document but
     /// do not append additional undo entries.
     func beginTransaction() {
+        guard !isReviewingPreviousMerge else { return }
         guard transactionBaseline == nil else { return }
         transactionBaseline = document
     }
@@ -1751,9 +2245,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactionBaseline = nil
     }
 
-    private func appendUndo(_ value: EditorDocument) {
+    private func appendUndo(_ value: EditorDocument, isRedo: Bool = false) {
+        guard !isReviewingPreviousMerge else { return }
+        mutatingDocumentHistory = true
+        defer { mutatingDocumentHistory = false }
+        saveHistory?.appendUndo(value, isRedo: isRedo)
         undoStack.append(value)
         if undoStack.count > historyLimit {
+            clearMergeDecisionCheckpoint()
             undoStack.removeFirst(undoStack.count - historyLimit)
         }
     }
@@ -1881,7 +2380,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let timelineProjectionCache { return timelineProjectionCache }
         let value = NativeEditorInteraction.timelineProjection(
             slots: document.clips,
-            carousel: document.carouselMoment
+            carousel: document.carouselMoment, splitSections: document.splitScreenSections
         )
         timelineProjectionCache = value
         return value
@@ -1943,21 +2442,25 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard editorLoadEpoch == epoch else { return }
         conversationRuntimeVersion = 2
         resetBackgroundRefresh()
-        self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
-        defer { if editorLoadEpoch == epoch { isSaving = false } }
+        loadObservationScope = observationScope(api: api, target: "draft:\(threadID)")
+        self.api = api; self.threadID = threadID; isSaving = true; isLoadingEditor = true; saveState = .saving; loadState = .loading
+        pendingLoadObservation = { [weak self] in
+            await self?.load(api: api, threadID: threadID, variantID: variantID, allowPlaybackFallback: allowPlaybackFallback)
+        }
+        defer { if editorLoadEpoch == epoch { isSaving = false; isLoadingEditor = false } }
         do {
-            let snapshot = try await api.draft(threadID: threadID)
+            let snapshot = try await readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
             guard editorLoadEpoch == epoch else { return }
             let jobID = snapshot.baseJobID.flatMap(UUID.init)
             self.jobID = jobID
             let authoritativeVariant: [String: JSONValue]?
             let requestedVariantKey = variantID ?? snapshot.variantKey
-            if let jobID { authoritativeVariant = try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) }
+            if let jobID { authoritativeVariant = try await readLoadObservation(epoch: epoch, target: "variant:\(jobID):\(requestedVariantKey)") { try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) } }
             else { authoritativeVariant = nil }
             guard editorLoadEpoch == epoch else { return }
-            let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
+            let loadedDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: authoritativeVariant)
             draft = loadedDraft
-            configureCapabilities(from: authoritativeVariant)
+            configureCapabilities(from: authoritativeVariant, songVariantKey: requestedVariantKey)
             await applyCloudReadOnlyIfNeeded(api: api, variant: authoritativeVariant)
             guard editorLoadEpoch == epoch else { return }
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
@@ -2023,6 +2526,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Show a staged chat edit as unsaved changes on top of the clean document.
     /// The clean baseline stays on the undo stack, so one Undo discards it.
     private func applyStagedChatDocument(_ staged: (document: EditorDocument, sections: Set<EditorSection>), revision: Int) {
+        chatStagedHasNoManualBase = !hasUnsavedChanges || hasOnlyChatStagedChanges
         appendUndo(document); redoStack.removeAll()
         document = staged.document
         changedSections.formUnion(staged.sections)
@@ -2042,20 +2546,26 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var syncNeedsRetry = false
 
     func synchronizePromptRevision() async {
+        await synchronizePromptRevision(identity: editorOperationIdentity, owner: api?.mediaLibraryOwner)
+    }
+
+    private func synchronizePromptRevision(identity: EditorOperationIdentity, owner: String?) async {
+        guard !isReviewingPreviousMerge, editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
+        // The open holds the session until its preview is built; runPromptRevisionSync would drop this, so remember it.
+        if openFlight != nil, isSaving || loadState != .loaded { syncDroppedByOpen = true }
         // A concurrent save/hydration can change the clean baseline while this
-        // suspends; a dropped sync would otherwise leave a chat edit invisible
-        // until the editor is reloaded (nothing else re-polls without new events).
-        let identity = editorOperationIdentity
+        // suspends; retain the initiating account through every baseline retry.
         for attempt in 0..<3 {
             syncNeedsRetry = false
-            await runPromptRevisionSync(identity: identity)
-            guard editorOperationIdentity == identity, syncNeedsRetry, !Task.isCancelled else { return }
+            await runPromptRevisionSync(identity: identity, owner: owner)
+            guard editorOperationIdentity == identity, api?.mediaLibraryOwner == owner, syncNeedsRetry, !Task.isCancelled else { return }
             Self.stagingLog.debug("sync retry attempt=\(attempt + 1, privacy: .public)")
         }
     }
 
-    private func runPromptRevisionSync(identity: EditorOperationIdentity) async {
-        guard editorOperationIdentity == identity else { return }
+    private func runPromptRevisionSync(identity: EditorOperationIdentity, owner: String?) async {
+        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
+        guard editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
         if isSaving, loadState == .loaded, !promptSyncStopped,
            refreshSync == .reconnecting || isRunningRefreshRetry {
             // A retry that lands mid-save would otherwise be dropped and leave the
@@ -2074,7 +2584,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // Legacy conversations have no runtime-v2 draft endpoint.
                 // Read the same rendered authority used when opening this editor.
                 let latest = try? await api.project(threadID: threadID)
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 let targetJob: UUID
                 let targetVariant: String
                 let targetItem: String
@@ -2098,7 +2608,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                     targetJob = jobID; targetVariant = variantKey; targetItem = itemID
                 }
                 let current = try await api.editorVariant(jobID: targetJob, variantID: targetVariant)
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 noteRefreshReadSucceeded()
                 variant = current
                 snapshot = DraftSnapshot(
@@ -2109,18 +2619,18 @@ struct NativeEditorTemporaryVideo: Sendable {
                     snapshot: [:], canUndo: false, createdAt: .now)
             } else {
                 snapshot = try await api.draft(threadID: threadID)
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 if let targetJob = snapshot.baseJobID.flatMap(UUID.init) {
                     variant = try await api.editorVariant(jobID: targetJob, variantID: snapshot.variantKey)
                 } else { variant = nil }
                 // Only a complete read proves the path works: a draft read followed by a failing
                 // variant read must not reset the streak, or a persistent conflict retries forever.
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 noteRefreshReadSucceeded()
             }
             let nextJobID = snapshot.baseJobID.flatMap(UUID.init)
             let nextVariantKey = snapshot.variantKey
-            let nextDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: variant)
+            let nextDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
             let sameTarget = nextJobID == jobID && nextVariantKey == variantKey && snapshot.itemID == itemID
             // A different job needs its video reloaded: adoptLatestJob owns that.
             if conversationRuntimeVersion == 2, nextJobID != jobID {
@@ -2136,29 +2646,28 @@ struct NativeEditorTemporaryVideo: Sendable {
             // (never rendered); show it as unsaved edits instead of ignoring it.
             let staged = conversationRuntimeVersion == 2 && sameTarget
                 ? stagedChatDocument(snapshot: snapshot, draft: nextDraft, variant: variant) : nil
-            guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+            guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
+            guard transactionBaseline == nil, !isTimingGestureActive else { return }
             if sameTarget { refreshEditingPermissions(from: variant, document: nextDocument) }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
-            // Only the previous chat draft is unsaved: the newer cumulative
-            // head replaces it wholesale instead of conflicting with it.
-            // Editor-state turn: the draft says which submitted state it was built on,
-            // so merge three-way against THAT instead of guessing from the head.
-            if let staged, sameTarget, variantUnchanged(variant), pendingText == nil, !isSaving,
-               let stateID = snapshot.snapshot["client_state_id"]?.stringValue,
-               let submitted = submittedEditorStates[stateID] {
-                let result = mergeChatDraft(staged, over: submitted.document)
-                // One Undo restores the creator's own pre-chat UNSAVED state. The clean
-                // baseline (the rendered variant) is deliberately left untouched.
-                appendUndo(document); redoStack.removeAll()
-                document = result.document
-                changedSections.formUnion(staged.sections)
-                appliedChatDraftRevision = snapshot.draftRevision
-                chatStagedDocument = nil; chatStagedSections = []
-                refreshDirtyState(); refreshDuration()
-                scheduleSourcePreviewUpdate()
+            if sameTarget, staged == nil, sourcePreviewState == .ready, let known = serverBaseline,
+               cleanDocument == known.hydrated, nextDraft.etag == etag {
+                // The draft setter stamps the server revision onto the document it builds; compare with that stamp.
+                var arrived = nextDocument
+                arrived.revision.number = nextDraft.revision
+                if arrived == known.raw { return }
+            }
+            let retentionSequence = sourcePreviewSequence
+            if sameTarget { retainAdmittedPreview() }
+            defer {
+                if sourcePreviewSequence == retentionSequence { retirePreviousPreview() }
+            }
+            if let staged, sameTarget, variantUnchanged(variant), pendingText == nil, transactionBaseline == nil, !isTimingGestureActive, !isSaving {
+                let submitted = snapshot.snapshot["client_state_id"]?.stringValue.flatMap { submittedEditorStates[$0] }
+                mergeChatDraft(staged, submitted: submitted, revision: snapshot.draftRevision)
                 return
             }
             let onlyChatStaged = hasOnlyChatStagedChanges
@@ -2168,21 +2677,6 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // next sync (every chat send runs one first) stages this draft then.
                 guard pendingText == nil, !isSaving else {
                     Self.stagingLog.debug("sync deferred: text entry or save in flight rev=\(snapshot.draftRevision, privacy: .public)")
-                    return
-                }
-                // Unsaved local edits on the same rendered variant: keep both sides
-                // lane-by-lane. A lane the chat also changed takes the chat's version
-                // (the newest edit, which the creator asked for); one Undo restores
-                // the creator's own version (KRI-935).
-                if let staged, variantUnchanged(variant) {
-                    appendUndo(document); redoStack.removeAll()
-                    var merged = document
-                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
-                    changedSections.formUnion(staged.sections)
-                    appliedChatDraftRevision = snapshot.draftRevision
-                    chatStagedDocument = nil
-                    refreshDirtyState(); refreshDuration()
                     return
                 }
                 // Same rendered generation and no new chat draft: nothing newer exists,
@@ -2195,17 +2689,14 @@ struct NativeEditorTemporaryVideo: Sendable {
                 Self.stagingLog.debug("sync rebase: newer version under local edits rev=\(snapshot.draftRevision, privacy: .public)")
                 if !sameTarget { appliedChatDraftRevision = nil }
                 if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
-                jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
-                rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget)
+                var remote = nextDocument
                 if let staged {
-                    appendUndo(document); redoStack.removeAll()
-                    var merged = document
-                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
-                    changedSections.formUnion(staged.sections)
-                    appliedChatDraftRevision = snapshot.draftRevision
-                    refreshDirtyState(); refreshDuration()
+                    for section in staged.sections { copy(section, from: staged.document, into: &remote) }
                 }
+                guard rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget,
+                    remoteEdits: remote, destination: (nextJobID, nextVariantKey, snapshot.itemID),
+                    stagedRevision: staged == nil ? nil : snapshot.draftRevision) else { return }
+                if staged != nil { appliedChatDraftRevision = snapshot.draftRevision }
                 return
             }
             let selected = selection
@@ -2218,6 +2709,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             configureCapabilities(from: variant)
             undoStack.removeAll(); redoStack.removeAll()
             changedSections.removeAll(); explicitlyDirtySections.removeAll()
+            // applyStagedChatDocument reads this to tell a clean editor from one with manual edits.
+            hasUnsavedChanges = false
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(variant?["duration_s"]))
             if let staged { applyStagedChatDocument(staged, revision: snapshot.draftRevision) }
@@ -2227,7 +2720,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             currentTime = min(time, duration)
             await prepareSourcePreview()
         } catch {
-            guard editorOperationIdentity == identity, sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
+            guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
             let failure = Self.refreshFailure(error)
             // The loaded job was superseded by a re-plan render (its editor
             // routes now answer "content plan unavailable"/409): follow the
@@ -2235,7 +2728,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             if conversationRuntimeVersion == 2, failure == .readConflict {
                 let before = jobID
                 await adoptActiveJobFromThread(api: api, threadID: threadID)
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 if jobID != before || newerJobPrompt != nil || refreshSync == .newVersionRendering { return }
             }
             handleRefreshFailure(failure)
@@ -2293,6 +2786,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func noteRefreshReadSucceeded() {
         refreshFailureStreak = 0
         refreshRetryTask?.cancel(); refreshRetryTask = nil
+        refreshRetryScope = nil
         if refreshSync == .reconnecting { refreshSync = .idle }
     }
 
@@ -2303,6 +2797,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             return
         case .appGate:
             refreshRetryTask?.cancel(); refreshRetryTask = nil
+            refreshRetryScope = nil
             refreshFailureStreak = 0
             if refreshSync == .reconnecting { refreshSync = .idle }
         case let .transient(retryAfter):
@@ -2326,41 +2821,47 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func scheduleRefreshRetry(retryAfter: TimeInterval?) {
         refreshRetryTask?.cancel()
+        let scope = RefreshRetryScope(identity: editorOperationIdentity, owner: api?.mediaLibraryOwner)
+        refreshRetryScope = scope
         guard !refreshRetryDelays.isEmpty else { refreshRetryTask = nil; return }
         var delay = refreshRetryDelays[min(max(refreshFailureStreak - 1, 0), refreshRetryDelays.count - 1)]
         // Honour the server's Retry-After, capped so a bad header cannot park the editor.
         if let retryAfter { delay = max(delay, .seconds(min(retryAfter, 120))) }
-        let identity = editorOperationIdentity
         refreshRetryTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity else { return }
+            guard !Task.isCancelled, let self, self.editorOperationIdentity == scope.identity,
+                  self.api?.mediaLibraryOwner == scope.owner else { return }
             self.refreshRetryTask = nil
-            await self.runRefreshRetry()
+            await self.runRefreshRetry(scope: scope)
         }
     }
 
     /// True while a scheduled or resumed retry runs, so a save in progress defers it instead of dropping it.
     private var isRunningRefreshRetry = false
 
-    private func runRefreshRetry() async {
+    private func runRefreshRetry(scope: RefreshRetryScope) async {
+        guard editorOperationIdentity == scope.identity, api?.mediaLibraryOwner == scope.owner else { return }
         let epoch = editorLoadEpoch
         isRunningRefreshRetry = true
         defer { if editorLoadEpoch == epoch { isRunningRefreshRetry = false } }
-        await synchronizePromptRevision()
+        await synchronizePromptRevision(identity: scope.identity, owner: scope.owner)
     }
 
     private func stopPromptSync() {
         promptSyncStopped = true
         refreshRetryTask?.cancel(); refreshRetryTask = nil
+        refreshRetryScope = nil
         refreshFailureStreak = 0
     }
 
     /// The connection came back or the app returned to the foreground: run a pending retry now
     /// instead of waiting out its backoff.
     func resumeRefreshSync() async {
-        guard refreshRetryTask != nil || refreshSync == .reconnecting else { return }
+        guard refreshRetryTask != nil || refreshSync == .reconnecting,
+              let scope = refreshRetryScope, editorOperationIdentity == scope.identity,
+              api?.mediaLibraryOwner == scope.owner else { return }
         refreshRetryTask?.cancel(); refreshRetryTask = nil
-        await runRefreshRetry()
+        await runRefreshRetry(scope: scope)
     }
 
     /// A shared session (`ChatWorkspaceView`'s editor tab) can be reused
@@ -2390,9 +2891,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// newest chat draft in place instead. A different job, a different variant or a newer
     /// render returns false, and the caller keeps the full reload (which swaps the video).
     ///
-    /// KRI-535: the creator's own unsaved edits are never dropped by this path. A newer render of
-    /// the same job raises `newerJobPrompt` ("Switch" discards, "Keep editing" stays), and a
-    /// transient failure to read the variant keeps the session as it is.
+    /// A newer render merges against the clean baseline. Only overlapping authored
+    /// changes need a choice; a transient read failure keeps the working session.
     func reconcileOnOpen(project: ProjectSummary, api: any KriaAPIClient) async -> Bool {
         guard loadState == .loaded, !isSaving, project.runtimeVersion == 2, conversationRuntimeVersion == 2,
               let jobID, let variantKey,
@@ -2435,10 +2935,145 @@ struct NativeEditorTemporaryVideo: Sendable {
             return true
         }
         guard hasOwnEdits, !isSaving else { return false }
-        // A newer render exists and reloading would discard the creator's work: ask first.
-        // `loadedServerRevision` stays put, so the next open asks again until they decide.
-        newerJobPrompt = project
+        _ = await reloadLatestKeepingLocalEdits()
         return true
+    }
+
+    // MARK: - Open and warm
+
+    /// What one open or warm run is for. Runs with an equal target share one flight.
+    private struct EditorOpenTarget: Equatable {
+        let threadID: UUID
+        let jobID: UUID?
+        let variantID: String?
+        let libraryJobID: UUID?
+        let owner: String?
+    }
+
+    /// The one open in progress. `claimed` is set once the creator asked for the editor, which a chat that merely
+    /// stopped being warmable must not undo.
+    private struct OpenFlight {
+        let id: UUID
+        let target: EditorOpenTarget
+        let task: Task<Void, Never>
+        var claimed: Bool
+    }
+
+    private var openFlight: OpenFlight?
+    /// A chat sync arrived while an open held the session; it is replayed once the open is done.
+    private var syncDroppedByOpen = false
+
+    /// The creator asked for the editor (the chat's Open editor tap): the flight in progress is theirs now.
+    func claimWarm() { openFlight?.claimed = true }
+
+    /// The open path: follow a newer job, reconcile or reload, then show a finished device render. The editor view
+    /// calls it when the creator opens the editor (`.open`) and the chat calls it while the video is ready and the
+    /// chat is idle (`.warm`), so the editor is already loaded at the tap.
+    ///
+    /// One flight at a time. A call for the same target joins the flight and returns when it is done; a call for a
+    /// different target (another job, account or thread) retires an unfinished flight and starts its own. A warm that
+    /// fails leaves the session idle, so the tap loads from scratch exactly as it did before warming existed.
+    func openOrWarm(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
+                    deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator,
+                    intent: EditorOpenIntent = .open) async {
+        let target = EditorOpenTarget(threadID: project.id, jobID: project.activeJobID, variantID: project.outputVariantID,
+                                      libraryJobID: libraryJobID, owner: api.mediaLibraryOwner)
+        while let flight = openFlight {
+            if flight.target == target {
+                if intent == .open { openFlight?.claimed = true }
+                await flight.task.value
+                if loadState == .loaded || intent == .warm { return }
+                continue
+            }
+            if loadState == .loaded { await flight.task.value } else { retireOpenFlight() }
+        }
+        // Chat events keep a loaded session current (`synchronizePromptRevision`, `adoptLatestJob`); asking again for
+        // the same job costs nothing.
+        if intent == .warm, loadState == .loaded, !isBehindActiveJob(project) { return }
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.syncDroppedByOpen = false
+            await self.performOpen(project: project, libraryJobID: libraryJobID, api: api, deviceRenders: deviceRenders, uploads: uploads)
+            // A retired flight must not touch the session its replacement now owns.
+            guard self.openFlight?.id == id else { return }
+            if self.syncDroppedByOpen {
+                self.syncDroppedByOpen = false
+                if self.loadState == .loaded, self.conversationRuntimeVersion == 2 { await self.synchronizePromptRevision() }
+            }
+            guard self.openFlight?.id == id else { return }
+            if intent == .warm, self.loadState != .loaded { self.abandonUnfinishedLoad() }
+            self.openFlight = nil
+        }
+        openFlight = OpenFlight(id: id, target: target, task: task, claimed: intent == .open)
+        await task.value
+    }
+
+    private func performOpen(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
+                             deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator) async {
+        useDeviceRendering(deviceRenders)
+        useMediaUploads(uploads)
+        if isBehindActiveJob(project) {
+            await adoptLatestJob(project, api: api)
+            return
+        }
+        guard needsReload(for: project) else {
+            // Already loaded: a chat draft may have landed while this tab was hidden.
+            if project.runtimeVersion == 2 { await synchronizePromptRevision() }
+            return
+        }
+        let lifetime = editorLifetimeID
+        if libraryJobID == nil {
+            // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
+            if await reconcileOnOpen(project: project, api: api) { return }
+        }
+        guard let loadedLifetime = await loadForEditorOpen(project: project, libraryJobID: libraryJobID,
+            api: api, expectedLifetime: lifetime), editorLifetimeID == loadedLifetime else { return }
+        if let key = deviceRenderKey, let file = deviceRenders.presentations[key]?.localFile { showDeviceOutput(file) }
+    }
+
+    /// The chat stopped being warmable (a turn started, the app left the foreground, the creator left the chat):
+    /// drop a warm load that is still fetching. A load that already has its document keeps going, and a flight the
+    /// creator claimed with a tap is never cancelled from here.
+    func cancelWarm() {
+        guard let flight = openFlight, !flight.claimed, loadState != .loaded else { return }
+        retireOpenFlight()
+    }
+
+    private func retireOpenFlight() {
+        guard let flight = openFlight else { return }
+        openFlight = nil
+        flight.task.cancel()
+        abandonUnfinishedLoad()
+    }
+
+    /// Fences every continuation of an unfinished load (its epoch is replaced) and returns the session to the state a
+    /// first open starts from: idle, no error surface, no retry scheduled.
+    private func abandonUnfinishedLoad() {
+        guard loadState != .loaded else { return }
+        _ = beginEditorLoad()
+        isSaving = false; isLoadingEditor = false
+        loadRetryTask?.cancel(); loadRetryTask = nil
+        pendingLoadObservation = nil
+        loadWaitingMessage = nil
+        loadState = .idle
+        saveState = .idle
+    }
+
+    /// iOS asked for memory back. A warm session nobody is looking at gives up its composition and player; the tap then
+    /// loads it again from the cold path. A session the creator is using, or holds their own edits, is never touched.
+    func releaseWarmForMemoryPressure() {
+        guard !previewPresentationActive, openFlight?.claimed != true else { return }
+        if loadState != .loaded { retireOpenFlight(); return }
+        guard openFlight == nil, !isSaving, pendingText == nil, !hasUnsavedChanges || hasOnlyChatStagedChanges else { return }
+        _ = beginEditorLoad()
+        isSaving = false; isLoadingEditor = false
+        discardPlaybackForNewJob()
+        serverBaseline = nil
+        hasUnsavedChanges = false
+        chatStagedDocument = nil; chatStagedSections = []; appliedChatDraftRevision = nil
+        loadState = .idle
+        saveState = .idle
     }
 
     func loadForEditorOpen(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
@@ -2514,38 +3149,267 @@ struct NativeEditorTemporaryVideo: Sendable {
         return target != jobID
     }
 
-    /// The thread's active job changed (a re-plan rendered a new video). Edits
-    /// staged from chat belong to the old job and are obsolete, so they are
-    /// dropped and the new job loads automatically. The creator's own unsaved
-    /// edits are never discarded silently: they raise `newerJobPrompt` instead.
+    /// Coalesce active-job notifications until Save settles. A fresh authoritative
+    /// read then follows a clean job or merges the creator's unsaved changes;
+    /// only overlapping changes or an unavailable editable base need a choice.
     func adoptLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
-        guard isBehindActiveJob(project), !isSaving, let target = project.activeJobID else { return }
+        guard project.id == threadID, isBehindActiveJob(project) else { return }
+        _ = latestJobGate.enqueue(threadID: project.id)
+        drainPendingLatestJob()
+    }
+
+    /// Visibility pauses observers only; Save, local edits, and conflict choices keep their owners.
+    func setObserversVisible(_ visible: Bool) {
+        guard observersVisible != visible else { return }
+        observersVisible = visible
+        if !visible {
+            latestJobDrainTask?.cancel(); latestJobDrainTask = nil
+            newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+            loadRetryTask?.cancel(); loadRetryTask = nil
+            previewRefreshTask?.cancel(); previewRefreshTask = nil
+            if let project = watchedLatestProject, project.id == threadID { _ = latestJobGate.enqueue(threadID: project.id) }
+            return
+        }
+        drainPendingLatestJob()
+        if let retry = pendingLoadObservation { scheduleLoadObservation(retry, delay: .zero) }
+        if !previewObservationTerminal, let generation = pendingPreviewGeneration { startPreviewRefresh(generation: generation) }
+    }
+
+    private func resetLatestJobDrain() {
+        clearMergeDecisionCheckpoint()
+        savedSongProjectionLag = nil
+        watchedLatestProject = nil
+        latestJobGate.reset()
+        latestJobDrainTask?.cancel()
+        latestJobDrainTask = nil
+        pendingMerge = nil
+        mergeConflictMessage = nil
+        canKeepLocalMergeConflicts = true
+        latestJobRefreshMessage = nil
+    }
+
+    private func drainPendingLatestJob() {
+        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
+        guard observersVisible, !isSaving, activeSaveAttemptID == nil, let ticket = latestJobGate.pending,
+              ticket.threadID == threadID, let api else { return }
+        latestJobDrainTask?.cancel()
+        let expectedJob = jobID
+        let owner = api.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        let window = NativeEditorReadWindow(started: latestJobReadNow())
+        let retryDelays = latestJobRetryDelays
+        latestJobDrainTask = Task { [weak self] in
+            guard let self else { return }
+            // Notifications may be coalesced or reordered while Save is running.
+            // Resolve the active target now rather than adopting the saved event.
+            for attempt in 0...retryDelays.count {
+                guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                      self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                do {
+                    guard try await self.allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+                    let latest = try await self.readLatestJob(ticket, window: window) { try await api.project(threadID: ticket.threadID) }
+                    guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                          self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                    self.latestJobCooldowns[scope]?.prune(now: self.latestJobReadNow())
+                    self.latestJobRefreshMessage = nil
+                    if let currentJob = latest.job, currentJob.id == latest.activeJobID,
+                       ["cancelled", "superseded", "failed", "no_labeled_tracks"].contains(currentJob.status.lowercased()) || currentJob.status.lowercased().hasSuffix("_failed") {
+                        self.newVersionWatchTask?.cancel(); self.newVersionWatchTask = nil; self.watchedLatestProject = nil
+                        if self.refreshSync == .newVersionRendering { self.refreshSync = .idle }
+                        self.latestJobGate.finish(ticket)
+                        return
+                    }
+                    try await self.adoptResolvedLatestJob(latest.summary, api: api, ticket: ticket, window: window)
+                    return
+                } catch {
+                    guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                          self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                    if error is CancellationError { return }
+                    guard case .transient = Self.refreshFailure(error) else {
+                        self.latestJobRefreshMessage = "The latest version could not be checked. Your edits are still here."
+                        return
+                    }
+                    guard attempt < retryDelays.count,
+                          retryDelays[attempt] <= window.remaining(now: self.latestJobReadNow()) else {
+                        self.scheduleLatestJobRecheck(ticket)
+                        return
+                    }
+                    do { try await self.latestJobReadSleep(retryDelays[attempt]) } catch { return }
+                }
+            }
+        }
+    }
+
+    /// Ticket cancellation releases UI ownership, not transport ownership. A replacement
+    /// waits for a cancellation-ignoring GET and its Retry-After before issuing another.
+    private func readLatestJob<Value: Sendable>(_ ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow,
+                                      read: @escaping @MainActor () async throws -> Value) async throws -> Value {
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        while let active = latestJobTransport {
+            await active.value
+            try Task.checkCancellation()
+        }
+        guard observationScope(api: api, target: scope.target) == scope,
+              try await allowLatestJobRead(ticket, window: window), latestJobGate.matches(ticket),
+              observationScope(api: api, target: scope.target) == scope else { throw CancellationError() }
+        // A waiter may have acquired the transport while this one waited on pacing.
+        if latestJobTransport != nil { return try await readLatestJob(ticket, window: window, read: read) }
+        let owner = api?.mediaLibraryOwner
+        let task = Task<Value, Error> { [weak self] in
+            defer { self?.latestJobTransport = nil }
+            do { return try await read() }
+            catch {
+                if let self, self.api?.mediaLibraryOwner == owner,
+                   case let APIError.requestFailed(status, detail) = error,
+                   status == 408 || status == 429 || status >= 500, let hint = detail.retryAfter {
+                    self.latestJobCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.latestJobReadNow())
+                }
+                throw error
+            }
+        }
+        latestJobTransport = Task { _ = try? await task.value }
+        return try await task.value
+    }
+
+    /// A finite fast burst hands off to one cancellable, read-only wake. Server
+    /// deadlines survive bursts; a later notification replaces this ticket's wake.
+    private func scheduleLatestJobRecheck(_ ticket: NativeEditorLatestGate.Ticket) {
+        guard latestJobGate.matches(ticket), let api else { return }
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        let cooldown = latestJobCooldowns[scope] ?? NativeEditorReadCooldown()
+        guard !cooldown.isPaused else {
+            latestJobRefreshMessage = "The server supplied an unsupported retry interval. Your edits are still here."
+            return
+        }
+        let delay = max(Self.latestJobSlowRecheck, cooldown.delay(now: latestJobReadNow()))
+        let identity = editorOperationIdentity, owner = api.mediaLibraryOwner, sleep = latestJobReadSleep
+        latestJobRefreshMessage = "The latest version will be checked again automatically. Your edits are still here."
+        latestJobDrainTask = Task { [weak self] in
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorOperationIdentity == identity,
+                  self.latestJobGate.matches(ticket), api.mediaLibraryOwner == owner,
+                  self.observationScope(api: self.api, target: scope.target) == scope else { return }
+            self.latestJobDrainTask = nil
+            self.drainPendingLatestJob()
+        }
+    }
+
+    private func allowLatestJobRead(_ ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow) async throws -> Bool {
+        let owner = api?.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        while true {
+            guard !Task.isCancelled, observersVisible, latestJobGate.matches(ticket), ticket.threadID == threadID,
+                  api?.mediaLibraryOwner == owner, observationScope(api: api, target: scope.target) == scope, !isSaving, activeSaveAttemptID == nil else { return false }
+            let cooldown = latestJobCooldowns[scope] ?? NativeEditorReadCooldown()
+            switch window.action(cooldown: cooldown, now: latestJobReadNow()) {
+            case .paused:
+                scheduleLatestJobRecheck(ticket)
+                return false
+            case .ready:
+                return true
+            case .wait(let delay):
+                latestJobRefreshMessage = "Waiting for the server's retry window. The latest version will be checked automatically."
+                try await latestJobReadSleep(delay)
+            }
+            // Another in-flight response may have extended the deadline while asleep.
+        }
+    }
+
+    private func adoptResolvedLatestJob(_ project: ProjectSummary, api: any KriaAPIClient, ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow) async throws {
+        guard latestJobGate.matches(ticket), project.id == threadID, !isSaving, activeSaveAttemptID == nil else { return }
+        guard isBehindActiveJob(project), let target = project.activeJobID else {
+            latestJobGate.finish(ticket)
+            return
+        }
+        let expectedJob = jobID
+        let owner = api.mediaLibraryOwner
         // A re-plan points the thread at its new job before that job has a video. Loading it then
         // threw away the working video for "The editor couldn't open", and the prompt claimed a new
         // version was ready while it was still rendering. Keep editing the current video until then.
         let identity = editorOperationIdentity
-        let readiness = await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api)
-        guard editorOperationIdentity == identity else { return }
-        switch readiness {
+        guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+        let variants = try await readLatestJob(ticket, window: window) { try await api.editorVariants(jobID: target) }
+        guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, editorOperationIdentity == identity, latestJobGate.matches(ticket),
+              !isSaving, activeSaveAttemptID == nil else { return }
+        switch Self.readiness(variants: variants, preferredVariantID: project.outputVariantID) {
         case .ready:
             break
         case .rendering:
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
             refreshSync = .newVersionRendering
             watchNewVersion(project, api: api)
+            latestJobGate.finish(ticket)
             return
         case .failed:
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
             // The new render failed; the chat says so. The current video stays as it is.
-            newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+            newVersionWatchTask?.cancel(); newVersionWatchTask = nil; watchedLatestProject = nil
             if refreshSync == .newVersionRendering { refreshSync = .idle }
+            latestJobGate.finish(ticket)
             return
         }
-        guard isBehindActiveJob(project), !isSaving else { return }
+        guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
+              threadID == ticket.threadID, isBehindActiveJob(project), !isSaving, activeSaveAttemptID == nil else { return }
         newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+        newVersionWatchAttempts = 0
+        watchedLatestProject = nil
         if refreshSync == .newVersionRendering { refreshSync = .idle }
         if hasUnsavedChanges, !hasOnlyChatStagedChanges {
-            newerJobPrompt = project
+            if project.runtimeVersion == 1 {
+                // Legacy conversations have no runtime-v2 draft endpoint. Their
+                // selected variant is the authoritative editable snapshot.
+                guard let item = project.activePlanItemID, let variantID = project.outputVariantID else {
+                    newerJobPrompt = project
+                    latestJobGate.finish(ticket)
+                    return
+                }
+                guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+                let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: variantID) }
+                guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
+                      threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
+                let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
+                let snapshot = DraftSnapshot(draftID: "latest-\(target.uuidString)", itemID: item, variantKey: variantID,
+                    draftRevision: 0, snapshotHash: "", etag: "", baseJobID: target.uuidString,
+                    baseGenerationID: generation, snapshot: [:], canUndo: false, createdAt: .now)
+                let draft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
+                var clean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
+                clean.revision.baseGeneration = generation ?? ""
+                latestJobGate.finish(ticket)
+                newerJobPrompt = nil
+                _ = rebaseLocalEdits(onto: clean, variant: variant, forcePreviewRebuild: true,
+                    destination: (target, variantID, item), remoteETag: "", legacySnapshot: draft.serverSnapshot)
+                return
+            }
+            guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+            let snapshot = try await readLatestJob(ticket, window: window) { try await api.draft(threadID: ticket.threadID) }
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
+                  threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
+            guard snapshot.baseJobID.flatMap(UUID.init) == target,
+                  project.activePlanItemID.map({ $0 == snapshot.itemID }) ?? true,
+                  project.outputVariantID.map({ $0 == snapshot.variantKey }) ?? true else {
+                // There is no authoritative editable base for this target yet.
+                // Keep the existing explicit switch choice instead of guessing.
+                newerJobPrompt = project
+                latestJobGate.finish(ticket)
+                return
+            }
+            guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+            let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: snapshot.variantKey) }
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
+                  threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
+            let latestDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
+            let latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
+            latestJobGate.finish(ticket)
+            newerJobPrompt = nil
+            if rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: true,
+                destination: (target, snapshot.variantKey, snapshot.itemID), remoteETag: snapshot.etag,
+                legacySnapshot: conversationRuntimeVersion == 1 ? latestDraft.serverSnapshot : nil) { latestJobRefreshMessage = nil }
             return
         }
+        latestJobGate.finish(ticket)
+        // Loading resets the drain lifetime. Do not cancel this task from its
+        // own load entrypoint after the target has already been fenced.
+        latestJobDrainTask = nil
         await switchToLatestJob(project, api: api)
     }
 
@@ -2555,42 +3419,45 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// hiccup) counts as still rendering: the watch asks again, and nothing is discarded meanwhile.
     static func readiness(ofJob jobID: UUID, preferredVariantID: String?, api: any KriaAPIClient) async -> JobReadiness {
         guard let variants = try? await api.editorVariants(jobID: jobID) else { return .rendering }
+        return readiness(variants: variants, preferredVariantID: preferredVariantID)
+    }
+
+    private static func readiness(variants: [[String: JSONValue]], preferredVariantID: String?) -> JobReadiness {
         let identified = variants.filter { $0["variant_id"]?.stringValue != nil }
         let candidates = preferredVariantID.flatMap { id in
             let matching = identified.filter { $0["variant_id"]?.stringValue == id }
             return matching.isEmpty ? nil : matching
         } ?? identified
         if candidates.contains(where: { $0["render_status"]?.stringValue == "ready" }) { return .ready }
-        if !candidates.isEmpty, candidates.allSatisfy({ $0["render_status"]?.stringValue == "failed" }) { return .failed }
+        let terminal = Set(["failed", "cancelled", "superseded", "needs_attention"])
+        if !candidates.isEmpty, candidates.allSatisfy({ terminal.contains($0["render_status"]?.stringValue ?? "") }) { return .failed }
         return .rendering
     }
 
     /// Ask again until the new job is ready, then run the normal adopt decision once.
     private func watchNewVersion(_ project: ProjectSummary, api: any KriaAPIClient) {
         guard let target = project.activeJobID else { return }
+        watchedLatestProject = project
+        guard observersVisible else { return }
         if newVersionWatchTask != nil, newVersionWatchTarget == target { return }
         newVersionWatchTask?.cancel()
+        if newVersionWatchTarget != target { newVersionWatchAttempts = 0 }
         newVersionWatchTarget = target
         let identity = editorOperationIdentity
         let delays = newVersionPollDelays
+        guard !delays.isEmpty else { return }
+        let exhausted = newVersionWatchAttempts >= 64
+        let delay = exhausted ? Self.latestJobSlowRecheck : delays[min(newVersionWatchAttempts, delays.count - 1)]
+        newVersionWatchAttempts = min(newVersionWatchAttempts + 1, 64)
+        if exhausted { latestJobRefreshMessage = "The latest version is still rendering. It will be checked again automatically." }
+        let owner = api.mediaLibraryOwner, sleep = latestJobReadSleep
         newVersionWatchTask = Task { [weak self] in
-            var attempt = 0
-            // About 15 minutes at the default cadence, longer than any render the server allows.
-            while attempt < 64, !delays.isEmpty {
-                try? await Task.sleep(for: delays[min(attempt, delays.count - 1)])
-                attempt += 1
-                guard !Task.isCancelled, let self, self.editorOperationIdentity == identity, self.isBehindActiveJob(project) else { return }
-                let readiness = await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api)
-                guard !Task.isCancelled, self.editorOperationIdentity == identity else { return }
-                if readiness != .rendering {
-                    self.newVersionWatchTask = nil
-                    await self.adoptLatestJob(project, api: api)
-                    return
-                }
-            }
-            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity else { return }
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorOperationIdentity == identity,
+                  api.mediaLibraryOwner == owner, self.isBehindActiveJob(project) else { return }
             self.newVersionWatchTask = nil
-            if self.refreshSync == .newVersionRendering { self.refreshSync = .idle }
+            // Every GET, including readiness, goes through the same paced drain.
+            await self.adoptLatestJob(project, api: api)
         }
     }
 
@@ -2605,9 +3472,9 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Ask the server which job the thread points at now, then run the adopt decision.
     func adoptActiveJobFromThread(api: any KriaAPIClient, threadID: UUID) async {
-        let identity = editorOperationIdentity
-        guard let thread = try? await api.project(threadID: threadID), editorOperationIdentity == identity else { return }
-        await adoptLatestJob(thread.summary, api: api)
+        guard self.threadID == threadID else { return }
+        _ = latestJobGate.enqueue(threadID: threadID)
+        drainPendingLatestJob()
     }
 
     func keepEditingCurrentJob() { newerJobPrompt = nil }
@@ -2615,6 +3482,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// A load starts from the server's current answer, so earlier refresh trouble no longer applies.
     private func resetBackgroundRefresh() {
         refreshRetryTask?.cancel(); refreshRetryTask = nil
+        refreshRetryScope = nil
         newVersionWatchTask?.cancel(); newVersionWatchTask = nil; newVersionWatchTarget = nil
         loadRetryTask?.cancel(); loadRetryTask = nil
         refreshFailureStreak = 0
@@ -2626,6 +3494,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// The thread now points at a different render job: the old job's player,
     /// source composition and device-render identity must not keep showing.
     private func discardPlaybackForNewJob() {
+        previewWork.reset()
+        clearPreviewAdmission()
         sourcePreviewTask?.cancel()
         previewRefreshTask?.cancel(); pendingPreviewGeneration = nil
         promptRefreshSequence &+= 1
@@ -2636,8 +3506,11 @@ struct NativeEditorTemporaryVideo: Sendable {
         sourcePreview = nil; sourceCompiler = nil; sourcePool = nil; resolvedSources = nil; previewTalkingCutaways = []
         liveSongVolumeActive = false; previewBuiltDocument = nil
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
+        resolvedAudio.removeAll()
+        deviceNarrationResolutionGeneration = nil
+        deviceNarrationPresence = nil
         previewVariant = [:]
-        pendingDeviceRenderIdentity = nil
+        pendingDeviceRenderIdentity = nil; pendingDeviceRenderGeneration = nil
         // The old job's recovery must not touch the new job's player.
         finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
         sourcePreviewQuietRetryTask?.cancel()
@@ -2663,52 +3536,65 @@ struct NativeEditorTemporaryVideo: Sendable {
         let epoch = loadEpoch ?? beginEditorLoad()
         guard editorLoadEpoch == epoch else { return }
         self.api = api
+        loadObservationScope = observationScope(api: api, target: "job:\(editorJobID)")
         self.threadID = threadID
         resetBackgroundRefresh()
         if let previous = jobID, previous != editorJobID { discardPlaybackForNewJob() }
         jobID = editorJobID
         isSaving = true
+        isLoadingEditor = true
         saveState = .saving
         loadState = .loading
         Perf.begin("editor.open", id: editorJobID.uuidString)
-        defer { if editorLoadEpoch == epoch { isSaving = false }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
+        defer { if editorLoadEpoch == epoch { isSaving = false; isLoadingEditor = false }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
         // Neither of these needs the job's status, so they start now and overlap it. They used to follow it one after
         // the other, three round trips in a row before the editor could show anything. The draft is compared with the
         // resolved variant only once that is known.
         let capabilitiesTask = Task { try? await api.creationCapabilities() }
         let draftTask: Task<DraftSnapshot?, Never>? = if conversationRuntimeVersion == 2, let threadID {
-            Task { try? await api.draft(threadID: threadID) }
+            Task { [weak self] in
+                guard let self else { return nil }
+                return try? await self.readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
+            }
         } else {
             nil
         }
         defer { capabilitiesTask.cancel(); draftTask?.cancel() }
+        var acknowledgedOpen: OpenInEditorResponse?
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
             } else {
                 nil
             }
+            acknowledgedOpen = receipt
             guard editorLoadEpoch == epoch else { return }
             self.threadID = threadID ?? receipt?.creationThreadID
             guard let resolvedPlanItemID = planItemID ?? receipt?.planItemID else {
                 throw APIError.invalidResponse
+            }
+            let retryVariant = preferredVariantID ?? receipt?.variantID
+            let retryThread = threadID ?? receipt?.creationThreadID
+            pendingLoadObservation = { [weak self] in
+                await self?.load(editorJobID: editorJobID, planItemID: resolvedPlanItemID,
+                    preferredVariantID: retryVariant, threadID: retryThread, api: api)
             }
             let resolved: (variantID: String, variant: [String: JSONValue])
             if let requestedVariantID = preferredVariantID ?? receipt?.variantID {
                 do {
                     resolved = (
                         requestedVariantID,
-                        try await api.editorVariant(jobID: editorJobID, variantID: requestedVariantID)
+                        try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(requestedVariantID)") { try await api.editorVariant(jobID: editorJobID, variantID: requestedVariantID) }
                     )
                 } catch where receipt != nil && requestedVariantID != receipt?.variantID {
                     guard editorLoadEpoch == epoch else { return }
                     resolved = (
                         receipt!.variantID,
-                        try await api.editorVariant(jobID: editorJobID, variantID: receipt!.variantID)
+                        try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(receipt!.variantID)") { try await api.editorVariant(jobID: editorJobID, variantID: receipt!.variantID) }
                     )
                 }
             } else {
-                let variants = try await api.editorVariants(jobID: editorJobID)
+                let variants = try await readLoadObservation(epoch: epoch, target: "variants:\(editorJobID)") { try await api.editorVariants(jobID: editorJobID) }
                 guard editorLoadEpoch == epoch else { return }
                 guard let variant = variants.first(where: {
                     $0["render_status"]?.stringValue == "ready" && $0["variant_id"]?.stringValue != nil
@@ -2716,7 +3602,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                       let variantID = variant["variant_id"]?.stringValue else {
                     throw APIError.invalidResponse
                 }
-                resolved = (variantID, try await api.editorVariant(jobID: editorJobID, variantID: variantID))
+                resolved = (variantID, try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(variantID)") { try await api.editorVariant(jobID: editorJobID, variantID: variantID) })
             }
             guard editorLoadEpoch == epoch else { return }
             let variant = resolved.variant
@@ -2736,10 +3622,10 @@ struct NativeEditorTemporaryVideo: Sendable {
                 canUndo: false,
                 createdAt: .now
             )
-            let loadedDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+            let loadedDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
             draft = loadedDraft
             legacyPromptSnapshot = loadedDraft.serverSnapshot
-            configureCapabilities(from: variant)
+            configureCapabilities(from: variant, songVariantKey: resolved.variantID)
             await applyCloudReadOnlyIfNeeded(api: api, variant: variant, capabilities: capabilitiesTask)
             guard editorLoadEpoch == epoch else { return }
             cleanDocument = document
@@ -2799,16 +3685,54 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.failure("editor-load-failed", error: error)
             NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
             #endif
+            let retryItem = planItemID ?? acknowledgedOpen?.planItemID
+            let retryVariant = preferredVariantID ?? acknowledgedOpen?.variantID
+            let retryThread = threadID ?? acknowledgedOpen?.creationThreadID
+            if retryItem == nil {
+                if error as? APIError == .editorNotReady {
+                    if scheduleLoadRetry(after: error, { [weak self] in
+                        await self?.observeGalleryReadiness(jobID: editorJobID, api: api)
+                    }) { return }
+                }
+                // No receipt proves promotion. Do not replay an uncertain metadata POST.
+                loadSucceeded()
+                saveState = .loadFailed("The editor could not confirm opening this video. Your Gallery video is still available.")
+                loadState = .failed("The editor could not confirm opening this video. Your Gallery video is still available.")
+                return
+            }
             if scheduleLoadRetry(after: error, { [weak self] in
-                await self?.load(editorJobID: editorJobID, planItemID: planItemID, preferredVariantID: preferredVariantID,
-                                 threadID: threadID, api: api)
+                await self?.load(editorJobID: editorJobID, planItemID: retryItem, preferredVariantID: retryVariant,
+                                 threadID: retryThread, api: api)
             }) { return }
             saveState = .loadFailed(error.localizedDescription)
             loadState = .failed(error.localizedDescription)
         }
     }
 
+    /// A definitive not-ready rejection did not promote anything. Observe the
+    /// original job with GETs, then finish its already-authorized open once ready.
+    private func observeGalleryReadiness(jobID: UUID, api: any KriaAPIClient) async {
+        let epoch = editorLoadEpoch
+        do {
+            let variants = try await readLoadObservation(epoch: epoch, target: "variants:\(jobID)") { try await api.editorVariants(jobID: jobID) }
+            guard editorLoadEpoch == epoch, observersVisible else { return }
+            switch Self.readiness(variants: variants, preferredVariantID: nil) {
+            case .rendering: throw APIError.editorNotReady
+            case .failed: throw APIError.contentPlanUnavailable
+            case .ready:
+                await load(editorJobID: jobID, planItemID: nil, preferredVariantID: nil, threadID: nil, api: api)
+            }
+        } catch {
+            guard editorLoadEpoch == epoch else { return }
+            if scheduleLoadRetry(after: error, { [weak self] in await self?.observeGalleryReadiness(jobID: jobID, api: api) }) { return }
+            saveState = .loadFailed(error.localizedDescription)
+            loadState = .failed(error.localizedDescription)
+        }
+    }
+
     private func loadSucceeded() {
+        pendingLoadObservation = nil
+        loadObservationCooldown.prune(now: loadReadNow())
         loadRetryAttempt = 0
         loadWaitingMessage = nil
     }
@@ -2821,6 +3745,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         let limit: Int
         let message: String
         let apiError = error as? APIError
+        if !observersVisible, error is CancellationError {
+            scheduleLoadObservation(retry, delay: .zero)
+            return true
+        }
         if apiError == .editorNotReady {
             delays = loadRenderingDelays
             limit = 80
@@ -2840,25 +3768,74 @@ struct NativeEditorTemporaryVideo: Sendable {
                 return false
             }
         }
-        guard loadRetryAttempt < limit, !delays.isEmpty else {
-            loadSucceeded()
-            return false
-        }
-        let delay = delays[min(loadRetryAttempt, delays.count - 1)]
-        loadRetryAttempt += 1
-        loadWaitingMessage = message
+        guard !delays.isEmpty else { loadSucceeded(); return false }
+        let mayRecoverSlowly: Bool = if apiError == .editorNotReady { true } else { if case .transient = Self.refreshFailure(error) { true } else { false } }
+        guard loadRetryAttempt < limit || mayRecoverSlowly else { loadSucceeded(); return false }
+        guard !loadObservationCooldown.isPaused else { loadSucceeded(); return false }
+        let exhausted = loadRetryAttempt >= limit
+        let delay = exhausted ? Self.latestJobSlowRecheck : delays[min(loadRetryAttempt, delays.count - 1)]
+        loadRetryAttempt = min(loadRetryAttempt + 1, limit)
+        loadWaitingMessage = exhausted ? "The editor will check again automatically. Your saved edit is safe." : message
         saveState = .idle
         loadState = .loading
-        loadRetryTask?.cancel()
-        let epoch = editorLoadEpoch
+        scheduleLoadObservation(retry, delay: delay)
+        return true
+    }
+
+    private func scheduleLoadObservation(_ retry: @escaping @MainActor () async -> Void, delay: Duration) {
+        pendingLoadObservation = retry
+        loadRetryTask?.cancel(); loadRetryTask = nil
+        guard observersVisible, !loadObservationCooldown.isPaused else { return }
+        let epoch = editorLoadEpoch, owner = api?.mediaLibraryOwner, sleep = loadReadSleep
+        let scope = loadObservationScope
+        let pause = max(delay, loadObservationCooldown.delay(now: loadReadNow()))
         loadRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, self.editorLoadEpoch == epoch else { return }
-            // Cleared first: the load cancels any pending retry, and this task must not cancel itself.
+            do { try await sleep(pause) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorLoadEpoch == epoch,
+                  self.api?.mediaLibraryOwner == owner,
+                  scope.map({ self.observationScope(api: self.api, target: $0.target) == $0 }) ?? false else { return }
             self.loadRetryTask = nil
             await retry()
         }
-        return true
+    }
+
+    private func readLoadObservation<Value: Sendable>(epoch: UInt64, target: String,
+        read: @escaping @MainActor () async throws -> Value) async throws -> Value {
+        let owner = api?.mediaLibraryOwner
+        let scope = observationScope(api: api, target: target)
+        guard editorLoadEpoch == epoch else { throw CancellationError() }
+        loadObservationScope = scope
+        while let active = loadTransport, active.epoch == epoch {
+            await active.task.value
+            try Task.checkCancellation()
+            guard editorLoadEpoch == epoch else { throw CancellationError() }
+        }
+        while (loadObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: loadReadNow()) > .zero {
+            try await loadReadSleep((loadObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: loadReadNow()))
+            try Task.checkCancellation()
+        }
+        guard observersVisible, editorLoadEpoch == epoch, api?.mediaLibraryOwner == owner,
+              observationScope(api: api, target: target) == scope,
+              !(loadObservationCooldowns[scope]?.isPaused ?? false) else { throw CancellationError() }
+        if loadTransport?.epoch == epoch { return try await readLoadObservation(epoch: epoch, target: target, read: read) }
+        let token = UUID()
+        let transport = Task<Value, Error> { [weak self] in
+            defer { if self?.loadTransport?.token == token { self?.loadTransport = nil } }
+            do { return try await read() }
+            catch {
+                if let self, self.editorLoadEpoch == epoch, self.api?.mediaLibraryOwner == owner,
+                   self.observationScope(api: self.api, target: target) == scope,
+                   case let APIError.requestFailed(_, detail) = error, let hint = detail.retryAfter {
+                    self.loadObservationCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.loadReadNow())
+                }
+                throw error
+            }
+        }
+        loadTransport = LoadTransport(epoch: epoch, token: token, task: Task { _ = try? await transport.value })
+        let value = try await transport.value
+        try Task.checkCancellation()
+        guard observersVisible, editorLoadEpoch == epoch, api?.mediaLibraryOwner == owner else { throw CancellationError() }
+        return value
     }
 
     #if DEBUG
@@ -2902,8 +3879,15 @@ struct NativeEditorTemporaryVideo: Sendable {
             let (fifthAsset, fifthOriginal) = try await original(fifthURL, mediaID: "gameday-istanbul-source-4")
             var clips: [JSONValue] = []
             for index in 0...4 {
-                let mediaID = index == 4 ? "gameday-istanbul-source-4" : "gameday-source-\(index)"
-                try store.bind(mediaID: mediaID, original: index == 4 ? fifthAsset : asset)
+                let mediaID = index == 4
+                    ? (ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
+                       ? NativeEditorUITestCommitTransport.splitImportMediaID : "gameday-istanbul-source-4")
+                    : "gameday-source-\(index)"
+                // The real enqueue path must own the imported source binding. Prebinding
+                // this ID would conflict with its newly imported asset UUID.
+                if index != 4 || !ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import") {
+                    try store.bind(mediaID: mediaID, original: index == 4 ? fifthAsset : asset)
+                }
                 clips.append(.object(["clip_index": .number(Double(index)), "native_source": .object([
                     "media_id": .string(mediaID), "original": index == 4 ? fifthOriginal : originalValue, "local_required": .bool(true)])]))
             }
@@ -2919,7 +3903,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             UserDefaults.standard.set(try JSONEncoder().encode(recipeStatus), forKey: NativeEditorUITestFixtures.gamedayRecipeKey)
             cleanDocument = document
             gamedayFixtureSaved = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedaySavedKey) != nil
-            mediaUploads = BackgroundUploadCoordinator(api: api!, defaultsKey: "gameday-fixture-placement", sessionConfiguration: .ephemeral)
+            mediaUploads = BackgroundUploadCoordinator(api: api!,
+                defaultsKey: ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
+                    ? NativeEditorUITestCommitTransport.splitImportRecoveryKey : "gameday-fixture-placement",
+                sessionConfiguration: ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
+                    ? NativeEditorUITestCommitTransport.uploadConfiguration() : .ephemeral)
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays"),
                let api, let itemID, let sourceResolver, !document.visualBlocks.isEmpty {
                 let library = try await api.visuals(itemID: itemID)
@@ -2969,6 +3957,12 @@ struct NativeEditorTemporaryVideo: Sendable {
                                       failure: Error = NativeEditorRenderError.missingVideoTrack) async {
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
+        let workTicket = beginPreviewWork()
+        defer {
+            if previewDisplayTicket != workTicket || sourcePreviewSettledSequence != sequence || sourcePreviewState.isFailure {
+                abandonPreviewWork(workTicket)
+            }
+        }
         sourcePreviewState = .preparing
         do {
             if forceFailure { throw failure }
@@ -2976,6 +3970,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 loadState = .loaded
                 try await Task.sleep(for: .milliseconds(600))
             }
+            guard workTicket == currentPreviewWork, !Task.isCancelled else { return }
             guard let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) else {
                 throw NativeEditorRenderError.missingFont("bundled fonts")
             }
@@ -3009,12 +4004,54 @@ struct NativeEditorTemporaryVideo: Sendable {
                 return (index, ResolvedEditorSource(clipIndex: index, mediaID: "fixture-source-\(index)",
                     asset: MediaAsset(id: "fixture-\(index)", relativePath: sourceURL.lastPathComponent, fingerprint: sourceFingerprint), url: sourceURL))
             })
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-mixed-media") {
+                let photoURL = FileManager.default.temporaryDirectory.appendingPathComponent("split-unused-photo.png")
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 160)).image { context in
+                    UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 96, height: 160))
+                }
+                try image.pngData()!.write(to: photoURL)
+                let photoFingerprint = try SHA256Fingerprinter().fingerprint(file: photoURL)
+                let fixtureProject = ProjectDirectory(root: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("split-media-\(UUID().uuidString)", isDirectory: true))
+                let cache = NativePreviewAssetCache(project: fixtureProject)
+                try cache.project.createIfNeeded()
+                let assetID = "native-preview-" + photoFingerprint.hex
+                let storedPhoto = cache.project.originals.appendingPathComponent(assetID + ".png")
+                if !FileManager.default.fileExists(atPath: storedPhoto.path) {
+                    try FileManager.default.copyItem(at: photoURL, to: storedPhoto)
+                }
+                let asset = MediaAsset(id: assetID, relativePath: "originals/" + assetID + ".png", fingerprint: photoFingerprint)
+                try cache.store(asset, for: "\(document.revision.baseGeneration):1:fixture-source-1")
+                sourcePool = NativeEditorSourcePool(clips: [.init(clipIndex: 1, nativeSource: .init(
+                    mediaID: "fixture-source-1", sourceURL: URL(string: "https://fixture.invalid/unused-photo.png"),
+                    original: nil, localRequired: false))], baseGeneration: document.revision.baseGeneration)
+                sourceResolver = NativeEditorSourceResolver(project: fixtureProject)
+                // This account-free fixture has no narration/song bed. Supplying a real
+                // source resolver must not trigger a device-recipe API fetch for that empty lane.
+                deviceNarrationResolutionGeneration = narrationOwnerGeneration(document)
+                // Resolve the admitted photo through the ordinary verified disk-cache path on selection.
+                resolvedSources?.removeValue(forKey: 1)
+            }
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-global-layers") {
+                let greenURL = FileManager.default.temporaryDirectory.appendingPathComponent("boundary-green.png")
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96)).image { context in
+                    UIColor.green.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 96, height: 96))
+                }
+                try image.pngData()!.write(to: greenURL)
+                let greenFingerprint = try SHA256Fingerprinter().fingerprint(file: greenURL)
+                authoredVisualSources["visual:boundary-green:boundary-green"] = ResolvedEditorSource(
+                    clipIndex: -1, mediaID: "boundary-green",
+                    asset: MediaAsset(id: "boundary-green", relativePath: greenURL.lastPathComponent,
+                        fingerprint: greenFingerprint), url: greenURL)
+            }
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-caption-visuals") {
                 let source = ResolvedEditorSource(clipIndex: -1, mediaID: "fixture", asset: MediaAsset(id: "fixture", relativePath: url.lastPathComponent, fingerprint: fingerprint, duration: 4), url: url)
                 authoredVisualSources["visual:paper-media:paper-media"] = source
             }
             await rebuildSourcePreview(sequence: sequence)
         } catch {
+            guard workTicket == currentPreviewWork, !Task.isCancelled else { return }
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
@@ -3130,15 +4167,29 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func prepareSourcePreview() async {
+        guard !isReviewingPreviousMerge else { return }
         guard let api, let jobID, let variantKey else { return }
+        #if DEBUG
+        sourcePreviewBuildCountForTesting += 1
+        #endif
+        Perf.event("editor.preview.build")
         Perf.begin("editor.preview", id: jobID.uuidString)
         defer { Perf.end("editor.preview", id: jobID.uuidString) }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
+        let workTicket = beginPreviewWork()
+        defer {
+            if previewDisplayTicket != workTicket || sourcePreviewSettledSequence != sequence || sourcePreviewState.isFailure {
+                abandonPreviewWork(workTicket)
+            }
+        }
+        let rawBaseline = cleanDocument
+        serverBaseline = nil
         let generation = document.revision.baseGeneration
         sourcePreviewGeneration = generation
         sourcePreviewState = .preparing
+        preservePreviewResumeIntent()
         player?.pause()
         isPlaying = false
         resolvedSources = nil
@@ -3146,6 +4197,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         sourcePool = nil
         resolvedAudio = [:]
         deviceNarrationResolutionGeneration = nil
+        deviceNarrationPresence = nil
         resolvedMedia = [:]
         skippedPreviewMedia = []
         previewSkippedMediaCount = 0
@@ -3175,6 +4227,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             var phoneTalkingIndices: [Int]?
             var phoneTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
             var phoneTalkingInserts: [NativePhoneTalkingSource.Insert] = []
+            var phoneTalkingSpeakerRemoved: [Int: [(start: Double, end: Double)]] = [:]
             var phoneNarratedSeeds: [NativePhoneNarratedSource.Seed] = []
             if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {
                 #if DEBUG
@@ -3214,6 +4267,13 @@ struct NativeEditorTemporaryVideo: Sendable {
                     } else {
                         phoneTalkingIndices = nil
                     }
+                    // Each take cut on its own (KRI-720): a take the preview can't cut like the recipe would put every
+                    // later caption on the wrong words.
+                    if let spans = NativePhoneTalkingSource.speakerRemovedSpans(variant: previewVariant, pool: pool, speakerIndices: speakers) {
+                        phoneTalkingSpeakerRemoved = spans
+                    } else {
+                        phoneTalkingIndices = nil
+                    }
                 }
                 if NativePhoneNarratedSource.applies(variant: previewVariant, document: document) {
                     phoneNarratedSeeds = await loadPhoneNarratedSeeds(pool: pool, generation: generation, sequence: sequence)
@@ -3241,13 +4301,17 @@ struct NativeEditorTemporaryVideo: Sendable {
                     return (insert: insert, sourceDuration: duration) as NativePhoneTalkingSource.PlacedInsert
                 }
                 #if DEBUG
-                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": phoneTalkingIndices.map(String.init).joined(separator: ","), "duration": speakers.map { String($0.duration) }.joined(separator: ","), "removed": String(removed.count), "inserts": String(inserts.count)])
+                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": phoneTalkingIndices.map(String.init).joined(separator: ","), "duration": speakers.map { String($0.duration) }.joined(separator: ","), "removed": String(removed.count), "speakerRemoved": String(phoneTalkingSpeakerRemoved.count), "inserts": String(inserts.count)])
                 #endif
-                document = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: removed, inserts: inserts)
-                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, speakers: speakers, removed: removed, inserts: inserts)
-                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
-                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
-                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
+                let speakerRemoved = phoneTalkingSpeakerRemoved
+                func hydrateTalking(_ doc: EditorDocument) throws -> EditorDocument {
+                    try NativePhoneTalkingSource.hydrate(doc, speakers: speakers, removed: removed, speakerRemoved: speakerRemoved, inserts: inserts)
+                }
+                document = try hydrateTalking(document)
+                cleanDocument = try hydrateTalking(cleanDocument)
+                chatStagedDocument = try chatStagedDocument.map(hydrateTalking)
+                undoStack = try undoStack.map(hydrateTalking)
+                redoStack = try redoStack.map(hydrateTalking)
                 refreshDuration()
             }
             if !phoneNarratedSeeds.isEmpty {
@@ -3277,7 +4341,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             sourcePool = pool
             resolvedSources = sources
             previewTalkingCutaways = phoneTalkingIndices == nil ? [] : phoneTalkingCutaways
+            let hydratedBaseline = cleanDocument
             await rebuildSourcePreview(sequence: sequence)
+            if sequence == sourcePreviewSequence, !Task.isCancelled, !sourcePreviewState.isFailure {
+                serverBaseline = (rawBaseline, hydratedBaseline)
+            }
         } catch {
             guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
             #if DEBUG
@@ -3311,6 +4379,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         sourcePool = nil
         resolvedAudio.removeAll()
         deviceNarrationResolutionGeneration = nil
+        deviceNarrationPresence = nil
         resolvedMedia.removeAll()
         skippedPreviewMedia = []
         previewSkippedMediaCount = 0
@@ -3320,6 +4389,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         textInteractionSequence += 1
         textInteractionFrame = nil
         cancelScrubFrames()
+        preservePreviewResumeIntent()
         player?.pause()
         isPlaying = false
         sourcePreviewState = .preparing
@@ -3412,6 +4482,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             status, jobID: jobID, variantID: variantKey, generation: narrationOwnerGeneration(document)
         )
         let narrationAssetID = request.recipe.audio.narrationAssetID
+        deviceNarrationPresence = (narrationOwnerGeneration(document), narrationAssetID != nil)
         let songBed = NativeEditorSongBed(recipe: request.recipe)
         var result = DeviceRecipeAudio()
         guard narrationAssetID != nil || songBed != nil else { return result }
@@ -3645,9 +4716,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func scheduleSourcePreviewUpdate() {
+        guard !isReviewingPreviousMerge else { return }
         guard resolvedSources != nil, sourceCompiler != nil else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
+        _ = beginPreviewWork()
         guard !isTimingGestureActive, !isDirectManipulating, !isSongStartDragActive else {
             sourcePreviewUpdateDeferred = true
             return
@@ -3674,7 +4747,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     static let previewCoalesceMilliseconds = 80
 
     private func rebuildSourcePreview(sequence: Int) async {
+        guard !isReviewingPreviousMerge else { return }
         guard let compiler = sourceCompiler, var sources = resolvedSources else { return }
+        let workTicket = currentPreviewWork
+        guard workTicket.sequence == sequence, !Task.isCancelled else { return }
+        if !previewWork.isPending(workTicket) { previewWork.begin(workTicket) }
+        var awaitingFrame = false
+        defer { if !awaitingFrame { abandonPreviewWork(workTicket) } }
         let baseline = document
         let pending = pendingText
         var snapshot = baseline
@@ -3693,7 +4772,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             if !needed.isSubset(of: Set(sources.keys)), let pool = sourcePool, let resolver = sourceResolver {
                 sourcePreviewState = .preparing
                 sources = try await resolver.resolve(pool, generation: baseline.revision.baseGeneration, requiredIndices: needed)
-                guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline else { return }
+                guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline else { return }
                 resolvedSources = sources
             }
             #if DEBUG
@@ -3715,7 +4794,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.record("prepare-media")
             #endif
             let media = try await preparePreviewMedia(document: snapshot, sequence: sequence)
-            guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             #if DEBUG
             sourcePreviewCompileCount += 1
             NativePreviewDiagnostics.record("compile", fields: [
@@ -3758,14 +4837,17 @@ struct NativeEditorTemporaryVideo: Sendable {
             // while the user keeps watching the stale cloud render (KRI-110).
             NativePreviewDiagnostics.note("preview-rebuild", fields: [
                 "documentChanged": previewBuiltDocument.map { $0 != baseline ? "1" : "0" } ?? "first"])
-            if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
-               updatePreviewInPlace(preview, program: program) {
+            if retainedPreview == nil, let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
+               updatePreviewInPlace(preview, program: program, ticket: workTicket) {
                 liveSongVolumeActive = liveVolume
                 previewBuiltDocument = baseline
                 applyLiveSongVolume()
                 sourcePreviewState = .ready
                 sourcePreviewSettledSequence = sequence
-                if !isPlaying { seek(to: currentTime) }
+                previewDisplayTicket = workTicket
+                awaitingFrame = true
+                previewWork.waitForFrame(workTicket)
+                if !isPlaying { positionPreview(to: currentTime) }
                 prepareInteractionLayers()
                 startPendingPlaybackIfPossible()
                 return
@@ -3774,24 +4856,38 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.record("composition-start")
             #endif
             let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: .standard)
-            guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             // The finished render is playing: ready the live item on its own player first, so the swap below is not
             // a pause, a detach, a seek and a resume in front of the creator's eyes.
             var warmed: (player: AVPlayer, time: TimeInterval)?
-            if isPlaying, player != nil, player === finishedRenderPlayer {
+            if retainedPreview != nil || (isPlaying && player != nil && player === finishedRenderPlayer) {
                 let target = currentTime
-                if let candidate = await Self.prerolledPlayer(for: preview.preview.playerItem, at: target) { warmed = (candidate, target) }
-                guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
+                if let candidate = await prerolledPlayerProvider(preview.preview.playerItem, target) { warmed = (candidate, target) }
+                guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
                     warmed?.player.replaceCurrentItem(with: nil)
                     return
                 }
             }
+            if retainedPreview != nil, let candidate = warmed,
+               abs(currentTime - candidate.time) > Self.warmHandoffMaxDrift {
+                let target = currentTime
+                let reached = await candidate.player.seek(to: CMTime(seconds: max(0, target), preferredTimescale: 600),
+                                                          toleranceBefore: .zero, toleranceAfter: .zero)
+                guard workTicket == currentPreviewWork, !Task.isCancelled,
+                      document == baseline, pendingText == pending else {
+                    candidate.player.replaceCurrentItem(with: nil)
+                    return
+                }
+                // A miss is the plain swap, not a failure: the retained picture stays until the live frame is admitted.
+                if reached { warmed = (candidate.player, target) }
+                else { candidate.player.replaceCurrentItem(with: nil); warmed = nil }
+            }
             let latestTime = currentTime
-            let resumePlayback = isPlaying
+            let resumePlayback = isPlaying || shouldResumeRetainedPreview
             var adopted: AVPlayer?
             if let warmed {
                 // The creator paused or scrubbed while it warmed, or it took long enough to be far behind: the plain path.
-                if resumePlayback, abs(latestTime - warmed.time) <= Self.warmHandoffMaxDrift { adopted = warmed.player }
+                if retainedPreview != nil || (resumePlayback && abs(latestTime - warmed.time) <= Self.warmHandoffMaxDrift) { adopted = warmed.player }
                 else { warmed.player.replaceCurrentItem(with: nil) }
                 NativePreviewDiagnostics.note("live-handoff", fields: [
                     "prerolled": "1", "adopted": adopted == nil ? "0" : "1",
@@ -3805,6 +4901,9 @@ struct NativeEditorTemporaryVideo: Sendable {
             applyLiveSongVolume()
             sourcePreviewState = .ready
             sourcePreviewSettledSequence = sequence
+            previewDisplayTicket = workTicket
+            awaitingFrame = true
+            previewWork.waitForFrame(workTicket)
             if resumePlayback {
                 // An adopted player already sits at `warmed.time`, decoded and prerolled; seeking it again would undo that.
                 if adopted == nil {
@@ -3813,7 +4912,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 activatePreviewAudio()
                 player?.play()
             } else {
-                seek(to: latestTime)
+                positionPreview(to: latestTime)
             }
             prepareInteractionLayers()
             startPendingPlaybackIfPossible()
@@ -3821,12 +4920,14 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.record("preview-ready")
             #endif
         } catch {
-            guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
+            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled else { return }
             player?.pause()
             isPlaying = false
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
+            previewWork.end(workTicket)
+            if retainedPreview != nil { previousPreviewStatus = error is CancellationError ? .cancelled : .failed }
             failSourcePreview(error)
             sourcePreviewSettledSequence = sequence
             // failSourcePreview -> restoreFinishedRenderFallback -> installPlayer
@@ -3834,16 +4935,22 @@ struct NativeEditorTemporaryVideo: Sendable {
             // (finished-render) length by an in-progress auto-scroll or trim
             // has nothing to re-clamp it once the widened scrub bound above
             // narrows back — the transport would sit past the actual end.
-            if currentTime > playbackDuration { seek(to: playbackDuration) }
+            if currentTime > playbackDuration { positionPreview(to: playbackDuration) }
         }
     }
 
     /// Any refusal (an audio edit since KRI-241, timing, sources) takes the full
     /// rebuild. DEBUG builds log the refusal, so an edit that should have stayed
     /// in place, such as a caption keystroke, shows up in the diagnostics file.
-    private func updatePreviewInPlace(_ preview: LivePreviewComposition, program: NativeEditorRenderProgram) -> Bool {
+    private func updatePreviewInPlace(_ preview: LivePreviewComposition, program: NativeEditorRenderProgram,
+                                      ticket: NativeEditorPreviewWork) -> Bool {
         do {
-            try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)
+            let callback: @Sendable (Double) -> Void = { [weak self] _ in
+                Task { @MainActor [weak self] in self?.playbackFrameWasComposed(ticket) }
+            }
+            try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs, onPlaybackFrame: callback)
+            guard let player, let item = player.currentItem, let composition = item.videoComposition else { return false }
+            inPlacePreviewFrame = InPlacePreviewFrame(ticket: ticket, player: player, item: item, composition: composition)
             NativePreviewDiagnostics.note("preview-updated-in-place")
             return true
         } catch {
@@ -3884,7 +4991,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
         guard sourcePreviewState == .ready else { return nil }
-        if selection.kind == .speaker { return canMoveSpeakerOnPreview ? sourcePreview?.speakerSelectionBounds(time: time) : nil }
+        if selection.kind == .speaker { return canMoveSpeakerOnPreview ? sourcePreview?.speakerSelectionBounds(time: time, clipID: selection.id == EditorSelection.speakerID ? nil : selection.id) : nil }
         if selection.kind == .mediaOverlay { return sourcePreview?.mediaSelectionBounds(id: "overlay:" + selection.id, time: time) }
         if selection.kind == .visualBlock,
            document.visualBlocks.first(where: { $0.id == selection.id })?.kind == "media" {
@@ -3897,8 +5004,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func togglePlayback() {
+        invalidatePreviewResumeIntent()
+        guard !isReviewingPreviousMerge else { return }
         guard document.editorState != "empty" else { return }
-        guard canDisplayCurrentPlayer, let player else {
+        if !isPlaying, !canDisplayCurrentPlayer, sourcePreviewState == .preparing { showVersionBeforeStagedEdit() }
+        guard canPlayCanvasVideo, let player else {
             // While the editable preview is still building there is nothing to play yet. Remember the tap
             // instead of dropping it, so play starts the moment the preview (or its fallback) is ready.
             pendingPlayRequest = sourcePreviewState == .preparing && !isPlaying
@@ -3912,6 +5022,19 @@ struct NativeEditorTemporaryVideo: Sendable {
         if isPlaying {
             pausePlayback()
             return
+        }
+        if let pending = inPlacePreviewFrame {
+            let ticket = pending.ticket
+            let armed: Void? = try? sourcePreview?.observeNextPlaybackFrame { [weak self] _ in
+                Task { @MainActor [weak self] in self?.playbackFrameWasComposed(ticket) }
+            }
+            if armed == nil {
+                // No receipt will ever arrive for this edit, but the item is already on screen: play, and let
+                // the ready item complete the pending work instead of failing the preview.
+                inPlacePreviewFrame = nil
+                admitPreviewFrame(player: pending.player, ticket: ticket)
+                NativePreviewDiagnostics.record("playback-receipt-unavailable")
+            }
         }
         // Scrubbing renders stills independently of AVPlayer. Only that handoff
         // (or replay) needs a seek; ordinary resume keeps the decoded surface.
@@ -3954,7 +5077,18 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
+    /// Play while a staged AI edit is still being applied plays the last finished video, labelled, until the live
+    /// preview takes over (its warm handoff follows a playing finished render). The old frozen frame goes first.
+    private func showVersionBeforeStagedEdit() {
+        guard chatStagedDocument != nil, !finishedRenderFailed,
+              let url = playableDeviceOutputURL ?? finishedRenderURL else { return }
+        retirePreviousPreview()
+        if player !== finishedRenderPlayer { reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration) }
+        playsVersionBeforeStagedEdit = true
+    }
+
     func pausePlayback() {
+        invalidatePreviewResumeIntent()
         pendingPlayRequest = false
         player?.pause()
         isPlaying = false
@@ -3990,6 +5124,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var seekRecoveryTask: Task<Void, Never>?
 
     func seek(to time: TimeInterval) {
+        invalidatePreviewResumeIntent()
+        positionPreview(to: time)
+    }
+
+    private func positionPreview(to time: TimeInterval) {
         // A timeline gesture owns the clock. Continuing playback can advance
         // the displayed frame between finger samples and race the next seek.
         if isPlaying || (player?.rate ?? 0) != 0 {
@@ -4041,6 +5180,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         seekLatencyMeter.request()
         guard scrubFrameTask == nil, let generator = scrubFrameGenerator else { return true }
         let generation = scrubFrameGeneration
+        let frameTicket = currentPreviewWork
         scrubFrameTask = Task { @MainActor [weak self, generator] in
             while !Task.isCancelled, let target = self?.pendingScrubFrameTime {
                 self?.pendingScrubFrameTime = nil
@@ -4051,6 +5191,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                     if self.pendingScrubFrameTime != nil { continue }
                     self.scrubPreviewTime = frame.actualTime.seconds
                     self.scrubPreviewFrame = UIImage(cgImage: frame.image)
+                    self.acceptInPlaceFrame(frameTicket, item: item, composition: composition, isStill: true)
                     self.prepareInteractionLayers()
                     if let elapsed = self.seekLatencyMeter.visible() {
                         self.previewInstrumentation.record(MetricEvent(name: .seekLatency, value: elapsed))
@@ -4061,8 +5202,12 @@ struct NativeEditorTemporaryVideo: Sendable {
                     NativePreviewDiagnostics.failure("scrub-frame-failure", error: error)
                     #endif
                     if self.pendingScrubFrameTime == nil {
-                        self.scrubPreviewFrame = nil
-                        self.scrubPreviewTime = nil
+                        if self.inPlacePreviewFrame?.ticket == frameTicket, frameTicket == self.currentPreviewWork {
+                            self.failSourcePreview(error)
+                        } else {
+                            self.scrubPreviewFrame = nil
+                            self.scrubPreviewTime = nil
+                        }
                     }
                 }
             }
@@ -4210,18 +5355,21 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Captures one immutable source window for the whole pointer gesture.
     /// Every preview update is derived from this baseline, so cumulative drag
     /// translations cannot be applied repeatedly to an already-trimmed clip.
-    func beginTrim(clipID: UUID, edge: NativeTrimEdge) {
-        guard canEditTimeline, draft.clips.contains(where: { $0.id == clipID }) else { return }
+    @discardableResult
+    func beginTrim(clipID: UUID, edge: NativeTrimEdge, gestureID: NativeTimelineGestureID? = nil) -> Bool {
+        guard !timelinePinching, activeTrim == nil, activeTimedEdit == nil,
+              canEditTimeline, draft.clips.contains(where: { $0.id == clipID }) else { return false }
         activeTrim = ActiveTrim(
-            clipID: clipID,
+            gestureID: gestureID, undoBaseline: undoStack, clipID: clipID,
             edge: edge,
             baseline: document,
             redoBaseline: redoStack
         )
+        return true
     }
 
-    func updateTrim(by translation: TimeInterval) {
-        guard translation.isFinite, var active = activeTrim else { return }
+    func updateTrim(by translation: TimeInterval, gestureID: NativeTimelineGestureID? = nil) {
+        guard !timelinePinching, translation.isFinite, var active = activeTrim, active.gestureID == gestureID else { return }
         active.lastTranslation = translation
         let translation = translation - active.translationOrigin
         guard let index = clipSlotIndex(active.clipID.uuidString, in: active.baseline) else { return }
@@ -4236,7 +5384,16 @@ struct NativeEditorTemporaryVideo: Sendable {
         // and mirrors the server's bound. A drag is in output seconds, so it moves the source by `* rate`.
         let rate = Self.explicitPlaybackRate(slot)
         let window = KriaSourceWindowGeometry.Window(start: sourceIn, length: currentDuration)
-        let resized: KriaSourceWindowGeometry.Window
+        var resized: KriaSourceWindowGeometry.Window
+        if slot.raw["freeze_frame_s"]?.numberValue != nil {
+            switch active.edge {
+            case .leading:
+                let delta = min(max(translation, -sourceIn / rate), currentDuration - minimumClipDuration)
+                resized = .init(start: sourceIn + delta * rate, length: currentDuration - delta)
+            case .trailing:
+                resized = .init(start: sourceIn, length: min(1800, max(minimumClipDuration, currentDuration + translation)))
+            }
+        } else {
         switch active.edge {
         case .leading:
             // Left trim preserves the source Out point. A negative translation restores earlier source frames
@@ -4254,6 +5411,22 @@ struct NativeEditorTemporaryVideo: Sendable {
             let end = KriaSourceWindowGeometry.sourceEnd(window, rate: rate)
             resized = KriaSourceWindowGeometry.resizedTrailing(window, by: translation * rate, rate: rate, sourceDuration: sourceDuration ?? end)
         }
+        }
+        if let id = slot.splitSectionID, let section = next.splitScreenSections.first(where: { $0.id == id }) {
+            let offset = slot.splitOffsetS
+            let peers = next.clips.filter { $0.id != slot.id && $0.splitSectionID == id && $0.splitPanelIndex == slot.splitPanelIndex }
+            let previousEnd = peers.filter { $0.splitOffsetS < offset }.map { $0.splitOffsetS + ($0.durationS ?? 0) }.max() ?? 0
+            // A collapse section follows its longest member, so a trailing trim may grow it (the timeline cap still holds).
+            let nextStart = peers.filter { $0.splitOffsetS >= offset }.map(\.splitOffsetS).min() ?? (section.collapseEmptyPanels ? 1800 : section.durationS)
+            switch active.edge {
+            case .leading:
+                let delta = min(max((resized.start - sourceIn) / rate, previousEnd - offset), currentDuration - minimumClipDuration)
+                resized = .init(start: sourceIn + delta * rate, length: currentDuration - delta)
+                slot.raw["split_offset_s"] = .number(offset + delta)
+            case .trailing:
+                resized.length = min(resized.length, nextStart - offset)
+            }
+        }
         // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
         if abs(resized.start - slot.inS) >= 1e-9 { slot.raw["source_start_locked"] = .bool(true) }
         slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
@@ -4262,13 +5435,25 @@ struct NativeEditorTemporaryVideo: Sendable {
         if slot.raw["source_end_s"] != nil {
             slot.raw["source_end_s"] = .number(resized.start + resized.length * rate)
         }
+        if active.baseline.clips[index].raw["freeze_frame_s"]?.numberValue != nil {
+            let baseline = active.baseline.clips[index]
+            let clock = NativeClipSourceClock(slot: baseline)
+            let delta = active.edge == .leading ? (resized.start - sourceIn) / rate : 0
+            let end = active.edge == .leading ? currentDuration : resized.length
+            slot = clock.sliced(from: delta, to: end).applying(to: slot)
+        }
         slot.durationBeats = nil; next.clips[index] = slot
+        next.fitCollapseSectionDurations()
+        guard next.splitScreenIsValid else { return }
+        // A section that grew or shrank moves the canvas lanes behind it, exactly as setSplitScreenDuration does.
+        if next.splitScreenSections != active.baseline.splitScreenSections { NativeSplitTimelineRebase.rebase(&next, from: active.baseline) }
         // Later clips ripple by construction (windows are a walk of the slot durations); the
         // per-clip labels must ripple with them, derived from the gesture baseline every update.
         rebaseGuidedLabels(&next, from: active.baseline)
 
         if next == active.baseline {
             if active.recordedUndo {
+                saveHistory?.cancelLastCheckpoint(matching: active.baseline)
                 undoStack.removeLast()
                 redoStack = active.redoBaseline
                 active.recordedUndo = false
@@ -4287,6 +5472,16 @@ struct NativeEditorTemporaryVideo: Sendable {
     #if DEBUG
     /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
     func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
+    func discardPlaybackForNewJobForTesting() { discardPlaybackForNewJob() }
+    func configureClipAudioForTesting(variant: [String: JSONValue], pinnedNarrationPresent: Bool?, resolvedNarration: ResolvedEditorSource?) {
+        previewVariant = variant
+        rendersOnDevice = variant["render_destination"] == .string("device")
+        deviceNarrationPresence = pinnedNarrationPresent.map { (narrationOwnerGeneration(document), $0) }
+        resolvedAudio["narration"] = resolvedNarration
+    }
+    func configureReplacementSourcesForTesting(pool: NativeEditorSourcePool, resolver: NativeEditorSourceResolver) {
+        sourcePool = pool; sourceResolver = resolver; resolvedSources = [:]
+    }
     #endif
 
     /// The creator-set playback rate (`playback_rate`), 1 when none. Derived rates (slowed narration) are
@@ -4296,7 +5491,35 @@ struct NativeEditorTemporaryVideo: Sendable {
         return 1
     }
 
-    func endTrim() {
+    func ownsTimingGesture(_ id: NativeTimelineGestureID) -> Bool {
+        activeTrim?.gestureID == id || activeTimedEdit?.gestureID == id
+    }
+
+    func setTimelinePinching(_ pinching: Bool) {
+        timelinePinching = pinching
+        if pinching { cancelTimingGesture() }
+    }
+
+    /// Cancels only the owning gesture; nil is reserved for a timeline-wide takeover.
+    func cancelTimingGesture(gestureID: NativeTimelineGestureID? = nil) {
+        let baseline: EditorDocument
+        let undo: [EditorDocument]
+        let redo: [EditorDocument]
+        let recorded: Bool
+        if let active = activeTrim, gestureID == nil || active.gestureID == gestureID {
+            baseline = active.baseline; undo = active.undoBaseline; redo = active.redoBaseline; recorded = active.recordedUndo
+            activeTrim = nil
+        } else if let active = activeTimedEdit, gestureID == nil || active.gestureID == gestureID {
+            baseline = active.baseline; undo = active.undoBaseline; redo = active.redoBaseline; recorded = active.recordedUndo
+            activeTimedEdit = nil
+        } else { return }
+        if recorded { saveHistory?.cancelLastCheckpoint(matching: baseline) }
+        undoStack = undo; redoStack = redo; document = baseline
+        refreshDirtyState(); refreshDuration(); flushDeferredSourcePreviewUpdate()
+    }
+
+    func endTrim(gestureID: NativeTimelineGestureID? = nil) {
+        guard activeTrim?.gestureID == gestureID else { return }
         activeTrim = nil
         flushDeferredSourcePreviewUpdate()
     }
@@ -4306,6 +5529,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     var canReorderClips: Bool { canEditTimeline && canEditOperation(["clips.reorder"], section: .timeline) }
 
     func moveSelected(by offset: TimeInterval) {
+        if selectedSplitScreenSectionID != nil {
+            if abs(offset) > 0.000001 { moveSelectedSplitScreenSection(by: offset < 0 ? -1 : 1) }
+            return
+        }
         guard canReorderClips, let id = selectedClipID, abs(offset) > 0.000001 else { return }
         let ordered = timelineClips
         guard let index = ordered.firstIndex(where: { $0.id == id }) else { return }
@@ -4320,16 +5547,33 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard ordered.indices.contains(toIndex),
               let from = clipSlotIndex(id.uuidString),
               let to = clipSlotIndex(ordered[toIndex].id.uuidString), from != to else { return }
-        transactDocument(section: .timeline) { $0.clips = NativeEditorInteraction.reorderedSlots($0.clips, from: from, to: to) }
+        transactDocument(section: .timeline) { value in
+            value.clips = NativeEditorInteraction.reorderedSlots(value.clips, from: from, to: to)
+        }
     }
 
     func slideSourceWindow(by offset: TimeInterval) {
-        guard canEditTimeline, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
+        guard canEditTimeline, offset.isFinite, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
         let slot = document.clips[index]
+        if slot.raw["freeze_frame_s"]?.numberValue != nil {
+            let clock = NativeClipSourceClock(slot: slot)
+            let limit = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
+                ?? max(clock.end, clock.frame ?? clock.end)
+            let shifted = clock.shifted(by: offset, sourceDuration: limit)
+            guard abs(shifted.start - clock.start) > 0.000001 else { return }
+            transactDocument(section: .timeline) {
+                $0.clips[index] = shifted.applying(to: slot)
+                $0.clips[index].durationS = slot.durationS
+                $0.clips[index].raw["source_start_locked"] = .bool(true)
+            }
+            return
+        }
         let length = max(minimumClipDuration, slot.durationS ?? minimumClipDuration)
         // The source span is the length times the real rate, or the slide could write a window the server refuses.
         let found = sourceWindowSlot(for: EditorSelection(kind: .clip, id: id.uuidString))
-        let span = length * (found.map { effectiveSourceRate(slot: $0.slot, clip: $0.clip) } ?? 1)
+        let consumedSpan = length * (found.map { effectiveSourceRate(slot: $0.slot, clip: $0.clip) } ?? 1)
+        let selectedSpan = (slot.raw["source_end_s"]?.numberValue).map { $0 - slot.inS }
+        let span = max(consumedSpan, selectedSpan ?? consumedSpan)
         let sourceEnd = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? slot.inS + span
         let start = min(max(0, slot.inS + offset), max(0, sourceEnd - span))
         transactDocument(section: .timeline) {
@@ -4381,7 +5625,15 @@ struct NativeEditorTemporaryVideo: Sendable {
         // larger) -- clamp here, at the mutation, so no caller can produce a
         // value that only gets shrunk later at Save.
         let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 0.3) }
-        mutateClip(clipID: clipID) { $0.transitionAfter = transition; $0.transitionDurationS = duration }
+        guard let index = clipSlotIndex(clipID) else { return }
+        var candidate = document
+        Self.applyClipTransition(to: &candidate, index: index, transition: transition, duration: duration)
+        guard candidate.splitScreenIsValid else {
+            splitScreenActionError = "This transition would move clips outside the section. Extend the section first."
+            return
+        }
+        splitScreenActionError = nil
+        transactDocument(section: .timeline) { $0 = candidate }
     }
     func setClipTransition(clipID: UUID, transition: String, durationS: Double? = nil) { setClipTransition(clipID: clipID.uuidString, transition: transition, durationS: durationS) }
     /// Sets the same transition on every boundary in one transaction (one
@@ -4392,12 +5644,38 @@ struct NativeEditorTemporaryVideo: Sendable {
     func setTransitionAcrossVideo(transition: String, durationS: Double? = nil) {
         guard NativeEditorWireContract.transitions.contains(transition), canEditSection(.timeline) else { return }
         let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 0.3) }
-        transactDocument(section: .timeline) { doc in
-            guard doc.clips.count > 1 else { return }
-            for index in doc.clips.indices.dropLast() {
-                doc.clips[index].transitionAfter = transition
-                doc.clips[index].transitionDurationS = duration
-            }
+        guard document.clips.count > 1 else { return }
+        var candidate = document
+        for index in candidate.clips.indices where index < candidate.clips.count - 1 || candidate.clips[index].splitSectionID != nil {
+            Self.applyClipTransition(to: &candidate, index: index, transition: transition, duration: duration)
+        }
+        guard candidate.splitScreenIsValid else {
+            splitScreenActionError = "These transitions would move clips outside a section. Extend the section first."
+            return
+        }
+        splitScreenActionError = nil
+        transactDocument(section: .timeline) { $0 = candidate }
+    }
+
+    private static func applyClipTransition(to value: inout EditorDocument, index: Int, transition: String, duration: Double?) {
+        let slot = value.clips[index]
+        value.clips[index].transitionAfter = transition
+        value.clips[index].transitionDurationS = duration
+        guard let id = slot.splitSectionID else { return }
+        let suffix = value.clips.indices.filter {
+            value.clips[$0].splitSectionID == id && value.clips[$0].splitPanelIndex == slot.splitPanelIndex
+                && value.clips[$0].splitOffsetS > slot.splitOffsetS
+        }.sorted { value.clips[$0].splitOffsetS < value.clips[$1].splitOffsetS }
+        guard let next = suffix.first else { return }
+        let end = slot.splitOffsetS + (slot.durationS ?? 0)
+        guard value.clips[next].splitOffsetS <= end + 0.000001 else { return }
+        let oldOverlap = max(0, end - value.clips[next].splitOffsetS)
+        let allowed = min(0.3, duration ?? 0.3, (slot.durationS ?? 0) * 0.3, (value.clips[next].durationS ?? 0) * 0.3)
+        let overlap = transition == "cut" || allowed < 0.1 ? 0 : allowed
+        let delta = oldOverlap - overlap
+        // Move the whole suffix so later joins and deliberate gap lengths remain unchanged.
+        for position in suffix {
+            value.clips[position].raw["split_offset_s"] = .number(value.clips[position].splitOffsetS + delta)
         }
     }
     func setClipTiming(clipID: String, inS: Double? = nil, durationS: Double? = nil, durationBeats: Int? = nil) {
@@ -4429,7 +5707,12 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
     func restoreClip(clipID: String) {
         guard canEditSection(.timeline), let index = document.tombstones.firstIndex(where: { $0.id == clipID }) else { return }
-        transactDocument(section: .timeline) { doc in var restored = doc.tombstones.remove(at: index); restored.removed = false; doc.clips.append(restored) }
+        transactDocument(section: .timeline) { doc in
+            var restored = doc.tombstones.remove(at: index); restored.removed = false
+            if let id = restored.splitSectionID, let position = doc.clips.lastIndex(where: { $0.splitSectionID == id }) {
+                doc.clips.insert(restored, at: position + 1)
+            } else { restored.clearSplitMembership(); doc.clips.append(restored) }
+        }
     }
 
     private func mutateClip(clipID: String, gatedByTimeline: Bool = true, _ body: (inout EditorTimelineSlot) -> Void) {
@@ -4457,13 +5740,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// fixed at job creation, so a slot referencing an unminted index would be
     /// rejected on Save. The new slot itself then round-trips through the
     /// normal Save path like any other timeline edit.
-    func addClip(fileURL: URL) async { await addClip(source: { fileURL }) }
+    func addClip(fileURL: URL, replacingSlotID: String? = nil) async { await addClip(source: { fileURL }, replacingSlotID: replacingSlotID) }
 
     /// `source` produces the file. For a Photos pick that is the export out of the library, which can
     /// take seconds when the asset lives in iCloud. Running it here, rather than before the call,
     /// keeps `isAddingClip` true throughout, so the editor can show progress after the picker sheet
     /// has already dismissed instead of holding the user on it.
-    func addClip(source: @MainActor () async throws -> URL, uploadSource: UploadSource = .files) async {
+    func addClip(source: @MainActor () async throws -> URL, uploadSource: UploadSource = .files, replacingSlotID: String? = nil) async {
         // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
         // no-op instead of a round trip that would 422 anyway.
         guard !isAddingClip else { return }
@@ -4477,7 +5760,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             defer { isAddingClip = false }
             do {
                 let url = try await source()
-                await addDeviceTimelineMedia(fileURL: url, source: uploadSource, alreadyPreparing: true)
+                await addDeviceTimelineMedia(fileURL: url, source: uploadSource, alreadyPreparing: true, replacingSlotID: replacingSlotID)
             } catch {
                 addClipError = "This file couldn’t be read. Try Files or choose it again."
             }
@@ -5175,6 +6458,32 @@ struct NativeEditorTemporaryVideo: Sendable {
             resolvedSources = sources; sourceCompiler = compiler
             sourcePreviewGeneration = placement.target.baseGeneration
             sourcePreviewState = .preparing
+            if let target = splitPanelPlacements[placement.id] {
+                guard let opening = document.splitPanelOpening(sectionID: target.sectionID, panel: target.panel, near: target.offset),
+                      opening.end - opening.start >= minimumClipDuration else { throw APIError.conflict }
+                let slot = EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(duration, opening.end - opening.start), raw: [
+                    "source_duration_s": .number(sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05),
+                    "editor_source_placement_id": .string(placementID),
+                ])
+                transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: target.sectionID, panel: target.panel, offset: opening.start) }
+                guard document.clips.contains(where: { $0.id == placementID }) else { throw APIError.invalidResponse }
+                splitPanelPlacements[placement.id] = nil
+                select(.init(kind: .clip, id: placementID), seekToStart: false)
+                mediaUploads?.acknowledgeEditorPlacement(placement.id)
+                await sourcePreviewTask?.value
+                return
+            }
+            if let targetID = placement.replacingSlotID {
+                guard let targetIndex = clipSlotIndex(targetID), document.clips[targetIndex].splitSectionID != nil else {
+                    throw APIError.conflict
+                }
+                replaceClipSource(slotID: targetID, clipIndex: index, placementID: placementID)
+                guard document.clips.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else { throw APIError.invalidResponse }
+                select(.init(kind: .clip, id: targetID))
+                mediaUploads?.acknowledgeEditorPlacement(placement.id)
+                await sourcePreviewTask?.value
+                return
+            }
             transactDocument(section: .timeline) {
                 $0.clips.append(EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(Self.addedClipDurationS, duration), raw: [
                     "source_duration_s": .number(sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05),
@@ -5264,6 +6573,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func dismissPendingEditorImport(_ placement: PendingEditorSourcePlacement) async {
+        splitPanelPlacements[placement.id] = nil
         await mediaUploads?.discardEditorPlacement(placement.id)
         if placement.lane == .timeline { addClipError = nil } else { visualError = nil }
     }
@@ -5271,7 +6581,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Device renders retain a local footage original and send only its
     /// analysis proxy through the existing project reservation.  Completion is
     /// admitted to this variant, never attached to its creation thread.
-    func addDeviceTimelineMedia(fileURL: URL, source: UploadSource, alreadyPreparing: Bool = false) async {
+    func addDeviceTimelineMedia(fileURL: URL, source: UploadSource, alreadyPreparing: Bool = false, replacingSlotID: String? = nil,
+                                splitPanel: (sectionID: String, panel: Int, offset: Double)? = nil) async {
         guard canAddTimelineMedia, let uploads = mediaUploads else {
             addClipError = "Adding media isn’t available for this edit right now."
             return
@@ -5296,8 +6607,9 @@ struct NativeEditorTemporaryVideo: Sendable {
             let target = editorSourceTarget(kind: kind)!
             let recordID = UUID()
             let placement = PendingEditorSourcePlacement(id: recordID, target: target, lane: .timeline, visual: nil,
-                                                         localDurationS: localDuration)
+                                                         localDurationS: localDuration, replacingSlotID: replacingSlotID)
             uploads.beginEditorPlacement(placement)
+            if let splitPanel { splitPanelPlacements[recordID] = splitPanel }
             importID = placement.id
             pendingPlacementIDs.insert(placement.id)
             defer { pendingPlacementIDs.remove(placement.id) }
@@ -5335,7 +6647,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     var canGenerateOverlayPlan: Bool { rendersOnDevice && canImportVisuals }
 
-    var overlayBaseDuration: Double { timelineProjection.baseClipWindows.last?.end ?? 0 }
+    var overlayBaseDuration: Double { NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil, splitSections: document.splitScreenSections).totalDuration }
 
     func overlayOutputTime(_ baseTime: Double) -> Double { timelineProjection.projectBaseTime(baseTime) }
 
@@ -5611,6 +6923,88 @@ struct NativeEditorTemporaryVideo: Sendable {
     var speakerBackgroundWindows: [EditorSpeakerBackgroundWindow] { document.speakerBackground?.windows ?? [] }
     var speakerFrame: EditorSpeakerFrame? { document.speakerBackground?.speakerFrame }
 
+    private func speakerOccurrenceIndex(for selected: EditorSelection) -> Int? {
+        guard selected.kind == .speaker, selected.id != EditorSelection.speakerID,
+              let index = document.clips.firstIndex(where: { $0.id == selected.id && !$0.removed }),
+              document.clips[index].splitSectionID != nil || document.clips[index].raw["speaker_frame_override"] != nil else { return nil }
+        return index
+    }
+
+    func usesScopedSpeakerFrame(for selected: EditorSelection) -> Bool { speakerOccurrenceIndex(for: selected) != nil }
+
+    private func isSpeakerSubject(_ slot: EditorTimelineSlot) -> Bool {
+        slot.raw["speaker_subject"]?.boolValue
+            ?? (NativePhoneTalkingSource.isSourceSlot(slot) || slot.parentSegmentID?.hasPrefix(NativePhoneTalkingSource.slotID) == true)
+    }
+
+    func canEditSpeakerFrame(for selected: EditorSelection) -> Bool {
+        canEditSpeakerBackgroundWindows && document.speakerBackground != nil
+            && (usesScopedSpeakerFrame(for: selected) ? canEditTimeline : isGlobalSpeakerFrameTarget(selected))
+    }
+
+    private func isGlobalSpeakerFrameTarget(_ selected: EditorSelection) -> Bool {
+        selected == .speaker || (selected.kind == .speaker && !usesScopedSpeakerFrame(for: selected)
+            && document.clips.contains { $0.id == selected.id })
+    }
+
+    func speakerFrame(for selected: EditorSelection) -> EditorSpeakerFrame? {
+        guard selected.kind == .speaker else { return nil }
+        if selected.id == EditorSelection.speakerID { return speakerFrame }
+        guard let slot = document.clips.first(where: { $0.id == selected.id }) else { return nil }
+        guard let raw = slot.raw["speaker_frame_override"] else { return speakerFrame }
+        return EditorSpeakerFrameOverride(json: raw)?.resolved(defaultFrame: speakerFrame)
+    }
+
+    func speakerEditingFrame(for selected: EditorSelection) -> EditorSpeakerFrame? {
+        speakerFrame(for: selected) ?? (usesScopedSpeakerFrame(for: selected)
+            ? EditorSpeakerFrame(widthFraction: 1, xFraction: 0.5, yFraction: 0.5) : nil)
+    }
+
+    func speakerSelection(forClip selected: EditorSelection) -> EditorSelection? {
+        guard selected.kind == .clip, let index = clipSlotIndex(selected.id), let id = document.clips[index].id else { return nil }
+        let slot = document.clips[index]
+        let subject = isSpeakerSubject(slot)
+        let target = EditorSelection(kind: .speaker, id: id)
+        return subject && usesScopedSpeakerFrame(for: target) && canEditSpeakerFrame(for: target) ? target : nil
+    }
+
+    @discardableResult
+    func setSpeakerFrame(preset: String, for selected: EditorSelection) -> Bool {
+        if isGlobalSpeakerFrameTarget(selected) { return setSpeakerFrame(preset: preset) }
+        if preset == "full" { return setSpeakerFrameOverride(.full, for: selected) }
+        guard let frame = EditorSpeakerFrame.preset(preset) else { return false }
+        return setSpeakerFrameOverride(.custom(frame), for: selected)
+    }
+
+    func setSpeakerFrameCenter(x: Double, y: Double, for selected: EditorSelection) {
+        if isGlobalSpeakerFrameTarget(selected) { setSpeakerFrameCenter(x: x, y: y); return }
+        guard let frame = speakerEditingFrame(for: selected),
+              let next = EditorSpeakerFrame.clamped(widthFraction: frame.widthFraction, xFraction: x, yFraction: y) else { return }
+        setSpeakerFrameOverride(.custom(next), for: selected)
+    }
+
+    func setSpeakerFrameWidth(_ width: Double, for selected: EditorSelection) {
+        if isGlobalSpeakerFrameTarget(selected) { setSpeakerFrameWidth(width); return }
+        guard let frame = speakerEditingFrame(for: selected),
+              let next = EditorSpeakerFrame.clamped(widthFraction: width, xFraction: frame.xFraction, yFraction: frame.yFraction) else { return }
+        setSpeakerFrameOverride(.custom(next), for: selected)
+    }
+
+    @discardableResult
+    func resetSpeakerFrame(for selected: EditorSelection) -> Bool {
+        setSpeakerFrameOverride(.inherit, for: selected)
+    }
+
+    @discardableResult
+    private func setSpeakerFrameOverride(_ value: EditorSpeakerFrameOverride, for selected: EditorSelection) -> Bool {
+        guard canEditSpeakerBackgroundWindows, canEditTimeline, document.speakerBackground != nil,
+              let index = speakerOccurrenceIndex(for: selected) else { return false }
+        guard value == .inherit || (isSpeakerSubject(document.clips[index])
+            && document.clips[index].raw["media_kind"]?.stringValue != "image") else { return false }
+        transactDocument(section: .timeline) { $0.clips[index].raw["speaker_frame_override"] = value.json }
+        return true
+    }
+
     /// Where a background window may end: the end of the video, else the wire's own ceiling while it is unknown.
     private var backgroundWindowsCeiling: Double {
         let total = timelineProjection.unprojectOutputTime(timelineProjection.totalDuration)
@@ -5695,7 +7089,12 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// The speaker can be selected, moved and resized on the preview: the frame controls are open and the speaker is
     /// drawn small. A full-frame speaker is never selectable: it would cover the canvas and swallow tap-to-expand.
-    var canMoveSpeakerOnPreview: Bool { canEditSpeakerBackgroundWindows && speakerFrame != nil }
+    var canMoveSpeakerOnPreview: Bool {
+        canEditSpeakerBackgroundWindows && document.speakerBackground != nil && (speakerFrame != nil || document.clips.contains {
+            guard let raw = $0.raw["speaker_frame_override"] else { return false }
+            return EditorSpeakerFrameOverride(json: raw)?.resolved(defaultFrame: nil) != nil
+        })
+    }
 
     /// Moves the framed speaker's centre (canvas fractions, top-left origin), clamped to the wire's range (SF3).
     /// A same-value sample is not an edit. The preview gesture wraps its samples in one direct-manipulation
@@ -5726,7 +7125,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         background.speakerFrame = nil
         transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
         // A full-frame speaker is not a preview object any more (SF2).
-        if selection?.kind == .speaker { select(nil) }
+        if let selected = selection, selected.kind == .speaker, !usesScopedSpeakerFrame(for: selected),
+           speakerFrame(for: selected) == nil { select(nil) }
         return true
     }
 
@@ -5809,7 +7209,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     @discardableResult
     func removeSpeakerBackground() -> Bool {
         guard canEditSpeakerBackground, document.speakerBackground != nil else { return false }
-        transactDocument(section: .speakerBackground) { $0.speakerBackground = nil }
+        let hasOverrides = document.clips.contains { $0.raw["speaker_frame_override"] != nil }
+        transactDocument(sections: hasOverrides ? [.speakerBackground, .timeline] : [.speakerBackground]) {
+            $0.speakerBackground = nil
+            for index in $0.clips.indices where $0.clips[index].raw["speaker_frame_override"] != nil {
+                $0.clips[index].raw["speaker_frame_override"] = EditorSpeakerFrameOverride.inherit.json
+            }
+        }
         if selection?.kind == .speaker { select(nil) }
         return true
     }
@@ -5870,6 +7276,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
     var canEditDrawings: Bool { canEditOperation(["drawings.edit"], section: .drawings) }
     var canDeleteDrawings: Bool { canEditOperation(["drawings.delete"], section: .drawings) }
+    /// Set by the preview canvas: a tap (canvas fractions) that another layer received, re-run as a canvas tap.
+    var previewTapForwarder: ((CGPoint) -> Void)?
     func drawing(id: String) -> EditorDrawing? { document.drawings.first { $0.id == id } }
 
     /// Why the next stroke cannot be added to `id` (a new drawing when nil), or nil when it can: the same
@@ -6031,26 +7439,32 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
-    /// KRI-1141: a Talking picture card can turn (`editor_capabilities.media_overlay_tilt`) while the rest of
-    /// `editor_style` (zoom, fit, animation) stays closed (`visual_editor_style`), because the pinned recipe keeps
-    /// only the angle. Anything with the full style capability may turn; a card needs a pip card, not a cutaway.
+    /// KRI-1141: a Talking picture card can turn (`editor_capabilities.media_overlay_tilt`) while its fit stays closed
+    /// (`visual_editor_style`). Anything with the full style capability may turn; a card needs a pip card, not a cutaway.
     func canRotateVisual(_ selection: EditorSelection) -> Bool {
-        if canEdit("visual_editor_style") { return true }
-        guard selection.kind == .mediaOverlay, canEdit("media_overlay_tilt"),
-              let card = document.mediaOverlays.first(where: { $0.id == selection.id }) else { return false }
+        canEdit("visual_editor_style") || canEdit("media_overlay_tilt") && isOnTopCard(selection)
+    }
+
+    /// KRI-1264: the same for a Talking card's Zoom and Animation (`editor_capabilities.media_overlay_style`).
+    func canStyleVisual(_ selection: EditorSelection) -> Bool {
+        canEdit("visual_editor_style") || canEdit("media_overlay_style") && isOnTopCard(selection)
+    }
+
+    private func isOnTopCard(_ selection: EditorSelection) -> Bool {
+        guard selection.kind == .mediaOverlay, let card = document.mediaOverlays.first(where: { $0.id == selection.id }) else { return false }
         return card.raw["display_mode"]?.stringValue != "fullscreen"
     }
 
     func setVisualEditorStyle(_ selected: EditorSelection, key: String, value: JSONValue, animationPhase: String? = nil) {
-        let tiltOnly = key == "rotation_deg" && !canEdit("visual_editor_style") && canRotateVisual(selected)
-        guard canEdit("visual_editor_style") || tiltOnly, let raw = visualRaw(selected) else { return }
+        let full = canEdit("visual_editor_style")
+        let allowed = full || (key == "rotation_deg" ? canRotateVisual(selected) : ["zoom", "animation"].contains(key) && canStyleVisual(selected))
+        guard allowed, let raw = visualRaw(selected) else { return }
         var style = NativeVisualAuthoring.style(for: raw)
         style[key] = value
         guard (try? NativeEditorRenderCompiler.visualEditorStyle(.object(style))) != nil else { return }
-        // A card that can only turn keeps a style while it is turned: upright it carries none, so Reset is the
-        // untouched card (the server compiles the angle alone and projects none back for an upright card).
-        let uprightTiltOnly: Bool = tiltOnly && style == NativeVisualAuthoring.defaultStyle
-        let storedStyle: JSONValue? = uprightTiltOnly ? nil : JSONValue.object(style)
+        // A card with only the Talking capabilities keeps a style while it is turned, zoomed or animated. Plain, it
+        // carries none, so Reset is the untouched card (the server projects no style back for a plain card).
+        let storedStyle: JSONValue? = !full && style == NativeVisualAuthoring.defaultStyle ? nil : JSONValue.object(style)
         switch selected.kind {
         case .mediaOverlay:
             mutateTimedEffect(kind: .mediaOverlay, id: selected.id, section: .mediaOverlays, operationKeys: ["media_overlays", "overlays"]) {
@@ -6929,12 +8343,12 @@ struct NativeEditorTemporaryVideo: Sendable {
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.scale", "overlays.scale", "media_overlays.scale", "lanes.overlays"]) { $0.raw["scale"] = .number(min(max(0.05, scale), 1)) }
     }
     func setMediaOverlayDisplayMode(id: String, mode: String) {
-        // KRI-1141: a full-screen cutaway has nothing to turn, and the server refuses its angle, so a card that can
-        // only turn (no full style capability) goes full screen upright.
-        let dropsTilt = mode == "fullscreen" && !canEdit("visual_editor_style")
+        // KRI-1141 / KRI-1264: the server refuses a full-screen cutaway's angle, zoom and animation, so a card without
+        // the full style capability goes full screen plain.
+        let dropsStyle = mode == "fullscreen" && !canEdit("visual_editor_style")
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.display_mode", "overlays.display_mode", "media_overlays.display_mode", "lanes.overlays"]) {
             $0.raw["display_mode"] = .string(mode)
-            if dropsTilt { $0.raw["editor_style"] = nil }
+            if dropsStyle { $0.raw["editor_style"] = nil }
         }
     }
     func setMediaOverlayZIndex(id: String, z: Double) {
@@ -7072,10 +8486,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     func beginTimedBodyMove(kind: EditorSelectionKind, id: String) { beginTimedEdit(selection: EditorSelection(kind: kind, id: id), kind: .move, edge: nil) }
     func updateTimedBodyMove(by translation: TimeInterval) { updateTimedEdit(by: translation) }
     func endTimedBodyMove() { endTimedEdit() }
-    func beginTimedEdgeTrim(kind: EditorSelectionKind, id: String, edge: NativeTrimEdge) { beginTimedEdit(selection: EditorSelection(kind: kind, id: id), kind: .trim, edge: edge) }
+    @discardableResult
+    func beginTimedEdgeTrim(kind: EditorSelectionKind, id: String, edge: NativeTrimEdge, gestureID: NativeTimelineGestureID? = nil) -> Bool { beginTimedEdit(selection: EditorSelection(kind: kind, id: id), kind: .trim, edge: edge, gestureID: gestureID) }
     func beginTimedEdgeTrim(selection: EditorSelection, edge: NativeTrimEdge) { beginTimedEdit(selection: selection, kind: .trim, edge: edge) }
-    func updateTimedEdgeTrim(by translation: TimeInterval) { updateTimedEdit(by: translation) }
-    func endTimedEdgeTrim() { endTimedEdit() }
+    func updateTimedEdgeTrim(by translation: TimeInterval, gestureID: NativeTimelineGestureID? = nil) { updateTimedEdit(by: translation, gestureID: gestureID) }
+    func endTimedEdgeTrim(gestureID: NativeTimelineGestureID? = nil) { endTimedEdit(gestureID: gestureID) }
 
     func reorderLayer(selection: EditorSelection, to destination: Int) {
         guard canEditOperation(["layers.reorder", "layer_order", "lanes.layer_order"], section: .timeline) else { return }
@@ -7128,10 +8543,24 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactDocument(section: .mix) { $0.mix["original_level"] = .number((clamped * 100).rounded() / 100) }
     }
 
-    /// Whether this clip's own sound is heard right now: the whole-video level is up and the clip is not muted.
+    private var clipAudioHasNarration: Bool {
+        if resolvedAudio["narration"] != nil { return true }
+        if rendersOnDevice {
+            let generation = narrationOwnerGeneration(document)
+            if let known = deviceNarrationPresence, known.generation == generation { return known.present }
+            if deviceNarrationResolutionGeneration == generation { return false }
+        }
+        return Self.usesRenderedNarration(previewVariant)
+    }
+
+    /// Narrated clips opt into camera audio individually; missing or null gains retain legacy silence.
     func isClipAudioOn(clipID: String) -> Bool {
-        guard let index = clipSlotIndex(clipID) else { return false }
-        return originalAudioLevel > 0 && document.clips[index].raw["muted"] != .bool(true)
+        guard let index = clipSlotIndex(clipID), originalAudioLevel > 0,
+              document.clips[index].raw["muted"] != .bool(true) else { return false }
+        if let gain = document.clips[index].raw["source_audio_volume"]?.numberValue {
+            return gain.isFinite && gain > 0
+        }
+        return !clipAudioHasNarration
     }
 
     /// The per-clip audio button. Turning a clip on while the whole video's original audio is off
@@ -7142,6 +8571,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         let turningOn = !isClipAudioOn(clipID: clipID)
         let levelIsOff = originalAudioLevel <= 0
         transactDocument(sections: [.timeline, .mix]) { doc in
+            if turningOn, (doc.clips[target].raw["source_audio_volume"]?.numberValue ?? 0) <= 0 {
+                doc.clips[target].raw["source_audio_volume"] = .number(1)
+            }
             if turningOn && levelIsOff {
                 doc.mix["original_level"] = .number(1)
                 for index in doc.clips.indices where !doc.clips[index].removed {
@@ -7196,13 +8628,53 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func undo() {
+        guard !isReviewingPreviousMerge else { return }
+        if !isSaving, transactionBaseline == nil, !isTimingGestureActive,
+           undoStack.isEmpty, var checkpoint = mergeDecisionCheckpoint, decisionIsCurrent {
+            pausePlayback()
+            promptRefreshSequence &+= 1
+            latestJobDrainTask?.cancel(); latestJobDrainTask = nil
+            previewRefreshTask?.cancel(); previewRefreshTask = nil
+            sourcePreviewTask?.cancel(); sourcePreviewQuietRetryTask?.cancel()
+            sourcePreviewSequence &+= 1
+            pendingPlayRequest = false
+            checkpoint.isOpen = true
+            mergeDecisionCheckpoint = checkpoint
+            pendingMerge = checkpoint.context
+            document = checkpoint.before
+            sourcePreviewState = .failed("Review your previous edits and choose which changes to keep before preparing a preview.")
+            let context = checkpoint.context
+            if case .resolved = NativeEditorMerge.documents(base: context.base, local: checkpoint.before,
+                remote: context.remote, baseSong: context.baseSong, remoteSong: checkpoint.authority.song,
+                preference: .local) {
+                canKeepLocalMergeConflicts = true
+            } else { canKeepLocalMergeConflicts = false }
+            mergeConflictMessage = "Your previous edits are shown read-only. Choose which changes to keep on the current version, or Redo the previous choice."
+            refreshDirtyState(); refreshDuration()
+            return
+        }
+        mutatingDocumentHistory = true
+        defer { mutatingDocumentHistory = false }
         guard let previous = undoStack.popLast() else { return }
+        saveHistory?.recordUndo(to: previous, from: document)
         appendRedo(document); document = previous; refreshDirtyState(); refreshDuration()
     }
 
     func redo() {
+        if let checkpoint = mergeDecisionCheckpoint, checkpoint.isOpen {
+            guard !isSaving, decisionIsCurrent else { return }
+            var restored = checkpoint
+            restored.isOpen = false
+            mergeDecisionCheckpoint = restored
+            pendingMerge = nil; mergeConflictMessage = nil; canKeepLocalMergeConflicts = true
+            document = checkpoint.after
+            refreshDirtyState(); refreshDuration()
+            refreshRebasedSourcePreview(force: true)
+            rearmLatestJobAfterMergeDecision()
+            return
+        }
         guard let next = redoStack.popLast() else { return }
-        appendUndo(document); document = next; refreshDirtyState(); refreshDuration()
+        appendUndo(document, isRedo: true); document = next; refreshDirtyState(); refreshDuration()
     }
 
     func save() async {
@@ -7210,6 +8682,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func save(retrying retrySections: Set<EditorSection>) async {
+        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
         guard !isSaving, activeSaveAttemptID == nil else { return }
         let attemptID = UUID()
         let identity = editorOperationIdentity
@@ -7217,6 +8690,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         defer {
             if activeSaveAttemptID == attemptID {
                 activeSaveAttemptID = nil
+                defer { if editorOperationIdentity == identity { drainPendingLatestJob() } }
                 // Every exit still owned by this editor must be terminal. A
                 // load/reset owns its own state, even for identical target IDs.
                 if editorOperationIdentity == identity, !isSaving, saveState == .saving {
@@ -7233,6 +8707,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             let reload = await reloadLatestKeepingLocalEdits(saveAttemptID: attemptID)
             guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
             switch reload {
+            case .needsResolution:
+                return
             case .reloaded:
                 if !retrySections.isEmpty {
                     // Consent covered the previous generation's render. A retry
@@ -7265,17 +8741,29 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func saveOnce(retrying retrySections: Set<EditorSection> = []) async {
+        guard pendingMerge == nil else {
+            saveState = .failed("Resolve the conflicting changes before saving.")
+            return
+        }
         guard !isSaving, hasUnsavedChanges || !retrySections.isEmpty else { return }
         let saveEditorEpoch = editorLoadEpoch
         defer { if editorLoadEpoch == saveEditorEpoch { userSongRetry = nil } }
+        guard document.splitScreenIsValid else { saveState = .failed("This split-screen layout cannot be saved. Your edits are still here."); return }
         guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
         isSaving = true; saveState = .saving
-        defer { if editorLoadEpoch == saveEditorEpoch { isSaving = false } }
         let submittedDocument = document
+        let journal = EditorSaveHistory(submitted: submittedDocument, limit: historyLimit)
+        let saveHistoryID = journal.id
+        saveHistory = journal
+        defer {
+            if editorLoadEpoch == saveEditorEpoch, saveHistory?.id == saveHistoryID {
+                saveHistory = nil
+                isSaving = false
+            }
+        }
         // KRI-576: the song window this save asks the server to project the lyric rows against.
         let submittedSongStartS = trueSongWindowStartS
         let submittedSections = changedSections.union(retrySections)
-        let submittedUndoCount = undoStack.count
         let saveItemID = itemID
         let saveJobID = jobID
         let saveVariantKey = variantKey
@@ -7286,19 +8774,22 @@ struct NativeEditorTemporaryVideo: Sendable {
         let request = commitRequest(sections: sections, submittedSections: submittedSections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             // A committed save proves the connection works: drop the offline hint. Any pending
             // retry stays scheduled so the catch-up read still runs.
             refreshFailureStreak = 0
             if refreshSync == .reconnecting { refreshSync = .idle }
+
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
-            let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
+            guard let journal = saveHistory, journal.id == saveHistoryID else { return }
+            let postSubmitUndo = journal.undoCheckpoints(current: document)
+            let postSubmitRedo = journal.redoCheckpoints
             let hasPostSubmitEdits = document != submittedDocument
             // A durable commit fences the previous render even when this
             // response saves an empty draft and does not start a new poll.
             previewRefreshTask?.cancel()
             pendingPreviewGeneration = nil
-            pendingDeviceRenderIdentity = nil
+            pendingDeviceRenderIdentity = nil; pendingDeviceRenderGeneration = nil
             chatStagedDocument = nil; chatStagedSections = []
             // An empty authored-phone document has its first editable revision
             // immediately, even before the next variant-status refresh exposes
@@ -7319,24 +8810,24 @@ struct NativeEditorTemporaryVideo: Sendable {
                     document = acknowledgedEmpty
                     cleanDocument = acknowledgedEmpty
                     changedSections.removeAll(); explicitlyDirtySections.removeAll()
-                    undoStack.removeAll(); redoStack.removeAll()
                 } else {
                     // The empty commit is durable, but a later local edit was
                     // staged while it was in flight. Move both bases to the
                     // new generation and retain that edit and its undo entry.
                     document.revision.baseGeneration = response.generation
                     cleanDocument = acknowledgedEmpty
-                    let acknowledgedRevision = document.revision
-                    undoStack = postSubmitUndo.map { value in
-                        var rebased = value
-                        rebased.revision = acknowledgedRevision
-                        return rebased
-                    }
-                    redoStack.removeAll()
                     if !document.clips.isEmpty { document.editorState = "renderable" }
-                    consumeSubmittedDeletions(from: submittedDocument)
                     explicitlyDirtySections.subtract(acknowledged)
                 }
+                let acknowledgedRevision = document.revision
+                let rebaseHistory: (EditorDocument) -> EditorDocument = { value in
+                    var rebased = value
+                    rebased.revision = acknowledgedRevision
+                    return rebased
+                }
+                undoStack = postSubmitUndo.map(rebaseHistory)
+                redoStack = postSubmitRedo.map(rebaseHistory)
+                consumeSubmittedDeletions(from: submittedDocument)
                 pendingRenderRetrySections.removeAll()
                 rebaseActiveGestureHistoryAfterDurableSave()
                 refreshDirtyState()
@@ -7364,19 +8855,26 @@ struct NativeEditorTemporaryVideo: Sendable {
                 }
             }
             acknowledge(acknowledged, generation: response.generation, submittedDocument: savedSubmission)
-            if hasPostSubmitEdits {
-                let acknowledgedRevision = document.revision
-                let rebaseSong = userSongRebase
-                undoStack = postSubmitUndo.map { value in
-                    var rebased = value
-                    rebased.revision = acknowledgedRevision
-                    if acknowledged.contains(.userSong) { rebased.userSong = rebaseSong(rebased.userSong) }
-                    return rebased
-                }
-                redoStack.removeAll()
+            // A durable intent can outlive failed recipe compilation. Its old
+            // song projection is not evidence that this exact Save was undone.
+            if response.ok, response.renderStarted == false, let song = acknowledgedUserSong, !response.generation.isEmpty {
+                savedSongProjectionLag = SavedSongProjectionLag(thread: saveThreadID, job: saveJobID,
+                    item: saveItemID, variant: saveVariantKey, generation: response.generation,
+                    revision: response.revisionNumber,
+                    previousProjection: previewVariant["user_song"], acknowledged: song)
             } else {
-                undoStack.removeAll(); redoStack.removeAll()
+                savedSongProjectionLag = nil
             }
+            let acknowledgedRevision = document.revision
+            let rebaseSong = userSongRebase
+            let rebaseHistory: (EditorDocument) -> EditorDocument = { value in
+                var rebased = value
+                rebased.revision = acknowledgedRevision
+                if acknowledged.contains(.userSong) { rebased.userSong = rebaseSong(rebased.userSong) }
+                return rebased
+            }
+            undoStack = postSubmitUndo.map(rebaseHistory)
+            redoStack = postSubmitRedo.map(rebaseHistory)
             userSongRebase = { $0 }
             // A successful response has durably applied the exact deletion
             // intent sent with this commit. Remove only those IDs: a later
@@ -7391,51 +8889,68 @@ struct NativeEditorTemporaryVideo: Sendable {
             // renderer may project text differently (for example after a
             // timeline-only save). Reconcile the committed variant as soon as
             // it is durable; polling remains the fallback when this read is
-            // unavailable or still stale.
-            if response.draft == nil, let saveJobID,
+            // unavailable or still stale. The read runs beside the device
+            // render's own start-up reads: neither needs the other, and both
+            // were queued one behind the other before.
+            let committedSaveAttemptID = activeSaveAttemptID
+            let committedRead: Task<Void, Never>? = if response.draft == nil, let saveJobID,
                response.generation == document.revision.baseGeneration {
-                do {
-                    let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
-                    guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
-                    _ = reconcileAuthoritativeText(
-                        from: committedVariant,
-                        generation: response.generation,
-                        expectedItemID: saveItemID,
-                        expectedJobID: saveJobID,
-                        expectedVariantKey: saveVariantKey,
-                        expectedThreadID: saveThreadID,
-                        expectedDocumentGeneration: response.generation,
-                        songWindowStartS: submittedSongStartS
-                    )
-                } catch {
-                    // A durable save must remain successful even when the
-                    // read-after-write reconciliation is temporarily down.
+                Task { @MainActor [weak self] in
+                    do {
+                        let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
+                        guard !Task.isCancelled, let self, self.activeSaveAttemptID == committedSaveAttemptID,
+                              self.saveHistory?.id == saveHistoryID, self.saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                        _ = self.reconcileAuthoritativeText(
+                            from: committedVariant,
+                            generation: response.generation,
+                            expectedItemID: saveItemID,
+                            expectedJobID: saveJobID,
+                            expectedVariantKey: saveVariantKey,
+                            expectedThreadID: saveThreadID,
+                            expectedDocumentGeneration: response.generation,
+                            songWindowStartS: submittedSongStartS
+                        )
+                    } catch {
+                        // A durable save must remain successful even when the
+                        // read-after-write reconciliation is temporarily down.
+                    }
                 }
+            } else { nil }
+            defer { committedRead?.cancel() }
+            guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else {
+                committedRead?.cancel()
+                return
             }
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+
             if response.renderStarted ?? response.ok {
                 // The commit is durable even while its render is pending. Keep
                 // the acknowledged sections retryable until a matching ready
                 // generation is observed.
                 pendingRenderRetrySections = acknowledged
                 saveState = .previewPending
+                pendingDeviceRenderGeneration = response.generation
                 await refreshDeviceRender()
-                guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                await withTaskCancellationHandler { await committedRead?.value } onCancel: { committedRead?.cancel() }
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingDeviceRenderIdentity = deviceRenderKey.flatMap { deviceRenders?.request(for: $0)?.identity }
+                pendingDeviceRenderGeneration = response.generation
                 previewSupersededGeneration = saveDocumentGeneration
                 startPreviewRefresh(generation: response.generation)
             } else {
+                await withTaskCancellationHandler { await committedRead?.value } onCancel: { committedRead?.cancel() }
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingRenderRetrySections = acknowledged
                 saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
         } catch APIError.conflict {
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             // `save()` loads the newer version and sends this edit again.
             saveHitNewerVersion = true
         } catch EditorSaveError.userSongUnavailable where submittedDocument.userSong?.removed == true {
             // The song is already gone on the server (an earlier removal reached it): that is what the
             // creator asked for. Fold the removal in locally and carry on with whatever else is pending.
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             foldAcknowledgedUserSong(submittedDocument.userSong)
             let rebaseSong = userSongRebase
             undoStack = undoStack.map { var value = $0; value.userSong = rebaseSong(value.userSong); return value }
@@ -7446,7 +8961,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             songRemovalAlreadyApplied = true
             saveState = hasUnsavedChanges ? .idle : .saved
         } catch {
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             saveState = .failed(error.localizedDescription)
         }
     }
@@ -7456,6 +8971,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if var activeTrim {
             activeTrim.baseline = document
             activeTrim.translationOrigin = activeTrim.lastTranslation
+            activeTrim.undoBaseline = undoStack
             activeTrim.redoBaseline = redoStack
             activeTrim.recordedUndo = false
             self.activeTrim = activeTrim
@@ -7464,6 +8980,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             activeTimedEdit.baseline = document
             activeTimedEdit.translationOrigin = activeTimedEdit.lastTranslation
             activeTimedEdit.projection = timelineProjection
+            activeTimedEdit.undoBaseline = undoStack
             activeTimedEdit.redoBaseline = redoStack
             activeTimedEdit.recordedUndo = false
             self.activeTimedEdit = activeTimedEdit
@@ -7477,11 +8994,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// reloading forever; Retry clears it.
     private var previewConflictReloadGeneration: String?
 
-    private enum LatestReload { case reloaded, alreadyTried, superseded, failed(Error) }
+    private enum LatestReload { case reloaded, needsResolution, alreadyTried, superseded, failed(Error) }
 
-    /// KRI-935: load the newest renderer-owned version of this edit without asking the
-    /// creator. It becomes the clean base and their unsaved lanes are replayed on top
-    /// (`rebaseLocalEdits`). `fencingPreviewConflict` allows one reload per server
+    /// Load the newest renderer-owned version and three-way merge it with the clean
+    /// baseline and current edits. Independent changes merge automatically; overlapping
+    /// edits retain both versions for a choice. `fencingPreviewConflict` allows one reload per server
     /// generation and always rebuilds the preview, even when the generation is unchanged.
     private func reloadLatestKeepingLocalEdits(fencingPreviewConflict: Bool = false, saveAttemptID: UUID? = nil) async -> LatestReload {
         guard !isSaving, activeSaveAttemptID == saveAttemptID,
@@ -7519,49 +9036,155 @@ struct NativeEditorTemporaryVideo: Sendable {
                 canUndo: false,
                 createdAt: .now
             )
-            let latestDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+            let latestDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = latestDraft.serverSnapshot }
             var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestClean.revision.baseGeneration = generation
-            rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
-            return .reloaded
+            return rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
+                ? .reloaded : .needsResolution
         } catch {
             guard editorOperationIdentity == identity else { return .superseded }
             return .failed(error)
         }
     }
 
-    /// Make `latestClean` the clean baseline and replay only the locally dirty
-    /// sections on top, as one undoable change. Nothing the creator changed is lost.
-    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool) {
-        let localDocument = document
-        let localSections = changedSections
-        let localExplicitSections = explicitlyDirtySections
+    /// Retain both sides until every overlapping authored change is resolved.
+    @discardableResult
+    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool,
+                                 remoteEdits: EditorDocument? = nil,
+                                 destination: (job: UUID?, variant: String?, item: String?)? = nil,
+                                 stagedRevision: Int? = nil, remoteETag: String? = nil,
+                                 legacySnapshot: [String: JSONValue]? = nil) -> Bool {
+        guard !isReviewingPreviousMerge else { return false }
+        let context = PendingMerge(authority: mergeAuthority, base: cleanDocument, clean: latestClean, remote: remoteEdits ?? latestClean,
+            baseSong: Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong, job: jobID, generation: cleanDocument.revision.baseGeneration), variant: variant, forcePreview: forcePreviewRebuild,
+            thread: threadID, originalJob: jobID, originalVariant: variantKey,
+            destinationJob: destination?.job ?? jobID, destinationVariant: destination?.variant ?? variantKey,
+            destinationItem: destination?.item ?? itemID, stagedRevision: stagedRevision,
+            remoteETag: remoteETag, legacySnapshot: legacySnapshot)
+        pendingMerge = context
+        return applyMerge(context, preference: nil)
+    }
+
+    func resolveMergeConflicts(keepingLocal: Bool) {
+        guard let context = pendingMerge, !isSaving else { return }
+        guard !keepingLocal || canKeepLocalMergeConflicts else { return }
+        if applyMerge(context, preference: keepingLocal ? .local : .remote) {
+            rearmLatestJobAfterMergeDecision()
+        }
+    }
+
+    private func rearmLatestJobAfterMergeDecision() {
+        let authority = mergeAuthority
+        Task { @MainActor [weak self] in
+            guard let self, self.mergeAuthority == authority else { return }
+            self.drainPendingLatestJob()
+        }
+    }
+
+    private func mergeRemoteSong(for context: PendingMerge) -> JSONValue? {
+        return context.variant.map { variant in
+            let overlay = Self.serverSavedSongOverlay(for: variant, job: context.destinationJob, variantKey: context.destinationVariant)
+                ?? savedSongOverlay(for: variant, thread: context.thread, job: context.destinationJob,
+                item: context.destinationItem, variantKey: context.destinationVariant,
+                generation: context.clean.revision.baseGeneration)
+            return Self.mergeSongAuthority(variant: variant, effective: NativeUserSong(variant: variant)?.applying(overlay),
+                job: context.destinationJob, generation: context.clean.revision.baseGeneration)
+        } ?? context.baseSong
+    }
+
+    private func applyMerge(_ context: PendingMerge, preference: AuthoredJSONMerge.Preference?) -> Bool {
+        guard !isReviewingPreviousMerge || preference != nil else { return false }
+        guard pendingMerge?.id == context.id, context.authority == mergeAuthority else { return false }
+        guard context.origin == .rendered || context.remote.capabilities == document.capabilities else { return false }
+        let local = context.localOverride ?? document
+        if context.origin == .unprovenChat, preference == nil {
+            canKeepLocalMergeConflicts = true
+            mergeConflictMessage = "This chat edit has no matching submitted state. Choose your current edits or the chat edit; nothing changes until you choose."
+            return false
+        }
+        let remoteSong = mergeRemoteSong(for: context)
+        // An unproven base is only a conservative comparison aid after an explicit
+        // choice; it never authorizes automatic replacement of local work.
+        let result = NativeEditorMerge.documents(base: context.base, local: local, remote: context.remote,
+            baseSong: context.baseSong, remoteSong: remoteSong, preference: preference)
+        let rebased: EditorDocument
+        switch result {
+        case .resolved(let value): rebased = value
+        case .conflicts(let conflicts):
+            let connected = conflicts.contains(where: { $0.path.first == "dependent" })
+            canKeepLocalMergeConflicts = context.baseSong == remoteSong || (local.userSong?.isEmpty != false && !connected)
+            mergeConflictMessage = !canKeepLocalMergeConflicts
+                ? "The latest version may use a different song. Use it, then edit the song."
+                : connected
+                ? "Timing or deletions affect connected content. Choose which version to keep."
+                : "You and the latest version changed the same content. Choose which one to keep."
+            return false
+        case .unsupported(let message):
+            canKeepLocalMergeConflicts = false
+            mergeConflictMessage = message
+            return false
+        }
         let selected = selection
-        var rebased = latestClean
-        for section in localSections {
-            copy(section, from: localDocument, into: &rebased)
+        let retentionSequence = sourcePreviewSequence
+        if jobID == context.destinationJob, variantKey == context.destinationVariant, itemID == context.destinationItem {
+            retainAdmittedPreview()
         }
-        // Deletion intents travel with the replayed lanes, so Save still sends them.
-        for deletion in localDocument.deletions where !rebased.deletions.contains(deletion) {
-            rebased.deletions.append(deletion)
+        defer {
+            if sourcePreviewSequence == retentionSequence { retirePreviousPreview() }
         }
+        let chatOnlyBefore = !hasUnsavedChanges || hasOnlyChatStagedChanges
+        let before = local
+        let preservesAuthority = context.localOverride == nil && !isReviewingPreviousMerge
+            && before.revision.baseGeneration == context.clean.revision.baseGeneration
+            && context.originalJob == context.destinationJob
+            && context.originalVariant == context.destinationVariant
+            && context.clean.revision.baseGeneration == cleanDocument.revision.baseGeneration
+            && context.baseSong == remoteSong
+        if !preservesAuthority || isReviewingPreviousMerge { mergeDecisionCheckpoint = nil }
+        let authoredChanged = before.editorState != rebased.editorState
+            || before.deletions != rebased.deletions || before.userSong != rebased.userSong
+            || EditorSection.allCases.contains { before.snapshot(for: $0) != rebased.snapshot(for: $0) }
+        if preservesAuthority, authoredChanged { appendUndo(before) }
+        if context.originalJob != context.destinationJob { discardPlaybackForNewJob() }
         document = rebased
-        cleanDocument = latestClean
-        changedSections = localSections
-        explicitlyDirtySections = localExplicitSections.intersection(localSections)
-        redoStack.removeAll()
-        configureCapabilities(from: variant)
-        refreshRebasedSourcePreview(force: forcePreviewRebuild)
+        cleanDocument = context.clean
+        jobID = context.destinationJob; variantKey = context.destinationVariant; itemID = context.destinationItem
+        if let value = context.remoteETag { etag = value }
+        if let value = context.legacySnapshot { legacyPromptSnapshot = value }
+        pendingMerge = nil
+        mergeConflictMessage = nil
+        canKeepLocalMergeConflicts = true
+        if let revision = context.stagedRevision { appliedChatDraftRevision = revision }
+        if context.origin == .rendered {
+            chatStagedDocument = nil; chatStagedSections = []; chatStagedHasNoManualBase = false
+        } else {
+            chatStagedHasNoManualBase = chatOnlyBefore
+            chatStagedDocument = context.remote
+            chatStagedSections = context.stagedSections
+        }
+        if !preservesAuthority || authoredChanged { redoStack.removeAll() }
+        if context.origin == .rendered { configureCapabilities(from: context.variant) }
+        refreshRebasedSourcePreview(force: context.forcePreview)
         refreshDirtyState()
-        undoStack = hasUnsavedChanges ? [latestClean] : []
+        explicitlyDirtySections.formIntersection(changedSections)
+        if !preservesAuthority {
+            undoStack.removeAll()
+            var decision = context
+            decision.authority = mergeAuthority
+            decision.localOverride = before
+            mergeDecisionCheckpoint = MergeDecisionCheckpoint(context: decision, before: before,
+                after: document, authority: mergeAuthority)
+        }
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
-        setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+        setAuthoritativeDuration(Self.number(context.variant?["duration_s"]))
         refreshDuration()
+        return true
     }
 
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
+        guard !isReviewingPreviousMerge else { return }
         var next = draft; body(&next); guard next != draft else { return }
         invalidateDurationSources(for: Set([section]))
         let before = document
@@ -7577,11 +9200,18 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactDocument(sections: [section], body)
     }
 
-    private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
+    /// `rebasesSplitLanes: false` is only for an edit that keeps every clip's window where it was.
+    private func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, _ body: (inout EditorDocument) -> Void) {
+        guard !isReviewingPreviousMerge else { return }
         var next = document; body(&next)
+        let retainedSplitIDs = Set(next.clips.filter { !$0.removed }.compactMap(\.splitSectionID))
+        next.splitScreenSections.removeAll { !retainedSplitIDs.contains($0.id) }
+        next.fitCollapseSectionDurations()
+        guard next.splitScreenIsValid else { return }
         if !next.clips.isEmpty { next.editorState = "renderable" }
         guard next != document else { return }
         NativeSpeechTimelineProjection.acknowledgeCaptionEdits(&next, from: document)
+        if rebasesSplitLanes { NativeSplitTimelineRebase.rebase(&next, from: document) }
         rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
@@ -7589,6 +9219,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
+        guard !isReviewingPreviousMerge else { return false }
         for key in keys {
             if let capability = document.capabilities[key] { return capability.editable }
         }
@@ -7650,7 +9281,13 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// What the crop is shown in: the video canvas.
     var cropOutputAspect: CGFloat {
-        EditorDocument.canonicalOrientation(document.orientation) == "landscape" ? 16.0 / 9.0 : 9.0 / 16.0
+        let canvas = NativeEditorRenderCompiler.canvas(for: document)
+        let aspect = CGFloat(canvas.width) / CGFloat(canvas.height)
+        guard let selection, let index = clipSlotIndex(selection.id), let id = document.clips[index].splitSectionID,
+              let panel = document.clips[index].splitPanelIndex,
+              let section = document.splitScreenSections.first(where: { $0.id == id }) else { return aspect }
+        let height = (1 - section.gutter * Double(section.panelCount - 1)) * section.panelWeights[panel] / section.panelWeights.reduce(0, +)
+        return aspect / CGFloat(height)
     }
 
     /// The real upright frame a crop is drawn on: the clip's source at its source-in time (a photo's own pixels).
@@ -7780,6 +9417,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         // A pure slide writes `in_s` alone, so a beat-bound slot keeps `duration_beats`; a new length is a fixed length.
         // A Talking segment goes through the leaf gate (checked above), not the closed timeline section, but still
         // through `.timeline` so the speech projection moves the captions and Save sends the rows.
+        if let sectionID = found.slot.splitSectionID,
+           let section = document.splitScreenSections.first(where: { $0.id == sectionID }),
+           !section.collapseEmptyPanels, found.slot.splitOffsetS + window.length > section.durationS + 0.000001 { return false }
         mutateClip(clipID: selection.id, gatedByTimeline: !talking) { slot in
             slot.inS = max(0, window.start)
             if moved { slot.raw["source_start_locked"] = .bool(true) }
@@ -7878,21 +9518,23 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
-    private func beginTimedEdit(selection: EditorSelection, kind: TimedEditKind, edge: NativeTrimEdge?) {
+    @discardableResult
+    private func beginTimedEdit(selection: EditorSelection, kind: TimedEditKind, edge: NativeTrimEdge?, gestureID: NativeTimelineGestureID? = nil) -> Bool {
         let operation = kind == .move ? "timing" : "trim"
-        guard activeTimedEdit == nil,
+        guard !timelinePinching, activeTimedEdit == nil, activeTrim == nil,
               let section = section(for: selection.kind),
               // KRI-589: a drawing's window moves and trims under the server's `drawings.trim` / `drawings.edit`.
               canEditOperation(section == .drawings ? ["drawings.trim", "drawings.edit"] : ["\(section.rawValue).\(operation)", section.rawValue], section: section),
               // KRI-1162: a background window moves and trims only while the server opens `speaker_background_windows`.
               section != .speakerBackground || canEditSpeakerBackgroundWindows,
               timedObjectExists(selection),
-              supportsTimedGesture(selection) else { return }
-        activeTimedEdit = ActiveTimedEdit(selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
+              supportsTimedGesture(selection) else { return false }
+        activeTimedEdit = ActiveTimedEdit(gestureID: gestureID, undoBaseline: undoStack, selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
+        return true
     }
 
-    private func updateTimedEdit(by translation: TimeInterval) {
-        guard translation.isFinite, var active = activeTimedEdit else { return }
+    private func updateTimedEdit(by translation: TimeInterval, gestureID: NativeTimelineGestureID? = nil) {
+        guard !timelinePinching, translation.isFinite, var active = activeTimedEdit, active.gestureID == gestureID else { return }
         active.lastTranslation = translation
         let translation = translation - active.translationOrigin
         var next = active.baseline
@@ -7933,6 +9575,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         guard next != active.baseline else {
             if active.recordedUndo {
+                saveHistory?.cancelLastCheckpoint(matching: active.baseline)
                 undoStack.removeLast()
                 redoStack = active.redoBaseline
                 active.recordedUndo = false
@@ -7949,7 +9592,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         refreshDirtyState(); refreshDuration(); activeTimedEdit = active
     }
 
-    private func endTimedEdit() {
+    private func endTimedEdit(gestureID: NativeTimelineGestureID? = nil) {
+        guard activeTimedEdit?.gestureID == gestureID else { return }
         activeTimedEdit = nil
         flushDeferredSourcePreviewUpdate()
     }
@@ -8123,6 +9767,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
     private func canEditSection(_ section: EditorSection) -> Bool {
+        guard !isReviewingPreviousMerge else { return false }
         if cloudEditorUnavailableMessage != nil { return false }
         if let capability = capability(for: section) { return capability.editable }
         switch section {
@@ -8150,7 +9795,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // differ in shape without representing a user edit.
             let differs: Bool
             switch section {
-            case .timeline: differs = document.clips != cleanDocument.clips || document.tombstones != cleanDocument.tombstones
+            case .timeline: differs = !document.hasSameTimelineSlots(as: cleanDocument) || document.splitScreenSections != cleanDocument.splitScreenSections
             case .text: differs = document.textElements != cleanDocument.textElements
             case .captions: differs = document.captionCues != cleanDocument.captionCues
             case .captionMeta: differs = document.captionMeta != cleanDocument.captionMeta
@@ -8193,6 +9838,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         var payload = object(root["editor_payload"]) ?? [:]
         var sections = object(payload["sections"]) ?? [:]
         let isIntentionalEmpty = sourcePayload?["editor_state"]?.stringValue == "empty"
+        if let splits = sourceSections["split_screen_sections"] { sections["split_screen_sections"] = splits }
         if draft.text.isEmpty, sourceSections["text_elements"] != nil { sections["text_elements"] = sourceSections["text_elements"] }
         if draft.clips.isEmpty, !isIntentionalEmpty, sourceSections["timeline_slots"] != nil { sections["timeline_slots"] = sourceSections["timeline_slots"] }
         if draft.music == nil {
@@ -8204,7 +9850,17 @@ struct NativeEditorTemporaryVideo: Sendable {
             sections["timeline_slots"] = .array(rows.enumerated().map { index, row in
                 guard index < draft.clips.count, var value = Self.object(row) else { return row }
                 let clip = draft.clips[index]
-                value["asset_id"] = .string(clip.assetID.uuidString)
+                let canonicalRow = Self.array(sourceSections["timeline_slots"]).compactMap(Self.object).first { source in
+                    (clip.slotID != nil && source["slot_id"]?.stringValue == clip.slotID)
+                        || source["id"]?.stringValue.flatMap(UUID.init(uuidString:)) == clip.id
+                }
+                if let canonicalRow {
+                    // EditorClip requires a UUID even when a registered source is
+                    // identified only by media_id. Keep that UI fallback out of wire data.
+                    value["asset_id"] = canonicalRow["asset_id"]
+                } else {
+                    value["asset_id"] = .string(clip.assetID.uuidString)
+                }
                 // Do not manufacture an explicit unmute while hydrating a
                 // legacy slot. The absence of this field carries the backend's
                 // initial source-audio policy; explicit true or false is an
@@ -8225,12 +9881,13 @@ struct NativeEditorTemporaryVideo: Sendable {
             draftRevision: value.revision.number ?? 0, snapshotHash: value.revision.snapshotHash ?? "", etag: etag,
             baseJobID: jobID?.uuidString, baseGenerationID: value.revision.baseGeneration.nilIfEmpty,
             snapshot: value.encodeSnapshot(), canUndo: canUndo, createdAt: .now
-        ).editorDraft(projectID: projectID)
+        ).editorDraft(projectID: editorIdentityProjectID)
+        let windows = value.splitScreenSections.isEmpty ? [] : NativeEditorInteraction.timelineProjection(slots: value.clips, carousel: value.carouselMoment, splitSections: value.splitScreenSections).clipWindows
         for (index, slot) in value.clips.enumerated() where projected.clips.indices.contains(index) {
             guard let slotID = slot.id else { continue }
             let stableID = clipID(for: slotID)
             let clip = projected.clips[index]
-            projected.clips[index] = EditorClip(id: stableID, assetID: clip.assetID, sourceClipIndex: clip.sourceClipIndex, start: clip.start, end: clip.end, trimIn: clip.trimIn, trimOut: clip.trimOut, sourceDuration: clip.sourceDuration, muted: clip.muted, slotID: slotID)
+            projected.clips[index] = EditorClip(id: stableID, assetID: clip.assetID, sourceClipIndex: clip.sourceClipIndex, start: windows.first(where: { $0.sourceIndex == index })?.start ?? clip.start, end: windows.first(where: { $0.sourceIndex == index })?.end ?? clip.end, trimIn: clip.trimIn, trimOut: clip.trimOut, sourceDuration: clip.sourceDuration, muted: clip.muted, slotID: slotID)
         }
         projected.captions.enabled = Self.bool(value.captionMeta["enabled"]) ?? projected.captions.enabled
         projected.captions.style = value.captionMeta["style"]?.stringValue ?? projected.captions.style
@@ -8240,11 +9897,11 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Keeps legacy UUID-backed views attached to canonical string slot IDs.
     /// Existing draft metadata wins; otherwise UUID slot IDs are reused and
-    /// opaque server IDs receive a session-stable adapter ID.
+    /// opaque server IDs receive a project-stable adapter ID.
     private func clipID(for slotID: String?) -> UUID {
-        guard let slotID else { return UUID() }
+        guard let slotID, !slotID.isEmpty else { return UUID() }
         if let id = clipIDsBySlot[slotID] { return id }
-        let id = UUID(uuidString: slotID) ?? UUID()
+        let id = EditorCompatibilityClipIdentity.id(projectID: editorIdentityProjectID, slotID: slotID)
         clipIDsBySlot[slotID] = id
         return id
     }
@@ -8333,6 +9990,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         return EditorCommitRequest(
             timelineSlots: array("timeline_slots", .timeline),
+            splitScreenSections: submittedSections.contains(.timeline) && (value["split_screen_sections"] != nil || !document.splitScreenSections.isEmpty || !cleanDocument.splitScreenSections.isEmpty) ? document.splitScreenSections.map(\.json) : nil,
             // A guided timeline commit always carries the rebased label lane, like the server's
             // copilot path: the server then treats text as authored and skips its own
             // (right-biased, label-unaware) projection.
@@ -8462,11 +10120,18 @@ struct NativeEditorTemporaryVideo: Sendable {
             rebased.deletions.removeAll { submittedDocument.deletions.contains($0) }
             return rebased
         }
+        redoStack = redoStack.map { snapshot in
+            var rebased = snapshot
+            rebased.deletions.removeAll { submittedDocument.deletions.contains($0) }
+            return rebased
+        }
     }
 
     private func copy(_ section: EditorSection, from submitted: EditorDocument, into baseline: inout EditorDocument) {
         switch section {
         case .timeline:
+            baseline.splitScreenSections = submitted.splitScreenSections
+            baseline.unreadableSplitScreen = submitted.unreadableSplitScreen
             baseline.clips = submitted.clips
             baseline.tombstones = submitted.tombstones
             baseline.editorState = submitted.editorState
@@ -8508,14 +10173,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         if NativeSpeechTimelineProjection.rebase(&next, from: previous) { return }
         let freeText = ridesGuidedTimeline
         guard GuidedLabelRebase.hasLabels(next.textElements, includeFreeText: freeText), canEditSection(.text),
-              previous.clips != next.clips else { return }
+              previous.clips != next.clips || previous.splitScreenSections != next.splitScreenSections else { return }
         let media = mediaIDsByClipIndex
-        guard GuidedLabelRebase.windows(of: previous.clips, mediaByClipIndex: media)
-                != GuidedLabelRebase.windows(of: next.clips, mediaByClipIndex: media) else { return }
+        guard GuidedLabelRebase.windows(of: previous.clips, mediaByClipIndex: media, splitSections: previous.splitScreenSections)
+                != GuidedLabelRebase.windows(of: next.clips, mediaByClipIndex: media, splitSections: next.splitScreenSections) else { return }
         let before = Dictionary(next.textElements.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         next.textElements = GuidedLabelRebase.rebase(
             next.textElements, oldSlots: previous.clips, newSlots: next.clips,
-            mediaByClipIndex: media, includeFreeText: freeText
+            mediaByClipIndex: media, includeFreeText: freeText, oldSplitSections: previous.splitScreenSections, newSplitSections: next.splitScreenSections
         ).map { element in
             // A text the edit did not move stays byte-identical: stamping its segment_id alone
             // would mark the text lane dirty (and send it) for a clip edit that never touched it.
@@ -8572,6 +10237,12 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func failSourcePreview(_ error: Error, reloadsLatestOnConflict: Bool = true) {
+        previewResumeIntent = nil
+        sourcePreview?.cancelPendingPlaybackFrame()
+        inPlacePreviewFrame = nil
+        if previewWork.end(currentPreviewWork), retainedPreview != nil {
+            previousPreviewStatus = error is CancellationError ? .cancelled : .failed
+        }
         NativePreviewDiagnostics.record("finished-render-fallback", fields: [
             "error": String(((error as NSError).domain + ".\((error as NSError).code)").prefix(80)),
             "finishedCurrent": finishedRenderIsCurrent ? "1" : "0"], attachRoutine: true)
@@ -8582,18 +10253,19 @@ struct NativeEditorTemporaryVideo: Sendable {
         if (reloadsLatestOnConflict && reloadLatestAfterPreviewConflict(error)) || retrySourcePreviewQuietly(after: error) {
             // KRI-535: while the quiet rebuild runs, a render older than a staged edit stays hidden.
             finishedRenderIsCurrent = finishedWasCurrent
-            if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() }
+            if canPlayCanvasVideo { startPendingPlaybackIfPossible() }
             return
         }
         sourcePreviewState = Self.isMissingOriginals(error)
             ? .originalsUnavailable
             : .failed(Self.sourcePreviewMessage(for: error))
         // A queued play tap follows the fallback; with nothing to show it is dropped, not left armed.
-        if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() } else { pendingPlayRequest = false }
+        if canPlayCanvasVideo { startPendingPlaybackIfPossible() } else { pendingPlayRequest = false }
     }
 
     private func startPendingPlaybackIfPossible() {
-        guard pendingPlayRequest, canDisplayCurrentPlayer, !isPlaying else { return }
+        guard !isReviewingPreviousMerge else { return }
+        guard pendingPlayRequest, canPlayCanvasVideo, !isPlaying else { return }
         togglePlayback()
     }
 
@@ -8630,6 +10302,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             let result = await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true)
             guard self.editorOperationIdentity == identity else { return }
             switch result {
+            case .needsResolution:
+                guard !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
+                self.sourcePreviewState = .failed("Review the conflicting changes above to prepare your preview. Your edits are still here.")
+                self.pendingPlayRequest = false
+                return
             case .reloaded:
                 return
             case .superseded:
@@ -8675,6 +10352,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// rebuild every player and composition. The old ones never play again, so recovery budgets that
     /// were spent on failures from before the reset start over.
     func handleMediaServicesReset() {
+        clearPreviewAdmission()
+        previewWork.reset()
         NativePreviewDiagnostics.record("media-services-reset", fields: ["state": sourcePreviewStateLabel])
         startPlaybackRecoveryEpisode()
         finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
@@ -8683,7 +10362,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         player?.pause()
         isPlaying = false
         failureHandledItem = nil
-        activatePreviewAudio()
+        if wantsPlayback || previewPresentationActive { activatePreviewAudio() }
         if player != nil, player === finishedRenderPlayer, let url = playableDeviceOutputURL ?? finishedRenderURL {
             reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
         }
@@ -8839,6 +10518,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// A player item that loads ends the finished render's failure streak. When it is the finished
     /// render after its failure was surfaced, the "couldn't be loaded" message goes with it (KRI-587).
     private func playerItemBecameReady() {
+        armRetainedPreviewTimeout()
         finishedRenderRetryCount = 0
         guard finishedRenderFailed else { return }
         finishedRenderFailed = false
@@ -8850,10 +10530,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func restoreFinishedRenderFallback() {
-        guard let finishedRenderURL, finishedRenderIsCurrent,
-              !hasUnsavedChanges, chatStagedDocument == nil else { return }
+        // A staged AI edit keeps the finished video too, shown as the version before that edit (KRI-1230).
+        guard let finishedRenderURL,
+              chatStagedDocument != nil || (finishedRenderIsCurrent && !hasUnsavedChanges) else { return }
         guard player === finishedRenderPlayer else {
-            installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
+            reinstallFinishedRender(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
             return
         }
         // KRI-587: a finished render that died while the editable preview was building (its message was
@@ -8908,9 +10589,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         // SwiftUI may retain the outgoing VideoPlayer after this replacement.
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
-        player?.replaceCurrentItem(with: nil)
+        if retainedPreview?.player !== player { player?.replaceCurrentItem(with: nil) }
         let next = prerolled ?? AVPlayer(playerItem: item)
         player = next
+        previewDisplayTicket = currentPreviewWork
         observingPlayer = next
         playbackStateObserver = next.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self, weak next] _, _ in
             Task { @MainActor [weak self, weak next] in
@@ -8982,7 +10664,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         // alive so the seek handoff cannot strand a scrub still over the player.
         if status == .waitingToPlayAtSpecifiedRate { return }
         if status == .paused && playbackHandoffInFlight { return }
-        let nextIsPlaying = status == .playing
+        // The KVO hop reads `timeControlStatus` on a later main-actor turn, and AVPlayer can still say
+        // `.playing` for a beat after `pause()` has zeroed `rate` (KRI-1087). `rate` is the intent, so a
+        // .playing report at rate 0 is stale: it must not turn an explicit pause back into playback.
+        let nextIsPlaying = status == .playing && (player?.rate ?? 0) != 0
         if nextIsPlaying && !playbackHandoffInFlight { playbackSeekTarget = nil }
         if nextIsPlaying, scrubPreviewFrame != nil {
             scrubPreviewFrame = nil
@@ -9028,7 +10713,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         // every timing-gesture sample (updateTrim/updateTimedEdit), and
         // clamping to the stale composition length here would fight
         // auto-scroll's own widened bound mid-drag.
-        if currentTime > timelineScrubDuration { seek(to: timelineScrubDuration) }
+        if currentTime > timelineScrubDuration { positionPreview(to: timelineScrubDuration) }
     }
 
     private func setAuthoritativeDuration(_ value: TimeInterval?) {
@@ -9081,10 +10766,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
-    private func configureCapabilities(from variant: [String: JSONValue]?) {
+    private func configureCapabilities(from variant: [String: JSONValue]?, songVariantKey: String? = nil) {
+        let serverOverlay = variant.flatMap { Self.serverSavedSongOverlay(for: $0, job: jobID, variantKey: songVariantKey ?? variantKey) }
+        let overlay = serverOverlay ?? variant.flatMap { savedSongOverlay(for: $0, thread: threadID, job: jobID,
+            item: itemID, variantKey: variantKey,
+            generation: $0["render_generation_id"]?.stringValue ?? $0["render_finished_at"]?.stringValue ?? "") }
         previewVariant = variant ?? [:]
-        // The variant is the server's word on the song: what it lists already includes saved edits.
-        acknowledgedUserSong = nil
+        acknowledgedUserSong = overlay
+        if serverOverlay != nil || overlay == nil { savedSongProjectionLag = nil }
         // KRI-576: its lyric rows were projected for that same window.
         songCaptionWindowStartS = NativeUserSong(variant: previewVariant)?.windowStartS
         songCaptionLipsyncCarryS = 0
@@ -9107,11 +10796,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let transactionBaseline { self.transactionBaseline = refreshed(transactionBaseline) }
         if var activeTrim {
             activeTrim.baseline = refreshed(activeTrim.baseline)
+            activeTrim.undoBaseline = activeTrim.undoBaseline.map(refreshed)
             activeTrim.redoBaseline = activeTrim.redoBaseline.map(refreshed)
             self.activeTrim = activeTrim
         }
         if var activeTimedEdit {
             activeTimedEdit.baseline = refreshed(activeTimedEdit.baseline)
+            activeTimedEdit.undoBaseline = activeTimedEdit.undoBaseline.map(refreshed)
             activeTimedEdit.redoBaseline = activeTimedEdit.redoBaseline.map(refreshed)
             self.activeTimedEdit = activeTimedEdit
         }
@@ -9165,9 +10856,38 @@ struct NativeEditorTemporaryVideo: Sendable {
     var previewPollInterval: Duration = .seconds(1)
     var previewPollBudget = 300
 
+    private func readSavedPreview(api: any KriaAPIClient, job: UUID, variant: String,
+                                  identity: EditorOperationIdentity, generation: String) async throws -> [String: JSONValue] {
+        let owner = api.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "variant:\(job):\(variant)")
+        while let active = previewTransport { _ = try? await active.value; try Task.checkCancellation() }
+        while (previewObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: previewReadNow()) > .zero {
+            try await previewReadSleep((previewObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: previewReadNow()))
+            try Task.checkCancellation()
+        }
+        guard observersVisible, editorOperationIdentity == identity, pendingPreviewGeneration == generation,
+              api.mediaLibraryOwner == owner, observationScope(api: self.api, target: scope.target) == scope, !(previewObservationCooldowns[scope]?.isPaused ?? false) else { throw CancellationError() }
+        if previewTransport != nil { return try await readSavedPreview(api: api, job: job, variant: variant, identity: identity, generation: generation) }
+        let task = Task<[String: JSONValue], Error> { [weak self] in
+            defer { self?.previewTransport = nil }
+            do { return try await api.editorVariant(jobID: job, variantID: variant) }
+            catch {
+                if let self, api.mediaLibraryOwner == owner,
+                   case let APIError.requestFailed(_, detail) = error, let hint = detail.retryAfter {
+                    self.previewObservationCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.previewReadNow())
+                }
+                throw error
+            }
+        }
+        previewTransport = task
+        return try await task.value
+    }
+
     private func startPreviewRefresh(generation: String) {
         previewRefreshTask?.cancel()
         pendingPreviewGeneration = generation
+        previewObservationTerminal = false
+        guard observersVisible else { return }
         if surfaceDeviceRenderFailure() { return }
         guard let api, let jobID, let variantKey else {
             saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
@@ -9177,20 +10897,31 @@ struct NativeEditorTemporaryVideo: Sendable {
         let savedFrom = previewSupersededGeneration
         let interval = previewPollInterval
         let budget = previewPollBudget
+        let owner = api.mediaLibraryOwner, sleep = previewReadSleep
+        let wasSlow = previewSlowGeneration == generation
         previewRefreshTask = Task { [weak self] in
             // Only answered polls spend the budget: offline or a 5xx just waits longer between tries.
             var answered = 0
             var unreachable = 0
             var newerGeneration: String?
             var newerSightings = 0
-            while answered < budget {
+            var recovering = wasSlow
+            while true {
                 guard !Task.isCancelled else { return }
-                let backoff = unreachable == 0 ? interval : min(interval * (1 << min(unreachable, 4)), .seconds(15))
-                try? await Task.sleep(for: backoff)
+                recovering = recovering || answered >= budget || unreachable >= 12
+                let exhausted = recovering
+                let backoff = exhausted ? Self.latestJobSlowRecheck : (unreachable == 0 ? interval : min(interval * (1 << min(unreachable, 4)), .seconds(15)))
+                if exhausted, let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation {
+                    self.previewSlowGeneration = generation
+                    self.saveState = .previewFailed("Your edit is saved. The preview will be checked again automatically.")
+                }
+                do { try await sleep(backoff) } catch { return }
                 guard !Task.isCancelled else { return }
                 let variant: [String: JSONValue]
                 do {
-                    variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+                    guard let self, self.observersVisible, self.editorOperationIdentity == identity,
+                          self.pendingPreviewGeneration == generation, api.mediaLibraryOwner == owner else { return }
+                    variant = try await self.readSavedPreview(api: api, job: jobID, variant: variantKey, identity: identity, generation: generation)
                 } catch {
                     switch Self.refreshFailure(error) {
                     case .cancelled:
@@ -9198,18 +10929,21 @@ struct NativeEditorTemporaryVideo: Sendable {
                     case .appGate:
                         // Sign-in or update is shown app-wide; nothing to poll for until then.
                         return
-                    case let .transient(retryAfter):
-                        unreachable += 1
-                        if let retryAfter { try? await Task.sleep(for: .seconds(min(retryAfter, 60))) }
+                    case .transient:
+                        unreachable = min(unreachable + 1, 12)
                     case .readConflict, .targetLost, .runtimeUnavailable, .other:
-                        answered += 1
+                        guard let self, self.observersVisible, self.editorOperationIdentity == identity,
+                              self.pendingPreviewGeneration == generation, api.mediaLibraryOwner == owner else { return }
+                        self.previewObservationTerminal = true
+                        self.saveState = .previewFailed("Your edit is saved, but this preview cannot be checked right now.")
+                        return
                     }
                     continue
                 }
                 unreachable = 0
-                answered += 1
+                answered = min(answered + 1, budget)
                 guard !Task.isCancelled else { return }
-                guard let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
+                guard let self, self.observersVisible, api.mediaLibraryOwner == owner, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
                 // Device failures are reported on the authoritative variant;
                 // only reconcile the local renderer for that terminal status.
                 // Save-time reconciliation already covers the normal path,
@@ -9223,11 +10957,11 @@ struct NativeEditorTemporaryVideo: Sendable {
                     || variant["render_status"]?.stringValue == "needs_attention"
                     || (variant["render_status"]?.stringValue == "ready" && variantGeneration != generation)
                 )
-                if refreshDevice {
+                if refreshDevice && !exhausted {
                     await self.refreshDeviceRender()
                     guard !Task.isCancelled, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
                 }
-                if self.applyPreviewVariant(variant, generation: generation) { return }
+                if self.applyPreviewVariant(variant, generation: generation) { self.previewObservationTerminal = true; return }
                 // The server moved past this save: another device saved on top of it, or this
                 // iPhone published under a request the identity fence no longer recognises. Waiting
                 // for this generation can never end, so follow the newer one once it reads the same
@@ -9242,12 +10976,9 @@ struct NativeEditorTemporaryVideo: Sendable {
                 newerGeneration = current
                 guard newerSightings >= 2 else { continue }
                 self.pendingPreviewGeneration = current
-                if self.applyPreviewVariant(variant, generation: current) { return }
+                if self.applyPreviewVariant(variant, generation: current) { self.previewObservationTerminal = true; return }
                 self.pendingPreviewGeneration = generation
             }
-            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
-            // Never reuse a read error's copy here: "This edit changed elsewhere" is a save conflict.
-            self.saveState = .previewFailed("Your edit is saved, but the preview is taking longer than expected. Try checking again.")
         }
     }
 
@@ -9315,6 +11046,14 @@ struct NativeEditorTemporaryVideo: Sendable {
             announceEditApplied()
             return true
         }
+        if status == "needs_attention" {
+            saveState = .renderRetryNeeded("Your edit is saved, but its preview needs attention before rendering can continue.")
+            return true
+        }
+        if status == "cancelled" || status == "superseded" {
+            saveState = .previewFailed("Your edit is saved. This preview is no longer rendering.")
+            return true
+        }
         if status == "failed" {
             saveState = .renderRetryNeeded("Your edit is saved, but its preview render failed. You can retry it safely.")
             return true
@@ -9374,11 +11113,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let transactionBaseline { self.transactionBaseline = rebase(transactionBaseline) }
         if var activeTrim {
             activeTrim.baseline = rebase(activeTrim.baseline)
+            activeTrim.undoBaseline = activeTrim.undoBaseline.map(rebase)
             activeTrim.redoBaseline = activeTrim.redoBaseline.map(rebase)
             self.activeTrim = activeTrim
         }
         if var activeTimedEdit {
             activeTimedEdit.baseline = rebase(activeTimedEdit.baseline)
+            activeTimedEdit.undoBaseline = activeTimedEdit.undoBaseline.map(rebase)
             activeTimedEdit.redoBaseline = activeTimedEdit.redoBaseline.map(rebase)
             self.activeTimedEdit = activeTimedEdit
         }
@@ -9401,7 +11142,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             canUndo: false,
             createdAt: .now
         )
-        let draft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+        let draft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
         return EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft)).textElements
     }
 
@@ -9427,6 +11168,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard retried else { return }
         }
         guard editorOperationIdentity == identity, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
+        pendingDeviceRenderGeneration = generation
         await refreshDeviceRender(retry: true)
         guard editorOperationIdentity == identity, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
         pendingDeviceRenderIdentity = deviceRenders.request(for: key)?.identity
@@ -9476,7 +11218,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             createdAt: .now
         )
         let selected = selection
-        replace(with: snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant))
+        replace(with: snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant))
         if conversationRuntimeVersion == 1 {
             // Compare raw authority, before client metadata/hydration. Reusing
             // encodeSnapshot here would cache random compatibility clip IDs.
@@ -9485,7 +11227,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 draftRevision: 0, snapshotHash: "", etag: "", baseJobID: snapshot.baseJobID,
                 baseGenerationID: generation, snapshot: [:], canUndo: false, createdAt: .now
             )
-            legacyPromptSnapshot = authority.editorDraft(projectID: projectID, authoritativeVariant: variant).serverSnapshot
+            legacyPromptSnapshot = authority.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant).serverSnapshot
         }
         cleanDocument = document
         undoStack.removeAll()
@@ -9526,6 +11268,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func selectionExists(_ value: EditorSelection) -> Bool {
+        if value.kind == .speaker {
+            return speakerFrame(for: value) != nil || usesScopedSpeakerFrame(for: value)
+        }
         if value.kind == .clip, let id = UUID(uuidString: value.id) { return draft.clips.contains { $0.id == id } }
         return timelineItems.contains { $0.selection == value }
     }
@@ -9535,3 +11280,542 @@ private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
 
 // Declared here, in the scanned session file, so the editor capability parity test sees every extension.
 extension NativeEditorSession: NativeEditorExportSource {}
+
+extension NativeEditorSession {
+    var selectedSplitScreenSectionID: String? {
+        guard let selection, selection.kind == .clip, let index = clipSlotIndex(selection.id) else { return nil }
+        return document.clips[index].splitSectionID
+    }
+
+    var canEditSplitScreen: Bool {
+        canEditTimeline && rendersOnDevice && document.splitScreenIsValid
+            && (document.capabilities["split_screen"] ?? document.capabilities["clips.split_screen"])?.editable == true
+    }
+
+    var canCreateSplitScreen: Bool {
+        canEditSplitScreen && selectedSplitScreenSectionID == nil && selection?.kind == .clip
+    }
+
+    /// Collapse needs this build at protocol 47 or later and the server's say-so: the editor capability
+    /// `split_collapse` the server sends with the edit, or `splitCollapse` among the phone-render features it
+    /// verified. Until the server offers it, new sections stay fixed-layout and the control stays hidden.
+    var canCollapseSplitPanels: Bool {
+        KriaClientProtocolContract.version >= 47
+            && (document.capabilities["split_collapse"]?.editable == true
+                || lastPhoneRenderingCapabilities?.verifiedFeatures.contains("splitCollapse") == true)
+    }
+
+    var canSplitSelectedClip: Bool {
+        guard canEditTimeline, let selection, let found = sourceWindowSlot(for: selection) else { return false }
+        let offset = currentTime - found.clip.start
+        return offset >= minimumClipDuration && found.clip.end - currentTime >= minimumClipDuration
+    }
+
+    var canDuplicateSelectedClip: Bool {
+        guard canEditTimeline, let selection, let index = clipSlotIndex(selection.id) else { return false }
+        let slot = document.clips[index]
+        guard let id = slot.splitSectionID else { return true }
+        guard let section = document.splitScreenSections.first(where: { $0.id == id }) else { return false }
+        let start = slot.splitOffsetS + (slot.durationS ?? 0)
+        let end = start + (slot.durationS ?? 0)
+        return (section.collapseEmptyPanels || end <= section.durationS + 0.000001) && !document.clips.contains {
+            $0.id != slot.id && $0.splitSectionID == id && $0.splitPanelIndex == slot.splitPanelIndex
+                && $0.splitOffsetS < end && $0.splitOffsetS + ($0.durationS ?? 0) > start
+        }
+    }
+
+    var splitScreenSourceChoices: [(clipIndex: Int, label: String)] {
+        let measured = Set((resolvedSources ?? [:]).keys).union(document.clips.filter {
+            Self.number($0.raw["source_duration_s"] ?? $0.raw["source_duration"]) != nil
+        }.map(\.clipIndex))
+        let admitted = Set((sourcePool?.clips ?? []).filter { $0.nativeSource != nil }.map(\.clipIndex))
+        return measured.union(admitted).sorted().map { ($0, "Clip \($0 + 1)") }
+    }
+
+    var canCreateWholeVideoSplit: Bool {
+        canEditSplitScreen && wholeVideoSplit(panelCount: 2) != nil
+    }
+
+    /// New panels start empty: the section shows its background there until footage is added.
+    func createSplitScreen(panelCount: Int, scope: NativeSplitScope) {
+        guard (2...3).contains(panelCount) else { return }
+        switch scope {
+        case .selectedClip:
+            guard canCreateSplitScreen, let selection, let index = clipSlotIndex(selection.id),
+                  let duration = document.clips[index].durationS, duration >= minimumClipDuration else { return }
+            let id = UUID().uuidString
+            let collapse = canCollapseSplitPanels
+            transactDocument(section: .timeline) { value in
+                value.splitScreenSections.append(EditorSplitScreenSection(id: id, durationS: duration, panelCount: panelCount, collapseEmptyPanels: collapse))
+                value.clips[index] = Self.pinningSpeakerSubject(value.clips[index])
+                value.clips[index].setSplitMembership(sectionID: id, panelIndex: 0, offset: 0)
+            }
+        case .wholeVideo:
+            guard canEditSplitScreen, let next = wholeVideoSplit(panelCount: panelCount),
+                  let id = next.splitScreenSections.first?.id else { return }
+            // Every clip keeps its window, so timed lanes stay where they are. The unit rebase would instead
+            // map each former clip onto the start of the one new section.
+            transactDocument(sections: [.timeline], rebasesSplitLanes: false) { $0 = next }
+            if selectedSplitScreenSectionID != id { selectSplitPanel(sectionID: id, panel: 0) }
+        }
+    }
+
+    /// Every ordinary clip becomes a top-panel clip at its current place in the video, transitions included.
+    private func wholeVideoSplit(panelCount: Int) -> EditorDocument? {
+        guard document.splitScreenSections.isEmpty else { return nil }
+        let windows = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil).baseClipWindows
+        guard let origin = windows.first?.start else { return nil }
+        let id = UUID().uuidString
+        var next = document
+        var previous: EditorTimelineSlot?
+        var end = 0.0
+        for window in windows {
+            var slot = Self.pinningSpeakerSubject(next.clips[window.sourceIndex])
+            guard let duration = slot.durationS else { return nil }
+            var offset = window.start - origin
+            if let previous, let length = previous.durationS {
+                let overlap = previous.transitionAfter == "cut" ? 0
+                    : min(0.3, previous.transitionDurationS ?? 0.3, length * 0.3, duration * 0.3)
+                offset = max(offset, previous.splitOffsetS + length - (overlap >= 0.1 ? overlap : 0))
+            }
+            slot.setSplitMembership(sectionID: id, panelIndex: 0, offset: offset)
+            next.clips[window.sourceIndex] = slot
+            end = max(end, window.end - origin, offset + duration)
+            previous = slot
+        }
+        next.splitScreenSections = [EditorSplitScreenSection(id: id, durationS: end, panelCount: panelCount, collapseEmptyPanels: canCollapseSplitPanels)]
+        return next.splitScreenIsValid ? next : nil
+    }
+
+    private static func pinningSpeakerSubject(_ slot: EditorTimelineSlot) -> EditorTimelineSlot {
+        var slot = slot
+        if slot.raw["speaker_subject"]?.boolValue == nil,
+           NativePhoneTalkingSource.isSourceSlot(slot) || slot.parentSegmentID?.hasPrefix("native-phone-talking-source") == true {
+            slot.raw["speaker_subject"] = .bool(true)
+        }
+        return slot
+    }
+
+    private static func insertSplitMember(_ slot: EditorTimelineSlot, into value: inout EditorDocument, sectionID: String, panel: Int, offset: Double) {
+        var member = slot
+        member.setSplitMembership(sectionID: sectionID, panelIndex: panel, offset: offset)
+        guard let last = value.clips.lastIndex(where: { $0.splitSectionID == sectionID }) else { return }
+        value.clips.insert(member, at: last + 1)
+    }
+
+    var splitContextAtPlayhead: NativeSplitContext? {
+        let projection = timelineProjection
+        for section in document.splitScreenSections {
+            let members = document.clips.indices.filter { !document.clips[$0].removed && document.clips[$0].splitSectionID == section.id }
+            guard let first = members.first, let window = projection.clipWindows.first(where: { $0.sourceIndex == first }) else { continue }
+            let start = window.start - document.clips[first].splitOffsetS
+            let end = start + section.durationS
+            // The playhead parks on the last instant once playback ends; that frame still shows this section.
+            guard start <= currentTime, currentTime < end || (currentTime <= end && end >= projection.totalDuration - 0.000001) else { continue }
+            let filled = Set(members.compactMap { document.clips[$0].splitPanelIndex })
+            let local = max(0, min(currentTime - start, section.durationS - 0.000001))
+            return NativeSplitContext(sectionID: section.id, sectionStart: start, section: section,
+                                      emptyPanels: (0..<section.panelCount).filter { !filled.contains($0) },
+                                      activePanels: NativeSplitPanelLayout.activePanels(in: section, members: members.map { document.clips[$0] }, at: local))
+        }
+        return nil
+    }
+
+    func selectSplitPanel(sectionID: String, panel: Int) {
+        guard let context = splitContextAtPlayhead, context.sectionID == sectionID else { return }
+        let local = min(currentTime - context.sectionStart, context.section.durationS - 0.000001)
+        guard let slot = document.clips.filter({
+            !$0.removed && $0.splitSectionID == sectionID && $0.splitPanelIndex == panel
+                && $0.splitOffsetS <= local && local < $0.splitOffsetS + ($0.durationS ?? 0)
+        }).max(by: { $0.splitOffsetS < $1.splitOffsetS }) else { return }
+        select(.init(kind: .clip, id: clipID(for: slot.id).uuidString), seekToStart: false)
+    }
+
+    func swapSplitPanels(sectionID: String, _ a: Int, _ b: Int) {
+        guard canEditSplitScreen, a != b, let section = document.splitScreenSections.first(where: { $0.id == sectionID }),
+              (0..<section.panelCount).contains(a), (0..<section.panelCount).contains(b) else { return }
+        transactDocument(section: .timeline) { value in
+            for i in value.clips.indices where value.clips[i].splitSectionID == sectionID {
+                let panel = value.clips[i].splitPanelIndex
+                if panel == a { value.clips[i].raw["split_panel_index"] = .number(Double(b)) }
+                else if panel == b { value.clips[i].raw["split_panel_index"] = .number(Double(a)) }
+            }
+        }
+    }
+
+    /// `upper` and `lower` are the two panels the divider sits between: neighbours among the panels drawn at the
+    /// playhead, which in a collapse section can skip a panel that has ended.
+    func beginSplitDividerDrag(sectionID: String, between upper: Int, and lower: Int) {
+        if splitDividerDrag != nil { endSplitDividerDrag() }
+        guard canEditSplitScreen, let section = document.splitScreenSections.first(where: { $0.id == sectionID }),
+              (0..<section.panelCount).contains(upper), (0..<section.panelCount).contains(lower), upper < lower else { return }
+        let active = splitContextAtPlayhead.flatMap { $0.sectionID == sectionID ? $0.activePanels : nil }
+            ?? (section.collapseEmptyPanels ? [] : Array(0..<section.panelCount))
+        guard let position = active.firstIndex(of: upper), active.indices.contains(position + 1), active[position + 1] == lower else { return }
+        let owns = transactionBaseline == nil
+        if owns { beginTransaction() }
+        splitDividerDrag = (sectionID, upper, lower, active, section.panelWeights, owns)
+    }
+
+    func updateSplitDividerDrag(deltaFraction: Double) {
+        guard let drag = splitDividerDrag,
+              let index = document.splitScreenSections.firstIndex(where: { $0.id == drag.sectionID }) else { return }
+        let weights = NativeSplitPanelLayout.draggedWeights(drag.weights, between: drag.upper, and: drag.lower, active: drag.active,
+            gutter: document.splitScreenSections[index].gutter, deltaFraction: deltaFraction)
+        transactDocument(section: .timeline) { $0.splitScreenSections[index].panelWeights = weights }
+    }
+
+    func endSplitDividerDrag() {
+        guard let drag = splitDividerDrag else { return }
+        splitDividerDrag = nil
+        if drag.ownsTransaction { endTransaction() }
+    }
+
+    func cancelSplitDividerDrag() {
+        guard let drag = splitDividerDrag else { return }
+        splitDividerDrag = nil
+        if drag.ownsTransaction, let baseline = transactionBaseline {
+            transactionBaseline = nil
+            document = baseline
+            refreshDirtyState(); refreshDuration()
+        } else if let index = document.splitScreenSections.firstIndex(where: { $0.id == drag.sectionID }) {
+            transactDocument(section: .timeline) { $0.splitScreenSections[index].panelWeights = drag.weights }
+        }
+    }
+
+    /// One undo step. Turning it on needs `canCollapseSplitPanels` and makes the section last until its longest
+    /// clip ends; turning it off keeps the length the section has.
+    func setSplitCollapse(sectionID: String, _ on: Bool) {
+        guard canEditSplitScreen, !on || canCollapseSplitPanels,
+              let index = document.splitScreenSections.firstIndex(where: { $0.id == sectionID }),
+              document.splitScreenSections[index].collapseEmptyPanels != on else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[index].collapseEmptyPanels = on }
+    }
+
+    /// Where a panel add lands, in section seconds, judged from the playhead when it is inside this section.
+    private func splitPanelOpening(sectionID: String, panel: Int) -> (start: Double, end: Double)? {
+        let context = splitContextAtPlayhead
+        let local = context?.sectionID == sectionID ? context.map { currentTime - $0.sectionStart } : nil
+        guard let opening = document.splitPanelOpening(sectionID: sectionID, panel: panel, near: local),
+              opening.end - opening.start >= minimumClipDuration else { return nil }
+        return opening
+    }
+
+    func addSplitPanelClip(sectionID: String, panel: Int, fileURL: URL) async {
+        guard canEditSplitScreen, !isAddingClip else { return }
+        guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
+            splitScreenActionError = "This panel is full. Shorten a clip in it to make room."
+            return
+        }
+        splitScreenActionError = nil
+        isAddingClip = true
+        defer { isAddingClip = false }
+        await addDeviceTimelineMedia(fileURL: fileURL, source: .files, alreadyPreparing: true,
+                                     splitPanel: (sectionID, panel, opening.start))
+    }
+
+    func addSplitPanelClip(sectionID: String, panel: Int, sourceClipIndex: Int) {
+        guard canEditSplitScreen, splitScreenSourceChoices.contains(where: { $0.clipIndex == sourceClipIndex }) else { return }
+        guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
+            splitScreenActionError = "This panel is full. Shorten a clip in it to make room."
+            return
+        }
+        let traits = sourceTraits(sourceClipIndex)
+        if resolvedSources?[sourceClipIndex] == nil, !traits.isPhoto, traits.measured == nil,
+           let pool = sourcePool, let resolver = sourceResolver {
+            let generation = document.revision.baseGeneration
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let sources = try await resolver.resolve(pool, generation: generation, requiredIndices: Set([sourceClipIndex]))
+                    guard self.document.revision.baseGeneration == generation, self.canEditSplitScreen else { return }
+                    self.resolvedSources = (self.resolvedSources ?? [:]).merging(sources) { _, new in new }
+                    self.insertSplitPanelSource(sourceClipIndex, sectionID: sectionID, panel: panel, offset: opening.start)
+                } catch { self.splitScreenActionError = "This media could not be opened. Try again." }
+            }
+            return
+        }
+        insertSplitPanelSource(sourceClipIndex, sectionID: sectionID, panel: panel, offset: opening.start)
+    }
+
+    private func insertSplitPanelSource(_ clipIndex: Int, sectionID: String, panel: Int, offset: Double) {
+        guard let opening = document.splitPanelOpening(sectionID: sectionID, panel: panel, near: offset) else { return }
+        let traits = sourceTraits(clipIndex)
+        let length = min(traits.isPhoto ? Self.addedClipDurationS : traits.measured ?? 0, opening.end - opening.start)
+        guard length >= minimumClipDuration else {
+            splitScreenActionError = traits.isPhoto ? "This panel is full. Shorten a clip in it to make room." : "This video is too short to add."
+            return
+        }
+        splitScreenActionError = nil
+        var raw: [String: JSONValue] = ["media_kind": .string(traits.isPhoto ? "image" : "video")]
+        if let template = traits.template { for key in ["asset_id", "media_id"] { raw[key] = template.raw[key] } }
+        if let source = resolvedSources?[clipIndex] { raw["media_id"] = .string(source.mediaID) }
+        if !traits.isPhoto, let measured = traits.measured { raw["source_duration_s"] = .number(measured) }
+        let slot = EditorTimelineSlot(id: UUID().uuidString, clipIndex: clipIndex, inS: 0, durationS: length, raw: raw)
+        transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: sectionID, panel: panel, offset: opening.start) }
+        guard document.clips.contains(where: { $0.id == slot.id }) else { return }
+        select(.init(kind: .clip, id: clipID(for: slot.id).uuidString), seekToStart: false)
+    }
+
+    /// Adds an empty panel, or removes the bottom one while another panel still holds footage.
+    func setSplitScreenPanelCount(_ count: Int) {
+        guard canEditSplitScreen, (2...3).contains(count), let id = selectedSplitScreenSectionID,
+              let sectionIndex = document.splitScreenSections.firstIndex(where: { $0.id == id }),
+              document.splitScreenSections[sectionIndex].panelCount != count,
+              document.clips.contains(where: { !$0.removed && $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) < count }) else { return }
+        transactDocument(section: .timeline) { value in
+            value.splitScreenSections[sectionIndex].panelCount = count
+            value.splitScreenSections[sectionIndex].panelWeights = Array(repeating: 1, count: count)
+            value.clips.removeAll { $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) >= count }
+        }
+        if let selection, clipSlotIndex(selection.id) == nil,
+           let slot = document.clips.first(where: { $0.splitSectionID == id }) { select(.init(kind: .clip, id: clipID(for: slot.id).uuidString)) }
+    }
+
+    func setSplitScreenDuration(_ duration: Double) {
+        guard canEditSplitScreen, duration.isFinite, (minimumClipDuration...1800).contains(duration),
+              let id = selectedSplitScreenSectionID,
+              let index = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
+        guard document.clips.contains(where: { $0.splitSectionID == id && $0.splitOffsetS <= duration - minimumClipDuration + 0.000001 }) else {
+            splitScreenActionError = "Keep at least one clip inside the section. Move a clip earlier before shortening it."
+            return
+        }
+        splitScreenActionError = nil
+        transactDocument(section: .timeline) { value in
+            value.splitScreenSections[index].durationS = duration
+            value.clips.removeAll { $0.splitSectionID == id && $0.splitOffsetS >= duration - minimumClipDuration + 0.000001 }
+            for i in value.clips.indices where value.clips[i].splitSectionID == id {
+                let length = min(value.clips[i].durationS ?? duration, duration - value.clips[i].splitOffsetS)
+                guard length < (value.clips[i].durationS ?? length) - 0.000001 else { continue }
+                if value.clips[i].raw["freeze_frame_s"]?.numberValue != nil {
+                    value.clips[i] = NativeClipSourceClock(slot: value.clips[i]).sliced(from: 0, to: length).applying(to: value.clips[i])
+                    continue
+                }
+                value.clips[i].durationS = length; value.clips[i].durationBeats = nil
+                if value.clips[i].raw["source_end_s"] != nil {
+                    value.clips[i].raw["source_end_s"] = .number(value.clips[i].inS + length * Self.explicitPlaybackRate(value.clips[i]))
+                }
+            }
+        }
+    }
+
+    func setSelectedSplitScreenOffset(_ offset: Double) {
+        guard canEditSplitScreen, offset.isFinite, offset >= 0, let selection,
+              let index = clipSlotIndex(selection.id), document.clips[index].splitSectionID != nil else { return }
+        transactDocument(section: .timeline) { $0.clips[index].raw["split_offset_s"] = .number(offset) }
+    }
+
+    func splitSelectedClip() {
+        guard canSplitSelectedClip, let selection, let index = clipSlotIndex(selection.id),
+              let found = sourceWindowSlot(for: selection) else { return }
+        let local = currentTime - found.clip.start
+        let rate = effectiveSourceRate(slot: found.slot, clip: found.clip)
+        transactDocument(section: .timeline) { value in
+            var left = value.clips[index], right = left
+            let duration = left.durationS ?? (found.clip.end - found.clip.start)
+            right.id = UUID().uuidString; right.parentSegmentID = left.id
+            left.durationS = local; right.durationS = duration - local
+            left.durationBeats = nil; right.durationBeats = nil
+            if left.raw["freeze_frame_s"]?.numberValue != nil {
+                let clock = NativeClipSourceClock(slot: value.clips[index])
+                left = clock.sliced(from: 0, to: local).applying(to: left)
+                right = clock.sliced(from: local, to: duration).applying(to: right)
+            } else { right.inS = left.inS + local * rate }
+            right.raw["source_start_locked"] = .bool(true)
+            if value.clips[index].raw["freeze_frame_s"]?.numberValue == nil, left.raw["source_end_s"] != nil { left.raw["source_end_s"] = .number(right.inS) }
+            left.transitionAfter = "cut"; left.transitionDurationS = nil
+            if right.splitSectionID != nil { right.raw["split_offset_s"] = .number(right.splitOffsetS + local) }
+            value.clips.replaceSubrange(index...index, with: [left, right])
+        }
+    }
+
+    func duplicateSelectedClip() {
+        guard canDuplicateSelectedClip, let selection, let index = clipSlotIndex(selection.id) else { return }
+        transactDocument(section: .timeline) { value in
+            var copy = Self.pinningSpeakerSubject(value.clips[index])
+            copy.parentSegmentID = nil; copy.id = UUID().uuidString
+            if copy.splitSectionID != nil { copy.raw["split_offset_s"] = .number(copy.splitOffsetS + (copy.durationS ?? 0)) }
+            value.clips.insert(copy, at: index + 1)
+        }
+    }
+
+    func replaceSelectedClipSource(clipIndex: Int) {
+        guard canEditTimeline, let selection,
+              splitScreenSourceChoices.contains(where: { $0.clipIndex == clipIndex }) else { return }
+        let slotID = selection.id
+        if resolvedSources?[clipIndex] == nil, let pool = sourcePool, let resolver = sourceResolver {
+            let generation = document.revision.baseGeneration
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let sources = try await resolver.resolve(pool, generation: generation, requiredIndices: Set([clipIndex]))
+                    guard self.document.revision.baseGeneration == generation, self.canEditTimeline,
+                          self.clipSlotIndex(slotID) != nil else { return }
+                    self.resolvedSources = (self.resolvedSources ?? [:]).merging(sources) { _, new in new }
+                    self.replaceClipSource(slotID: slotID, clipIndex: clipIndex)
+                } catch { self.splitScreenActionError = "This media could not be opened. Try again." }
+            }
+            return
+        }
+        replaceClipSource(slotID: slotID, clipIndex: clipIndex)
+    }
+
+    /// What the edit already knows about an admitted source: a slot that uses it, its measured length, whether it is a photo.
+    private func sourceTraits(_ clipIndex: Int) -> (template: EditorTimelineSlot?, measured: Double?, isPhoto: Bool) {
+        let template = document.clips.first(where: { $0.clipIndex == clipIndex })
+        let measured = resolvedSources?[clipIndex]?.asset.duration
+            ?? template.flatMap { Self.number($0.raw["source_duration_s"] ?? $0.raw["source_duration"]) }
+        let isPhoto = resolvedSources?[clipIndex].map { isStill($0.url) }
+            ?? ((template?.raw["media_kind"]?.stringValue ?? template?.raw["kind"]?.stringValue) == "image")
+        return (template, measured, isPhoto)
+    }
+
+    private func replaceClipSource(slotID: String, clipIndex: Int, placementID: String? = nil) {
+        guard canEditTimeline, let index = clipSlotIndex(slotID) else { return }
+        let (template, measured, isPhoto) = sourceTraits(clipIndex)
+        let frameOverride = document.clips[index].raw["speaker_frame_override"].flatMap { EditorSpeakerFrameOverride(json: $0) }
+        let preservesSpeaker = frameOverride != nil && frameOverride != .inherit
+        if isPhoto && preservesSpeaker {
+            splitScreenActionError = "Use default framing before replacing this speaker with a photo."
+            return
+        }
+        guard isPhoto || (measured ?? 0) >= minimumClipDuration else { return }
+        splitScreenActionError = nil
+        transactDocument(section: .timeline) { value in
+            var slot = value.clips[index]
+            slot.clipIndex = clipIndex; slot.inS = 0
+            if let placementID { slot.raw["editor_source_placement_id"] = .string(placementID) }
+            slot.raw["speaker_subject"] = .bool(preservesSpeaker)
+            for key in ["asset_id", "media_id", "media_kind", "kind", "source_duration_s", "source_duration", "source_end_s", "native_source_span_s", "native_composite_source", "freeze_frame_s", "freeze_hold_s"] { slot.raw.removeValue(forKey: key) }
+            if let template {
+                for key in ["asset_id", "media_id", "media_kind"] { slot.raw[key] = template.raw[key] }
+            }
+            slot.raw["media_kind"] = .string(isPhoto ? "image" : "video")
+            if let source = resolvedSources?[clipIndex] { slot.raw["media_id"] = .string(source.mediaID) }
+            if isPhoto { slot.raw.removeValue(forKey: "playback_rate") }
+            else {
+                if let measured {
+                    slot.raw["source_duration_s"] = .number(measured)
+                    slot.durationS = min(slot.durationS ?? measured, measured / Self.explicitPlaybackRate(slot))
+                }
+                for key in ["layout", "still_layout"] where slot.raw[key]?.stringValue == "supporting_card" {
+                    slot.raw.removeValue(forKey: key)
+                }
+            }
+            slot.durationBeats = nil; slot.raw["source_start_locked"] = .bool(true)
+            value.clips[index] = slot
+        }
+    }
+
+    func removeSelectedSplitScreen() {
+        guard canEditSplitScreen, let id = selectedSplitScreenSectionID, let selection,
+              let index = clipSlotIndex(selection.id), let panel = document.clips[index].splitPanelIndex else { return }
+        transactDocument(section: .timeline) { value in
+            guard let insertion = value.clips.firstIndex(where: { $0.splitSectionID == id }) else { return }
+            let kept = value.clips.filter { $0.splitSectionID == id && $0.splitPanelIndex == panel }
+                .sorted { $0.splitOffsetS < $1.splitOffsetS }.map { slot -> EditorTimelineSlot in
+                    var result = slot; result.clearSplitMembership(); return result
+                }
+            value.clips.removeAll { $0.splitSectionID == id }
+            value.clips.insert(contentsOf: kept, at: insertion)
+            value.splitScreenSections.removeAll { $0.id == id }
+        }
+    }
+
+
+}
+
+extension NativeEditorSession {
+    func setSplitScreenPanelWeight(index: Int, weight: Double) {
+        guard canEditSplitScreen, weight.isFinite, weight > 0, let id = selectedSplitScreenSectionID,
+              let i = document.splitScreenSections.firstIndex(where: { $0.id == id }),
+              document.splitScreenSections[i].panelWeights.indices.contains(index) else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[i].panelWeights[index] = weight }
+    }
+
+    func setSplitScreenGutter(_ value: Double) {
+        guard canEditSplitScreen, value.isFinite, (0...0.1).contains(value), let id = selectedSplitScreenSectionID,
+              let i = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[i].gutter = value }
+    }
+
+    func setSplitScreenBackgroundColor(_ hex: String) {
+        guard canEditSplitScreen, let color = EditorSpeakerBackground.normalizedColor(hex), let id = selectedSplitScreenSectionID,
+              let i = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[i].backgroundColor = color }
+    }
+
+    func moveSelectedSplitScreenSection(by delta: Int) {
+        guard canEditSplitScreen, delta != 0, let id = selectedSplitScreenSectionID,
+              let first = document.clips.firstIndex(where: { $0.splitSectionID == id }),
+              let last = document.clips.lastIndex(where: { $0.splitSectionID == id }) else { return }
+        let target = delta < 0 ? first - 1 : last + 1
+        guard document.clips.indices.contains(target) else { return }
+        transactDocument(section: .timeline) { $0.clips = NativeEditorInteraction.reorderedSlots($0.clips, from: first, to: target) }
+    }
+
+    func moveSelectedSplitScreenClip(by delta: Int) {
+        guard canEditSplitScreen, delta != 0, let selection, let index = clipSlotIndex(selection.id),
+              let id = document.clips[index].splitSectionID, let panel = document.clips[index].splitPanelIndex else { return }
+        let ordered = document.clips.indices.filter { document.clips[$0].splitSectionID == id && document.clips[$0].splitPanelIndex == panel }
+            .sorted { document.clips[$0].splitOffsetS < document.clips[$1].splitOffsetS }
+        guard let position = ordered.firstIndex(of: index), ordered.indices.contains(position + (delta < 0 ? -1 : 1)) else { return }
+        let other = ordered[position + (delta < 0 ? -1 : 1)]
+        let a = document.clips[index], b = document.clips[other]
+        let earlier = a.splitOffsetS < b.splitOffsetS ? a : b
+        let later = a.splitOffsetS < b.splitOffsetS ? b : a
+        let gap = max(0, later.splitOffsetS - earlier.splitOffsetS - (earlier.durationS ?? 0))
+        transactDocument(section: .timeline) { value in
+            if a.splitOffsetS < b.splitOffsetS {
+                value.clips[other].raw["split_offset_s"] = .number(a.splitOffsetS)
+                value.clips[index].raw["split_offset_s"] = .number(a.splitOffsetS + (b.durationS ?? 0) + gap)
+            } else {
+                value.clips[index].raw["split_offset_s"] = .number(b.splitOffsetS)
+                value.clips[other].raw["split_offset_s"] = .number(b.splitOffsetS + (a.durationS ?? 0) + gap)
+            }
+        }
+    }
+}
+
+extension NativeEditorSession {
+    var selectedClipSourceVolume: Double {
+        guard let selection, let index = clipSlotIndex(selection.id) else { return 1 }
+        return document.clips[index].raw["source_audio_volume"]?.numberValue ?? 1
+    }
+
+    func setSelectedClipSourceVolume(_ volume: Double) {
+        guard canEditClipAudio, volume.isFinite, (0...2).contains(volume), let selection,
+              let index = clipSlotIndex(selection.id) else { return }
+        transactDocument(section: .timeline) { value in
+            value.clips[index].raw["source_audio_volume"] = .number(volume)
+        }
+    }
+}
+
+extension NativeEditorSession {
+    var previewSpeakerItems: [NativeEditorTimelineItem] {
+        guard canMoveSpeakerOnPreview else { return [] }
+        guard !document.splitScreenSections.isEmpty || document.clips.contains(where: { $0.raw["speaker_frame_override"] != nil }) else {
+            return [.init(selection: .speaker, start: 0, end: SpeakerBackgroundLimits.maxTimeline, zIndex: -1_000)]
+        }
+        return timelineProjection.clipWindows.compactMap { window in
+            let slot = document.clips[window.sourceIndex]
+            let subject = isSpeakerSubject(slot)
+            guard subject, let id = slot.id, speakerFrame(for: .init(kind: .speaker, id: id)) != nil else { return nil }
+            return .init(selection: .init(kind: .speaker, id: id), start: window.start, end: window.end, zIndex: -1_000, sourceIndex: window.sourceIndex)
+        }
+    }
+
+    func speakerViewport(for selected: EditorSelection, at time: Double) -> CGRect? {
+        guard selected.kind == .speaker, canEditSpeakerBackgroundWindows, speakerFrame(for: selected) != nil else { return nil }
+        return sourcePreview?.speakerViewport(time: time, clipID: selected.id == EditorSelection.speakerID ? nil : selected.id)
+    }
+
+    func speakerFrameRect(for selected: EditorSelection, at time: Double) -> CGRect? {
+        guard let frame = speakerFrame(for: selected), let viewport = speakerViewport(for: selected, at: time) else { return nil }
+        let local = frame.layerFrame.canvasRect
+        return CGRect(x: viewport.minX + local.minX * viewport.width, y: viewport.minY + local.minY * viewport.height,
+                      width: local.width * viewport.width, height: local.height * viewport.height)
+            .intersection(viewport)
+    }
+}

@@ -215,6 +215,33 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Your added photos and videos"].exists)
     }
 
+    /// Opening a finished render through the real load path (the chat's "Open editor" card against the perf
+    /// fixture's slowed responses) is not a save, so the header must never read "Saving" while it loads.
+    func testOpeningTheEditorFromChatNeverShowsSaving() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "KRIA_FIXTURE_LATENCY_MS": "150", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30))
+        open.tap()
+
+        let save = app.buttons["native-editor-save"]
+        var observed: [String] = []
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            if save.exists { observed.append(save.label) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(app.staticTexts["native-editor-duration"].exists, "the editor finished opening")
+        XCTAssertFalse(observed.contains("Saving"), "opening the editor is not a save; saw \(Set(observed))")
+        XCTAssertTrue(observed.contains("Saved"), "a clean project reads Saved; saw \(Set(observed))")
+        app.terminate()
+    }
+
     func testNativeEditorBackButtonReturnsToPreviousSurface() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]
@@ -590,5 +617,74 @@ final class EditorUITests: XCTestCase {
         XCTAssertEqual(first.frame.maxX, second.frame.minX, accuracy: 1.0,
                        "Gap between clip blocks: first ends \(first.frame.maxX), second starts \(second.frame.minX)")
         XCTAssertEqual(first.frame.width / second.frame.width, 2.6 / 3.0, accuracy: 0.02)
+    }
+
+    /// Opening the editor from a ready chat shows the latest picture at once, because it was prepared while the chat was
+    /// on screen. From the tap to five seconds later, sampled as fast as the UI query allows: no loading, preparing,
+    /// applying or updating text, the Save control never says Saving, the preview frame never moves, and the editor
+    /// does none of the open's heavy work (source pool, downloads, hashing, preview build) again.
+    func testEditorIsReadyBeforeTheTap() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "KRIA_FIXTURE_LATENCY_MS": "150", "KRIA_PERF_COUNTERS": "1",
+            "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30), "the chat offers Open editor")
+        // The creator reads the chat. Nothing in this window touches the editor.
+        RunLoop.current.run(until: Date().addingTimeInterval(4))
+
+        func counters() -> [String: Int] {
+            var result: [String: Int] = [:]
+            let probe = app.staticTexts["perf-counters"]
+            guard probe.waitForExistence(timeout: 5) else { return result }
+            for line in probe.label.split(separator: "\n") {
+                let parts = line.split(separator: "=", maxSplits: 1)
+                if parts.count == 2, let value = Int(parts[1]) { result[String(parts[0])] = value }
+            }
+            return result
+        }
+        let before = counters()
+        open.tap()
+        let tapped = Date()
+
+        let duration = app.staticTexts["native-editor-duration"]
+        XCTAssertTrue(duration.waitForExistence(timeout: 0.5), "the editor is on screen within half a second of the tap")
+        let forbidden = ["Opening the editor…", "Preparing preview", "Preparing preview…", "Preparing your video…",
+                         "Applying your edit", "Updating preview — showing the previous version."]
+        // One query for every forbidden string: each XCUI query costs about a hundred milliseconds or more, so the
+        // sampling rate is what three queries per sample allow.
+        let loading = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@ OR value IN %@", forbidden, forbidden))
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let save = app.buttons["native-editor-save"]
+        var frames = Set<String>(), samples = 0
+        var seen: [String] = []
+        while Date().timeIntervalSince(tapped) < 5 {
+            seen += loading.allElementsBoundByIndex.map(\.label)
+            if save.exists, save.label == "Saving" { seen.append("Save reads Saving") }
+            if preview.exists { frames.insert(NSCoder.string(for: preview.frame)) }
+            samples += 1
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        add(XCTAttachment(string: "samples=\(samples) frames=\(frames.count)"))
+        XCTAssertGreaterThanOrEqual(samples, 4, "sampled the open for five seconds")
+        XCTAssertEqual(seen, [], "nothing says the editor is loading, preparing or saving after the tap")
+        XCTAssertEqual(frames.count, 1, "the preview never moved or resized: \(frames)")
+
+        let after = counters()
+        func delta(_ matches: (String) -> Bool) -> Int {
+            after.filter { matches($0.key) }.reduce(0) { $0 + $1.value - (before[$1.key] ?? 0) }
+        }
+        XCTAssertEqual(delta { $0.hasPrefix("net ") && $0.hasSuffix("/timeline") }, 0, "no source pool read after the tap")
+        XCTAssertEqual(delta { $0 == "source.download" }, 0, "no source downloaded after the tap")
+        XCTAssertEqual(delta { $0 == "sha256.files" }, 0, "no source hashed after the tap")
+        XCTAssertEqual(delta { $0 == "editor.preview.build" }, 0, "no preview built after the tap")
+        XCTAssertLessThanOrEqual(delta { $0.hasPrefix("net GET /creation-threads/") && $0.hasSuffix("/draft") }, 1, "at most one draft revalidation")
+        XCTAssertLessThanOrEqual(delta { $0.hasPrefix("net GET /generative-jobs/") && $0.hasSuffix("/status") }, 1,
+                                 "at most one variant revalidation")
+        app.terminate()
     }
 }

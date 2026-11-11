@@ -108,7 +108,9 @@ dependencies = [
     # assets/models/rvm_mobilenetv3_fp32.onnx (~15MB, committed like the
     # selfie segmenter tflite).
     "onnxruntime>=1.17,<2",
-    "regex>=2024.11",
+    # Unicode 17 grapheme boundaries match the native text-motion oracle.
+    # Qualify upgrades against Python and Swift timing before changing this pin.
+    "regex==2026.6.28",
     # Admin-only edit-training exports. JSONL and Parquet share one canonical
     # schema; pyarrow is imported lazily so normal API/render paths pay no
     # startup cost. Keep a bounded major range for reproducible writer output.

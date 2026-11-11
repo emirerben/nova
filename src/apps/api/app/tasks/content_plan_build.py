@@ -34,6 +34,7 @@ from app.database import sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, CreationThread, CreatorAgentSession, Job, PlanItem, User
 from app.models import Persona as PersonaRow
+from app.schemas.slide_post_generation import SlidePostGenerationReceiptOut
 from app.services.content_plan_dedup import choose_replacements, flag_replacement_indices
 from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
@@ -43,6 +44,13 @@ from app.services.creator_sessions import ACTIVE_CREATOR_PHASES
 from app.services.edit_proposal_limits import queue_for_guided_contract
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.seed_provenance import match_specs_to_seeds
+from app.services.slide_post_generation_receipts import (
+    ReceiptConflict,
+    SlidePostGenerationRequest,
+    capture_receipt,
+    lookup_receipt,
+    record_publication,
+)
 from app.services.tiktok_style_observations import effective_persona_style
 from app.worker import celery_app
 
@@ -737,6 +745,7 @@ class DispatchResult:
     outcome: DispatchOutcome
     job_id: str | None = None
     reason: str | None = None
+    generation_receipt: SlidePostGenerationReceiptOut | None = None
 
 
 # `(code, message)` pairs for every `phone_gate` value `_dispatch_item_render`
@@ -751,6 +760,14 @@ class DispatchResult:
 # earlier policy layer (`app.agents._schemas.creator_policy
 # .effective_render_program`) already raises for a proposed strategy before
 # a Job ever exists. Keep the two in sync if either wording changes.
+# The live `subtitled_clip_count_unsupported` sentence while multi-clip Talking is on; a
+# template so the chat copy (`kria_runtime._phone_gate_refusal_copy`) keys it once.
+TALKING_MULTI_CLIP_COUNT_MESSAGE = (
+    "Talking-to-camera videos render on your iPhone with up to {max_clips} clips. Remove the "
+    "extra clips and try again. No fallback edit was rendered."
+)
+
+
 class _PhoneGateMessages(dict[str, tuple[str, str]]):
     """`PHONE_GATE_MESSAGES` with one flag-aware entry (KRI-719).
 
@@ -776,9 +793,7 @@ class _PhoneGateMessages(dict[str, tuple[str, str]]):
             return stored
         return (
             stored[0],
-            "Talking-to-camera videos render on your iPhone with up to "
-            f"{TALKING_MULTI_CLIP_MAX_CLIPS} clips. Remove the extra clips and try "
-            "again. No fallback edit was rendered.",
+            TALKING_MULTI_CLIP_COUNT_MESSAGE.format(max_clips=TALKING_MULTI_CLIP_MAX_CLIPS),
         )
 
     def __getitem__(self, key: str) -> tuple[str, str]:
@@ -1011,7 +1026,7 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
 
 # Never blank: an unrecognized or None-but-status-failed code still needs a
 # real sentence, not a fallthrough to nothing.
-_DEFAULT_JOB_FAILURE_MESSAGE = (
+DEFAULT_JOB_FAILURE_MESSAGE = (
     "Something went wrong and this render didn't finish. Your direction and "
     "footage are still saved — try again."
 )
@@ -1042,7 +1057,7 @@ def humanize_job_failure_reason(failure_reason: str | None) -> str | None:
     """
     if not failure_reason:
         return None
-    return JOB_FAILURE_MESSAGES.get(failure_reason, _DEFAULT_JOB_FAILURE_MESSAGE)
+    return JOB_FAILURE_MESSAGES.get(failure_reason, DEFAULT_JOB_FAILURE_MESSAGE)
 
 
 def _guided_cleanup_matches_contract(
@@ -1128,10 +1143,13 @@ def _speech_cleanup_dispatch_snapshot(
         # has no timeline-reshaping primitive at all, so THAT shape keeps the
         # refusal (surfaced to the creator as
         # `speech_cleanup_unavailable_on_phone`, not a generic failure).
+        # KRI-720: a several-take Talking source (`source.takes`, only resolved while
+        # `phone_talking_multi_take_cleanup_supported()`) is cut take by take on the phone.
         if (
             resolution.source is not None
             and is_analysis_proxy_path(resolution.source.storage_path)
             and len(item.clip_gcs_paths or []) != 1
+            and not getattr(resolution.source, "takes", ())
         ):
             return DispatchResult("speech_cleanup_unavailable_on_phone")
     try:
@@ -1798,6 +1816,7 @@ def _dispatch_item_render(
     speech_cleanup_preflight_outcome: dict | None = None,
     speech_cleanup_outcome_analysis_id: str | None = None,
     prepared_execution: dict | None = None,
+    slide_post_request: SlidePostGenerationRequest | None = None,
 ) -> DispatchResult:
     """Mint a generative Job for an item's clips, persist it, dispatch its render.
 
@@ -3045,7 +3064,28 @@ def _dispatch_item_render(
             **(job.assembly_plan or {}),
             "speech_cleanup_outcome": stamped,
         }
+    if slide_post_request is not None:
+        from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+
+        draft = parse_slide_post(item.slide_post)
+        if draft is None:
+            raise ReceiptConflict("slide_post_input_changed")
+        receipt = capture_receipt(
+            session,
+            slide_post_request,
+            item=item,
+            job=job,
+            draft=draft,
+            ownership_epoch=ownership_epoch,
+        )
+        receipt.dispatch_queue = _guided_render_queue(approved_proposal, creator_strategy)
     session.commit()
+
+    if slide_post_request is not None:
+        from app.services.slide_post_generation_delivery import publish_pending
+
+        publish_pending(slide_post_request.client_request_id)
+        return DispatchResult("dispatched", job_id=job_id)
 
     # Dispatch onto the throttled plan-jobs queue (concurrency=1 worker) via the
     # shared sync helper — keeps celery_task_id correlation and routes the queue
@@ -3101,6 +3141,8 @@ def _dispatch_item_render(
             # The central dispatch helper already won its queued-only recovery
             # CAS.  Preserve the caller contract instead of treating that
             # terminalized row as evidence that a worker claimed it.
+            if slide_post_request is not None:
+                record_publication(slide_post_request.client_request_id, published=False)
             return DispatchResult("publish_failed", job_id=job_id)
         if locked_job.status != "queued":
             log.warning(
@@ -3114,6 +3156,8 @@ def _dispatch_item_render(
         locked_job.failure_reason = "dispatch_publish_failed"
         locked_job.error_detail = "The render couldn't be handed to the queue. Give it another go."
         session.commit()
+        if slide_post_request is not None:
+            record_publication(slide_post_request.client_request_id, published=False)
         log.error(
             "plan_item_render.publish_failed",
             plan_item_id=str(item.id),
@@ -3121,6 +3165,8 @@ def _dispatch_item_render(
             error=str(exc),
         )
         return DispatchResult("publish_failed", job_id=job_id)
+    if slide_post_request is not None:
+        record_publication(slide_post_request.client_request_id, published=True)
     log.info("plan_item_render.dispatched", plan_item_id=str(item.id), job_id=job_id)
     return DispatchResult("dispatched", job_id=job_id)
 
@@ -3176,6 +3222,8 @@ def dispatch_item_render_for(
     expected_slide_post_version: int | None = None,
     reject_active_creator_session: bool = False,
     prepared_execution: dict | None = None,
+    slide_post_request: SlidePostGenerationRequest | None = None,
+    slide_post_replay_only: bool = False,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
 
@@ -3236,6 +3284,20 @@ def dispatch_item_render_for(
         if item is None or item.content_plan_id != plan.id:
             log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
+        if slide_post_request is not None:
+            if slide_post_request.owner_id != plan.user_id or slide_post_request.item_id != item.id:
+                raise ReceiptConflict("slide_post_request_conflict")
+            receipt = lookup_receipt(session, slide_post_request, item=item)
+            if receipt is not None:
+                return DispatchResult(
+                    "already_active", job_id=str(receipt.job_id), generation_receipt=receipt
+                )
+            if slide_post_replay_only:
+                raise ReceiptConflict("slide_post_request_conflict")
+            if not settings.slide_post_generation_recovery_enabled:
+                raise ReceiptConflict("slide_post_generation_unavailable")
+            if item.current_job_id != slide_post_request.expected_current_job_id:
+                raise ReceiptConflict("slide_post_target_conflict")
         # Native slide-post creation authorizes one exact persisted revision.
         # Recheck under the dispatcher row lock so a concurrent PUT cannot make
         # this render an old draft after the route's read-time validation.
@@ -3477,6 +3539,8 @@ def dispatch_item_render_for(
                 else:
                     return DispatchResult("speech_cleanup_recovery_conflict")
             if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
+                if slide_post_request is not None:
+                    raise ReceiptConflict("slide_post_generation_active")
                 return DispatchResult("already_active", job_id=str(current.id))
         if not persona_row.persona:
             log.error("plan_item_videos.persona_not_ready", plan_item_id=plan_item_id)
@@ -3508,6 +3572,7 @@ def dispatch_item_render_for(
             speech_cleanup_preflight_snapshot=recovery_snapshot,
             speech_cleanup_preflight_outcome=recovery_outcome,
             speech_cleanup_outcome_analysis_id=recovery_outcome_analysis_id,
+            **({"slide_post_request": slide_post_request} if slide_post_request else {}),
             # KRI-722: absent = byte-identical legacy call.
             **({"prepared_execution": prepared_execution} if prepared_execution else {}),
         )
@@ -4558,3 +4623,10 @@ def generate_ideas_into_plan(
         )
         _mark_failed(ownership_epoch)
         raise
+
+
+@celery_app.task(name="tasks.reconcile_slide_post_generations")
+def reconcile_slide_post_generations() -> dict[str, int]:
+    from app.services.slide_post_generation_delivery import reconcile_generations
+
+    return reconcile_generations()

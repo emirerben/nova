@@ -19,6 +19,20 @@ final class TextMotionTimingTests: XCTestCase {
         let lineProgresses: [Double]?
     }
 
+    func testNativeTextMotionCharacterBoundaries() {
+        let cases: [(String, [String])] = [
+            ("नमस्ते दुनिया", ["न", "म", "स्ते", " ", "दु", "नि", "या"]),
+            ("क्ष", ["क्ष"]),
+            ("क्\u{200C}ष", ["क्\u{200C}", "ष"]),
+            ("क्\u{200D}ष", ["क्\u{200D}ष"]),
+            ("👩🏽‍🚀 café\ne\u{0301}", ["👩🏽‍🚀", " ", "c", "a", "f", "é", "\n", "e\u{0301}"]),
+            ("🇹🇷🇪🇸", ["🇹🇷", "🇪🇸"])
+        ]
+        for (text, clusters) in cases {
+            XCTAssertEqual(text.map(String.init), clusters, text)
+        }
+    }
+
     func testEveryTextEffectTimingMatchesCloudReference() throws {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("../../../../../api/tests/fixtures/phone_text_motion_v2.json").standardizedFileURL

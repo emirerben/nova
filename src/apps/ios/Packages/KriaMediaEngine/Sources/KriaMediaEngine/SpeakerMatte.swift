@@ -73,7 +73,8 @@ final class SpeakerMatte: @unchecked Sendable {
 
     let config: SpeakerMatteConfig
     /// Per-frame outcomes of this composition's matte; see `SpeakerBackgroundTrace`.
-    let trace = SpeakerBackgroundTrace()
+    let trace: SpeakerBackgroundTrace
+    private var panelMattes: [String: SpeakerMatte] = [:]
     private let lock = NSLock()
     private let segmenter: NativePersonSegmenting?
     private var clipKey: String?
@@ -81,9 +82,18 @@ final class SpeakerMatte: @unchecked Sendable {
     private var tick: (index: Int, answer: Answer, outcome: SpeakerBackgroundTrace.Outcome)?
     private var lastGood: (answer: Answer, time: Double)?
 
-    init(segmenter: NativePersonSegmenting? = SpeakerMatte.segmenterFactory(), config: SpeakerMatteConfig = SpeakerMatte.defaultConfig) {
+    init(segmenter: NativePersonSegmenting? = SpeakerMatte.segmenterFactory(), config: SpeakerMatteConfig = SpeakerMatte.defaultConfig, trace: SpeakerBackgroundTrace = SpeakerBackgroundTrace()) {
         self.segmenter = segmenter
         self.config = config
+        self.trace = trace
+    }
+
+    func forPanel(_ key: String) -> SpeakerMatte {
+        lock.lock(); defer { lock.unlock() }
+        if let matte = panelMattes[key] { return matte }
+        let matte = SpeakerMatte(config: config, trace: trace)
+        panelMattes[key] = matte
+        return matte
     }
 
     /// `speaker` is the speaker layer alone, after its transform, over a transparent canvas.
@@ -120,7 +130,7 @@ final class SpeakerMatte: @unchecked Sendable {
                             lastGood = (.backgroundOnly, time)
                             return (.backgroundOnly, .backgroundOnly)
                         }
-                        if reading.coverage <= config.maxCoverage {
+                        if reading.isUsable(by: config) {
                             let answer = Answer.cutout(reading.mask(canvas: canvas))
                             lastGood = (answer, time)
                             return (answer, .cutout)
@@ -207,6 +217,10 @@ struct SpeakerMaskReading {
         self.buffer = buffer
         self.step = step
     }
+
+    /// False when the mask swallowed the frame (S5). Under `minCoverage` is still usable: it means nobody is in frame (S4).
+    /// The mask cache stores only usable masks, so this is the one place the ceiling lives.
+    func isUsable(by config: SpeakerMatteConfig) -> Bool { coverage <= config.maxCoverage }
 
     /// The mask in canvas space, color-unmanaged so 0.5 stays 0.5 through the linear working space.
     /// Clamped before scaling so the canvas border keeps the mask's edge value instead of fading to 0.

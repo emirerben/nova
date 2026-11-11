@@ -344,22 +344,41 @@ def add_e2e_section(add) -> None:
     twin = json.loads(E2E_JSON.read_text(encoding="utf-8"))
     add(
         f"From `.chip-eval/e2e-report.md` ({twin.get('when', '?')}, `{twin.get('sha', '?')}`). "
-        "Gaps are named GAP-1.. in that file."
+        "Gaps are named GAP-n in that file. A cell is one served card tapped; its state is what "
+        "the thread went through first (a Save, a denied render, a switch pulled, a decided title)."
     )
     add("")
     add(
         "| kind | cells tapped | languages | tap executes (unmodified GET) | refused | "
-        "first prompt | gaps | why |"
+        "states tapped | patched (not shipped) | first prompt | gaps | why |"
     )
-    add("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    add("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in twin.get("kinds_proven", []):
+        states = ", ".join(
+            f"{name} {found['pass']}/{found['cells']}"
+            for name, found in sorted((row.get("states") or {}).items())
+        )
+        patched = row.get("patched") or {}
+        patched_text = (
+            f"{patched.get('cells', 0)} cells "
+            + ", ".join(f"{n} {v}" for v, n in (patched.get("verdicts") or {}).items())
+            if patched.get("cells")
+            else "-"
+        )
         add(
             f"| {row['kind']} | {row['cells_tapped']} | {'+'.join(row.get('languages', [])) or '-'}"
             f" | {'yes' if row['tap_executes'] else 'NO'} | {row.get('refused_cells', 0)} | "
-            f"{row.get('first_prompt', '-')} | {', '.join(row['gaps']) or '-'} | "
-            f"{str(row.get('why', '')).replace('|', '/')[:200]} |"
+            f"{states or '-'} | {patched_text} | {row.get('first_prompt', '-')} | "
+            f"{', '.join(row['gaps']) or '-'} | {str(row.get('why', '')).replace('|', '/')[:200]} |"
         )
     add("")
+    gaps = twin.get("gaps") or []
+    if gaps:
+        add("Named gaps still open (each is a check that fails honestly; its text is the repro):")
+        add("")
+        for gap in gaps:
+            add(f"* **{gap['id']}** {gap['title']} (`{gap['owner']}`)")
+        add("")
 
 
 def add_agent_section(add, agent: dict) -> None:

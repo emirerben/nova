@@ -464,6 +464,7 @@ def with_labels_kept_as_written(
                 op="caption",
                 attribute=intent.attribute,
                 source_kind=intent.source_kind,
+                source_quote=intent.source_quote,
                 creator_text=text,
             )
         kept.append(intent)
@@ -941,10 +942,11 @@ def with_filming_end_ticks(
         last = position == "last"
         notes.append(
             say(
-                en=f"I ticked the {'last' if last else 'first'} clip you filmed for "
-                f'"{category.get("label")}".',
-                tr=f'"{category.get("label")}" için çektiğin {"son" if last else "ilk"} klibi '
-                "işaretledim.",
+                en='I ticked the {v1} clip you filmed for "{category_get}".',
+                tr='"{category_get}" için çektiğin {v2} klibi işaretledim.',
+                v1="last" if last else "first",
+                category_get=category.get("label"),
+                v2="son" if last else "ilk",
             )
         )
     if not notes:
@@ -1066,6 +1068,7 @@ def _settle(
             records=[clip_record(by_id[m].analysis, kind=by_id[m].kind) for m in media_ids],
             intent_id=intent.intent_id,
             creator_copy=True,
+            source_quote=intent.source_quote,
         )
         if grounded is None:
             return None
@@ -1116,6 +1119,7 @@ def _selected_assignments(
                     creator_request=creator_request,
                     record=clip_record(clip.analysis, kind=clip.kind),
                     intent_id=intent.intent_id,
+                    source_quote=intent.source_quote,
                 )
             if label is None:
                 return None
@@ -1438,10 +1442,7 @@ async def plan_and_resolve_clip_intents(
         )
     dropped_exclusions = output.silent_drops.get("exclusion_dropped", 0)
     inventory = _checked_inventory(output, planner_input)
-    intents = [
-        ClipIntent.model_validate(intent.model_dump(exclude={"source_quote"}))
-        for intent in planned_intents
-    ]
+    intents = [ClipIntent.model_validate(intent.model_dump()) for intent in planned_intents]
     if not clip_facts_on:
         # Defense in depth: the flag-off prompt never teaches `order_by`, so a
         # stray one is dropped rather than half-honored.
@@ -1632,7 +1633,7 @@ async def plan_and_resolve_clip_intents(
                 # KRI-692: a Turkish chat's picker row never shows a model-written English label.
                 **(
                     {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
-                    if current_reply_language() == "tr"
+                    if current_reply_language() not in (None, "en")
                     else {}
                 ),
             )

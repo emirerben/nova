@@ -18,6 +18,7 @@ import UserNotifications
         defer { Perf.end("launch.init") }
         // Every phone render coordinator keeps encoding briefly in the background.
         UIKitDeviceRenderBackgroundExecution.install()
+        SpeakerMaskCacheSwitch.installIfEnabled()
         #if DEBUG
         TalkBench.startIfRequested()
         // First, before anything can touch `URLSession.shared`: AsyncImage loads gallery posters through it.
@@ -83,7 +84,7 @@ import UserNotifications
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
             let auth = AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil)
             _auth = StateObject(wrappedValue: auth)
-            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity })
+            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }, uploadSessionConfiguration: ChatUITestTransport.uploadSessionConfiguration())
             if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
             _model = StateObject(wrappedValue: model)
             return
@@ -210,6 +211,9 @@ struct RootView: View {
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-saved-uploads") { SavedUploadsUITestHost() }
             else if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-playback-admission") {
+                NativeEditorPlaybackAdmissionFixture()
+            }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 NativeEditorUITestHost()
             }

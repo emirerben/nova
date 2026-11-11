@@ -50,7 +50,9 @@ async def _own_pool():  # noqa: ANN202
     await async_engine.dispose()
 
 
-async def _approved_strategy(monkeypatch: pytest.MonkeyPatch, *, approve: bool = True):  # noqa: ANN202
+async def _approved_strategy(  # noqa: ANN202
+    monkeypatch: pytest.MonkeyPatch, *, approve: bool = True, repair_attempts: int = 0
+):
     user_id, thread_id, session_id = _seed_runtime_project()
     plan = adapt_creator_action(
         ProposeStrategy(
@@ -112,6 +114,7 @@ async def _approved_strategy(monkeypatch: pytest.MonkeyPatch, *, approve: bool =
                 expected_thread_revision=revision,
                 expected_draft_revision=rev,
                 expected_approval_fingerprint=token,
+                automatic_repair_attempts=repair_attempts,
             ),
         )
     return user_id, thread_id, session_id, item_id, approval_id
@@ -268,3 +271,43 @@ def test_reconcile_skips_when_another_sweep_holds_the_advisory_lock(monkeypatch)
             holder.execute(text("select pg_advisory_unlock(:k)"), {"k": key})
             holder.commit()
     assert out.get("skipped") == 1
+
+
+def _repair_grant(approval_id: uuid.UUID) -> dict | None:
+    with sync_session() as db:
+        execution = db.get(
+            CreatorAgentExecution,
+            uuid.UUID(db.get(CreatorAgentApproval, approval_id).execution_ids[0]),
+        )
+        return (execution.result or {}).get("automatic_repair_grant")
+
+
+# KRI-1262: the repair grant follows the server's limit, never the client's field.
+#
+# Failure modes: an older build (sends 0) approving without the grant while the limit is 2; a
+# client forging 2 where the server's limit is 0; the grant ignoring the server's own limit;
+# a re-approve or deny writing a grant.
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("verification_enabled", "client_sends", "granted"),
+    [
+        (True, 0, 2),  # an older build, or the new one with the choice gone
+        (True, 2, 2),
+        (False, 2, None),  # the limit is 0: a forged 2 grants nothing
+        (False, 0, None),
+    ],
+)
+async def test_the_repair_grant_follows_the_servers_limit_not_the_clients_field(
+    monkeypatch: pytest.MonkeyPatch,
+    verification_enabled: bool,
+    client_sends: int,
+    granted: int | None,
+) -> None:
+    monkeypatch.setattr(settings, "phone_actual_export_verification_enabled", verification_enabled)
+
+    *_, approval_id = await _approved_strategy(monkeypatch, repair_attempts=client_sends)
+
+    grant = _repair_grant(approval_id)
+    assert (grant or {}).get("max_attempts") == granted
+    if granted:
+        assert grant["used"] == 0 and grant["media_snapshot"] is not None

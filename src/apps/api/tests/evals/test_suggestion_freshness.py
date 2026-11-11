@@ -595,9 +595,7 @@ def test_the_filter_says_when_the_ring_still_lacks_the_cards_it_served():
 # ── 6. Cards stored for a tap are the cards that were served ─────────────────────────
 
 
-async def test_cards_are_stored_only_when_the_rebuilt_ids_match_the_served_ones(
-    flags, redis, monkeypatch
-):
+async def test_the_cards_stored_are_the_served_ones_that_rebuild(flags, redis, monkeypatch):
     served = _served([MUTE_3, CAPTIONS])
     served.ctx = SimpleNamespace(thread_id="t-1")
     served.plan = object()
@@ -609,9 +607,18 @@ async def test_cards_are_stored_only_when_the_rebuilt_ids_match_the_served_ones(
 
     monkeypatch.setattr(serve, "assemble_suggestions", lambda *a: built({"ss_mute3", "ss_caps"}))
     assert [c["id"] for c in await serve._server_cards(served)] == ["ss_mute3", "ss_caps"]
-    # the picks expired from Redis and the deterministic order differs: store nothing, so a
-    # tap answers "no longer fits" instead of running a different change
+    # the picks expired from Redis and one card no longer rebuilds: that card is not stored (a tap
+    # on it answers "no longer fits" instead of running a different change), the other one is
     monkeypatch.setattr(serve, "assemble_suggestions", lambda *a: built({"ss_caps"}))
+    assert [c["id"] for c in await serve._server_cards(served)] == ["ss_caps"]
+    # a card the rebuild produces that was never served is not stored either
+    served.unfiltered = served.out.model_copy(
+        update={"suggestions": [c for c in served.out.suggestions if c.id == "ss_mute3"]}
+    )
+    monkeypatch.setattr(serve, "assemble_suggestions", lambda *a: built({"ss_mute3", "ss_caps"}))
+    assert [c["id"] for c in await serve._server_cards(served)] == ["ss_mute3"]
+    served.unfiltered = served.out
+    monkeypatch.setattr(serve, "assemble_suggestions", lambda *a: built(set()))
     assert await serve._server_cards(served) is None
     monkeypatch.setattr(serve, "assemble_suggestions", lambda *a: (None, {}))
     assert await serve._server_cards(served) is None

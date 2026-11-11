@@ -167,6 +167,7 @@ def guard_audible_speech(
     exempt: Sequence[tuple[float, float]] = (),
     sr: int = SAMPLE_RATE,
     min_cut_s: float = MIN_CUT_S,
+    min_floor_db: float | None = None,
 ) -> tuple[CutPlan, dict[str, Any]]:
     """``plan`` with every voiced silence/filler cut given back to the edit.
 
@@ -202,6 +203,8 @@ def guard_audible_speech(
         verdicts = [(removal, None, 0.0) for removal in judged]
     else:
         floor_db = quiet_floor_db(samples, sr)
+        if min_floor_db is not None:
+            floor_db = max(floor_db, min_floor_db)
         for removal in judged:
             voiced = [
                 piece

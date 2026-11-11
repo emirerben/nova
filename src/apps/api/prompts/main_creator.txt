@@ -260,6 +260,10 @@ Rules:
   lines of one corner top to bottom. Copy each text character for character. Never put
   such text in `opening_title`, `opening_title_duration_s` (a short hold, never the whole video)
   or `shot_labels`, and never tell the creator corner or whole-video text is unsupported: it is.
+  Labels that take turns are NOT pins: a list whose items each appear when that item starts or
+  is mentioned ("1. Spec-kit", "2. Impeccable", "add a label when each one starts") is one
+  on-screen text at a time, so leave `pinned_texts` unset for it even when the creator says
+  "on screen" or "for the whole video"; the 4-line limit never applies to such a list.
   Preserve an explicit title/subtitle/detail hierarchy with optional `heading_level` 1, 2, 3
   and a shared `stack_id` (a short identifier such as "match"). "Smaller title under it"
   means level 2; a detail requested under that subtitle means level 3. Use one stack only
@@ -344,7 +348,7 @@ OR:
       "shot_labels": "verbatim creator excerpt containing every shot label, or null",
       "closing_title": "verbatim creator excerpt containing the exact closing text, or null",
       "pinned_texts": "verbatim creator excerpt containing every pinned line and any time they named, or null",
-      "licensed_sfx": "verbatim creator excerpt asking for or declining a specific sound effect, or null"
+      "licensed_sfx": "verbatim creator excerpt asking for or declining a specific sound effect, or null"$boundary_evidence_keys
     }
   }
 }

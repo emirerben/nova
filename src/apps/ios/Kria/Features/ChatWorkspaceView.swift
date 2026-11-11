@@ -92,7 +92,7 @@ struct ChatWorkspaceView: View {
     /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
     /// onto the outer one, where they outlive the switch to a chat.
     @ViewBuilder private var workspace: some View {
-        if model.showsCameraRoll, let cameraRoll {
+        if model.showsCameraRoll, model.pendingNewChat == nil, let cameraRoll {
             WorkspaceCrossfade(dismiss: {}) { _ in
                 CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
                     await model.loadProjects()
@@ -107,7 +107,7 @@ struct ChatWorkspaceView: View {
     private var chatWorkspace: some View {
         NavigationStack {
             Group {
-                if let project = model.selectedProject {
+                if let project = model.selectedProject, model.pendingNewChat == nil {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },
@@ -117,7 +117,9 @@ struct ChatWorkspaceView: View {
                     .id(project.id)
                 } else {
                     Group {
-                        if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
+                        if let pending = model.pendingNewChat {
+                            PendingNewChatView(pending: pending)
+                        } else if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
                             WorkspaceLoadingView()
                         } else if model.projectsState == .empty {
                             WorkspaceEmptyView { Task { await model.createProject() } }
@@ -405,6 +407,46 @@ private struct WorkspaceEmptyView: View {
     }
 }
 
+/// The new conversation, shown the moment New chat is tapped while the server makes the real one. It has
+/// no thread id yet: the creator can type, but sending and attaching wait for the real one.
+private struct PendingNewChatView: View {
+    let pending: AppModel.PendingNewChat
+    @EnvironmentObject private var model: AppModel
+    @FocusState private var focus: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 14) {
+                if let failure = pending.failure {
+                    Text("Your chat couldn’t be created.").font(KriaFont.headline(22))
+                    Text(failure).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).multilineTextAlignment(.center)
+                    Button("Try again") { model.startNewChat() }
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                        .accessibilityIdentifier("pending-new-chat-retry")
+                    Button("Back to my chats") { model.cancelPendingNewChat() }
+                        .font(KriaFont.body(14))
+                        .accessibilityIdentifier("pending-new-chat-cancel")
+                } else {
+                    ProgressView().tint(KriaColor.ink)
+                    Text("Starting your chat…").font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("pending-new-chat")
+            // Typing works at once; sending and attaching wait for the real thread, so nothing typed can
+            // reach any other conversation.
+            ChatComposer(
+                text: Binding(get: { pending.draft }, set: { model.setPendingNewChatDraft($0) }),
+                isSending: false, canAttach: false, blocksSubmission: true,
+                isFocused: $focus, attach: {}, send: {}
+            )
+        }
+        .background(WorkspaceSurface())
+    }
+}
+
 private struct WorkspaceLoadingView: View {
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     var body: some View {
@@ -500,10 +542,10 @@ private struct CreationWorkspaceView: View {
     @State private var transcriptIsFresh = true
     @StateObject private var responsePresentation = ChatResponsePresentation()
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var reachability = NetworkReachability.shared
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var sendReceipt: ChatSendReceipt?
     @State private var approval: ApprovalSnapshot?
-    @State private var allowAutomaticRepairs = true
     /// KRI-306: the creator's pending video-shape pick for the approval / plan on screen.
     @State private var renderShapePick = RenderShapePickerState()
     @State private var approvalNotice: String?
@@ -544,6 +586,10 @@ private struct CreationWorkspaceView: View {
     @State private var afterSequence = -1
     @State private var threadRevision: Int
     @State private var projectionOrder = ThreadProjectionOrder()
+    /// Ticks once a second while the speech check runs, so it lives in a box: a plain `@State` struct
+    /// would re-render this view every tick. Only the timed-out flag below is observed.
+    @State private var speechCheckClock = SpeechCheckClock()
+    @State private var speechCheckTimedOut = false
     @State private var ownsSendAttempt = false
     @State private var hasActivatedDraftStorage = false
     private var isSending: Bool { ownsSendAttempt || chatDrafts.isSubmitting(for: project.id) }
@@ -602,9 +648,14 @@ private struct CreationWorkspaceView: View {
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
+    /// The creator's own re-record steps; the rest of the flow is read from uploads and the thread (`rerecordPhase`).
+    @State private var rerecordLocal: RerecordPhase.Local = .none
+    /// The camera for a re-record. Open independently of `rerecordLocal` so it is not torn down by the flow moving on.
+    @State private var rerecordCamera: RerecordTarget?
     /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
     @State private var attachmentScript: VoiceoverScript?
     @State private var attachmentLaunch: AttachmentLaunch?
+    @State private var attachmentOrigin: AttachmentOrigin = .addMedia
     @State private var showsResult = false
     /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
     @State private var reviewPresentation: ReviewPlanPresentation?
@@ -613,6 +664,14 @@ private struct CreationWorkspaceView: View {
     /// Bumped when "Open editor" is tapped in the editor's own Kria sheet: the editor is already
     /// underneath, so the sheet closes instead.
     @State private var editorConversationCloseID: UUID?
+    private var editorAIActivity: NativeEditorAIActivity? {
+        let sending = pendingTurnSubmission?.clientEventID
+            ?? chatDrafts.submission(for: project.id).flatMap { $0.phase == .accepted ? nil : $0.clientEventID }
+        return NativeEditorAIActivity.current(
+            projectID: project.id, isSending: isSending, sendingRequestID: sending,
+            isThinking: isThinking, thinkingRequestID: thinkingTurnID ?? thoughtRequestID
+        )
+    }
     /// KRI-756: the server's latest suggestion chips for this chat. Only read through `suggestionChips(for:)`.
     @State private var suggestionSet: SuggestionSet?
     /// The `suggestionScopeKey` that `suggestionSet` was fetched under; a set from another scope is never drawn.
@@ -620,6 +679,8 @@ private struct CreationWorkspaceView: View {
     /// AI suggestion blocks: what each card is doing on this phone (sending, handled, stale) and the refresh nudge
     /// that the editor Save and a stale tap give the poll.
     @StateObject private var suggestionLedger = SuggestionCardLedger()
+    /// The image a paid card is making after its tap, found by the id both sides derive (`GeneratedCardEvent`).
+    @StateObject private var generatedCards = GeneratedCardTracker()
 
     init(project: ProjectSummary, openProjects: @escaping () -> Void, openAccount: @escaping () -> Void) {
         self.project = project
@@ -633,11 +694,78 @@ private struct CreationWorkspaceView: View {
         model.projects.first(where: { $0.id == project.id }) ?? project
     }
 
-    private var canAttachMedia: Bool {
-        selectedFormat != nil && !isSending && !isActing && !isThinking
-            && (selectedFormat != .slides || hasDedicatedSlideWorkspace)
-            && currentProject.status != .rendering && (selectedFormat == .slides || currentProject.status != .ready)
+    /// Why the composer's + cannot add media right now, in the words its tray shows. Nil = it can.
+    private var attachBlockedReason: String? {
+        if selectedFormat == nil { return "Choose a video format first." }
+        if selectedFormat == .slides, !hasDedicatedSlideWorkspace { return "This post is still being set up." }
+        if isSending || isActing || isThinking { return "Kria is replying. Add media in a moment." }
+        if currentProject.status == .rendering { return "Your video is rendering. Add media once it’s ready." }
+        return nil
     }
+
+    private var canAttachMedia: Bool { attachBlockedReason == nil }
+
+    private var rerecordFacts: RerecordPhase.Facts {
+        let swapping = uploadRecords.contains { $0.projectID == project.id && $0.replacesMediaID != nil && $0.uploadFailed != true }
+            || uploadInFlight.values.contains { $0.projectID == project.id && $0.replacesMediaID != nil }
+        let failure = uploadFailures.first { $0.projectID == project.id && $0.replacesMediaID != nil }
+        let offer: RerecordOffer = workspaceStage == .ready && currentProject.status == .ready && !isSending && !isActing && !isThinking
+            ? .resolve(thread: fullThread) : .none
+        return RerecordPhase.Facts(
+            offer: offer, replaceInFlight: swapping,
+            failure: failure.map { RerecordFailure(code: nil, message: $0.message, retryable: $0.cause == .uploadFailed) },
+            debt: RerecordPlanDebt.owed(state: threadState, activeJobID: fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString, events: events)
+        )
+    }
+
+    private var rerecordPhase: RerecordPhase { .resolve(local: rerecordLocal, facts: rerecordFacts) }
+
+    private var rerecordActions: RerecordActions {
+        RerecordActions(
+            start: {
+                switch rerecordFacts.offer {
+                case .none: break
+                case let .one(target): rerecordLocal = .confirming([target])
+                case let .choose(targets): rerecordLocal = .confirming(targets)
+                }
+            },
+            retry: { if let id = rerecordFacts.failureRecordID(in: uploadFailures, project: project.id) { Task { await model.uploads.retryUpload(recordID: id) } } },
+            dismissFailure: {
+                guard let id = rerecordFacts.failureRecordID(in: uploadFailures, project: project.id) else { return }
+                Task { await model.uploads.cancel(recordID: id); model.uploads.dismissFailure(id: id) }
+            },
+            makeAgain: { if let debt = rerecordFacts.debt { Task { await sendRerecordPlan(debt) } } }
+        )
+    }
+
+    /// The fresh-plan turn the swap owes. A failed send leaves the swap owed, so the button is still there to retry.
+    private func sendRerecordPlan(_ debt: SourceReplacement) async {
+        rerecordLocal = .planning(debt)
+        for _ in 0..<30 where isSending || isActing || isThinking || pendingUploadCount > 0 { try? await Task.sleep(for: .milliseconds(100)) }
+        // `send` returns silently while a turn runs or an earlier receipt is pending; staying `.planning` then would
+        // hide the Make it again button with nothing left to send the turn.
+        guard !isSending, !isActing, !isThinking, sendReceipt == nil else { rerecordLocal = .none; return }
+        await send(message: RerecordPlanDebt.message, keepsDraft: true)
+        if rerecordFacts.debt == debt, !isThinking, sendReceipt == nil { rerecordLocal = .none }
+    }
+
+    private func rerecordCameraClosed() {
+        // Nothing was handed over: the creator backed out, so this session has no swap to follow.
+        if case .swapping = rerecordLocal, !rerecordFacts.replaceInFlight, rerecordFacts.debt == nil { rerecordLocal = .none }
+    }
+
+    private func rerecordDebtChanged(_ debt: SourceReplacement?) {
+        guard let debt else { return }
+        if case .swapping = rerecordLocal { Task { await sendRerecordPlan(debt) } }
+    }
+
+    private var rerecordConfirmation: Binding<Bool> {
+        Binding(
+            get: { if case .confirming = rerecordLocal { true } else { false } },
+            set: { if !$0, case .confirming = rerecordLocal { rerecordLocal = .none } }
+        )
+    }
+
 
     private var readyMediaCount: Int {
         guard workspaceStage == .footage else { return 0 }
@@ -727,7 +855,11 @@ private struct CreationWorkspaceView: View {
         for requestID in completedThoughtSummaries.keys.sorted() {
             hasher.combine(requestID)
             for summary in completedThoughtSummaries[requestID] ?? [] {
-                hasher.combine(summary.id); hasher.combine(summary.status.rawValue); hasher.combine(summary.text)
+                // KRI-1239: never the text itself. A finished thought's text is final, and hashing it (tens of KB of
+                // non-ASCII prose, normalised on every read) on every row of every redraw froze the main thread
+                // past the iOS watchdog. Its length (O(1) for native strings) still marks a changed record.
+                hasher.combine(summary.id); hasher.combine(summary.status.rawValue)
+                hasher.combine(summary.text.utf8.count); hasher.combine(summary.durationMS)
             }
         }
         let key = hasher.finalize()
@@ -739,7 +871,31 @@ private struct CreationWorkspaceView: View {
         )
         derived.timelineKey = cacheable ? key : nil
         derived.timeline = built
+        derived.timelineMessages = nil
+        derived.timelineRows = nil
         return built
+    }
+
+    /// The timeline's messages in order. Each question card asks for them on every redraw, so they are kept with the
+    /// timeline they came from instead of being filtered out again per row.
+    private var timelineMessages: [ChatTranscriptMessage] {
+        let entries = timeline
+        if let cached = derived.timelineMessages, derived.timelineKey != nil { return cached }
+        let messages = entries.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        if derived.timelineKey != nil { derived.timelineMessages = messages }
+        return messages
+    }
+
+    /// The timeline as the lazy stack's rows, kept with the timeline it came from (each media receipt is parsed to
+    /// count its files).
+    private var timelineRows: [ChatTimelineRow] {
+        let entries = timeline
+        if let cached = derived.timelineRows, derived.timelineKey != nil { return cached }
+        let rows = ChatTimelineRow.rows(entries)
+        if derived.timelineKey != nil { derived.timelineRows = rows }
+        return rows
     }
 
     /// The newest reply that carries requirement receipts; a new one means the brief may have changed.
@@ -797,7 +953,8 @@ private struct CreationWorkspaceView: View {
     }
 
     @ViewBuilder private var planFeedView: some View {
-        let feed = planFeed.paced(by: deviceBuildStage)
+        let serverFeed = planFeed
+        let feed = serverFeed.paced(by: deviceBuildStage)
         let device = deviceRenderKey
         let devicePhase = device.flatMap { model.deviceRenders.presentations[$0]?.phase } ?? .preparing
         PlanBlockFeed(
@@ -808,15 +965,18 @@ private struct CreationWorkspaceView: View {
             isStopping: isStoppingRender,
             stopMessage: stopMessage,
             stop: stopRender,
-            // The Review CTA / Change pills exist only when the server speaks live-plan contract v2.
-            openReview: capabilities?.livePlanReviewAvailable == true ? { openPlanReview(section: $0) } : nil
+            // The Change pills exist only when the server speaks live-plan contract v2.
+            openReview: capabilities?.livePlanReviewAvailable == true ? { openPlanReview(section: $0) } : nil,
+            // The server's plan, not the device-paced one: an iPhone build holds `feed` incomplete while it builds.
+            phase: serverFeed.phase(workspaceReady: currentProject.status == .ready),
+            buildStage: deviceBuildStage
         )
         .id("plan-feed")
     }
 
-    /// Opens the Review sheet (KRI-440). `section` is the card whose Change was tapped, nil for the CTA or the
-    /// project's Review row. The sheet starts from the feed's blocks so it shows at once, then loads the snapshot.
-    private func openPlanReview(section: PlanSectionID?) {
+    /// Opens the Review sheet (KRI-440). `section` is the card whose Change was tapped. The sheet starts from the
+    /// feed's blocks so it shows at once, then loads the snapshot.
+    private func openPlanReview(section: PlanSectionID) {
         let seed = planFeed.isEmpty ? [] : planFeed.paced(by: deviceBuildStage).blocks
         reviewPresentation = ReviewPlanPresentation(seed: seed, initialFlag: section)
     }
@@ -824,69 +984,110 @@ private struct CreationWorkspaceView: View {
     private func reviewActions() -> ReviewPlanActions {
         let api = model.api
         let threadID = project.id
+        let account = ReviewAccountScope(uiOwner: auth.localStorageIdentity, transportOwner: api.mediaLibraryOwner)
+        let environment = (api as? KriaAPI)?.baseURL
+        let checkScope: @MainActor () throws -> Void = {
+            guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+        }
         return ReviewPlanActions(
-            loadSnapshot: { try await api.planSnapshot(threadID: threadID) },
-            update: { scope, edits, message in try await submitReviewTurn(scope: scope, edits: edits, message: message) },
-            undoSection: { section, blockRevision, draftRevision in
-                try await undoReviewSection(section, blockRevision: blockRevision, draftRevision: draftRevision)
+            loadSnapshot: {
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                let snapshot = try await api.planSnapshot(threadID: threadID, expectedOwner: account.transportOwner)
+                guard reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                return snapshot
             },
-            undoAll: { draftRevision in try await undoAllReview(draftRevision: draftRevision) }
+            update: { scope, edits, message in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                try await submitReviewTurn(scope: scope, edits: edits, message: message, expectedOwner: account.transportOwner, checkScope: checkScope)
+            },
+            undoSection: { section, blockRevision, draftRevision in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                return try await undoReviewSection(section, blockRevision: blockRevision, draftRevision: draftRevision, expectedOwner: account.transportOwner, checkScope: checkScope)
+            },
+            undoAll: { draftRevision in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                try await undoAllReview(draftRevision: draftRevision, expectedOwner: account.transportOwner, checkScope: checkScope)
+            }
         )
+    }
+
+    private func reviewScopeIsCurrent(threadID: UUID, account: ReviewAccountScope?, environment: URL?) -> Bool {
+        model.selectedProject?.id == threadID && project.id == threadID && account?.matches(uiOwner: auth.localStorageIdentity, transportOwner: model.api.mediaLibraryOwner) == true && (model.api as? KriaAPI)?.baseURL == environment
+    }
+
+    private var reviewScopeToken: String {
+        "\(project.id):\(auth.localStorageIdentity ?? "signed-out"):\(model.api.mediaLibraryOwner ?? "no-token"):\((model.api as? KriaAPI)?.baseURL.absoluteString ?? "fixture")"
     }
 
     /// "Update video": a turn scoped to the flagged sections (planned as editor operations only), then the
     /// approval it produces is approved at once. Tapping Update video is the consent.
-    private func submitReviewTurn(scope: [PlanSectionID], edits: [ManualPlanEdit], message: String) async throws {
+    private func submitReviewTurn(scope: [PlanSectionID], edits: [ManualPlanEdit], message: String, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
+        let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
         let accepted = try await model.api.submitScopedTurn(
-            threadID: project.id, message: message, expectedRevision: threadRevision,
-            clientEventID: UUID().uuidString, scope: scope, manualEdits: edits
+            threadID: threadID, message: message, expectedRevision: threadRevision,
+            clientEventID: UUID().uuidString, scope: scope, manualEdits: edits, expectedOwner: expectedOwner
         )
+        try checkScope()
+        guard project.id == threadID, let identity = ReviewApprovalIdentity(threadID: threadID, turnID: accepted.turnID) else { throw ReviewPlanError.timedOut }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
-        try await approveReviewDraft(turnID: accepted.turnID, afterSequence: startSequence)
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
     }
 
-    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int) async throws -> Bool {
+    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws -> Bool {
+        let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
         let result = try await model.api.undoPlanSection(
-            threadID: project.id, sectionID: section, expectedThreadRevision: threadRevision,
-            expectedBlockRevision: blockRevision, expectedDraftRevision: draftRevision
+            threadID: threadID, sectionID: section, expectedThreadRevision: threadRevision,
+            expectedBlockRevision: blockRevision, expectedDraftRevision: draftRevision, expectedOwner: expectedOwner
         )
+        try checkScope()
+        guard project.id == threadID else { throw ReviewPlanError.timedOut }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: result.threadRevision)
         // A null successor turn means nothing was queued to render: there is no approval to wait for.
         guard let turnID = result.turnID else { return false }
-        try await approveReviewDraft(turnID: turnID, afterSequence: startSequence)
+        guard let identity = ReviewApprovalIdentity(threadID: threadID, turnID: turnID) else { throw ReviewPlanError.timedOut }
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
         return true
     }
 
-    private func undoAllReview(draftRevision: Int) async throws {
+    private func undoAllReview(draftRevision: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
+        let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
-        _ = try await model.api.undoDraft(threadID: project.id, expectedRevision: draftRevision, render: true)
-        try await approveReviewDraft(turnID: "", afterSequence: startSequence)
+        let restored = try await model.api.undoDraft(threadID: threadID, expectedRevision: draftRevision, render: true, expectedOwner: expectedOwner)
+        try checkScope()
+        guard project.id == threadID,
+              let identity = ReviewApprovalIdentity(threadID: threadID, draftID: restored.draftID, draftRevision: restored.draftRevision) else { throw ReviewPlanError.timedOut }
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
     }
 
-    /// Waits for the approval the review turn produces (matched by turn id, else the newest one after
-    /// `startSequence`) and approves it. A reply that is not an approval (Kria declined or found nothing to
+    /// Waits for the exact review turn or restored draft's approval after `startSequence`.
+    /// A reply that is not an approval (Kria declined or found nothing to
     /// change) ends the wait with its text.
-    private func approveReviewDraft(turnID: String, afterSequence startSequence: Int) async throws {
+    private func approveReviewDraft(identity: ReviewApprovalIdentity, afterSequence startSequence: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
         var repliesWithoutApproval = 0
         for _ in 0..<150 {
+            try checkScope()
             _ = try? await refreshDelta()
+            try checkScope()
+            guard project.id == identity.threadID else { throw ReviewPlanError.timedOut }
             let fresh = events.filter { $0.sequence > startSequence }
-            let request = fresh.last {
-                $0.eventType == "approval_requested"
-                    && (turnID.isEmpty || $0.payload?["turn_id"]?.stringValue == nil || $0.payload?["turn_id"]?.stringValue == turnID)
-            }
-            if let request, let approvalID = request.payload?["approval_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
-                try await approveReviewApproval(approvalID)
+            if let selected = fresh.compactMap({ identity.select($0, threadID: project.id) }).last {
+                try await approveReviewApproval(selected, expectedOwner: expectedOwner, checkScope: checkScope)
                 return
             }
             let reply = fresh.last {
                 $0.role == "assistant" && $0.eventType.hasPrefix("assistant")
-                    && (turnID.isEmpty || $0.payload?["turn_id"]?.stringValue == turnID)
+                    && identity.matchesReply($0, threadID: project.id)
             }
             if let reply {
                 repliesWithoutApproval += 1
@@ -897,31 +1098,41 @@ private struct CreationWorkspaceView: View {
         throw ReviewPlanError.timedOut
     }
 
-    private func approveReviewApproval(_ approvalID: UUID) async throws {
-        let snapshot = try await model.api.approval(threadID: project.id, approvalID: approvalID)
-        guard snapshot.status == "pending", let draftRevision = snapshot.draftRevision else { throw ReviewPlanError.timedOut }
+    private func approveReviewApproval(_ selected: ReviewApprovalIdentity.Selection, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
+        try checkScope()
+        let approvalID = selected.approvalID
+        let snapshot = try await model.api.approval(threadID: selected.threadID, approvalID: approvalID, expectedOwner: expectedOwner)
+        try checkScope()
+        guard selected.matches(snapshot, threadID: project.id), snapshot.status == "pending", let draftRevision = snapshot.draftRevision else { throw ReviewPlanError.timedOut }
         func decide() async throws {
-            try await model.api.decideApproval(
-                threadID: project.id, approvalID: approvalID, decision: "approve",
+            try checkScope()
+            guard selected.matches(snapshot, threadID: project.id) else { throw ReviewPlanError.timedOut }
+            try await model.api.decideReviewApproval(
+                threadID: project.id, approvalID: approvalID,
                 expectedThreadRevision: threadRevision, expectedDraftRevision: draftRevision,
-                fingerprint: snapshot.approvalFingerprint, speechCleanupAware: true,
-                speechCleanupAnalysisID: nil, speechCleanupChoice: nil
+                fingerprint: snapshot.approvalFingerprint, expectedOwner: expectedOwner
             )
         }
         do {
             try await decide()
         } catch let error as APIError where error.isConflict {
             // The revision moved (every plan_block event bumps it): take the newest and try once more.
+            try checkScope()
             _ = try? await refreshDelta()
+            try checkScope()
             try await decide()
         }
+        try checkScope()
         approval = nil
         thinkingAnchor = afterSequence
         thinkingTurnID = snapshot.turnID
         thinkingSettlesOnJobStatus = true
         isThinking = true
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
     }
+
 
     /// Cancels the render behind the feed. Always sends the newest thread revision: every `plan_block`
     /// event bumps it, so the revision the feed was drawn with is usually stale.
@@ -1116,7 +1327,7 @@ private struct CreationWorkspaceView: View {
     private var timelineUpdateToken: String {
         let feed = planFeed.paced(by: deviceBuildStage)
         let readyCardsToken: String = readyCardsPresentation?.cards.map(\.id).joined(separator: ",") ?? ""
-        let liveThoughtToken: String = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
+        let liveThoughtToken: String = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.utf8.count)" }.joined(separator: "|")
         let timelineIDs: String = timeline.map(\.id).joined(separator: "|")
         let failureMessage: String = failure?.message ?? ""
         let upNextTurnID: String = upNext?.turnID ?? ""
@@ -1172,12 +1383,13 @@ private struct CreationWorkspaceView: View {
         if workspaceStage == .footage, let selectedFormat {
             VideoTypeRow(format: selectedFormat) { isChoosingFormat = true }
         }
-        ForEach(ChatTimelineGroup.group(timeline)) { group in
-            if case .media = group.entries[0].content {
-                mediaReceipts(group.entries)
+        ForEach(timelineRows) { row in
+            if let index = row.mediaIndex {
+                mediaReceipt(row.entry, index: index)
+                    .padding(.top, row.joinsMediaAbove ? ChatConversationSpacing.mediaStrip - ChatConversationSpacing.row : 0)
             } else {
-                timelineRow(group.entries[0])
-                    .transition(Self.rowTransition(for: group.entries[0], reduceMotion: reduceMotion))
+                timelineRow(row.entry)
+                    .transition(Self.rowTransition(for: row.entry, reduceMotion: reduceMotion))
             }
         }
         if currentProject.status == .ready {
@@ -1245,6 +1457,7 @@ private struct CreationWorkspaceView: View {
     }
 
     @ViewBuilder private func timelineRow(_ entry: ChatTimelineEntry) -> some View {
+        let _ = Perf.event("chat.rowBuilt")
         switch entry.content {
         case .message(let message):
             messageRow(message)
@@ -1266,7 +1479,7 @@ private struct CreationWorkspaceView: View {
         case .thoughts(let summaries):
             ThoughtSummaryDisclosure(summaries: summaries).id(entry.id)
         case .media:
-            EmptyView() // Consecutive receipts are rendered together above.
+            EmptyView() // Drawn one file per row by `mediaReceipt`.
         }
     }
 
@@ -1294,9 +1507,7 @@ private struct CreationWorkspaceView: View {
         // The payload only exists when the server supports it, so an unloaded capability snapshot never hides it.
         guard transcriptIsFresh, ClipSelectionAvailability.isAvailable(capabilities: capabilities),
               let question = message.clipQuestion else { return nil }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let isLatestQuestion = !messages[(index + 1)...].contains { $0.clipQuestion != nil }
         let isAnswered = messages[(index + 1)...].contains { $0.role == .user }
@@ -1433,9 +1644,7 @@ private struct CreationWorkspaceView: View {
     private func choiceQuestionMode(for message: ChatTranscriptMessage) -> ChoiceQuestionCardMode? {
         guard transcriptIsFresh, capabilities?.choiceQuestionsEnabled == true,
               let question = message.choiceQuestion else { return nil }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let later = messages[(index + 1)...]
         if let answer = later.first(where: { $0.role == .user }) {
@@ -1462,9 +1671,7 @@ private struct CreationWorkspaceView: View {
     private func echoesChoiceAnswer(_ message: ChatTranscriptMessage) -> Bool {
         guard message.role == .user, !message.isPending, transcriptIsFresh,
               capabilities?.choiceQuestionsEnabled == true else { return false }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return false }
         // The nearest question above, with no other user message in between: this one is its answer.
         for earlier in messages[..<index].reversed() {
@@ -1481,9 +1688,7 @@ private struct CreationWorkspaceView: View {
     /// project (its item, its latest revision); every other script card is read-only text.
     private func voiceoverScriptMode(for message: ChatTranscriptMessage) -> VoiceoverScriptCardMode? {
         guard capabilities?.voiceoverScriptCardsEnabled == true, let script = message.voiceoverScript else { return nil }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         let scripts = messages.compactMap(\.voiceoverScript)
         // A draft is live while it is the newest draft; a failed draft only while no draft exists to record.
         let current = script.isDraft ? scripts.last(where: \.isDraft) : (scripts.contains(where: \.isDraft) ? nil : scripts.last)
@@ -1506,6 +1711,7 @@ private struct CreationWorkspaceView: View {
     private func openVoiceoverStep(with script: VoiceoverScript) {
         guard canAttachMedia else { return }
         attachmentLaunch = nil
+        attachmentOrigin = .addMedia
         attachmentScript = script
         scrollRequest += 1
         showsAttachments = true
@@ -1538,9 +1744,7 @@ private struct CreationWorkspaceView: View {
     /// anything later that landed (an answer, a newer question) removes them from history.
     private func replyOptionsMode(for message: ChatTranscriptMessage) -> ReplyOptionsMode? {
         guard transcriptIsFresh, !message.replyOptions.isEmpty else { return nil }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let later = messages[(index + 1)...]
         guard !later.contains(where: { ($0.role == .user && !$0.isPending) || !$0.replyOptions.isEmpty || !$0.options.isEmpty }) else { return nil }
@@ -1560,14 +1764,12 @@ private struct CreationWorkspaceView: View {
         composerFocused = true
     }
 
-    private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
-        let media = entries.flatMap { entry -> [CreationAttachedMedia] in
-            guard case .media(let event) = entry.content else { return [] }
-            let current = Dictionary(CreationAttachedMedia.parse(threadState).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-            return CreationAttachedMedia.parse(event.payload ?? [:]).map { current[$0.id] ?? $0 }
-        }
-        return VStack(spacing: 8) {
-            ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
+    /// One file of a media receipt, as the project holds it now (a poster that arrived later, a new name).
+    @ViewBuilder private func mediaReceipt(_ entry: ChatTimelineEntry, index: Int) -> some View {
+        if case .media(let event) = entry.content {
+            let received = CreationAttachedMedia.parse(event.payload ?? [:])
+            if received.indices.contains(index) {
+                let attachment = CreationAttachedMedia.parse(threadState).last { $0.id == received[index].id } ?? received[index]
                 KriaMediaRow(name: attachment.displayName,
                              status: .ready(attachment.isSong ? "Song · Ready" : attachment.isVoiceover ? "Voiceover · Ready" : "Video · Ready"),
                              trailing: .check, onFill: true) {
@@ -1602,9 +1804,38 @@ private struct CreationWorkspaceView: View {
             isChoosingFormat = false
             return
         }
+        // The flight the chat started while it was idle is the creator's from here on.
+        editorSession.claimWarm()
+        Perf.begin("editor.tap.toFrame")
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { showsResult = true }
+    }
+
+    /// Whether the chat may prepare its editor now. The value is the `.task(id:)` identity, so the warm-up restarts only
+    /// when the job, the variant or the permission changes, never on a chat poll.
+    private var editorWarmPlan: EditorWarmPlan {
+        var warmable = true
+        #if DEBUG
+        warmable = ProcessInfo.processInfo.environment["KRIA_EDITOR_WARM_DISABLED"] != "1"
+        #endif
+        return EditorWarmPlan(project: currentProject, facts: .init(
+            videoIsReady: currentProject.status == .ready && warmable, formatIsKnown: isFormatKnown,
+            isSlidePost: isSlidePostProject, canOpenVideoEditor: canOpenVideoEditor,
+            sceneIsActive: scenePhase == .active, chatIsIdle: !isSending && !isActing && !isThinking,
+            isOnline: reachability.isOnline, isLowDataMode: reachability.isConstrained))
+    }
+
+    /// Prepares the editor (variant, draft, sources, composition) while the creator reads the chat, so the tap finds it
+    /// loaded. A load that fails leaves the editor as it was: the tap opens it the way it always has.
+    private func warmEditor() async {
+        let plan = editorWarmPlan
+        guard plan.isWarmable, !showsResult else { editorSession.cancelWarm(); return }
+        // Let the chat finish drawing and reading before competing with it; a plan that flips back cancels this sleep.
+        try? await Task.sleep(for: EditorWarmPlan.settleDelay)
+        guard !Task.isCancelled else { return }
+        await editorSession.openOrWarm(project: currentProject, libraryJobID: nil, api: model.api,
+                                       deviceRenders: model.deviceRenders, uploads: model.uploads, intent: .warm)
     }
 
     private func dismissEditor() {
@@ -1617,9 +1848,32 @@ private struct CreationWorkspaceView: View {
         suggestionLedger.requestRefresh()
     }
 
-    private func openAttachments(launch: AttachmentLaunch? = nil) {
+    private func attachmentSheet(rerecordTarget: RerecordTarget?) -> some View {
+        AttachmentSheet(
+            projectID: project.id,
+            maximumClipCount: selectedMaximumClipCount,
+            attachedClipCount: attachedClipCount,
+            format: selectedFormat,
+            thread: fullThread,
+            capabilities: capabilities,
+            capabilitiesLoaded: capabilitiesAreAuthoritative,
+            voiceoverScript: rerecordTarget == nil ? attachmentScript : nil,
+            launch: rerecordTarget == nil ? attachmentLaunch : nil,
+            origin: rerecordTarget == nil ? attachmentOrigin : .addMedia,
+            rerecordTarget: rerecordTarget,
+            refresh: {
+                if !capabilitiesAreAuthoritative { await refreshCapabilities() }
+                await refreshNow()
+            }
+        )
+            .environmentObject(model)
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
+    }
+
+    private func openAttachments(launch: AttachmentLaunch? = nil, origin: AttachmentOrigin = .addMedia) {
         guard canAttachMedia else { return }
         attachmentLaunch = launch
+        attachmentOrigin = origin
         attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
@@ -1828,6 +2082,11 @@ private struct CreationWorkspaceView: View {
             await capabilities
         }
         .task(id: suggestionFetchKey) { await loadSuggestions() }
+        .task(id: editorWarmPlan) { await warmEditor() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            editorSession.releaseWarmForMemoryPressure()
+        }
+        .onDisappear { editorSession.cancelWarm() }
         // An editor Save changes the Job without a new thread revision, so cards built on the old edit are asked about again.
         .onChange(of: editorSession.saveState) { old, new in
             if case .saving = old, new == .saved || new == .previewPending { suggestionLedger.requestRefresh() }
@@ -1890,6 +2149,10 @@ private struct CreationWorkspaceView: View {
             if let brief { briefRequirements.merge(brief.requirementsByID) { _, new in new } }
             briefSettled = true
         }
+        .task(id: fullThread?.activePlanItemID) {
+            guard let itemID = fullThread?.activePlanItemID else { return }
+            generatedCards.resume(itemID: itemID, accountID: auth.localStorageIdentity, api: model.api)
+        }
         #if DEBUG
         // KRI-211 fixtures: `1` = one file that couldn't be read; `record` = an upload that failed on
         // the way and still has its record (Retry). Neither may block Send.
@@ -1914,32 +2177,36 @@ private struct CreationWorkspaceView: View {
             apply(thread)
         }
         .sheet(isPresented: $showsAttachments) {
-            AttachmentSheet(
-                projectID: project.id,
-                maximumClipCount: selectedMaximumClipCount,
-                attachedClipCount: attachedClipCount,
-                format: selectedFormat,
-                thread: fullThread,
-                capabilities: capabilities,
-                capabilitiesLoaded: capabilitiesAreAuthoritative,
-                voiceoverScript: attachmentScript,
-                launch: attachmentLaunch,
-                refresh: {
-                    if !capabilitiesAreAuthoritative { await refreshCapabilities() }
-                    await refreshNow()
-                }
-            )
-                .environmentObject(model)
-                .environment(\.dynamicTypeSize, dynamicTypeSize)
+            attachmentSheet(rerecordTarget: nil)
                 .presentationDetents([.large])
         }
+        .fullScreenCover(item: $rerecordCamera, onDismiss: rerecordCameraClosed) { target in
+            attachmentSheet(rerecordTarget: target)
+        }
+        .confirmationDialog("Re-record your take?", isPresented: rerecordConfirmation, titleVisibility: .visible) {
+            if case let .confirming(targets) = rerecordLocal {
+                ForEach(targets) { target in
+                    Button(targets.count == 1 ? "Record new take" : "Re-record \(target.displayName)") { rerecordLocal = .swapping; rerecordCamera = target }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Kria keeps your script, background and other clips, then makes the video again from your new take. Text and caption changes you made to this video won’t carry over. Your current video stays until the new one is ready.")
+        }
+        .onChange(of: rerecordFacts.debt) { _, debt in rerecordDebtChanged(debt) }
         .sheet(item: $reviewPresentation) { presentation in
             ReviewPlanView(
                 seed: presentation.seed, initialFlag: presentation.initialFlag,
                 actions: reviewActions(),
+                refreshToken: "\(afterSequence):\(threadRevision):\(currentProject.activeJobID?.uuidString ?? ""):\(currentProject.status):\(failure == nil)",
+                expectedThreadID: project.id.uuidString,
+                isCurrentScope: { [threadID = project.id, account = ReviewAccountScope(uiOwner: auth.localStorageIdentity, transportOwner: model.api.mediaLibraryOwner), environment = (model.api as? KriaAPI)?.baseURL] in
+                    reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment)
+                },
                 dictation: dictationForComposer, dictationTerms: dictationContextTerms,
                 close: { reviewPresentation = nil }
             )
+            .id(reviewScopeToken)
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
             .presentationBackground(KriaColor.paper)
@@ -1957,8 +2224,8 @@ private struct CreationWorkspaceView: View {
                     sharedSession: editorSession,
                     conversationAcceptedID: conversationAcceptedID,
                     conversationCloseID: editorConversationCloseID,
+                    conversationActivity: editorAIActivity,
                     conversation: { AnyView(editorConversation) },
-                    improve: readyCardsPresentation,
                     onBack: close
                 )
                 .environmentObject(model)
@@ -1975,6 +2242,7 @@ private struct CreationWorkspaceView: View {
     private var genericChatWorkspace: some View {
         ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
             conversationContent
+            firstPromptSuggestions
         }
         .accessibilityHidden(projectsDrawerOpen)
         .allowsHitTesting(!projectsDrawerOpen)
@@ -1997,28 +2265,6 @@ private struct CreationWorkspaceView: View {
                         .background(KriaColor.paper)
                         .accessibilityIdentifier("routed-device-render")
                 }
-                // KRI-756: the first-prompt chips sit just above the composer, not inside the scrolling transcript.
-                let firstPromptChips = suggestionChips(for: .firstPrompt)
-                if !firstPromptChips.isEmpty {
-                    SuggestionChipRow(chips: firstPromptChips, sendingID: sendingSuggestionID) { sendSuggestion($0) }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
-                        .background(KriaColor.paper)
-                        .accessibilityIdentifier("first-prompt-suggestions")
-                } else if suggestionsLoading, suggestionSurface == .firstPrompt,
-                          prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    // The first prompt's chips are still being written (Paper S2.09 state A): two quiet placeholders.
-                    HStack(spacing: 8) {
-                        KriaSkeletonBar(width: 140, height: 44)
-                        KriaSkeletonBar(width: 112, height: 44)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
-                    .background(KriaColor.paper)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Loading suggestions")
-                    .accessibilityIdentifier("first-prompt-suggestions-loading")
-                }
                 waitingBar
                 ChatComposer(
                     text: promptBinding,
@@ -2034,7 +2280,7 @@ private struct CreationWorkspaceView: View {
                     dictation: dictationForComposer,
                     dictationTerms: dictationContextTerms,
                     attach: { openAttachments() },
-                    send: { Task { await send() } },
+                    send: { Task { await sendComposerDraft() } },
                     attachMenu: attachMenu
                 )
             }
@@ -2043,19 +2289,55 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// KRI-756: the first-prompt chips end the transcript, so they scroll away with it instead of covering the page
+    /// while the keyboard is up.
+    @ViewBuilder private var firstPromptSuggestions: some View {
+        let firstPromptChips = suggestionChips(for: .firstPrompt)
+        if !firstPromptChips.isEmpty {
+            SuggestionChipRow(chips: firstPromptChips, sendingID: sendingSuggestionID) { sendSuggestion($0) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("first-prompt-suggestions")
+        } else if suggestionsLoading, suggestionSurface == .firstPrompt,
+                  prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // The first prompt's chips are still being written (Paper S2.09 state A): two quiet placeholders.
+            HStack(spacing: 8) {
+                KriaSkeletonBar(width: 140, height: 44)
+                KriaSkeletonBar(width: 112, height: 44)
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Loading suggestions")
+            .accessibilityIdentifier("first-prompt-suggestions-loading")
+        }
+    }
+
     /// What the composer's + offers (Paper S3.05): Record and Upload for every format, and the optional script and
-    /// voiceover rows only where they mean something.
+    /// voiceover rows only where they mean something. Every row opens Add media on the place it names; at the most
+    /// clips Record and Upload give way to the limit notice and Manage clips.
     private var attachMenu: ChatAttachMenu {
+        let takesPhotos = selectedFormat?.usesVisualPool == true
+        var replaceOffered = false
+        if selectedFormat == .talkingToCamera, case .one = RerecordOffer.resolve(thread: fullThread) { replaceOffered = true }
+        let room: AttachRoom = takesPhotos ? .open : .resolve(used: clipSlotsUsed, maximum: selectedMaximumClipCount, recordReplaces: replaceOffered)
         return ChatAttachMenu(
-            disabledReason: canAttachMedia ? nil : "Choose a video format first.",
+            disabledReason: attachBlockedReason,
             offersSaved: capabilities?.mediaLibrary == true,
-            record: selectedFormat?.usesVisualPool == true ? nil : { openAttachments(launch: .record) },
-            upload: { openAttachments(launch: .source($0)) },
+            takesPhotos: takesPhotos,
+            room: room,
+            record: takesPhotos ? nil : { openAttachments(launch: .record, origin: .composerTray) },
+            upload: { openAttachments(launch: .source($0), origin: .composerTray) },
             addScript: selectedFormat == .talkingToCamera ? { openAttachments(launch: .recordWithScript) } : nil,
             addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil,
             addSong: capabilities?.songUploadEnabled == true && selectedFormat?.runsAsMontage == true ? { openAttachments(launch: .step(.song)) } : nil,
-            addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil
+            addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil,
+            manageClips: { openAttachments() }
         )
+    }
+
+    /// Clips attached plus clips still uploading or being chosen: the count the picker measures its room against.
+    private var clipSlotsUsed: Int {
+        attachedClipCount + uploadRecords.filter { $0.projectID == project.id && $0.role == .clip }.count
+            + BackgroundUploadCoordinator.reservedCount(projectID: project.id, role: .clip, inFlight: uploadInFlight, records: uploadRecords, selections: photoSelections)
     }
 
     private var editorConversation: some View {
@@ -2067,7 +2349,7 @@ private struct CreationWorkspaceView: View {
                 waitingBar
                 ChatComposer(
                     text: promptBinding, isSending: isSending || isActing,
-                    canAttach: false, blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
+                    canAttach: false, blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await sendComposerDraft() } }
                 )
             }
         }
@@ -2128,8 +2410,8 @@ private struct CreationWorkspaceView: View {
                     approval: approval,
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
-                    automaticRepairs: approval.automaticRepairLimit == 2 ? $allowAutomaticRepairs : nil,
                     researchPreview: ResearchPreview.parse(activeProposalEvent?.payload?["research_preview"]),
                     replyLanguage: ClipAnswerLanguage(threadState: threadState),
                     isBusy: isActing || pendingUploadCount > 0,
@@ -2152,6 +2434,7 @@ private struct CreationWorkspaceView: View {
                     conflict: visibleConfirmationConflict(for: thread),
                     renderShape: renderShapePicker,
                     refreshDirection: refreshDirection,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     action: performAction
                 )
             }
@@ -2194,28 +2477,11 @@ private struct CreationWorkspaceView: View {
                 // ones). Capability off: nil, the fixed chips.
                 serverSuggestions: SuggestionChipsPolicy.isEnabled(capabilities) ? suggestionChips(for: .ready) : nil,
                 sendSuggestion: { sendSuggestion($0) },
-                suggestionCards: readyCardsPresentation
+                suggestionCards: readyCardsPresentation,
+                rerecord: rerecordPhase,
+                rerecordActions: rerecordActions
             )
             .id("ready")
-            if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,
-               let activeJob = fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString {
-                ProjectReviewEntry(threadID: project.id, jobKey: activeJob, api: model.api) { openPlanReview(section: nil) }
-                    .id("project-review-entry")
-            }
-            // Short creator-facing sentences about one-pass render decisions
-            // (KRI-178), e.g. "Placed 9 of 10 moments you named." Only shown
-            // once the job itself is in a ready/done state, mirroring the
-            // failureMessage precedent in CreationConfirmationStage.
-            if currentProject.status == .ready, let renderNotes = fullThread?.job?.renderNotes,
-                !renderNotes.isEmpty
-            {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(renderNotes.enumerated()), id: \.offset) { _, note in
-                        Text(note).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                    }
-                }
-                .accessibilityIdentifier("chat.job.renderNotes")
-            }
             if let variants = fullThread?.job?.variants, variants.count > 1 {
                 ForEach(variants.compactMap { $0.variantID }, id: \.self) { variantID in
                     let variant = variants.first { $0.variantID == variantID }
@@ -2259,6 +2525,7 @@ private struct CreationWorkspaceView: View {
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     conflict: visibleConfirmationConflict(for: thread),
                     refreshDirection: refreshDirection,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     action: performAction
                 )
             } else {
@@ -2274,12 +2541,9 @@ private struct CreationWorkspaceView: View {
                         title: fullThread?.lastAssistantErrorTitle ?? "Your video wasn’t made",
                         bodyText: fullThread?.lastAssistantErrorContent
                             ?? fullThread?.job?.failureMessage
-                            ?? "Your direction and footage are safe. Refresh the project or tell me what you want to change.",
-                        retryLabel: fullThread?.failedRenderExecutionID == nil ? "Refresh project" : "Retry approved edit",
-                        retry: { Task {
-                            if fullThread?.failedRenderExecutionID != nil { await retryApprovedRender() }
-                            else { await refreshNow() }
-                        } },
+                            ?? "Your direction and footage are saved. Send a message to try again or change direction.",
+                        retryLabel: "Retry approved edit",
+                        retry: fullThread?.failedRenderExecutionID != nil ? { Task { await retryApprovedRender() } } : nil,
                         nonRetryableReasonCode: fullThread?.lastAssistantErrorCode,
                         declineReason: fullThread?.lastAssistantDeclineReason,
                         replyInChat: { composerFocused = true }
@@ -2396,17 +2660,52 @@ private struct CreationWorkspaceView: View {
     }
 
     /// The v2 cards for the finished video, or nil when the chat is not on the ready surface or the server's set has
-    /// none (then the chips stay in charge). The same value feeds the ready stage and the editor's Improve sheet.
+    /// none (then the chips stay in charge). The same value feeds the ready stage in the chat and in the editor's chat sheet.
     private var readyCardsPresentation: SuggestionCardsPresentation? {
-        guard SuggestionChipsPolicy.isEnabled(capabilities), suggestionSurface == .ready,
-              suggestionSetKey == suggestionScopeKey,
-              case .cards(let cards) = SuggestionReadyContent.resolve(set: suggestionSet) else { return nil }
+        guard SuggestionChipsPolicy.isEnabled(capabilities) else { return nil }
+        // A spent paid card leaves the set at once, but its image does not: the row outlives the set it came from, and
+        // it shows while the tap's own turn is still running (that is when the image is being made), which hides cards.
+        let onSurface = suggestionSurface == .ready && suggestionSetKey == suggestionScopeKey
+        guard onSurface || generatedCards.result != nil else { return nil }
+        var served: [SuggestionCard] = []
+        if onSurface, case .cards(let found) = SuggestionReadyContent.resolve(set: suggestionSet) {
+            served = found
+        } else if generatedCards.result == nil {
+            return nil
+        }
         return SuggestionCardsPresentation(
-            cards: suggestionLedger.visible(cards),
-            tap: { sendSuggestionCard($0) }, dismiss: { dismissSuggestionCard($0) },
-            refresh: { suggestionLedger.requestRefresh() },
-            sendingID: cards.first { suggestionLedger.phase(of: $0.id) == .sending }?.id
+            cards: suggestionLedger.visible(served),
+            isSelected: { SuggestionDraft.isSelected($0, in: promptDraft.text) },
+            toggle: { promptDraft.set(SuggestionDraft.toggle($0, in: promptDraft.text)) },
+            generated: generatedCards.result,
+            reviewGenerated: { reviewGeneratedCard() },
+            dismissGenerated: { generatedCards.dismiss() }
         )
+    }
+
+    /// Hands the finished image to the overlay review, the same screen "Add media" uses for an image made there, so the
+    /// creator sees it before it goes anywhere and accepts it in the one place that does that.
+    private func reviewGeneratedCard() {
+        guard selectedFormat != nil, selectedFormat != .slides, let accountID = auth.localStorageIdentity,
+              let itemID = fullThread?.activePlanItemID, let title = generatedCards.result?.title else { return }
+        let subject = (fullThread?.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard generatedCards.stageForReview(prompt: subject.isEmpty ? title : subject, accountID: accountID, itemID: itemID) else { return }
+        generatedCards.dismiss()
+        // Not `openAttachments`: the image is ready while the tap's own turn may still be closing, and the creator who
+        // pays for an image must not find Review dead for those seconds.
+        attachmentLaunch = .generatedOverlays
+        attachmentScript = nil
+        scrollRequest += 1
+        guard showsResult else {
+            showsAttachments = true
+            return
+        }
+        // The editor's chat sheet is up: it closes first, because a sheet cannot open while another is still leaving.
+        editorConversationCloseID = UUID()
+        Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            showsAttachments = true
+        }
     }
 
     /// The chips to draw for one surface; empty unless the chat is on that surface right now.
@@ -2438,30 +2737,29 @@ private struct CreationWorkspaceView: View {
         )
     }
 
-    /// A card tap is the creator's chat message (`prompt`) pinned to the card it came from. It rides the ordinary
-    /// send path, so the bubble, idempotency key and revision handling are shared. The pin names the set the creator
-    /// SAW, not whatever set the chat holds by the time the request goes out; the server decides if it still fits.
-    /// A refused pin comes back as an ordinary accepted turn whose reply says the card no longer fits, so the card
-    /// is handled either way and the reply in the chat is the notice.
-    /// Returns whether the tap started, so the editor's Improve sheet closes only for a tap that is going out.
-    private func sendSuggestionCard(_ card: SuggestionCard) -> Bool {
-        guard !isSending, !isActing, !isThinking, let setID = suggestionSet?.setID, suggestionLedger.begin(card) else { return false }
-        let tap = SuggestionTap(setID: setID, chipID: card.id)
-        Task {
-            await send(message: card.prompt, suggestion: tap, keepsDraft: true) { _ in
+    /// Send from either composer. A draft that is exactly one offered card's prompt goes out pinned to that card, so the
+    /// server runs the action it proved (the exact hook text, the image the creator asked for). The pin names the set the
+    /// creator SAW; the server decides if it still fits, and a refused pin comes back as an ordinary accepted turn whose
+    /// reply says the card no longer fits. Anything else (other words, several prompts) is a plain message the planner
+    /// reads, and every card whose prompt it carried is handled for this set.
+    private func sendComposerDraft() async {
+        let cards = readyCardsPresentation?.cards ?? []
+        if let card = SuggestionDraft.pinnedCard(for: promptDraft.text, among: cards),
+           !isSending, !isActing, !isThinking, let setID = suggestionSet?.setID, suggestionLedger.begin(card) {
+            let tap = SuggestionTap(setID: setID, chipID: card.id)
+            await send(message: card.prompt, suggestion: tap) { _ in
                 suggestionLedger.finish(card, accepted: true)
+                // The tap spends on the server; this only watches for the image it makes.
+                if card.needsSpendConsent, let itemID = fullThread?.activePlanItemID {
+                    generatedCards.begin(card: card, setID: setID, itemID: itemID, accountID: auth.localStorageIdentity, title: card.title, api: model.api)
+                }
             }
             // Nothing reached the server (offline, rejected, blocked): the card is tappable again.
             suggestionLedger.finish(card, accepted: false)
+            return
         }
-        return true
-    }
-
-    private func dismissSuggestionCard(_ card: SuggestionCard) {
-        guard let setID = suggestionSet?.setID else { return }
-        suggestionLedger.dismiss(card)
-        let api = model.api, threadID = project.id
-        Task { await api.dismissSuggestion(threadID: threadID, setID: setID, suggestionID: card.id) }
+        let carried = SuggestionDraft.cards(in: promptDraft.text, among: cards)
+        await send(suggestionOutcome: carried.isEmpty ? nil : { _ in carried.forEach { suggestionLedger.markApplied($0) } })
     }
 
     /// A chip tap is a real send of the chip's `message` (the old fixed chips only filled the composer), tagged
@@ -2909,8 +3207,9 @@ private struct CreationWorkspaceView: View {
                 let deviceSettled = serverDeviceRenderKey.map { model.deviceRenders.isSettled($0) } ?? false
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
                 if let routedKey = routedDeviceRenderKey { await refreshDeviceRender(routedKey) }
+                await refreshWhileCheckingSpeech()
                 delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
-                    || fullThread?.preparationIsActive == true || speechCleanupIsChecking
+                    || fullThread?.preparationIsActive == true || (speechCleanupIsChecking && !speechCheckTimedOut)
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
                 return
@@ -2924,6 +3223,20 @@ private struct CreationWorkspaceView: View {
             }
             try? await Task.sleep(nanoseconds: delay)
         }
+    }
+
+    /// The analysis task never bumps the thread revision or appends an event, so `/delta` cannot
+    /// announce it finishing. While the card says "Checking speech…", re-read the full thread on
+    /// `SpeechCheckWatch`'s schedule. This loop awaits it, so reads never overlap each other.
+    private func refreshWhileCheckingSpeech() async {
+        let resolution = SpeechCleanupOffer.resolve(fullThread?.speechCleanup)
+        let shouldRefetch = speechCheckClock.watch.observe(resolution.offer, analysisID: resolution.analysisID, now: .now)
+        let timedOut = speechCheckClock.watch.hasTimedOut
+        if timedOut != speechCheckTimedOut { speechCheckTimedOut = timedOut }
+        guard shouldRefetch else { return }
+        let requestSequence = projectionOrder.begin()
+        guard let thread = try? await model.api.project(threadID: project.id), !Task.isCancelled else { return }
+        apply(thread, requestSequence: requestSequence)
     }
 
     /// True while the v2 approval card's speech-check analysis is queued,
@@ -2972,7 +3285,9 @@ private struct CreationWorkspaceView: View {
         defer { isActing = false }
         if fullThread?.failedRenderExecutionID == nil { await refreshNow() }
         guard let executionID = fullThread?.failedRenderExecutionID else {
-            failure = ChatFailure("The render status is still updating. Your edit is saved. Refresh the project before retrying.")
+            // The authoritative projection may already have moved on. Its
+            // existing live poll follows the result; there is no exact failed
+            // execution to retry or a manual reload the creator must perform.
             return
         }
         do {
@@ -3371,7 +3686,7 @@ private struct CreationWorkspaceView: View {
                     speechCleanupChoice: cleanupChoice,
                     outputOrientation: shape?.orientation,
                     landscapeFit: shape?.landscapeFit,
-                    automaticRepairAttempts: decision == "approve" && approval.automaticRepairLimit == 2 && allowAutomaticRepairs ? 2 : 0
+                    automaticRepairAttempts: decision == "approve" ? approval.automaticRepairLimit ?? 0 : 0
                 )
             } catch let error as APIError where error == .conflict && speechCleanupConflictCodes.contains(error.conflictCode ?? "") {
                 // The approval stays PENDING with the same id/fingerprint --
@@ -3491,6 +3806,10 @@ enum ChatMessageRole: Equatable { case user, assistant }
 final class ChatDerivedMemo {
     var timelineKey: Int?
     var timeline: [ChatTimelineEntry] = []
+    /// The `.message` entries of `timeline`; nil until read after each rebuild.
+    var timelineMessages: [ChatTranscriptMessage]?
+    /// The lazy stack's rows for `timeline`; nil until read after each rebuild.
+    var timelineRows: [ChatTimelineRow]?
     var feedKey: Int?
     var feed: PlanBlockFeedState?
     var clipQuestionKey: Int?

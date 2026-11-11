@@ -66,7 +66,7 @@ def test_returns_whisper_text(monkeypatch) -> None:
     _stub_whisper(monkeypatch, _transcript("make the second clip shorter"))
     res = client.post("/dictation/transcribe", files=_audio())
     assert res.status_code == 200
-    assert res.json() == {"text": "make the second clip shorter", "reason": None}
+    assert res.json() == {"text": "make the second clip shorter", "reason": None, "language": "en"}
 
 
 def test_flag_off_is_404(monkeypatch) -> None:
@@ -108,7 +108,7 @@ def test_silence_returns_no_speech_not_invented_words(monkeypatch) -> None:
     _stub_whisper(monkeypatch, _transcript("thanks for watching", no_speech=0.93))
     res = client.post("/dictation/transcribe", files=_audio())
     assert res.status_code == 200
-    assert res.json() == {"text": "", "reason": "no_speech"}
+    assert res.json() == {"text": "", "reason": "no_speech", "language": None}
 
 
 def test_empty_transcript_is_no_speech(monkeypatch) -> None:
@@ -123,7 +123,7 @@ def test_whisper_echoing_the_vocabulary_prompt_is_no_speech(monkeypatch) -> None
         files=_audio(),
         data={"context_terms": '["Deniz"]'},
     )
-    assert res.json() == {"text": "", "reason": "no_speech"}
+    assert res.json() == {"text": "", "reason": "no_speech", "language": None}
 
 
 def test_a_short_spoken_word_that_is_in_the_vocabulary_is_not_silence(monkeypatch) -> None:
@@ -149,7 +149,7 @@ def test_context_terms_reach_whisper_and_bad_terms_are_ignored(monkeypatch) -> N
     assert prompt.startswith("Bodrum sunset, montage")
     assert "altyazı" in prompt
     assert prompt.count("Bodrum sunset") == 1
-    assert calls[0]["language"] == "tr"
+    assert calls[0]["language"] is None
 
     calls.clear()
     client.post(
@@ -209,27 +209,34 @@ def test_temp_file_is_deleted_on_every_path(monkeypatch) -> None:
     assert set(glob.glob(f"{tempfile.gettempdir()}/tmp*.m4a")) == before
 
 
-def test_only_a_top_ranked_kria_language_is_forced(monkeypatch) -> None:
-    """KRI-780 review: forcing a device language makes Whisper translate speech in another
-    one, and codes Whisper does not know ("nb") fail the call. Only a top-ranked Turkish
-    locale forces; a later Turkish entry only adds the Turkish word list."""
+def test_whisper_is_never_told_the_language(monkeypatch) -> None:
+    """KRI-1328: a Turkish phone with an English speaker came back as Turkish because Whisper
+    was forced to "tr" and translated. The device language only picks the spelling word list;
+    Whisper always detects what is spoken."""
 
     calls: list = []
     _stub_whisper(monkeypatch, _transcript("add captions and remove the music"), calls)
     cases = {
-        "de-DE": (None, False),
-        "nb-NO": (None, False),
-        "az-AZ": (None, False),
-        "de-DE,tr-TR": (None, True),
-        "en-TR,tr-TR": (None, True),
-        "tr-TR,en-US": ("tr", True),
+        "de-DE": False,
+        "nb-NO": False,
+        "en-US": False,
+        "de-DE,tr-TR": True,
+        "en-TR,tr-TR": True,
+        "tr-TR": True,
+        "tr-TR,en-US": True,
     }
-    for hint, (language, turkish_words) in cases.items():
+    for hint, turkish_words in cases.items():
         calls.clear()
         res = client.post("/dictation/transcribe", files=_audio(), data={"locale_hint": hint})
         assert res.status_code == 200, hint
-        assert calls[0]["language"] == language, hint
+        assert calls[0]["language"] is None, hint
         assert ("altyazı" in calls[0]["verbatim_prompt"]) is turkish_words, hint
+
+
+def test_response_reports_the_detected_language(monkeypatch) -> None:
+    _stub_whisper(monkeypatch, _transcript("add captions"))
+    res = client.post("/dictation/transcribe", files=_audio(), data={"locale_hint": "tr-TR"})
+    assert res.json() == {"text": "add captions", "reason": None, "language": "en"}
 
 
 def test_turkish_credit_filler_after_the_request_is_dropped(monkeypatch) -> None:
@@ -243,10 +250,10 @@ def test_turkish_credit_filler_after_the_request_is_dropped(monkeypatch) -> None
 
     _stub_whisper(monkeypatch, _transcript("Altyazı M.K."))
     res = client.post("/dictation/transcribe", files=_audio(), data={"locale_hint": "tr-TR"})
-    assert res.json() == {"text": "", "reason": "no_speech"}
+    assert res.json() == {"text": "", "reason": "no_speech", "language": None}
 
 
 def test_all_caps_turkish_prompt_echo_is_no_speech(monkeypatch) -> None:
     _stub_whisper(monkeypatch, _transcript("ALTYAZI SESLENDİRME GEÇİŞ", no_speech=None))
     res = client.post("/dictation/transcribe", files=_audio(), data={"locale_hint": "tr-TR"})
-    assert res.json() == {"text": "", "reason": "no_speech"}
+    assert res.json() == {"text": "", "reason": "no_speech", "language": None}

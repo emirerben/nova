@@ -14,6 +14,7 @@ import shutil
 import subprocess
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -4035,7 +4036,7 @@ def compile_guided_runtime_plan(
             grounded_intents = []
         if grounded_intents:
             from app.tasks.generative_build import (  # noqa: PLC0415
-                _CONTEXT_LABEL_COMBINED_MAX_CHARS,
+                _combined_context_label_text,
                 _compact_context_sport_text_elements,
                 _grounded_context_labels,
             )
@@ -4064,17 +4065,11 @@ def compile_guided_runtime_plan(
                         continue
                     seen_texts.add(text)
                     rendered_rows.append(row)
-                sport = " · ".join(str(row["sport"]) for row in rendered_rows)
+                sport, shown_rows = _combined_context_label_text(rendered_rows, clip_id=clip_id)
                 start_s = float(moment.get("output_start_s") or 0.0)
                 end_s = float(moment.get("output_end_s") or 0.0)
                 if not sport or end_s <= start_s:
                     continue
-                if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
-                    raise ValueError(
-                        "Combined context labels for clip "
-                        f"{clip_id!r} exceed the "
-                        f"{_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
-                    )
                 row = rendered_rows[0]
                 source_params: dict[str, Any] = {
                     "source": "context_sport",
@@ -4085,7 +4080,7 @@ def compile_guided_runtime_plan(
                     "confidence": row.get("confidence"),
                     "intent_id": row.get("intent_id") or "",
                 }
-                if len(rendered_rows) > 1:
+                if len(shown_rows) > 1:
                     source_params["context_label_provenance"] = [
                         {
                             "text": candidate["sport"],
@@ -4093,7 +4088,12 @@ def compile_guided_runtime_plan(
                             "confidence": candidate.get("confidence"),
                             "intent_id": candidate.get("intent_id") or "",
                         }
-                        for candidate in rendered_rows
+                        for candidate in shown_rows
+                    ]
+                if len(shown_rows) < len(rendered_rows):
+                    source_params["context_labels_not_shown"] = [
+                        candidate.get("intent_id") or ""
+                        for candidate in rendered_rows[len(shown_rows) :]
                     ]
                 context_elements.append(
                     TextElement(
@@ -6176,6 +6176,8 @@ def _apply_guided_caption_meta(
 _GUIDED_FACE_PLACEMENT_FIXED_IDS = frozenset({"guided-title", "guided-closing-title"})
 _GUIDED_FACE_PLACEMENT_PREFIX = "guided-thought-"
 _GUIDED_FACE_PLACEMENT_ANCHORS = 6
+# Same tolerance as `render_geometry._FACE_OVERLAP_MAX_COVERAGE`.
+_GUIDED_PROTECTED_MAX_COVERAGE = 0.05
 _GUIDED_FACE_PLACEMENT_TIMEOUT_BASE_S = 2.5
 _GUIDED_FACE_PLACEMENT_TIMEOUT_PER_ANCHOR_S = 0.35
 
@@ -6213,6 +6215,39 @@ def _evenly_spaced_window_anchors(start_s: float, end_s: float, n: int) -> list[
     return [round(start_s + span * (index + 0.5) / n, 3) for index in range(n)]
 
 
+@dataclass(frozen=True)
+class GuidedTextProtection:
+    """KRI-903: what the creator named to keep guided-story text off.
+
+    ``all_faces``: every detected face counts, not only the dominant one. ``objects(start_s,
+    end_s)`` returns the marked objects' canvas boxes over an output window and whether
+    every one of them was actually seen by the tracker (never inferred or lost)."""
+
+    all_faces: bool = False
+    objects: Callable[[float, float], tuple[list[Any], bool]] | None = None
+
+
+_GUIDED_FACE_CONFIRMED_REASONS = frozenset({None, "no_face"})
+
+
+def _guided_protection_placement(receipt: dict[str, Any], objects_seen: bool) -> dict[str, Any]:
+    """The protected-text placement receipt of one guided text row, from the chooser's
+    own measurement at the position it chose (`phone_protected_text.protected_text_receipt`
+    reads it). ``faces`` is "detected" once the sampler really looked (decoded frames, no
+    failure), whether or not a face turned up: a clip with nobody in it keeps text off
+    nobody's face."""
+    looked = (receipt.get("face_reason") or receipt.get("reason")) in _GUIDED_FACE_CONFIRMED_REASONS
+    return {
+        "status": receipt.get("status"),
+        "faces": "detected" if looked else "fallback",
+        "face_collision": float(receipt.get("face_coverage") or 0.0)
+        > _GUIDED_PROTECTED_MAX_COVERAGE,
+        "object_collision": float(receipt.get("object_coverage") or 0.0)
+        > _GUIDED_PROTECTED_MAX_COVERAGE,
+        "objects_verified": objects_seen,
+    }
+
+
 def _apply_guided_text_face_placement(
     base_path: str | None,
     text_element_rows: list[dict[str, Any]],
@@ -6221,6 +6256,8 @@ def _apply_guided_text_face_placement(
     canvas: Canvas,
     duration_s: float | None = None,
     sampler: Callable[[list[float], float], tuple[list[Any], dict[str, Any]]] | None = None,
+    protection: GuidedTextProtection | None = None,
+    placements_out: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Move the guided-story title/chapter/closing text off any face in its shot.
 
@@ -6322,12 +6359,21 @@ def _apply_guided_text_face_placement(
                 candidates = tuple(
                     value for value in candidates if value == default_y or value >= floor
                 )
+            object_boxes: list[Any] = []
+            objects_seen = True
+            if protection is not None and protection.objects is not None:
+                object_boxes, objects_seen = protection.objects(start_s, end_s)
             chosen_y, receipt = choose_guided_text_y_frac(
                 face_regions,
                 face_receipt,
                 probe_box,
                 [],
                 candidates,
+                **(
+                    {"object_boxes": object_boxes, "all_faces": protection.all_faces}
+                    if protection is not None
+                    else {}
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - fail open to the authored default
             log.warning(
@@ -6336,6 +6382,8 @@ def _apply_guided_text_face_placement(
                 element_id=element_id,
                 error=str(exc),
             )
+            if placements_out is not None:
+                placements_out[element_id] = {"objects_verified": False, "faces": "fallback"}
             try:
                 record_pipeline_event(
                     "overlay",
@@ -6367,6 +6415,8 @@ def _apply_guided_text_face_placement(
             )
         except Exception as trace_exc:  # noqa: BLE001 - instrumentation must never break render
             log.warning("guided_text_placement_event_emit_failed", error=str(trace_exc))
+        if placements_out is not None and protection is not None:
+            placements_out[element_id] = _guided_protection_placement(receipt, objects_seen)
         if chosen_y != default_y:
             new_row = dict(row)
             new_row["y_frac"] = chosen_y

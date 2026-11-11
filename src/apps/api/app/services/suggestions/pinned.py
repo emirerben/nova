@@ -29,7 +29,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +40,7 @@ from app.services.suggestions import registry
 from app.services.suggestions.context import NO_TARGET, SuggestionContext, Target, snapshot_digest
 from app.services.suggestions.models import (
     Action,
+    AsyncGenerateAction,
     BriefUpdateAction,
     CopyDecisionAction,
     EditorOpsAction,
@@ -85,6 +86,12 @@ TARGET_UNAVAILABLE = "target_unavailable"
 NO_STRATEGY = "no_strategy"
 UNSAVED_EDITS = "unsaved_edits"
 SETTING_REFUSED = "setting_refused"
+# A spending tap (``async_generate``). Not transient: the card leaves the set and a later set may
+# offer it again, because the operation behind a tap is keyed on the card and would only answer
+# the same failure.
+GENERATION_UNAVAILABLE = "generation_unavailable"
+GENERATION_FAILED = "generation_failed"
+BUDGET_UNAVAILABLE = "budget_unavailable"
 # A refusal that says nothing about the card itself: the creator can tap it again later (a render
 # in flight, hand edits not saved yet). It is recorded but never marks the card refused.
 TRANSIENT_REASONS = frozenset({TARGET_UNAVAILABLE, UNSAVED_EDITS})
@@ -125,9 +132,14 @@ class StoredCard:
     action_digest: str
 
 
-def ring_suggestions(sset: SuggestionSet) -> list[dict[str, Any]]:
+def ring_cards(cards: Iterable[Suggestion]) -> list[dict[str, Any]]:
     """The ``suggestions`` value of a ring entry: what ``stored_card`` reads back."""
-    return [s.model_dump(mode="json") for s in sset.suggestions]
+    return [s.model_dump(mode="json") for s in cards]
+
+
+def ring_suggestions(sset: SuggestionSet) -> list[dict[str, Any]]:
+    """``ring_cards`` of a whole set."""
+    return ring_cards(sset.suggestions)
 
 
 def stored_card(
@@ -802,6 +814,17 @@ def restate_updates(suggestion: Suggestion, action: Action) -> tuple[Any, ...]:
     return ()
 
 
+def tap_updates(suggestion: Suggestion, action: Action, *, language: str = "en") -> tuple[Any, ...]:
+    """The typed requirement(s) a tap of this card writes: its ops' own (``brief_updates_for``),
+    else a restating card's (``restate_updates``). What the serve measures a tap by."""
+    ops = editor_ops(action)
+    if ops is None:
+        ops = copy_ops(action)
+    if ops is not None:
+        return brief_updates_for(suggestion, ops, language=language)
+    return restate_updates(suggestion, action)
+
+
 @dataclass(frozen=True)
 class RestateBase:
     """What a strategy restate stands on: the plan it re-drafts and the head draft it replaces.
@@ -812,6 +835,16 @@ class RestateBase:
     strategy: dict[str, Any] | None
     head_hash: str | None
     reason: str | None = None
+    # The media the plan's draft pinned when it was made (its binding's snapshot, which holds the
+    # length plan): what the plan's requirements were judged on, so a restate can be judged on
+    # it again (``restate_judgment.plan_media``). None for a draft that pinned none.
+    media: dict[str, Any] | None = None
+
+
+def _pinned_media_of(snapshot: Any) -> dict[str, Any] | None:
+    binding = snapshot.get("brief_binding") if isinstance(snapshot, Mapping) else None
+    media = binding.get("media_snapshot") if isinstance(binding, Mapping) else None
+    return dict(media) if isinstance(media, Mapping) and media else None
 
 
 def _strategy_of(snapshot: Any) -> dict[str, Any] | None:
@@ -860,7 +893,9 @@ async def restate_base(db: Any, *, thread_id: Any, ctx: SuggestionContext | None
         if not isinstance(snapshot, Mapping) or snapshot.get("kind") != "strategy":
             return RestateBase(None, digest, BASE_MOVED)
         strategy = _strategy_of(snapshot)
-        return RestateBase(strategy, digest, None if strategy else NO_STRATEGY)
+        return RestateBase(
+            strategy, digest, None if strategy else NO_STRATEGY, _pinned_media_of(snapshot)
+        )
     rows = (
         await db.execute(
             select(CreatorEditDraft.snapshot_json)
@@ -872,7 +907,9 @@ async def restate_base(db: Any, *, thread_id: Any, ctx: SuggestionContext | None
     for snapshot in rows:
         if isinstance(snapshot, Mapping) and snapshot.get("kind") == "strategy":
             strategy = _strategy_of(snapshot)
-            return RestateBase(strategy, None, None if strategy else NO_STRATEGY)
+            return RestateBase(
+                strategy, None, None if strategy else NO_STRATEGY, _pinned_media_of(snapshot)
+            )
     return RestateBase(None, None, NO_STRATEGY)
 
 
@@ -882,8 +919,16 @@ def restates_strategy(action: Action) -> bool:
     return isinstance(action, (BriefUpdateAction, ItemSettingAction))
 
 
+def spends(action: Action) -> bool:
+    """A tap that makes paid media and edits nothing: the tap spends, the creator reviews."""
+    return isinstance(action, AsyncGenerateAction)
+
+
 __all__ = [
+    "BUDGET_UNAVAILABLE",
     "COPY_OP_ALLOW",
+    "GENERATION_FAILED",
+    "GENERATION_UNAVAILABLE",
     "PIN_KEY",
     "PINNED_OP_ALLOW",
     "StoredCard",
@@ -910,6 +955,7 @@ __all__ = [
     "restate_base",
     "restate_updates",
     "restates_strategy",
+    "spends",
     "resolve_pin",
     "save_unread",
     "ring_suggestions",

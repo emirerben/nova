@@ -17,10 +17,15 @@ struct SpeechCleanupStats: Equatable {
     /// The creator asked for TIGHT pauses (top-level `pause_style == "tight"`); the analysis
     /// numbers only count long pauses, so the card leaves them out.
     let tightPauses: Bool
+    /// The creator asked to keep the whole clip / their speech as filmed (top-level
+    /// `recommended_choice == "keep_original"`, KRI-971): "Keep original speech and create"
+    /// leads. Old servers never send it.
+    let keepOriginalRecommended: Bool
 
-    init(analysis: [String: JSONValue], requestedInChat: Bool = false, tightPauses: Bool = false) {
+    init(analysis: [String: JSONValue], requestedInChat: Bool = false, tightPauses: Bool = false, keepOriginalRecommended: Bool = false) {
         self.requestedInChat = requestedInChat
         self.tightPauses = tightPauses
+        self.keepOriginalRecommended = keepOriginalRecommended
         candidateCount = analysis["candidate_count"]?.numberValue.map(Int.init)
         estimatedRemovedMs = analysis["estimated_removed_ms"]?.numberValue.map(Int.init)
         let counts = analysis["category_counts"]?.objectValue
@@ -29,9 +34,10 @@ struct SpeechCleanupStats: Equatable {
         retakes = counts?["retakes"]?.numberValue.map(Int.init)
     }
 
-    init(candidateCount: Int? = nil, estimatedRemovedMs: Int? = nil, fillerSounds: Int? = nil, longPauses: Int? = nil, retakes: Int? = nil, requestedInChat: Bool = false, tightPauses: Bool = false) {
+    init(candidateCount: Int? = nil, estimatedRemovedMs: Int? = nil, fillerSounds: Int? = nil, longPauses: Int? = nil, retakes: Int? = nil, requestedInChat: Bool = false, tightPauses: Bool = false, keepOriginalRecommended: Bool = false) {
         self.requestedInChat = requestedInChat
         self.tightPauses = tightPauses
+        self.keepOriginalRecommended = keepOriginalRecommended
         self.candidateCount = candidateCount
         self.estimatedRemovedMs = estimatedRemovedMs
         self.fillerSounds = fillerSounds
@@ -97,24 +103,34 @@ struct SpeechCleanupChoiceButtons: View {
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
                     .accessibilityIdentifier("speech-cleanup-stats")
             }
-            Button(action: clean) {
-                Text("Clean up speech and create")
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 12)
+            if stats.keepOriginalRecommended {
+                Text("You asked to keep the whole clip")
+                    .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.ink)
+                    .accessibilityIdentifier("speech-cleanup-keep-whole-note")
+                choiceButton("Keep original speech and create", id: "speech-cleanup-keep-original", primary: true, action: keepOriginal)
+                choiceButton("Clean up speech and create", id: "speech-cleanup-clean", primary: false, action: clean)
+            } else {
+                choiceButton("Clean up speech and create", id: "speech-cleanup-clean", primary: true, action: clean)
+                choiceButton("Keep original speech and create", id: "speech-cleanup-keep-original", primary: false, action: keepOriginal)
             }
-            .buttonStyle(CanonicalPrimaryButtonStyle())
-            .disabled(isDisabled)
-            .accessibilityIdentifier("speech-cleanup-clean")
-            Button(action: keepOriginal) {
-                Text("Keep original speech and create")
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 12)
-            }
-            .buttonStyle(CanonicalSecondaryButtonStyle())
-            .disabled(isDisabled)
-            .accessibilityIdentifier("speech-cleanup-keep-original")
+        }
+    }
+
+    @ViewBuilder private func choiceButton(_ title: String, id: String, primary: Bool, action: @escaping () -> Void) -> some View {
+        let label = Text(title)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 12)
+        if primary {
+            Button(action: action) { label }
+                .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isDisabled)
+                .accessibilityIdentifier(id)
+        } else {
+            Button(action: action) { label }
+                .buttonStyle(CanonicalSecondaryButtonStyle())
+                .disabled(isDisabled)
+                .accessibilityIdentifier(id)
         }
     }
 }
@@ -205,11 +221,64 @@ enum SpeechCleanupOffer: Equatable {
             return (.failed, analysisID)
         case "ready", "no_findings":
             if cleanup["requires_choice"]?.booleanValue == true {
-                return (.choice(SpeechCleanupStats(analysis: analysis, requestedInChat: cleanup["requested_in_chat"]?.booleanValue == true, tightPauses: cleanup["pause_style"]?.stringValue == "tight")), analysisID)
+                return (.choice(SpeechCleanupStats(analysis: analysis, requestedInChat: cleanup["requested_in_chat"]?.booleanValue == true, tightPauses: cleanup["pause_style"]?.stringValue == "tight", keepOriginalRecommended: cleanup["recommended_choice"]?.stringValue == "keep_original")), analysisID)
             }
             return (.plain, analysisID)
         default:
             return (.plain, analysisID)
         }
     }
+}
+
+/// Decides, while the speech check reads `.checking`, when the poll loop must re-read the full
+/// thread and when the card stops promising a result. The analysis task never bumps the thread
+/// revision or appends an event, so `/delta` stays empty and only a full read sees it finish.
+///
+/// `giveUpAfter` is ~6x the 15 s analysis measured in prod, and covers a cold worker start. It is
+/// a card deadline, not a verdict: the watch keeps refetching afterwards so a slow analysis
+/// still resolves the card, and the server's own failure is the only thing that offers Retry.
+struct SpeechCheckWatch: Equatable {
+    static let refetchInterval: TimeInterval = 3
+    static let lateRefetchInterval: TimeInterval = 15
+    static let giveUpAfter: TimeInterval = 90
+    /// Longer gaps between observations (app suspended, poll backed off) are not time the
+    /// creator spent watching a spinner, so they count as this much.
+    static let maxCountedGap: TimeInterval = 5
+
+    private var analysisID: String?
+    private var checkedFor: TimeInterval = 0
+    private var lastObservedAt: Date?
+    private var lastFetchAt: Date?
+
+    init(analysisID: String? = nil, lastObservedAt: Date? = nil, lastFetchAt: Date? = nil) {
+        self.analysisID = analysisID
+        self.lastObservedAt = lastObservedAt
+        self.lastFetchAt = lastFetchAt
+    }
+
+    var hasTimedOut: Bool { checkedFor >= Self.giveUpAfter }
+
+    /// Returns true when the caller should re-read the full thread now. A new analysis, or
+    /// leaving `.checking`, starts the clock over. The read just before checking began is the
+    /// baseline, so the first refetch is one interval away rather than immediate.
+    mutating func observe(_ offer: SpeechCleanupOffer, analysisID: String?, now: Date) -> Bool {
+        guard offer == .checking else {
+            self = SpeechCheckWatch()
+            return false
+        }
+        guard let lastObservedAt, analysisID == self.analysisID, let lastFetchAt else {
+            self = SpeechCheckWatch(analysisID: analysisID, lastObservedAt: now, lastFetchAt: now)
+            return false
+        }
+        checkedFor += min(max(now.timeIntervalSince(lastObservedAt), 0), Self.maxCountedGap)
+        self.lastObservedAt = now
+        let interval = hasTimedOut ? Self.lateRefetchInterval : Self.refetchInterval
+        guard now.timeIntervalSince(lastFetchAt) >= interval else { return false }
+        self.lastFetchAt = now
+        return true
+    }
+}
+
+final class SpeechCheckClock {
+    var watch = SpeechCheckWatch()
 }

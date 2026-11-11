@@ -8,6 +8,84 @@ import CoreGraphics
 #endif
 
 final class DeviceRenderCoordinatorTests: XCTestCase {
+    // Written before safe parked continuation; native/package execution is held.
+    func testSafeContinuationKeepsLegacyAndUnknownExportConservative() async throws {
+        for stage: DeviceRenderContinuationStage? in [nil, .exportStarted] {
+            let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var saved = DeviceRenderReceipt(request: request(), attemptID: UUID(), phase: .preparing)
+            saved.continuationStage = stage
+            try JSONEncoder().encode(saved).write(to: directory.appendingPathComponent("device-render.json"))
+            let exporter = RecordingExporter()
+            let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: RecordingPublisher())
+            let resumed = try await coordinator.resumeParkedSafely()
+            await coordinator.waitUntilIdle()
+            let count = await exporter.count, final = await coordinator.snapshot()
+            XCTAssertFalse(resumed)
+            XCTAssertEqual(count, 0)
+            XCTAssertEqual(final?.attemptID, saved.attemptID)
+        }
+    }
+
+    func testSafeContinuationEncodesKnownNotStartedOnceAndPersistsDispatchStage() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var saved = DeviceRenderReceipt(request: request(), attemptID: UUID(), phase: .preparing)
+        saved.continuationStage = .notStarted
+        try JSONEncoder().encode(saved).write(to: directory.appendingPathComponent("device-render.json"))
+        let exporter = RecordingExporter(holdFirst: true)
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: RecordingPublisher())
+        let resumed = try await coordinator.resumeParkedSafely()
+        XCTAssertTrue(resumed)
+        await exporter.waitStarted()
+        let persisted = try JSONDecoder().decode(DeviceRenderReceipt.self, from: Data(contentsOf: directory.appendingPathComponent("device-render.json")))
+        XCTAssertEqual(persisted.continuationStage, .exportStarted)
+        let overlapping = try await coordinator.resumeParkedSafely()
+        XCTAssertFalse(overlapping)
+        await exporter.release()
+        await coordinator.waitUntilIdle()
+        let final = await coordinator.snapshot(), count = await exporter.count
+        XCTAssertEqual(final?.phase, .synced)
+        XCTAssertEqual(final?.attemptID, saved.attemptID)
+        XCTAssertEqual(count, 1)
+    }
+
+    func testSafeContinuationPublishesIntactOutputButNeverReplacesMissingOutput() async throws {
+        for damage in ["none", "missing", "corrupt"] {
+            let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+            let exporter = RecordingExporter(), publisher = CheckingPublisher(pendingFirst: 1)
+            let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+            try await coordinator.start(request(), decision: .init(route: .local))
+            await coordinator.waitUntilIdle()
+            let snapshot = await coordinator.snapshot()
+            let before = try XCTUnwrap(snapshot)
+            let file = try XCTUnwrap(before.outputURL)
+            if damage == "missing" { try FileManager.default.removeItem(at: file) }
+            if damage == "corrupt" { try Data("changed bytes".utf8).write(to: file) }
+            let resumed = try await coordinator.resumeParkedSafely()
+            await coordinator.waitUntilIdle()
+            let after = await coordinator.snapshot(), count = await exporter.count
+            XCTAssertEqual(resumed, damage == "none")
+            XCTAssertEqual(after?.attemptID, before.attemptID)
+            XCTAssertEqual(after?.phase, damage == "none" ? .synced : .localReady)
+            XCTAssertEqual(count, 1)
+        }
+    }
+
+    func testSafeContinuationNeverRevivesTerminalReceipt() async throws {
+        for phase in [DeviceRenderPhase.cancelled, .superseded, .synced, .needsAttention] {
+            let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var saved = DeviceRenderReceipt(request: request(), attemptID: UUID(), phase: phase)
+            saved.continuationStage = .notStarted
+            try JSONEncoder().encode(saved).write(to: directory.appendingPathComponent("device-render.json"))
+            let exporter = RecordingExporter()
+            let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: RecordingPublisher())
+            let resumed = try await coordinator.resumeParkedSafely(), count = await exporter.count
+            XCTAssertFalse(resumed); XCTAssertEqual(count, 0)
+        }
+    }
+
     func testStopWinsAgainstEarlierReplacementReturningFromCleanupLater() async throws {
         let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
         let exporter = RecordingExporter(holdFirst: true), gate = CommandReturnGate(held: .superseded)

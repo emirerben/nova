@@ -1,0 +1,17 @@
+# Hosted editor expression type-check correction
+
+Frozen failing source: `973391cace1f01beddfeb3763e395c41ec4e448f`. Hosted run 42270005379, iPhone unit job 128073270252, failed at 18:35:15 UTC with `NativeEditorView.swift:115:25: error: the compiler is unable to type-check this expression in reasonable time`. The job ended TEST BUILD FAILED. No native test pass is implied by this run. Local log: `/tmp/nova-auto-973-native.log`; durable source: https://github.com/emirerben/nova/actions/runs/42270005379/job/128073270252.
+
+The original body put loading branches, presentation sheets, conflict banner, exit controls and lifecycle modifiers in one long expression. The correction extracts the existing expression into four opaque-return view builders and composes them inside the same GeometryReader in the original order. No state owner, modifier order, sheet callback, visibility or lifetime guard changes. Independent static review confirmed those boundaries. The native-selection production fingerprint is updated only for the changed file; this is source correspondence, not execution proof. No formal mapping or hash resync was performed.
+
+The hosted compiler failure is the red evidence. Hosted compilation on the correction remains required to establish green; no local native/package/model/database/process test was launched while re-record owns the serial lane. `git diff --check` passed. A reversible expression decomposition does not add a behavior-mirroring unit test.
+
+At the failing head, API shards 0 and 1, lint/contracts, creator replay, journey mapping, journey-offline and journey-library passed. Docker image build and metadata/overlay guards also passed. Aggregate journey/test-api/build-and-test jobs failed downstream; their failure is not a new API assertion failure. The request-following report was still running. Success of old-head database jobs does not establish mixed-version rolling-binary proof or native readiness, and must not be transferred silently to a new source head.
+
+Documentation-only checkpoint `b4149efe06fd82977bcda6025cb0ba63a3d7c303` adds the independently reviewed mixed-version proposal and corrects evidence prose spacing. It changes no application code. The compiler correction is a separate commit after that checkpoint. No private project, real provider, operational migration, deployment, flag or merge action occurred.
+
+## Next hosted compiler finding
+
+At `1aedbaa02ff02fc659d2f8228396b44455188562`, the hosted compiler progressed past the extracted editor expression and failed on `Core/SlidePost.swift:2700`: the implicit immutable `catch` binding named `error` hid the session's published `String?` property. Job https://github.com/emirerben/nova/actions/runs/42273984202/job/128085886155 reports both the immutable assignment and String-to-Error errors. Local log `/tmp/nova-auto-1aed-native.log` retains that red evidence. The follow-up explicitly assigns `self.error`; storage behavior and the visible message stay unchanged. A source search found no other `catch { error =` assignment in the app. The production selection fingerprint is refreshed for that one file. `git diff --check` passes; the local native hold remains and compilation green is not claimed.
+
+The separate lint job at this head failed because the unchanged remote PR body declares the previous head. Its metadata update remains denied; no retry or alternate publication route was attempted. This is an active merge blocker, alongside unexecuted final-source and operational gates.

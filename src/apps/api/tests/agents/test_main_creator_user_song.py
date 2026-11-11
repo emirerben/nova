@@ -97,13 +97,24 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v135 too.
 # v136 (Qendresa item 18, was v126 / v132 / v134): its paragraph renders only with
 # BACKGROUND_FOCUS_ENABLED and the `background_focus` capability, so the pins cover v136 too.
+# #2131 (Qendresa says-done cases 6-8) rewords the brief section's caption-count and cleanup
+# sentences: the two brief-on hashes re-pinned (v136's: b4ebb285… / bbccdc91…); brief-off
+# unchanged.
+# KRI-971: the two brief-on hashes re-pinned (the keep-a-take-whole sentence also records
+# speech_cleanup false; before: 1d002672… / 7d7d75bc…); brief-off unchanged.
+# KRI-1292: the two brief-on hashes re-pinned again (the spoken-word text asks for a typed
+# `hold_s`; before: 63a22d0d… / 7ed8c8f9…); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
+# KRI-1327: the brief section teaches `subject_outline` (a line drawn around a person): the two
+# brief-on hashes re-pinned (before: 9fc58bb0… / 891266d1…); brief-off unchanged.
+# KRI-1355: the brief section teaches the typed no-title ask (`facts.title == "off"`): the two
+# brief-on hashes re-pinned (before: ae8b21b4… / 3b5a507b…); brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "b4ebb285ecf45439fac6a6ef12251cfe6ee507d8f8c7760a0a37de07c7753b26",
-    (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "bbccdc9144d5257ecbe3e647d944c970665902b7f8afe7f0ea8e5388992f9e52",
-    (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
+    (True, True): "5ac96e9a1909de36430a3641ab104edafae4a20af1fa9bf8f30f20d25705ec77",
+    (True, False): "42a19e30cae3fadac2dd65318b2af49ca4a5d70332e17f714aa5875af6433914",
+    (False, True): "4ad9471f016b045c48ca1c328d4334a7c69179c221770d5c17416b09e98c0631",
+    (False, False): "68d42cab5cc0d03ccf3cf164d19bccba9193f01a9409d802acc0454b4adce777",
 }
 
 
@@ -183,8 +194,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
     assert '"user_song":{"duration_s":187.4,"has_lyrics":true}' in song_prompt
 
 
-def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v136"
+def test_prompt_version_is_wired_into_the_spec() -> None:
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

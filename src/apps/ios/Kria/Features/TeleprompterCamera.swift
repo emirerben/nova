@@ -45,10 +45,9 @@ import UIKit
     @Published private(set) var cinematicActive = false
     /// Cinematic was asked for but this camera session is recording in standard mode.
     @Published private(set) var cinematicNote: String?
-    /// The Cinematic look is being baked into the take that just stopped.
-    @Published private(set) var applyingCinematic = false
-    /// What happened to Cinematic for the take handed to `onFinalized` (nil when Cinematic was off).
-    @Published private(set) var finalizedCinematic: CinematicTakeOutcome?
+    /// Cinematic for the take handed to `onFinalized` (nil when Cinematic was off): `rawReview` when the movie is a raw
+    /// Cinematic one that still owes its bake, `standardKept` when the camera dropped the mode.
+    @Published private(set) var finalizedCinematic: CinematicBakeState?
 
     /// Read by `TeleprompterCameraPreview`; configuration always happens on `captureQueue`.
     nonisolated(unsafe) let session = AVCaptureSession()
@@ -240,6 +239,7 @@ import UIKit
                 let audio = AVAudioSession.sharedInstance()
                 try audio.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
                 try audio.setActive(true)
+                TeleprompterMicrophone.preferBottom(on: audio)
                 self.recordingRequested = true
                 output.startRecording(to: url, recordingDelegate: self)
             } catch {
@@ -339,6 +339,7 @@ import UIKit
                     let audio = AVAudioSession.sharedInstance()
                     try audio.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
                     try audio.setActive(true)
+                    TeleprompterMicrophone.preferBottom(on: audio)
                     if self.isConfigured {
                         let micGone = self.session.inputs.compactMap { $0 as? AVCaptureDeviceInput }
                             .contains { $0.device.hasMediaType(.audio) && !$0.device.isConnected }
@@ -774,15 +775,12 @@ private extension TeleprompterCamera {
         let wasInterrupted = interrupted
         let startedAt = recordingStartedAt
         let validation = await Perf.measureAsync("talk.stop.validate") { await Self.validateMovie(at: url) }
-        // KRI-1160: bake the Cinematic look in before anything measures, saves or plays the take.
-        var cinematic: CinematicTakeOutcome?
+        // KRI-1160: only whether this movie owes a bake. The bake itself runs after Review opens, so Stop never waits for it.
+        var cinematic: CinematicBakeState?
         if case .valid = validation, takeWantsCinematic {
-            applyingCinematic = true
-            note("cinematic_bake")
-            let outcome = await Perf.measureAsync("talk.stop.cinematicBake") { await CinematicTakeFinisher.finish(movieAt: url) } ?? .standard
-            applyingCinematic = false
-            note("cinematic_\(outcome.rawValue)")
-            cinematic = outcome
+            let raw = await Perf.measureAsync("talk.stop.cinematicCheck") { await CinematicTakeFinisher.isCinematic(movieAt: url) }
+            cinematic = raw ? .rawReview : .standardKept
+            note(raw ? "cinematic_raw" : "cinematic_standard")
         }
         finalizedCinematic = cinematic
         takeWantsCinematic = false

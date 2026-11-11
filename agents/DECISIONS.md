@@ -3619,7 +3619,7 @@ watermark as hard obstacles, then raised.
 
 ## [2026-11-03] "Cut the sentence I restarted" is a typed `cut_restarts` brief fact, and its receipt reads "Done" on a retake cut (KRI-1189)
 
-**Decision:** the brief model (shared brief section: Main Creator v119, brief extractor v54; v117/v52 on its branch before #2088 landed) records an unquoted restart ask ("the sentence I restarted", "my retakes", "yanlış başladığım cümleleri", "tekrar aldığım cümleyi") as `{"speech_cleanup": true, "cut_restarts": true}` and never copies the take's words into `cut_lines`. A restart the creator quotes or names stays a cut line; "start over" about the edit or a clip is no restart. Receipts key on the fact only (KRI-667: no new regex): before render "Clean up speech also cuts a sentence you restarted if it finds one, and I'll tell you after" (detection on; approvable through `approval_readiness._cleanup_deferred`) or "... a sentence you restarted stays in" (off; held). After render a `retake` row in the cut record is met ("Done"); none is "didn't find a sentence you restarted" where this render's cleanup could detect one (`_cleanup_note_retake_cut_possible`, the job's contract) and "stays in" where it could not.
+**Decision:** the brief model (shared brief section: Main Creator v119, brief extractor v54; v117/v52 on its branch before #2088 landed) records an unquoted restart ask ("the sentence I restarted", "my retakes", "yanlış başladığım cümleleri", "tekrar aldığım cümleyi") as `{"speech_cleanup": true, "cut_restarts": true}` and never copies the take's words into `cut_lines`. A restart the creator quotes or names stays a cut line; "start over" about the edit or a clip is no restart. Receipts key on the fact only (KRI-667: no new regex): before render "Clean up speech also cuts a sentence you restarted if it finds one, and I'll tell you after" (detection on; approvable through `approval_readiness._promised_at_render`, KRI-1235) or "... a sentence you restarted stays in" (off; held). After render a `retake` row in the cut record is met ("Done"); none is "didn't find a sentence you restarted" where this render's cleanup could detect one (`_cleanup_note_retake_cut_possible`, the job's contract) and "stays in" where it could not.
 **Why:** Green 3 and the two Green runs before it (jobs 9bad2d75, f4556f50, 2f13dc3f) all recorded the transcript line in `cut_lines`, which the render drops; after #2090 a real retake cut would still read "Partly ... may still be in your video" next to a note that says "1 restarted sentence".
 **Kept:** briefs written before the prompt change carry no fact and keep #2090's answer. A retake row never makes a named-line ask met (KRI-551).
 **Evidence:** paid retake precision run 2026-11-03 (`retake-precision-2026-11-03-r5`, $0.047): 8/8 restart-free real takes return no span, Green 3 cuts only 44..53, N3 only 28..31.
@@ -3655,3 +3655,228 @@ watermark as hard obstacles, then raised.
 **Result (offline replay, real Green 5 luminance):** prod picked #767676 (worst caption 1.41:1); now white + black outline, every caption 21:1 against its outline; no plain colour reaches 4.5:1 over these backgrounds.
 **Gap:** face boxes are still mapped as if the speaker filled the canvas, so `caption_look_receipt.over_face` can be wrong for a corner speaker (not changed here).
 **Guards:** `tests/tasks/test_green45_caption_contrast.py`.
+
+## [2026-11-06] Qendresa "says done but isn't", group B: the plan and render do what the typed brief asked (cases 2, 4, 9, 10)
+
+**Context:** the Qendresa kit (`tests/bugs/`) found four asks the draft promised and the video broke: "keep the whole clip" cut 11 s to its 4 s best moment; "mute my sound" refused after render because the contract pinned camera audio from the planner's `audio_strategy: original_audio`; a whole-video `text/global` line the planner filed as `opening_title` showed 0–2.2 s; a title's `timing/title {duration_s: 3}` hold became the video's exact length.
+**Decision (each a bug-fix kill switch, default true, off = byte-identical; typed facts only, KRI-667):**
+- `KEEP_WHOLE_TAKE_PLAN_ENABLED`: `planner._whole_take_ids` → `build_length_plan(whole_take_ids=)`: a footage-owned `montage` with exactly one video clip, a typed `timing/global {keep_whole_take: true}` (no own `duration_s`), no creator length, no moment ask / named moment / found closing line, no mixed-media profile and a clip ≤ the edit cap plays that clip 0 → end (floor = its length, so pace never trims it).
+- `CREATOR_MUTE_WINS_ENABLED`: a whole-video `clip_sound: off` with no `on` ask and no exception on ANY live ask (`clip_sound_toggle_ask.mutes_whole_video`; each exception is painted on in brief order) makes `build_render_contract` pin no camera audio (`require` and `audio_source_ids` dropped; `forbid` kept). A phone job whose pinned contract still requires it relaxes those two fields on a per-variant contract revision (the KRI-736 editor relax) with the length policy re-stamped, except when its prepared-execution stamp records the contract digest (the initial render review requires that exact contract).
+- `WHOLE_VIDEO_TEXT_PIN_ENABLED`: `unified_montage._whole_video_title_pin`: an opening title whose words are a live `text/global` literal becomes a whole-video pin (corner from the literal's typed `position`, else `top_center`), unless any `title`-scope text ask is live, a typed title hold exists or the title is animated; an existing whole-video pin with the same words is reused (never doubled) and a timed one leaves the title as it was. Follow-up (2026-11-06): a text literal typed as an ending (`facts.closing`, non-empty string or `true`) is never the brief-fallback opening title nor pinned; it is drawn only as the closing title (the ending flag rides on each `BriefView.global_literals` entry, so the same words asked once for the whole video and once as an ending keep both; same switch).
+- `TITLE_HOLD_NOT_LENGTH_ENABLED`: `freeze_ask.times_one_moment` is true for a `title`-scoped requirement, so no length reader takes its seconds as the total.
+**Not done:** a hold filed as `timing/global {duration_s: 3}` has the typed shape of "make it 3 seconds" and stays a length ask (brief writer's to file on the title row; kit `title_hold_scope_global` / `ending_hold` stay red). Multi-clip "keep the whole clip" and a whole-video line drawn by another proposal path are unchanged. The receipt halves of cases 2 and 9 are group C's (`brief_checks`). The kit's `test_q3_whole_video_text_receipt` setup assert (`covered < total`) fails once case 9 renders the line for the whole video, by design.
+**Guards:** `tests/kria/test_says_done_b_keep_whole_take.py`, `tests/tasks/test_says_done_b_mute_wins.py`, `tests/pipeline/test_says_done_b_whole_video_text.py`, `tests/services/test_says_done_b_title_hold_length.py`; failure modes `docs/reviews/qendresa-says-done-b-failure-modes.md`.
+
+## [2026-11-06] Main Creator and brief-extractor prompt versions are fingerprints of their source files
+
+**Decision:** `MAIN_CREATOR_PROMPT_VERSION` / `BRIEF_EXTRACTOR_PROMPT_VERSION` are computed at import
+from the files their prompt text comes from (`app/agents/_prompt_fingerprint.py`, `mc-<12 hex>` /
+`be-<12 hex>`). Nobody bumps, renumbers or pins them, and the history comments above them are frozen
+in `docs/pipelines/prompt-version-history.md`.
+
+**Why:** every prompt PR edited the same version line, appended to the same history comment and
+re-pinned the same number in up to 9 test files, so each merge conflicted with every other open
+prompt PR. In the 2026-11-05 batch (23 PRs), 31 of 64 conflicting merge commits touched only those
+files, and the renumber chain (v120 to v136) forced extra pushes, CI runs and re-approvals
+(`docs/reviews/pr-merge-speed-2026-11-05/`). The version labels traces, stored agent runs and eval
+proofs, and it is one input of the turn-checkpoint identity digest (`services/turn_checkpoint.py`):
+a new value only makes a continued turn re-call the model, which `FLY_IMAGE_REF` already does on
+every deploy. Nothing orders these two versions.
+
+**Guard:** `tests/agents/test_prompt_fingerprint.py` checks that every `load_prompt` / `load_skill`
+the two agents call is a listed source, that every source ships in the prod image, and that the
+fingerprint is order/line-ending stable and moves on any byte change. It also checks that the
+file behind every `{{TOKEN}}` vocabulary a source renders (`prompt_vocab.PROMPT_VOCABULARY_SOURCES`,
+e.g. `_schemas/text_animation_phases.py`) is listed (Emir's #2133 review). Remaining gaps: text
+built at render time from capability manifests and other runtime inputs, and a constant imported
+from an unlisted module; list such a module in `*_PROMPT_SOURCES` when it starts feeding prompt
+text.
+## [2026-11-01] Prompt fidelity wave 2: planner
+
+**2026-11-06 main reconciliation.** The unique planner delta is applied over main
+`febe547fb7c1a8d92c4c7ec6c38f57d77ad523c7`, using `15c03a51b` as its historical
+foundation. Current route behavior and existing route goldens are retained. Main's
+content-derived prompt fingerprint replaces the historical v108/v109 labels below;
+there is no flag-dependent version override. The quote rule remains disabled by
+default. Unknown-look disclosures remain enabled independently. Offline replay proves
+the parse, saved-decline provenance and approval-card boundaries only. The known
+whole-sentence semantic counterexamples remain unresolved; live model qualification,
+native export and effective production settings are not verified by this merge.
+
+**Two switches, two defaults (after reviewer 4).** `PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED`
+(default `true`) gates only the unknown-look card lines. `PLANNER_BOUNDARY_HONEST_ENABLED` (default
+`false`, dark) gates only the quote rule for `mixed_media_timing`, `montage_cadence` and
+`video_reuse_policy`, its prompt keys (v109) and its card lines. Reviewer 4 ran 26 attack cases
+against the quote rule: 15 kept a value the creator did not ask for, 3 dropped one they did. The
+server can check that a quote is the creator's own whole sentence, not that the sentence is about
+the field, and the creator's prompt comes first, so keeping a value against the ask is the failure
+this wave exists to prevent. The quote rule stays dark until the paid live v109 eval (an approved
+development-ledger run) measures how often the live model quotes a sentence about something else;
+the look lines carry no such risk (they only name a word the renderer drops anyway). Both are
+reversible by the switch alone.
+
+**What the quote rule does (`MainCreatorAgent.parse`, when on):** the three fields follow the
+`media_scope` rule (KRI-129 part C): the English/Turkish recognizers' explicit reading still wins,
+and where they are silent the model's own value stays only when the model's quote for it grounds
+it. Prompt v109 asks for the three quotes in `render_intent_evidence` (the creator's whole
+sentence, word for word); the parse takes them out of the raw action before validation and only
+`_creator_quote` reads them. A quote grounds a value when (a) it is two words or more found
+verbatim in what the creator wrote, both sides in Unicode NFC (an accent typed as two code points
+still matches); (b) it is whole sentences of that text, starting and ending at a sentence mark
+(`. ! ? …`, a line break, their CJK/Arabic/Devanagari forms) or the edge of a message, never a part
+that leaves out words of its own sentence: a negation before the quote reaches it across commas,
+semicolons, colons and asides ("No quiero que, como la última vez, las fotos ...", "Lo que no
+quiero es esto; las fotos ..."), a later clause can turn it around, and a list a line introduces
+is that line's sentence (a line ending with ":" introduces every line up to a blank line; a line
+with no end mark followed by list items introduces those items; a list no line introduces is one
+sentence per item, `_sentence_text`); (c) every number of seconds the model wrote (a cadence's
+cut, a photo hold) is written in it with digits and a seconds unit right after them ("2
+segundos", "1,5s"; "Somos 2 amigos" grounds nothing); (d) a repeat quote is not the cadence quote
+or a part of it. A quote grounds only its own field: a timing quote keeps the photo and video
+holds, never photo runs or sport groups; a cadence quote keeps the cut, while the cadence's
+`reuse_policy` is the recognizers' reading unless `video_reuse_policy` is grounded by its own
+quote (a cadence with no repeat ask gives `distinct_windows`, as the English recognizer path
+does); a kept cadence follows the recognizers' rule of exactly two videos in the manifest,
+alternating those two (three videos, or a video and a photo, keep no cadence). The checks read
+sentence marks, list marks, digits and the unit written after them, never what a sentence asks
+for: the language policy (KRI-773/786, `test_kri667_no_new_intent_regexes`) leaves that to the
+model. Every check fails toward the server's own reading, the foundation's behaviour. A
+latest-turn "stop alternating" still keeps any cadence out. A grounded ask the manifest cannot
+render (no guided proposals, a voiceover beside a cadence) costs no retry: the parse falls back to
+the server's own reading and records a decline. An ungrounded model value is not kept (a deviation
+from the plan's literal "else keep the model's value"): the overwrite also stops the model
+inventing asks (`test_creator_initial_and_followup_reuse_is_grounded`,
+`test_main_creator_drops_model_invented_timing_for_unrelated_request`, the recorded
+`video_reuse_default` response: very fast photos for "Create a slow Summer in Madrid montage").
+
+**What the look switch does:** a title animation or label position the renderer has no name for
+("bounce", "upper middle") used to become None in the strategy validators and vanish. It is now
+recorded on the strategy as a server-owned `planner_declines` entry (out of every model schema,
+omitted when empty), and `route_disclosure.strategy_notices` names it on the approval card on
+every route (code `not_applied_on_route`, subject `planner_<field>`, English and Turkish,
+`app/kria/planner_declines.py`). The render is unchanged; a decline is never a receipt, a question
+or a block. Each `planner_declines` field belongs to one switch (`planner_decline_fields`): a
+decline whose switch is off is not recorded, is dropped from a stored strategy when it is
+validated, and is not named on the card. A model-written `planner_declines` is refused as the
+unknown key it is on the foundation in every switch state (the same `SchemaError` and retry).
+`drafts.write_draft` drops a client's copy and keeps the head draft's declines only for fields the
+save leaves as the head had them: a client that sets the title to "fade" no longer sees "bounce
+won't be used" (an unknown word typed back is still unset, so that line stays).
+
+**Failure modes, listed before the code** (pinned in `tests/kria/test_planner_boundary_replay.py`
+over `tests/fixtures/kria_replay/planner_boundary/cases.json`, all four switch states):
+F1 an ask in words the recognizers do not read is erased; F2 a model invention is kept; F3 the
+recognizers' explicit reading loses to the model; F4 a latest "stop alternating" loses to a stale
+quoted cadence; F5 a kept ask the manifest cannot render makes the parse refuse; F6 a paraphrase or
+a one-word quote grounds a value; F7 an unknown look vanishes; F8 a known word, an alias or "none"
+is declined; F9 a model-written `planner_declines` is anything but refused; F10 a switch off is not
+byte-identical, or one switch's behaviour leaks through the other; F11 a decline blocks approval or
+changes the render; F12 a fragment of the creator's clause grounds a value; F13 seconds the creator
+never wrote are kept; F14 a decline sentence is reworded into a claim (route card golden
+`tests/fixtures/kria_replay/golden_lines.json`, `tests/kria/test_route_lines_golden.py`); F15 a
+quoted cadence carries the model's repeat permission, or the cadence sentence (or a part of it) is
+reused as the repeat quote; F16 a negation escapes across a comma, a semicolon, an aside, a colon or
+a list break, or a later clause turns the quote around; F17 a timing quote keeps grouping, or a
+digit that is not seconds grounds a hold; F18 a client save forges a decline or keeps one whose
+field it changed, or a stored decline whose switch is off validates to anything but the
+foundation's strategy without it; F19 a kept cadence alternates other than the manifest's exactly
+two videos; F20 an NFD/NFC spelling difference drops a real ask. The `attack_*` cases (reviewer 4)
+record the creator's `direction` per field ("keep" or "drop"), so a later flip of the default is
+guarded: with the quote rule on, the parse follows the direction except on a case marked `limit`
+(`test_the_quote_rule_follows_the_creators_direction`; fixing a limit fails the test until the mark
+is dropped). Mutation check (each fails at least one test): a semicolon as a sentence end (A2), no
+introduced lists, no colon rule, no list-item rule, list marks not blanked (A3), no NFC (A17), no
+cadence-quote containment check (A15), no two-video rule or no pair check (A10), the look lines
+read from the quote switch, a model-written `planner_declines` dropped instead of refused, stored
+declines not filtered by switch, a stale decline kept after a client edit, a client's own
+declines kept, the card not filtered by switch, the quote rule default on.
+
+**Reviewer 4 attack cases:** fixed: A2 (negation before ";"), A3 (negated list, with and without
+a colon, and plain lines after a colon), A10 (three videos, a cadence over all three, a video and
+a photo), A15 (repeat quote equal to or inside the cadence quote: no repeats, `distinct_windows`
+as the English path), A17 (NFD creator text). Documented limits, recorded as `limit` cases and
+not fixed: A5/A6/A7/A8 (a whole sentence about something else: a slow montage for very fast
+photos, an unrelated message for repeats, a title's or a clip's seconds for a cut), A20 (the next
+sentence takes the ask back), A21 (a later turn withdraws the ask in words the recognizers do not
+read), and the over-drops A11 (seconds in words), A13 (2"), A16 (empty quote), which fail toward
+the foundation's reading. A14 (a cadence quoted, repeats not) gives `distinct_windows`, which is
+the English recognizer path's own result, not a repeat. Out of this lane: A1 ("Her fotoğraf 2 sn.
+olsun istemiyorum") is the foundation's Turkish recognizer reading "2 sn." despite the negation,
+with the switch on or off; A23/A24 send an `image_hold` value the schema refuses.
+
+**Wipes left as they are (justified):** `pacing_requested`, `selected_music_section`,
+`song_captions`, `resolved_song_takes`, `choice_answers`, `selection_reconciliation` and
+`confirmed_order_replacement` are server-owned provenance that the route or the planner re-stamps
+from the creator's words or a server resolver; wiping the model's copy loses no creator ask.
+`execution_contract` (native-only manifest, KRI-598) and `editorial_plan` (misfit, KRI-806) are
+mechanisms and model plans, not creator asks; their visible consequences are already reported
+(KRI-594 downgrade notices, the story fallback notes).
+
+**Kill switches:** `PLANNER_BOUNDARY_HONEST_ENABLED=false` (the default) + restart api and worker:
+the prompt is v108 byte for byte (`V108_PROMPT_SHA` in `tests/agents/test_main_creator_user_song.py`)
+and the run records `2026-11-01-v108` (`MainCreatorAgent.__init__`); a response carrying a boundary
+quote is refused as an unknown key, as on the foundation. `PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED=false`
++ restart: no look decline is recorded or shown. With both off the planner path is the foundation's
+(see Verification). Outside the parse, `CreativeStrategy` drops a carried decline whose switch is
+off instead of refusing it, so a strategy stored while a switch was on stays readable and validates
+to exactly the foundation's strategy without it. That is the one schema-level difference from the
+foundation, and no client can use it to forge a line: the only client-writable strategy path,
+`drafts.write_draft`, drops the client's copy in every switch state. Apply: `fly secrets set
+PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED=false --app nova-video` (api + worker) + restart.
+
+**Never revert this lane's code; use the switches.** The foundation's `CreativeStrategy` refuses
+unknown keys (`extra="forbid"`), so with this code reverted every draft, approval and job strategy
+stored with a `planner_declines` entry (an unknown look, recorded by default) fails validation on
+read: approval reads, `approval_readiness`, `kria_runtime` and the render paths that call
+`CreativeStrategy.model_validate` on stored JSON. No tolerance written in this lane's diff can
+survive its own revert. Turning both switches off stops new entries and makes stored ones validate
+as if absent. If a revert is ever unavoidable, keep a read-time drop of the key in the revert
+(`_read_legacy_labels` in `CreativeStrategy` pops retired keys the same way: add
+`data.pop("planner_declines", None)`), which is byte-identical for payloads without it.
+
+**Verification:** with both switches off, all 48 cases and the 89 recorded Main Creator responses
+give the same parse output, or the same exception text, error class and attributes, as the
+foundation worktree (15c03a51b); the same prompt version and hashes (brief on and off), the same
+model, strategy and output schema hashes, and the same card lines on all seven routes in English
+and Turkish. The only difference is the schema-level one above (a stored strategy carrying
+`planner_declines` validates to the bare strategy; the foundation refuses the key). With the
+defaults (quote rule off, looks on) the only further difference is the `unknown_looks` case: its
+two look declines and their card lines. Quote rule on with looks off differs from both on only in
+those look declines. The recorded responses and the Assos draft parse the same in all four states.
+`make kria-replay` for all eight fixtures gives the foundation's reports (only latencies differ;
+29-ekim now records v108 like the foundation); evals replay green; `tests/kria` + `tests/agents`
+fail only the 15 tests (and 44 Postgres fixture errors) that fail the same way on the
+foundation in this environment.
+
+**Limits:** (1) the live model leg is not replayed: whether the live model writes grounded v109
+quotes, and how often it quotes a whole sentence about something else, is unmeasured; that eval
+gates the quote rule's default. (2) The server checks provenance, not meaning (the `limit` cases
+above). Seconds written as words, as 2", or with a unit outside the English, Spanish, Portuguese,
+French, Italian, German and Turkish spellings in `_SECOND_UNITS` ground no number; an abbreviation
+point ("p. ej.", "2 sn.") counts as a sentence end; CJK quotes fail the two-word rule; a line
+after a colon belongs to the colon's sentence up to a blank line, so an unrelated ask written
+there without a blank line is dropped. A grouping ask (photo runs, sport groups) in words the
+recognizers do not read stays dropped, as on the foundation. (3) The web-only v1 route
+(`routes/creator_agent._apply_explicit_render_intent`) still re-derives `mixed_media_timing` from
+the recognizer; Kria (iOS) does not run it. (4) A fallback reverts all three fields together. (5)
+A strategy that carries both an unknown key and `planner_declines` lists the two errors in another
+order than the foundation when the unknown key comes first (`planner_declines` is a declared field
+refused by its validator); the exception class and the retry are the same. (6) `FIELD_MATRIX`
+gains the three `planner_declines` paths (`upstream_resolved`), which changes
+`worker_capabilities_digest` on deploy like any new strategy field; per-strategy readiness digests
+are unchanged when no decline is recorded. (7) The typed wire schema (`main_creator_output_mode=native`,
+off by default) carries no boundary quote, so that arm keeps the server's reading. (8) Owned by
+the foundation's `unified_montage` table, not this lane: `montage_cadence` is marked Applied there
+although the phone planner reads it only as a story blocker, so a kept cadence renders as a plain
+montage with no card line (true for English cadences already), and `image_hold` "standard" and
+"very_fast" give the same photo hold.
+
+## [2026-11-07] The dedicated `visuals` process (KRI-1240, #2148) is reverted for cost
+
+**Decision:** revert #2148 the day it merged. The `visuals` Fly group (shared-cpu-2x/2048MB, always on; flyctl's first deploy made two machines) is removed from `fly.toml`, and `queue_state.py`/`worker.py`/the topology pins go back to api/worker/light. The worker was the fallback `visuals-analysis` consumer the whole time, so Visuals keep working, one file at a time again (~27 s each; 10 Visuals ~4.5 min, the pre-#2148 behaviour).
+
+**Why:** product call (Yasin): the speed-up is not worth a new always-on machine bill. `VISUALS_ANALYSIS_QUEUE` stays set; the worker drains that queue. The local benchmark is in #2148's history (`docs/reviews/kri-1240-visuals-burst.md`) if a cheaper fix (one Gemini call per burst, or raising concurrency for analysis only) is tried later.
+
+**Deadline budget (Emir's review of #2183):** with the dedicated group gone, the unified worker (`--concurrency=1`) is the only `visuals-analysis` consumer, but `pool_analysis_deadline` still budgeted two slots, no other work on the lane and a 60-min cap: 14 healthy photos (239 s each) behind each other exceed the 14th photo's deadline, and the reaper turns an expired `queued` row into a retryable failure without asking the broker. The budget now matches the lane that is always there: `_QUEUE_CONCURRENCY = 1` (pinned to the worker's `--concurrency`; a dedicated group may be draining or gone), one lane occupant of 2400 s (the longest hard limit the worker can be running, `batch_import_from_drive`; pinned), backlog weighted per kind ahead (`queue_backlog_stmt` returns lane seconds: 420 s per photo, 780 s per video = run window + the 60 s soft-to-hard gap), cap 4 h. Cost: a truly lost broker message on a quiet lane now shows "Analyzing..." for up to 50 min (photo) / 70 min (video) plus one run window instead of 10/30, and `creator_preparation.POOL_WAIT_LIMIT` grows with the cap (4 h 22 min). Not covered: more non-analysis tasks interleaved into a burst (Celery cycles the worker's queues); the cap and the retryable timeout are the backstop. Guards: `tests/integration/test_pool_asset_stall_bound_postgres.py::test_slow_burst_behind_a_busy_shared_lane_never_times_out` (+ red control `test_pre_revert_budget_fails_the_same_burst`, recovery `test_lost_message_on_a_quiet_lane_still_ends_and_retry_recovers`), `tests/test_pool_asset_fly_contract.py::test_visuals_deadline_budgets_only_the_always_present_worker_lane` / `::test_lane_occupant_covers_the_longest_task_the_worker_can_be_running`.
+
+**Cutover: two deploys, and quiesce before removal** (Emir's re-review of #2183). (1) Attempts carry durable deadlines and broker `expires`, and nothing extends them, so attempts stamped under the old two-slot budget would time out if capacity shrank under them: the lane-sized deadline ships FIRST in its own PR, and the group is removed only after the old-budget cohort (in flight, dispatched before that deploy completed) is empty. (2) The pinned flyctl (v0.4.94) destroys a group removed from `fly.toml` with `Kill: true` before updating the retained groups, so the machines are stopped gracefully first (`--signal SIGTERM --timeout 300 --wait-timeout 6m`; `REMAP_SIGTERM=SIGQUIT` makes it Celery's soft shutdown, up to 240 s, then restore) with every attempt they could have touched captured by id and token (in flight at `T_start`, plus everything dispatched since `T_start` whatever its state: a later in-flight snapshot misses an attempt dispatched, claimed, killed and timed out inside the stop window) and reconciled 20 min later (`needs_retry` = creator Retry). No deploy may be queued or running during it. Procedure and queries: `docs/runbooks/visuals-group-removal.md`; its queries run verbatim in `tests/integration/test_visuals_cutover_postgres.py` (old-budget red, drain-then-remove control, reconcile outcomes).

@@ -81,11 +81,22 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # `caption_box`): the brief section's cleanup sentence teaches `pauses: "tight"`. v120 alone
 # was d690f1ff / ca93a669 / 2e66923b / f56fcd47; v119's values were e632c312 / cd66c5b5 /
 # 09c8a8cc / e86242d5.
+# Re-pinned for KRI-971 (the "keep a take whole" fact also records speech_cleanup false);
+# the values before it were eadb06c3 / c6290bc7 / 6021f1e2 / 3d3d0c73.
+# Re-pinned for says-done group E (#2131): the brief section's caption-count and cleanup
+# sentences carry her Q1/Q2 sentences as examples; v136's values were 39455ee1 / 06797395 /
+# 4b280598 / 83b280d6.
+# Re-pinned for KRI-1292: the brief section teaches `hold_s` for a text at a spoken word;
+# removing that clause reproduces the values above.
+# Re-pinned for KRI-1327: the brief section teaches `subject_outline` (a line around a person);
+# the values before it were ce15504f / 8a7a2c85 / 68edb943 / d29283f2.
+# Re-pinned for KRI-1355: the brief section teaches the typed no-title ask (`title: "off"`);
+# the values before it were b52730bb / 72041f99 / 3116efd4 / 7cc917df.
 MAIN_PROMPT_SHA = {
-    "neither": "39455ee18360da7e3780ec22a38d993b894d7869826bf6e87d6b6b25c9a07474",
-    (True, True): "06797395bfbd83d1aa897d786c39758dd0c1af444b8dc1055a486a6920c4af33",
-    (True, False): "4b2805986afd719d046bb7f93047dcbac8d76612379a1ca8bfc061c77e34961b",
-    (False, True): "83b280d6a117a66b3bfbdd79ee97ec5e3bb28bbf3d137db6634387c69e7e3fdd",
+    "neither": "62cb90f09ed39561094307dcbe86fb5858d82957b0373a3ba5b14a1973912e00",
+    (True, True): "2c83102a5775194593119b0cd004a6593d9c9b3622815419da09aedf33c3f181",
+    (True, False): "f2f80a6e20025407fbe0a2dffb0176c7a534a42eac2faf3fea4de2649242bec8",
+    (False, True): "d0df791e74b22894ca12b7933e8f5c3d2144f9156b273939d998eb618efae5ed",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

@@ -49,6 +49,7 @@ from app.pipeline.phone_recipe_shared import (
     apply_landscape_fit,
     clip_tilt_zoom,
     timeline_end_s,
+    with_color_moments,
     with_drawings,
 )
 from app.pipeline.phone_subtitled_lanes import (
@@ -63,6 +64,7 @@ from app.pipeline.phone_subtitled_lanes import (
 )
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
+    additional_speaker_keep_segments_from_recipe,
     additional_speakers_from_recipe,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
@@ -91,7 +93,9 @@ from app.services.phone_editor_sources import (
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
     background_focus_client_supported,
+    card_style_supported,
     card_tilt_supported,
+    color_moments_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     phone_guided_sfx_supported,
@@ -172,6 +176,8 @@ _SUBTITLED_EDITOR_SECTIONS = frozenset(
         "orientation",
         # KRI-589: freehand drawings compile into the recipe's `drawing_layers`.
         "drawings",
+        # KRI-1350: colour moments (the chat op) compile onto `color_moments` / `end_fade`.
+        "color_moments",
         # KRI-1117: the whole-edit Talk-to-camera background (`EditRecipeV2.speaker_background`).
         "speaker_background",
     }
@@ -186,7 +192,7 @@ _SUBTITLED_TEXT_SECTIONS = frozenset({"text_elements"})
 # always honours (KRI-280): the caption lines and their look. Every other
 # section opens only behind its own gate below, and the rest stay closed rather
 # than silently dropped on Save.
-_NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta", "drawings"})
+_NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta", "drawings", "color_moments"})
 _NARRATED_CAPTION_SECTIONS = frozenset({"caption_cues", "caption_meta"})
 # KRI-465: ...and the opening title / text the creator adds, as `text_elements`,
 # recompiled into the pinned recipe's `title-` layers by `replace_narrated_title`
@@ -208,7 +214,8 @@ _VOICEOVER_FIT_SECTIONS = frozenset({"landscape_fit"})
 # KRI-589: ...and freehand drawings, recompiled from the variant's stored lane onto the
 # pinned recipe's `drawing_layers` (`with_drawings`) on EVERY Save of every device
 # archetype, whichever sections it carries.
-_DRAWING_SECTIONS = frozenset({"drawings"})
+# KRI-1350: colour moments ride the same lane-free path (`with_color_moments`).
+_DRAWING_SECTIONS = frozenset({"drawings", "color_moments"})
 # KRI-821: ...and the footage's own sound level (Sounds > Original audio, `mix.original_level`
 # only), written onto the pinned recipe's `audio.original_volume` by `_apply_original_level`.
 # The narration and any music bed keep their pinned levels.
@@ -333,6 +340,7 @@ def _text_requirements_for_save(
                         media_id=source.media_id,
                         shot_index=source.shot_index,
                         duration_s=source.duration_s,
+                        chapter_media_ids=source.chapter_media_ids,
                     )
                 )
             else:
@@ -608,8 +616,12 @@ def _compile_editor_commit(
     if variant.get("editor_timeline_mode") == "authored":
         from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
 
-        recipe = compile_phone_authored_timeline(staged, variant, previous.recipe)
-        recipe = with_drawings(recipe, variant.get("drawings"))
+        recipe = compile_phone_authored_timeline(
+            staged, variant, with_color_moments(previous.recipe, None)
+        )
+        if "drawings" in variant:
+            recipe = with_drawings(recipe, variant.get("drawings"))
+        recipe = with_color_moments(recipe, variant.get("color_moments"))
         validate_phone_pilot_recipe(recipe, allow_editor_media=True)
         request = make_device_request(
             job_id=job.id,
@@ -671,7 +683,7 @@ def _compile_editor_commit(
         plan = copy.deepcopy(variant.get(PHONE_EDITOR_SAVED_PLAN_FIELD) or worker_plan)
         revision = prep.get("guided_revision")
         render_sections = {key for key, value in prep["sections"].items() if value}
-        if not (render_sections - {"text_elements", "drawings"}):
+        if not (render_sections - {"text_elements", "drawings", "color_moments"}):
             # A text-only save keeps the approved plan's device-verified timing
             # program and swaps just the text lane, whether it came from a
             # legacy guided editor or the v2 revision contract. Re-projecting
@@ -767,6 +779,8 @@ def _compile_editor_commit(
         )
         # KRI-589: the revision is the guided variant's canonical lanes.
         recipe = with_drawings(recipe, revision.get("drawings") if revision is not None else None)
+        # KRI-1350: colour moments are server-owned (the chat op) and ride every Save.
+        recipe = with_color_moments(recipe, variant.get("color_moments"))
         validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
         request = make_device_request(
             job_id=job.id,
@@ -811,6 +825,36 @@ def prepare_phone_editor_commit(
         None,
     )
     require_phone_voiceover_source_audio_client(before_variant)
+    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL
+    from app.services.phone_rollout import (
+        split_collapse_client_supported,
+        split_screen_client_supported,
+    )
+
+    if not split_screen_client_supported() or not split_collapse_client_supported():
+        try:
+            split_recipe = device_status(job, variant_id).request.recipe
+        except KeyError:
+            split_recipe = None
+        capabilities = split_recipe.required_capabilities if split_recipe is not None else set()
+        if "splitScreen" in capabilities and not split_screen_client_supported():
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "split_screen",
+                    "minimum_client_protocol": 42,
+                },
+            )
+        if "splitCollapse" in capabilities and not split_collapse_client_supported():
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "split_collapse",
+                    "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
+                },
+            )
     staged = _StagedJob(job)
     from app.services.finished_style_learning import learning_available, style_snapshot
 
@@ -855,6 +899,31 @@ def prepare_phone_editor_commit(
     if stored_drawings and not freehand_drawing_client_supported():
         # A recompile would pin a recipe (`drawingLayers`) this app build cannot decode.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
+    # KRI-1350: the lane this Save leaves behind (staged), so a Save that clears the moments
+    # goes through on any app build; only a recipe that would still carry them needs build 48.
+    stored_color_moments = next(
+        (
+            v.get("color_moments")
+            for v in (staged.assembly_plan or {}).get("variants", [])
+            if isinstance(v, dict) and v.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if (
+        isinstance(stored_color_moments, dict)
+        and (stored_color_moments.get("moments") or stored_color_moments.get("end_fade"))
+        and not color_moments_client_supported()
+    ):
+        # KRI-1350: a recompile would pin `color_moments` / `end_fade`, which this
+        # app build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "color_moments",
+                "minimum_client_protocol": settings.color_moments_min_client_protocol,
+            },
+        )
     stored_variant = next(
         (
             v
@@ -1417,21 +1486,30 @@ def _persist_lane_state(
         row.pop(SFX_DUCK_RECEIPT_FIELD, None)
 
 
-def _require_card_tilt_supported(previous: Any, lanes: Any) -> None:
-    """KRI-1141: refuse a NEW or CHANGED card angle while the tilt gates are closed.
+def _require_card_edits_supported(previous: Any, lanes: Any) -> None:
+    """Refuse a NEW or CHANGED card angle (KRI-1141) or zoom/animation (KRI-1264) while its
+    gates are closed.
 
-    Keeping a stored angle and straightening one are always allowed (a Save that does not touch
-    the tilt of a card the edit already holds must not fail because the kill switch was flipped
-    afterwards).
+    Keeping a stored value and resetting one are always allowed (a Save that does not touch a
+    card's tilt or style must not fail because a gate was closed afterwards).
     """
-    held = {card.id: card.rotation_deg for card in (previous.overlays if previous else [])}
-    changed = [
+    held = {card.id: card for card in (previous.overlays if previous else [])}
+    tilted = [
         card
         for card in lanes.overlays
-        if card.rotation_deg != 0 and card.rotation_deg != held.get(card.id, 0.0)
+        if card.rotation_deg != 0
+        and card.rotation_deg != getattr(held.get(card.id), "rotation_deg", 0.0)
     ]
-    if changed and not card_tilt_supported():
+    if tilted and not card_tilt_supported():
         raise ValueError("tilting a picture isn't available on this edit yet")
+    styled = [
+        card
+        for card in lanes.overlays
+        if (style := card.placement_style()) is not None
+        and style != (held[card.id].placement_style() if card.id in held else None)
+    ]
+    if styled and not card_style_supported():
+        raise ValueError("zooming or animating a picture isn't available on this edit yet")
 
 
 def _compile_subtitled_editor_commit(
@@ -1483,9 +1561,20 @@ def _compile_subtitled_editor_commit(
     if range_rows is not None:
         if not isinstance(previous.recipe, EditRecipeV2) or len(bindings) != 1:
             raise ValueError("Range needs a single-clip pinned Talking recipe")
-        range_keep, previous_lanes = _apply_talking_range(
-            range_rows, previous.recipe, bindings[0], previous_lanes
+        range_keep, previous_lanes, moved_moments = _apply_talking_range(
+            range_rows,
+            previous.recipe,
+            bindings[0],
+            previous_lanes,
+            color_moments=variant.get("color_moments"),
         )
+        # KRI-1350: the stored moments follow their footage like the cards do (a lane this
+        # Save also sets is already on the new clock).
+        if "color_moments" not in active_sections and moved_moments is not None:
+            if moved_moments.get("moments") or moved_moments.get("end_fade"):
+                variant["color_moments"] = moved_moments
+            else:
+                variant.pop("color_moments", None)
     lanes = lanes_from_editor_sections(
         previous=previous_lanes,
         sound_effects=prep.get("sfx_override"),
@@ -1494,8 +1583,14 @@ def _compile_subtitled_editor_commit(
         background_touched=bool(prep.get("speaker_background_touched")),
         background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
+    # KRI-1350: a colour moment's own sound always sits on its moment's edge, whatever moved.
+    lanes = rebind_color_moment_sounds(lanes, variant.get("color_moments"))
+    if isinstance(variant.get("sound_effects"), list):
+        variant["sound_effects"] = rebind_color_moment_sound_rows(
+            variant["sound_effects"], variant.get("color_moments")
+        )
 
-    _require_card_tilt_supported(previous_lanes, lanes)
+    _require_card_edits_supported(previous_lanes, lanes)
 
     caption_cues = prep.get("caption_cues_override")
     caption_cues_overridden = caption_cues is not None
@@ -1521,6 +1616,8 @@ def _compile_subtitled_editor_commit(
     speaker = bindings[0]
     cutaways: tuple = ()
     additional_speakers: tuple = ()
+    # KRI-720: each extra take's own cleanup cut, so a Save never plays a cut take uncut again.
+    additional_speaker_keep: dict = {}
     inserts: tuple = ()
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
@@ -1528,6 +1625,10 @@ def _compile_subtitled_editor_commit(
         if not phone_talking_cutaway_sound_supported():
             cutaways = tuple(c.model_copy(update={"sound": False}) for c in cutaways)
         additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
+        if additional_speakers:
+            additional_speaker_keep = additional_speaker_keep_segments_from_recipe(
+                previous.recipe, bindings
+            )
         # Parent KRI-1151: a clip the take was paused for comes back where it was, whatever the
         # insert flag says now; the rows below are already on the final timeline.
         inserts = inserts_from_recipe(previous.recipe, bindings)
@@ -1564,6 +1665,8 @@ def _compile_subtitled_editor_commit(
         editor_speaker_framing,
         landscape_canvas_framing,
     )
+    from app.pipeline.phone_talking_closing_card import closing_card_from_recipe  # noqa: PLC0415
+    from app.services.phone_rollout import phone_talking_closing_card_available  # noqa: PLC0415
 
     if landscape_canvas:
         # No face-fill on a wide canvas: the receipt says so (`landscape_canvas`) but keeps its
@@ -1587,6 +1690,11 @@ def _compile_subtitled_editor_commit(
         caption_look=caption_look,
         cutaways=cutaways,
         additional_speakers=additional_speakers,
+        **(
+            {"additional_speaker_keep_segments": additional_speaker_keep}
+            if additional_speaker_keep
+            else {}
+        ),
         **({"inserts": inserts} if inserts else {}),
         landscape_fit=landscape_fit,
         # KRI-467: the staged row's text (already this Save's, when it carries
@@ -1597,8 +1705,18 @@ def _compile_subtitled_editor_commit(
         # Only a landscape canvas names itself: the portrait call stays byte-identical.
         **({"output_orientation": "landscape"} if landscape_canvas else {}),
         **({"clip_tilts": tilts} if (tilts := _previous_clip_tilts(previous.recipe)) else {}),
+        # KRI-1346: the creator's colour card stays at the end on every Save (read back from
+        # the pinned recipe, like the inserts); its words are an ordinary saved text row. With
+        # its switch off the Save drops the card instead of failing the recipe check.
+        **(
+            {"closing_card": card}
+            if phone_talking_closing_card_available()
+            and (card := closing_card_from_recipe(previous.recipe))
+            else {}
+        ),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
+    recipe = with_color_moments(recipe, variant.get("color_moments"))
     # KRI-1142: added pictures are rebuilt from the saved blocks on EVERY Talking Save, not only a
     # Save that touches them. This compiler rebuilds the recipe from scratch, so skipping the media
     # layer here would silently drop a picture on the next caption or sound edit. The blocks are
@@ -1707,12 +1825,16 @@ def _apply_talking_range(
     recipe: EditRecipeV2,
     speaker: PhoneSourceBinding,
     previous_lanes: PhoneSubtitledLanes | None,
-) -> tuple[list[tuple[float, float]], PhoneSubtitledLanes | None]:
-    """The new keep segments from the Range rows, and the pinned card/effect lanes moved from
-    the old layout onto it (a lane the Save also carries replaces its moved copy)."""
+    *,
+    color_moments: Any = None,
+) -> tuple[list[tuple[float, float]], PhoneSubtitledLanes | None, Any]:
+    """The new keep segments from the Range rows, and the pinned card/effect lanes and the
+    stored colour moments (KRI-1350) moved from the old layout onto it (a lane the Save also
+    carries replaces its moved copy)."""
     from app.services.phone_talking_range import (  # noqa: PLC0415
         keep_segments_from_rows,
         layout_slots,
+        reproject_color_moments,
         reproject_lanes,
     )
 
@@ -1725,7 +1847,68 @@ def _apply_talking_range(
     tail_s = max(0.0, float(recipe.duration) - speaker_end)
     old_slots = layout_slots(old_keep, ids, tail_s=tail_s)
     new_slots = layout_slots(new_keep, ids, tail_s=tail_s)
-    return new_keep, reproject_lanes(previous_lanes, old_slots, new_slots)
+    return (
+        new_keep,
+        reproject_lanes(previous_lanes, old_slots, new_slots),
+        reproject_color_moments(color_moments, old_slots, new_slots),
+    )
+
+
+def _color_moment_edges(stored: Any) -> dict[str, float]:
+    """Sound id -> edge time for every moment of a stored colour-moments lane (KRI-1350)."""
+    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
+
+    edges: dict[str, float] = {}
+    if isinstance(stored, dict):
+        for moment in stored.get("moments") or []:
+            if isinstance(moment, dict) and moment.get("id") is not None:
+                edges[f"{SOUND_ID_PREFIX}{moment['id']}-enter"] = round(float(moment["start"]), 3)
+                edges[f"{SOUND_ID_PREFIX}{moment['id']}-exit"] = round(float(moment["end"]), 3)
+    return edges
+
+
+def rebind_color_moment_sounds(lanes: Any, stored: Any) -> Any:
+    """Pin every colour-moment sound in ``lanes`` to its moment's edge; drop one whose moment
+    is gone. Sounds the creator placed themselves are never touched (KRI-1350)."""
+    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
+
+    if lanes is None or not any(
+        effect.request.id.startswith(SOUND_ID_PREFIX) for effect in lanes.sound_effects
+    ):
+        return lanes
+    edges = _color_moment_edges(stored)
+    effects = []
+    for effect in lanes.sound_effects:
+        if effect.request.id.startswith(SOUND_ID_PREFIX):
+            at = edges.get(effect.request.id)
+            if at is None:
+                continue
+            if effect.request.at_s != at:
+                request = effect.request.model_copy(update={"at_s": at})
+                effect = effect.model_copy(update={"request": request})
+        effects.append(effect)
+    return lanes.model_copy(update={"sound_effects": effects})
+
+
+def rebind_color_moment_sound_rows(rows: list, stored: Any) -> list:
+    """`rebind_color_moment_sounds` for the variant's stored ``sound_effects`` editor rows."""
+    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
+
+    if not any(
+        isinstance(row, dict) and str(row.get("id") or "").startswith(SOUND_ID_PREFIX)
+        for row in rows
+    ):
+        return rows
+    edges = _color_moment_edges(stored)
+    kept = []
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("id") or "").startswith(SOUND_ID_PREFIX):
+            at = edges.get(str(row["id"]))
+            if at is None:
+                continue
+            row = {**row, "at_s": at}
+        kept.append(row)
+    return kept
 
 
 def _restale_protected_text(
@@ -1800,7 +1983,7 @@ def _commit_voiceover_lanes(
         media_overlays=prep.get("media_overlays_override"),
         visuals=visuals,
     )
-    _require_card_tilt_supported(previous_lanes, lanes)
+    _require_card_edits_supported(previous_lanes, lanes)
     recipe = replace_editor_lanes(
         recipe, lanes=lanes, visuals=visuals, video_track_id=video_track_id
     )
@@ -2047,7 +2230,7 @@ def _compile_narrated_editor_commit(
     # KRI-589: patch from the pinned recipe WITHOUT its drawing layers (a shorter cut would
     # leave them past the end, which the recipe validator refuses) and re-add them from the
     # stored lane at the end, whichever sections this Save carried.
-    recipe = with_drawings(previous.recipe, None)
+    recipe = with_color_moments(with_drawings(previous.recipe, None), None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
         recipe = _swap_voiceover_cut(
@@ -2100,6 +2283,7 @@ def _compile_narrated_editor_commit(
     if original_active:
         recipe = _apply_original_level(recipe, variant, prep)
     recipe = with_drawings(recipe, variant.get("drawings"))
+    recipe = with_color_moments(recipe, variant.get("color_moments"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
         job_id=previous.identity.job_id,
@@ -2207,7 +2391,7 @@ def _compile_voiceover_montage_editor_commit(
         raise ValueError("phone Voiceover edits need a pinned v2 recipe")
 
     # KRI-589: patch from the pinned recipe without its drawing layers (see the narrated twin).
-    recipe = with_drawings(previous.recipe, None)
+    recipe = with_color_moments(with_drawings(previous.recipe, None), None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
         recipe = _swap_voiceover_cut(
@@ -2246,6 +2430,7 @@ def _compile_voiceover_montage_editor_commit(
     if original_active:
         recipe = _apply_original_level(recipe, variant, prep)
     recipe = with_drawings(recipe, variant.get("drawings"))
+    recipe = with_color_moments(recipe, variant.get("color_moments"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
         job_id=previous.identity.job_id,

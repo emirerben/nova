@@ -45,8 +45,8 @@ setting the flag:
 2. Land KRI-1189 (the `cut_restarts` brief fact; child of KRI-1174, related to KRI-1176) first. The
    brief model records an unquoted restart ask as `cut_restarts: true` (Main Creator v119, brief
    extractor v54) and receipts key on it: before render "Clean up speech also cuts a sentence you
-   restarted if it finds one" (detection on, approvable via `_cleanup_deferred`) or "... stays in"
-   (off, held); after render a `retake` row is "Done", none is "didn't find" (on) or "stays in"
+   restarted if it finds one" (detection on, approvable: `RENDER_PROMISE_REASONS`) or "... stays
+   in" (off, held); after render a `retake` row is "Done", none is "didn't find" (on) or "stays in"
    (off). Briefs written before it carry no fact and keep "may still be in your video".
 3. `fly secrets set SPEECH_CLEANUP_RETAKES_ENABLED=true --app nova-video` and restart api and
    worker (every ready analysis is retired once and consent is asked again), then the canary
@@ -68,6 +68,72 @@ and evidence: `docs/reviews/qendresa-13-tight-pauses.md`.
    on the creator's own take, plus one take with background noise (expect no tight cuts).
 2. `fly secrets set TIGHT_PAUSE_CUT_ENABLED=true --app nova-video`, restart api and worker.
 3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
+
+## Long pauses by default
+
+`SPEECH_CLEANUP_LONG_PAUSES_ENABLED` (default off; off is byte-identical). Whisper-1 word stamps
+are contiguous and stretch over pauses, so cleanup's pause rule (word gap >= 0.6 s plus silence
+agreement) sees a gap of 0 and keeps the pause. Evidence: Emir's camera take (prod job c39a3210,
+one Turkish clip, 82.7 s, "Clean up speech") kept 11 pauses of 0.6-1.6 s while the plan cut 10.
+With the flag on, a consented single-clip phone Talking render also runs the tight-pause cutter
+(`tight_pause_cut.py`, same protections: quiet-floor rule, noisy takes untouched, voice guard,
+keep-segment caps) in long mode, `min_pause_s=0.6`: only Kria silence spans of 0.6 s or more
+are cut, from their audio edges. Replay on that take: 10 of the 11 leftover pauses cut (longest
+kept pause 1.61 s to 0.58 s; the 11th, 0.62 s, sits under a protected word stamp and stays), no
+word cut. Shorter natural pauses stay.
+
+The receipt is `variant["long_pauses"]` (`mode: "long"`, `limit_s: 0.6`); `tight_pauses` is
+reserved for a creator ask and a tight ask keeps the tight path. The public cleanup counts include
+the extra cuts. No iPhone change: the phone applies the server's cut ranges.
+
+1. `fly secrets set SPEECH_CLEANUP_LONG_PAUSES_ENABLED=true --app nova-video`, restart api and
+   worker (needs `SILENCE_CUT_ENABLED`).
+2. Check a fresh Talking render on a consented take: `long_pauses.status` is `applied` and
+   `pauses_over_limit` is 0; a noisy-room take reports `no_change`.
+3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
+
+## Off-script opening ("okay, starting", "we're recording", "başlıyorum")
+
+`SPEECH_CLEANUP_SLATE_CUT_ENABLED` (default off; off is byte-identical). A creator who says "okay,
+starting" or "okay, we're recording" before the first real sentence restarts nothing, so the
+pause, filler and retake rules all keep it (Çiğdem S2 "ss2b", prod job f4f81c07, KRI-1326;
+yorum3, prod job 7eba9903, KRI-1348). With the flag on, `app/pipeline/speech_slate.py` reads the
+take's opening utterances (from word 0, stopping at the first real one) and gives every word a
+role: filler, glue, production talk (recording, starting, rolling, mic/sound/camera/light checks,
+kayıt, başlıyorum, çekiyor …), countdown number, or cue (go, let's, "is this on", hadi, hazır mıyız …). An
+utterance is cut only when every word has a role and it has an anchor: a production word, a
+countdown of two or more numbers, or a cue followed by a pause of at least 0.6 s. A word with no
+role keeps it ("Okay, so here's the thing" stays), a production noun the take talks about later
+keeps it (a mic review's "Mic check."), and the cut ends within 8 s and leaves at least 3 words.
+New phrasings are new combinations of roles and need no code change. It is handed to the planner
+as a retake span (same snapping, voice-guard exemption, receipts), so it also needs both retake
+switches (`RETAKE_CUT_ENABLED` and `SPEECH_CLEANUP_RETAKES_ENABLED`, both on in prod since
+2026-11-04); with either off it is kept. The cleanup offer counts it among the "restarted
+sentences". Failure modes and checks: `docs/reviews/kri-1348-preroll-failure-modes.md` (and
+`docs/reviews/cigdem-s2-failure-modes.md` A for the first version).
+
+The flag is not part of the source-policy fingerprint: analyses already `ready` keep their plan
+(no consent is retired), and only analyses made after the restart see the opener. Test with a
+freshly sent take, not a re-approval of an old one.
+
+Rollout (an operator step; needs Yasin's OK — this PR does not change any secret):
+
+1. After the PR is merged and the Fly deploy of that commit finished, confirm `fly status --app
+   nova-video` shows that image on the `api` and `worker` process groups. The flag is read
+   by the API, by preflight analysis (the `speech-analysis` queue) and by the cloud render cut;
+   both queues run on `worker` since the former `speech_analysis` group was folded into it
+   (`fly.toml`). If `fly status` still lists a `speech_analysis` group, it must be on the same
+   image and restart with the others.
+2. `fly secrets set SPEECH_CLEANUP_SLATE_CUT_ENABLED=true --app nova-video`. Fly restarts every
+   machine on a secret change; confirm api and worker (and any `speech_analysis` machine)
+   restarted before testing.
+3. On the iPhone, send a NEW take that opens with "Okay, starting." (the Çiğdem S1 take
+   `IMG_7212.MOV` works) and approve with Clean up speech. Pass: the debug view's
+   `silence_cut.removed` starts with a `retake` row from 0 s, the first keep segment starts at the
+   first real word, and the video opens on "Ten minutes after…". Also send one take that opens
+   straight on its real first sentence (Çiğdem S4 `IMG_8120.MP4`): no `retake` row at 0 s.
+4. Kill switch: the same secret `=false` (api and worker restart); renders already pinned keep
+   their cuts.
 
 ## Gates and sequence
 

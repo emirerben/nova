@@ -197,9 +197,84 @@ def sound_toggle_asks(requirements: Iterable[BriefRequirement]) -> tuple[SoundTo
     return tuple(ask for req in requirements if (ask := requirement_sound_toggle(req)) is not None)
 
 
+def requirement_source_mute(req: BriefRequirement) -> SoundToggleAsk | None:
+    """KRI-1297: a global ``audio_intent: source_muted`` ask read as a whole-video ``off``.
+
+    "Mute my sound, I'll add a song on TikTok" is filed by the brief writer as the typed
+    ``source_muted`` (the voiceover bed's mute, KRI-821) rather than ``clip_sound: off``. One
+    plain ask, two typed shapes: without this a voiceless montage kept the clip's own sound.
+    The approved words must say mute/remove and never keep, lower or raise the sound; a
+    clip-scoped or windowed ask stays the bed reader's. A voiceover or song soundtrack never
+    reaches this (the montage lane steps aside for them), so the bed mute is unchanged.
+    """
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _BED_MUTE_RE,
+        _BED_UP_RE,
+        _KEEP_VERB_RE,
+        SOURCE_MUTED_INTENT,
+        _asks_bed_level,
+        _req_text,
+        _typed_audio_intent,
+    )
+
+    if not req.live or req.kind != "audio" or req.scope.strip().lower() != "global":
+        return None
+    if _typed_audio_intent(req) != SOURCE_MUTED_INTENT:
+        return None
+    if req.facts.get(CLIP_SOUND_FACT) is not None or any(
+        req.facts.get(key) is not None
+        for key in (
+            SOUND_CLIP_FACT,
+            SOUND_MEDIA_FACT,
+            SOUND_FROM_FACT,
+            SOUND_TO_FACT,
+            SOUND_LINE_FACT,
+            SOUND_EXCEPT_FACT,
+        )
+    ):
+        # A row that names where (or an exception) is the `clip_sound` reader's, never a
+        # whole-video mute.
+        return None
+    text = _req_text(req)
+    if (
+        not _BED_MUTE_RE.search(text)
+        or _KEEP_VERB_RE.search(text)
+        or _BED_UP_RE.search(text)
+        or _asks_bed_level(text)
+    ):
+        return None
+    return SoundToggleAsk(requirement=req, state=SOUND_OFF, target=SoundTarget())
+
+
 def brief_sound_toggle_asks(brief: CreativeBrief | None) -> tuple[SoundToggleAsk, ...]:
-    """`sound_toggle_asks` over a brief's live requirements (empty without one)."""
-    return sound_toggle_asks(brief.live()) if brief is not None else ()
+    """`sound_toggle_asks` over a brief's live requirements (empty without one).
+
+    Includes the typed ``source_muted`` whole-video mute (`requirement_source_mute`).
+    """
+    if brief is None:
+        return ()
+    # One pass in brief order: a later creator correction (``clip_sound: on``) must follow an
+    # earlier ``source_muted`` mute, and the reverse.
+    return tuple(
+        ask
+        for req in brief.live()
+        if (ask := requirement_sound_toggle(req) or requirement_source_mute(req)) is not None
+    )
+
+
+def mutes_whole_video(asks: Iterable[SoundToggleAsk]) -> bool:
+    """True when the asks silence every clip (Qendresa case 4, "mute my sound"): no ask turns
+    any sound on (no ``on`` ask, no exception on any ask: each exception is painted on, in
+    brief order) and at least one is a whole-video ``off``."""
+    asks = tuple(asks)
+    if any(ask.state == SOUND_ON or ask.exceptions for ask in asks):
+        return False
+    return any(ask.state == SOUND_OFF and ask.target.whole_video for ask in asks)
+
+
+def brief_mutes_whole_video(brief: CreativeBrief | None) -> bool:
+    """`mutes_whole_video` over a brief's live requirements (False without one)."""
+    return mutes_whole_video(brief_sound_toggle_asks(brief))
 
 
 __all__ = [
@@ -215,7 +290,10 @@ __all__ = [
     "SOUND_TO_FACT",
     "SoundTarget",
     "SoundToggleAsk",
+    "brief_mutes_whole_video",
     "brief_sound_toggle_asks",
+    "mutes_whole_video",
+    "requirement_source_mute",
     "requirement_sound_toggle",
     "sound_toggle_asks",
 ]

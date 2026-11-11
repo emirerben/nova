@@ -64,14 +64,106 @@ final class AuthoredTextFitTests: XCTestCase {
         }
     }
 
-    /// 7. Text dragged off-centre or edge-anchored wraps to the full 0.9 x W and runs past the frame edge.
+    /// 7. Text dragged off-centre or edge-anchored wraps to the full 0.9 x W and runs past the frame edge, or (KRI-885)
+    /// is re-wrapped although it sits inside the frame because the room stopped at the 5% safe margins.
     /// The widths are cloud `text_fit.authored_safe_width` values (`test_authored_safe_width_matches_ios`).
-    func testOffCentreAuthoredTextGetsOnlyTheRoomToTheSafeMargins() {
-        let cases: [(Double, String, Double)] = [(0.5, "center", 972), (0.7, "center", 540), (0.3, "left", 702),
-                                                 (0.8, "right", 810), (0.15, "center", 216), (0.99, "center", 108)]
+    func testOffCentreAuthoredTextGetsTheRoomToTheFrameEdge() {
+        let cases: [(Double, String, Double)] = [(0.5, "center", 972), (0.7, "center", 583.2), (0.3, "left", 723.6),
+                                                 (0.8, "right", 831.6), (0.15, "center", 259.2), (0.99, "center", 108)]
         for (x, alignment, expected) in cases {
             XCTAssertEqual(AuthoredTextFit.safeWidth(canvasWidth: 1080, xFraction: x, alignment: alignment),
                            expected, accuracy: 0.001, "\(x) \(alignment)")
+        }
+    }
+
+    /// KRI-886, written before the code: an unbreakable run (emoji chain, CJK, URL, combining marks) overflowed at the
+    /// shrink floor. It must break between grapheme clusters, only at the floor, never split a cluster, never drop text,
+    /// and break at the same places as the cloud renderers (`tests/pipeline/test_authored_text_fit.py`).
+    func testUnbreakableRunsBreakBetweenClustersAtTheFloor() throws {
+        let font = repo.appendingPathComponent("src/apps/api/assets/fonts/Inter-Bold.ttf")
+        let runs = ["emoji": String(repeating: "🔥", count: 90),
+                    "family": String(repeating: "👨‍👩‍👧‍👦", count: 90),
+                    "flags": String(repeating: "🇹🇷🇯🇵🇧🇷", count: 40),
+                    "skin": String(repeating: "👍🏽👍🏿", count: 60),
+                    "combining": String(repeating: "e\u{301}a\u{308}", count: 120),
+                    "url": "https://example.com/" + String(repeating: "a-very-long-path-segment/", count: 12)]
+        let graphics = try XCTUnwrap(CGDataProvider(url: font as CFURL).flatMap(CGFont.init))
+        let ctFont = CTFontCreateWithGraphicsFont(graphics, AuthoredTextFit.minimumSize, nil, nil)
+        let safe = AuthoredTextFit.safeWidth(canvasWidth: 1080)
+        for (name, text) in runs {
+            let layer = try AuthoredTextLayout.compile(id: "t", text: text, start: 0, end: 2,
+                style: .init(fontAssetID: "font", size: 72, widthFraction: 0.3,
+                             color: .init(red: 1, green: 1, blue: 1, alpha: 1), wrapsLines: false),
+                fontURL: font, canvas: Canvas(width: 1080, height: 1920))
+            let rows = layer.runs.map(\.text)
+            XCTAssertEqual(rows.joined(), text, name)
+            XCTAssertEqual(rows.map(\.count).reduce(0, +), text.count, "\(name): a cluster was split")
+            XCTAssertTrue(layer.runs.allSatisfy { $0.fontSize >= AuthoredTextFit.minimumSize }, name)
+            if rows.count > 1 {
+                XCTAssertTrue(layer.runs.allSatisfy { $0.fontSize == AuthoredTextFit.minimumSize }, "\(name): broken above the floor")
+            }
+            for row in rows {
+                XCTAssertLessThanOrEqual(AuthoredTextFit.width(row, attributes: [
+                    NSAttributedString.Key(kCTFontAttributeName as String): ctFont]), safe + 0.5, "\(name): \(row)")
+            }
+        }
+    }
+
+    /// The compiler refuses a face with no CJK glyphs (a glyph-safe face is picked upstream), so CJK is checked on
+    /// the row breaker with a face that has them.
+    func testCJKBreaksBetweenClustersAtTheFloor() {
+        let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String):
+            CTFontCreateWithName("PingFangSC-Regular" as CFString, AuthoredTextFit.minimumSize, nil)]
+        let text = String(repeating: "今日は天気がいいので散歩に行きましょう", count: 9)
+        let rows = AuthoredTextFit.authoredRows(text, attributes: attributes, width: 972, breaksRuns: true)
+        XCTAssertGreaterThan(rows.count, 1)
+        XCTAssertEqual(rows.joined(), text)
+        XCTAssertTrue(rows.allSatisfy { AuthoredTextFit.width($0, attributes: attributes) <= 972 })
+        XCTAssertEqual(AuthoredTextFit.authoredRows(text, attributes: attributes, width: 972, breaksRuns: false), [text],
+                       "above the floor a run is shrunk, not broken")
+    }
+
+    func testAClusterWiderThanTheBoxStaysWhole() {
+        let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String):
+            CTFontCreateWithName("Helvetica" as CFString, 72, nil)]
+        let rows = AuthoredTextFit.clusterRows("A👨‍👩‍👧‍👦B", attributes: attributes, width: 4)
+        XCTAssertEqual(rows, ["A", "👨‍👩‍👧‍👦", "B"])
+    }
+
+    /// The slide canvas draws `authoredText`, so preview and export keep and break the same words.
+    func testSlideCanvasTextIsTheRowsTheExportDraws() {
+        let attributes: (Double) -> [NSAttributedString.Key: Any] = { points in
+            [NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithName("Helvetica-Bold" as CFString, points, nil)]
+        }
+        let url = "https://example.com/" + String(repeating: "a-very-long-path-segment/", count: 12)
+        let fitted = AuthoredTextFit.authoredText("Short line\n\n\(url)", points: 24, width: 972, attributes: attributes)
+        let rows = fitted.components(separatedBy: "\n")
+        XCTAssertEqual(Array(rows.prefix(2)), ["Short line", ""])
+        XCTAssertGreaterThan(rows.count, 3)
+        XCTAssertEqual(rows.dropFirst(2).joined(), url)
+        let keptWhole = AuthoredTextFit.authoredText("one verylongword", points: 72, width: 300, attributes: attributes)
+        XCTAssertEqual(keptWhole, "one\nverylongword", "above the floor a word stays whole")
+    }
+
+    /// A highlighted caption word is one run (the cloud karaoke keeps it whole, `_wrap_word_indices`). A token wider
+    /// than the safe width at the 24 px floor must therefore overflow whole instead of being cut between clusters,
+    /// which made `compileHighlightedWords` throw `AuthoredTextLayout-213` and failed the whole native caption render.
+    func testHighlightedCaptionKeepsAnUnbreakableWordWholeAtTheFloor() throws {
+        let font = repo.appendingPathComponent("src/apps/api/assets/fonts/Inter-Bold.ttf")
+        let url = "https://example.com/" + String(repeating: "a-very-long-path-segment/", count: 12)
+        let canvas = Canvas(width: 1080, height: 1920)
+        let ink = TextInk(red: 1, green: 1, blue: 1, alpha: 1)
+        for wrapsLines in [true, false] {
+            let style = AuthoredTextLayout.Style(fontAssetID: "font", size: 56, widthFraction: 0.8, color: ink, wrapsLines: wrapsLines)
+            for text in [url, "see \(url) now", String(repeating: "🔥", count: 90)] {
+                let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+                let layer = try AuthoredTextLayout.compileHighlightedWords(id: "c", text: text, start: 0, end: 3,
+                    starts: words.indices.map { Double($0) }, highlight: ink, style: style, fontURL: font, canvas: canvas)
+                XCTAssertEqual(layer.runs.map(\.text), words, "wrapsLines=\(wrapsLines): \(text.prefix(12))")
+            }
+            let single = try AuthoredTextLayout.compileSingleWords(id: "c", text: "see \(url)", start: 0, end: 3,
+                starts: [0, 1], highlight: ink, style: style, fontURL: font, canvas: canvas)
+            XCTAssertNil(single, "a word that cannot stay on one line falls back to the full-line karaoke layer")
         }
     }
 

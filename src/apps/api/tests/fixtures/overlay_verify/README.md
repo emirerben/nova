@@ -75,10 +75,20 @@ frame's safe width (0.9 x W) soft-wraps at the creator's size; a single over-wid
 shrinks (never below 24px). All must stay inside the side margins. The slide fixture is
 verified on the 1080-wide portrait frame: slides share its width, so the side margins are
 the same. The last two slide overlays sit off-centre (centred at x=0.7, left-anchored at x=0.3):
-the wrap width is the room between the anchor and the safe margins
-(`text_fit.authored_safe_width`), not a flat 0.9 x W. The server slide export draws
+the wrap width is the room between the anchor and the frame edge, capped at 0.9 x W
+(`text_fit.authored_safe_width`, KRI-885), not a flat 0.9 x W. The server slide export draws
 through Pillow, not Skia, so `tests/pipeline/test_authored_newlines.py` renders the same
 text through the real `slide_post.build.render_text_element_png`.
+
+`kri885_886_unbreakable_and_off_centre.json` (KRI-885, KRI-886) is hand-edited text
+(`wrap_lines=false`) with runs that have no space to wrap at: a 90-emoji chain, 180 Hangul
+characters (Inter lacks them, so the whole run moves to Noto Sans KR via `glyph-fallbacks.json`;
+no bundled face draws Japanese or Chinese, so those are checked by measurement only in
+`test_authored_text_fit.py`, never as pixels), a long URL and a ZWJ family / flag / skin-tone chain, plus two legacy lines placed
+off-centre (centred at x=0.68, left-anchored at x=0.2) that sit inside the frame. The text
+shrinks to the 24px floor, then breaks between grapheme clusters (never inside a ZWJ
+sequence, flag or skin tone); every row must stay un-clipped, and the off-centre lines must
+not re-wrap while they fit the room to the frame edge.
 
 `kri1192_caption_scripts.json` (KRI-1192) burns real FLEURS sentences (CC BY 4.0) in the
 new caption scripts: Greek in TikTok Sans Bold and in Montserrat Bold (no Greek letters, so
@@ -87,3 +97,5 @@ KR Bold), Arabic as a static line and as a karaoke line (whole run in Noto Sans 
 shaped right to left), and Serbian in its Latin spelling in Inter Tight. The verifier FAILs a
 missing glyph and, since KRI-1192, Arabic that would be drawn unshaped (isolated letters, left
 to right).
+
+`kri1312_new_fonts.json` burns an English line and a Turkish line in each of the 39 fonts added by KRI-1312, so a face that clips, drops a glyph or falls back to the wrong partner shows up in the montage. Faces without Turkish letters render the Turkish line in their `glyph-fallbacks.json` partner.

@@ -222,6 +222,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - `CAPTION_ANIMATION_ENABLED` — default `true` (KRI-1007): caption entrance/exit/loop (protocol 24, `authoredText`); off = old captions. `phone-rendering.md`.
 - `SPEAKER_BACKGROUND_ENABLED` — default **`false`**; token/protocol: `speakerBackground` 27, `speakerBackgroundWindows` 32, `speakerBackgroundColor` 34. `docs/pipelines/speaker-background.md`.
 - `MEDIA_TILT_ENABLED` — default **`false`** (KRI-1134). Clip tilt + backdrop; needs `clipTilt` verified + protocol ≥28. phone-rendering.md.
+- `COLOR_MOMENTS_ENABLED` — default **`false`** (KRI-1350). Chat-set B&W/warm/faded windows, flash/dip edges, end fade; needs `colorMoments` verified + protocol ≥48. phone-rendering.md.
 - `CREATOR_EDITORIAL_TASTE_ENABLED` / `_USER_IDS` — default `false` / `[]` (empty admits nobody; `["*"]` = every account; ENABLED stays the kill switch). Personalizes nothing until a creator confirms a profile. `docs/runbooks/editorial-taste-calibration.md`.
 - `SLIDE_POSTS_ENABLED` — defaults `true`. Mixed-media posts; pipelines/slide-post.md. Rollback: fly secret `…=false` + restart (api+worker). `SLIDE_POST_STICKERS_ENABLED` (protocol `8`, KRI-647): default `true`; old builds 426 on save; sticker images never slides.
 - `FREEHAND_DRAWING_ENABLED` (min protocol `6`) / `SLIDE_POST_DRAWING_ENABLED` (`7`) — default `true`, KRI-589 kill switches. Video needs `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES`, old builds 426 (slides never). `false` ⇒ no new drawings; never roll code back. `docs/pipelines/drawing.md`.
@@ -233,7 +234,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (replay only; needs `ANTHROPIC_API_KEY`). Paid live Gemini requires an approved development-ledger run (hard cap $2, no judge); see `tests/evals/README.md`.
-- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump its `prompt_version`; free replay evals must pass (live/judge: optional, paid). Enum lists come from `prompt_vocab.py` tokens; guard: `test_prompt_vocab_drift.py`.
+- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump `prompt_version` (Main Creator/brief extractor: auto); free replay evals must pass (live/judge optional, paid). Enums: `prompt_vocab.py` tokens; guard `test_prompt_vocab_drift.py`.
 - **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh`. See `tests/evals/README.md` for the full prompt-iteration loop.
 - **Layer-2 cache-bump rule:** any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts must bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py`. Guard: `.github/workflows/layer2-cache-guard.yml`. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.
 - See `docs/pipelines/layer2-text-overlay.md` for Layer-2 stage details, OCR backend divergence (local Apple Vision ≠ prod Cloud Vision), and the template_text agent rubric.
@@ -309,9 +310,8 @@ identifier yet.
 `gbrain code-def`, `code-refs`, `code-callers`, `code-callees`, `search`, and
 `query` from anywhere under this worktree route to that source by default —
 no `--source` flag needed (gbrain >= 0.41.38.0; on older gbrain the call-graph
-commands need `--source "$(cat .gbrain-source)"`). Conductor sibling worktrees
-of the same repo each have their own pin and their own indexed pages, so
-semantic results match the code on disk here.
+commands need `--source "$(cat .gbrain-source)"`). Sibling worktrees each have
+their own pin and pages, so results match the code on disk here.
 
 Call-graph queries (`code-callers`/`code-callees`) also need the graph to be
 built first — run `/sync-gbrain --dream` (or `--full`) if they return
@@ -338,11 +338,9 @@ file globs. Run `/sync-gbrain` after meaningful code changes; for ongoing
 auto-sync across all worktrees, run `gbrain autopilot --install` once per
 machine — gbrain's daemon handles incremental refresh on a schedule.
 
-Safety: don't run `/sync-gbrain` while `gbrain autopilot` is active — the
-orchestrator refuses destructive source ops when it detects a running autopilot
-to avoid racing it (#1734). Prefer registering user repos with `gbrain sources
-add --path <dir>` (no `--url`): URL-managed sources can auto-reclone, and the
-sync code walk for them requires an explicit `--allow-reclone` opt-in.
+Safety: don't run `/sync-gbrain` while `gbrain autopilot` is active (it
+refuses destructive source ops then; #1734). Register repos with `gbrain sources add --path <dir>`
+(no `--url`: URL sources can auto-reclone).
 
 <!-- gstack-gbrain-search-guidance:end -->
 

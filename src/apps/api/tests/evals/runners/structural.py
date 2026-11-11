@@ -2799,6 +2799,38 @@ def check_scene_matcher(
     return failures
 
 
+def check_spoken_cue_resolver(output: Any, input: Any) -> list[str]:  # noqa: A002
+    """KRI-1356: the resolver contract, independently of parse(): one row per cue, real word
+    ids, a short forward span, and a resolved span that is never just the creator's own words
+    (those the exact matcher already hears, so the cue would never have been sent)."""
+    from app.agents.spoken_cue_resolver import MAX_CUE_SPAN_WORDS  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    failures: list[str] = []
+    cue_ids = [cue.cue_id for cue in input.cues]
+    if [row.cue_id for row in output.resolutions] != cue_ids:
+        failures.append("resolutions must answer every cue once, in input order")
+    index_of = {str(word.get("word_id")): i for i, word in enumerate(input.words)}
+    trigger_of = {cue.cue_id: cue.trigger for cue in input.cues}
+    for row in output.resolutions:
+        if (row.start_word_id is None) != (row.end_word_id is None):
+            failures.append(f"{row.cue_id}: only one end of the span is set")
+            continue
+        if row.start_word_id is None:
+            continue
+        first, last = index_of.get(row.start_word_id), index_of.get(str(row.end_word_id))
+        if first is None or last is None:
+            failures.append(f"{row.cue_id}: unknown word id")
+            continue
+        if not 0 <= last - first < MAX_CUE_SPAN_WORDS:
+            failures.append(f"{row.cue_id}: span is reversed or longer than the cue allows")
+            continue
+        heard = " ".join(str(input.words[i].get("text") or "") for i in range(first, last + 1))
+        if fold_tokens(heard) == fold_tokens(trigger_of.get(row.cue_id, "")):
+            failures.append(f"{row.cue_id}: resolved to the exact words the matcher hears")
+    return failures
+
+
 def check_narrated_clip_alignment(
     output: NarratedClipAlignmentOutput,
     input: NarratedClipAlignmentInput,  # noqa: A002
@@ -3199,6 +3231,8 @@ def run_structural(
         return check_scene_matcher(output, input)
     if agent_name == "nova.compose.narrated_clip_alignment":
         return check_narrated_clip_alignment(output, input)
+    if agent_name == "nova.compose.spoken_cue_resolver":
+        return check_spoken_cue_resolver(output, input)
     if agent_name == "nova.compose.narrated_storyboard":
         return check_narrated_storyboard(output, input)
     if agent_name == "nova.compose.narration_annotations":

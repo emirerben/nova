@@ -50,7 +50,17 @@ def _segments(rows: list[dict]) -> list[dict]:
             )
             if overlap >= 0.1:
                 cursor -= overlap
+        if row.get("_speech_output_start_s") is not None:
+            cursor = float(row["_speech_output_start_s"])
         source_start = float(row.get("in_s") or 0.0)
+        hold = float(row.get("freeze_hold_s") or 0)
+        source_end = (
+            float(row["source_end_s"])
+            if row.get("source_end_s") is not None
+            else source_start + duration * rate
+        )
+        if hold or row.get("split_section_id"):
+            source_end = min(source_end, source_start + (duration - hold) * rate)
         slot_id = str(row.get("slot_id") or row.get("segment_id") or len(segments))
         segments.append(
             {
@@ -60,10 +70,9 @@ def _segments(rows: list[dict]) -> list[dict]:
                 "output_start_s": cursor,
                 "output_end_s": cursor + duration,
                 "duration_s": duration,
+                "freeze_hold_s": hold,
                 "source_start_s": source_start,
-                "source_end_s": float(row["source_end_s"])
-                if row.get("source_end_s") is not None
-                else source_start + duration * rate,
+                "source_end_s": source_end,
             }
         )
         cursor += duration

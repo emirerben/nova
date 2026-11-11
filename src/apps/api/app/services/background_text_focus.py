@@ -32,6 +32,8 @@ MAX_AUTO_ZOOM = 2.5
 MIN_FOCUS_ZOOM = 0.2  # wire bounds of a focus zoom
 MAX_FOCUS_ZOOM = 4.0
 LANDSCAPE_MARGIN = 1.25  # measure only when picture aspect >= canvas aspect * this
+# KRI-1307: the measured zoom's floor, a multiple of the cover fit: the picture fills the frame.
+_FILL_ZOOM = 1.0
 
 # Measure constants (set on a prototype over four layouts).
 _SAMPLE_W, _SAMPLE_H = 960, 540
@@ -299,13 +301,18 @@ def focus_for_text_column(
     canvas_w: int = 1080,
     canvas_h: int = 1920,
 ) -> BackgroundFocus | None:
-    """Zoom/align so the column fills the width, lines stay readable and start in view.
+    """Zoom/align so the picture fills the frame, lines stay readable and start in view.
+
+    KRI-1307: the zoom never goes below the cover fit. Fitting the whole column into the width
+    zoomed a 16:9 README recording OUT (0.70-0.87x), and the phone then drew black bars above and
+    below it ("screen recordings full screen" was not full screen). Filling the frame wins; when
+    the column is then wider than what shows, the view starts at the column's left edge so every
+    line reads from its first word. A creator's own zoom (the lane's) is not floored here.
 
     None when the picture already fits or the column has no line pitch (not text)."""
     if min(source_w, source_h, canvas_w, canvas_h) <= 0:
         return None
     cover = max(canvas_w / source_w, canvas_h / source_h)
-    contain = min(canvas_w / source_w, canvas_h / source_h)
     v_cover = canvas_w / (source_w * cover)  # visible share of the width at zoom 1
     if v_cover >= 0.999:
         return None
@@ -318,7 +325,7 @@ def focus_for_text_column(
     if not column.line_pitch:
         return None  # no measurable line pitch: not text we can size, so no auto focus
     z_read = TARGET_LINE_PITCH_PX / (column.line_pitch * source_h * cover)
-    z = min(MAX_AUTO_ZOOM, max(z_fit, z_read, contain / cover, MIN_FOCUS_ZOOM))
+    z = min(MAX_AUTO_ZOOM, max(z_fit, z_read, _FILL_ZOOM))
     v = v_cover / z
     # Wider than what shows: start at the column's left edge so lines read from their start.
     start = a if (b - a) > v else (a + b) / 2 - v / 2

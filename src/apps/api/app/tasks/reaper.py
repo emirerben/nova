@@ -42,6 +42,7 @@ from app.config import settings
 from app.database import sync_session
 from app.models import Job
 from app.services.durable_attempt_cleanup import reconcile_storage_attempt_cleanup
+from app.services.job_status import JOB_REAPER_NON_TERMINAL_STATUSES
 from app.services.queue_state import get_live_job_index, get_task_runtime_state
 from app.services.speech_cleanup_terminal import terminalize_required_speech_generations
 
@@ -80,7 +81,7 @@ THRESHOLD_MIN = 60
 # template job ends in `template_ready` and stays there. Reaping it would
 # silently flip every completed job to `processing_failed` after the
 # 60-minute threshold, which is what happened to prod job e3804f62.
-_NON_TERMINAL_STATUSES = ("processing", "matching", "rendering", "posting")
+_NON_TERMINAL_STATUSES = JOB_REAPER_NON_TERMINAL_STATUSES
 
 # Per-variant statuses that mean "still working" — eligible for reconciliation
 # when a variant is stuck in one past the threshold.

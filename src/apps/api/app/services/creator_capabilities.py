@@ -84,6 +84,7 @@ from app.services.phone_rollout import (
     phone_subtitled_reaction_beats_supported,
     phone_subtitled_title_supported,
     phone_subtitled_video_overlays_supported,
+    phone_talking_corner_text_supported,
     phone_talking_cutaway_sound_supported,
     phone_talking_head_supported,
     phone_talking_insert_clips_supported,
@@ -985,6 +986,14 @@ def resolve_creator_manifest(
             )
         else:
             capabilities[CAPABILITY_TIMED_CARDS] = _available()
+    from app.services.phone_rollout import split_screen_planned_for
+
+    if (
+        phone_rendering_allowed
+        and has_media
+        and split_screen_planned_for(_sending_build_protocol())
+    ):
+        capabilities["split_screen"] = _available()
     background_pick: str | None = None
     if is_phone_subtitled and not has_voiceover:
         # Advertised only when open (like `timed_cards`): a closed gate leaves the dict, both
@@ -1448,6 +1457,15 @@ def phone_talking_title_lane_open(manifest: ResolvedCreatorManifest) -> bool:
 
     phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
     return bool(phone is not None and phone.available and phone_subtitled_title_supported())
+
+
+def phone_talking_corner_text_open(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-1342 item 7: a phone Talking edit keeps the creator's corner text on screen
+    (`phone_talking_corner_text`). Cloud Talking edits have no text lane; the flag off closes it
+    (one top line is then the opening title, anything else is asked about)."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    return bool(phone is not None and phone.available and phone_talking_corner_text_supported())
 
 
 def ending_clip_problem(
@@ -1983,6 +2001,8 @@ def _repair_creator_speaker_background(
     opening_fields: dict[str, Any] = (
         {"full_screen_opening": True, "full_screen_opening_s": opening_s} if opening else {}
     )
+    if wanted is not None and wanted.left_out and entries:
+        opening_fields["left_out"] = wanted.left_out  # KRI-1304: said in the finished reply
     # Qendresa item 18: a side / zoom for the recordings. A colour fill with no windows has
     # nothing to aim (dropped silently); a closed gate with the flag on says so once.
     if (
@@ -2085,6 +2105,18 @@ def compile_strategy_to_plan(
     audio-led/voiceover item can never be compiled into a guided proposal even
     if an agent asks for one.
     """
+
+    if strategy.split_screen is not None:
+        capability = manifest.capabilities.get("split_screen")
+        if capability is None or not capability.available:
+            raise CreatorCapabilityError(
+                "Split screen is unavailable for this edit",
+                code="split_screen_unavailable",
+                edit_format=strategy.edit_format,
+            )
+        media_ids = {media.media_id for media in manifest.media}
+        if any(panel.media_id not in media_ids for panel in strategy.split_screen.panels):
+            raise CreatorStrategyError("A split panel source is not in the approved media")
 
     # KRI-118 item 2: repair a chat-picked story shape (day_vlog/single_hero)
     # and any stale/hidden-format strategy BEFORE the render program is
@@ -2246,6 +2278,34 @@ def compile_strategy_to_plan(
         and phone_capability.available
         and phone_subtitled_closing_title_supported()
     )
+    # A recorded voiceover makes the item's program "native", which no cloud renderer draws
+    # pins for; the phone montage-family voiceover writer does (KRI-527), so a phone cohort
+    # keeps its pins there.
+    phone_voiceover_montage = bool(
+        phone_capability is not None
+        and phone_capability.available
+        and manifest.has_voiceover
+        and strategy.edit_format in GUIDED_EDIT_FORMATS
+    )
+    if strategy.pinned_texts and (
+        (strategy.edit_format == "subtitled" and not phone_talking_corner_text_open(manifest))
+        or (
+            strategy.edit_format != "subtitled"
+            and strategy.render_program != "guided"
+            and not phone_voiceover_montage
+        )
+    ):
+        # KRI-523: corner text is drawn by the guided text compiler (cloud) and by every phone
+        # montage writer (unified, lip-sync, spoken-excerpt, voice-behind-footage and the
+        # recorded-voiceover montage - KRI-527). A subtitled talking edit has no free text lane.
+        raise CreatorStrategyError(
+            f"pinned_texts is not supported by the {strategy.edit_format} renderer",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    # KRI-1302: the count/length questions come AFTER the renderer check above. A Talking edit
+    # has no pin lane at all, so asking which of five lines to keep offered a choice that
+    # was refused on the next turn.
     # KRI-526: the strategy parses up to 12 lines / 400 characters so an over-limit ask lands
     # here and becomes a question about the pins (strategy_policy), not a schema failure.
     if len(strategy.pinned_texts or ()) > MAX_CREATOR_PINNED_TEXTS:
@@ -2257,27 +2317,6 @@ def compile_strategy_to_plan(
     if any(not pin.fits_a_corner for pin in strategy.pinned_texts or ()):
         raise CreatorStrategyError(
             "pinned_texts_too_long: a corner line is longer than one line",
-            code="unsupported_treatment",
-            edit_format=strategy.edit_format,
-        )
-    # A recorded voiceover makes the item's program "native", which no cloud renderer draws
-    # pins for; the phone montage-family voiceover writer does (KRI-527), so a phone cohort
-    # keeps its pins there.
-    phone_voiceover_montage = bool(
-        phone_capability is not None
-        and phone_capability.available
-        and manifest.has_voiceover
-        and strategy.edit_format in GUIDED_EDIT_FORMATS
-    )
-    if strategy.pinned_texts and (
-        strategy.edit_format == "subtitled"
-        or (strategy.render_program != "guided" and not phone_voiceover_montage)
-    ):
-        # KRI-523: corner text is drawn by the guided text compiler (cloud) and by every phone
-        # montage writer (unified, lip-sync, spoken-excerpt, voice-behind-footage and the
-        # recorded-voiceover montage - KRI-527). A subtitled talking edit has no free text lane.
-        raise CreatorStrategyError(
-            f"pinned_texts is not supported by the {strategy.edit_format} renderer",
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )

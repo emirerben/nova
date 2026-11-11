@@ -39,6 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     PrivateAttr,
     field_validator,
@@ -61,6 +62,14 @@ from app.config import settings
 from app.database import get_db
 from app.kria.draft_schemas import DraftSnapshotOut
 from app.kria.media_sources import OriginalMediaDescriptor
+from app.kria.portable_color_moments import MAX_COLOR_MOMENTS, ColorMoment, EndFade
+from app.kria.portable_speaker_background import SpeakerFrameOverride
+from app.kria.recipes import MediaTransform
+from app.kria.split_screen import (
+    SplitScreenSection,
+    layout_split_timeline,
+    sync_collapsed_section_durations,
+)
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -96,6 +105,7 @@ from app.schemas.guided_edit_revision import (
     validate_guided_revision_lane_identities,
 )
 from app.schemas.montage_preset import MASONRY_MONTAGE_PRESET, is_collage_montage_preset
+from app.schemas.saved_user_song import SavedUserSong
 from app.schemas.user_song import MIN_PLAYABLE_SONG_S
 from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
@@ -614,6 +624,9 @@ class GenerativeVariant(BaseModel):
     # byte-identical. Display-only: never a catalog track, never editable via
     # music_track_id / mix / music_operations.
     user_song: UserSongOut | None = Field(default=None, exclude_if=lambda value: value is None)
+    saved_user_song: SavedUserSong | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     editor_capabilities: EditorCapabilitiesOut | None = None
     speech_cut_candidates: list[dict] | None = None
     speech_cut_revision: str | None = None
@@ -960,7 +973,7 @@ def visual_block_variant_duration(variant: dict) -> float:
         return explicit
     timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
     slots = [slot for slot in timeline.get("slots") or [] if not slot.get("removed")]
-    slot_total = _active_timeline_duration_s(slots)
+    slot_total = _active_timeline_duration_s(slots, timeline.get("split_screen_sections"))
     if slot_total > 0:
         return slot_total
     timed_rows = (
@@ -984,6 +997,9 @@ class TimelineSlotEdit(BaseModel):
 
     slot_id: str | None = None
     parent_segment_id: str | None = None
+    split_section_id: str | None = Field(default=None, min_length=1, max_length=160)
+    split_panel_index: int | None = Field(default=None, ge=0, le=2, strict=True)
+    split_offset_s: float | None = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
     clip_index: int
     in_s: float
     duration_beats: int | None = None
@@ -1008,6 +1024,14 @@ class TimelineSlotEdit(BaseModel):
     # Explicit selected source edge for source-preserving speed edits. Omission
     # retains the legacy duration * rate window contract.
     source_end_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    speaker_subject: bool | None = None
+    speaker_frame_override: SpeakerFrameOverride | None = None
+    media_transform: MediaTransform | None = None
+    source_audio_volume: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
+    audio_fade_in: float | None = Field(default=None, ge=0, le=60, allow_inf_nan=False)
+    audio_fade_out: float | None = Field(default=None, ge=0, le=60, allow_inf_nan=False)
+    freeze_hold_s: float | None = Field(default=None, ge=0, le=1800, allow_inf_nan=False)
+    freeze_frame_s: float | None = Field(default=None, ge=0, le=1800, allow_inf_nan=False)
     # Camera sound for this occurrence: True silences it. None = an older client omitted
     # the field; the saved value is kept. Honoured on phone-rendered guided edits only.
     muted: bool | None = None
@@ -1101,7 +1125,7 @@ class TimelineSlotOut(BaseModel):
     duration_s: float | None = None
     # Unit per-occurrence marker for selected source audio under a recorded
     # narration. The global bed gain remains on the recipe's audio mix.
-    source_audio_volume: float | None = Field(default=None, ge=0.0, le=1.0)
+    source_audio_volume: float | None = Field(default=None, ge=0.0, le=2.0)
     duration_beats: int | None = None
     order: int | None = None
     moment_energy: float | None = None
@@ -1147,6 +1171,9 @@ class NativeEditorAssetOut(BaseModel):
 
 
 class TimelineResponse(BaseModel):
+    saved_user_song: SavedUserSong | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     editor_state: Literal["renderable", "empty"] = "renderable"
     draft: DraftSnapshotOut | None = None
     native_assets: list[NativeEditorAssetOut] = Field(default_factory=list)
@@ -1156,6 +1183,7 @@ class TimelineResponse(BaseModel):
     total_duration_s: float
     has_user_edits: bool
     slots: list[TimelineSlotOut]
+    split_screen_sections: list[SplitScreenSection] = Field(default_factory=list)
     clips: list[TimelineClipOut]
     edit_wide_look_presets: list[LookPreset] = Field(default_factory=list)
     look_presets: list[LookPreset] = Field(default_factory=list)
@@ -1421,6 +1449,19 @@ class EditorCommitCaptionMeta(BaseModel):
         return clean.upper()
 
 
+class EditorCommitColorMoments(BaseModel):
+    """KRI-1350: the whole colour-moments lane of a phone edit (written by the Kria chat op).
+
+    Output-timeline windows drawn black-and-white / warm / faded with flash, light-leak or
+    dip edges, and an optional end fade to black. Compiled onto the pinned recipe by
+    `with_color_moments` on every phone Save.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    moments: list[ColorMoment] = Field(default_factory=list, max_length=MAX_COLOR_MOMENTS)
+    end_fade: EndFade | None = None
+
+
 class EditorCommitRequest(BaseModel):
     """One atomic editor Save: every provided section validates first; nothing
     persists unless ALL sections are valid. `base_generation` is the baseline the
@@ -1433,6 +1474,7 @@ class EditorCommitRequest(BaseModel):
     caption_cues: list[dict] | None = None
     caption_meta: EditorCommitCaptionMeta | None = None
     timeline_slots: list[TimelineSlotEdit] | None = None
+    split_screen_sections: list[SplitScreenSection] | None = Field(default=None, max_length=100)
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
     # Explicit music removal. Deliberately NOT an overloaded nullable
@@ -1463,6 +1505,9 @@ class EditorCommitRequest(BaseModel):
     # KRI-1117: the Talk-to-camera background. TRI-STATE like `carousel_moment`: absent from
     # `model_fields_set` = leave unchanged; explicit `null` = clear; an object = set.
     speaker_background: EditorCommitSpeakerBackground | None = None
+    # KRI-1350: colour moments. TRI-STATE like `speaker_background`: absent = leave unchanged
+    # (the phone editor never sends it); explicit `null` = clear; an object = replace the lane.
+    color_moments: EditorCommitColorMoments | None = None
     # Carousel-moment edit (Blossom carousel), staged as a batched-Save section —
     # reuses `CarouselMomentEditRequest` verbatim (do not fork). Tri-state at
     # THIS level, mirroring `EditVariantRequest.carousel_moment` /
@@ -2919,7 +2964,19 @@ def _variants_for_response(job: Job) -> list[dict]:
         from app.services.editor_empty_drafts import public_saved_editor_variant
 
         out.append(public_saved_editor_variant(job, v))
-    return project_public_assembly_plan(out)
+    result = project_public_assembly_plan(out)
+    from app.services.saved_user_song import saved_user_song_for_variant
+
+    for variant in result:
+        variant.pop("saved_user_song", None)
+        if variant.get("variant_id") in (
+            projection.media_unavailable_variant_ids | projection.masked_last_good_variant_ids
+        ):
+            continue
+        if marker := saved_user_song_for_variant(job, variant):
+            variant["saved_user_song"] = marker
+            variant["editor_revision_number"] = marker["revision_number"]
+    return result
 
 
 def _find_variant(job: Job, variant_id: str) -> dict | None:
@@ -3540,6 +3597,26 @@ class CaptionCue(BaseModel):
     shadow_enabled: bool | None = Field(None, strict=True)
     # KRI-1007: this line's own animation; absent inherits `caption_animation_phases`.
     animation_phases: TextAnimationPhases | None = None
+    # KRI-1344: parts of this line's time it is not drawn (seconds from the cue's own start,
+    # [start, end] pairs), set by generation where a text-dense full-screen picture is up.
+    # Server-authored and round-tripped untouched (the PATCH replaces the whole cue list, so
+    # anything not listed here would be stripped on the first text edit). Read by
+    # `caption_legibility.visible_cues` (phone compile + cloud burn) and the iPhone editor.
+    hidden_spans: list[list[float]] | None = None
+
+    @field_validator("hidden_spans")
+    @classmethod
+    def _validate_hidden_spans(cls, v: list[list[float]] | None) -> list[list[float]] | None:
+        if v is None:
+            return v
+        from app.pipeline.caption_legibility import MAX_HIDDEN_SPANS  # noqa: PLC0415
+
+        if len(v) > MAX_HIDDEN_SPANS:
+            raise ValueError(f"Too many hidden spans on one caption line (max {MAX_HIDDEN_SPANS}).")
+        for span in v:
+            if len(span) != 2 or not 0 <= span[0] < span[1] <= 1800:
+                raise ValueError("Each hidden span must be a [start, end] pair, 0 <= start < end.")
+        return v
 
     @field_validator("font_family")
     @classmethod
@@ -7665,6 +7742,38 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
     }
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_collapse_planned_for, split_screen_supported
+
+    if (
+        variant.get("render_destination") == "device"
+        and capabilities.get("timeline") is True
+        and split_screen_supported()
+    ):
+        capabilities["split_screen"] = True
+        # The sender's stamp, not the request: a worker drafting for a build and the request
+        # re-checking it must offer the same capabilities (KRI-1321).
+        if split_collapse_planned_for(current_client_protocol()):
+            capabilities["split_collapse"] = True
+    if (
+        variant.get("editor_timeline_mode") == "authored"
+        and variant.get("render_destination") == "device"
+    ):
+        song = _variant_user_song(job, variant)
+        if song is not None and settings.guided_story_editor_v2_enabled:
+            background = song["mode"] == "background"
+            capabilities["user_song"] = {
+                "volume": {"editable": True, "reason": None},
+                "window": {
+                    "editable": background,
+                    "reason": None if background else "user_song_lipsync_locked",
+                },
+                "remove": {"editable": True, "reason": None},
+                "trim": {
+                    "editable": background,
+                    "reason": None if background else "user_song_lipsync_locked",
+                },
+            }
     if "original_audio" not in capabilities:
         original_audio = _voiceover_original_audio_capability(variant)
         if original_audio is not None:
@@ -7725,6 +7834,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # KRI-1141: present only when ON (same reason as `text_bend`); the editor opens the
         # rotate gesture and the Rotation slider for a card, and nothing else of `editor_style`.
         capabilities["media_overlay_tilt"] = True
+    if _media_overlay_style_capability(variant, capabilities):
+        # KRI-1264: present only when ON; the editor opens Zoom and Animation for an on-top card,
+        # while `visual_editor_style` (fit, and any style on a full-screen card) stays closed.
+        capabilities["media_overlay_style"] = True
     from app.services.client_protocol import CAPTION_STYLE_SCOPE_PROTOCOL, current_client_protocol
 
     protocol = current_client_protocol()
@@ -7773,6 +7886,24 @@ def _media_overlay_tilt_capability(variant: dict, capabilities: dict) -> bool:
         is_phone_subtitled_editor_variant(variant)
         and capabilities.get("overlays") is True
         and card_tilt_supported()
+    )
+
+
+def _media_overlay_style_capability(variant: dict, capabilities: dict) -> bool:
+    """KRI-1264: may the app zoom and animate a picture card (``media_overlay_style``)?
+
+    The same Talking card lane as the tilt (its Save recompiles each card's zoom and animation into
+    the placement), behind the ``cardStyle`` token and the requesting build's protocol.
+    """
+    from app.services.phone_rollout import card_style_supported  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        is_phone_subtitled_editor_variant,
+    )
+
+    return bool(
+        is_phone_subtitled_editor_variant(variant)
+        and capabilities.get("overlays") is True
+        and card_style_supported()
     )
 
 
@@ -8646,6 +8777,18 @@ def _native_timeline_source(
             binding = PhoneSourceBinding.model_validate(matches[0])
         except ValueError:
             return None
+        if binding.pool_source is not None:
+            # KRI-1340: a take adopted from Visuals has no camera-roll binding on any phone;
+            # the editor plays its pinned pool bytes, exactly what the render downloads.
+            from app import storage  # noqa: PLC0415
+
+            try:
+                url = storage.signed_get_url_for_generation(
+                    binding.pool_source.gcs_path, generation=binding.pool_source.generation
+                )
+            except Exception:  # noqa: BLE001 - report an unavailable source, never stale bytes
+                return None
+            return {"media_id": binding.media_id, "source_url": url, "local_required": False}
         return {
             "media_id": binding.media_id,
             "original": binding.original.model_dump(),
@@ -8911,6 +9054,14 @@ def dispatch_get_timeline(
             base_generation=variant_render_baseline(variant),
             has_user_edits=True,
         )
+    from app.services.saved_user_song import saved_user_song_for_variant
+
+    projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
+    if variant and variant_id not in (
+        projection.media_unavailable_variant_ids | projection.masked_last_good_variant_ids
+    ):
+        if marker := saved_user_song_for_variant(job, variant):
+            timeline["saved_user_song"] = marker
     return timeline
 
 
@@ -9114,6 +9265,12 @@ def _dispatch_rendered_timeline(
         # The pinned recipe's own length is authoritative (it already accounts for
         # montage crossfade overlaps and retimed clips).
         total = phone_total_duration_s
+    split_sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
+    if split_sections:
+        starts, _, total = layout_split_timeline(active, split_sections)
+        for row, start in zip(active, starts, strict=True):
+            row["output_start_s"] = start
+            row["output_end_s"] = start + row["duration_s"]
     used_indices = {s.get("clip_index") for s in active}
 
     # Source durations are only known where the worker probed them (ai_timeline).
@@ -9148,6 +9305,7 @@ def _dispatch_rendered_timeline(
             "reason": reason,
             "beat_grid": beat_grid,
             "total_duration_s": round(total, 3),
+            "split_screen_sections": split_sections,
             "has_user_edits": has_user_edits,
             "edit_wide_look_presets": (
                 list(EDIT_WIDE_LOOK_PRESETS)
@@ -9344,7 +9502,9 @@ _TIMELINE_REASSEMBLY_SENTINEL = {
 }
 
 
-def _active_timeline_duration_s(slots: list[dict]) -> float:
+def _active_timeline_duration_s(slots: list[dict], split_sections: list | None = None) -> float:
+    if split_sections:
+        return layout_split_timeline(slots, split_sections)[2]
     active = [slot for slot in slots if not slot.get("removed")]
     total = sum(float(slot.get("duration_s") or 0.0) for slot in active)
     if settings.edit_transitions_enabled:
@@ -10281,6 +10441,9 @@ async def dispatch_edit_timeline(
     candidate_variant = _find_variant(job, variant_id)
     if candidate_variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    from app.services.split_screen_editor import require_split_screen_commit
+
+    require_split_screen_commit(candidate_variant, EditorCommitRequest())
     guided_v2 = candidate_variant.get("resolved_archetype") == "guided_story" and getattr(
         settings, "guided_story_editor_v2_enabled", False
     )
@@ -10290,6 +10453,14 @@ async def dispatch_edit_timeline(
         variant = require_editable_variant(job, variant_id, allow_guided_text=True)
     else:
         variant = require_editable_variant(job, variant_id)
+    require_split_screen_commit(
+        candidate_variant, EditorCommitRequest(timeline_slots=payload.slots)
+    )
+    if any(
+        row.get("speaker_frame_override") is not None
+        for row in (candidate_variant.get("user_timeline") or {}).get("slots") or []
+    ) or any(row.speaker_frame_override is not None for row in payload.slots):
+        raise HTTPException(422, detail={"code": "split_screen_requires_atomic_commit"})
     if variant.get("resolved_archetype") == "guided_story" and getattr(
         settings, "guided_story_editor_v2_enabled", False
     ):
@@ -10327,6 +10498,10 @@ async def dispatch_edit_timeline(
     if any(v.get("render_status") == "rendering" for v in _variants_of(job)):
         raise _timeline_error(status.HTTP_409_CONFLICT, "JOB_BUSY")
 
+    if (variant.get("user_timeline") or {}).get("split_screen_sections") or any(
+        row.split_section_id or row.speaker_frame_override is not None for row in payload.slots
+    ):
+        raise HTTPException(422, detail={"code": "split_screen_requires_atomic_commit"})
     resolved = resolve_timeline_slots_for_edit(job, variant, payload.slots)
 
     render_gen_id = uuid.uuid4().hex
@@ -11024,9 +11199,16 @@ def require_guided_story_editor_commit(
         # KRI-428: the creator's own song is not catalog music, so the reference-only
         # gate above never applies to it -- but it only exists on a phone guided-v2
         # variant whose current plan actually carries one.
-        if variant.get("editor_timeline_mode") == "authored" or not getattr(
-            settings, "guided_story_editor_v2_enabled", False
-        ):
+        from app.services.phone_rollout import split_screen_supported
+
+        authored_song_supported = (
+            variant.get("editor_split_screen_origin") is True
+            and variant.get("render_destination") == "device"
+            and split_screen_supported()
+        )
+        if (
+            variant.get("editor_timeline_mode") == "authored" and not authored_song_supported
+        ) or not getattr(settings, "guided_story_editor_v2_enabled", False):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=_GUIDED_STORY_EDIT_ERROR,
@@ -11163,6 +11345,9 @@ def prepare_editor_commit(
     )
     variant = _find_variant(job, variant_id)
     if variant is not None:
+        from app.services.split_screen_editor import require_split_screen_commit
+
+        require_split_screen_commit(variant, payload)
         _require_render_affecting_mutation_allowed(
             job, variant, allow_authored=payload.editor_state_version in (1, 2)
         )
@@ -11191,8 +11376,17 @@ def prepare_editor_commit(
                 raise HTTPException(422, detail={"code": "phone_editor_media_unavailable"})
 
         if (
-            variant.get("editor_timeline_mode") == "authored"
-            and variant.get("resolved_archetype") == "subtitled"
+            (
+                variant.get("editor_timeline_mode") == "authored"
+                and variant.get("resolved_archetype") == "subtitled"
+            )
+            or payload.split_screen_sections
+            or any(slot.speaker_frame_override is not None for slot in payload.timeline_slots or [])
+            or any(
+                row.get("speaker_frame_override") is not None
+                for row in (variant.get("user_timeline") or {}).get("slots") or []
+            )
+            or (variant.get("user_timeline") or {}).get("split_screen_sections")
         ):
             from app.services.authored_editor import prepare_authored_editor_commit
 
@@ -11467,17 +11661,14 @@ def _validate_drawings_section(
 
 
 def _speaker_background_shape_ok(job: Job, variant: dict) -> bool:
-    """Can this variant carry a background at all (the shape half of the capability)?
+    """Existing Talking lanes, plus verified receipt-backed split-origin authored speakers."""
+    if variant.get("editor_state") == "empty":
+        return False
+    if variant.get("editor_timeline_mode") == "authored":
+        from app.services.split_screen_editor import authored_split_speaker_background_available
 
-    A device-rendered Talk-to-camera edit whose lanes the editor recompiles. Cloud variants,
-    other archetypes, empty drafts and authored timelines (whose compiler has no such lane)
-    are all closed.
-    """
-    return bool(
-        variant.get("editor_state") != "empty"
-        and variant.get("editor_timeline_mode") != "authored"
-        and _phone_subtitled_editor_lanes_available(job, variant)
-    )
+        return authored_split_speaker_background_available(job, variant)
+    return _phone_subtitled_editor_lanes_available(job, variant)
 
 
 def _speaker_background_capability(job: Job, variant: dict) -> bool:
@@ -11730,6 +11921,63 @@ def _validate_speaker_background_windows(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "speaker_background_start_out_of_range"},
             )
+
+
+def _color_moments_only_removes(stored: Any, lane: dict) -> bool:
+    """Does ``lane`` only take things away from the stored colour-moments lane (KRI-1350)?
+
+    Every moment is one already stored, unchanged, and the end fade is the stored one or
+    gone. Removing never needs the switch, the token or a new app build; anything new does.
+    """
+    stored = stored if isinstance(stored, dict) else {}
+    kept = [m for m in stored.get("moments") or [] if isinstance(m, dict)]
+    if any(moment not in kept for moment in lane.get("moments") or []):
+        return False
+    return lane.get("end_fade") in (None, stored.get("end_fade"))
+
+
+def _validate_color_moments_section(
+    job: Job, variant: dict, payload: EditorCommitRequest
+) -> tuple[bool, dict | None]:
+    """Save-time gate for the KRI-1350 ``color_moments`` lane: ``(touched, stored value)``.
+
+    Absent = untouched. Only a device variant whose archetype recompiles lane-free sections
+    (the drawings shape) takes the lane. Clearing, or keeping only some of the stored moments
+    and fade, is always allowed so a creator can take them off with the switch off; anything
+    new needs `color_moments_supported` (kill switch, verified token, app build). Windows must
+    fit the current timeline.
+    """
+    from app.kria.portable_color_moments import validate_color_moments  # noqa: PLC0415
+    from app.services.phone_rollout import color_moments_supported  # noqa: PLC0415
+
+    if "color_moments" not in payload.model_fields_set:
+        return False, None
+    lane = payload.color_moments
+    if lane is None or (not lane.moments and lane.end_fade is None):
+        return True, None
+    if not _drawing_capabilities(job, variant)["delete"]["editable"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "color_moments_require_phone_render"},
+        )
+    if not color_moments_supported() and not _color_moments_only_removes(
+        variant.get("color_moments"), lane.model_dump(mode="json")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "color_moments_disabled"},
+        )
+    duration_s = visual_block_variant_duration(variant)
+    try:
+        validate_color_moments(lane.moments, duration_s)
+        if lane.end_fade is not None and lane.end_fade.duration > duration_s + 1e-6:
+            raise ValueError("the end fade is longer than the video")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "color_moments_invalid", "reason": str(exc)[:300]},
+        ) from exc
+    return True, lane.model_dump(mode="json")
 
 
 def _validate_speaker_background_section(
@@ -12044,6 +12292,9 @@ def _prepare_editor_commit(
 
     require_editor_clock_reader(job, variant)
     require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
+    from app.services.split_screen_editor import require_split_screen_commit
+
+    require_split_screen_commit(variant, payload)
     payload = normalize_editor_deletion_request(job, variant_id, payload)
     require_guided_story_editor_commit(job, variant_id, payload)
 
@@ -12171,6 +12422,7 @@ def _prepare_editor_commit(
         and payload.camera_effects is None
         and payload.drawings is None
         and "speaker_background" not in payload.model_fields_set
+        and "color_moments" not in payload.model_fields_set
         and payload.guided_revision is None
         and payload.title is None
         and not payload.remove_music
@@ -13004,7 +13256,9 @@ def _prepare_editor_commit(
                 )["segments"]
             )
         elif resolved_slots is not None:
-            drawing_duration_s = _active_timeline_duration_s(resolved_slots)
+            drawing_duration_s = _active_timeline_duration_s(
+                resolved_slots, (variant.get("user_timeline") or {}).get("split_screen_sections")
+            )
         else:
             drawing_duration_s = visual_block_variant_duration(variant)
         validated_drawings = _validate_drawings_section(
@@ -13012,6 +13266,9 @@ def _prepare_editor_commit(
         )
 
     speaker_background_touched, validated_speaker_background = _validate_speaker_background_section(
+        job, variant, payload
+    )
+    color_moments_touched, validated_color_moments = _validate_color_moments_section(
         job, variant, payload
     )
 
@@ -13126,6 +13383,7 @@ def _prepare_editor_commit(
         or validated_camera_effects is not None
         or validated_drawings is not None
         or speaker_background_touched
+        or color_moments_touched
         or carousel_moment_touched
         or guided_timeline_commit
         or payload._lyric_line_suppressions is not None
@@ -13167,6 +13425,24 @@ def _prepare_editor_commit(
         if v.get("variant_id") != variant_id:
             continue
         updated = dict(v)
+        if payload.user_song is not None and v.get("editor_timeline_mode") == "authored":
+            from app.schemas.user_song import UserSongPlan
+            from app.services.user_song_projection import _current_plan
+
+            plan = copy.deepcopy(_current_plan(job, v) or {})
+            song = _merge_user_song_edit(job, v, plan.get("user_song"), payload)
+            if song.pop("removed", False):
+                plan.pop("user_song", None)
+                if updated.get("original_audio_level_source") != "editor":
+                    updated["original_audio_level"] = 1.0
+                updated["source_audio_preserved"] = True
+            else:
+                song.setdefault("window_end_s", song["duration_s"])
+                try:
+                    plan["user_song"] = UserSongPlan.model_validate(song).model_dump(mode="json")
+                except ValueError as exc:
+                    raise _timeline_error(422, "user_song_window_out_of_range") from exc
+            updated["_phone_editor_saved_plan_v1"] = plan
         if validated_elements is not None:
             updated["text_elements"] = validated_elements
             updated["text_elements_user_edited"] = True
@@ -13181,6 +13457,15 @@ def _prepare_editor_commit(
                 del updated["caption_animation_phases"]
         if resolved_slots is not None:
             updated["user_timeline"] = {"slots": resolved_slots}
+            split_sections = (
+                [section.model_dump(mode="json") for section in payload.split_screen_sections]
+                if payload.split_screen_sections is not None
+                else (variant.get("user_timeline") or {}).get("split_screen_sections", [])
+            )
+            if split_sections:
+                layout_split_timeline(resolved_slots, split_sections)
+                sync_collapsed_section_durations(resolved_slots, split_sections)
+                updated["user_timeline"]["split_screen_sections"] = split_sections
         if payload.mix is not None:
             if payload.mix.music_level is not None:
                 updated["mix"] = float(payload.mix.music_level)
@@ -13237,7 +13522,9 @@ def _prepare_editor_commit(
             else:
                 updated.pop("user_timeline", None)
         if resolved_slots is not None and updated.get("music_track_id"):
-            active_duration_s = _active_timeline_duration_s(resolved_slots)
+            active_duration_s = _active_timeline_duration_s(
+                resolved_slots, (variant.get("user_timeline") or {}).get("split_screen_sections")
+            )
             if active_duration_s > 0:
                 # The editor commit persists before enqueue. Keep the duration
                 # beside those cuts so an older worker cannot reuse a stale
@@ -13281,10 +13568,18 @@ def _prepare_editor_commit(
             updated["camera_effects"] = validated_camera_effects or None
         if validated_drawings is not None:
             updated["drawings"] = validated_drawings or None
+        if color_moments_touched:
+            if validated_color_moments is None:
+                updated.pop("color_moments", None)
+            else:
+                updated["color_moments"] = validated_color_moments
         if speaker_background_touched:
             # The phone Save recompiles the lanes and rewrites this row from them.
             if validated_speaker_background is None:
-                updated.pop("speaker_background", None)
+                if updated.get("editor_timeline_mode") == "authored":
+                    updated["speaker_background"] = None
+                else:
+                    updated.pop("speaker_background", None)
             else:
                 updated["speaker_background"] = validated_speaker_background
         if carousel_moment_touched:
@@ -13375,7 +13670,9 @@ def _prepare_editor_commit(
             for segment in guided_revision.get("segments") or []
         )
     elif resolved_slots is not None:
-        expected_duration_s = _active_timeline_duration_s(resolved_slots)
+        expected_duration_s = _active_timeline_duration_s(
+            resolved_slots, (variant.get("user_timeline") or {}).get("split_screen_sections")
+        )
     else:
         expected_duration_s = float(updated.get("duration_s") or variant.get("duration_s") or 0.0)
 
@@ -13457,6 +13754,8 @@ def _prepare_editor_commit(
             "motion_scenes": validated_motion_scenes is not None,
             "camera_effects": validated_camera_effects is not None,
             "drawings": validated_drawings is not None,
+            # KRI-1350: present only when touched, so every other Save's sections are unchanged.
+            **({"color_moments": True} if color_moments_touched else {}),
             "speaker_background": speaker_background_touched,
             "carousel_moment": carousel_moment_touched,
         },

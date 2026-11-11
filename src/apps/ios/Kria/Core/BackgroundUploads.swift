@@ -46,6 +46,9 @@ struct UploadRecoveryRecord: Codable, Identifiable, Sendable, Equatable {
     /// Best-effort local footage duration. Optional so records from older builds
     /// and files AVFoundation cannot inspect continue through recovery normally.
     var durationS: Double? = nil
+    /// Re-record: the attached clip this upload replaces. Persisted so an app kill mid-upload resumes the swap through
+    /// the replace route, never as a second attached clip.
+    var replacesMediaID: String? = nil
     var role: CreationMediaRole { mediaRole ?? .clip }
 }
 
@@ -59,21 +62,24 @@ struct PendingEditorSourcePlacement: Codable, Identifiable, Sendable {
     let lane: Lane
     let visual: CreationVisual?
     let localDurationS: Double?
+    let replacingSlotID: String?
     var status: String
     var error: String?
     var retryable: Bool
 
-    init(id: UUID, target: EditorSourceRegistrationTarget, lane: Lane, visual: CreationVisual?, localDurationS: Double?, status: String = "preparing", error: String? = nil, retryable: Bool = true) {
+    init(id: UUID, target: EditorSourceRegistrationTarget, lane: Lane, visual: CreationVisual?, localDurationS: Double?, replacingSlotID: String? = nil, status: String = "preparing", error: String? = nil, retryable: Bool = true) {
         self.id = id; self.target = target; self.lane = lane; self.visual = visual; self.localDurationS = localDurationS
+        self.replacingSlotID = replacingSlotID
         self.status = status; self.error = error; self.retryable = retryable
     }
 
-    enum CodingKeys: String, CodingKey { case id, target, lane, visual, localDurationS, status, error, retryable }
+    enum CodingKeys: String, CodingKey { case id, target, lane, visual, localDurationS, replacingSlotID, status, error, retryable }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id); target = try c.decode(EditorSourceRegistrationTarget.self, forKey: .target)
         lane = try c.decode(Lane.self, forKey: .lane); visual = try c.decodeIfPresent(CreationVisual.self, forKey: .visual)
         localDurationS = try c.decodeIfPresent(Double.self, forKey: .localDurationS)
+        replacingSlotID = try c.decodeIfPresent(String.self, forKey: .replacingSlotID)
         status = try c.decodeIfPresent(String.self, forKey: .status) ?? "preparing"
         error = try c.decodeIfPresent(String.self, forKey: .error)
         retryable = try c.decodeIfPresent(Bool.self, forKey: .retryable) ?? true
@@ -152,6 +158,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// Carries a completed best-effort probe across a crash before the upload
     /// record is created. Resume also re-probes when this is absent.
     var durationS: Double? = nil
+    /// Same meaning as `UploadRecoveryRecord.replacesMediaID`, carried across a kill during preparation.
+    var replacesMediaID: String? = nil
     var state: PreparationState
     var lastHeartbeatAt: Date
     /// Identifies the process that most recently wrote/touched this entry.
@@ -159,7 +167,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// still-running preparation from an orphaned one (see type doc above).
     var launchToken: UUID
 
-    init(id: UUID, projectID: UUID, localFilePath: String, filename: String, source: UploadSource, purpose: UploadPurpose, role: CreationMediaRole, itemID: String?, editorSourceTarget: EditorSourceRegistrationTarget? = nil, durationS: Double? = nil, state: PreparationState = .preparing, lastHeartbeatAt: Date = Date(), launchToken: UUID) {
+    init(id: UUID, projectID: UUID, localFilePath: String, filename: String, source: UploadSource, purpose: UploadPurpose, role: CreationMediaRole, itemID: String?, editorSourceTarget: EditorSourceRegistrationTarget? = nil, durationS: Double? = nil, replacesMediaID: String? = nil, state: PreparationState = .preparing, lastHeartbeatAt: Date = Date(), launchToken: UUID) {
         self.id = id
         self.projectID = projectID
         self.localFilePath = localFilePath
@@ -170,6 +178,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         self.itemID = itemID
         self.editorSourceTarget = editorSourceTarget
         self.durationS = durationS
+        self.replacesMediaID = replacesMediaID
         self.state = state
         self.lastHeartbeatAt = lastHeartbeatAt
         self.launchToken = launchToken
@@ -195,6 +204,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         itemID = try container.decodeIfPresent(String.self, forKey: .itemID)
         editorSourceTarget = try container.decodeIfPresent(EditorSourceRegistrationTarget.self, forKey: .editorSourceTarget)
         durationS = try container.decodeIfPresent(Double.self, forKey: .durationS).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        replacesMediaID = try container.decodeIfPresent(String.self, forKey: .replacesMediaID)
         state = try container.decodeIfPresent(PreparationState.self, forKey: .state) ?? .interrupted
         lastHeartbeatAt = try container.decodeIfPresent(Date.self, forKey: .lastHeartbeatAt) ?? .distantPast
         launchToken = try container.decodeIfPresent(UUID.self, forKey: .launchToken) ?? UUID()
@@ -257,6 +267,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         var filename: String? = nil
         var startedAt = Date()
         var durationS: Double? = nil
+        /// A re-record occupies no new clip slot: it swaps the clip it names.
+        var replacesMediaID: String? = nil
     }
 
     /// Bumped whenever a thumbnail file is written, so views that read previews from disk re-render.
@@ -427,14 +439,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// clip's `enqueue` would erase an earlier clip's failure before anyone saw it. Callers that
     /// want a clean slate call `clearLastError()` once per batch.
     @discardableResult
-    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose, role: CreationMediaRole = .clip, itemID: String? = nil, limit: CreationMediaLimit? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil, recordID: UUID = UUID(), failureKey: String? = nil) async -> Bool {
+    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose, role: CreationMediaRole = .clip, itemID: String? = nil, limit: CreationMediaLimit? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil, recordID: UUID = UUID(), failureKey: String? = nil, replacesMediaID: String? = nil) async -> Bool {
         var recoveryCopy: URL?
         var accepted = false
         var staged = false
         var preparedToDiscard: (URL, MediaAsset?)?
         // Counts against the project's clip limit for the whole prepare/reserve window, then hands
         // over to `records` (appended by `startTask` before this returns) with no gap in between.
-        inFlight[recordID] = InFlightUpload(projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), startedAt: inFlight[recordID]?.startedAt ?? Date())
+        inFlight[recordID] = InFlightUpload(projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), startedAt: inFlight[recordID]?.startedAt ?? Date(), replacesMediaID: replacesMediaID)
         defer { inFlight[recordID] = nil }
         var holdsSlot = false
         let gate = purpose == .analysisProxy ? proxyGate : cloudGate
@@ -484,7 +496,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 stagedURL = copy
                 startEarlyPreview(of: copy, recordID: recordID)
                 Self.persistPreparingUpload(PreparingUpload(id: recordID, projectID: projectID, localFilePath: copy.path,
-                    filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID, editorSourceTarget: editorSourceTarget, launchToken: launchToken), key: defaultsKey)
+                    filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID, editorSourceTarget: editorSourceTarget, replacesMediaID: replacesMediaID, launchToken: launchToken), key: defaultsKey)
                 staged = true
                 probeAndCacheFootageDuration(at: copy, recordID: recordID)
                 activePreparationIDs.insert(recordID)
@@ -530,7 +542,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 try await Perf.measureAsync("talk.use.reserve") {
                     try await reserve(
                         projectID: projectID, itemID: itemID, role: role, clientUploadID: clientUploadID,
-                        filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), contract: prepared.2
+                        filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), contract: prepared.2, replacesMediaID: replacesMediaID
                     )
                 }
             }
@@ -552,7 +564,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 reservation: reservation,
                 clientUploadID: clientUploadID,
                 retryCount: 0, role: role, itemID: itemID, visualReservationID: visualReservationID, uploadContract: prepared.2, editorSourceTarget: editorSourceTarget,
-                durationS: inFlight[recordID]?.durationS
+                durationS: inFlight[recordID]?.durationS, replacesMediaID: replacesMediaID
             )
             accepted = true
             if editorSourceTarget != nil && !containsEditorPlacement(recordID) {
@@ -564,17 +576,18 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // An un-chosen clip is not a failure: surfacing "Swift.CancellationError error 1" would
             // tell the user something broke when they did exactly what they meant to.
             if error is CancellationError || Task.isCancelled { return false }
-            let message = CreationUploadError.message(for: error, role: role)
+            // A swap that is refused names its own reason and says the current take is untouched.
+            let message = replacesMediaID != nil ? RerecordFailure(error).message : CreationUploadError.message(for: error, role: role)
             lastError = message
             // The server stayed busy past every retry: the file is fine, so this is a retryable upload
             // failure, not an unreadable file.
             let busy = TransientRetryPolicy.isServerBusy(error)
-            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: message, selectionKey: failureKey, cause: busy ? .uploadFailed : .unreadable)
+            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: message, selectionKey: failureKey, cause: busy ? .uploadFailed : .unreadable, replacesMediaID: replacesMediaID)
             // No record exists yet, so Retry must re-run the intake. Files are re-run from the same
             // URL while it still exists; a Photos pick registers its own re-run in `select`.
             if busy, failureKey == nil, FileManager.default.fileExists(atPath: fileURL.path) {
                 intakeRetries[recordID] = { [weak self] in
-                    await self?.enqueue(fileURL: fileURL, projectID: projectID, source: source, consentGiven: consentGiven, purpose: purpose, role: role, itemID: itemID, limit: limit, editorSourceTarget: editorSourceTarget, recordID: recordID)
+                    await self?.enqueue(fileURL: fileURL, projectID: projectID, source: source, consentGiven: consentGiven, purpose: purpose, role: role, itemID: itemID, limit: limit, editorSourceTarget: editorSourceTarget, recordID: recordID, replacesMediaID: replacesMediaID)
                 }
             }
             return false
@@ -696,9 +709,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     /// One line per failed clip: a repeat of the same asset replaces its earlier line (matched by
     /// `selectionKey`), rather than appending another for every attempt.
-    private func recordFailure(id: UUID, projectID: UUID, role: CreationMediaRole, filename: String, message: String, selectionKey: String? = nil, cause: UploadFailure.Cause = .unreadable) {
+    private func recordFailure(id: UUID, projectID: UUID, role: CreationMediaRole, filename: String, message: String, selectionKey: String? = nil, cause: UploadFailure.Cause = .unreadable, replacesMediaID: String? = nil) {
         failures.removeAll { $0.id == id || (selectionKey != nil && $0.selectionKey == selectionKey) }
-        failures.append(UploadFailure(id: id, projectID: projectID, role: role, filename: filename, message: message, selectionKey: selectionKey, cause: cause))
+        failures.append(UploadFailure(id: id, projectID: projectID, role: role, filename: filename, message: message, selectionKey: selectionKey, cause: cause, replacesMediaID: replacesMediaID))
     }
 
     /// Drops the failure lines of assets that are no longer ticked, so un-ticking a failed clip clears its
@@ -955,13 +968,20 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// `role: nil` counts every role (what "is anything still on its way?" needs).
     nonisolated static func reservedCount(projectID: UUID, role: CreationMediaRole?, inFlight: [UUID: InFlightUpload], records: [UploadRecoveryRecord], selections: [String: ProjectPhotoSelection]) -> Int {
         func matches(_ candidate: CreationMediaRole) -> Bool { role == nil || candidate == role }
-        let flying = Set(inFlight.filter { $0.value.projectID == projectID && matches($0.value.role) }.keys)
+        let flying = Set(inFlight.filter { $0.value.projectID == projectID && matches($0.value.role) && $0.value.replacesMediaID == nil }.keys)
         let recorded = Set(records.filter { $0.projectID == projectID && matches($0.role) }.map(\.id))
         let entries: [PhotoSelectionEntry] = selections[projectID.uuidString].map { Array($0.entries.values) } ?? []
         let choosing = entries.filter {
             matches($0.role) && $0.mediaID == nil && !flying.contains($0.recordID) && !recorded.contains($0.recordID)
         }
         return flying.count + choosing.count
+    }
+
+    /// A re-recorded take is being prepared, uploaded or retried. Until it lands, the clip it replaces is spoken for:
+    /// removing it, or aiming a second take at it, makes the swap answer `retake_target_missing` on every retry.
+    nonisolated static func replacementUnderway(projectID: UUID, inFlight: [UUID: InFlightUpload], records: [UploadRecoveryRecord]) -> Bool {
+        inFlight.values.contains { $0.projectID == projectID && $0.replacesMediaID != nil }
+            || records.contains { $0.projectID == projectID && $0.replacesMediaID != nil }
     }
 
     /// KRI-294: chosen files of one role still on their way into the project, counted once each
@@ -991,7 +1011,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     func clearInFlight(_ recordID: UUID) { inFlight[recordID] = nil }
 
     func reportFailure(id: UUID = UUID(), projectID: UUID, role: CreationMediaRole, filename: String, message: String, cause: UploadFailure.Cause = .unreadable) {
-        recordFailure(id: id, projectID: projectID, role: role, filename: filename, message: message, cause: cause)
+        recordFailure(id: id, projectID: projectID, role: role, filename: filename, message: message, cause: cause, replacesMediaID: records.first(where: { $0.id == id })?.replacesMediaID)
         if cause != .unreadable, let index = records.firstIndex(where: { $0.id == id }) {
             records[index].uploadFailed = true
             persist()
@@ -1166,7 +1186,19 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // Nothing left to resume, so the asset is no longer on its way: release its claim, or it
                 // would count as pending forever and keep Continue disabled with no way out.
                 releaseSelection(recordID: entry.id, projectID: entry.projectID)
+                inFlight[entry.id] = nil
+                if entry.replacesMediaID != nil {
+                    recordFailure(id: entry.id, projectID: entry.projectID, role: entry.role,
+                                  filename: Self.displayFilename(entry.filename),
+                                  message: "The new take couldn’t be resumed. Record it again. \(RerecordFailure.unchanged)",
+                                  replacesMediaID: entry.replacesMediaID)
+                }
                 continue
+            }
+            // Even while backoff postpones preparation, a durable replacement owns the old clip.
+            if entry.replacesMediaID != nil {
+                inFlight[entry.id] = InFlightUpload(projectID: entry.projectID, role: entry.role,
+                                                   durationS: entry.durationS, replacesMediaID: entry.replacesMediaID)
             }
             guard now.timeIntervalSince(entry.lastHeartbeatAt) >= Self.resumeBackoffInterval else {
                 // Too soon since the last attempt/heartbeat -- leave it exactly as
@@ -1196,7 +1228,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func resumePreparation(_ entry: PreparingUpload) -> Task<Void, Never> {
         let recordID = entry.id
         activePreparationIDs.insert(recordID)
-        inFlight[recordID] = InFlightUpload(projectID: entry.projectID, role: entry.role, durationS: entry.durationS)
+        inFlight[recordID] = InFlightUpload(projectID: entry.projectID, role: entry.role, durationS: entry.durationS, replacesMediaID: entry.replacesMediaID)
         let backgroundTaskID = backgroundActivity.begin(name: Self.preparationBackgroundTaskName) { [weak self] in
             Task { @MainActor in self?.markPreparationExpired(recordID: recordID) }
         }
@@ -1205,7 +1237,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             guard let self else { return }
             defer {
                 self.activePreparationIDs.remove(recordID)
-                self.inFlight[recordID] = nil
+                // A transient failure leaves a staged retry. Keep its replacement lock until that
+                // entry is consumed or discarded; ordinary uploads retain their existing cleanup.
+                let waitingReplacement = entry.replacesMediaID != nil
+                    && Self.restorePreparingUploads(key: self.defaultsKey).contains { $0.id == recordID }
+                if !waitingReplacement { self.inFlight[recordID] = nil }
                 self.resumeTasks[recordID] = nil
                 self.backgroundActivity.end(backgroundTaskID)
             }
@@ -1253,7 +1289,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             try Task.checkCancellation()
             let (reservation, visualReservationID) = try await reserve(
                 projectID: entry.projectID, itemID: entry.itemID, role: entry.role, clientUploadID: clientUploadID,
-                filename: entry.filename, contentType: contentType, size: Int64(size), contract: prepared.2
+                filename: entry.filename, contentType: contentType, size: Int64(size), contract: prepared.2, replacesMediaID: entry.replacesMediaID
             )
             preparedToDiscard = nil   // the upload owns these files from here on
             if let original = prepared.1 {
@@ -1270,7 +1306,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 reservation: reservation,
                 clientUploadID: clientUploadID,
                 retryCount: 0, role: entry.role, itemID: entry.itemID, visualReservationID: visualReservationID, uploadContract: prepared.2, editorSourceTarget: entry.editorSourceTarget,
-                durationS: inFlight[recordID]?.durationS ?? entry.durationS
+                durationS: inFlight[recordID]?.durationS ?? entry.durationS, replacesMediaID: entry.replacesMediaID
             )
             if entry.editorSourceTarget != nil && !containsEditorPlacement(recordID) { await cancel(recordID: recordID) }
         } catch {
@@ -1297,7 +1333,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // Otherwise the claim survives with nothing behind it: it keeps counting as pending
                 // (Continue stays disabled) and the picker keeps showing the asset as chosen.
                 releaseSelection(recordID: recordID, projectID: entry.projectID)
-                recordFailure(id: recordID, projectID: entry.projectID, role: entry.role, filename: Self.displayFilename(entry.filename), message: "It couldn’t be resumed. Choose it again.")
+                recordFailure(id: recordID, projectID: entry.projectID, role: entry.role, filename: Self.displayFilename(entry.filename),
+                              message: entry.replacesMediaID == nil ? "It couldn’t be resumed. Choose it again." : RerecordFailure(error).message,
+                              replacesMediaID: entry.replacesMediaID)
             }
         }
     }
@@ -1497,7 +1535,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let clientUploadID = record.clientUploadID ?? "ios-\(record.id.uuidString)"
             let (reservation, visualReservationID) = try await reserve(
                 projectID: record.projectID, itemID: record.itemID, role: record.role,
-                clientUploadID: clientUploadID, filename: record.filename, contentType: contentType, size: Int64(size), contract: record.uploadContract
+                clientUploadID: clientUploadID, filename: record.filename, contentType: contentType, size: Int64(size), contract: record.uploadContract, replacesMediaID: record.replacesMediaID
             )
             guard !cancellingRecords.contains(record.id), records.contains(where: { $0.id == record.id }) else { return }
             if let reservationID = record.reservationID {
@@ -1515,7 +1553,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 reservation: reservation,
                 clientUploadID: clientUploadID,
                 retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID, uploadContract: record.uploadContract, editorSourceTarget: record.editorSourceTarget,
-                durationS: record.durationS
+                durationS: record.durationS, replacesMediaID: record.replacesMediaID
             )
         } catch {
             lastError = error.localizedDescription
@@ -1618,6 +1656,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message, cause: .cannotResume)
             return
         }
+        if let replaced = record.replacesMediaID {
+            await performReplacement(record, replacing: replaced, mediaID: mediaID, gcsPath: gcsPath, contentType: contentType, libraryOwnerAtStart: libraryOwnerAtStart)
+            return
+        }
         if let target = record.editorSourceTarget {
             do {
                 guard target.sourceKind == .footage else { throw APIError.invalidResponse }
@@ -1678,13 +1720,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                     await CreationMediaPreview.finalize(recordID: record.id, localURL: URL(fileURLWithPath: record.localFilePath), mediaID: mediaID)
                     previewVersion += 1
                 }
-                if let owner = libraryOwnerAtStart, api.mediaLibraryOwner == owner,
-                   let assetID = CreationAttachedMedia.parse(attachedThread.state ?? [:]).first(where: { $0.id == mediaID })?.libraryAssetID,
-                   let original = (try? SourceAssetStore(project: Self.projectDirectory(record.projectID)).bindings())?.first(where: { $0.mediaID == mediaID })?.original {
-                    // Keep a separate durable link before releasing upload recovery. Failure leaves
-                    // the post original in place for lazy migration when Saved uploads is opened.
-                    try? await MediaLibraryOriginals(owner: owner).retain(assetID: assetID, from: Self.projectDirectory(record.projectID), mediaID: mediaID, original: original)
-                }
+                await retainLibraryOriginal(in: attachedThread, record: record, mediaID: mediaID, ownerAtStart: libraryOwnerAtStart)
                 attachedThreads[record.projectID] = attachedThread
                 // Hand the asset's identity from the (about to be deleted) record to the ledger, so
                 // the clip still shows as chosen the next time the picker opens.
@@ -1704,6 +1740,53 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         // KRI-194: this was `lastError`-only, so an attach failure for one clip could sit
         // hidden behind another clip's still-showing failure line.
         reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message, cause: .uploadFailed)
+    }
+
+    private func retainLibraryOriginal(in thread: CreationThread, record: UploadRecoveryRecord, mediaID: String, ownerAtStart: String?) async {
+        guard let owner = ownerAtStart, api.mediaLibraryOwner == owner,
+              let assetID = CreationAttachedMedia.parse(thread.state ?? [:]).first(where: { $0.id == mediaID })?.libraryAssetID,
+              let original = (try? SourceAssetStore(project: Self.projectDirectory(record.projectID)).bindings())?.first(where: { $0.mediaID == mediaID })?.original else { return }
+        // Keep a separate durable link before releasing upload recovery. Failure leaves
+        // the post original in place for lazy migration when Saved uploads is opened.
+        try? await MediaLibraryOriginals(owner: owner).retain(assetID: assetID, from: Self.projectDirectory(record.projectID), mediaID: mediaID, original: original)
+    }
+
+    /// The swap half of a re-record. Its idempotency key is the record's id, so a retry after a 5xx or a relaunch
+    /// re-posts the same swap and the server answers it as a no-op instead of attaching a second speaker.
+    private func performReplacement(_ record: UploadRecoveryRecord, replacing replaced: String, mediaID: String, gcsPath: String, contentType: String, libraryOwnerAtStart: String?) async {
+        guard record.role == .clip else { return }
+        let capture = await ClipCaptureWire.forAttach(recordID: record.id)
+        var failure: Error?
+        for _ in 0..<2 {
+            do {
+                let current = try await retryingTransient { try await api.project(threadID: record.projectID) }
+                let swapped = try await retryingTransient { try await api.replaceProjectMedia(
+                    threadID: record.projectID, replacedMediaID: replaced, mediaID: mediaID, gcsPath: gcsPath, filename: record.filename,
+                    contentType: contentType, expectedRevision: current.revision, clientEventID: "ios-replace-\(record.id.uuidString)", capture: capture
+                ) }
+                await CreationMediaPreview.finalize(recordID: record.id, localURL: URL(fileURLWithPath: record.localFilePath), mediaID: mediaID)
+                previewVersion += 1
+                await retainLibraryOriginal(in: swapped, record: record, mediaID: mediaID, ownerAtStart: libraryOwnerAtStart)
+                attachedThreads[record.projectID] = swapped
+                bindSelection(recordID: record.id, projectID: record.projectID, mediaID: mediaID)
+                ClipCaptureStore.shared.remove(record.id)
+                remove(record.id, deleteLocalFile: true)
+                return
+            } catch {
+                failure = error
+                if !RerecordFailure(error).retryable { break }
+            }
+        }
+        let problem = RerecordFailure(failure ?? APIError.invalidResponse)
+        lastError = problem.message
+        if problem.retryable {
+            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: Self.displayFilename(record.filename), message: problem.message, cause: .uploadFailed)
+        } else {
+            // The server rolled the swap back and these bytes cannot succeed; the creator records again.
+            ClipCaptureStore.shared.remove(record.id)
+            remove(record.id, deleteLocalFile: true)
+            recordFailure(id: record.id, projectID: record.projectID, role: record.role, filename: Self.displayFilename(record.filename), message: problem.message, cause: .cannotResume, replacesMediaID: replaced)
+        }
     }
 
     /// Posts (or idempotently re-posts) admission and waits briefly for the
@@ -1729,7 +1812,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return false
     }
 
-    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?, uploadContract: ProjectMediaUploadContract? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil, durationS: Double? = nil) throws {
+    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?, uploadContract: ProjectMediaUploadContract? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil, durationS: Double? = nil, replacesMediaID: String? = nil) throws {
         var request = URLRequest(url: reservation.uploadURL)
         request.httpMethod = "PUT"
         request.setValue(reservation.contentType, forHTTPHeaderField: "Content-Type")
@@ -1752,7 +1835,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             retentionExpiresAt: nil,
             taskIdentifier: task.taskIdentifier,
             retryCount: retryCount, mediaRole: role, itemID: itemID, visualReservationID: visualReservationID,
-            editorSourceTarget: editorSourceTarget, durationS: durationS
+            editorSourceTarget: editorSourceTarget, durationS: durationS, replacesMediaID: replacesMediaID
         )
         records.append(record)
         persist()
@@ -1760,7 +1843,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         task.resume()
     }
 
-    private func reserve(projectID: UUID, itemID: String?, role: CreationMediaRole, clientUploadID: String, filename: String, contentType: String, size: Int64, contract: ProjectMediaUploadContract? = nil) async throws -> (ProjectUploadReservation, String?) {
+    private func reserve(projectID: UUID, itemID: String?, role: CreationMediaRole, clientUploadID: String, filename: String, contentType: String, size: Int64, contract: ProjectMediaUploadContract? = nil, replacesMediaID: String? = nil) async throws -> (ProjectUploadReservation, String?) {
+        if let replacesMediaID {
+            guard role == .clip else { throw APIError.invalidResponse }
+            if let contract {
+                return (try await api.reserveProjectReplacementProxyUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, size: size, contract: contract, replacing: replacesMediaID), nil)
+            }
+            return (try await api.reserveProjectReplacementUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size, replacing: replacesMediaID), nil)
+        }
         if let contract {
             guard role == .clip else { throw APIError.invalidResponse }
             let target = try await api.reserveProjectProxyUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, size: size, contract: contract)

@@ -118,6 +118,7 @@ def _option(
     recommended: bool = False,
     aliases: Sequence[str] = (),
     tr_aliases: Sequence[str] = (),
+    values: Mapping[str, object] | None = None,
 ) -> ConflictOption:
     """A :class:`ConflictOption` with ``(en, tr)`` copy for the chat's language (KRI-520).
 
@@ -127,13 +128,17 @@ def _option(
     can still get a Turkish reply). English chats keep the English label and description.
     """
 
+    # ``values`` fill templated labels and descriptions (``"Extend it to {shown} seconds"``),
+    # so a catalog language finds them by their template (KRI-1362).
+    filled = dict(values or {})
     en_label, tr_label = label
-    shown = say(en=en_label, tr=tr_label)
-    extra = (en_label,) if shown != en_label else ()
+    shown = say(en=en_label, tr=tr_label, **filled)
+    english = en_label.format(**filled) if filled else en_label
+    extra = (english,) if shown != english else ()
     return ConflictOption(
         key=key,
         label=shown,
-        description=say(en=description[0], tr=description[1]) if description else None,
+        description=say(en=description[0], tr=description[1], **filled) if description else None,
         recommended=recommended,
         aliases=(*aliases, *tr_aliases, *extra),
     )
@@ -219,41 +224,44 @@ def detect_order_vs_group(
     return ConflictCandidate(
         conflict_id=CONFLICT_ORDER_VS_GROUP,
         reason=say(
-            en=f"your {names} clips were filmed mixed together, so I can't do both.",
+            en="your {names} clips were filmed mixed together, so I can't do both.",
             tr=(
-                f"{names} klipleri birbirine karışık çekilmiş, bu yüzden ikisini birden "
-                "yapamıyorum."
+                "{names} klipleri birbirine karışık çekilmiş, bu yüzden ikisini birden yapamıyorum."
             ),
+            names=names,
         ),
         intro=say(
-            en=f"You asked for a chronological video and for the clips grouped by {word}.",
+            en="You asked for a chronological video and for the clips grouped by {word}.",
             tr=(
-                f"Hem kronolojik bir video hem de kliplerin {tr_word} bazında "
-                "gruplanmasını istedin."
+                "Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin."
             ),
+            word=word,
+            tr_word=tr_word,
         ),
         options=(
             _option(
                 OPT_GROUP_FIRST,
                 label=(
-                    f"Group by {word}, chronological inside each {word}",
-                    f"Her {tr_word} bir blok olsun; blok içinde kronolojik sırala",
+                    "Group by {word}, chronological inside each {word}",
+                    "Her {tr_word} bir blok olsun; blok içinde kronolojik sırala",
                 ),
                 description=(
-                    f"Each {word} plays as one block; blocks start in the order they first "
+                    "Each {word} plays as one block; blocks start in the order they first "
                     "appear, and clips inside a block keep the order you filmed them.",
-                    f"Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla "
+                    "Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla "
                     "başlar, blok içindeki klipler çektiğin sırayı korur.",
                 ),
+                values={"word": word, "tr_word": tr_word},
                 recommended=True,
                 tr_aliases=("grupla", "gruplandır", "önce grupla") if turkish else (),
             ),
             _option(
                 OPT_CHRONOLOGICAL,
                 label=(
-                    f"Keep it strictly chronological; {word}s may interleave",
-                    f"Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir",
+                    "Keep it strictly chronological; {word}s may interleave",
+                    "Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir",
                 ),
+                values={"word": word, "tr_word": tr_word},
                 description=(
                     "Clips play in the exact order you filmed them.",
                     "Klipler tam olarak çektiğin sırayla oynar.",
@@ -327,41 +335,49 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
         # The one option is a way out, not a limit: the typed words are the main path.
         return say(
             en=(
-                f"{candidate.intro} Type the words you want and I'll use them exactly, "
-                f'or reply "{options[0].label}".'
+                "{candidate_intro} Type the words you want and I'll use them exactly, "
+                'or reply "{options_0_label}".'
             ),
             tr=(
-                f"{candidate.intro} İstediğin kelimeleri yaz, aynen kullanırım; "
-                f'ya da "{options[0].label}" yaz.'
+                "{candidate_intro} İstediğin kelimeleri yaz, aynen kullanırım; "
+                'ya da "{options_0_label}" yaz.'
             ),
+            candidate_intro=candidate.intro,
+            options_0_label=options[0].label,
         )
     if candidate.kind == CONFLICT_VOICE_VS_DURATION and len(options) == 1:
         # Only the length the clips and the voice allow: a statement, never "the most I can do".
         only = options[0]
         return say(
             en=(
-                f"{candidate.intro} {candidate.reason} I can make it {only.label}. "
-                f'Reply "{only.label}" to go with that, or change your request.'
+                "{candidate_intro} {candidate_reason} I can make it {only_label}. "
+                'Reply "{only_label}" to go with that, or change your request.'
             ),
             tr=(
-                f"{candidate.intro} {candidate.reason} Şunu yapabilirim: {only.label}. "
-                f'Bunu istiyorsan "{only.label}" yaz ya da isteğini değiştir.'
+                "{candidate_intro} {candidate_reason} Şunu yapabilirim: {only_label}. "
+                'Bunu istiyorsan "{only_label}" yaz ya da isteğini değiştir.'
             ),
+            candidate_intro=candidate.intro,
+            candidate_reason=candidate.reason,
+            only_label=only.label,
         )
     if len(options) == 1:
         # One way forward is a statement, not a choice.
         only = options[0]
         return say(
             en=(
-                f"{candidate.intro} Unfortunately {_after_connector(candidate.reason)} "
+                "{candidate_intro} Unfortunately {after_connector_candidate_reason} "
                 "The most I can do is: "
-                f'{only.label}. Reply "{only.label}" to go with that, or change your request.'
+                '{only_label}. Reply "{only_label}" to go with that, or change your request.'
             ),
             tr=(
-                f"{candidate.intro} Maalesef {_after_connector(candidate.reason)} "
+                "{candidate_intro} Maalesef {after_connector_candidate_reason} "
                 "Yapabileceğim en fazla şu: "
-                f'{only.label}. Bunu istiyorsan "{only.label}" yaz ya da isteğini değiştir.'
+                '{only_label}. Bunu istiyorsan "{only_label}" yaz ya da isteğini değiştir.'
             ),
+            candidate_intro=candidate.intro,
+            after_connector_candidate_reason=_after_connector(candidate.reason),
+            only_label=only.label,
         )
     if candidate.reason.endswith("?"):
         # The reason is itself the question ("How long should the video be?").
@@ -370,13 +386,15 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
         lines = [
             say(
                 en=(
-                    f"{candidate.intro} Unfortunately {_after_connector(candidate.reason)} "
+                    "{candidate_intro} Unfortunately {after_connector_candidate_reason} "
                     "Which do you prefer?"
                 ),
                 tr=(
-                    f"{candidate.intro} Maalesef {_after_connector(candidate.reason)} "
+                    "{candidate_intro} Maalesef {after_connector_candidate_reason} "
                     "Hangisini tercih edersin?"
                 ),
+                candidate_intro=candidate.intro,
+                after_connector_candidate_reason=_after_connector(candidate.reason),
             )
         ]
     lines.extend(_numbered_options((o.label, o.recommended) for o in options))
@@ -706,6 +724,111 @@ def simpler_version_accepted(events: Events, dropped_fields: Iterable[str]) -> b
     offered = {str(name) for name in question.get("dropped_fields") or ()}
     dropping = set(dropped_fields)
     return bool(dropping) and dropping <= offered
+
+
+def simpler_version_carried(events: Events, dropped_fields: Iterable[str]) -> bool:
+    """An EARLIER "simpler version" tap on a policy refusal still covers this turn (KRI-1354).
+
+    de1 (Leverkusen N3): the creator tapped the simpler version on the policy refusal's card,
+    the draft was then held by approval readiness, and the tap on THAT card re-planned into the
+    same refusal, which no longer counted the first tap: the same question came back. The
+    KRI-1323 rule of the readiness consent (`_simpler_version_consent`), for the policy side.
+
+    True only when, walking back from this turn's message, every creator turn is a choice tap
+    (a typed message is a new request and ends it), none is a "Change my request" tap, no draft
+    was applied, and the newest simpler tap on a policy refusal's card (one that records
+    ``dropped_fields``) offered to leave out every field the policy drops now. A tap on a card
+    that records no fields (readiness / receipts) is walked past, never taken as this consent.
+    """
+    dropping = set(dropped_fields)
+    if not dropping:
+        return False
+    rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
+    for index in range(len(rows) - 1, -1, -1):
+        role, payload = rows[index]
+        if role == "assistant":
+            if payload.get(EVENT_TYPE_KEY) in {"draft_applied", "draft_undone"}:
+                return False
+            continue
+        if role != "user":
+            continue
+        selection = payload.get("choice_selection")
+        if not isinstance(selection, dict):
+            return False  # a typed message is a new request
+        key = selection.get("option_key")
+        if key in _CHANGE_REQUEST_KEYS:
+            return False
+        if key != "simpler_version":
+            continue  # a tap that answers another question
+        # The card it answered must have been the open simpler-version question then.
+        question = _simpler_question_answered(rows[: index + 1], {"simpler_version"})
+        if question is None:
+            continue
+        offered = {str(name) for name in question.get("dropped_fields") or ()}
+        if not offered:
+            continue  # a readiness / receipts card: not a policy refusal's consent
+        return dropping <= offered
+    return False
+
+
+def follows_change_request(events: Events) -> bool:
+    """This turn's message is the typed answer to a "Change my request" tap (KRI-1360).
+
+    True only when the current (last) creator turn is a typed message, not a tap, and the creator
+    turn just before it tapped "Change my request" on the simpler-version question that was open
+    then. Any later message is an ordinary turn again.
+    """
+    rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
+    users = [index for index, (role, _payload) in enumerate(rows) if role == "user"]
+    if len(users) < 2:
+        return False
+    current, previous = users[-1], users[-2]
+    if any(isinstance(rows[current][1].get(key), dict) for key in _ANSWER_PAYLOAD_KEYS):
+        return False
+    return change_request_selected(rows[: previous + 1]) is not None
+
+
+def simpler_version_answer(events: Events) -> dict[str, Any] | None:
+    """The simpler-version question THIS turn answers with "Make it without these", else
+    ``None`` (KRI-1236).
+
+    A tap on that option of the question open just before the message, or a typed message that
+    is exactly its label or one of its aliases (the text fallback ``_simpler_version_consent``
+    accepts). Such a turn states nothing but the tap: what it leaves out is what the question
+    named, never what a model reads into "these".
+    """
+    rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
+    question = _simpler_question_answered(rows, {"simpler_version"})
+    if question is not None:
+        return question
+    last_user = next((i for i in range(len(rows) - 1, -1, -1) if rows[i][0] == "user"), None)
+    if last_user is None:
+        return None
+    payload = rows[last_user][1]
+    if any(isinstance(payload.get(key), dict) for key in _ANSWER_PAYLOAD_KEYS):
+        return None  # a tap that answers something else
+    question = latest_open_choice_question(rows[:last_user])
+    if question is None or question.get("conflict") != SIMPLER_VERSION_REASON:
+        return None
+    named_option = {
+        "options": [o for o in question.get("options", []) if o.get("key") == "simpler_version"]
+    }
+    return (
+        question
+        if match_open_choice(named_option, payload.get(CONTENT_KEY)) == "simpler_version"
+        else None
+    )
+
+
+# Payload keys that make a creator event a tap or card answer (`simpler_version_answer`).
+_ANSWER_PAYLOAD_KEYS = (
+    "choice_selection",
+    "clip_selection",
+    "protected_region",
+    "moment_order",
+    "song_order",
+    "song_range",
+)
 
 
 def change_request_selected(events: Events) -> dict[str, Any] | None:
@@ -1085,20 +1208,21 @@ def _duration_vs_count(
     subset = _evenly_spaced(clip_ids, fit)
     shown = _clean_seconds(needed)
     asked = _clean_seconds(seconds)
-    said = quoted or say(en=f"{asked} seconds", tr=f"{asked} saniye")
+    said = quoted or say(en="{asked} seconds", tr="{asked} saniye", asked=asked)
     options = [
         _option(
             OPT_FEWER,
             label=(
-                f"Keep {asked} seconds with {len(subset)} clips",
-                f"{asked} saniyeyi koru, {len(subset)} klip kullan",
+                "Keep {asked} seconds with {kept} clips",
+                "{asked} saniyeyi koru, {kept} klip kullan",
             ),
             description=(
-                f"Uses {len(subset)} of your {count} clips, spread evenly through your "
+                "Uses {kept} of your {count} clips, spread evenly through your "
                 "footage; the others are left out.",
-                f"{count} klibinden {len(subset)} tanesini kullanır, çekimlerine eşit "
+                "{count} klibinden {kept} tanesini kullanır, çekimlerine eşit "
                 "aralıklarla dağıtır; diğerleri dışarıda kalır.",
             ),
+            values={"asked": asked, "kept": len(subset), "count": count},
             # Extending breaks a ceiling, so "fewer clips" is the way to keep it.
             recommended=ceiling or not can_extend,
             aliases=("fewer", "fewer clips", "use fewer", "use fewer clips", "keep it short"),
@@ -1122,12 +1246,13 @@ def _duration_vs_count(
             0,
             _option(
                 OPT_EXTEND,
-                label=(f"Extend it to {shown} seconds", f"Süreyi {shown} saniyeye uzat"),
+                label=("Extend it to {shown} seconds", "Süreyi {shown} saniyeye uzat"),
                 description=(
-                    f"Every clip gets at least {floor_s:g} seconds, so all {count} stay in.",
-                    f"Her klip en az {floor_s:g} saniye görünür, böylece {count} klibin "
+                    "Every clip gets at least {floor_s:g} seconds, so all {count} stay in.",
+                    "Her klip en az {floor_s:g} saniye görünür, böylece {count} klibin "
                     "hepsi kalır.",
                 ),
+                values={"shown": shown, "floor_s": floor_s, "count": count},
                 recommended=not ceiling,
                 aliases=("extend", "extend it", "longer", "make it longer", "extend the length"),
                 tr_aliases=_EXTEND_TR_ALIASES,
@@ -1146,18 +1271,23 @@ def _duration_vs_count(
         field_path="target_duration_s",
         requirement_ids=tuple(requirement_ids),
         intro=say(
-            en=f'Your brief says "{said}" and this edit uses {count} clips.',
-            tr=f'İsteğinde "{said}" yazıyor ama bu düzenlemede {count} klip var.',
+            en='Your brief says "{said}" and this edit uses {count} clips.',
+            tr='İsteğinde "{said}" yazıyor ama bu düzenlemede {count} klip var.',
+            said=said,
+            count=count,
         ),
         reason=say(
             en=(
-                f"{count} clips can't each stay on screen long enough to be seen in {asked} "
-                f"seconds (each needs about {floor_s:g} seconds)."
+                "{count} clips can't each stay on screen long enough to be seen in {asked} "
+                "seconds (each needs about {floor_s:g} seconds)."
             ),
             tr=(
-                f"{asked} saniyede {count} klibin her biri görülecek kadar ekranda kalamaz "
-                f"(her birine yaklaşık {floor_s:g} saniye lazım)."
+                "{asked} saniyede {count} klibin her biri görülecek kadar ekranda kalamaz "
+                "(her birine yaklaşık {floor_s:g} saniye lazım)."
             ),
+            count=count,
+            asked=asked,
+            floor_s=floor_s,
         ),
         options=tuple(options),
         # The creator's inputs only: the model's own selection or length never reopens it.
@@ -1208,7 +1338,7 @@ def _holds_vs_length(
     can_extend = needed <= cap.max_duration_s
     asked = _clean_seconds(requested)
     shown = _clean_seconds(needed)
-    said = quoted or say(en=f"{asked} seconds", tr=f"{asked} saniye")
+    said = quoted or say(en="{asked} seconds", tr="{asked} saniye", asked=asked)
     keep_strategy: dict[str, Any] = {}
     group = _number(conflict.get("group_hold_s"))
     profile = strategy.get("mixed_media_timing")
@@ -1226,13 +1356,14 @@ def _holds_vs_length(
         _option(
             OPT_KEEP_LENGTH,
             label=(
-                f"Keep {asked} seconds, photos at the usual pace",
-                f"{asked} saniyeyi koru, fotoğraflar normal hızda",
+                "Keep {asked} seconds, photos at the usual pace",
+                "{asked} saniyeyi koru, fotoğraflar normal hızda",
             ),
             description=(
                 "The photos you timed play at the edit's own pace so everything fits.",
                 "Süre verdiğin fotoğraflar her şey sığsın diye düzenlemenin kendi hızında oynar.",
             ),
+            values={"asked": asked},
             recommended=not can_extend,
             aliases=("keep the length", "keep it", f"keep {asked} seconds"),
             tr_aliases=("süreyi koru", "süre kalsın", "süreyi değiştirme"),
@@ -1244,7 +1375,8 @@ def _holds_vs_length(
             0,
             _option(
                 OPT_EXTEND,
-                label=(f"Make it {shown} seconds", f"Videoyu {shown} saniye yap"),
+                label=("Make it {shown} seconds", "Videoyu {shown} saniye yap"),
+                values={"shown": shown},
                 description=(
                     "Every photo plays the length you gave it, with the footage around it.",
                     "Her fotoğraf verdiğin süre kadar kalır, çekimler de etrafında oynar.",
@@ -1267,15 +1399,19 @@ def _holds_vs_length(
         field_path="target_duration_s",
         requirement_ids=tuple(dict.fromkeys([*total_ids, *hold_ids])),
         intro=say(
-            en=f'Your brief says "{said}" and the photos you timed take {_clean_seconds(held)} '
+            en='Your brief says "{said}" and the photos you timed take {clean_seconds_held} '
             "seconds.",
-            tr=f'İsteğinde "{said}" yazıyor ve süre verdiğin fotoğraflar '
-            f"{_clean_seconds(held)} saniye tutuyor.",
+            tr='İsteğinde "{said}" yazıyor ve süre verdiğin fotoğraflar '
+            "{clean_seconds_held} saniye tutuyor.",
+            said=said,
+            clean_seconds_held=_clean_seconds(held),
         ),
         reason=say(
-            en=f"Those photos and your footage need about {shown} seconds, more than {asked}.",
-            tr=f"O fotoğraflar ve çekimlerin yaklaşık {shown} saniye istiyor, {asked} "
+            en="Those photos and your footage need about {shown} seconds, more than {asked}.",
+            tr="O fotoğraflar ve çekimlerin yaklaşık {shown} saniye istiyor, {asked} "
             "saniyeden fazla.",
+            shown=shown,
+            asked=asked,
         ),
         options=tuple(options),
         # The creator's inputs only: the requested total, the held seconds, who holds.
@@ -1464,8 +1600,10 @@ def _order_basis(
             )
             if len(missing) == many
             else say(
-                en=f"{len(missing)} of your {many} clips have no filming time",
-                tr=f"{many} klibinden {len(missing)} tanesinde çekim saati yok",
+                en="{len_missing} of your {many} clips have no filming time",
+                tr="{many} klibinden {len_missing} tanesinde çekim saati yok",
+                len_missing=len(missing),
+                many=many,
             )
         )
         filmed = strategy.get("ordering_choice") == "chronological" or any(
@@ -1487,8 +1625,9 @@ def _order_basis(
                 tr="Klipleri çekildikleri zamana göre belirli bir sırayla istedin.",
             )
         reason = say(
-            en=f"{some}, so I can't put them in that order.",
-            tr=f"{some}, bu yüzden onları o sıraya koyamıyorum.",
+            en="{some}, so I can't put them in that order.",
+            tr="{some}, bu yüzden onları o sıraya koyamıyorum.",
+            some=some,
         )
         covered = capture_ids + (rule_ids if ask_rule else [])
     else:
@@ -1611,8 +1750,9 @@ def _text_placement(
                 field_path="shot_labels[]",
                 requirement_ids=(str(req.id),),
                 intro=say(
-                    en=f'You gave me the words "{_clean_name(str(req.literal))}" for one shot.',
-                    tr=f'Bir sahne için "{_clean_name(str(req.literal))}" yazısını verdin.',
+                    en='You gave me the words "{clean_name_str_req_literal}" for one shot.',
+                    tr='Bir sahne için "{clean_name_str_req_literal}" yazısını verdin.',
+                    clean_name_str_req_literal=_clean_name(str(req.literal)),
                 ),
                 reason=say(
                     en=(
@@ -1697,13 +1837,17 @@ def _title_text(
 
     if cap.creator_id is None:
         return None
-    from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
+    from app.kria.brief_checks import defers_to_unified_montage, title_off  # noqa: PLC0415
     from app.pipeline.unified_montage import title_source_exists  # noqa: PLC0415
 
     wanted = [
         req
         for req in _live(brief)
-        if req.kind == "text" and req.scope == "title" and not str(req.literal or "").strip()
+        if req.kind == "text"
+        and req.scope == "title"
+        and not str(req.literal or "").strip()
+        # KRI-1355: "Kein Titel" asks for no title; there are no words to ask for.
+        and not title_off(req)
     ]
     if not wanted:
         return None
@@ -1878,8 +2022,9 @@ def _speech_occurrence(
             )
         built.append(_option(OCCURRENCE_WAIVE, label=waive))
         more = say(
-            en=f" I'm showing the first {len(offered)}.",
-            tr=f" İlk {len(offered)} tanesini gösteriyorum.",
+            en=" I'm showing the first {len_offered}.",
+            tr=" İlk {len_offered} tanesini gösteriyorum.",
+            len_offered=len(offered),
         )
         return tuple(built), more if len(offered) < len(spans) else ""
 
@@ -1904,18 +2049,34 @@ def _speech_occurrence(
                 conflict_id=f"{CONFLICT_SPEECH_OCCURRENCE}:{ask.requirement_id}"[:80],
                 field_path="brief_requirements",
                 requirement_ids=(ask.requirement_id,),
-                intro=say(
-                    en=(
-                        f'You asked for "{ask.text}" when {ask.speaker} says "{trigger}". '
-                        f'"{trigger}" is said {times} time{"s" if times != 1 else ""} in the '
-                        "part of your take I'm keeping, and I can't tell who is speaking." + more
-                    ),
-                    tr=(
-                        f'"{trigger}" denildiğinde "{ask.text}" yazısını istedin. Koruduğum '
-                        f'kısımda "{trigger}" {times} kez geçiyor ve kimin konuştuğunu ayırt '
-                        "edemiyorum." + more
-                    ),
-                ),
+                intro=(
+                    say(
+                        en='You asked for "{text}" when {speaker} says "{trigger}". "{trigger}" '
+                        "is said {times} time in the part of your take I'm keeping, and I "
+                        "can't tell who is speaking.",
+                        tr='"{trigger}" denildiğinde "{text}" yazısını istedin. Koruduğum '
+                        'kısımda "{trigger}" {times} kez geçiyor ve kimin konuştuğunu ayırt '
+                        "edemiyorum.",
+                        text=ask.text,
+                        speaker=ask.speaker,
+                        trigger=trigger,
+                        times=times,
+                    )
+                    if times == 1
+                    else say(
+                        en='You asked for "{text}" when {speaker} says "{trigger}". "{trigger}" '
+                        "is said {times} times in the part of your take I'm keeping, and I "
+                        "can't tell who is speaking.",
+                        tr='"{trigger}" denildiğinde "{text}" yazısını istedin. Koruduğum '
+                        'kısımda "{trigger}" {times} kez geçiyor ve kimin konuştuğunu ayırt '
+                        "edemiyorum.",
+                        text=ask.text,
+                        speaker=ask.speaker,
+                        trigger=trigger,
+                        times=times,
+                    )
+                )
+                + more,
                 reason=say(
                     en="Which one should it appear on?",
                     tr="Yazı hangisinde çıksın?",
@@ -1954,15 +2115,13 @@ def _speech_occurrence(
                 field_path="brief_requirements",
                 requirement_ids=tuple(cut.requirement_ids),
                 intro=say(
-                    en=(
-                        f'You asked me to cut "{cut.quote}". It is said {len(spans)} times in '
-                        "the part of your take I'm keeping." + more
-                    ),
-                    tr=(
-                        f'"{cut.quote}" kısmını kesmemi istedin. Koruduğum kısımda '
-                        f"{len(spans)} kez geçiyor." + more
-                    ),
-                ),
+                    en='You asked me to cut "{quote}". It is said {times} times in the part of '
+                    "your take I'm keeping.",
+                    tr='"{quote}" kısmını kesmemi istedin. Koruduğum kısımda {times} kez geçiyor.',
+                    quote=cut.quote,
+                    times=len(spans),
+                )
+                + more,
                 reason=say(en="Which one should I cut?", tr="Hangisini keseyim?"),
                 options=options,
                 input_digest=_digest(
@@ -2168,13 +2327,16 @@ def _freeze_frame(
             ]
             intro = say(
                 en=(
-                    f"You asked me to freeze the frame on that moment. I found it in {name} "
-                    f"({span}s), but I can't tell the exact instant, and I won't guess it."
+                    "You asked me to freeze the frame on that moment. I found it in {name} "
+                    "({span}s), but I can't tell the exact instant, and I won't guess it."
                 ),
                 tr=(
-                    f"O anda kareyi dondurmamı istedin. O anı {name_tr} buldum ({span}. "
+                    "O anda kareyi dondurmamı istedin. O anı {name_tr} buldum ({span}. "
                     "saniyeler arası) ama tam anını bilemiyorum ve tahmin etmeyeceğim."
                 ),
+                name=name,
+                span=span,
+                name_tr=name_tr,
             )
             reason = say(
                 en="Which frame should hold?",
@@ -2406,7 +2568,7 @@ def _which_voice(
         row = by_id[media_id]
         length = _voice_length_s(row)
         quote = _spoken_quote(row)
-        label = say(en=f"Clip {index}", tr=f"{index}. klip") + (
+        label = say(en="Clip {index}", tr="{index}. klip", index=index) + (
             f" ({_clean_seconds(length)} s)" if length else ""
         )
         label += f": \u201c{quote}\u201d" if quote else ""
@@ -2497,7 +2659,7 @@ def _voice_vs_duration(
             return None
         whole = int(math.floor(length))
         asked_s, voice_s = _clean_seconds(asked), _clean_seconds(whole)
-        said = quoted or say(en=f"{asked_s} seconds", tr=f"{asked_s} saniye")
+        said = quoted or say(en="{asked_s} seconds", tr="{asked_s} saniye", asked_s=asked_s)
         options: list[ConflictOption] = []
         effects: dict[str, Mapping[str, Any]] = {}
         # Each option only if the clips can actually be cut to it (never a promise that ends in
@@ -2507,8 +2669,9 @@ def _voice_vs_duration(
                 ConflictOption(
                     key=OPT_MATCH_VOICE,
                     label=say(
-                        en=f"End the edit when your voice ends ({voice_s} seconds)",
-                        tr=f"Sesin bittiğinde bitir ({voice_s} saniye)",
+                        en="End the edit when your voice ends ({voice_s} seconds)",
+                        tr="Sesin bittiğinde bitir ({voice_s} saniye)",
+                        voice_s=voice_s,
                     ),
                     description=say(
                         en="The video is exactly as long as your voice.",
@@ -2530,14 +2693,10 @@ def _voice_vs_duration(
                 ConflictOption(
                     key=OPT_SILENT_TAIL,
                     label=say(
-                        en=(
-                            f"Keep {asked_s} seconds, the last {_clean_seconds(asked - whole)} "
-                            "seconds play without voice"
-                        ),
-                        tr=(
-                            f"{asked_s} saniye kalsın, son {_clean_seconds(asked - whole)} "
-                            "saniye sessiz oynasın"
-                        ),
+                        en=("Keep {asked_s} seconds, the last {v1} seconds play without voice"),
+                        tr=("{asked_s} saniye kalsın, son {v1} saniye sessiz oynasın"),
+                        asked_s=asked_s,
+                        v1=_clean_seconds(asked - whole),
                     ),
                     description=say(
                         en="Your voice plays first, then the footage carries on in silence.",
@@ -2557,8 +2716,10 @@ def _voice_vs_duration(
         if not options:
             return None
         intro = say(
-            en=f'Your brief says "{said}" and your voice runs {voice_s} seconds.',
-            tr=f'İsteğinde "{said}" yazıyor ve sesin {voice_s} saniye sürüyor.',
+            en='Your brief says "{said}" and your voice runs {voice_s} seconds.',
+            tr='İsteğinde "{said}" yazıyor ve sesin {voice_s} saniye sürüyor.',
+            said=said,
+            voice_s=voice_s,
         )
         reason = say(
             en="your voice can't fill the whole video.",
@@ -2583,7 +2744,7 @@ def _voice_vs_duration(
             options.append(
                 ConflictOption(
                     key=key,
-                    label=say(en=f"{seconds} seconds", tr=f"{seconds} saniye"),
+                    label=say(en="{seconds} seconds", tr="{seconds} saniye", seconds=seconds),
                     description=(
                         say(
                             en=(
@@ -2610,18 +2771,21 @@ def _voice_vs_duration(
                 }
             }
         intro = say(
-            en=f"Your voice runs {_clean_seconds(length)} seconds.",
-            tr=f"Sesin {_clean_seconds(length)} saniye sürüyor.",
+            en="Your voice runs {clean_seconds_length} seconds.",
+            tr="Sesin {clean_seconds_length} saniye sürüyor.",
+            clean_seconds_length=_clean_seconds(length),
         )
         reason = (
             say(en="How long should the video be?", tr="Video ne kadar uzun olsun?")
             if len(values) > 1
             else say(
-                en=f"{count} clips need at least {_clean_seconds(lo_s)} seconds to each be seen.",
+                en="{count} clips need at least {clean_seconds_lo_s} seconds to each be seen.",
                 tr=(
-                    f"{count} klibin her birinin görülmesi için en az "
-                    f"{_clean_seconds(lo_s)} saniye gerekir."
+                    "{count} klibin her birinin görülmesi için en az "
+                    "{clean_seconds_lo_s} saniye gerekir."
                 ),
+                count=count,
+                clean_seconds_lo_s=_clean_seconds(lo_s),
             )
         )
         requirement_ids = []
@@ -2932,32 +3096,47 @@ def _take_window_choice(
         field_path="target_duration_s",
         requirement_ids=tuple(requirement_ids),
         intro=say(
-            en=f"{subject_en} about {kept_s} seconds of your take: {span_en}.",
-            tr=f"{subject_tr} çekiminin yaklaşık {kept_s} saniyesini tutuyor: {span_tr}.",
+            en="{subject_en} about {kept_s} seconds of your take: {span_en}.",
+            tr="{subject_tr} çekiminin yaklaşık {kept_s} saniyesini tutuyor: {span_tr}.",
+            subject_en=subject_en,
+            kept_s=kept_s,
+            span_en=span_en,
+            subject_tr=subject_tr,
+            span_tr=span_tr,
         ),
-        reason=say(
-            en=(
-                f"With the standard ending that part runs to {asked_s} seconds or more, and I "
-                f"can't shorten it without changing {lines_en}."
-                if strict
-                else f"That part runs longer than {asked_s} seconds, and I can't shorten it "
-                f"without changing {lines_en}."
-                if ceiling
-                else f"That part can't make a {asked_s}-second edit without changing {lines_en}."
-            ),
-            tr=(
-                f"Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve "
-                f"{lines_tr} değiştirmeden kısaltamam."
-                if strict
-                else f"O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam."
-                if ceiling
-                else f"{lines_tr.capitalize()} değiştirmeden {asked_s} saniyelik bir video yapamam."
-            ),
+        reason=(
+            say(
+                en="With the standard ending that part runs to {asked_s} seconds or more, and I "
+                "can't shorten it without changing {lines_en}.",
+                tr="Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve "
+                "{lines_tr} değiştirmeden kısaltamam.",
+                asked_s=asked_s,
+                lines_en=lines_en,
+                lines_tr=lines_tr,
+            )
+            if strict
+            else say(
+                en="That part runs longer than {asked_s} seconds, and I can't shorten it "
+                "without changing {lines_en}.",
+                tr="O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam.",
+                asked_s=asked_s,
+                lines_en=lines_en,
+                lines_tr=lines_tr,
+            )
+            if ceiling
+            else say(
+                en="That part can't make a {asked_s}-second edit without changing {lines_en}.",
+                tr="{lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam.",
+                asked_s=asked_s,
+                lines_en=lines_en,
+                lines_tr=lines_tr.capitalize(),
+            )
         ),
         options=(
             _option(
                 OPT_ACCEPT_NATURAL,
-                label=(f"Keep those {kept_s} seconds", f"O {kept_s} saniyeyi kullan"),
+                label=("Keep those {kept_s} seconds", "O {kept_s} saniyeyi kullan"),
+                values={"kept_s": kept_s},
                 description=(
                     "The video plays just the part your lines keep, without reuse or a "
                     "silent extension.",
@@ -3085,28 +3264,30 @@ def _length_vs_natural(
         "footage": "çekim",
     }[owner]
     asked_s, capacity_s = _clean_seconds(asked), _clean_seconds(capacity)
+    # One Turkish sentence for three English ones: the English is picked here as a template.
     natural_description = (
-        f"Use {capacity_s} seconds of the recording and selected footage; "
+        "Use {capacity_s} seconds of the recording and selected footage; "
         "the remaining recording is left out."
         if owner == "voiceover"
-        else f"The video follows the {source} without reuse or a silent extension."
+        else "The video follows the {source} without reuse or a silent extension."
     )
     if source_capacity > capacity:
         natural_description = (
-            f"Use a supported {capacity_s}-second window of the {source}; "
+            "Use a supported {capacity_s}-second window of the {source}; "
             "the remaining source is left out."
         )
     options = [
         _option(
             OPT_ACCEPT_NATURAL,
             label=(
-                f"Use the available {capacity_s} seconds",
-                f"Mevcut {capacity_s} saniyeyi kullan",
+                "Use the available {capacity_s} seconds",
+                "Mevcut {capacity_s} saniyeyi kullan",
             ),
             description=(
                 natural_description,
-                f"Video tekrar veya sessiz uzatma olmadan {source_tr} süresini takip eder.",
+                "Video tekrar veya sessiz uzatma olmadan {source_tr} süresini takip eder.",
             ),
+            values={"capacity_s": capacity_s, "source": source, "source_tr": source_tr},
             recommended=asked > capacity,
             aliases=("use available length", "use the available length", "match the source"),
         )
@@ -3125,11 +3306,12 @@ def _length_vs_natural(
             0,
             _option(
                 OPT_TRIM_TO_REQUESTED,
-                label=(f"Trim it to {asked_s} seconds", f"{asked_s} saniyeye kısalt"),
+                label=("Trim it to {asked_s} seconds", "{asked_s} saniyeye kısalt"),
                 description=(
-                    f"Use the supported trim for this {source}.",
-                    f"Bu {source_tr} için desteklenen kırpmayı kullanır.",
+                    "Use the supported trim for this {source}.",
+                    "Bu {source_tr} için desteklenen kırpmayı kullanır.",
                 ),
+                values={"asked_s": asked_s, "source": source, "source_tr": source_tr},
                 recommended=True,
                 aliases=("trim it", "trim", "keep requested length"),
             ),
@@ -3141,30 +3323,37 @@ def _length_vs_natural(
                 "creator_duration_s": asked_s,
             }
         }
-    said = quoted or say(en=f"{asked_s} seconds", tr=f"{asked_s} saniye")
+    said = quoted or say(en="{asked_s} seconds", tr="{asked_s} saniye", asked_s=asked_s)
     return UnresolvedChoice(
         kind=CONFLICT_LENGTH_VS_NATURAL,
         conflict_id=CONFLICT_LENGTH_VS_NATURAL,
         field_path="target_duration_s",
         requirement_ids=tuple(requirement_ids),
         intro=say(
-            en=f'Your brief says "{said}", but the available {source} is {capacity_s} seconds.',
-            tr=f'İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye.',
+            en='Your brief says "{said}", but the available {source} is {capacity_s} seconds.',
+            tr='İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye.',
+            said=said,
+            source=source,
+            capacity_s=capacity_s,
+            source_tr=source_tr,
         ),
-        reason=say(
-            en=(
-                f"That {source} cannot make an edit of at most {asked_s} seconds without "
-                "changing the source timing."
-                if ceiling
-                else f"That {source} cannot make a {asked_s}-second edit without changing the "
-                "source timing."
-            ),
-            tr=(
-                f"kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video "
-                "yapamam."
-                if ceiling
-                else f"kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
-            ),
+        reason=(
+            say(
+                en="That {source} cannot make an edit of at most {asked_s} seconds without "
+                "changing the source timing.",
+                tr="kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video "
+                "yapamam.",
+                source=source,
+                asked_s=asked_s,
+            )
+            if ceiling
+            else say(
+                en="That {source} cannot make a {asked_s}-second edit without changing the "
+                "source timing.",
+                tr="kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam.",
+                source=source,
+                asked_s=asked_s,
+            )
         ),
         options=tuple(options),
         input_digest=_digest(CONFLICT_LENGTH_VS_NATURAL, owner, asked, capacity, snapshot),
@@ -3331,34 +3520,36 @@ def _source_coverage(
         requested = envelope.get("target_duration_s")
         # KRI-847: a ceiling is "at most N seconds", never "the requested N seconds".
         ceiling = envelope.get("target_duration_bound") == "at_most"
-        reason = say(
-            en=(
-                f"A video of at most {requested:g} seconds cannot include these clips with "
+        reason = (
+            say(
+                en="A video of at most {requested:g} seconds cannot include these clips with "
                 "their approved holds. Choose fewer clips or change those holds before "
-                "rendering."
-                if ceiling
-                else f"The requested {requested:g} seconds cannot include these clips with "
-                "their approved holds. Choose fewer clips or change those holds before "
-                "rendering."
-            ),
-            tr=(
-                f"En fazla {requested:g} saniyelik bir video, onaylı bekleme süreleriyle bu "
+                "rendering.",
+                tr="En fazla {requested:g} saniyelik bir video, onaylı bekleme süreleriyle bu "
                 "klipleri kapsayamıyor. Oluşturmadan önce daha az klip seç ya da bekleme "
-                "sürelerini değiştir."
-                if ceiling
-                else f"İstenen {requested:g} saniye, onaylı bekleme süreleriyle bu klipleri "
+                "sürelerini değiştir.",
+                requested=requested,
+            )
+            if ceiling
+            else say(
+                en="The requested {requested:g} seconds cannot include these clips with "
+                "their approved holds. Choose fewer clips or change those holds before "
+                "rendering.",
+                tr="İstenen {requested:g} saniye, onaylı bekleme süreleriyle bu klipleri "
                 "kapsayamıyor. Oluşturmadan önce daha az klip seç ya da bekleme "
-                "sürelerini değiştir."
-            ),
+                "sürelerini değiştir.",
+                requested=requested,
+            )
         )
         label = "Update the selected clips"
     elif "source_count_limit" in codes:
         reason = say(
             en=(
-                f"This edit can include at most {source_limit} clips. Choose fewer clips so "
+                "This edit can include at most {source_limit} clips. Choose fewer clips so "
                 "each one can be used."
             ),
-            tr=f"Her biri kurguya girebilsin diye bu video için en fazla {source_limit} klip seç.",
+            tr="Her biri kurguya girebilsin diye bu video için en fazla {source_limit} klip seç.",
+            source_limit=source_limit,
         )
         label = "Choose fewer clips"
     elif "natural_source_capacity" in codes and (
@@ -3370,14 +3561,17 @@ def _source_coverage(
         edit_cap = edit_cap_s(natural_owner)
         reason = say(
             en=(
-                f"The selected {natural_owner} runs {natural_duration:g} seconds, but an edit "
-                f"can be at most {edit_cap:g} seconds. Use a shorter "
-                f"{natural_owner}."
+                "The selected {natural_owner} runs {natural_duration:g} seconds, but an edit "
+                "can be at most {edit_cap:g} seconds. Use a shorter "
+                "{natural_owner}."
             ),
             tr=(
-                f"Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla "
-                f"{edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
+                "Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla "
+                "{edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
             ),
+            natural_owner=natural_owner,
+            natural_duration=natural_duration,
+            edit_cap=edit_cap,
         )
         label = "Use a shorter voiceover"
     elif "natural_source_capacity" in codes:
@@ -3385,14 +3579,17 @@ def _source_coverage(
         natural_duration = envelope.get("natural_duration_s")
         reason = say(
             en=(
-                f"The selected {natural_owner} runs {natural_duration:g} seconds, but the "
-                f"footage can provide only {raw_duration:g} seconds without reuse. Add "
+                "The selected {natural_owner} runs {natural_duration:g} seconds, but the "
+                "footage can provide only {raw_duration:g} seconds without reuse. Add "
                 "longer footage."
             ),
             tr=(
-                f"Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar "
-                f"olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle."
+                "Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar "
+                "olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle."
             ),
+            natural_owner=natural_owner,
+            natural_duration=natural_duration,
+            raw_duration=raw_duration,
         )
         label = "Add longer footage"
     elif "cap_below_coverage" in codes:
@@ -3713,12 +3910,14 @@ def _said_as_note(part: Any, start: bool) -> str:
     """KRI-967: the description under the option that opens / ends where the words were said."""
     if start:
         return say(
-            en=f"Opens where “{part.unheard}” is said.",
-            tr=f"“{part.unheard}” denen yerden açılır.",
+            en="Opens where “{part_unheard}” is said.",
+            tr="“{part_unheard}” denen yerden açılır.",
+            part_unheard=part.unheard,
         )
     return say(
-        en=f"Ends right after “{part.unheard}” is said.",
-        tr=f"“{part.unheard}” dendiği yerin hemen ardından biter.",
+        en="Ends right after “{part_unheard}” is said.",
+        tr="“{part_unheard}” dendiği yerin hemen ardından biter.",
+        part_unheard=part.unheard,
     )
 
 
@@ -3976,13 +4175,14 @@ def unclear_word_choice(
         requirement_ids=tuple(requirement_ids),
         intro=say(
             en=(
-                f"I couldn't make out one word around {at} in your clip: the two listens "
+                "I couldn't make out one word around {at} in your clip: the two listens "
                 "heard different words, and I won't guess."
             ),
             tr=(
-                f"Klibinde {at} civarında bir kelimeyi anlayamadım: klibini iki kez dinledim, "
+                "Klibinde {at} civarında bir kelimeyi anlayamadım: klibini iki kez dinledim, "
                 "farklı kelimeler duydum ve tahmin yürütmeyeceğim."
             ),
+            at=at,
         ),
         reason=say(en="What should the captions say?", tr="Altyazıda ne yazsın?"),
         options=tuple(options),
@@ -4601,8 +4801,9 @@ def _disclosure(kind: object, option: object) -> str | None:
             at = _seconds_text(parsed[2])
             return say(
                 # Neutral: a "you choose" answer is disclosed as the AI's pick (`_disclose`).
-                en=f"I'm freezing the frame at {at}s into the clip.",
-                tr=f"Kareyi klibin {at}. saniyesinde donduruyorum.",
+                en="I'm freezing the frame at {at}s into the clip.",
+                tr="Kareyi klibin {at}. saniyesinde donduruyorum.",
+                at=at,
             )
         if basis == FREEZE_BASIS_MOMENT:
             return say(
@@ -4613,8 +4814,9 @@ def _disclosure(kind: object, option: object) -> str | None:
     if kind == CONFLICT_VOICE_VS_DURATION and str(option).startswith("length_"):
         seconds = str(option).removeprefix("length_")
         return say(
-            en=f"I'm making it {seconds} seconds.",
-            tr=f"Videoyu {seconds} saniye yapıyorum.",
+            en="I'm making it {seconds} seconds.",
+            tr="Videoyu {seconds} saniye yapıyorum.",
+            seconds=seconds,
         )
     return None
 
@@ -4639,8 +4841,9 @@ def _occurrence_disclosure(option: object) -> str | None:
     if pin.approx_s is None:
         return None
     return say(
-        en=f"I'm using the one at {_clock(pin.approx_s)} in your take.",
-        tr=f"Çekimindeki {_clock(pin.approx_s)} anındakini kullanıyorum.",
+        en="I'm using the one at {clock_pin_approx_s} in your take.",
+        tr="Çekimindeki {clock_pin_approx_s} anındakini kullanıyorum.",
+        clock_pin_approx_s=_clock(pin.approx_s),
     )
 
 
@@ -4798,7 +5001,7 @@ def _kept_note(
     ``match_answered_choice`` accepts, even if the chat's language changed since.
     """
 
-    kept = say(en=f"As agreed earlier: {note}", tr=f"Daha önce anlaştığımız gibi: {note}")
+    kept = say(en="As agreed earlier: {note}", tr="Daha önce anlaştığımız gibi: {note}", note=note)
     asked = _latest_questions(history).get(choice.conflict_id)
     options = (
         [(str(o.get("key")), str(o.get("label") or "")) for o in asked.get("options") or []]
@@ -4809,8 +5012,10 @@ def _kept_note(
     if not others or len(others) > 2:
         return kept
     return kept + say(
-        en=f" To change it, reply {' or '.join(others)}.",
-        tr=f" Değiştirmek için {' veya '.join(others)} yaz.",
+        en=" To change it, reply {join_others}.",
+        tr=" Değiştirmek için {join_others_2} yaz.",
+        join_others=" or ".join(others),
+        join_others_2=" veya ".join(others),
     )
 
 
@@ -4857,6 +5062,70 @@ def _typed_unclear_reply(
     return confirmed
 
 
+def _restore_answered_triggers(
+    data: Mapping[str, Any],
+    brief: Any,
+    media_snapshot: Mapping[str, Any] | None,
+    capability: ChoiceCapability | None,
+    scoped: Mapping[str, ScopedAnswer],
+) -> Any:
+    """KRI-972: ``brief`` with a spoken-text trigger put back to the words the creator's
+    occurrence answer was about, when a later turn widened it.
+
+    Tapping an option sends its sentence back as the creator's message ("…cheese. Okay.
+    Provolone, grilled cheese. Perfecto."), and the brief's trigger for "grilled cheese" can
+    come out as "Provolone grilled cheese". That changes the question's digest, so the answer
+    stopped counting and the same question was asked about the longer words, whose first word
+    is the wrong time. A shorter run of the widened trigger is the creator's only when the
+    question asked about it would carry EXACTLY the digest the answered one did (same text,
+    speaker, take and occurrences); anything else is a real change of words and is left alone.
+    """
+    if not any(conflict.startswith(f"{CONFLICT_SPEECH_OCCURRENCE}:") for conflict in scoped):
+        return brief
+    from app.kria.spoken_text_ask import narrowed_to_answer, spoken_text_asks  # noqa: PLC0415
+
+    rows = _rows(media_snapshot)
+    cap = capability or ChoiceCapability()
+
+    def asked(candidate: Any) -> dict[str, UnresolvedChoice]:
+        found = _speech_occurrence(data, candidate, rows, cap, snapshot=media_snapshot)
+        return {c.conflict_id: c for c in found}
+
+    now_asked = asked(brief)
+    live = {req.id: req for req in _live(brief)}
+    restored: dict[str, Any] = {}
+    for ask in spoken_text_asks(live.values()):
+        conflict_id = f"{CONFLICT_SPEECH_OCCURRENCE}:{ask.requirement_id}"[:80]
+        prior, now = scoped.get(conflict_id), now_asked.get(conflict_id)
+        if prior is None or prior.input_digest is None or now is None:
+            continue
+        if prior.input_digest == now.input_digest:
+            continue
+        words = ask.triggers[0].split()
+        runs = [
+            " ".join(words[start : start + length])
+            for length in range(len(words) - 1, 0, -1)
+            for start in range(len(words) - length + 1)
+        ]
+        for run in runs:
+            narrowed = narrowed_to_answer(live[ask.requirement_id], run)
+            if narrowed is None:
+                continue
+            again = asked(_with_requirements(brief, {ask.requirement_id: narrowed}))
+            if (found := again.get(conflict_id)) is not None and (
+                found.input_digest == prior.input_digest
+            ):
+                restored[ask.requirement_id] = narrowed
+                break
+    return _with_requirements(brief, restored) if restored else brief
+
+
+def _with_requirements(brief: Any, replaced: Mapping[str, Any]) -> Any:
+    return brief.model_copy(
+        update={"requirements": [replaced.get(r.id, r) for r in brief.requirements]}
+    )
+
+
 def resolve_choices(
     strategy: Any,
     brief: Any,
@@ -4893,6 +5162,7 @@ def resolve_choices(
     notices: list[str] = []
     exhausted: list[UnresolvedChoice] = []
     superseded: list[str] = []
+    brief = _restore_answered_triggers(data, brief, media_snapshot, capability, scoped)
     pending = collect_conflicts(data, brief, media_snapshot, capability)
     seen: set[str] = set()
     picks_applied = False
@@ -5026,8 +5296,9 @@ def _disclose(note: str, source: object) -> str:
     if source != "creator_delegated":
         return note
     return say(
-        en=f"{note} (You left it to me, so I went with it.)",
-        tr=f"{note} (Kararı bana bıraktığın için bunu seçtim.)",
+        en="{note} (You left it to me, so I went with it.)",
+        tr="{note} (Kararı bana bıraktığın için bunu seçtim.)",
+        note=note,
     )
 
 
@@ -5037,12 +5308,14 @@ def _pins_description(pins: Mapping[str, str]) -> str:
     first, last = pins.get("first"), pins.get("last")
     if first and last:
         return say(
-            en=f"start with {first}; end with {last}",
-            tr=f"{first} ile başla; {last} ile bitir",
+            en="start with {first}; end with {last}",
+            tr="{first} ile başla; {last} ile bitir",
+            first=first,
+            last=last,
         )
     if first:
-        return say(en=f"start with {first}", tr=f"{first} ile başla")
-    return say(en=f"end with {last}", tr=f"{last} ile bitir")
+        return say(en="start with {first}", tr="{first} ile başla", first=first)
+    return say(en="end with {last}", tr="{last} ile bitir", last=last)
 
 
 def answered_brief(brief: Any, strategy: Any) -> Any:
@@ -5099,10 +5372,10 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                         update={
                             "facts": {**req.facts, "duration_s": data["target_duration_s"]},
                             "description": say(
-                                en=f"Keep {_clean_seconds(new)} seconds (so every timed "
-                                "photo fits)",
-                                tr=f"{_clean_seconds(new)} saniye olsun (süre verilen her "
+                                en="Keep {clean_seconds_new} seconds (so every timed photo fits)",
+                                tr="{clean_seconds_new} saniye olsun (süre verilen her "
                                 "fotoğraf sığsın diye)",
+                                clean_seconds_new=_clean_seconds(new),
                             ),
                         }
                     )
@@ -5118,14 +5391,16 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                         "facts": _facts_with_length(req.facts, data["target_duration_s"]),
                         "description": say(
                             en=(
-                                f"Keep {_clean_seconds(new)} seconds (extended from "
-                                f"{_clean_seconds(old)} so every clip can be seen)"
+                                "Keep {clean_seconds_new} seconds (extended from "
+                                "{clean_seconds_old} so every clip can be seen)"
                             ),
                             # No "her klip ... N saniye": that reads as a per-clip length.
                             tr=(
-                                f"{_clean_seconds(new)} saniye olsun ({_clean_seconds(old)} "
+                                "{clean_seconds_new} saniye olsun ({clean_seconds_old} "
                                 "saniyeden uzatıldı, böylece her klip görülebiliyor)"
                             ),
+                            clean_seconds_new=_clean_seconds(new),
+                            clean_seconds_old=_clean_seconds(old),
                         ),
                     }
                 )
@@ -5171,13 +5446,15 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                         "facts": _facts_with_length(req.facts, data["target_duration_s"]),
                         "description": say(
                             en=(
-                                f"Keep {_clean_seconds(new)} seconds (as long as your voice, "
-                                f"shortened from {_clean_seconds(old)})"
+                                "Keep {clean_seconds_new} seconds (as long as your voice, "
+                                "shortened from {clean_seconds_old})"
                             ),
                             tr=(
-                                f"{_clean_seconds(new)} saniye olsun (sesin kadar, "
-                                f"{_clean_seconds(old)} saniyeden kısaltıldı)"
+                                "{clean_seconds_new} saniye olsun (sesin kadar, "
+                                "{clean_seconds_old} saniyeden kısaltıldı)"
                             ),
+                            clean_seconds_new=_clean_seconds(new),
+                            clean_seconds_old=_clean_seconds(old),
                         ),
                     }
                 )
@@ -5210,14 +5487,16 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                             "facts": facts,
                             "description": say(
                                 en=(
-                                    f"Keep about {_clean_seconds(new)} seconds (the part your "
-                                    f"lines keep, instead of {_clean_seconds(old)})"
+                                    "Keep about {clean_seconds_new} seconds (the part your "
+                                    "lines keep, instead of {clean_seconds_old})"
                                 ),
                                 tr=(
-                                    f"Yaklaşık {_clean_seconds(new)} saniye olsun "
-                                    f"({_clean_seconds(old)} saniye yerine, cümlelerinin "
+                                    "Yaklaşık {clean_seconds_new} saniye olsun "
+                                    "({clean_seconds_old} saniye yerine, cümlelerinin "
                                     "tuttuğu kısım)"
                                 ),
+                                clean_seconds_new=_clean_seconds(new),
+                                clean_seconds_old=_clean_seconds(old),
                             ),
                         }
                     )
@@ -5227,13 +5506,15 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                         "facts": facts,
                         "description": say(
                             en=(
-                                f"Keep {_clean_seconds(new)} seconds (the available source "
-                                f"length, instead of {_clean_seconds(old)})"
+                                "Keep {clean_seconds_new} seconds (the available source "
+                                "length, instead of {clean_seconds_old})"
                             ),
                             tr=(
-                                f"{_clean_seconds(new)} saniye olsun ({_clean_seconds(old)} "
+                                "{clean_seconds_new} saniye olsun ({clean_seconds_old} "
                                 "saniye yerine, eldeki çekimlerin uzunluğu)"
                             ),
+                            clean_seconds_new=_clean_seconds(new),
+                            clean_seconds_old=_clean_seconds(old),
                         ),
                     }
                 )
@@ -5250,6 +5531,14 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 waived = _without_cut_line(changed.get(req.id, req), answer.get("value"))
                 if waived is not None:
                     changed[req.id] = waived
+            elif kind == CONFLICT_SPEECH_OCCURRENCE and req.kind == "text":
+                # KRI-972: the pick times the creator's own trigger words, not the option's
+                # sentence a later turn may have written into the trigger.
+                from app.kria.spoken_text_ask import narrowed_to_answer  # noqa: PLC0415
+
+                narrowed = narrowed_to_answer(changed.get(req.id, req), answer.get("value"))
+                if narrowed is not None:
+                    changed[req.id] = narrowed
             elif kind in TAKE_LINE_KINDS:
                 # KRI-844: the line of the take the creator picked rides the requirement that
                 # quoted the line, next to (never instead of) the quote. A declined side has
@@ -5556,7 +5845,10 @@ __all__ = [
     "STRATEGY_REFUSAL_KIND",
     "TAKE_LINE_KINDS",
     "change_request_selected",
+    "follows_change_request",
     "simpler_version_accepted",
+    "simpler_version_answer",
+    "simpler_version_carried",
     "simpler_version_ask",
     "simpler_version_question",
     "without_length_answer_echo",

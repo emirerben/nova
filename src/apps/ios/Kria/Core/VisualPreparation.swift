@@ -159,14 +159,18 @@ enum UploadProgressCaption {
     static let shared = NetworkReachability()
 
     @Published private(set) var isOnline = true
+    /// The system's Low Data Mode (or a constrained interface) is on: optional downloads wait.
+    @Published private(set) var isConstrained = false
     private let monitor = NWPathMonitor()
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
+            let constrained = path.isConstrained
             Task { @MainActor [weak self] in
-                guard let self, self.isOnline != online else { return }
-                self.isOnline = online
+                guard let self else { return }
+                if self.isOnline != online { self.isOnline = online }
+                if self.isConstrained != constrained { self.isConstrained = constrained }
             }
         }
         monitor.start(queue: DispatchQueue(label: "kria.network-reachability"))

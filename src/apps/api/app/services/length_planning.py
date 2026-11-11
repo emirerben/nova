@@ -75,6 +75,9 @@ DESCRIBED_MOMENT_FLOOR_MAX_S = 4.0
 # KRI-585: a quiet stretch (``spoken_roles.quiet_window``) is its clip's window and its
 # ceiling, and keeps at least a readable shot when lengths are shared.
 QUIET_MOMENT_FLOOR_S = 1.2
+# Qendresa case 2: a take the creator asked to keep whole (``whole_take_ids``) is one window,
+# start to end, above every other moment, and that whole length is its floor.
+WHOLE_TAKE_ENERGY = 1000.0
 
 
 def _number(value: object) -> float | None:
@@ -96,6 +99,7 @@ def _sources(
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     still_holds: Mapping[str, float] | None = None,
     kept_windows: Mapping[str, float] | None = None,
+    whole_take_ids: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     selected = set(selected_ids)
     still_holds = still_holds or {}
@@ -172,6 +176,13 @@ def _sources(
             # KRI-1028: a clip kept audible for a line the creator named keeps its whole
             # sentence when lengths are shared, past the 4 s cap: the silent clips give way.
             spoken_floor_s = round(kept_windows[row["media_id"]], 3)
+        if kind == "video" and duration_s and row["media_id"] in whole_take_ids:
+            # Qendresa case 2: "keep the whole clip, don't cut it" plays it start to end; the
+            # pace or a story direction never trims it back to a moment.
+            analysis["best_moments"] = [
+                {"start_s": 0.0, "end_s": duration_s, "energy": WHOLE_TAKE_ENERGY}
+            ]
+            spoken_floor_s = round(duration_s, 3)
         sources.append(
             {
                 "media_id": row["media_id"],
@@ -293,6 +304,7 @@ def paced_selection(
     minimums: Mapping[str, float],
     maximums: Mapping[str, float],
     story_floor_s: float | None = None,
+    text_floor_s: float | None = None,
 ) -> BestPartsResult | None:
     """The source windows with the planner's pace applied, or None to keep the plain ones.
 
@@ -307,9 +319,12 @@ def paced_selection(
 
     ``story_floor_s`` (text-explainer unit) is the shortest hold a story direction gives a clip
     (``length_policy.story_hold_floor_s``); it rides the same rule, with ``pace`` None when the
-    planner said nothing about pace.
+    planner said nothing about pace. ``text_floor_s`` is the least a free total may be so approved
+    word-by-word text can be read (`text_sequence.sequence_read_floor_s`); a stated budget is
+    never moved by it.
     """
 
+    min_total_s = max(MIN_PROPOSAL_DURATION_S, text_floor_s or 0.0)
     floor_s, ceiling_s = (
         pace_selection_limits(pace, total_free=budget is None) if pace is not None else (None, None)
     )
@@ -348,12 +363,12 @@ def paced_selection(
     result = select_best_parts(
         list(sources),
         target_duration_s=paced_budget,
-        minimum_total_duration_s=MIN_PROPOSAL_DURATION_S if paced_budget is None else None,
+        minimum_total_duration_s=min_total_s if paced_budget is None else None,
         minimum_duration_s=paced_min,
         maximum_duration_s=paced_max,
         cap_duration_s=cap_s,
     )
-    if result.conflicts or result.duration_s < MIN_PROPOSAL_DURATION_S:
+    if result.conflicts or result.duration_s < min_total_s:
         return None
     if paced_budget is None and result.duration_s < MIN_PROPOSAL_DURATION_S + PACE_MIN_HEADROOM_S:
         # A free total that lands exactly on the minimum is 2.967 s after whole-frame rounding
@@ -387,6 +402,8 @@ def build_length_plan(
     attached_visual_ids: Collection[str] = (),
     visual_budget_s: float = 0.0,
     story_floor_s: float | None = None,
+    whole_take_ids: Collection[str] = (),
+    text_floor_s: float | None = None,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -445,6 +462,15 @@ def build_length_plan(
     song section nobody stated is extended by the least the holds need; a creator's length is
     never moved (when the holds do not fit it the plain windows stand and the render cuts a fast
     montage and says so). Recorded as ``story`` only when it changed the windows.
+
+    ``whole_take_ids`` (Qendresa case 2, ``planner._whole_take_ids``): video clips the creator
+    asked to keep whole, uncut. Each one's window is the clip, start to end, and that length is
+    its floor, so neither the pace nor a story direction cuts it back to one moment.
+
+    ``text_floor_s`` (KRI-1365, ``text_sequence.sequence_read_floor_s``): approved word-by-word
+    text needs this long to be read, so a total nobody stated (a fast pace over short clips) is
+    at least that, up to what the footage holds. A creator's stated length is never moved by it:
+    the text pass reports the text that cannot fit instead.
     """
 
     natural_owner = natural_length_owner(strategy)
@@ -463,6 +489,7 @@ def build_length_plan(
         quiet_moments,
         still_holds,
         kept_windows,
+        whole_take_ids,
     )
     by_id = {source["media_id"]: source for source in sources}
     if len(by_id) != len(sources):
@@ -698,10 +725,11 @@ def build_length_plan(
             for source in ordered_sources
             if source["maximum_duration_s"] is not None or source["quiet_ceiling_s"] is not None
         }
+        free_total_s = max(3.0, min(text_floor_s or 0.0, raw_capacity))
         result = select_best_parts(
             ordered_sources,
             target_duration_s=budget,
-            minimum_total_duration_s=3 if budget is None else None,
+            minimum_total_duration_s=free_total_s if budget is None else None,
             minimum_duration_s=minimums,
             maximum_duration_s=maximums,
             cap_duration_s=cap_s,
@@ -719,6 +747,7 @@ def build_length_plan(
                 minimums=minimums,
                 maximums=maximums,
                 story_floor_s=story_floor_s,
+                text_floor_s=min(text_floor_s or 0.0, raw_capacity) or None,
             )
             if paced is not None and (paced.duration_s, paced.parts) != (
                 result.duration_s,

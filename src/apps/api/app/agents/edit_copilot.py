@@ -108,7 +108,21 @@ log = structlog.get_logger()
 # the server measured it); the BACKGROUND block prints each aimed window as `aim=left zoom=0.8x`.
 # Taught in speaker_background_focus.txt only where the snapshot offers the `background_focus`
 # family (flag + verified token + protocol 42), so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-05-v116"
+# v117: editable split-screen sections and per-clip audio gain on top of v116.
+# v118: occurrence speaker framing (custom/full/inherit) on verified split-origin edits.
+# v120 (KRI-1253): PICTURE CARDS teaches add_overlay for an ASSET POOL row (the generated image the
+# creator accepted, listed by its title); with no row the lane still says a new picture can't be
+# added from chat.
+# v121 (KRI-1365): a vague "make the video shorter" acts at once (about 70%, proportional) instead
+# of asking; "make the text faster" / "show each text shorter" retimes every word sequence, a
+# paired one (a text and its translation) over the same window.
+# v122 (KRI-1350): set_color_moments {moments?, end_fade_s?} sets black-and-white / warm / faded
+# stretches with cut, white-flash, light-leak or dip-to-black edges (a library sound may land on an
+# edge) and the fade to black at the end. Taught in color_moments.txt and printed as COLOR MOMENTS
+# only where the snapshot offers the `color_moments` family (flag + verified token + protocol 48),
+# or, with that gate closed, on an edit that still carries moments, marked REMOVAL ONLY (only
+# taking them off is accepted), so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-11-v122"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1367,6 +1381,31 @@ def _format_snapshot(snapshot: dict) -> str:
     timeline_fields = snapshot.get("timeline_patch_capabilities")
     if isinstance(timeline_fields, dict):
         lines.append("timeline_patch_capabilities: " + json.dumps(timeline_fields, sort_keys=True))
+    if snapshot.get("split_screen_available"):
+        lines.append("split_screen_available: true")
+    if snapshot.get("split_screen_sections"):
+        lines.append(
+            "split_screen_sections: "
+            + json.dumps(snapshot["split_screen_sections"], sort_keys=True)
+        )
+    for slot in slots:
+        if isinstance(slot, dict) and slot.get("split_section_id"):
+            lines.append(
+                "split member: "
+                + json.dumps(
+                    {
+                        key: slot.get(key)
+                        for key in (
+                            "slot_id",
+                            "clip_index",
+                            "split_section_id",
+                            "split_panel_index",
+                            "split_offset_s",
+                        )
+                    },
+                    sort_keys=True,
+                )
+            )
     appearance = _text_appearance_inventory(snapshot)
     if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
         lines.append("TEXT APPEARANCE: version=1; targets=")
@@ -1410,6 +1449,11 @@ def _format_snapshot(snapshot: dict) -> str:
         lines.append("\nSAFE SOURCE POOL SUMMARY (counts/digests only; no source paths):")
         lines.append(_field(json.dumps(summary, ensure_ascii=False), max_chars=1800))
 
+    if isinstance(snapshot.get("replacement_source_pool"), list):
+        lines.append(
+            "replacement_source_pool: "
+            + json.dumps(snapshot["replacement_source_pool"], ensure_ascii=False)
+        )
     source_pool = snapshot.get("source_pool")
     if isinstance(source_pool, list):
         unused = [
@@ -1991,8 +2035,8 @@ def _format_snapshot(snapshot: dict) -> str:
                 lines.append(
                     f"- id={_field(asset.get('id'), max_chars=80)!r} "
                     f"kind={_field(asset.get('kind'), max_chars=40)!r} "
-                    f"subject={_field(asset.get('subject'), max_chars=60)!r} "
-                    f"duration={_fmt_round3(_first_number(asset, ('duration_s',)))}s"
+                    f"subject={_field(asset.get('subject'), max_chars=60)!r}"
+                    f"{_pool_duration(asset)}"
                     f"{_context_row_suffix(asset, component_context_enabled)}"
                 )
         else:
@@ -2010,6 +2054,32 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
         else:
             lines.append("(none)")
+
+    if isinstance(snapshot.get("color_moments"), dict):
+        lane = snapshot["color_moments"]
+        fade = _fmt_round3(lane.get("end_fade_s")) if lane.get("end_fade_s") else "none"
+        lines.append(
+            f"\nCOLOR MOMENTS (video length {_fmt_round3(lane.get('duration_s'))}s; "
+            f"end fade {fade}):"
+        )
+        for moment in lane.get("moments") or []:
+            sound = (
+                f" sound={_field(moment.get('sound'), max_chars=80)!r}@{moment.get('sound_at')}"
+                if moment.get("sound")
+                else ""
+            )
+            lines.append(
+                f"- {_fmt_round3(moment.get('start_s'))}-{_fmt_round3(moment.get('end_s'))}s "
+                f"tone={moment.get('tone')} enter={moment.get('enter')} exit={moment.get('exit')}"
+                + sound
+            )
+        if not lane.get("moments"):
+            lines.append("(none)")
+        if lane.get("removal_only"):
+            lines.append(
+                'REMOVAL ONLY on this edit: you may take moments off ("moments":[]) or the '
+                'end fade off ("end_fade_s":0); never add or change one.'
+            )
 
     if isinstance(snapshot.get("background"), dict):
         background = snapshot["background"]
@@ -2340,6 +2410,11 @@ def _fmt_round3(value: float | None) -> str:
     if value is None:
         return "unknown"
     return f"{_round_snapshot_float(value):.3f}"
+
+
+def _pool_duration(asset: dict) -> str:
+    seconds = _first_number(asset, ("duration_s",))
+    return "" if seconds is None else f" duration={_fmt_round3(seconds)}s"
 
 
 def _font_catalog() -> str:
@@ -3038,26 +3113,31 @@ def _bulk_capacity_clarification(
 
     detail = say(
         en=(
-            f"The current {current_slots}-slot edit leaves room for only {available} additional "
-            f"slots under the {_GUIDED_TIMELINE_MAX_SLOTS}-slot Save limit, but all "
-            f"{requested} ready unused sources "
+            "The current {current_slots}-slot edit leaves room for only {available} additional "
+            "slots under the {guided_timeline_max_slots}-slot Save limit, but all "
+            "{requested} ready unused sources "
             "were requested."
         ),
         tr=(
-            f"Şu anki düzenlemede {current_slots} klip yeri dolu; {_GUIDED_TIMELINE_MAX_SLOTS} "
-            f"yerlik kaydetme sınırına kadar yalnızca {available} yer daha var, ama "
-            f"kullanılmayan {requested} hazır kaynağın hepsi istendi."
+            "Şu anki düzenlemede {current_slots} klip yeri dolu; {guided_timeline_max_slots} "
+            "yerlik kaydetme sınırına kadar yalnızca {available} yer daha var, ama "
+            "kullanılmayan {requested} hazır kaynağın hepsi istendi."
         ),
+        current_slots=current_slots,
+        available=available,
+        guided_timeline_max_slots=_GUIDED_TIMELINE_MAX_SLOTS,
+        requested=requested,
     )
     return detail + say(
         en=(
-            f" Choose a media kind and count of at most {available} while retaining the "
+            " Choose a media kind and count of at most {available} while retaining the "
             "current edit, or remove existing content first."
         ),
         tr=(
-            f" Mevcut düzenleme korunarak en fazla {available} olacak şekilde bir medya "
+            " Mevcut düzenleme korunarak en fazla {available} olacak şekilde bir medya "
             "türü ve sayı seç ya da önce var olan içerikten kaldır."
         ),
+        available=available,
     )
 
 
@@ -3480,13 +3560,13 @@ def _drop_normalized_no_effect_ops(
     if removed_trim_start is not None and not filtered:
         message = say(
             en=(
-                f"The draft already starts at {removed_trim_start:g} seconds, "
-                "so I didn't change it."
+                "The draft already starts at {removed_trim_start:g} seconds, so I didn't change it."
             ),
             tr=(
-                f"Taslak zaten {removed_trim_start:g} saniyede başlıyor, "
+                "Taslak zaten {removed_trim_start:g} saniyede başlıyor, "
                 "o yüzden bir şey değiştirmedim."
             ),
+            removed_trim_start=removed_trim_start,
         )
     if appearance_unchanged and not filtered and message is None:
         message = say(
@@ -3920,11 +4000,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 )
             else:
                 reply = say(
-                    en=f"How short should the {referent or 'clips'} be?",
-                    tr=(
-                        f"{_TR_REFERENT_NOUNS.get(referent or 'clips', 'Klipler')} "
-                        "ne kadar kısa olsun?"
-                    ),
+                    en="How short should the {v1} be?",
+                    tr=("{v2} ne kadar kısa olsun?"),
+                    v1=referent or "clips",
+                    v2=_TR_REFERENT_NOUNS.get(referent or "clips", "Klipler"),
                 )
         if not ops and state.invalid_notes:
             state.reply_notes.extend(state.invalid_notes)
@@ -4143,15 +4222,19 @@ def _server_reply(ops: list[dict], notes: str) -> str:
             if op.get("mode") == "append":
                 parts.append(
                     say(
-                        en=f"Added the filming hour to {count} clip{'s' if count != 1 else ''}.",
-                        tr=f"{count} klibe çekim saatini ekledim.",
+                        en="Added the filming hour to {count} clip{v1}.",
+                        tr="{count} klibe çekim saatini ekledim.",
+                        count=count,
+                        v1="s" if count != 1 else "",
                     )
                 )
             else:
                 parts.append(
                     say(
-                        en=f"Labelled {count} clip{'s' if count != 1 else ''}.",
-                        tr=f"{count} klibe etiket ekledim.",
+                        en="Labelled {count} clip{v1}.",
+                        tr="{count} klibe etiket ekledim.",
+                        count=count,
+                        v1="s" if count != 1 else "",
                     )
                 )
         else:
@@ -4236,6 +4319,11 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
                 tr="Bunu bu düzenlemede henüz değiştiremiyorum.",
             ),
         )
+        closed_note = _v2.REGISTRY.closed_notes.get(name)
+        if closed_note is not None:
+            note = say(en=closed_note[0], tr=closed_note[1])
+            if note not in state.reply_notes:
+                state.reply_notes.append(note)
         return None
 
     raw_payload = raw_op.get("payload")
@@ -4467,13 +4555,11 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
     cue_count = _section_len(snapshot, "captions", "cues")
     camera_effect_count = len(snapshot.get("camera_effects") or [])
     visual_block_count = len(snapshot.get("visual_blocks") or [])
-    transition_slot_count = len(
-        [
-            slot
-            for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
-            if isinstance(slot, dict) and not slot.get("removed")
-        ]
-    )
+    transition_slots = [
+        slot
+        for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        if isinstance(slot, dict) and not slot.get("removed")
+    ]
     for key in ("bar_index",):
         if key in payload and not _index_in_bounds(payload[key], text_count):
             log.warning("edit_copilot.drop_text_index_oob", op=name, index=payload.get(key))
@@ -4514,8 +4600,13 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
             index=payload.get("camera_effect_index"),
         )
         return False
-    if "boundary_index" in payload and not _index_in_bounds(
-        payload["boundary_index"], max(0, transition_slot_count - 1)
+    from app.kria.split_screen import has_timeline_transition_successor
+
+    if "boundary_index" in payload and (
+        not _index_in_bounds(payload["boundary_index"], len(transition_slots))
+        or not has_timeline_transition_successor(
+            transition_slots, transition_slots[int(payload["boundary_index"])]
+        )
     ):
         log.warning(
             "edit_copilot.drop_boundary_index_oob",
@@ -4818,12 +4909,19 @@ def _effect_removal_pass(
     }
     if len(names) == 1:
         label = say(
-            en=f"the {sorted(names)[0]} animation",
-            tr=f"{sorted(names)[0]} animasyonunu",
+            en="the {sorted_names_0} animation",
+            tr="{sorted_names_0} animasyonunu",
+            sorted_names_0=sorted(names)[0],
         )
     else:
         label = say(en="the text animation", tr="yazı animasyonunu")
-    note = say(en=f"I turned off {label}", tr=f"{label[:1].upper()}{label[1:]} kapattım")
+    note = say(
+        en="I turned off {label}",
+        tr="{v1}{v2} kapattım",
+        label=label,
+        v1=label[:1].upper(),
+        v2=label[1:],
+    )
     if not wants_shadow:
         note += say(
             en="; say if you also want the shadow gone",
@@ -4907,17 +5005,23 @@ def _ground_descriptive_captions(
         state.reply_notes.append(
             say(
                 en=(
-                    f"Clip{'s' if len(mismatched) != 1 else ''} {names} "
-                    f'{"don" if len(mismatched) != 1 else "doesn"}\'t look like "{words}" from '
+                    "Clip{v1} {names} "
+                    '{v2}\'t look like "{words}" from '
                     "what I saw, so I didn't put that wording on "
-                    f"{'them' if len(mismatched) != 1 else 'it'}. Tell me what "
-                    f"{'they are' if len(mismatched) != 1 else 'it is'}, or ask me to describe "
+                    "{v3}. Tell me what "
+                    "{v4}, or ask me to describe "
                     "what I see."
                 ),
                 tr=(
-                    f'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
+                    'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
                     "ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
                 ),
+                v1="s" if len(mismatched) != 1 else "",
+                names=names,
+                v2="don" if len(mismatched) != 1 else "doesn",
+                words=words,
+                v3="them" if len(mismatched) != 1 else "it",
+                v4="they are" if len(mismatched) != 1 else "it is",
             )
         )
     if not written:
@@ -4959,23 +5063,27 @@ def _ground_descriptive_captions(
         state.reply_notes.append(
             say(
                 en=(
-                    f"I left out clip{plural} {', '.join(unseen)}: I can't tell what "
-                    f"{'they show' if plural else 'it shows'}. Tell me and I'll add "
-                    f"{'them' if plural else 'it'}."
+                    "I left out clip{plural} {join_unseen}: I can't tell what "
+                    "{v1}. Tell me and I'll add "
+                    "{v2}."
                 ),
                 tr=(
-                    f"Klip {', '.join(unseen)} dışarıda kaldı: ne gösterdiğini anlayamadım. "
+                    "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. "
                     "Söylersen ekleyeyim."
                 ),
+                plural=plural,
+                join_unseen=", ".join(unseen),
+                v1="they show" if plural else "it shows",
+                v2="them" if plural else "it",
             )
         )
     if skipped:
         state.reply_notes.append(
             say(
-                en=(
-                    f"I didn't caption clip{'s' if len(skipped) != 1 else ''} {', '.join(skipped)}."
-                ),
-                tr=f"Klip {', '.join(skipped)} için yazı eklemedim.",
+                en=("I didn't caption clip{v1} {join_skipped}."),
+                tr="Klip {join_skipped} için yazı eklemedim.",
+                v1="s" if len(skipped) != 1 else "",
+                join_skipped=", ".join(skipped),
             )
         )
     return kept
@@ -5084,7 +5192,8 @@ def _coerce_label_each_clip(
     all_bars = [bar for bar in _snapshot_list(snapshot, _TEXT_INDEX_KEYS) if isinstance(bar, dict)]
     bars: dict[str, dict] = {}
     for bar in all_bars:
-        if bar.get("clip_id") and bar.get("id"):
+        # A title or participant label bound by its recorded clip is not the clip's fact label.
+        if bar.get("clip_id") and bar.get("id") and not bar.get("recorded"):
             bars.setdefault(str(bar["clip_id"]), bar)  # first bar per clip
     label_windows = [
         (float(bar["start_s"]), float(bar["end_s"]))
@@ -5176,8 +5285,10 @@ def _coerce_label_each_clip(
             plural = "s" if len(untimed) != 1 else ""
             state.reply_notes.append(
                 say(
-                    en=f"No filming time for clip{plural} {', '.join(untimed)}.",
-                    tr=f"Klip {', '.join(untimed)} için çekim saati yok.",
+                    en="No filming time for clip{plural} {join_untimed}.",
+                    tr="Klip {join_untimed} için çekim saati yok.",
+                    plural=plural,
+                    join_untimed=", ".join(untimed),
                 )
             )
         if labels:
@@ -5723,6 +5834,18 @@ def _coerce_payload(
         boundary_index = out["boundary_index"]
         left = slots[boundary_index] if boundary_index < len(slots) else {}
         right = slots[boundary_index + 1] if boundary_index + 1 < len(slots) else {}
+        if left.get("split_section_id"):
+            successors = sorted(
+                [
+                    candidate
+                    for candidate in slots
+                    if candidate.get("split_section_id") == left["split_section_id"]
+                    and candidate.get("split_panel_index") == left.get("split_panel_index")
+                    and float(candidate["split_offset_s"]) > float(left["split_offset_s"])
+                ],
+                key=lambda candidate: float(candidate["split_offset_s"]),
+            )
+            right = successors[0] if successors else {}
         if not isinstance(left, dict) or not isinstance(right, dict):
             state.invalid_value()
             return None
@@ -6259,8 +6382,9 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
             if not isinstance(value, str) or value not in _ALLOWED_FONTS:
                 state.invalid_value(
                     say(
-                        en=f"I don't have a font called {value!r}",
-                        tr=f"{value!r} adında bir yazı tipim yok",
+                        en="I don't have a font called {value!r}",
+                        tr="{value!r} adında bir yazı tipim yok",
+                        value=value,
                     )
                 )
                 return {}
@@ -6269,8 +6393,9 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
             if not isinstance(value, str) or value not in _ALLOWED_EFFECTS:
                 state.invalid_value(
                     say(
-                        en=f"I couldn't set the effect to {value!r}; the options are ",
-                        tr=f"Efekti {value!r} yapamadım; seçenekler: ",
+                        en="I couldn't set the effect to {value!r}; the options are ",
+                        tr="Efekti {value!r} yapamadım; seçenekler: ",
+                        value=value,
                     )
                     + ", ".join(sorted(_ALLOWED_EFFECTS))
                 )
@@ -6294,12 +6419,13 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
                     say(
                         en=(
                             "I couldn't set the letter case to "
-                            f"{value!r}; the options are none, upper, lower, title"
+                            "{value!r}; the options are none, upper, lower, title"
                         ),
                         tr=(
-                            f"Harf biçimini {value!r} yapamadım; "
+                            "Harf biçimini {value!r} yapamadım; "
                             "seçenekler: none, upper, lower, title"
                         ),
+                        value=value,
                     )
                 )
                 return {}

@@ -188,7 +188,7 @@ import XCTest
         let state = SlidePostState(itemID: itemID, title: "Post", draft: draft, assets: assets, renderStatus: "not_rendered")
         var requests = 0
         NativeEditorURLProtocol.handler = { _ in requests += 1; return (200, try JSONEncoder().encode(state)) }
-        let result = SlidePostSession(defaults: defaults)
+        let result = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await result.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         return result
     }

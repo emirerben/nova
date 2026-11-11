@@ -292,9 +292,7 @@ def require_declared_fixtures(root: Path, rows: list) -> list:
         if not directory:
             continue
         folder = root / directory
-        produced = folder.is_dir() and any(
-            item.is_file() for item in folder.rglob("*")
-        )
+        produced = folder.is_dir() and any(item.is_file() for item in folder.rglob("*"))
         require(
             produced,
             f"journey {row['id']} declares fixtures in {directory}/ but its "
@@ -365,6 +363,70 @@ def verify_named_tests(report: dict, expected: set) -> None:
     require(
         not missing, f"required named tests missing or not passed: {sorted(missing)}"
     )
+
+
+def api_tests_for_ids(ids: str) -> list[str]:
+    import shlex
+
+    journeys = load(Path(__file__).with_name("journey-manifest.json"))["journeys"]
+    selected = ids.split(",") if ids else []
+    require(
+        selected and len(selected) == len(set(selected)),
+        "empty or duplicate API journey ids",
+    )
+    rows = {row["id"]: row for row in journeys}
+    require(set(selected) <= rows.keys(), "unknown API journey ids")
+    tests = sorted(
+        {
+            test
+            for key in selected
+            for test in shlex.split(rows[key].get("api_tests", ""))
+        }
+    )
+    require(tests, "selected API journeys have no named test cases")
+    return tests
+
+
+def verify_api_cases(results: Path, selectors: list[str]) -> None:
+    """Every requested pytest node must have actual non-skipped passing evidence."""
+    from xml.etree import ElementTree
+
+    require(
+        selectors and len(selectors) == len(set(selectors)),
+        "empty or duplicate API selectors",
+    )
+    try:
+        cases = ElementTree.parse(results).findall(".//testcase")
+    except (OSError, ElementTree.ParseError) as error:
+        raise ValueError(f"unreadable API execution receipt: {error}") from error
+    for selector in selectors:
+        parts = selector.split("::")
+        require(
+            len(parts) == 2
+            and parts[0].startswith("tests/")
+            and parts[0].endswith(".py")
+            and parts[1].startswith("test_"),
+            f"API journey requires a named node: {selector}",
+        )
+        module = parts[0][:-3].replace("/", ".")
+        matches = [
+            case
+            for case in cases
+            if case.get("classname") == module
+            and case.get("name", "").split("[", 1)[0] == parts[1]
+        ]
+        require(matches, f"API journey case did not execute: {selector}")
+        require(
+            all(
+                not any(
+                    case.find(status) is not None
+                    for status in ("skipped", "failure", "error")
+                )
+                for case in matches
+            ),
+            f"API journey case did not pass: {selector}",
+        )
+    print(f"Verified {len(selectors)} named API journey selectors passed.")
 
 
 def native_units(ids: str, require_unit: bool) -> None:
@@ -466,11 +528,16 @@ def main() -> None:
     unit_parser = commands.add_parser("native-units")
     unit_parser.add_argument("--ids", required=True)
     unit_parser.add_argument("--require-unit", action="store_true")
+    api_parser = commands.add_parser("api-cases")
+    api_parser.add_argument("--ids", required=True)
+    api_parser.add_argument("--test-results", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "seal-bundle":
         seal_bundle(args.root, args.head, args.run, args.attempt, args.journeys)
     elif args.command == "verify-bundle":
         verify_bundle(args.root, args.head, args.run, args.attempt, args.journeys)
+    elif args.command == "api-cases":
+        verify_api_cases(args.test_results, api_tests_for_ids(args.ids))
     elif args.command == "native-units":
         native_units(args.ids, args.require_unit)
     elif args.command == "verify-input":

@@ -22,13 +22,17 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     public var textLayers: [PortableTextLayer]
     public var drawingLayers: [PortableDrawingLayer]
     public var visualFills: [VisualCanvasFill]
+    public var splitScreenSections: [SplitScreenSection]
     public var speakerBackground: SpeakerBackgroundLayer?
+    /// KRI-1350: whole-frame tone windows with flash / light-leak / dip edges, and the end fade to black.
+    public var colorMoments: [ColorMoment]
+    public var endFade: EndFade?
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers, cameraPulses, motionScenes, visualFills, drawingLayers, speakerBackground
+        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers, cameraPulses, motionScenes, visualFills, drawingLayers, speakerBackground, splitScreenSections, colorMoments, endFade
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers", "cameraPulses", "motionScenes", "visualFills", "drawingLayers", "speakerBackground"])
+        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers", "cameraPulses", "motionScenes", "visualFills", "drawingLayers", "speakerBackground", "splitScreenSections", "colorMoments", "endFade"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         rendererVersion = try c.decode(String.self, forKey: .rendererVersion)
@@ -49,8 +53,12 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if schemaVersion == 1 && c.contains(.textLayers) { throw RecipeError.invalidTimeline }
         drawingLayers = try c.decodeIfPresent([PortableDrawingLayer].self, forKey: .drawingLayers) ?? []
         if schemaVersion == 1 && c.contains(.drawingLayers) { throw RecipeError.invalidTimeline }
+        splitScreenSections = try c.decodeIfPresent([SplitScreenSection].self, forKey: .splitScreenSections) ?? []
+        if schemaVersion == 1 && c.contains(.splitScreenSections) { throw RecipeError.invalidTimeline }
         speakerBackground = try c.decodeIfPresent(SpeakerBackgroundLayer.self, forKey: .speakerBackground)
         if schemaVersion == 1 && c.contains(.speakerBackground) { throw RecipeError.invalidTimeline }
+        colorMoments = try c.decodeIfPresent([ColorMoment].self, forKey: .colorMoments) ?? []
+        endFade = try c.decodeIfPresent(EndFade.self, forKey: .endFade)
     }
 
     public init(schemaVersion: Int = 1,
@@ -59,11 +67,12 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 frameRate: Double = 30,
                 assets: [MediaAsset] = [], tracks: [TimelineTrack] = [],
                 audio: AudioMixRecipe = .default, requiredCapabilities: Set<MediaCapability> = [],
-                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = [], cameraPulses: [CameraPulse] = [], motionScenes: MotionSceneProgram? = nil, visualFills: [VisualCanvasFill] = [], drawingLayers: [PortableDrawingLayer] = [], speakerBackground: SpeakerBackgroundLayer? = nil) {
+                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = [], cameraPulses: [CameraPulse] = [], motionScenes: MotionSceneProgram? = nil, visualFills: [VisualCanvasFill] = [], drawingLayers: [PortableDrawingLayer] = [], speakerBackground: SpeakerBackgroundLayer? = nil, splitScreenSections: [SplitScreenSection] = [], colorMoments: [ColorMoment] = [], endFade: EndFade? = nil) {
         self.schemaVersion = schemaVersion; self.rendererVersion = rendererVersion
         self.canvas = canvas; self.frameRate = frameRate; self.assets = assets
         self.tracks = tracks; self.audio = audio; self.requiredCapabilities = requiredCapabilities
-        self.assetManifest = assetManifest; self.textLayers = textLayers; self.cameraPulses = cameraPulses; self.motionScenes = motionScenes; self.visualFills = visualFills; self.drawingLayers = drawingLayers; self.speakerBackground = speakerBackground
+        self.assetManifest = assetManifest; self.textLayers = textLayers; self.cameraPulses = cameraPulses; self.motionScenes = motionScenes; self.visualFills = visualFills; self.drawingLayers = drawingLayers; self.speakerBackground = speakerBackground; self.splitScreenSections = splitScreenSections
+        self.colorMoments = colorMoments; self.endFade = endFade
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -78,10 +87,16 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !cameraPulses.isEmpty { try c.encode(cameraPulses, forKey: .cameraPulses) }
         if schemaVersion == 2 { try c.encode(textLayers, forKey: .textLayers) }
         if !drawingLayers.isEmpty { try c.encode(drawingLayers, forKey: .drawingLayers) }
+        if !splitScreenSections.isEmpty { try c.encode(splitScreenSections, forKey: .splitScreenSections) }
         try c.encodeIfPresent(speakerBackground, forKey: .speakerBackground)
+        // Omitted when unset so every existing recipe keeps its bytes and digest (failure mode 3).
+        if !colorMoments.isEmpty { try c.encode(colorMoments, forKey: .colorMoments) }
+        try c.encodeIfPresent(endFade, forKey: .endFade)
     }
 
     public func validate() throws {
+        try validateSplitScreen()
+        try validateSpeakerOwnership()
         guard [1, 2].contains(schemaVersion) else { throw RecipeError.unsupportedSchema(schemaVersion) }
         if schemaVersion == 2 {
             guard rendererVersion == "kria-ios-2", let manifest = assetManifest else { throw RecipeError.invalidTimeline }
@@ -118,6 +133,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                     if case .visual(_, _, let kind) = $0.source { $0.id == window.assetID && kind == window.mediaKind } else { false }
                 }) == true else { throw RecipeError.missingAssetReference }
             }
+        }
+        if !colorMoments.isEmpty || endFade != nil {
+            let total = TimelineMath.totalDuration(of: self)
+            try colorMoments.validateMoments(duration: total)
+            try endFade?.validate(duration: total)
         }
         guard textLayers.count <= Self.maxTextLayers, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
         for layer in textLayers { try layer.validate(duration: TimelineMath.totalDuration(of: self), manifest: assetManifest) }
@@ -171,6 +191,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 throw RecipeError.invalidTimeline
             }
             try clip.sourceCrop?.validate()
+            try clip.speakerFrameOverride?.validate()
             if let backdrop = clip.backdrop {
                 try backdrop.validate()
                 guard tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
@@ -186,7 +207,15 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 guard schemaVersion == 2, tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
                       clip.rate == 1, clip.look == nil, clip.holdDuration == nil, clip.sourceCrop == nil,
                       clip.transform == MediaTransform(rotationDegrees: clip.transform.rotationDegrees),
-                      assetManifest?.assets.contains(where: { if case .visual(_, _, .image) = $0.source { $0.id == clip.sourceAssetID } else { false } }) == true else {
+                      assetManifest?.assets.contains(where: { asset in
+                          guard asset.id == clip.sourceAssetID else { return false }
+                          switch asset.source {
+                          case .visual(_, _, .image): return true
+                          // A device photo may be a supporting card only inside a split-screen panel.
+                          case .original: return clip.splitScreen != nil
+                          default: return false
+                          }
+                      }) == true else {
                     throw RecipeError.invalidTimeline
                 }
             }
@@ -224,6 +253,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     /// Derive requirements from content too: an omitted server capability must not drop an effect.
     public var effectiveCapabilities: Set<MediaCapability> {
         var result = requiredCapabilities
+        if speakerBackground?.subjectClipIDs != nil || !splitScreenSections.isEmpty || tracks.flatMap(\.clips).contains(where: { $0.splitScreen != nil || $0.speakerFrameOverride != nil }) { result.insert(.splitScreen) }
+        // Protocol 47: a build without collapse would keep every panel at its fixed rect.
+        if splitScreenSections.contains(where: \.collapseEmptyPanels) { result.insert(.splitCollapse) }
         let clips = tracks.flatMap(\.clips)
         if !clips.isEmpty { result.formUnion([.basicComposition, .local1080Export]) }
         if !textLayers.isEmpty { result.insert(.positionedText) }
@@ -233,7 +265,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !drawingLayers.isEmpty { result.insert(.freehandDrawing) }
         if speakerBackground != nil { result.insert(.speakerBackground) }
         if speakerBackground?.mediaKind == .color { result.insert(.speakerBackgroundColor) }
-        if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil { result.insert(.speakerBackgroundWindows) }
+        if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil || tracks.flatMap(\.clips).contains(where: { $0.speakerFrameOverride?.mode == .custom }) { result.insert(.speakerBackgroundWindows) }
         // Qendresa item 16 (protocol 41): a full-screen opening/ending is a layer property an older build would silently ignore.
         if speakerBackground?.fullScreenWindows != nil { result.insert(.speakerFrameWindows) }
         // Qendresa item 18 (protocol 42): an aimed background (fill or any window) is a layer property an older build would silently ignore.
@@ -277,6 +309,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
         if clips.contains(where: { $0.transform.rotationDegrees != 0 || $0.backdrop != nil }) { result.insert(.clipTilt) }
+        if !colorMoments.isEmpty || endFade != nil { result.insert(.colorMoments) }
         if clips.contains(where: { if case .media? = $0.backdrop { true } else { false } }) { result.insert(.clipBackdropMedia) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
@@ -388,6 +421,8 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var overlayAboveText: Bool?
     public var overlayPopIn: Bool?
     public var overlayPreserveAlpha: Bool?
+    public var splitScreen: SplitScreenMembership?
+    public var speakerFrameOverride: SpeakerFrameOverride?
     public var visualPlacement: VisualMediaPlacement?
     public var overlayDissolveSeed: UInt32?
     /// Fade an overlay-track clip in and/or out on the shared 0.15 s curve
@@ -430,15 +465,15 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
                                                  fadeIn: overlayFadeIn == true, fadeOut: overlayFadeOut == true)
     }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut, backdrop }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut, backdrop, splitScreen, speakerFrameOverride }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil, backdrop: ClipBackdrop? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil, backdrop: ClipBackdrop? = nil, splitScreen: SplitScreenMembership? = nil, speakerFrameOverride: SpeakerFrameOverride? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
         self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop; self.stillLayout = stillLayout
         self.overlayFadeIn = overlayFadeIn; self.overlayFadeOut = overlayFadeOut
-        self.audioFadeIn = audioFadeIn; self.audioFadeOut = audioFadeOut; self.backdrop = backdrop
+        self.audioFadeIn = audioFadeIn; self.audioFadeOut = audioFadeOut; self.backdrop = backdrop; self.splitScreen = splitScreen; self.speakerFrameOverride = speakerFrameOverride
     }
 }
 
@@ -556,7 +591,8 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
-         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus
+         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse,
+         colorMoments
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

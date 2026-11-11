@@ -87,6 +87,69 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         XCTAssertEqual(font.value as? String, "Bebas Neue")
     }
 
+    /// KRI-1312: the font sheet groups fonts by type under tabs that scroll sideways.
+    func testFontPickerGroupsFontsByTypeUnderSidewaysTabs() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]
+        app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "390"
+        app.launch()
+
+        let timelineText = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"].firstMatch
+        XCTAssertTrue(timelineText.waitForExistence(timeout: 8))
+        timelineText.tap()
+        timelineText.tap()
+        let styleTab = app.buttons["Style"]
+        XCTAssertTrue(styleTab.waitForExistence(timeout: 3))
+        styleTab.tap()
+        let font = app.buttons["native-editor-text-font"]
+        reveal(font, in: app.scrollViews["native-editor-text-inspector-scroll"])
+        XCTAssertTrue(font.waitForExistence(timeout: 3))
+        font.tap()
+
+        let all = app.buttons["native-editor-font-tab-all"]
+        let script = app.buttons["native-editor-font-tab-script"]
+        XCTAssertTrue(all.waitForExistence(timeout: 3))
+        XCTAssertTrue(all.isSelected)
+        XCTAssertTrue(app.buttons["native-editor-font-option-bebas-neue"].waitForExistence(timeout: 3))
+        attachScreenshot(app, name: "Font picker, All tab")
+
+        // A swipe on the pages moves to the next type and the chip follows.
+        app.scrollViews.element(boundBy: 1).swipeLeft()
+        let editorial = app.buttons["native-editor-font-tab-editorial"]
+        XCTAssertTrue(editorial.waitForExistence(timeout: 3))
+        XCTAssertTrue(editorial.isSelected)
+        // The page lists its fonts alphabetically in a lazy list, so a font far down it is not on screen yet.
+        let playfair = app.buttons["native-editor-font-option-editorial-playfair-display"]
+        let editorialPages = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH %@", "native-editor-font-option-editorial-"))
+        XCTAssertTrue(editorialPages.firstMatch.waitForExistence(timeout: 3))
+        for _ in 0..<8 where !playfair.isHittable {
+            // The innermost match is the page's own vertical list; the outer one is the sideways pager.
+            editorialPages.element(boundBy: editorialPages.count - 1).swipeUp()
+        }
+        XCTAssertTrue(playfair.waitForExistence(timeout: 3))
+        XCTAssertTrue(playfair.isHittable, "Playfair Display is listed on the Editorial page")
+
+        // Tapping a chip jumps straight to that type, which lists only its fonts.
+        XCTAssertTrue(script.waitForExistence(timeout: 3))
+        // The strip has scrolled to centre Editorial, so Script is past its edge: drag the strip sideways to reach it.
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let window = app.windows.firstMatch.frame
+        for _ in 0..<3 where !window.contains(script.frame) {
+            let row = editorial.frame.midY
+            origin.withOffset(CGVector(dx: window.width * 0.85, dy: row))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: window.width * 0.15, dy: row)))
+        }
+        script.tap()
+        let pacifico = app.buttons["native-editor-font-option-script-pacifico"]
+        XCTAssertTrue(pacifico.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["native-editor-font-option-script-bebas-neue"].exists)
+        attachScreenshot(app, name: "Font picker, Script tab")
+        pacifico.tap()
+
+        XCTAssertTrue(font.waitForExistence(timeout: 3))
+        XCTAssertEqual(font.value as? String, "Pacifico")
+    }
+
     private func reveal(_ control: XCUIElement, in inspector: XCUIElement) {
         for _ in 0..<24 where !control.isHittable {
             let moveUp = !control.exists || control.frame.midY > inspector.frame.midY

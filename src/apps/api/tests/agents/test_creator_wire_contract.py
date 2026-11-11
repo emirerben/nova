@@ -182,3 +182,42 @@ def test_duration_wire_rejects_non_boolean_preservation(value):
                 "ops": [{"op": "set_total_duration", "target_s": 12, "preserve_text": value}],
             }
         )
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        {
+            "op": "set_speaker_frame",
+            "selector": {"slot_indexes": [0]},
+            "frame": {"width_fraction": 0.4, "x_fraction": 0.2, "y_fraction": 0.8},
+        },
+        {"op": "clear_speaker_frame", "selector": {"slot_indexes": [1]}},
+        {"op": "set_speaker_frame", "selector": {"slot_indexes": [0]}, "preset": "inherit"},
+    ],
+)
+def test_occurrence_speaker_frame_provider_wire_roundtrip(operation):
+    contract = WireContract(copilot_schema())
+    value = {"intent": "edit", "reply": "Prepared", "ops": [operation]}
+    assert contract.decode(contract.encode(value)) == value
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"width_fraction": 0.4, "x_fraction": 0.2},
+        {"width_fraction": 0.1, "x_fraction": 0.2, "y_fraction": 0.8},
+        {"width_fraction": 0.4, "x_fraction": 1.1, "y_fraction": 0.8},
+        {"width_fraction": 0.4, "x_fraction": 0.2, "y_fraction": 0.8, "rotation": 30},
+        {"width_fraction": "small", "x_fraction": 0.2, "y_fraction": 0.8},
+    ],
+)
+def test_occurrence_speaker_frame_provider_rejects_invalid_geometry(frame):
+    contract = WireContract(copilot_schema())
+    value = {
+        "intent": "edit",
+        "reply": "Prepared",
+        "ops": [{"op": "set_speaker_frame", "selector": {"slot_indexes": [0]}, "frame": frame}],
+    }
+    with pytest.raises(ValueError):
+        contract.encode(value)

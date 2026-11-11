@@ -48,8 +48,10 @@ from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
 from app.kria.removed_messages import REMOVED_WHILE_WAITING
 from app.kria.reply_language import (
+    asks_for_video_text,
     creator_typed_language,
     needs_typed_history,
+    own_words_enabled,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -86,6 +88,7 @@ from app.services.clip_selection import ClipSelectionIn, latest_open_clip_questi
 from app.services.creation_thread_titles import (
     conversation_revision_matches,
     prepare_message_title,
+    start_title_generation,
 )
 from app.services.creative_copy_decisions import latest_open_creative_question
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
@@ -105,8 +108,10 @@ from app.services.song_range import (
     validate_song_range_answer,
 )
 from app.services.speech_cleanup_decision import (
+    BRIEF_ORIGIN,
     SPEECH_CLEANUP_CONFLICT_COPY,
     SpeechCleanupDecisionConflict,
+    brief_keep_original_decision,
     evaluate_enforce_mode_decision,
     legacy_default_decision,
     resolve_next_audio_mode,
@@ -480,13 +485,23 @@ async def _stamp_protected_region(
             current_revision=int(thread.revision),
         )
     generation = match.get("storage_generation") or match.get("generation")
+    if not generation:
+        # Stamped without one, the mark reads as invalidated at render once the upload ends.
+        raise RuntimeFailure(
+            409,
+            "protected_region_clip_uploading",
+            "That clip is still uploading. Mark the object again in a moment.",
+            recovery="retry",
+            retryable=True,
+            current_revision=int(thread.revision),
+        )
     try:
         mark = ProtectedRegionSelection(
             label=region.label,
             media_id=region.media_id,
             source_t_s=region.source_t_s,
             box=region.box,
-            generation=str(generation) if generation is not None else None,
+            generation=str(generation),
         )
     except ValueError as exc:
         raise RuntimeFailure(
@@ -839,6 +854,34 @@ async def _validate_scoped_turn(
     return scope
 
 
+async def _answers_video_text_question(db: AsyncSession, thread: CreationThread) -> bool:
+    """True when the open question asks for words for the video (KRI-1363).
+
+    Read only when a message would move the chat to another language, so a normal turn pays
+    nothing for it.
+    """
+    if not own_words_enabled():
+        return False
+    rows = (
+        await db.execute(
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    return asks_for_video_text(
+        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+    )
+
+
 async def submit_turn(
     db: AsyncSession,
     *,
@@ -1075,6 +1118,19 @@ async def submit_turn(
     reply_language = resolve_reply_language(
         body.message, previous=previous_language, locale=locale, typed_elsewhere=typed_elsewhere
     )
+    if (
+        previous_language is not None
+        and reply_language != previous_language
+        and await _answers_video_text_question(db, thread)
+    ):
+        # KRI-1363: words typed for a title are the video's language, not the chat's.
+        reply_language = resolve_reply_language(
+            body.message,
+            previous=previous_language,
+            locale=locale,
+            typed_elsewhere=typed_elsewhere,
+            answers_video_text=True,
+        )
     remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
     with reply_language_for(reply_language):
@@ -1432,6 +1488,9 @@ async def read_delta(
             "Use either after_sequence or before_sequence, not both.",
             recovery="manual",
         )
+    if isinstance(db, AsyncSession) and (thread.state or {}).get("title_generation") == "pending":
+        # KRI-1262: a deferred chat is released by the worker, so a poll is what starts its title.
+        start_title_generation(thread.id)
     statement = select(CreationThreadEvent).where(CreationThreadEvent.thread_id == thread.id)
     if before_sequence is not None:
         statement = statement.where(CreationThreadEvent.sequence < before_sequence).order_by(
@@ -2104,6 +2163,7 @@ async def _apply_strategy_approval_media(
     strategy_payload: dict[str, Any],
     body: ApprovalDecisionBody,
     execution: CreatorAgentExecution | None,
+    brief_binding: Any = None,
 ) -> _StrategyApprovalMedia:
     """Apply a strategy draft's media targets, then gate on speech cleanup.
 
@@ -2248,27 +2308,50 @@ async def _apply_strategy_approval_media(
     submitted_analysis_id = body.speech_cleanup_analysis_id
     submitted_choice = body.speech_cleanup_choice
     reused_recorded_decision = False
+    kept_for_brief = None
     if submitted_analysis_id is None or submitted_choice is None:
+        from app.kria.tight_pause_ask import brief_wants_original_speech  # noqa: PLC0415
+        from app.services.client_protocol import (  # noqa: PLC0415
+            cleanup_card_ignores_keep_original,
+        )
+        from app.services.render_shape import readable_brief  # noqa: PLC0415
+
+        current_cleanup = await current_analysis_async(db, item.id, for_update=True)
+        source_policy_fingerprint = (
+            resolution.source.source_policy_fingerprint if resolution.source else None
+        )
         # Follow-up approval after the creator already chose: the projection
         # stopped asking, so the client sends neither. Reuse the recorded one.
         reusable = reuse_recorded_cleanup_decision(
-            await current_analysis_async(db, item.id, for_update=True),
-            source_policy_fingerprint=(
-                resolution.source.source_policy_fingerprint if resolution.source else None
-            ),
+            current_cleanup,
+            source_policy_fingerprint=source_policy_fingerprint,
             submitted_analysis_id=submitted_analysis_id,
             submitted_choice=submitted_choice,
         )
+        if (
+            reusable is None
+            and submitted_choice is None
+            and cleanup_card_ignores_keep_original()
+            and brief_wants_original_speech(readable_brief(brief_binding))
+        ):
+            # The question the thread read did not ask this build (`_brief_answers_cleanup_ask`).
+            kept_for_brief = reusable = brief_keep_original_decision(
+                current_cleanup,
+                source_policy_fingerprint=source_policy_fingerprint,
+                submitted_analysis_id=submitted_analysis_id,
+            )
         if reusable is not None:
             log.info(
-                "kria_speech_cleanup_recorded_decision_reused",
+                "kria_speech_cleanup_brief_keeps_original"
+                if kept_for_brief
+                else "kria_speech_cleanup_recorded_decision_reused",
                 item_id=str(item.id),
                 analysis_id=str(reusable.analysis_id),
                 choice=reusable.choice,
             )
             submitted_analysis_id = reusable.analysis_id
             submitted_choice = reusable.choice
-            reused_recorded_decision = True
+            reused_recorded_decision = kept_for_brief is None
 
     result = await evaluate_enforce_mode_decision(
         db,
@@ -2294,6 +2377,7 @@ async def _apply_strategy_approval_media(
         {
             "analysis_id": str(result.analysis_id) if result.analysis_id else None,
             "choice": result.choice,
+            **({"origin": BRIEF_ORIGIN} if kept_for_brief else {}),
         },
         preflight_analysis_id,
     )
@@ -2867,6 +2951,11 @@ async def _mint_prepared_execution(
     approval.prepared_execution_id = row.id
 
 
+def _automatic_repair_limit() -> int:
+    """Automatic export repairs an approval grants (0 or 2); the server decides (KRI-1262)."""
+    return 2 if settings.phone_actual_export_verification_enabled else 0
+
+
 def _optional_uuid(value: object) -> uuid.UUID | None:
     try:
         return uuid.UUID(str(value)) if value else None
@@ -2973,7 +3062,7 @@ async def decide_approval(
     needs_plan_item_lock = (
         is_strategy_approval
         or deny_restore_pending
-        or (decision == "approve" and body.automatic_repair_attempts > 0)
+        or (decision == "approve" and _automatic_repair_limit() > 0)
         or (decision == "deny" and await _staged_tap_writes_item(db, approval_ref))
     )
     plan_item = (
@@ -3448,6 +3537,7 @@ async def decide_approval(
             strategy_payload=document_peek.strategy,
             body=body,
             execution=execution,
+            brief_binding=document_peek.brief_binding,
         )
         if strategy_media.speech_cleanup_stash is not None and execution is not None:
             execution.result = {
@@ -3466,11 +3556,9 @@ async def decide_approval(
         # A card's tap that staged this render is taken back with it: the denial is final.
         await _withdraw_staged_tap(db, approval=approval, item=plan_item, thread=thread)
 
-    if decision == "approve" and body.automatic_repair_attempts:
-        if execution is None:
-            raise RuntimeFailure(
-                409, "approval_target_missing", "The render for this approval is unavailable."
-            )
+    if decision == "approve" and _automatic_repair_limit() > 0 and execution is not None:
+        # KRI-1262: the grant follows the server's limit, never the client's field (an older
+        # build sends 0 here; a newer one no longer shows the choice).
         from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
 
         grant_item = plan_item or await db.get(PlanItem, session.plan_item_id)
@@ -3478,7 +3566,7 @@ async def decide_approval(
             **(execution.result or {}),
             "automatic_repair_grant": {
                 "version": 1,
-                "max_attempts": 2,
+                "max_attempts": _automatic_repair_limit(),
                 "used": 0,
                 "approved_at": now.isoformat(),
                 "expires_at": (now + timedelta(minutes=30)).isoformat(),
@@ -3572,7 +3660,7 @@ async def read_approval(
         if isinstance(result, dict) and isinstance(result.get("render_retry"), dict):
             retry_of_execution_id = result["render_retry"].get("source_execution_id")
     return ApprovalSnapshotOut(
-        automatic_repair_limit=(2 if settings.phone_actual_export_verification_enabled else 0),
+        automatic_repair_limit=_automatic_repair_limit(),
         approval_id=str(approval.id),
         turn_id=str(approval.turn_id),
         draft_id=str(approval.draft_id) if approval.draft_id else None,

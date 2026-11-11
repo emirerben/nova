@@ -15,7 +15,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from types import UnionType
 from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_type_hints
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
@@ -73,6 +73,7 @@ from app.services.length_policy import (
     length_owner,
 )
 from app.services.order_mode import order_mode
+from app.services.talking_clip_anchors import talking_anchor_rows
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -222,6 +223,9 @@ _CLIP_INTENT_LEAVES = (
     "op",
     "attribute",
     "source_kind",
+    # KRI-884: the creator's own sentence the intent quoted; picks which repeated wording
+    # the resolver and the render-time re-grounding print.
+    "source_quote",
     "label_source",
     "transcript_kind",
     "creator_text",
@@ -349,6 +353,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[].intent.position",
         "selection_reconciliation.rejected_selections[].intent.requirement_id",
         "selection_reconciliation.rejected_selections[].intent.source_kind",
+        "selection_reconciliation.rejected_selections[].intent.source_quote",
         "selection_reconciliation.rejected_selections[].intent.transcript_kind",
         "selection_reconciliation.rejected_selections[].intent.under_s",
         "selection_reconciliation.rejected_selections[].question_id",
@@ -717,6 +722,25 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "phone_initial_split_screen",
+        "split_screen",
+        "split_screen.panels[]",
+        "split_screen.panels[].media_id",
+        "split_screen.panels[].source_start_s",
+        "split_screen.start_s",
+        "split_screen.duration_s",
+        "split_screen.panel_weights[]",
+        "split_screen.gutter",
+        "split_screen.background_color",
+        note=(
+            "Capability policy validates availability and approved media; the initial phone "
+            "compiler lowers source clocks and layout through the editable section command "
+            "before pinning the device request. This contract does not independently pin or "
+            "verify panel placement."
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "speaker_background_repair",
         "background_media",
         "background_media.media_id",
@@ -732,6 +756,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "background_media.full_screen_opening_s",
         "background_media.focus",
         "background_media.focus_zoom",
+        "background_media.left_out[]",
+        "background_media.left_out[].name",
+        "background_media.left_out[].why",
         "background_media.speaker_frame",
         note=(
             "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
@@ -782,13 +809,55 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "licensed_sfx.max_placements",
         note="a named licensed effect is required but no verifier proves its placement",
     ),
+    **_rules(
+        "upstream_resolved",
+        "planner_boundary",
+        "planner_declines[]",
+        "planner_declines[].field",
+        "planner_declines[].value",
+        note=(
+            "KRI-1097 wave 2: what the Main Creator parse could not keep, written there and read "
+            "only by the approval card (route_disclosure); the render never reads it"
+        ),
+    ),
 }
+
+
+def _carries_source_quote(strategy: Mapping[str, Any]) -> bool:
+    """Whether any intent in the strategy holds a KRI-884 quote; legacy digests stay put."""
+
+    def quoted(intent: Any) -> bool:
+        value = (
+            intent.get("source_quote")
+            if isinstance(intent, Mapping)
+            else getattr(intent, "source_quote", None)
+        )
+        return value is not None
+
+    if any(
+        quoted(i)
+        for key in ("clip_intents", "resolved_clip_intents")
+        for i in strategy.get(key) or ()
+    ):
+        return True
+    reconciliation = strategy.get("selection_reconciliation")
+    rejected = (
+        reconciliation.get("rejected_selections")
+        if isinstance(reconciliation, Mapping)
+        else getattr(reconciliation, "rejected_selections", None)
+    )
+    return any(
+        quoted(r.get("intent") if isinstance(r, Mapping) else getattr(r, "intent", None))
+        for r in rejected or ()
+    )
 
 
 def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRule]:
     unused = set()
     if not strategy.get("confirmed_order_replacement"):
         unused.add("confirmed_order_replacement")
+    if not strategy.get("planner_declines"):
+        unused.add("planner_declines[]")
     if not strategy.get("selection_reconciliation"):
         unused.add("selection_reconciliation")
     if not any(
@@ -797,6 +866,14 @@ def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRul
         for intent in strategy.get(key) or ()
     ):
         unused.update({"clip_intents[].source_kind", "resolved_clip_intents[].source_kind"})
+    if not _carries_source_quote(strategy):
+        unused.update(
+            {
+                "clip_intents[].source_quote",
+                "resolved_clip_intents[].source_quote",
+                "selection_reconciliation.rejected_selections[].intent.source_quote",
+            }
+        )
     return {
         path: rule
         for path, rule in FIELD_MATRIX.items()
@@ -967,6 +1044,22 @@ class TextRequirement(BaseModel):
     media_id: str | None = None
     shot_index: int | None = Field(default=None, ge=0)
     duration_s: float | None = Field(default=None, gt=0)
+    # KRI-1331: a chapter's one title (a creator-worded caption over several clips): drawn
+    # once, starting on the first of these clips the edit plays and never past that run of
+    # them. Omitted from dumps when empty, so every other contract (and its digest) stays
+    # byte-identical; an older worker, which forbids unknown keys, refuses one (fails closed).
+    chapter_media_ids: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def _one_chapter_shape(self) -> TextRequirement:
+        if self.chapter_media_ids and (
+            self.role != "clip"
+            or self.media_id is not None
+            or self.shot_index is not None
+            or len(set(self.chapter_media_ids)) < 2
+        ):
+            raise ValueError("a chapter title is a clip text over two or more clips")
+        return self
 
 
 class HiddenPartRequirement(BaseModel):
@@ -1041,16 +1134,17 @@ def _label_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str
     return tuple(ids)
 
 
-def _caption_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str, ...]:
-    """Clips a resolved described-shot caption prints the creator's ``literal`` on (KRI-804).
+def _caption_intent_chapters(resolved_intents: object, literal: str) -> tuple[tuple[str, ...], ...]:
+    """Member clips of each resolved caption printing the creator's ``literal`` (KRI-804).
 
     "Put "chimichurri & salsa criolla" on the sauce bowls" may travel as a caption with the
     creator's words (``creator_text``), the lane that prints them as written however long
-    (KRI-296); the montage burns it on exactly its member clips. A chapter caption with no
-    creator words, or one the resolver wrote, is never this placement.
+    (KRI-296). A caption is one phrase for its chapter (``app.schemas.clip_intents``): the
+    montage draws it once across neighbouring members. A chapter caption with no creator
+    words, or one the resolver wrote, is never this placement.
     """
     wanted = _normal(literal)
-    ids: list[str] = []
+    chapters: list[tuple[str, ...]] = []
     for intent in resolved_intents if isinstance(resolved_intents, Sequence) else ():
         if not isinstance(intent, Mapping) or intent.get("op") != "caption":
             continue
@@ -1065,11 +1159,33 @@ def _caption_intent_media_ids(resolved_intents: object, literal: str) -> tuple[s
             or _normal(text) != wanted
         ):
             continue
-        for row in intent.get("assignments") or []:
-            media_id = str(row.get("media_id") or "") if isinstance(row, Mapping) else ""
-            if media_id and media_id not in ids:
-                ids.append(media_id)
-    return tuple(ids)
+        members = tuple(
+            dict.fromkeys(
+                str(row.get("media_id"))
+                for row in intent.get("assignments") or []
+                if isinstance(row, Mapping) and row.get("media_id")
+            )
+        )
+        if members and members not in chapters:
+            chapters.append(members)
+    return tuple(chapters)
+
+
+def _caption_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str, ...]:
+    """Every clip a creator-worded caption printing ``literal`` covers (draft receipts)."""
+    return tuple(
+        dict.fromkeys(
+            media_id
+            for members in _caption_intent_chapters(resolved_intents, literal)
+            for media_id in members
+        )
+    )
+
+
+def _caption_text_requirement(literal: str, members: tuple[str, ...]) -> TextRequirement:
+    if len(members) == 1:
+        return TextRequirement(role="clip", text=literal, media_id=members[0])
+    return TextRequirement(role="clip", text=literal, chapter_media_ids=members)
 
 
 def _json_value(value: object) -> object:
@@ -1182,22 +1298,24 @@ def _creator_listed_order(
 def _pin_not_found(words: str) -> str:
     """A stated first / last clip the server could not place, in the chat's language."""
     return say(
-        en=f"I couldn't tell which clip \"{words}\" means, so I can't confirm the order.",
+        en="I couldn't tell which clip \"{words}\" means, so I can't confirm the order.",
         tr=(
-            f'"{words}" derken hangi klibi kastettiğini anlayamadım, '
+            '"{words}" derken hangi klibi kastettiğini anlayamadım, '
             "o yüzden sırayı doğrulayamıyorum."
         ),
+        words=words,
     )
 
 
 def text_clip_not_found(literal: str) -> str:
     """Creator text whose clip the server could not tell, in the chat's language."""
     return say(
-        en=f"I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.",
+        en="I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.",
         tr=(
-            f'"{literal}" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı '
+            '"{literal}" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı '
             "doğrulayamıyorum."
         ),
+        literal=literal,
     )
 
 
@@ -1231,8 +1349,12 @@ def capture_time_missing(names: Sequence[tuple[str, str]], *, whole_edit: bool =
     if whole_edit:
         en, tr = "Your clips and photos", "Kliplerinin ve fotoğraflarının hiçbiri"
     return say(
-        en=f"{en} {_NO_CAPTURE_TAILS['en'][0 if one else 1]}",
-        tr=f"{tr} {_NO_CAPTURE_TAILS['tr'][0 if one else 1]}",
+        en="{v1} {v2}",
+        tr="{v3} {v4}",
+        v1=en,
+        v2=_NO_CAPTURE_TAILS["en"][0 if one else 1],
+        v3=tr,
+        v4=_NO_CAPTURE_TAILS["tr"][0 if one else 1],
     )
 
 
@@ -1481,6 +1603,18 @@ def _one_unkeyed_clip(
     return len(selected) == 1 and len(rows) == 1 and not rows[0].get("media_id")
 
 
+def creator_mutes_whole_video(brief: CreativeBrief | None) -> bool:
+    """The brief silences every clip's own sound and ``CREATOR_MUTE_WINS_ENABLED`` is on.
+
+    Typed facts only (`clip_sound_toggle_ask.brief_mutes_whole_video`, KRI-667): a partial mute
+    or any "on" ask keeps whatever camera audio the contract pins.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.clip_sound_toggle_ask import brief_mutes_whole_video  # noqa: PLC0415
+
+    return bool(settings.creator_mute_wins_enabled) and brief_mutes_whole_video(brief)
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1594,8 +1728,9 @@ def build_render_contract(
     )
     unresolved.extend(
         say(
-            en=f"I still need to know which part of {name} to leave out.",
-            tr=f"{name} içinde hangi bölümü göstermeyeceğimi hâlâ bilmem gerekiyor.",
+            en="I still need to know which part of {name} to leave out.",
+            tr="{name} içinde hangi bölümü göstermeyeceğimi hâlâ bilmem gerekiyor.",
+            name=name,
         )
         for name in unsettled_hidden_parts(raw)
     )
@@ -1605,6 +1740,8 @@ def build_render_contract(
         and typed.song_sync == "lipsync"
         and typed.resolved_song_takes
     )
+    edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
+    talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
     # The creator's described sequence ("start with X", "end on Y"), as the clip-intent
     # resolver matched it to clips; the montage planner seats exactly these rows.
     sequence = (
@@ -1612,6 +1749,14 @@ def build_render_contract(
         if brief is not None and _clip_intents_on()
         else []
     )
+    if not sequence and talking_edit and brief is not None and _clip_intents_on():
+        # S3 Yorum2 (prod thread cc0e3706, 2026-11-08): a Talking edit plans no clip intents
+        # (`CLIP_INTENT_FREE_EDIT_FORMATS`), so nothing seated the brief's first / last take
+        # and every wording ("the 20-second home clip", "the clip that starts 'Wait, the
+        # light'", "the car clip") was refused below by name. The takes' own length, words
+        # and place in the snapshot tell them apart; an end they do not single out stays
+        # unplaced and is still asked about.
+        sequence = talking_anchor_rows(stated_anchors(brief), edit_rows)
     clip_ids = {
         str(row["media_id"])
         for row in (media_snapshot or {}).get("clip_assignments") or []
@@ -1625,7 +1770,16 @@ def build_render_contract(
         for position, _name, members, status in sequence
         if position and status == "resolved" and clip_ids.intersection(members)
     }
-    talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
+    # KRI-747: the Talking worker places a text on a spoken word only while its rollout is on
+    # (`PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED` and a phone that draws the text lane). Off, nothing
+    # answers the ask, so the literal is pinned like any other text, as before KRI-707.
+    spoken_text_lane = False
+    if talking_edit:
+        from app.services.phone_rollout import (
+            phone_subtitled_spoken_text_supported,  # noqa: PLC0415
+        )
+
+        spoken_text_lane = phone_subtitled_spoken_text_supported()
     # A word-timed text ask is omitted from the ordinary exact-copy pin only
     # when this approval can actually use the native narrated word-text lane.
     # Other typed voiceover strategies still need their literal pinned, so a
@@ -1642,7 +1796,6 @@ def build_render_contract(
         )
 
         voiceover_spoken_text = phone_voiceover_spoken_text_supported(require_client=False)
-    edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
     one_clip = one_clip_edit(edit_rows) or _one_unkeyed_clip(media_snapshot, typed, hidden_ids)
     if brief:
         for requirement in brief.live():
@@ -1665,7 +1818,7 @@ def build_render_contract(
             # 29 Ekim: a `text_sequence` pins the same words as a `text` ask; the draft shows
             # them whole.
             if requirement.kind in {"text", "text_sequence"} and requirement.literal:
-                if (talking_edit or voiceover_spoken_text) and (
+                if (spoken_text_lane or voiceover_spoken_text) and (
                     requirement_spoken_text(requirement) is not None
                     or is_spoken_text_cue(requirement)
                 ):
@@ -1717,17 +1870,15 @@ def build_render_contract(
                                 for media_id in placed_ids
                             )
                             continue
-                        captioned = _caption_intent_media_ids(
+                        chapters = _caption_intent_chapters(
                             raw.get("resolved_clip_intents"), requirement.literal
                         )
-                        if captioned:
-                            # A shared caption may cross neighboring member clips, but
-                            # its source identities must survive into verification.
+                        if chapters:
+                            # KRI-1331: one title per chapter ("a title at the beginning of
+                            # each event"), never one per member clip.
                             texts.extend(
-                                TextRequirement(
-                                    role="clip", text=requirement.literal, media_id=media_id
-                                )
-                                for media_id in captioned
+                                _caption_text_requirement(requirement.literal, members)
+                                for members in chapters
                             )
                             continue
                         # Nothing here turns the words into a caption, so the reply offers
@@ -2011,6 +2162,11 @@ def build_render_contract(
             tuple(str(value) for value in ids) if typed.montage_audio.preserve_source_audio else ()
         )
         original_audio = "require" if typed.montage_audio.preserve_source_audio else "forbid"
+    if (original_audio == "require" or source_ids) and creator_mutes_whole_video(brief):
+        # Qendresa case 4: the creator's typed whole-video mute outranks the strategy's camera
+        # audio (`original_audio` is the planner's pick when no song fits). Pinning it would
+        # refuse the muted recipe the draft already promised; "forbid" already agrees.
+        original_audio, source_ids = None, ()
     data: dict[str, Any] = dict(
         version=1,
         generation_id=generation_id,
@@ -2020,7 +2176,8 @@ def build_render_contract(
         audio_source_ids=source_ids,
         original_audio=original_audio,
         require_voiceover=bool(has_voiceover),
-        exact_texts=tuple(texts),
+        # KRI-1296: the strategy's pinned text and the brief's literal can name the same line.
+        exact_texts=tuple(t for i, t in enumerate(texts) if t not in texts[:i]),
         order_ids=order_ids,
         order_required=order_required,
         order_basis=order_basis,
@@ -2116,6 +2273,27 @@ def _audio_decline(requirement: str, message: str) -> CreatorRenderContractError
         decline_reason=typed.decline_reason,
         field_path=typed.field_path,
         alternative=typed.alternative,
+    )
+
+
+NO_FOOTAGE_SOUND = "None of your clips has sound."
+USE_MUSIC_INSTEAD = "Want me to use music instead?"
+
+
+def _no_footage_sound_decline(requirement: str) -> CreatorRenderContractError:
+    """The camera sound was required but every source file is silent (KRI-1365).
+
+    No rebuild of the same edit can ever pass, so the repair offer of the ordinary refusal is
+    replaced by the one thing that can: music. Still an ``AudioChoiceError``, so a manual
+    editor Save keeps clearing the stale requirement.
+    """
+
+    return AudioChoiceError(
+        NO_FOOTAGE_SOUND,
+        field=requirement,
+        decline_reason="capability_unavailable",
+        field_path=REQUIREMENT_FIELD_PATHS[requirement],
+        alternative=USE_MUSIC_INSTEAD,
     )
 
 
@@ -2488,6 +2666,56 @@ def source_group_text_matches(
     return bounded
 
 
+def chapter_window(
+    members: frozenset[str],
+    spans: Sequence[tuple[str, float, float]],
+    *,
+    tolerance_s: float,
+) -> tuple[float, float, float] | None:
+    """Where a chapter's title goes: ``(start, end, run_end)`` of its first clip.
+
+    ``spans`` are the picture clips as ``(media id, start, end)``. The run is that clip and
+    the member clips straight after it. ``None`` when no member plays.
+    """
+    ordered = sorted(spans, key=lambda span: span[1])
+    for rank, (media_id, start, end) in enumerate(ordered):
+        if media_id not in members:
+            continue
+        run_end = end
+        for next_id, next_start, next_end in ordered[rank + 1 :]:
+            if next_id not in members or next_start > run_end + tolerance_s:
+                break
+            run_end = max(run_end, next_end)
+        return start, end, run_end
+    return None
+
+
+def chapter_text_matches(
+    matches: Sequence[dict[str, Any]],
+    *,
+    members: frozenset[str],
+    spans: Sequence[tuple[str, float, float]],
+    tolerance_s: float,
+) -> list[dict[str, Any]]:
+    """Visible matches for a chapter title, shared by the phone, cloud and plan repair.
+
+    A match starts on the chapter's first clip and stays within the run of member clips
+    from there, so the montage's title across the chapter and a title on its first clip
+    both count; the words on another clip, or reaching past the chapter, never do.
+    """
+    window = chapter_window(members, spans, tolerance_s=tolerance_s)
+    if window is None:
+        return []
+    start, end, run_end = window
+    return [
+        row
+        for row in matches
+        if (row.get("media_id") is None or row["media_id"] in members)
+        and start - tolerance_s <= row["start_s"] < end - tolerance_s
+        and row["end_s"] <= run_end + tolerance_s
+    ]
+
+
 def check_recipe_duration(
     contract: CreatorRenderContract,
     duration_s: float,
@@ -2732,6 +2960,15 @@ def verify_phone_recipe(
             "audio_source_ids" if contract.audio_source_ids else "original_audio",
             "I couldn't verify audio in the approved source files.",
         )
+    if (
+        (contract.original_audio == "require" or contract.audio_source_ids)
+        and not original_ids
+        and source_audio
+        and not any(source_audio.values())
+    ):
+        raise _no_footage_sound_decline(
+            "audio_source_ids" if contract.audio_source_ids else "original_audio"
+        )
     if contract.original_audio == "require" and not original_ids:
         raise _audio_decline("original_audio", "This edit needs audible camera audio.")
     if contract.audio_source_ids and original_ids != set(contract.audio_source_ids):
@@ -2903,24 +3140,31 @@ def verify_phone_recipe(
                     if _contract_media_id(manifest.get(clip.source_asset_id))
                     == requirement.media_id
                 ]
+            spans = [
+                (
+                    source,
+                    clip.timeline_start,
+                    clip.timeline_start
+                    + clip.source_duration / clip.rate
+                    + (clip.hold_duration or 0),
+                )
+                for clip in picture
+                if (source := _contract_media_id(manifest.get(clip.source_asset_id))) is not None
+            ]
             group = text_source_group(contract.exact_texts, requirement)
-            if group:
+            if requirement.chapter_media_ids:
+                matches = chapter_text_matches(
+                    matches,
+                    members=frozenset(requirement.chapter_media_ids),
+                    spans=spans,
+                    tolerance_s=frame,
+                )
+            elif group:
                 matches = source_group_text_matches(
                     matches,
                     group=group,
                     media_id=requirement.media_id or "",
-                    spans=[
-                        (
-                            source,
-                            clip.timeline_start,
-                            clip.timeline_start
-                            + clip.source_duration / clip.rate
-                            + (clip.hold_duration or 0),
-                        )
-                        for clip in picture
-                        if (source := _contract_media_id(manifest.get(clip.source_asset_id)))
-                        is not None
-                    ],
+                    spans=spans,
                     tolerance_s=frame,
                     minimum_overlap_s=frame,
                 )

@@ -22,7 +22,7 @@ import XCTest
             var edits = SlidePostEdits(); edits.setTexts(texts); slide.edits = edits
             return slide
         }
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         session.draft = SlidePostDraft(version: 1, platformProfile: "instagram_carousel", slides: slides)
         return session
     }

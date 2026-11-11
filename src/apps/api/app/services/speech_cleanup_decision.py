@@ -34,6 +34,10 @@ from app.services.active_narration_source import ActiveNarrationResolution
 SpeechCleanupChoice = Literal["clean", "keep_original"]
 SpeechCleanupFullChoice = Literal["clean", "keep_original", "create_without_cleanup"]
 
+# The approval stash's ``origin`` when ``brief_keep_original_decision`` answered for the creator:
+# their typed request, not a tap on the card (KRI-1291).
+BRIEF_ORIGIN = "brief"
+
 SpeechCleanupConflictCode = Literal[
     "speech_cleanup_analysis_changed",
     "speech_cleanup_pending",
@@ -346,6 +350,32 @@ def reuse_recorded_cleanup_decision(
             current_cleanup.id, submitted_choice or current_cleanup.decision
         )
     return None
+
+
+def brief_keep_original_decision(
+    current_cleanup: SpeechCleanupAnalysis | None,
+    *,
+    source_policy_fingerprint: str | None,
+    submitted_analysis_id: uuid.UUID | None,
+) -> SpeechCleanupDecisionOk | None:
+    """KRI-1291: keep_original for the plain "Create this video" of a build the thread read
+    offered no cleanup choice, because the approval's own brief keeps the take whole.
+
+    The caller runs this only for that build, with no choice submitted and no recorded answer to
+    reuse, so a tap or an earlier answer always wins. keep_original removes nothing. Freshness
+    and id rules match ``reuse_recorded_cleanup_decision``.
+    """
+
+    if (
+        current_cleanup is None
+        or source_policy_fingerprint is None
+        or current_cleanup.source_policy_fingerprint != source_policy_fingerprint
+        or submitted_analysis_id not in (None, current_cleanup.id)
+        or current_cleanup.status != "ready"
+        or int(current_cleanup.candidate_count or 0) <= 0
+    ):
+        return None
+    return SpeechCleanupDecisionOk(current_cleanup.id, "keep_original")
 
 
 def resolve_next_audio_mode(strategy: Any, item: PlanItem) -> str | None:

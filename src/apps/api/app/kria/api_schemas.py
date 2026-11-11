@@ -80,13 +80,16 @@ class EditorStateIn(_StrictBody):
     """The editor's CURRENT UNSAVED state, sent with a chat turn.
 
     A lane present is the client's full current value; absent equals the saved variant.
-    A present-but-empty ``lanes`` is still authoritative: "no unsaved edits".
+    A present-but-empty ``lanes`` is authoritative ("no unsaved edits") only over chat
+    drafts the editor has seen: ``draft_revision`` is the newest one it staged or discarded,
+    absent from older builds and from an editor that never read the head (KRI-1333).
     The server never recomputes a hash; ``client_state_id`` is echoed verbatim.
     """
 
     version: Literal[1] = 1
     base_generation: str = Field(max_length=128)
     client_state_id: str = Field(min_length=1, max_length=64)
+    draft_revision: int | None = Field(default=None, ge=0)
     lanes: EditorStateLanes
 
     @model_validator(mode="after")
@@ -275,7 +278,7 @@ class TurnCancelled(BaseModel):
 
 
 class ApprovalDecisionBody(_StrictBody):
-    # Explicit original consent. Older clients grant no automatic repairs.
+    # Accepted for older builds and ignored: the server decides the repair grant (KRI-1262).
     automatic_repair_attempts: Literal[0, 2] = 0
     expected_thread_revision: int = Field(ge=0)
     expected_draft_revision: int = Field(ge=0)

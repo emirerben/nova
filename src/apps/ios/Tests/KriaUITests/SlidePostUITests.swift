@@ -141,6 +141,11 @@ import XCTest
     private func launchRich(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false, capabilities: String? = nil, readyThread: Bool = false, extraEnv: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
         for (key, value) in extraEnv { app.launchEnvironment[key] = value }
+        // Isolate app-private AI/UI journals across cases, without deleting stores.
+        // XCTest retains this environment when this same app is terminated/relaunched.
+        if app.launchEnvironment["KRIA_CHAT_FIXTURE_ACCOUNT_NAMESPACE"] == nil {
+            app.launchEnvironment["KRIA_CHAT_FIXTURE_ACCOUNT_NAMESPACE"] = UUID().uuidString
+        }
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = readyThread ? "v2" : "v1"
         app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
@@ -1097,7 +1102,7 @@ import XCTest
 
     /// KRI-564: a line typed on one line stays on one line on the slide, and resizing only scales it. The edit
     /// box scrolls sideways so the caret stays visible past the box edge and comes back when it moves back.
-    func testTypedLineStaysOnOneLineAndResizeOnlyScalesIt() {
+    func testTypedLongLineWrapsInsideTheFrameAndShrinksToFewerRows() {
         let app = openRichWorkspace()
         addText(app, "Athens")
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
@@ -1111,7 +1116,7 @@ import XCTest
         let oneLineHeight = selection.frame.height
         XCTAssertGreaterThan(oneLineHeight, 0)
 
-        // Re-open the text and type a line far wider than the canvas (it used to wrap onto four or more lines).
+        // Re-open the text and type a line far wider than the canvas.
         Thread.sleep(forTimeInterval: 0.9)
         text.tap()
         let field = app.textViews["slidepost-text-field"].firstMatch
@@ -1135,10 +1140,11 @@ import XCTest
         canvasText(app).press(forDuration: 0.9)
         XCTAssertTrue(selection.waitForExistence(timeout: 3))
         let longHeight = selection.frame.height
-        XCTAssertLessThan(longHeight, oneLineHeight * 1.5, "the typed line stays on one line, not wrapped")
-        attach(app, "Long typed line: one line on the canvas")
+        XCTAssertGreaterThan(longHeight, oneLineHeight * 1.5, "a line wider than the frame soft-wraps instead of running off it")
+        XCTAssertLessThanOrEqual(selection.frame.width, preview.frame.width, "the wrapped line stays inside the frame")
+        attach(app, "Long typed line: wrapped inside the canvas")
 
-        // Shrinking changes the size, never the number of lines.
+        // Shrinking scales the text; the same words need fewer rows.
         Thread.sleep(forTimeInterval: 0.9)
         canvasText(app).tap()
         app.buttons["Style"].tap()
@@ -1147,8 +1153,9 @@ import XCTest
         preview.pinch(withScale: 0.5, velocity: -1)
         let shrunk = NSPredicate { _, _ in self.number(self.canvasText(app).value as? String ?? "", after: "size") < sizeBefore }
         expectation(for: shrunk, evaluatedWith: nil); waitForExpectations(timeout: 5)
-        XCTAssertLessThan(selection.frame.height, oneLineHeight * 1.5, "still one line after resizing")
-        attach(app, "Long typed line: one line after shrinking")
+        XCTAssertLessThan(selection.frame.height, longHeight, "a smaller size fits the same words in fewer rows")
+        XCTAssertLessThanOrEqual(selection.frame.width, preview.frame.width, "still inside the frame after resizing")
+        attach(app, "Long typed line: fewer rows after shrinking")
     }
 
     func testTappingAnotherTextWhilePanelIsOpenSwitchesToItsEditField() {
@@ -1337,21 +1344,38 @@ import XCTest
 
     // MARK: Brand-new post: AI + add-media copy + seamless slide switching
 
-    /// A failed AI request says what happened, keeps the user's message, and offers Try again.
+    /// The original completed intent survives a lost POST response; no Retry tap or second fake execution.
     func testFailedAIRequestShowsAClearMessageAndRetryKeepsTheMessage() {
-        let app = openRichWorkspace(chatEdit: true, save: false, extraEnv: ["KRIA_SLIDE_POST_CHAT_EDIT_FAIL_ONCE": "1"])
+        assertOriginalAIResultRecovery(wrongIdentity: false)
+    }
+
+    func testAIRecoveryRefusesACompletedReceiptForAnotherRequest() {
+        assertOriginalAIResultRecovery(wrongIdentity: true)
+    }
+
+    private func assertOriginalAIResultRecovery(wrongIdentity: Bool) {
+        let app = openRichWorkspace(chatEdit: true, save: false, extraEnv: [
+            "KRIA_SLIDE_POST_AI_LOST_RESPONSE": "1",
+            "KRIA_SLIDE_POST_AI_WRONG_RECEIPT": wrongIdentity ? "1" : "0",
+        ])
         app.buttons["slidepost-openkria"].tap()
         let input = app.textFields["Message Kria"]
         XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap(); input.typeText("Order them by time")
         app.buttons["chat-send-message"].tap()
-        let retry = app.buttons["slidepost-ai-retry"]
-        XCTAssertTrue(retry.waitForExistence(timeout: 8), "failure offers Try again")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "problem on its side")).firstMatch.exists, "a clear reason, not a bare failure")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Order them by time")).firstMatch.exists, "the user's message is still shown")
-        attach(app, "AI failure: clear message and Try again")
-        retry.tap()
-        let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch
-        XCTAssertTrue(reply.waitForExistence(timeout: 8), "retrying resends the same message")
+        let message = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Order them by time"))
+        XCTAssertTrue(message.firstMatch.waitForExistence(timeout: 5), "The original instruction remains visible")
+        let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done."))
+        // Fixture completion is available only through the original UUID GET and
+        // only when its fake execution counter is exactly one. No recovery button is tapped.
+        if wrongIdentity {
+            XCTAssertFalse(reply.firstMatch.waitForExistence(timeout: 12), "A different receipt UUID must never supply the original result")
+        } else {
+            XCTAssertTrue(reply.firstMatch.waitForExistence(timeout: 15), "The original result arrives automatically after the lost response")
+            XCTAssertEqual(reply.count, 1, "Recovered completion is delivered once")
+        }
+        XCTAssertEqual(message.count, 1, "Recovery preserves one original user message rather than resending its bubble")
+        attach(app, wrongIdentity ? "AI recovery refuses wrong receipt" : "AI original result recovered without a tap")
+        app.terminate()
     }
 
     /// KRI-305: after adding text, the next slide used to flash its blurred thumbnail because the NSCache had

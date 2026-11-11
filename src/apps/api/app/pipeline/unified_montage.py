@@ -273,7 +273,17 @@ class BriefView:
     # "hh_mm" or "hour" (just the hour, no minutes) for those filming-time labels.
     time_format: str = "hh_mm"
     title_literal: str | None = None
+    # KRI-1057: sentences shown piece by piece beside a DIFFERENT title text, or a second one.
+    # The opening bar holds one wording, so each other sentence is seeded as the bar of the first
+    # clip the plan left unlabelled, for the text pass to split. They ask for no clip text.
+    sequence_literals: tuple[str, ...] = ()
     global_literal: str | None = None
+    # Qendresa case 9: every live ``text/global`` literal (the brief's whole-video / pinned
+    # text) as ``(text, facts.position, ending)``: position raw (normalized where it is used),
+    # ``ending`` = THAT requirement carries a typed ``facts.closing`` (drawn at the end only).
+    global_literals: tuple[tuple[str, object, bool], ...] = ()
+    # Any live title-scope text ask (worded or not): that title is the creator's own.
+    title_asked: bool = False
     facts: Mapping[str, Any] = field(default_factory=dict)
     target_duration_s: float | None = None
     # KRI-522: how the creator asked the title to enter / where labels sit / that the
@@ -311,6 +321,11 @@ class BriefView:
     withdrawn_texts: frozenset[str] = frozenset()
 
 
+def _closing_fact(value: object) -> bool:
+    """The typed ``facts.closing`` marks an ending: a non-empty string or exactly ``True``."""
+    return value is True or (isinstance(value, str) and bool(value.strip()))
+
+
 def brief_view(brief: Any) -> BriefView:
     """Reduce a ``CreativeBrief`` (duck-typed, see ``app.kria.brief``) to a view."""
     if brief is None:
@@ -324,7 +339,10 @@ def brief_view(brief: Any) -> BriefView:
     hour_only = False
     clip_literals: dict[str, str] = {}
     title_literal: str | None = None
+    title_sequences: list[str] = []
     global_literal: str | None = None
+    global_literals: list[tuple[str, object, bool]] = []
+    title_asked = False
     facts: dict[str, Any] = {}
     target: float | None = None
     title_animation: str | None = None
@@ -359,6 +377,15 @@ def brief_view(brief: Any) -> BriefView:
             if value not in (None, "") and key not in facts:
                 facts[str(key)] = value
         if req.kind == "text":
+            if req.scope == "global" and req.literal:
+                global_literals.append(
+                    (
+                        _nfc(req.literal),
+                        (req.facts or {}).get("position"),
+                        bool(_closing_fact((req.facts or {}).get("closing"))),
+                    )
+                )
+            title_asked = title_asked or req.scope == "title"
             if text_shape(req) == CURVED:
                 curved_title = curved_title or req.scope == "title"
                 curved_labels = curved_labels or req.scope == "per_clip"
@@ -397,8 +424,13 @@ def brief_view(brief: Any) -> BriefView:
             # creation text pass (`compose_creation_text`). Without this bar the pass had
             # nothing to split, so every such render failed as `creation_text_failed`. The
             # literal is the exact wording: never decorated with a route like a `global`
-            # text, and a `title` text literal keeps the bar.
-            title_literal = title_literal or _nfc(req.literal)
+            # text, and a `title` text literal keeps the bar (settled after the loop).
+            title_sequences.append(_nfc(req.literal))
+        elif is_text_sequence(req) and req.literal and req.scope.startswith("clip:"):
+            # KRI-1058: a clip's sequence has its bar like a clip's text literal; the text
+            # pass only splits it instead of having to add the text first.
+            wants_text = True
+            clip_literals.setdefault(req.scope.split(":", 1)[1], _nfc(req.literal))
         elif req.kind == "order":
             wants_order = True
             key = str((req.facts or {}).get("key") or (req.facts or {}).get("by") or "")
@@ -416,6 +448,14 @@ def brief_view(brief: Any) -> BriefView:
             raw = (req.facts or {}).get("duration_s")
             if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
                 target = float(raw)
+    if title_sequences and not title_literal:
+        title_literal = title_sequences.pop(0)
+    sequence_literals: list[str] = []
+    seen_words = {fold_text(title_literal or "")}
+    for sentence in title_sequences:
+        if fold_text(sentence) not in seen_words:
+            seen_words.add(fold_text(sentence))
+            sequence_literals.append(sentence)
     return BriefView(
         version=int(getattr(brief, "version", 0) or 0) or None,
         wants_per_clip_text=wants_text,
@@ -428,7 +468,10 @@ def brief_view(brief: Any) -> BriefView:
         per_clip_text_is_time=wants_time,
         time_format="hour" if hour_only else "hh_mm",
         title_literal=title_literal,
+        sequence_literals=tuple(sequence_literals),
         global_literal=global_literal,
+        global_literals=tuple(global_literals),
+        title_asked=title_asked or bool(title_literal),
         facts=facts,
         target_duration_s=target,
         title_animation=title_animation,
@@ -2238,6 +2281,11 @@ def plan_unified_montage(
     hour_zone, hour_basis = display_timezone(
         [clip.facts for clip in ordered] if view.per_clip_text_is_time else []
     )
+    # A sentence longer than a clip label (an approved paragraph, KRI-1352) is not a clip's label:
+    # the text pass gives it a whole-video bar of its own (`creation_text_composition`).
+    pending_sequences = [
+        sentence for sentence in view.sequence_literals if len(sentence) <= MAX_CREATOR_LABEL_CHARS
+    ]
     for index, clip in enumerate(ordered):
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
         group_id: str | None = None
@@ -2290,6 +2338,8 @@ def plan_unified_montage(
                 chosen = (start_fact[:MAX_LABEL_CHARS], "brief", "start", False)
             elif index == len(ordered) - 1 and end_fact and len(ordered) > 1:
                 chosen = (end_fact[:MAX_LABEL_CHARS], "brief", "end", False)
+        if chosen is None and pending_sequences:
+            chosen = (pending_sequences.pop(0), "creator", None, False)
         if chosen is None:
             if labels_requested and not described and not intent_labels:
                 dropped.append(clip.media_id)
@@ -2330,6 +2380,7 @@ def plan_unified_montage(
     )
     closing = _nfc(strategy.get("closing_title")) or None
     pins = _pinned_texts(strategy)
+    title, title_source, pins = _whole_video_title_pin(strategy, view, title, title_source, pins)
     requested_font = strategy.get("font_family")
     requested_font = requested_font if isinstance(requested_font, str) and requested_font else None
     labelled_before = set(labels)
@@ -4057,6 +4108,81 @@ def _fit_typography(
     return (chosen if keep else None), title, closing, labels
 
 
+# Qendresa case 9: a whole-video line's typed position -> the pin corner that draws it.
+_POSITION_CORNERS: dict[str, str] = {
+    "top_left": "top_left",
+    "top": "top_center",
+    "top_right": "top_right",
+    "middle": "middle_center",
+    "bottom_left": "bottom_left",
+    "bottom": "bottom_center",
+    "bottom_right": "bottom_right",
+}
+
+
+def _whole_video_pin_on() -> bool:
+    # A function so ``_title``, which imports ``settings`` locally, reads the module's switch.
+    return bool(settings.whole_video_text_pin_enabled)
+
+
+def _whole_video_title_pin(
+    strategy: Mapping[str, Any],
+    view: BriefView,
+    title: str | None,
+    title_source: str,
+    pins: list[PinnedText],
+) -> tuple[str | None, str, list[PinnedText]]:
+    """A whole-video line the planner drew as the opening title, pinned for the whole video.
+
+    Qendresa Q3 case 9: "put this text ... for the whole video" is a ``text/global`` literal in
+    the brief (the rule that also asks the planner for ``pinned_texts``). Filed instead as
+    ``opening_title``, or with no text field so ``_title`` used the literal, it showed for the
+    2.2 s title hold of an 11 s video. When the title's words are such a literal it becomes one
+    whole-video pin (``title`` none), which the ``opening`` text role and the phone repair
+    still accept (a pin drawn from 0 s). Typed facts only (KRI-667). Unchanged: any live
+    title-scope ask (she asked for a title, worded or not), a typed title hold
+    (``opening_title_duration_s``) or a title entrance (pins have none), and the switch off.
+    Corner: the literal's typed ``position`` when it names one (the middle only where item 21
+    draws middle pins), else ``top_center``.
+    An ending ("end with THANK YOU", ``facts.closing``) is never pinned: it is drawn at the end.
+    The ending flag is per requirement: the same words asked once for the whole video and once
+    as an ending still pin for the whole video.
+    A pin of the same words already in ``pins`` is never doubled: a whole-video one is reused
+    (the title is dropped, the pin stays where she put it); a timed one is a deliberate ask,
+    so the title is left as it was.
+    """
+    if not settings.whole_video_text_pin_enabled or not title or not view.global_literals:
+        return title, title_source, pins
+    if (
+        strategy.get("opening_title_duration_s") is not None
+        or view.title_animation
+        or normalize_title_animation(strategy.get("title_animation"))
+        or view.text_animation
+    ):
+        return title, title_source, pins
+    if view.title_asked:
+        # She asked for a title too: the planner's title stays hers to judge.
+        return title, title_source, pins
+    key = fold_text(_nfc(title))
+    matches = [
+        (spot, ending) for text, spot, ending in view.global_literals if fold_text(text) == key
+    ]
+    wanted = [spot for spot, ending in matches if not ending]
+    if not wanted:
+        # No such literal, or only an ending has these words.
+        return title, title_source, pins
+    position = wanted[0]
+    same_words = [pin for pin in pins if fold_text(_nfc(pin.text)) == key]
+    if any(pin.is_whole_video for pin in same_words):
+        return None, "none", pins
+    if same_words:
+        return title, title_source, pins
+    corner = _POSITION_CORNERS.get(normalize_label_position(position) or "", "top_center")
+    if corner == "middle_center" and not settings.clip_text_tiktok_look_enabled:
+        corner = "top_center"
+    return None, "none", [*pins, PinnedText(text=_nfc(title), corner=corner)]
+
+
 def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
     """KRI-523: the creator's corner text, as confirmed on the strategy."""
     return pins_from_strategy(strategy)
@@ -4491,9 +4617,14 @@ def _title(
     start = _first(view.facts, _START_KEYS)
     end = _first(view.facts, _END_KEYS)
     labelled = {fold_text(text) for text in creator_label_texts}
-    if titles(view.global_literal) and fold_text(_nfc(view.global_literal)) not in labelled:
+    if _whole_video_pin_on() and view.global_literals:
+        # An ending ("end with X") is not the opening title.
+        fallback = next((text for text, _spot, ending in view.global_literals if not ending), None)
+    else:
+        fallback = view.global_literal
+    if titles(fallback) and fold_text(_nfc(fallback)) not in labelled:
         route = f"{start} → {end}" if start and end else ""
-        headline = _nfc(view.global_literal)
+        headline = _nfc(fallback)
         if route and route.casefold() not in headline.casefold():
             headline = f"{headline} · {route}"
         return headline[:100], "brief"

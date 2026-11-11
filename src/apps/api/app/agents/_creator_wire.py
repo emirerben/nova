@@ -41,6 +41,7 @@ SERVER_FIELDS = {
     "target_duration_requested",
     "pacing_requested",
     "selected_music_section",
+    "planner_declines",
 }
 MODEL_HIDDEN = {
     "clip_intents",
@@ -170,6 +171,7 @@ def copilot_schema():
         "enabled",
         "fit_to_video",
         "preserve_text",
+        "muted",
     }
     numbers = {
         "at_s",
@@ -199,6 +201,7 @@ def copilot_schema():
         "letter_spacing",
         "line_spacing",
         "playback_rate",
+        "source_audio_volume",
         "transition_duration_s",
         "max_width_frac",
         "opacity",
@@ -207,6 +210,7 @@ def copilot_schema():
         "delay",
         "amount",
         "cadence_s",
+        "end_fade_s",
     }
     list_strings = {"target_ids", "segments", "slide_ids", "asset_ids"}
     map_fields = {
@@ -220,12 +224,33 @@ def copilot_schema():
     }
 
     def field(name):
+        if name == "frame":
+            from app.kria.portable_speaker_background import SpeakerFrame
+
+            return SpeakerFrame.model_json_schema()
         if name == "gap_policy":
             return enum("scale", "close", "fixed")
         if name == "pace":
             return enum(*get_args(ProposalPace))
         if name == "backdrop":
             return enum("blank", "color", "blur")
+        if name == "moments":
+            # KRI-1350: `set_color_moments` replaces the whole colour-moments lane.
+            edge = enum("cut", "flash_white", "light_leak", "dip_black")
+            return arr(
+                obj(
+                    {
+                        "start_s": number,
+                        "end_s": number,
+                        "tone": enum("mono", "warm", "faded"),
+                        "enter": edge,
+                        "exit": edge,
+                        "sound": string,
+                        "sound_at": enum("enter", "exit"),
+                    },
+                    ("start_s", "end_s", "tone"),
+                )
+            )
         if name == "preset":
             # KRI-1162: the speaker's corner, a name and never numbers (S37).
             return enum(
@@ -365,6 +390,8 @@ def copilot_schema():
             "playback_rate",
             "tilt",
             "rotation_delta_deg",
+            "muted",
+            "source_audio_volume",
         }
     )
     patch = obj(
@@ -378,7 +405,18 @@ def copilot_schema():
         }
     )
     ops = []
+    from app.agents.editor_ops_v2.split_screen import _MODELS as split_screen_models
+
     for name in sorted(_OP_FIELDS):
+        if name in split_screen_models:
+            schema = split_screen_models[name].model_json_schema()
+            ops.append(
+                obj(
+                    {"op": {"type": "string", "const": name}, **schema["properties"]},
+                    ["op", *schema.get("required", [])],
+                )
+            )
+            continue
         fields = _op_fields(name)
         ops.append(
             obj(
@@ -388,6 +426,14 @@ def copilot_schema():
                         k: (
                             {"type": "string"}
                             if name == "replace_caption_text" and k == "replace"
+                            else enum(
+                                "small_bottom_right",
+                                "small_bottom_left",
+                                "small_top_right",
+                                "small_top_left",
+                                "inherit",
+                            )
+                            if name == "set_speaker_frame" and k == "preset"
                             else field(k)
                         )
                         for k in sorted(set(fields) - {"integrity"})

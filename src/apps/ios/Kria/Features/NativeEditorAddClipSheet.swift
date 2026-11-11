@@ -23,7 +23,6 @@ struct NativeEditorAddClipSheet: View {
     @State private var showsCamera = false
     @State private var choosingSource = false
     @State private var addedByRecording = false
-    @State private var uploadAfterCamera = false
     @State private var launched = false
 
     var body: some View {
@@ -41,7 +40,8 @@ struct NativeEditorAddClipSheet: View {
                 Text(choosingSource ? "Upload from" : "Add a clip or photo").kriaType(.heading).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                 if !choosingSource {
-                    Text("Adds to the end of your video.").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    Text("Adds to the end of your video.")
+                        .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 }
             }
             if choosingSource {
@@ -49,7 +49,9 @@ struct NativeEditorAddClipSheet: View {
             } else {
                 KriaSourceRow(options: [
                     model.localAccountID == nil ? nil : .record(caption: "Film now", identifier: "native-editor-add-clip-record", isEnabled: !session.isAddingClip) { showsCamera = true },
-                    .upload(caption: "Use existing video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) { choosingSource = true }
+                    .upload(caption: "Use a photo or video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) {
+                        choosingSource = true
+                    }
                 ].compactMap { $0 })
             }
             // Normally invisible: the sheet closes as soon as a file is chosen. Kept for the moment
@@ -73,7 +75,6 @@ struct NativeEditorAddClipSheet: View {
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie, .image], onCompletion: importFile)
         .fullScreenCover(isPresented: $showsCamera, onDismiss: {
             if addedByRecording { dismiss() }
-            else if uploadAfterCamera { uploadAfterCamera = false; choosingSource = true }
         }) {
             if let accountID = model.localAccountID {
                 TeleprompterScreen(accountID: accountID, projectID: session.creationThreadID ?? UUID(),
@@ -85,8 +86,7 @@ struct NativeEditorAddClipSheet: View {
                                        addedByRecording = true
                                        return .attached
                                    },
-                                   intakeState: { _ in nil },
-                                   onUpload: { uploadAfterCamera = true })
+                                   intakeState: { _ in nil })
             }
         }
         .task {

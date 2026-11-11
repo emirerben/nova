@@ -675,8 +675,9 @@ def _caption_question(intent: ClipIntent) -> str:
     The attribute is the model's free-form phrase ("an introductory explanation", "pub
     clips"), so it is quoted rather than slotted behind a fixed article."""
     return say(
-        en=f'What should the caption for "{intent.attribute}" say?',
-        tr=f'"{intent.attribute}" için yazı ne olsun?',
+        en='What should the caption for "{intent_attribute}" say?',
+        tr='"{intent_attribute}" için yazı ne olsun?',
+        intent_attribute=intent.attribute,
     )
 
 
@@ -769,15 +770,22 @@ async def _run_vision_candidate(
 def _position_phrase(positions: list[int], *, max_refs: int = 5) -> str:
     ordered = sorted(set(positions))
     if len(ordered) == 1:
-        return say(en=f"clip {ordered[0]}", tr=f"klip {ordered[0]}")
+        return say(en="clip {ordered_0}", tr="klip {ordered_0}", ordered_0=ordered[0])
     if len(ordered) > max_refs:
         labels = ", ".join(str(p) for p in ordered[:max_refs])
         more = len(ordered) - max_refs
-        return say(en=f"clips {labels} and {more} more", tr=f"klip {labels} ve {more} klip daha")
+        return say(
+            en="clips {labels} and {more} more",
+            tr="klip {labels} ve {more} klip daha",
+            labels=labels,
+            more=more,
+        )
     labels = [str(p) for p in ordered]
     return say(
-        en=f"clips {', '.join(labels[:-1])} and {labels[-1]}",
-        tr=f"klip {', '.join(labels[:-1])} ve {labels[-1]}",
+        en="clips {v1} and {v2}",
+        tr="klip {v1} ve {v2}",
+        v1=", ".join(labels[:-1]),
+        v2=labels[-1],
     )
 
 
@@ -795,19 +803,23 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
         positions = [position_by_media[m] for m in work.failed_media_ids if m in position_by_media]
         if positions and work.intent.placeholder:
             phrase = say(
-                en=f'I couldn\'t tell if these are "{work.intent.attribute}"',
-                tr=f'Şunların "{work.intent.attribute}" olup olmadığını anlayamadım',
+                en='I couldn\'t tell if these are "{work_intent_attribute}"',
+                tr='Şunların "{work_intent_attribute}" olup olmadığını anlayamadım',
+                work_intent_attribute=work.intent.attribute,
             )
             parts.append(f"{phrase}: {_position_phrase(sorted(positions))}")
             seen.add(phrase)
         elif positions:
             phrase = say(
-                en=f"I couldn't tell the {work.intent.attribute}",
-                tr=f"Anlayamadım: {work.intent.attribute}",
+                en="I couldn't tell the {work_intent_attribute}",
+                tr="Anlayamadım: {work_intent_attribute}",
+                work_intent_attribute=work.intent.attribute,
             )
             positions_by_phrase.setdefault(phrase, set()).update(positions)
             where = _position_phrase(sorted(positions_by_phrase[phrase]))
-            part = say(en=f"{phrase} for {where}", tr=f"{phrase} ({where})")
+            part = say(
+                en="{phrase} for {where}", tr="{phrase} ({where})", phrase=phrase, where=where
+            )
             if phrase not in part_indexes:
                 part_indexes[phrase] = len(parts)
                 parts.append(part)
@@ -816,8 +828,9 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
                 parts[part_indexes[phrase]] = part
         elif not work.kept and work.intent.placeholder:
             phrase = say(
-                en=f'I couldn\'t find any "{work.intent.attribute}" to put the name placeholder on',
-                tr=f'İsim yer tutucusunu koyacak "{work.intent.attribute}" klibi bulamadım',
+                en='I couldn\'t find any "{work_intent_attribute}" to put the name placeholder on',
+                tr='İsim yer tutucusunu koyacak "{work_intent_attribute}" klibi bulamadım',
+                work_intent_attribute=work.intent.attribute,
             )
             if phrase not in seen:
                 parts.append(phrase)
@@ -825,8 +838,9 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
         elif not work.kept:
             label = work.intent.creator_text or work.intent.attribute
             phrase = say(
-                en=f'I couldn\'t find any clips for "{label}"',
-                tr=f'Şunun için klip bulamadım: "{label}"',
+                en='I couldn\'t find any clips for "{label}"',
+                tr='Şunun için klip bulamadım: "{label}"',
+                label=label,
             )
             if phrase not in seen:
                 parts.append(phrase)
@@ -856,19 +870,22 @@ _FOUND_SETTLES_OPS = frozenset({"group", "order", "include", "label", "caption"}
 def _found_rows_text(labels: list[str]) -> str:
     """The question for picker rows that come with the clips already found ticked."""
     shown = ", ".join(f'"{label}"' for label in labels[:4])
-    more = say(
-        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
-        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(labels) - 4)
+        if len(labels) > 4
+        else ""
     )
     return say(
         en=(
-            f"I ticked the clips I found for {shown}{more}. "
+            "I ticked the clips I found for {shown}{more}. "
             "Tap any others that show it too, or untick one that doesn't."
         ),
         tr=(
-            f"{shown}{more} için bulduğum klipleri işaretledim. "
+            "{shown}{more} için bulduğum klipleri işaretledim. "
             "Bunu gösteren başka klip varsa ona da dokun, göstermeyenin işaretini kaldır."
         ),
+        shown=shown,
+        more=more,
     )
 
 
@@ -878,24 +895,28 @@ def _unfound_rows_text(labels: list[str]) -> str:
     if len(labels) == 1:
         return say(
             en=(
-                f"I couldn't find {shown} in your clips. "
+                "I couldn't find {shown} in your clips. "
                 "Tap the clip that shows it, or tell me there isn't one."
             ),
-            tr=f"{shown} kliplerinde bulamadım. Onu gösteren klibe dokun ya da olmadığını söyle.",
+            tr="{shown} kliplerinde bulamadım. Onu gösteren klibe dokun ya da olmadığını söyle.",
+            shown=shown,
         )
-    more = say(
-        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
-        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(labels) - 4)
+        if len(labels) > 4
+        else ""
     )
     return say(
         en=(
-            f"I couldn't find {shown}{more} in your clips. "
+            "I couldn't find {shown}{more} in your clips. "
             "Tap the clip for each one, or mark the ones that aren't there."
         ),
         tr=(
-            f"Şunları kliplerinde bulamadım: {shown}{more}. "
+            "Şunları kliplerinde bulamadım: {shown}{more}. "
             "Her biri için klibe dokun ya da olmayanları işaretle."
         ),
+        shown=shown,
+        more=more,
     )
 
 
@@ -917,7 +938,8 @@ def _unfound_pin(
         intent.op == "order"
         and intent.position is not None
         and bool(matched)
-        and detect_chat_language(intent.attribute) != "tr"
+        # KRI-1362: only an English (or unclear) ask is judged against the English records.
+        and detect_chat_language(intent.attribute) in (None, "en")
         and pin_subject_unfound(intent.attribute, matched, records)
     )
 
@@ -1032,6 +1054,7 @@ def _settle_on_only_video(
                 creator_request=creator_request,
                 record=records_by_id[take.media_id],
                 intent_id=intent.intent_id,
+                source_quote=intent.source_quote,
             )
         )
         if label is None:
@@ -1045,6 +1068,7 @@ def _settle_on_only_video(
             records=[records_by_id[take.media_id]],
             intent_id=intent.intent_id,
             creator_copy=True,
+            source_quote=intent.source_quote,
         )
         if caption is None:
             return False
@@ -1482,6 +1506,7 @@ async def resolve_clip_intents_for_turn(
                     attribute=i.attribute,
                     source_kind=i.source_kind,
                     creator_text=i.creator_text,
+                    source_quote=i.source_quote,
                     placeholder=i.placeholder,
                     position=i.position,
                     ordered_members=i.ordered_members,
@@ -1694,6 +1719,7 @@ async def resolve_clip_intents_for_turn(
                             creator_request=creator_request,
                             record=records_by_id[media_id],
                             intent_id=intent.intent_id,
+                            source_quote=intent.source_quote,
                         )
                         if label is not None:
                             work.kept.append(
@@ -1727,6 +1753,7 @@ async def resolve_clip_intents_for_turn(
                     creator_request=creator_request,
                     record=records_by_id[media_id],
                     intent_id=intent.intent_id,
+                    source_quote=intent.source_quote,
                 )
                 if label is not None:
                     work.kept.append(
@@ -2234,6 +2261,7 @@ async def resolve_clip_intents_for_turn(
                 records=member_records,
                 intent_id=intent.intent_id,
                 creator_copy=True,
+                source_quote=intent.source_quote,
             )
             if grounded is not None:
                 work.caption_text = grounded.text
@@ -2256,6 +2284,7 @@ async def resolve_clip_intents_for_turn(
                 creator_request=creator_request,
                 records=member_records,
                 intent_id=intent.intent_id,
+                source_quote=intent.source_quote,
             )
             if named is not None:
                 work.caption_text = named.text
@@ -2272,6 +2301,7 @@ async def resolve_clip_intents_for_turn(
             creator_request=creator_request,
             records=member_records,
             intent_id=intent.intent_id,
+            source_quote=intent.source_quote,
         )
         if grounded is not None:
             work.caption_text = grounded.text
@@ -2317,6 +2347,7 @@ async def resolve_clip_intents_for_turn(
             vision_answer=output.answer,
             vision_confidence=output.confidence,
             intent_id=candidate.intent_id,
+            source_quote=cand_intent.source_quote,
         )
         if re_grounded is not None:
             work.caption_text = re_grounded.text
@@ -2409,6 +2440,7 @@ async def resolve_clip_intents_for_turn(
                     attribute=intent.attribute,
                     source_kind=intent.source_kind,
                     creator_text=intent.creator_text,
+                    source_quote=intent.source_quote,
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
@@ -2431,6 +2463,7 @@ async def resolve_clip_intents_for_turn(
                     attribute=intent.attribute,
                     source_kind=intent.source_kind,
                     creator_text=intent.creator_text,
+                    source_quote=intent.source_quote,
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
@@ -2678,6 +2711,7 @@ def _settle_named_label_guesses(
             creator_request=creator_request,
             record=records_by_id[media_id],
             intent_id=work.intent.intent_id,
+            source_quote=work.intent.source_quote,
         )
         if label is None:
             continue
@@ -2746,6 +2780,7 @@ def _apply_vision_result(
                     creator_request=creator_request,
                     record=records_by_id[candidate.media_id],
                     intent_id=candidate.intent_id,
+                    source_quote=work.intent.source_quote,
                 )
                 if label is not None:
                     work.kept.append(
@@ -2771,6 +2806,7 @@ def _apply_vision_result(
             vision_answer=output.answer,
             vision_confidence=output.confidence,
             intent_id=candidate.intent_id,
+            source_quote=work.intent.source_quote,
         )
         if label is not None:
             work.kept.append(

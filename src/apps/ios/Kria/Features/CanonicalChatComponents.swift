@@ -613,8 +613,6 @@ struct FootageStage: View {
     /// Ready photos and videos in the PlanItemAsset Visuals pool.
     var visualCount = 0
 
-    @Environment(\.dynamicTypeSize) private var typeSize
-
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
     }
@@ -690,18 +688,10 @@ struct FootageStage: View {
                     }
                 }
             } else if hasMedia {
-                let addMore = Text("Add more").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                if typeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 8) {
-                        addMore
-                        KriaSourceRow(options: sourceOptions, layout: .compact)
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        addMore
-                        KriaSourceRow(options: sourceOptions, layout: .compact)
-                    }
-                }
+                // The composer's + is the one way to add more: Record, Upload, script and the rest live in its tray.
+                Text(format.usesVisualPool ? "Add more photos or videos with the + button." : "Add more clips with the + button.")
+                    .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    .accessibilityIdentifier("footage-add-more-hint")
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     // A failure notice never sits under the butter lead tile.
@@ -772,11 +762,13 @@ struct DirectionStage: View {
     /// Nil for a thread that predates the field or hasn't loaded it yet, which
     /// resolves to the same plain "Create this video" flow as `applicable: false`.
     var speechCleanup: [String: JSONValue]? = nil
+    /// The speech check has been running past `SpeechCheckWatch.giveUpAfter`: stop the spinner and
+    /// lead with "Create without cleanup". Retry stays off; the server only retries a failed check.
+    var speechCheckTimedOut = false
     /// KRI-306: the video shapes on offer and the creator's current pick. Nil
     /// (older server, nothing choosable) hides the picker; the parent reads the pick
     /// when it sends the approval, so `decide` needs no extra argument.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
-    var automaticRepairs: Binding<Bool>? = nil
     /// KRI-881: the draft's sourced wording and sources (`draft_applied.research_preview`). Nil (no research, an
     /// older server, or an unreadable payload) leaves the card exactly as it was.
     var researchPreview: ResearchPreview? = nil
@@ -837,21 +829,6 @@ struct DirectionStage: View {
                 VideoShapeCard(offer: renderShape.offer, choice: renderShape.choice, isEnabled: !isBusy)
             }
 
-            Text("Nothing renders until you approve this direction.")
-                .font(KriaFont.body(12))
-                .foregroundStyle(KriaColor.zinc)
-
-            if let automaticRepairs {
-                Toggle(isOn: automaticRepairs) {
-                    Text("Allow up to 2 automatic repairs")
-                        .font(KriaFont.body(14).weight(.medium))
-                    Text("If a video check fails, Kria can rebuild it with the same clips, text, timing and sound. Permission lasts 30 minutes.")
-                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                }
-                .disabled(isBusy)
-                .accessibilityIdentifier("automatic-repair-consent")
-            }
-
             cleanupActions
 
             Button(approval.retryOfExecutionID == nil ? "Change direction" : "Cancel retry") { decide("deny", nil, nil) }
@@ -866,6 +843,13 @@ struct DirectionStage: View {
         switch resolution.offer {
         case .plain:
             Button(approval.retryOfExecutionID == nil ? "Create this video" : "Retry approved edit") { decide("approve", nil, resolution.analysisID) }
+                .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isBusy)
+        case .checking where speechCheckTimedOut:
+            Text("This is taking longer than usual.")
+                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                .accessibilityIdentifier("speech-cleanup-timed-out")
+            Button("Create without cleanup") { decide("approve", "create_without_cleanup", resolution.analysisID) }
                 .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
         case .checking:
@@ -1019,14 +1003,12 @@ struct ReadyStage: View {
     /// the chips say, and stay quiet (no label, no chips) once the creator has handled them all.
     var suggestionCards: SuggestionCardsPresentation? = nil
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Re-record: drawn only when the server offers it (`.unavailable` draws nothing, so an old server changes nothing here).
+    var rerecord: RerecordPhase = .unavailable
+    var rerecordActions = RerecordActions()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            AssistantHeading(
-                title: "Your first cut is ready",
-                bodyText: "Watch it through, then tell me what you want to refine or open the editor for hands-on changes."
-            )
-
             let cardLayout = dynamicTypeSize.isAccessibilitySize
                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 13))
                 : AnyLayout(HStackLayout(spacing: 13))
@@ -1074,11 +1056,13 @@ struct ReadyStage: View {
             .background(KriaColor.fill)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
+            RerecordCard(phase: rerecord, actions: rerecordActions)
+
             if let suggestionCards {
                 if !suggestionCards.isEmpty {
                     Text("Ways to improve it")
                         .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                    SuggestionCardList(presentation: suggestionCards, idPrefix: "suggestion-card")
+                    SuggestionCardChips(presentation: suggestionCards, idPrefix: "suggestion-card")
                 }
             } else {
                 // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
@@ -1162,13 +1146,13 @@ struct KriaFilledChip: View {
     let text: String
     /// KRI-756: one muted line under the label (footage evidence). Hidden when nil.
     var caption: String? = nil
-    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move) carries the quiet "Recommended" tag.
+    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move) is announced as recommended to VoiceOver only.
     var isPrimary = false
     var state: KriaAnswerState = .idle
     let action: () -> Void
 
     var body: some View {
-        KriaAnswerChip(title: text, caption: caption, state: state, isRecommended: isPrimary, action: action)
+        KriaAnswerChip(title: text, caption: caption, state: state, isSuggestion: true, isLead: isPrimary, action: action)
             .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
             .accessibilityValue(isPrimary ? "Recommended" : "")
     }
@@ -1284,56 +1268,12 @@ struct FailedStage: View {
 }
 
 struct ThinkingRow: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var shimmerOffset: CGFloat = -1
-
-    private static let shimmerInterval = 2.25
-    private static let shimmerDuration = 0.58
-    private var animates: Bool { !reduceMotion && scenePhase == .active }
-
     var body: some View {
-        Text("Thinking")
-            .font(KriaFont.body(12))
-            .foregroundStyle(KriaColor.zinc)
-            .overlay {
-                if animates {
-                    GeometryReader { proxy in
-                        LinearGradient(
-                            colors: [KriaColor.paper.opacity(0), KriaColor.paper.opacity(0.65), KriaColor.paper.opacity(0)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: max(proxy.size.width * 0.65, 16))
-                        .offset(x: shimmerOffset * proxy.size.width)
-                    }
-                    .mask(Text("Thinking").font(KriaFont.body(12)))
-                }
-            }
-        .frame(minHeight: 30)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Kria is thinking")
-        .accessibilityIdentifier("chat-thinking")
-        .task(id: animates) { await shimmer() }
-    }
-
-    private func shimmer() async {
-        guard animates else {
-            resetShimmer()
-            return
-        }
-
-        while !Task.isCancelled {
-            resetShimmer()
-            withAnimation(.linear(duration: Self.shimmerDuration)) { shimmerOffset = 1.25 }
-            do { try await Task.sleep(for: .seconds(Self.shimmerInterval)) } catch { return }
-        }
-    }
-
-    private func resetShimmer() {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { shimmerOffset = -1 }
+        KriaShimmerText("Thinking", font: KriaFont.body(12), color: KriaColor.zinc)
+            .frame(minHeight: 30)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Kria is thinking")
+            .accessibilityIdentifier("chat-thinking")
     }
 }
 
@@ -1492,7 +1432,12 @@ struct ChatComposer: View {
                     .accessibilityIdentifier("chat-dictation-notice")
             }
             HStack(alignment: .bottom, spacing: 4) {
-                Button { if attachMenu != nil { showsTray.toggle() } else { attach() } } label: {
+                Button {
+                    guard attachMenu != nil else { attach(); return }
+                    // The tray needs the room the keyboard takes, and every row leaves the chat anyway.
+                    if !showsTray { isFocused.wrappedValue = false }
+                    showsTray.toggle()
+                } label: {
                     if attachMenu != nil {
                         Image(systemName: showsTray ? "xmark" : "plus").font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(showsTray ? KriaColor.ink : KriaColor.paper)
@@ -1503,7 +1448,7 @@ struct ChatComposer: View {
                 }
                 .disabled(attachMenu == nil && !canAttach)
                 .accessibilityLabel(showsTray ? "Close attach menu" : "Attach footage")
-                .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                .accessibilityHint(attachMenu?.disabledReason ?? (canAttach ? "" : "Choose a video format first"))
                 .accessibilityIdentifier("chat-attach")
                 TextField(dictation?.isListening == true && text.isEmpty ? "Listening…" : placeholder, text: $text, axis: .vertical)
                     .font(KriaFont.body(15)).lineLimit(1...4)

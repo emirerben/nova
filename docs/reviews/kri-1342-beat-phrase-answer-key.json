@@ -1,0 +1,95 @@
+{
+ "note": "Hand-reviewed phrase starts (source seconds of the stored prod words) for the meaning-cued visuals of the KRI-1342 corpus. A visual passes when it starts within 0.3 s of phrase_start_s and does not end inside a later sentence.",
+ "beats": [
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "speckit",
+   "trigger": "Spec Kit",
+   "cue": "meaning",
+   "phrase_first_word": "Spec",
+   "phrase_start_s": 8.48
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "impeccable",
+   "trigger": "Impeccable",
+   "cue": "meaning",
+   "phrase_first_word": "Impeccable.",
+   "phrase_start_s": 15.32
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "tradingagents",
+   "trigger": "Trading Agents",
+   "cue": "meaning",
+   "phrase_first_word": "Trading",
+   "phrase_start_s": 22.82
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "agentsmarketplace",
+   "trigger": "Agents Marketplace",
+   "cue": "meaning",
+   "phrase_first_word": "the",
+   "phrase_start_s": 31.06
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "gamestudios",
+   "trigger": "Cloud Code Game Studios",
+   "cue": "meaning",
+   "phrase_first_word": "Cloud",
+   "phrase_start_s": 39.32
+  },
+  {
+   "case": "Cigdem yorum3 (S2-style green screen) 11-09",
+   "job_id": "7eba9903-2ceb-47ca-b1d8-f4922e6e95fa",
+   "language": "en",
+   "beat_id": "launch",
+   "trigger": "launched",
+   "cue": "meaning",
+   "phrase_first_word": "Ten",
+   "phrase_start_s": 2.16
+  },
+  {
+   "case": "Cigdem yorum3 (S2-style green screen) 11-09",
+   "job_id": "7eba9903-2ceb-47ca-b1d8-f4922e6e95fa",
+   "language": "en",
+   "beat_id": "post1",
+   "trigger": "welcome Lumo",
+   "cue": "meaning",
+   "phrase_first_word": "Welcome,",
+   "phrase_start_s": 9.82
+  },
+  {
+   "case": "Cigdem yorum3 (S2-style green screen) 11-09",
+   "job_id": "7eba9903-2ceb-47ca-b1d8-f4922e6e95fa",
+   "language": "en",
+   "beat_id": "post2",
+   "trigger": "a hinge",
+   "cue": "meaning",
+   "phrase_first_word": "A",
+   "phrase_start_s": 13.72
+  },
+  {
+   "case": "Cigdem yorum3 (S2-style green screen) 11-09",
+   "job_id": "7eba9903-2ceb-47ca-b1d8-f4922e6e95fa",
+   "language": "en",
+   "beat_id": "billboards",
+   "trigger": "billboards",
+   "cue": "meaning",
+   "phrase_first_word": "Like",
+   "phrase_start_s": 25.06
+  }
+ ]
+}

@@ -1,6 +1,7 @@
 """KRI-605 failure contracts, written before the workflow implementation."""
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -156,8 +157,6 @@ class ThroughputTests(unittest.TestCase):
         unit_only = {
             "Run selected iPhone UI scenarios",
             "Verify selected named native unit journeys",
-            "Save Xcode build data for the next run",
-            "Record compiled iPhone input timestamps",
         }
         every_leg = {
             "Build iPhone app and run selected unit tests",
@@ -181,6 +180,99 @@ class ThroughputTests(unittest.TestCase):
         self.assertIn("name: ios-native-test-diagnostics-${{ matrix.leg }}", job)
         self.assertIn("-${{ github.sha }}-${{ matrix.leg }}", job)
         self.assertEqual(job.count("upload-artifact@v4"), 2)
+        # PR runs only restore main's Xcode cache (ios.yml seeds it). Each PR
+        # save (~0.9 GB per push) evicted main's seed from the full 10 GB repo
+        # cache within 30-46 minutes (2026-11-04..06): 70 of 97 PR runs
+        # compiled cold, and only 6 of 27 hits came from a PR's own save.
+        self.assertIn("actions/cache/restore@v4", job)
+        self.assertNotIn("actions/cache/save", job)
+        self.assertNotIn("cache-inputs.py save", job)
+
+    def test_mac_queues_after_selection_but_never_for_an_unmapped_journey(self):
+        # Failure modes: an unmapped selection allocates a Mac (KRI-604); an
+        # iOS-only PR (no journey) loses its Mac; the output never reaches the
+        # job, which then silently skips; the Mac waits on the mapping job again.
+        self.assertTrue(ci.journey_mapped(False, "not_applicable", ""))
+        self.assertTrue(ci.journey_mapped(True, "covered", "kri-524-creation"))
+        self.assertFalse(ci.journey_mapped(True, "gap", ""))
+        self.assertFalse(ci.journey_mapped(True, "covered", ""))
+        self.assertFalse(
+            ci.journey_mapped(True, "covered", "kri-524-creation,kri-524-creation")
+        )
+        self.assertFalse(ci.journey_mapped(True, "covered", "not-a-journey"))
+        everything = ",".join(journey["id"] for journey in ci.JOURNEYS)
+        self.assertTrue(ci.journey_mapped(True, "covered", everything))
+        root = Path(__file__).resolve().parents[2] / ".github/workflows"
+        changes = (root / "ci-changes.yml").read_text()
+        self.assertIn("value: ${{ jobs.select.outputs.journey_mapped }}", changes)
+        self.assertIn(
+            "journey_mapped: ${{ steps.select.outputs.journey_mapped }}", changes
+        )
+        job = (root / "ci.yml").read_text().split("\n  journey-native:\n", 1)[1]
+        header = job.split("\n    steps:\n", 1)[0]
+        self.assertIn("\n    needs: [changes]\n", header)
+        self.assertIn("needs.changes.outputs.journey_mapped == 'true'", header)
+        self.assertNotIn("journey-mapping.result", header)
+
+    def run_ui_step(self, leg, shards):
+        """Run the workflow's UI step script against a stub verify.sh."""
+        job = (
+            (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml")
+            .read_text()
+            .split("\n  journey-native:\n", 1)[1]
+            .split("\n  journey:\n", 1)[0]
+        )
+        step = job.split("- name: Run selected iPhone UI scenarios\n", 1)[1]
+        step = re.split(r"\n      - ", step, 1)[0]
+        script = re.search(r"run: \|\n((?:          [^\n]*\n?)+)", step).group(1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts/ios").mkdir(parents=True)
+            (root / "scripts/ios/verify.sh").write_text(
+                'printf "%s|%s" "${KRIA_IOS_UI_SHARD-unset}" '
+                '"${KRIA_IOS_UI_SHARD_OVERHEAD_SECONDS-unset}"\n'
+            )
+            env = {**os.environ, "LEG": leg, "UI_SHARDS": shards}
+            env.pop("KRIA_IOS_UI_SHARD", None)
+            return subprocess.run(
+                ["bash", "-eo", "pipefail", "-c", textwrap.dedent(script)],
+                cwd=root, env=env, capture_output=True, text=True,
+            )
+
+    def test_each_ui_leg_runs_exactly_its_shard(self):
+        # Failure modes: two legs running the same shard (one part never
+        # runs), the unit leg repeating a shard, or a shard partition that
+        # still reserves time for unit tests the UI legs never run.
+        for leg, shards, expected in (
+            ("ui-1", "3", "1/3|0"),
+            ("ui-2", "3", "2/3|0"),
+            ("ui-3", "3", "3/3|0"),
+            ("ui-2", "2", "2/2|0"),
+            ("unit", "1", "unset|unset"),
+        ):
+            with self.subTest(leg=leg, shards=shards):
+                result = self.run_ui_step(leg, shards)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+        conditions = dict(self.native_steps())
+        ui = conditions["Run selected iPhone UI scenarios"]
+        # The unit leg keeps the UI only when the selection is one shard.
+        self.assertIn(
+            "(matrix.leg == 'unit' && needs.changes.outputs.ios_ui_shards == '1')", ui
+        )
+        self.assertIn("startsWith(matrix.leg, 'ui-')", ui)
+        # A UI leg never waits for, or needs, the portable journey fixtures.
+        for name in (
+            "Wait for the portable journeys this leg depends on",
+            "Download this attempt's portable fixture inputs",
+            "Check fixture provenance and transferred bytes",
+        ):
+            with self.subTest(step=name):
+                self.assertIn("!startsWith(matrix.leg, 'ui-')", conditions[name])
+        # A UI leg whose UI step was skipped must not report success.
+        guard = conditions["Require this UI leg's shard to have run"]
+        self.assertIn("always()", guard)
+        self.assertIn("startsWith(matrix.leg, 'ui-')", guard)
 
     def test_selector_starts_only_the_legs_with_selected_journeys(self):
         self.assertEqual(ci.native_legs([]), ["unit"])
@@ -257,6 +349,11 @@ class ThroughputTests(unittest.TestCase):
                     if journey == "true"
                     else "not_applicable",
                     "journey_ids": "kri-524-creation" if journey == "true" else "",
+                    "journey_mapped": "true",
+                    "ios_ui": "false",
+                    "ios_ui_groups": "none",
+                    "ios_ui_shards": "1",
+                    "native_legs": '["unit"]',
                 },
             },
             "journey-mapping": {
@@ -340,6 +437,10 @@ class ThroughputTests(unittest.TestCase):
             "journey_needs_native",
             "journey_coverage",
             "journey_ids",
+            "journey_mapped",
+            "ios_ui_groups",
+            "ios_ui_shards",
+            "native_legs",
         ):
             needs = self.needs()
             del needs["changes"]["outputs"][field]
@@ -350,6 +451,82 @@ class ThroughputTests(unittest.TestCase):
             needs["changes"]["outputs"]["journey_ids"] = ids
             with self.assertRaises(ValueError):
                 ci.gate_journey(needs, "pull_request")
+        # A Mac may queue only for a mapped or unselected journey.
+        for journey in ("true", "false"):
+            needs = self.needs(journey=journey)
+            needs["changes"]["outputs"]["journey_mapped"] = "false"
+            with self.subTest(journey=journey), self.assertRaises(ValueError):
+                ci.gate_journey(needs, "pull_request")
+
+
+    def ui_needs(self, journey="false"):
+        groups = "smoke,editor"
+        shards = ci.ui_shards("pull_request", groups)
+        needs = self.needs(journey=journey)
+        needs["changes"]["outputs"].update(
+            ios_ui="true",
+            ios_ui_groups=groups,
+            ios_ui_shards=str(shards),
+            native_legs=json.dumps(
+                ci.native_legs(
+                    needs["changes"]["outputs"]["journey_ids"].split(",")
+                    if journey == "true"
+                    else [],
+                    "pull_request",
+                    shards,
+                )
+            ),
+        )
+        return needs, shards
+
+    def test_every_pr_ui_shard_leg_is_required(self):
+        # Failure modes: a matrix result only covers the legs that exist, so a
+        # shard missing from native_legs would pass silently; a shard count that
+        # disagrees with the selection runs a different partition; a failed,
+        # cancelled or skipped shard leg turns the matrix result non-success.
+        for journey in ("false", "true"):
+            needs, shards = self.ui_needs(journey)
+            legs = json.loads(needs["changes"]["outputs"]["native_legs"])
+            self.assertEqual(
+                legs[-shards:], [f"ui-{i}" for i in range(1, shards + 1)]
+            )
+            ci.gate_journey(needs, "pull_request")
+            for bad in (
+                legs[:-1],
+                [leg for leg in legs if not leg.startswith("ui-")],
+                legs + [f"ui-{shards + 1}"],
+                legs[1:],
+                [legs[0], *reversed(legs[1:])],
+            ):
+                broken, _ = self.ui_needs(journey)
+                broken["changes"]["outputs"]["native_legs"] = json.dumps(bad)
+                with self.subTest(legs=bad), self.assertRaises(ValueError):
+                    ci.gate_journey(broken, "pull_request")
+            for count in ("1", str(shards - 1), str(shards + 1), ""):
+                broken, _ = self.ui_needs(journey)
+                broken["changes"]["outputs"]["ios_ui_shards"] = count
+                with self.subTest(shards=count), self.assertRaises(ValueError):
+                    ci.gate_journey(broken, "pull_request")
+            for result in ("failure", "cancelled", "skipped"):
+                broken, _ = self.ui_needs(journey)
+                broken["journey-native"]["result"] = result
+                with self.subTest(result=result), self.assertRaises(ValueError):
+                    ci.gate_journey(broken, "pull_request")
+
+    def test_pr_ui_shards_run_on_their_own_legs(self):
+        # The unit leg keeps build + unit tests; each UI shard gets a Mac.
+        self.assertEqual(
+            ci.native_legs([], "pull_request", 3), ["unit", "ui-1", "ui-2", "ui-3"]
+        )
+        self.assertEqual(
+            ci.native_legs(["kri-524-creation"], "pull_request", 2),
+            ["unit", "ui-1", "ui-2"],
+        )
+        self.assertEqual(ci.native_legs([], "pull_request", 1), ["unit"])
+        self.assertEqual(ci.native_legs([], "pull_request"), ["unit"])
+        # ci.yml runs UI only on PRs; nightly sharding belongs to ios.yml.
+        for event in ("schedule", "workflow_dispatch", "push"):
+            self.assertEqual(ci.native_legs([], event, 3), ["unit"])
 
 
 class ArtifactTransferTests(unittest.TestCase):

@@ -60,7 +60,7 @@ def keep_as_written_option(text: str) -> str:
 
 
 def shorter_label_option(text: str) -> str:
-    return say(en=f'Use "{text}" instead', tr=f'Onun yerine "{text}" yaz')
+    return say(en='Use "{text}" instead', tr='Onun yerine "{text}" yaz', text=text)
 
 
 def keeps_as_written(text: str, creator_messages: str | None) -> bool:
@@ -94,8 +94,9 @@ def _reasons(text: str) -> str:
         if problem == "too_long":
             reasons.append(
                 say(
-                    en=f"it runs past the {CREATOR_LABEL_MAX_LINES} lines a clip label holds",
-                    tr=f"klip etiketinin {CREATOR_LABEL_MAX_LINES} satırına sığmıyor",
+                    en="it runs past the {creator_label_max_lines} lines a clip label holds",
+                    tr="klip etiketinin {creator_label_max_lines} satırına sığmıyor",
+                    creator_label_max_lines=CREATOR_LABEL_MAX_LINES,
                 )
             )
         elif problem == "characters":
@@ -115,12 +116,13 @@ def _way_forward(keep: bool, shorter: str | None) -> str:
         return say(
             en=(
                 "I can keep your words exactly as written on that clip, or use the shorter "
-                f'label "{shorter}".'
+                'label "{shorter}".'
             ),
             tr=(
                 "Yazdığın gibi aynen o klipte gösterebilirim ya da daha kısa "
-                f'"{shorter}" etiketini kullanabilirim.'
+                '"{shorter}" etiketini kullanabilirim.'
             ),
+            shorter=shorter,
         )
     if keep:
         return say(
@@ -135,11 +137,12 @@ def _way_forward(keep: bool, shorter: str | None) -> str:
         )
     if shorter:
         return say(
-            en=f'I can use the shorter label "{shorter}" instead, or you can write another one.',
+            en='I can use the shorter label "{shorter}" instead, or you can write another one.',
             tr=(
-                f'Onun yerine daha kısa "{shorter}" etiketini kullanabilirim ya da başka bir '
+                'Onun yerine daha kısa "{shorter}" etiketini kullanabilirim ya da başka bir '
                 "tane yazabilirsin."
             ),
+            shorter=shorter,
         )
     return say(
         en="What shorter label should I use instead?",
@@ -169,8 +172,10 @@ def label_text_reply(texts: Sequence[str], *, keep: bool = True) -> LabelTextRep
         shorter = shorter_creator_label(text)
         about = [
             say(
-                en=f"{_quoted(text)} can't be a clip label: {reasons}.",
-                tr=f"{_quoted(text)} klip etiketi olamaz: {reasons}.",
+                en="{quoted_text} can't be a clip label: {reasons}.",
+                tr="{quoted_text} klip etiketi olamaz: {reasons}.",
+                quoted_text=_quoted(text),
+                reasons=reasons,
             ),
             _way_forward(keeps, shorter),
         ]
@@ -188,8 +193,9 @@ def label_text_reply(texts: Sequence[str], *, keep: bool = True) -> LabelTextRep
     if left_out:
         parts.append(
             say(
-                en=f"{left_out} more of your labels can't be clip labels either.",
-                tr=f"{left_out} etiketin daha klip etiketi olamıyor.",
+                en="{left_out} more of your labels can't be clip labels either.",
+                tr="{left_out} etiketin daha klip etiketi olamıyor.",
+                left_out=left_out,
             )
         )
     options = options[:MAX_REPLY_OPTIONS]

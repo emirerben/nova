@@ -229,7 +229,7 @@ import XCTest
     // MARK: The session
 
     private func session() -> SlidePostSession {
-        let session = SlidePostSession()
+        let session = SlidePostTestSubmissionStorage.session()
         session.draft = SlidePostDraft(version: 1, platformProfile: "tiktok_photo", slides: [
             SlidePostSlide(id: "s1", assetID: "a1", kind: "image"), SlidePostSlide(id: "s2", assetID: "a2", kind: "video"),
         ])

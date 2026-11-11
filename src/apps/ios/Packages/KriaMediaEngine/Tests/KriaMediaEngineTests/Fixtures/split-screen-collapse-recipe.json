@@ -1,0 +1,162 @@
+{
+  "schema_version": 2,
+  "renderer_version": "kria-ios-2",
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "frame_rate": 30.0,
+  "assets": [
+    {
+      "id": "new",
+      "relative_path": "new",
+      "fingerprint": {
+        "algorithm": "sha256",
+        "hex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "byte_count": 1000
+      },
+      "duration": 12.0,
+      "natural_size": {
+        "width": 1080.0,
+        "height": 1920.0
+      },
+      "frame_rate": null,
+      "orientation_degrees": 0,
+      "is_proxy_available": true
+    },
+    {
+      "id": "old",
+      "relative_path": "old",
+      "fingerprint": {
+        "algorithm": "sha256",
+        "hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "byte_count": 1000
+      },
+      "duration": 12.0,
+      "natural_size": {
+        "width": 1080.0,
+        "height": 1920.0
+      },
+      "frame_rate": null,
+      "orientation_degrees": 0,
+      "is_proxy_available": true
+    }
+  ],
+  "tracks": [
+    {
+      "id": "split-s-0",
+      "kind": "video",
+      "clips": [
+        {
+          "split_screen": {
+            "section_id": "s",
+            "panel_index": 0
+          },
+          "id": "top",
+          "source_asset_id": "new",
+          "source_start": 2.0,
+          "source_duration": 6.0,
+          "timeline_start": 0.0,
+          "rate": 2.0,
+          "transform": {
+            "scale": 1.0,
+            "rotation_degrees": 0.0,
+            "position_x": 0.0,
+            "position_y": 0.0
+          },
+          "transition": null,
+          "text": null,
+          "source_crop": {
+            "x": 0.1,
+            "y": 0.1,
+            "width": 0.8,
+            "height": 0.8
+          },
+          "volume": 1.0
+        }
+      ]
+    },
+    {
+      "id": "split-s-1",
+      "kind": "video",
+      "clips": [
+        {
+          "split_screen": {
+            "section_id": "s",
+            "panel_index": 1
+          },
+          "id": "bottom",
+          "source_asset_id": "old",
+          "source_start": 7.0,
+          "source_duration": 1.0,
+          "timeline_start": 1.0,
+          "rate": 1.0,
+          "transform": {
+            "scale": 1.0,
+            "rotation_degrees": 0.0,
+            "position_x": 0.0,
+            "position_y": 0.0
+          },
+          "transition": null,
+          "text": null,
+          "volume": 0.0
+        }
+      ]
+    }
+  ],
+  "audio": {
+    "music_asset_id": null,
+    "music_volume": 1.0,
+    "original_volume": 1.0,
+    "fade_in": 0.0,
+    "fade_out": 0.0,
+    "duck_original_during_music": false
+  },
+  "required_capabilities": [
+    "audioMix",
+    "sourceCrop",
+    "local1080Export",
+    "basicComposition",
+    "variableSpeed",
+    "splitScreen",
+    "splitCollapse"
+  ],
+  "asset_manifest": {
+    "version": 1,
+    "assets": [
+      {
+        "kind": "original",
+        "id": "new",
+        "media_id": "new",
+        "fingerprint": {
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "byte_count": 1000
+        }
+      },
+      {
+        "kind": "original",
+        "id": "old",
+        "media_id": "old",
+        "fingerprint": {
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "byte_count": 1000
+        }
+      }
+    ]
+  },
+  "text_layers": [],
+  "split_screen_sections": [
+    {
+      "id": "s",
+      "panel_weights": [
+        1.0,
+        1.0
+      ],
+      "gutter": 0.02,
+      "background_color": "#112233",
+      "start": 0.0,
+      "end": 3.0,
+      "collapse_empty_panels": true
+    }
+  ]
+}

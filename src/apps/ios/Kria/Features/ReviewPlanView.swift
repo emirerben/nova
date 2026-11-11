@@ -18,15 +18,21 @@ struct ReviewPlanPresentation: Identifiable {
 struct ReviewPlanView: View {
     @State private var model: ReviewPlanModel
     let close: () -> Void
+    private let refreshToken: String
     /// KRI-742: pass a controller (only when the server advertises `voice_dictation`) to show the mic.
     var dictation: DictationController? = nil
     var dictationTerms: () -> [String] = { [] }
     @FocusState private var promptFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.scenePhase) private var scenePhase
 
-    init(seed: [PlanBlock], initialFlag: PlanSectionID?, actions: ReviewPlanActions, dictation: DictationController? = nil, dictationTerms: @escaping () -> [String] = { [] }, close: @escaping () -> Void) {
-        _model = State(initialValue: ReviewPlanModel(seed: seed, initialFlag: initialFlag, actions: actions))
+    init(seed: [PlanBlock], initialFlag: PlanSectionID?, actions: ReviewPlanActions, refreshToken: String = "",
+         expectedThreadID: String? = nil, isCurrentScope: @escaping @MainActor () -> Bool = { true },
+         dictation: DictationController? = nil, dictationTerms: @escaping () -> [String] = { [] }, close: @escaping () -> Void) {
+        _model = State(initialValue: ReviewPlanModel(seed: seed, initialFlag: initialFlag, actions: actions,
+            expectedThreadID: expectedThreadID, isCurrentScope: isCurrentScope))
+        self.refreshToken = refreshToken
         self.dictation = dictation
         self.dictationTerms = dictationTerms
         self.close = close
@@ -79,7 +85,9 @@ struct ReviewPlanView: View {
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.88), value: model.phase)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.36, dampingFraction: 0.88), value: model.draft.scope)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.88), value: model.showsUpdated)
-        .task { await model.load() }
+        .task(id: "\(refreshToken):\(scenePhase == .active)") {
+            if scenePhase == .active { await model.load() }
+        }
         .onDisappear { model.cancelFollowing(); dictation?.cancel() }
         .onChange(of: model.phase) { _, phase in if phase != .reviewing { promptFocused = false } }
     }
@@ -675,57 +683,6 @@ private struct ReviewMixSliders: View {
             Text("\(Int((value.wrappedValue * 100).rounded()))%")
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.ink.opacity(0.7))
                 .frame(width: 38, alignment: .trailing)
-        }
-    }
-}
-
-// MARK: - Entry from the project
-
-/// The "Review your video" row under a finished video (second entry point, besides the feed's CTA). It asks the
-/// server for the plan once per job and shows only when there is one to review (`ready` or `updating`); an empty
-/// plan, an old server or a failed read hides it.
-struct ProjectReviewEntry: View {
-    let threadID: UUID
-    let jobKey: String
-    let api: any KriaAPIClient
-    let open: () -> Void
-    @State private var status: PlanSnapshot.Status?
-
-    private var visible: Bool { status == .ready || status == .updating }
-
-    var body: some View {
-        // A stack, not a bare Group: modifiers on an empty Group never run, and the probe must run while hidden.
-        VStack(spacing: 0) {
-            if visible {
-                Button(action: open) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 15, weight: .semibold)).foregroundStyle(KriaColor.ink)
-                            .frame(width: 32, height: 32)
-                            .background(KriaColor.butter, in: Circle())
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("Review your video")
-                                .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                            Text("See every choice and change any of it")
-                                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                        }
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(KriaColor.zinc)
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Review your video")
-                .accessibilityIdentifier("project-review-entry")
-                .kriaGlassCard(cornerRadius: 22)
-            }
-        }
-        .task(id: jobKey) {
-            status = (try? await api.planSnapshot(threadID: threadID))?.status
         }
     }
 }

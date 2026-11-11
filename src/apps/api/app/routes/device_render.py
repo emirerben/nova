@@ -100,15 +100,19 @@ from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
     background_focus_client_supported,
+    card_style_client_supported,
     card_tilt_client_supported,
     clip_backdrop_media_client_supported,
     clip_tilt_client_supported,
+    color_moments_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     recipe_has_clip_backdrop_media,
     recipe_has_clip_tilt,
+    recipe_has_color_moments,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
+    recipe_has_styled_card,
     recipe_has_tilted_card,
     single_word_text_client_supported,
     speaker_background_client_supported,
@@ -323,14 +327,15 @@ def _export_text_notes(job: Job, verification_report: dict | None) -> list[str]:
         return [
             say(
                 en=(
-                    f"I couldn't confirm all the on-screen text in the finished video was "
-                    f"readable (around {at:.0f}s). If a line looks off, tell me and I'll fix it."
+                    "I couldn't confirm all the on-screen text in the finished video was "
+                    "readable (around {at:.0f}s). If a line looks off, tell me and I'll fix it."
                 ),
                 tr=(
-                    f"Bitmiş videodaki ekran yazılarının hepsinin okunaklı olduğunu "
-                    f"doğrulayamadım (yaklaşık {at:.0f}. saniye). Bir satır yanlış görünüyorsa "
-                    f"söyle, düzelteyim."
+                    "Bitmiş videodaki ekran yazılarının hepsinin okunaklı olduğunu "
+                    "doğrulayamadım (yaklaşık {at:.0f}. saniye). Bir satır yanlış görünüyorsa "
+                    "söyle, düzelteyim."
                 ),
+                at=at,
             )
         ]
 
@@ -554,8 +559,22 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     check them BEFORE it re-pins anything for a build (`_auto_resume_updated`): a build
     newer than the one that declined is not necessarily new enough for the recipe.
     """
+    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL  # noqa: PLC0415
+
     protocol = _caller_protocol()
     recipe = status.request.recipe
+    if "splitScreen" in recipe.required_capabilities and protocol < 46:
+        return {
+            "code": "client_update_required",
+            "feature": "split_screen",
+            "minimum_client_protocol": 46,
+        }
+    if "splitCollapse" in recipe.required_capabilities and protocol < SPLIT_COLLAPSE_PROTOCOL:
+        return {
+            "code": "client_update_required",
+            "feature": "split_collapse",
+            "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
+        }
     from app.agents._schemas.text_animation_phases import DESIGNED_TEXT_EDGES
 
     if protocol < 23 and any(
@@ -623,6 +642,14 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "feature": "text_behind_subject",
             "minimum_client_protocol": settings.text_behind_subject_phone_min_client_protocol,
         }
+    if recipe_has_color_moments(recipe) and not color_moments_client_supported():
+        # KRI-1350: an older build rejects `color_moments` / `end_fade` as unknown recipe keys (and
+        # the `colorMoments` token) and would FAIL the whole render.
+        return {
+            "code": "client_update_required",
+            "feature": "color_moments",
+            "minimum_client_protocol": settings.color_moments_min_client_protocol,
+        }
     if (
         getattr(recipe, "speaker_background", None) is not None
         and not speaker_background_client_supported()
@@ -686,6 +713,14 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "speaker_background_color",
             "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
+        }
+    if not card_style_client_supported() and recipe_has_styled_card(recipe):
+        # KRI-1264: a build below protocol 44 cannot decode a placed card's `editor_style` and would
+        # fail the whole recipe. Checked before the tilt gate so the answer names the newer minimum.
+        return {
+            "code": "client_update_required",
+            "feature": "card_style",
+            "minimum_client_protocol": settings.media_card_style_min_client_protocol,
         }
     if not card_tilt_client_supported() and recipe_has_tilted_card(recipe):
         # KRI-1141: a build below protocol 30 decodes the `clipTilt` token a tilted card carries

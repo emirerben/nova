@@ -256,7 +256,7 @@ def unavailable_set() -> SuggestionSetOut:
 _COPY: dict[ChipKind, dict[str, tuple[str, str]]] = {
     # (label, message) per language. Messages never carry quotes or Gemini words.
     ChipKind.DEFAULT_EDIT: {
-        "en": ("Let Kria cut the first version", MEDIA_ONLY_MESSAGE),
+        "en": ("Let Kria decide", MEDIA_ONLY_MESSAGE),
         "tr": ("İlk versiyonu Kria kessin", MEDIA_ONLY_MESSAGE),
     },
     ChipKind.HOOK: {
@@ -858,6 +858,10 @@ def _measured_evidence(ctx: SuggestionContext, kind: str, targets: Sequence[Targ
             from app.services.suggestions.kinds import mute_clip  # noqa: PLC0415
 
             return mute_clip.evidence_lines(ctx, targets)
+        elif kind == "generated_overlay":
+            from app.services.suggestions.kinds import generated_overlay  # noqa: PLC0415
+
+            return generated_overlay.evidence_lines(ctx, targets)
     except Exception:  # noqa: BLE001 - a missing evidence line falls back to the clip names
         log.warning("suggestion_chips.error", stage="measured_evidence", kind=kind, exc_info=True)
     return []

@@ -75,6 +75,13 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "app.agents.narrated_clip_alignment",
         "NarratedClipAlignmentAgent",
     ),
+    # KRI-1356: where the voiceover says a reaction-beat cue the exact matcher never heard.
+    # Failure-isolated: `generative_build._resolve_unheard_beat_cues` keeps never_heard.
+    (
+        "nova.compose.spoken_cue_resolver",
+        "app.agents.spoken_cue_resolver",
+        "SpokenCueResolverAgent",
+    ),
     (
         "nova.compose.narration_annotations",
         "app.agents.narration_annotations",

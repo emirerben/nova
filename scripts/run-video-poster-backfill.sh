@@ -7,6 +7,7 @@
 
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 app_name="${FLY_APP_NAME:-nova-video}"
 region="${FLY_REGION:-iad}"
 guard_name="${app_name}-production-mutation-guard"
@@ -90,21 +91,8 @@ check_checkout_is_deployable() {
     fail "Expected deploy revision $expected_sha is not an ancestor of origin/main; refusing deploy."
 }
 
-# Fly's one-shot release_command runner is not part of the serving fleet. An
-# aborted deploy leaves it stopped on the NEW image digest, which would read as
-# a second production digest and wedge every later deploy (2026-10-30, v1961).
-# Stopped/destroyed ones are debris and are dropped from the inventory; a live
-# one is a migration in flight and is refused by resolve_production_image.
-release_command_debris_filter='
-  [.[] | select(
-    (((.config.metadata // .incomplete_config.metadata // {}).fly_process_group)
-      == "fly_app_release_command")
-    and (.state == "stopped" or .state == "destroyed")
-    | not
-  )]'
-
 machine_list() {
-  flyctl machine list --app "$app_name" --json | jq -c "$release_command_debris_filter"
+  flyctl machine list --app "$app_name" --json | jq -c -f "$script_dir/fly-production-inventory.jq"
 }
 
 machine_by_id() {

@@ -66,7 +66,7 @@ from app.agents._schemas.persona import Persona
 #              Persona.idea_seeds → byte-identical to baseline when seeds are absent.
 #              Directive: prefer and deepen the user's own ideas first; use the
 #              market IDEA_BANK only to fill remaining slots.
-CONTENT_PLAN_PROMPT_VERSION = "2026-10-25-research-19"
+CONTENT_PLAN_PROMPT_VERSION = "2026-11-01-research-20"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60

@@ -3699,12 +3699,17 @@ async def test_kri700_brighten_ask_is_a_couldnt_line_and_never_reaches_the_appro
             assert content == f'{claim}\n- Done: "20K Kosu"'
             assert card == f"Render this draft: {claim}"
             assert payload["changes"][0] == claim
+            # KRI-1262: the summary is the reply, so there is no failure line to send.
+            assert "reply_lead" not in payload
             return
         assert (receipts["r2"]["status"], receipts["r2"]["verification"]) == (
             "not_possible",
             "checked",
         )
         assert content.startswith("Not everything you asked for made it in")
+        # KRI-1262: the chat shows this one line over the receipt rows, not the prose too.
+        assert payload["reply_lead"] == "I did 1 of your 2 asks."
+        assert payload["requirement_receipts"]
         assert "Couldn't: brighten the dark river clips" in content
         assert "can't change how bright or dark clips look" in content
         for said in (content, card, *payload["changes"]):

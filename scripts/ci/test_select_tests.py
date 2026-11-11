@@ -399,11 +399,23 @@ class GateTests(unittest.TestCase):
         self.assertEqual(
             ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
         )
-        # One PR Mac job owns the selected UI and journey scenarios.
+        # A PR's short selections stay on the unit leg's Mac. PRs run `full` as
+        # the smoke tripwire, so it never splits either.
         self.assertEqual(ci.ui_shards("pull_request", "full"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "none"), 1)
+        self.assertEqual(ci.ui_shards("pull_request", "smoke"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "smoke,projects"), 1)
-        self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)
+        # An editor PR's group ran 89 min serially (#2225): it splits across
+        # Macs, sized by the PR leg target and capped like nightly.
+        editor = ci.ui_shards("pull_request", "smoke,editor")
+        self.assertGreater(editor, 1)
+        self.assertLessEqual(editor, ci.ui_tests.MAX_SHARDS)
+        self.assertEqual(
+            editor,
+            ci.ui_tests.shard_count(
+                "smoke,editor", target=ci.ui_tests.PR_SHARD_TARGET_SECONDS
+            ),
+        )
         # An unusable selection keeps one leg; its UI step fails closed.
         with patch.object(ci.ui_tests, "shard_count", side_effect=ValueError):
             self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)
@@ -423,6 +435,97 @@ class GateTests(unittest.TestCase):
             ci.gate(needs, "lint", "lint-suites")
         with self.assertRaises(ValueError):
             ci.gate(self.needs("false", "skipped"), "lint", "suite")
+
+
+class AutomaticUpdateMappingTests(unittest.TestCase):
+    def test_actual_117_path_ci_diff_selects_real_native_recovery_incidents(self):
+        fixture = json.loads(
+            (
+                SCRIPT.parent / "fixtures/automatic-result-convergence-diff.json"
+            ).read_text()
+        )
+        self.assertEqual(len(fixture["paths"]), 117)
+        self.assertEqual(
+            ci.unmapped_journey_paths(
+                fixture["base"], fixture["head"], paths=fixture["paths"]
+            ),
+            [],
+        )
+        expected = {
+            "saved-song-render-recovery",
+            "slide-post-generation-receipt-recovery",
+        }
+        with patch.object(ci, "journey_diff_paths", return_value=fixture["paths"]):
+            selected, coverage, ids = ci.journey_details(
+                "pull_request", fixture["base"], fixture["head"]
+            )
+        self.assertTrue(selected)
+        self.assertEqual(coverage, "covered")
+        self.assertTrue(expected <= set(ids.split(",")))
+        self.assertTrue(ci.journey_native_for_ids(sorted(expected)))
+        for path, incident in zip(fixture["original_unmapped"], sorted(expected)):
+            self.assertEqual(ci.journey_ids_for_path(path), {incident})
+
+    def test_recovery_incidents_require_named_api_and_native_execution(self):
+        rows = {row["id"]: row for row in ci.JOURNEYS}
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
+        start = workflow.index(
+            "      - name: Verify original generation receipts and saved-song recovery"
+        )
+        step = workflow[start : workflow.index("      - name:", start + 15)]
+        for key in (
+            "saved-song-render-recovery",
+            "slide-post-generation-receipt-recovery",
+        ):
+            row = rows[key]
+            self.assertIs(row["needs_native"], True)
+            self.assertTrue(row["xctests"])
+            self.assertIn(key, step)
+            for node in row["api_tests"].split():
+                self.assertIn("::test_", node)
+                file, name = node.split("::")
+                self.assertIn(
+                    "def " + name + "(",
+                    (SCRIPT.parents[2] / "src/apps/api" / file).read_text(),
+                )
+        self.assertIn("python3 -m pytest $tests", step)
+        self.assertIn("--junitxml=", step)
+        self.assertIn("journey-gate.py api-cases", step)
+
+    def test_missing_recovery_mapping_still_fails_closed(self):
+        fixture = json.loads(
+            (
+                SCRIPT.parent / "fixtures/automatic-result-convergence-diff.json"
+            ).read_text()
+        )
+        incidents = (
+            "saved-song-render-recovery",
+            "slide-post-generation-receipt-recovery",
+        )
+        for removed in ({incidents[0]}, {incidents[1]}, set(incidents)):
+            original = [row for row in ci.JOURNEYS if row["id"] not in removed]
+            expected = [
+                path
+                for path, key in zip(fixture["original_unmapped"], incidents)
+                if key in removed
+            ]
+            with (
+                self.subTest(removed=removed),
+                patch.object(ci, "JOURNEYS", original),
+                patch.object(ci, "journey_diff_paths", return_value=fixture["paths"]),
+            ):
+                self.assertEqual(
+                    ci.journey_details(
+                        "pull_request", fixture["base"], fixture["head"]
+                    ),
+                    (True, "gap", ""),
+                )
+                self.assertEqual(
+                    ci.unmapped_journey_paths(
+                        fixture["base"], fixture["head"], paths=fixture["paths"]
+                    ),
+                    expected,
+                )
 
 
 class GitDiffTests(unittest.TestCase):
@@ -1093,7 +1196,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/ios/Kria/Core/NativeActivity.swift",
-                (True, "covered", "native-activity-inbox,native-activity-account-boundary,native-notification-runtime"),
+                (
+                    True,
+                    "covered",
+                    "native-activity-inbox,native-activity-account-boundary,native-notification-runtime",
+                ),
             ),
             # This has journey impact but no incident-corpus repro mapping.
             (
@@ -1119,7 +1226,7 @@ class GitDiffTests(unittest.TestCase):
             (
                 True,
                 "covered",
-                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes,rendered-editor-original-clock,native-activity-account-boundary,native-notification-runtime",
+                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes,rendered-editor-original-clock,native-activity-account-boundary,native-notification-runtime,saved-song-render-recovery",
             ),
         )
 
@@ -1260,7 +1367,7 @@ class GitDiffTests(unittest.TestCase):
             "api=false\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
             'journey_ids=\njourney_needs_native=false\nnative_legs=["unit"]\n'
-            "ios_render_evidence=false\n",
+            "journey_mapped=true\nios_render_evidence=false\n",
         )
         self.assertIn("ios: run", summary.read_text())
         self.assertIn("Export/OCR unit proofs: skipped", summary.read_text())

@@ -244,11 +244,19 @@ def localize_question(question: dict[str, Any], language: str) -> dict[str, Any]
     return question
 
 
-def _localize_for_current_chat(question: dict[str, Any]) -> dict[str, Any]:
-    """Turkish chats get Turkish buttons from every path that builds these questions."""
+def chat_button_language() -> str | None:
+    """The bound chat language when its buttons are not English (Turkish, or German behind
+    its switch), else None."""
+    language = current_reply_language()
+    return language if language not in (None, "en") else None
 
-    if current_reply_language() == "tr":
-        localize_question(question, "tr")
+
+def _localize_for_current_chat(question: dict[str, Any]) -> dict[str, Any]:
+    """A non-English chat gets its own buttons from every path that builds these questions."""
+
+    language = chat_button_language()
+    if language is not None:
+        localize_question(question, language)
     return question
 
 
