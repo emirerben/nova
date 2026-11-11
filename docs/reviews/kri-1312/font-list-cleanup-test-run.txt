@@ -1,0 +1,7 @@
+API: cd src/apps/api && pytest tests/routes/test_editor_commit.py
+311 passed, 148 warnings in 20.78s
+
+iPhone (iPhone 17 simulator): xcodebuild test -only-testing the two tests below
+Test Case '-[KriaTests.NativeEditorInspectorTests testPickerValuesMatchSharedEditorCommitContract]' passed
+Test Case '-[KriaTests.NativeFontCatalogTests testPickerFontsAreTheNonDeprecatedRegistryKeysSorted]' passed
+** TEST SUCCEEDED **
