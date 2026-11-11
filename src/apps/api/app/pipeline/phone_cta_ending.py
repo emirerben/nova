@@ -63,6 +63,7 @@ _ARROW_DRAW_S = 0.6
 _ARROW_RIGHT_MAX = 0.96
 _ROW_LEFT_MIN = 0.04
 _CURVE_POINTS = 24
+CTA_OUTLINE_PX = 6
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,9 @@ def _row(
         shadow_enabled=True,
         shadow_color="#000000",
         shadow_opacity=0.35,
+        # KRI-1306: a dark outline keeps white/cream text readable over a light page.
+        stroke_width=CTA_OUTLINE_PX,
+        stroke_color="#000000",
         effect="fade-in",
         source_params={"source": pst.TALKING_CLOSING_SOURCE, CTA_PART_KEY: part},
     )

@@ -182,10 +182,26 @@ struct OverlayCard: Identifiable {
         self.api = api
         guard self.itemID != itemID || storageKey == nil else { return }
         self.itemID = itemID
-        if let data = try? JSONEncoder().encode([accountID, itemID]) {
-            storageKey = "generated-overlays." + data.base64EncodedString()
-        }
+        storageKey = Self.storageKey(accountID: accountID, itemID: itemID)
         restoreSaved()
+    }
+
+    private static func storageKey(accountID: String, itemID: String) -> String? {
+        (try? JSONEncoder().encode([accountID, itemID])).map { "generated-overlays." + $0.base64EncodedString() }
+    }
+
+    /// Hands an image another surface already paid for to the review screen: the next set that is configured for this
+    /// account and item restores it as a made overlay and looks it up by its operation, exactly like one this sheet
+    /// started and was interrupted on. Staged once per request.
+    static func stage(prompt: String, eventID: String, operationID: String, accountID: String, itemID: String) {
+        guard let key = storageKey(accountID: accountID, itemID: itemID) else { return }
+        var saved = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(Saved.self, from: $0) }
+            ?? Saved(origin: .describe, cards: [])
+        guard !saved.cards.contains(where: { $0.main?.recovery.clientEventID == eventID }) else { return }
+        let recovery = GeneratedMediaRecovery(clientEventID: eventID, operationID: operationID)
+        saved.cards.append(.init(id: UUID(), prompt: prompt, copiedFrom: nil, copiedPrompt: nil,
+                                 main: .init(prompt: prompt, recovery: recovery), remake: nil, accepted: false))
+        if let data = try? JSONEncoder().encode(saved) { UserDefaults.standard.set(data, forKey: key) }
     }
 
     func stopWork() {

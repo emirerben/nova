@@ -235,26 +235,16 @@ def _visible(plan) -> list:  # noqa: ANN001
     ]
 
 
-def _shows(plan, requirement, frame: float) -> bool:  # noqa: ANN001
-    """Whether the plan already carries ``requirement``'s exact words where it asks."""
-    from app.kria.brief_route import chapter_list  # noqa: PLC0415
+def _shown_rows(plan, requirement, frame: float) -> list[dict[str, Any]]:  # noqa: ANN001
+    """The plan's texts that already carry ``requirement``'s exact words where it asks."""
     from app.pipeline.sequence_text_evidence import text_matches  # noqa: PLC0415
+    from app.services.creator_render_contract import chapter_text_matches  # noqa: PLC0415
 
     rows = [
         {"element_id": e.id, "text": e.text, "start_s": e.start_s, "end_s": e.end_s}
         for e in _visible(plan)
     ]
     matches = text_matches(rows, requirement.text, role="any", tolerance_s=frame)
-    if (
-        not matches
-        and requirement.role == "any"
-        and requirement.duration_s is None
-        and chapter_list(requirement.text, [row["text"] for row in rows]) is not None
-    ):
-        # KRI-545, mirrored from ``verify_phone_recipe``: a literal that lists chapter
-        # names ("Sabah, Akşam") is drawn as those names, each its own clip label, never as
-        # one line. The plan already shows it; putting the list back would override it.
-        return True
     total = float(plan.resolved_duration_s)
     if requirement.duration_s is not None:
         wanted = min(requirement.duration_s, total)
@@ -263,6 +253,13 @@ def _shows(plan, requirement, frame: float) -> bool:  # noqa: ANN001
         matches = [r for r in matches if r["start_s"] <= frame]
     elif requirement.role == "closing":
         matches = [r for r in matches if r["end_s"] >= total - frame]
+    elif requirement.role == "clip" and requirement.chapter_media_ids:
+        matches = chapter_text_matches(
+            matches,
+            members=frozenset(requirement.chapter_media_ids),
+            spans=_clip_spans(plan),
+            tolerance_s=frame,
+        )
     elif requirement.role == "clip":
         windows = _clip_windows(plan, requirement)
         matches = [
@@ -270,16 +267,92 @@ def _shows(plan, requirement, frame: float) -> bool:  # noqa: ANN001
             for r in matches
             if any(r["start_s"] >= s - frame and r["end_s"] <= e + frame for s, e in windows)
         ]
-    return bool(matches)
+    return matches
+
+
+def _shows(plan, requirement, frame: float) -> bool:  # noqa: ANN001
+    """Whether the plan already carries ``requirement``'s exact words where it asks."""
+    from app.kria.brief_route import chapter_list  # noqa: PLC0415
+
+    if _shown_rows(plan, requirement, frame):
+        return True
+    # KRI-545, mirrored from ``verify_phone_recipe``: a literal that lists chapter names
+    # ("Sabah, Akşam") is drawn as those names, each its own clip label, never as one line.
+    # The plan already shows it; putting the list back would override it.
+    return (
+        requirement.role == "any"
+        and requirement.duration_s is None
+        and chapter_list(requirement.text, [e.text for e in _visible(plan)]) is not None
+    )
+
+
+def _clip_spans(plan) -> list[tuple[str, float, float]]:  # noqa: ANN001
+    return [
+        (m.media_id, float(m.output_start_s), float(m.output_end_s))
+        for m in plan.story_timeline
+        if m.lane == "clip"
+    ]
+
+
+def _candidate_clips(plan, requirement) -> list:  # noqa: ANN001
+    """The timeline clips a clip text may sit on."""
+    clips = [m for m in plan.story_timeline if m.lane == "clip"]
+    if requirement.shot_index is not None:
+        return clips[requirement.shot_index : requirement.shot_index + 1]
+    if requirement.chapter_media_ids:
+        return [m for m in clips if m.media_id in requirement.chapter_media_ids]
+    if requirement.media_id:
+        return [m for m in clips if m.media_id == requirement.media_id]
+    return clips
 
 
 def _clip_windows(plan, requirement) -> list[tuple[float, float]]:  # noqa: ANN001
-    clips = [m for m in plan.story_timeline if m.lane == "clip"]
-    if requirement.shot_index is not None:
-        clips = clips[requirement.shot_index : requirement.shot_index + 1]
-    elif requirement.media_id:
-        clips = [m for m in clips if m.media_id == requirement.media_id]
-    return [(float(m.output_start_s), float(m.output_end_s)) for m in clips]
+    return [
+        (float(m.output_start_s), float(m.output_end_s))
+        for m in _candidate_clips(plan, requirement)
+    ]
+
+
+def _clip_anchor(plan, requirement, frame: float) -> tuple[float, float, float] | None:  # noqa: ANN001
+    """``(start, end, run_end)`` of the clip a clip text goes on, or ``None``.
+
+    A chapter title goes on the chapter's first clip in the timeline and may run on over
+    the member clips straight after it (``run_end``); any other clip text stays on its clip.
+    """
+    from app.services.creator_render_contract import chapter_window  # noqa: PLC0415
+
+    if requirement.chapter_media_ids:
+        return chapter_window(
+            frozenset(requirement.chapter_media_ids), _clip_spans(plan), tolerance_s=frame
+        )
+    windows = _clip_windows(plan, requirement)
+    if not windows:
+        return None
+    start, end = windows[0]
+    return start, end, end
+
+
+def _claimed_ids(plan, contract, frame: float) -> set[str]:  # noqa: ANN001
+    """Texts that already show some pinned requirement: never moved to show another."""
+    return {
+        str(row.get("element_id"))
+        for requirement in contract.exact_texts
+        for row in _shown_rows(plan, requirement, frame)
+    }
+
+
+def _own_text(element) -> bool:  # noqa: ANN001
+    """A text of its own: never a caption-lane word, a lyric or one piece of a sequence."""
+    from app.pipeline.sequence_text_evidence import sequence_lineage  # noqa: PLC0415
+    from app.services.kria_editor_ops import is_caption_text_bar  # noqa: PLC0415
+
+    row = {"id": element.id, "source_params": element.source_params}
+    return (
+        element.role != "lyric_line"
+        and not is_caption_text_bar(row)
+        and sequence_lineage(row) is None
+        and not (element.source_params or {}).get("sequence_source_id")
+    )
 
 
 def _new_text(plan, template, **updates: Any):  # noqa: ANN001
@@ -381,10 +454,12 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
 
     Slots, in the contract's own words: an ``opening`` text becomes the title (retexted,
     or added at 0 s); a ``closing`` text is added over the last seconds; a ``clip`` text
-    goes on that clip's window (retexting its label when one is there); an ``any`` text
-    takes the title slot when the planner filled it with its own copy, otherwise it is
-    added over the opening. A text already shown but too briefly or in the wrong place is
-    held / moved, never duplicated. Nothing else in the plan changes.
+    goes on that clip's window, a chapter title on the chapter's first clip (moving the same
+    words from a clip where they show nothing pinned, else retexting its label, else added);
+    an ``any`` text takes the title slot when the planner filled it with its own copy,
+    otherwise it is added over the opening. A text already shown but too briefly or in the
+    wrong place is held / moved, never duplicated, and a moved or added text is placed clear
+    of the text around it (or refused when it cannot fit). Nothing else in the plan changes.
     """
     if contract is None or not contract.exact_texts:
         return plan, []
@@ -394,13 +469,16 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
     notes: list[str] = []
     added = 0
     current = plan
-    seen: set[tuple[str, str, str | None, int | None]] = set()
+    # Clip texts moved or added below: placed clear of other text once every one has its time.
+    placed: list[str] = []
+    seen: set[tuple[str, str, str | None, int | None, tuple[str, ...]]] = set()
     for requirement in contract.exact_texts:
         key = (
             _normal(requirement.text),
             requirement.role,
             requirement.media_id,
             requirement.shot_index,
+            requirement.chapter_media_ids,
         )
         if key in seen or _shows(current, requirement, frame_s):
             continue
@@ -431,10 +509,14 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             texts.insert(title[0], replacement)
             notes.append(f"Used your title {_quoted(literal)} exactly as you wrote it")
         elif requirement.role not in PLACED_WITHOUT_PLAN:
-            windows = _clip_windows(current, requirement)
-            if not windows:
+            anchor = _clip_anchor(current, requirement, frame_s)
+            if anchor is None:
                 continue  # no such clip in the plan: the pin-time check stays the authority
-            start, end = windows[0]
+            start, end, run_end = anchor
+            claimed = _claimed_ids(current, contract, frame_s)
+            stray = next(
+                (i for i in same if texts[i].id not in claimed and _own_text(texts[i])), None
+            )
             label = next(
                 (
                     i
@@ -447,8 +529,21 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
                 ),
                 None,
             )
-            if label is not None:
+            if stray is not None:
+                # KRI-1331: the words are already drawn on another clip (the text composer's
+                # guess): move that text here, never draw them a second time.
+                element = texts[stray]
+                texts[stray] = element.model_copy(
+                    update={
+                        "start_s": start,
+                        "end_s": min(run_end, start + element.end_s - element.start_s),
+                    }
+                )
+                placed.append(texts[stray].id)
+                notes.append(f"Moved your text {_quoted(literal)} onto its clip")
+            elif label is not None:
                 texts[label] = texts[label].model_copy(update={"text": literal, "text_case": None})
+                notes.append(f"Added your text {_quoted(literal)} on its clip")
             else:
                 added += 1
                 texts.append(
@@ -458,11 +553,13 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
                         id=f"contract-text-{added}",
                         text=literal,
                         start_s=start,
-                        end_s=end,
+                        # A chapter's title stays up long enough to read over a short first clip.
+                        end_s=min(run_end, max(end, start + _TITLE_HOLD_S)),
                         y_frac=_LABEL_Y,
                     )
                 )
-            notes.append(f"Added your text {_quoted(literal)} on its clip")
+                placed.append(texts[-1].id)
+                notes.append(f"Added your text {_quoted(literal)} on its clip")
         else:
             added += 1
             closing = requirement.role == "closing"
@@ -480,9 +577,51 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             texts.append(_place_added_contract_text(current, element))
             notes.append(f"Added your text {_quoted(literal)} on screen")
         current = current.model_copy(update={"text_elements": texts})
-    if not notes:
+    for done, element_id in enumerate(placed):
+        index = next(i for i, e in enumerate(texts) if e.id == element_id)
+        waiting = set(placed[done:])
+        others = [e for e in texts if e.id not in waiting]
+        texts[index] = _place_added_contract_text(
+            current.model_copy(update={"text_elements": others}), texts[index]
+        )
+    current = current.model_copy(update={"text_elements": list(texts)})
+    linked = _link_clip_texts(current, contract, frame_s)
+    if not notes and linked is current:
         return plan, []
-    return current, list(dict.fromkeys(notes))
+    return linked, list(dict.fromkeys(notes))
+
+
+def _link_clip_texts(plan, contract, frame: float):  # noqa: ANN001, ANN202
+    """KRI-1331: every text that shows a pinned clip text records that clip, as data.
+
+    ``source_params.source_asset_id`` (the clip's media id) and ``source_timeline_id`` (its
+    ``story_timeline`` moment) name the clip under the text's start, so an edit to the
+    timeline can keep the text with its clip.
+    """
+    texts = list(plan.text_elements)
+    changed = False
+    for requirement in contract.exact_texts:
+        if requirement.role != "clip":
+            continue
+        clips = _candidate_clips(plan, requirement)
+        for row in _shown_rows(plan, requirement, frame):
+            index = next((i for i, e in enumerate(texts) if e.id == row["element_id"]), None)
+            clip = next(
+                (
+                    m
+                    for m in clips
+                    if float(m.output_start_s) - frame <= row["start_s"] < float(m.output_end_s)
+                ),
+                None,
+            )
+            if index is None or clip is None or not _own_text(texts[index]):
+                continue
+            params = texts[index].source_params or {}
+            link = {"source_timeline_id": clip.moment_id, "source_asset_id": clip.media_id}
+            if any(params.get(key) != value for key, value in link.items()):
+                texts[index] = texts[index].model_copy(update={"source_params": {**params, **link}})
+                changed = True
+    return plan.model_copy(update={"text_elements": texts}) if changed else plan
 
 
 def compile_phone_guided_repaired(  # noqa: ANN001

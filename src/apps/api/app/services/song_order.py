@@ -26,7 +26,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.kria.reply_language import say
+from app.kria.reply_language import say, say_in
 from app.pipeline.take_assignment import (
     Assignment,
     TakeSpec,
@@ -91,6 +91,13 @@ CLIP_SKIP_MESSAGE_TR = "Klip sorusunu boş bıraktım, o klipleri sen belirle."
 SONG_RANGE_ANSWER_MESSAGE_TR = "Şarkının hangi kısmını çektiğimi söyledim."
 
 
+def _stand_in(language: str | None, *, en: str, tr: str, **values: object) -> str:
+    """The neutral sentence in ``language``, or in the turn's bound language when None."""
+    if language is None:
+        return say(en=en, tr=tr, **values)
+    return say_in(language, en=en, tr=tr, **values)
+
+
 def model_text(payload: Any, content: Any, *, language: str | None = None) -> str:
     """A user event's text as a model should read it (structured song/clip answers are neutral).
 
@@ -99,14 +106,11 @@ def model_text(payload: Any, content: Any, *, language: str | None = None) -> st
     bound for the turn, and English when nothing is bound.
     """
 
-    def stand_in(english: str, turkish: str) -> str:
-        if language is None:
-            return say(en=english, tr=turkish)
-        return turkish if language == "tr" else english
-
     if isinstance(payload, Mapping):
         if isinstance(payload.get(SONG_ORDER_ANSWER_KEY), Mapping):
-            return stand_in(SONG_ORDER_ANSWER_MESSAGE, SONG_ORDER_ANSWER_MESSAGE_TR)
+            return _stand_in(
+                language, en=SONG_ORDER_ANSWER_MESSAGE, tr=SONG_ORDER_ANSWER_MESSAGE_TR
+            )
         if isinstance(payload.get("moment_order"), Mapping):
             # KRI-723: the creator pointed at their named moments (folded from the payload by
             # the planner's moment gate). Its echo carries no times a model could re-read.
@@ -115,19 +119,28 @@ def model_text(payload: Any, content: Any, *, language: str | None = None) -> st
                 MOMENT_ORDER_ANSWER_MESSAGE_TR,
             )
 
-            return stand_in(MOMENT_ORDER_ANSWER_MESSAGE, MOMENT_ORDER_ANSWER_MESSAGE_TR)
+            return _stand_in(
+                language, en=MOMENT_ORDER_ANSWER_MESSAGE, tr=MOMENT_ORDER_ANSWER_MESSAGE_TR
+            )
         if isinstance(payload.get(SONG_RANGE_ANSWER_KEY), Mapping):
-            return stand_in(SONG_RANGE_ANSWER_MESSAGE, SONG_RANGE_ANSWER_MESSAGE_TR)
+            return _stand_in(
+                language, en=SONG_RANGE_ANSWER_MESSAGE, tr=SONG_RANGE_ANSWER_MESSAGE_TR
+            )
         mark = payload.get("protected_region")
         if isinstance(mark, Mapping):
             # KRI-901: the mark card's answer. Never a new instruction for the extractor.
             label = " ".join(str(mark.get("label") or "").split())[:60] or "it"
-            return stand_in(f"I marked the {label} on a frame.", f"{label} bir karede işaretledim.")
+            return _stand_in(
+                language,
+                en="I marked the {label} on a frame.",
+                tr="{label} bir karede işaretledim.",
+                label=label,
+            )
         selection = payload.get("clip_selection")
         if isinstance(selection, Mapping):
             if selection.get("skipped") is True:
-                return stand_in(CLIP_SKIP_MESSAGE, CLIP_SKIP_MESSAGE_TR)
-            return stand_in(CLIP_ANSWER_MESSAGE, CLIP_ANSWER_MESSAGE_TR)
+                return _stand_in(language, en=CLIP_SKIP_MESSAGE, tr=CLIP_SKIP_MESSAGE_TR)
+            return _stand_in(language, en=CLIP_ANSWER_MESSAGE, tr=CLIP_ANSWER_MESSAGE_TR)
     return str(content or "")
 
 
@@ -401,13 +414,14 @@ def song_order_question_text(question: SongOrderQuestion) -> str:
         )
     return say(
         en=(
-            f"I'm not sure where {unsure} of your clips sit in the song. "
+            "I'm not sure where {unsure} of your clips sit in the song. "
             "They're in the order I think; drag any that are out of place."
         ),
         tr=(
-            f"Kliplerinden {unsure} tanesinin şarkıda nereye geldiğinden emin değilim. "
+            "Kliplerinden {unsure} tanesinin şarkıda nereye geldiğinden emin değilim. "
             "Klipleri doğru olduğunu düşündüğüm sırayla dizdim; yeri yanlış olanları sürükle."
         ),
+        unsure=unsure,
     )
 
 

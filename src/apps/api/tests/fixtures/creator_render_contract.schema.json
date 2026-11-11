@@ -36,6 +36,14 @@
     "TextRequirement": {
       "additionalProperties": false,
       "properties": {
+        "chapter_media_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Chapter Media Ids",
+          "type": "array"
+        },
         "duration_s": {
           "anyOf": [
             {

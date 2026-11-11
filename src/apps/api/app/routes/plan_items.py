@@ -10046,16 +10046,16 @@ async def _queue_pool_asset_analysis(
 
     prior_attempts = int(getattr(asset, "analysis_attempt_count", 0) or 0)
     dispatched_at = datetime.now(UTC)
-    # KRI-820: the claim window covers the shared queue's live backlog, so a
-    # photo that is only waiting in line never times out.
-    queue_ahead = int(
+    # KRI-820: the claim window covers the shared queue's live backlog (lane
+    # seconds), so a photo that is only waiting in line never times out.
+    backlog_s = int(
         (await db.execute(queue_backlog_stmt(dispatched_at, exclude_id=asset.id))).scalar() or 0
     )
     attempt_token = begin_attempt(
         asset,
         now=dispatched_at,
         attempt_count=1 if reset_attempts else prior_attempts + 1,
-        queue_ahead=queue_ahead,
+        backlog_s=backlog_s,
     )
     await db.commit()
     await db.refresh(asset)
@@ -10919,6 +10919,30 @@ async def reanalyze_pool_asset(
     return _asset_out(asset)
 
 
+async def _drop_adopted_take(db: AsyncSession, item: PlanItem, asset_id: str) -> None:
+    """KRI-1340: deleting a Visual that became a Talking take removes that take too."""
+    rows = [row for row in (item.clip_assignments or []) if isinstance(row, dict)]
+    kept = [
+        row for row in rows if str((row.get("pool_source") or {}).get("asset_id") or "") != asset_id
+    ]
+    if len(kept) == len(rows):
+        return
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_async,
+    )
+
+    mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        clip_assignments=kept,
+        current_analysis=await mutation_current_analysis_async(db, item.id, for_update=True),
+    )
+
+
 @router.delete("/{item_id}/assets/{asset_id}")
 async def delete_pool_asset(
     item_id: str,
@@ -10982,6 +11006,7 @@ async def delete_pool_asset(
             status_code=status.HTTP_409_CONFLICT,
             detail="Replace or remove this file from the edit before deleting it.",
         )
+    await _drop_adopted_take(db, item, str(asset.id))
     if locked_job is not None and locked_job.status != "cancelled":
         # Decision 11A: deleting an asset eagerly clears dependent PENDING
         # suggestion rows (staged/accepted cards are real placements — untouched).

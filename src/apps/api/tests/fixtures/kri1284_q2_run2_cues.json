@@ -1,0 +1,896 @@
+{
+ "source": "Qendresa Q2 run 2, job 1d512b9c, variant subtitled caption_cues (cut timeline)",
+ "timeline_s": 40.431,
+ "caption_cues": [
+  {
+   "text": "Five projects",
+   "end_s": 0.86,
+   "words": [
+    {
+     "text": "Five",
+     "end_s": 0.42,
+     "start_s": 0.12
+    },
+    {
+     "text": "projects",
+     "end_s": 0.86,
+     "start_s": 0.42
+    }
+   ],
+   "start_s": 0.12
+  },
+  {
+   "text": "the AI",
+   "end_s": 1.48,
+   "words": [
+    {
+     "text": "the",
+     "end_s": 1.22,
+     "start_s": 0.86
+    },
+    {
+     "text": "AI",
+     "end_s": 1.48,
+     "start_s": 1.22
+    }
+   ],
+   "start_s": 0.86
+  },
+  {
+   "text": "builder",
+   "end_s": 1.72,
+   "words": [
+    {
+     "text": "builder",
+     "end_s": 1.72,
+     "start_s": 1.48
+    }
+   ],
+   "start_s": 1.48
+  },
+  {
+   "text": "community can't",
+   "end_s": 2.86,
+   "words": [
+    {
+     "text": "community",
+     "end_s": 2.3,
+     "start_s": 1.72
+    },
+    {
+     "text": "can't",
+     "end_s": 2.86,
+     "start_s": 2.3
+    }
+   ],
+   "start_s": 1.72
+  },
+  {
+   "text": "stop talking",
+   "end_s": 3.36,
+   "words": [
+    {
+     "text": "stop",
+     "end_s": 3.02,
+     "start_s": 2.86
+    },
+    {
+     "text": "talking",
+     "end_s": 3.36,
+     "start_s": 3.02
+    }
+   ],
+   "start_s": 2.86
+  },
+  {
+   "text": "about.",
+   "end_s": 3.87,
+   "words": [
+    {
+     "text": "about.",
+     "end_s": 3.87,
+     "start_s": 3.36
+    }
+   ],
+   "start_s": 3.36
+  },
+  {
+   "text": "Number one,",
+   "end_s": 5.08,
+   "words": [
+    {
+     "text": "Number",
+     "end_s": 4.32,
+     "start_s": 4.12
+    },
+    {
+     "text": "one,",
+     "end_s": 4.68,
+     "start_s": 4.32
+    }
+   ],
+   "start_s": 4.12
+  },
+  {
+   "text": "Spec Kit.",
+   "end_s": 5.4,
+   "words": [
+    {
+     "text": "Spec",
+     "end_s": 5.14,
+     "start_s": 5.08
+    },
+    {
+     "text": "Kit.",
+     "end_s": 5.4,
+     "start_s": 5.14
+    }
+   ],
+   "start_s": 5.08
+  },
+  {
+   "text": "You write",
+   "end_s": 6.05,
+   "words": [
+    {
+     "text": "You",
+     "end_s": 5.85,
+     "start_s": 5.69
+    },
+    {
+     "text": "write",
+     "end_s": 6.05,
+     "start_s": 5.85
+    }
+   ],
+   "start_s": 5.69
+  },
+  {
+   "text": "the spec",
+   "end_s": 6.37,
+   "words": [
+    {
+     "text": "the",
+     "end_s": 6.37,
+     "start_s": 6.05
+    },
+    {
+     "text": "spec",
+     "end_s": 6.37,
+     "start_s": 6.37
+    }
+   ],
+   "start_s": 6.05
+  },
+  {
+   "text": "first, and",
+   "end_s": 7.07,
+   "words": [
+    {
+     "text": "first,",
+     "end_s": 6.87,
+     "start_s": 6.37
+    },
+    {
+     "text": "and",
+     "end_s": 7.07,
+     "start_s": 6.89
+    }
+   ],
+   "start_s": 6.37
+  },
+  {
+   "text": "your",
+   "end_s": 7.51,
+   "words": [
+    {
+     "text": "your",
+     "end_s": 7.51,
+     "start_s": 7.07
+    }
+   ],
+   "start_s": 7.07
+  },
+  {
+   "text": "agent builds",
+   "end_s": 7.81,
+   "words": [
+    {
+     "text": "agent",
+     "end_s": 7.51,
+     "start_s": 7.51
+    },
+    {
+     "text": "builds",
+     "end_s": 7.81,
+     "start_s": 7.51
+    }
+   ],
+   "start_s": 7.51
+  },
+  {
+   "text": "the whole",
+   "end_s": 8.37,
+   "words": [
+    {
+     "text": "the",
+     "end_s": 8.09,
+     "start_s": 7.81
+    },
+    {
+     "text": "whole",
+     "end_s": 8.37,
+     "start_s": 8.09
+    }
+   ],
+   "start_s": 7.81
+  },
+  {
+   "text": "thing from",
+   "end_s": 8.83,
+   "words": [
+    {
+     "text": "thing",
+     "end_s": 8.61,
+     "start_s": 8.37
+    },
+    {
+     "text": "from",
+     "end_s": 8.83,
+     "start_s": 8.61
+    }
+   ],
+   "start_s": 8.37
+  },
+  {
+   "text": "it.",
+   "end_s": 9.27,
+   "words": [
+    {
+     "text": "it.",
+     "end_s": 9.27,
+     "start_s": 8.83
+    }
+   ],
+   "start_s": 8.83
+  },
+  {
+   "text": "Number two,",
+   "end_s": 10.286,
+   "words": [
+    {
+     "text": "Number",
+     "end_s": 9.586,
+     "start_s": 9.446
+    },
+    {
+     "text": "two,",
+     "end_s": 10.006,
+     "start_s": 9.586
+    }
+   ],
+   "start_s": 9.446
+  },
+  {
+   "text": "Impeccable.",
+   "end_s": 10.786,
+   "words": [
+    {
+     "text": "Impeccable.",
+     "end_s": 10.786,
+     "start_s": 10.286
+    }
+   ],
+   "start_s": 10.286
+  },
+  {
+   "text": "It gives",
+   "end_s": 11.626,
+   "words": [
+    {
+     "text": "It",
+     "end_s": 11.446,
+     "start_s": 11.006
+    },
+    {
+     "text": "gives",
+     "end_s": 11.626,
+     "start_s": 11.446
+    }
+   ],
+   "start_s": 11.006
+  },
+  {
+   "text": "your coding",
+   "end_s": 12.086,
+   "words": [
+    {
+     "text": "your",
+     "end_s": 11.866,
+     "start_s": 11.626
+    },
+    {
+     "text": "coding",
+     "end_s": 12.086,
+     "start_s": 11.866
+    }
+   ],
+   "start_s": 11.626
+  },
+  {
+   "text": "agent real",
+   "end_s": 12.866,
+   "words": [
+    {
+     "text": "agent",
+     "end_s": 12.426,
+     "start_s": 12.086
+    },
+    {
+     "text": "real",
+     "end_s": 12.866,
+     "start_s": 12.426
+    }
+   ],
+   "start_s": 12.086
+  },
+  {
+   "text": "design taste,",
+   "end_s": 13.846,
+   "words": [
+    {
+     "text": "design",
+     "end_s": 13.286,
+     "start_s": 12.866
+    },
+    {
+     "text": "taste,",
+     "end_s": 13.686,
+     "start_s": 13.286
+    }
+   ],
+   "start_s": 12.866
+  },
+  {
+   "text": "so your",
+   "end_s": 14.466,
+   "words": [
+    {
+     "text": "so",
+     "end_s": 14.186,
+     "start_s": 13.846
+    },
+    {
+     "text": "your",
+     "end_s": 14.466,
+     "start_s": 14.186
+    }
+   ],
+   "start_s": 13.846
+  },
+  {
+   "text": "apps stop",
+   "end_s": 15.186,
+   "words": [
+    {
+     "text": "apps",
+     "end_s": 14.726,
+     "start_s": 14.466
+    },
+    {
+     "text": "stop",
+     "end_s": 15.186,
+     "start_s": 14.726
+    }
+   ],
+   "start_s": 14.466
+  },
+  {
+   "text": "looking generic.",
+   "end_s": 15.946,
+   "words": [
+    {
+     "text": "looking",
+     "end_s": 15.486,
+     "start_s": 15.186
+    },
+    {
+     "text": "generic.",
+     "end_s": 15.946,
+     "start_s": 15.486
+    }
+   ],
+   "start_s": 15.186
+  },
+  {
+   "text": "Number three,",
+   "end_s": 17.151,
+   "words": [
+    {
+     "text": "Number",
+     "end_s": 16.511,
+     "start_s": 16.411
+    },
+    {
+     "text": "three,",
+     "end_s": 16.911,
+     "start_s": 16.511
+    }
+   ],
+   "start_s": 16.411
+  },
+  {
+   "text": "trading agents.",
+   "end_s": 17.931,
+   "words": [
+    {
+     "text": "trading",
+     "end_s": 17.411,
+     "start_s": 17.151
+    },
+    {
+     "text": "agents.",
+     "end_s": 17.931,
+     "start_s": 17.411
+    }
+   ],
+   "start_s": 17.151
+  },
+  {
+   "text": "A whole",
+   "end_s": 18.911,
+   "words": [
+    {
+     "text": "A",
+     "end_s": 18.631,
+     "start_s": 18.331
+    },
+    {
+     "text": "whole",
+     "end_s": 18.911,
+     "start_s": 18.631
+    }
+   ],
+   "start_s": 18.331
+  },
+  {
+   "text": "trading firm",
+   "end_s": 19.511,
+   "words": [
+    {
+     "text": "trading",
+     "end_s": 19.191,
+     "start_s": 18.911
+    },
+    {
+     "text": "firm",
+     "end_s": 19.511,
+     "start_s": 19.191
+    }
+   ],
+   "start_s": 18.911
+  },
+  {
+   "text": "built from",
+   "end_s": 20.051,
+   "words": [
+    {
+     "text": "built",
+     "end_s": 19.771,
+     "start_s": 19.511
+    },
+    {
+     "text": "from",
+     "end_s": 20.051,
+     "start_s": 19.771
+    }
+   ],
+   "start_s": 19.511
+  },
+  {
+   "text": "AI agents.",
+   "end_s": 20.831,
+   "words": [
+    {
+     "text": "AI",
+     "end_s": 20.371,
+     "start_s": 20.051
+    },
+    {
+     "text": "agents.",
+     "end_s": 20.831,
+     "start_s": 20.371
+    }
+   ],
+   "start_s": 20.051
+  },
+  {
+   "text": "Analysts, a",
+   "end_s": 22.391,
+   "words": [
+    {
+     "text": "Analysts,",
+     "end_s": 21.931,
+     "start_s": 20.831
+    },
+    {
+     "text": "a",
+     "end_s": 22.391,
+     "start_s": 22.031
+    }
+   ],
+   "start_s": 20.831
+  },
+  {
+   "text": "bull, a",
+   "end_s": 22.991,
+   "words": [
+    {
+     "text": "bull,",
+     "end_s": 22.391,
+     "start_s": 22.391
+    },
+    {
+     "text": "a",
+     "end_s": 22.991,
+     "start_s": 22.691
+    }
+   ],
+   "start_s": 22.391
+  },
+  {
+   "text": "bear, and",
+   "end_s": 23.411,
+   "words": [
+    {
+     "text": "bear,",
+     "end_s": 22.991,
+     "start_s": 22.991
+    },
+    {
+     "text": "and",
+     "end_s": 23.411,
+     "start_s": 23.211
+    }
+   ],
+   "start_s": 22.991
+  },
+  {
+   "text": "a trader.",
+   "end_s": 23.731,
+   "words": [
+    {
+     "text": "a",
+     "end_s": 23.471,
+     "start_s": 23.411
+    },
+    {
+     "text": "trader.",
+     "end_s": 23.731,
+     "start_s": 23.471
+    }
+   ],
+   "start_s": 23.411
+  },
+  {
+   "text": "Number four,",
+   "end_s": 25.241,
+   "words": [
+    {
+     "text": "Number",
+     "end_s": 24.721,
+     "start_s": 24.701
+    },
+    {
+     "text": "four,",
+     "end_s": 25.021,
+     "start_s": 24.721
+    }
+   ],
+   "start_s": 24.701
+  },
+  {
+   "text": "the agents",
+   "end_s": 25.761,
+   "words": [
+    {
+     "text": "the",
+     "end_s": 25.581,
+     "start_s": 25.241
+    },
+    {
+     "text": "agents",
+     "end_s": 25.761,
+     "start_s": 25.581
+    }
+   ],
+   "start_s": 25.241
+  },
+  {
+   "text": "marketplace.",
+   "end_s": 26.481,
+   "words": [
+    {
+     "text": "marketplace.",
+     "end_s": 26.481,
+     "start_s": 25.761
+    }
+   ],
+   "start_s": 25.761
+  },
+  {
+   "text": "Hundreds of",
+   "end_s": 27.561,
+   "words": [
+    {
+     "text": "Hundreds",
+     "end_s": 27.181,
+     "start_s": 27.061
+    },
+    {
+     "text": "of",
+     "end_s": 27.561,
+     "start_s": 27.181
+    }
+   ],
+   "start_s": 27.061
+  },
+  {
+   "text": "ready-made sub-agents",
+   "end_s": 28.461,
+   "words": [
+    {
+     "text": "ready-made",
+     "end_s": 27.961,
+     "start_s": 27.561
+    },
+    {
+     "text": "sub-agents",
+     "end_s": 28.461,
+     "start_s": 27.961
+    }
+   ],
+   "start_s": 27.561
+  },
+  {
+   "text": "you",
+   "end_s": 28.741,
+   "words": [
+    {
+     "text": "you",
+     "end_s": 28.741,
+     "start_s": 28.461
+    }
+   ],
+   "start_s": 28.461
+  },
+  {
+   "text": "can drop",
+   "end_s": 29.081,
+   "words": [
+    {
+     "text": "can",
+     "end_s": 28.941,
+     "start_s": 28.741
+    },
+    {
+     "text": "drop",
+     "end_s": 29.081,
+     "start_s": 28.941
+    }
+   ],
+   "start_s": 28.741
+  },
+  {
+   "text": "straight into",
+   "end_s": 29.741,
+   "words": [
+    {
+     "text": "straight",
+     "end_s": 29.461,
+     "start_s": 29.081
+    },
+    {
+     "text": "into",
+     "end_s": 29.741,
+     "start_s": 29.461
+    }
+   ],
+   "start_s": 29.081
+  },
+  {
+   "text": "Cloud Code.",
+   "end_s": 30.161,
+   "words": [
+    {
+     "text": "Cloud",
+     "end_s": 29.861,
+     "start_s": 29.741
+    },
+    {
+     "text": "Code.",
+     "end_s": 30.161,
+     "start_s": 29.861
+    }
+   ],
+   "start_s": 29.741
+  },
+  {
+   "text": "And number",
+   "end_s": 30.796,
+   "words": [
+    {
+     "text": "And",
+     "end_s": 30.636,
+     "start_s": 30.286
+    },
+    {
+     "text": "number",
+     "end_s": 30.796,
+     "start_s": 30.636
+    }
+   ],
+   "start_s": 30.286
+  },
+  {
+   "text": "five,",
+   "end_s": 31.736,
+   "words": [
+    {
+     "text": "five,",
+     "end_s": 31.236,
+     "start_s": 30.796
+    }
+   ],
+   "start_s": 30.796
+  },
+  {
+   "text": "Cloud Code",
+   "end_s": 32.116,
+   "words": [
+    {
+     "text": "Cloud",
+     "end_s": 31.796,
+     "start_s": 31.736
+    },
+    {
+     "text": "Code",
+     "end_s": 32.116,
+     "start_s": 31.796
+    }
+   ],
+   "start_s": 31.736
+  },
+  {
+   "text": "Game Studios.",
+   "end_s": 33.056,
+   "words": [
+    {
+     "text": "Game",
+     "end_s": 32.436,
+     "start_s": 32.116
+    },
+    {
+     "text": "Studios.",
+     "end_s": 33.056,
+     "start_s": 32.436
+    }
+   ],
+   "start_s": 32.116
+  },
+  {
+   "text": "Directors, leads,",
+   "end_s": 34.111,
+   "words": [
+    {
+     "text": "Directors,",
+     "end_s": 33.631,
+     "start_s": 33.631
+    },
+    {
+     "text": "leads,",
+     "end_s": 34.051,
+     "start_s": 34.051
+    }
+   ],
+   "start_s": 33.631
+  },
+  {
+   "text": "and specialists",
+   "end_s": 34.711,
+   "words": [
+    {
+     "text": "and",
+     "end_s": 34.391,
+     "start_s": 34.111
+    },
+    {
+     "text": "specialists",
+     "end_s": 34.711,
+     "start_s": 34.391
+    }
+   ],
+   "start_s": 34.111
+  },
+  {
+   "text": "that build",
+   "end_s": 35.271,
+   "words": [
+    {
+     "text": "that",
+     "end_s": 35.051,
+     "start_s": 34.711
+    },
+    {
+     "text": "build",
+     "end_s": 35.271,
+     "start_s": 35.051
+    }
+   ],
+   "start_s": 34.711
+  },
+  {
+   "text": "a whole",
+   "end_s": 35.751,
+   "words": [
+    {
+     "text": "a",
+     "end_s": 35.551,
+     "start_s": 35.271
+    },
+    {
+     "text": "whole",
+     "end_s": 35.751,
+     "start_s": 35.551
+    }
+   ],
+   "start_s": 35.271
+  },
+  {
+   "text": "game with",
+   "end_s": 36.391,
+   "words": [
+    {
+     "text": "game",
+     "end_s": 36.011,
+     "start_s": 35.751
+    },
+    {
+     "text": "with",
+     "end_s": 36.391,
+     "start_s": 36.011
+    }
+   ],
+   "start_s": 35.751
+  },
+  {
+   "text": "you.",
+   "end_s": 36.771,
+   "words": [
+    {
+     "text": "you.",
+     "end_s": 36.771,
+     "start_s": 36.391
+    }
+   ],
+   "start_s": 36.391
+  },
+  {
+   "text": "Comment 'repo',",
+   "end_s": 37.431,
+   "words": [
+    {
+     "text": "Comment",
+     "end_s": 37.391,
+     "start_s": 37.011
+    },
+    {
+     "text": "'repo',",
+     "end_s": 37.891,
+     "start_s": 37.391
+    }
+   ],
+   "start_s": 37.011
+  }
+ ]
+}

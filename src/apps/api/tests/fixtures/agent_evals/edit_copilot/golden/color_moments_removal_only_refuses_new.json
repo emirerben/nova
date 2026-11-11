@@ -1,0 +1,87 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-11-v122",
+  "input": {
+    "utterance": "make the end fade to black slower, 3 seconds",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "color_moments",
+        "sfx"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 60.0,
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {
+            "id": "whoosh-fast",
+            "label": "Whoosh fast",
+            "category": "transition",
+            "duration_s": 0.6
+          },
+          {
+            "id": "cinematic-hit",
+            "label": "Cinematic hit",
+            "category": "impact",
+            "duration_s": 1.2
+          }
+        ]
+      },
+      "color_moments": {
+        "moments": [
+          {
+            "start_s": 16.0,
+            "end_s": 22.0,
+            "tone": "mono",
+            "enter": "cut",
+            "exit": "light_leak"
+          }
+        ],
+        "end_fade_s": 1.6,
+        "duration_s": 60.0,
+        "removal_only": true
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_color_moments\", \"end_fade_s\": 3}], \"confidence\": 0.9, \"reply\": \"Done, the ending fades slower now.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [],
+    "confidence": 0.9,
+    "reply": "I can only take the colour moments or the end fade off this video right now, not add or change them.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "unsupported",
+    "rejection_reasons": [
+      {
+        "op": "set_color_moments",
+        "reason": "capability_unavailable",
+        "detail": "I can only take the colour moments or the end fade off this video right now, not add or change them."
+      }
+    ],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "I can only take the colour moments or the end fade off this video right now, not add or change them.",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "closed gate, REMOVAL ONLY lane: changing the end fade is new, so it is refused with a plain sentence and no op survives",
+    "lane": "color_moments",
+    "capability_contract": {
+      "intent": "edit",
+      "needs_clarification": false,
+      "reply_contains": [
+        "only take the colour moments"
+      ],
+      "reply_excludes": [
+        "fades slower"
+      ]
+    }
+  }
+}

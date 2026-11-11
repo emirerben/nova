@@ -10,7 +10,6 @@ final class NativeEditorInspectorTests: XCTestCase {
         let transitions: [String]
         let textAnimations: [String]
         let musicAlignments: [String]
-        let captionFonts: [String]
         let captionSizePX: Bounds
         let captionYFrac: Bounds
         enum CodingKeys: String, CodingKey {
@@ -18,7 +17,6 @@ final class NativeEditorInspectorTests: XCTestCase {
             case transitions
             case textAnimations = "text_animations"
             case musicAlignments = "music_alignments"
-            case captionFonts = "caption_fonts"
             case captionSizePX = "caption_size_px"
             case captionYFrac = "caption_y_frac"
         }
@@ -32,7 +30,6 @@ final class NativeEditorInspectorTests: XCTestCase {
         XCTAssertEqual(NativeEditorWireContract.transitions, contract.transitions)
         XCTAssertEqual(NativeEditorWireContract.textAnimations, contract.textAnimations)
         XCTAssertEqual(NativeEditorWireContract.musicAlignments, contract.musicAlignments)
-        XCTAssertEqual(NativeEditorWireContract.captionFonts, contract.captionFonts)
         XCTAssertEqual(contract.captionSizePX.min, 36)
         XCTAssertEqual(contract.captionSizePX.max, 160)
         XCTAssertEqual(contract.captionYFrac.min, 0.30)

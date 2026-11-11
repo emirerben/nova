@@ -61,13 +61,15 @@ def repair_issue(kind: str, role: str) -> str:
     word = role_word(role)
     if kind == "restore_exact_text":
         return say(
-            en=f"the {word} isn't your exact wording",
-            tr=f"{word} tam olarak yazdığın gibi değil",
+            en="the {word} isn't your exact wording",
+            tr="{word} tam olarak yazdığın gibi değil",
+            word=word,
         )
     if kind == "fit_text_to_duration":
         return say(
-            en=f"the {word} runs past the end of the video",
-            tr=f"{word} videonun sonundan taşıyor",
+            en="the {word} runs past the end of the video",
+            tr="{word} videonun sonundan taşıyor",
+            word=word,
         )
     raise ValueError(f"no repair wording for {kind}")
 
@@ -78,24 +80,26 @@ def repair_summary(items: Sequence[tuple[str, str]]) -> str:
     if len(issues) == 1:
         return say(
             en=(
-                f"One thing didn't match your request: {issues[0]}. I prepared a fix in your "
+                "One thing didn't match your request: {issues_0}. I prepared a fix in your "
                 "draft. Approve it to render, or undo it."
             ),
             tr=(
-                f"Bir şey isteğinle uyuşmadı: {issues[0]}. Taslağında bir düzeltme hazırladım. "
+                "Bir şey isteğinle uyuşmadı: {issues_0}. Taslağında bir düzeltme hazırladım. "
                 "Oluşturmak için onayla ya da geri al."
             ),
+            issues_0=issues[0],
         )
     joined = "; ".join(issues)
     return say(
         en=(
-            f"A few things didn't match your request: {joined}. I prepared fixes in your "
+            "A few things didn't match your request: {joined}. I prepared fixes in your "
             "draft. Approve them to render, or undo them."
         ),
         tr=(
-            f"Birkaç şey isteğinle uyuşmadı: {joined}. Taslağında düzeltmeler hazırladım. "
+            "Birkaç şey isteğinle uyuşmadı: {joined}. Taslağında düzeltmeler hazırladım. "
             "Oluşturmak için onayla ya da geri al."
         ),
+        joined=joined,
     )
 
 
@@ -104,13 +108,17 @@ def fix_done(kind: str, role: str) -> str | None:
     word = role_word(role)
     if kind == "restore_exact_text":
         return say(
-            en=f"Restored your exact wording on the {word}.",
-            tr=f"{_role_at_start(role)} tam yazdığın hâline döndü.",
+            en="Restored your exact wording on the {word}.",
+            tr="{role_at_start_role} tam yazdığın hâline döndü.",
+            word=word,
+            role_at_start_role=_role_at_start(role),
         )
     if kind == "fit_text_to_duration":
         return say(
-            en=f"Shortened the {word} so it ends before the video does.",
-            tr=f"{_role_at_start(role)} video bitmeden bitecek şekilde kısaldı.",
+            en="Shortened the {word} so it ends before the video does.",
+            tr="{role_at_start_role} video bitmeden bitecek şekilde kısaldı.",
+            word=word,
+            role_at_start_role=_role_at_start(role),
         )
     return None
 
@@ -120,19 +128,24 @@ def fix_optional(kind: str, role: str, target: Mapping[str, Any] | None = None) 
     word = role_word(role)
     if kind == "restore_exact_text":
         return say(
-            en=f"Optional: put your exact wording back on the {word}.",
-            tr=f"İstersen {word} tam yazdığın hâline döndürülebilir.",
+            en="Optional: put your exact wording back on the {word}.",
+            tr="İstersen {word} tam yazdığın hâline döndürülebilir.",
+            word=word,
         )
     if kind == "fit_text_to_duration":
         return say(
-            en=f"Optional: shorten the {word} so it ends before the video does.",
-            tr=f"İstersen {word} video bitmeden bitecek şekilde kısaltılabilir.",
+            en="Optional: shorten the {word} so it ends before the video does.",
+            tr="İstersen {word} video bitmeden bitecek şekilde kısaltılabilir.",
+            word=word,
         )
     if kind == "move_text_to_safe_anchor":
         en_anchor, tr_anchor = _ANCHORS.get(str((target or {}).get("anchor")), _ANCHORS["top"])
         return say(
-            en=f"Optional: move the {word} to the {en_anchor} so it's easier to read.",
-            tr=f"İstersen {word} daha kolay okunsun diye {tr_anchor} taşınabilir.",
+            en="Optional: move the {word} to the {en_anchor} so it's easier to read.",
+            tr="İstersen {word} daha kolay okunsun diye {tr_anchor} taşınabilir.",
+            word=word,
+            en_anchor=en_anchor,
+            tr_anchor=tr_anchor,
         )
     return None
 
@@ -218,10 +231,10 @@ def question_text(literal: str | None = None) -> str:
         )
     return say(
         en=(
-            "The text on screen doesn't match what you asked for. "
-            f"Want me to change it to {quoted}?"
+            "The text on screen doesn't match what you asked for. Want me to change it to {quoted}?"
         ),
-        tr=f"Ekrandaki yazı istediğinle uyuşmuyor. {quoted} olarak değiştireyim mi?",
+        tr="Ekrandaki yazı istediğinle uyuşmuyor. {quoted} olarak değiştireyim mi?",
+        quoted=quoted,
     )
 
 
@@ -231,7 +244,7 @@ def question_options(literal: str | None = None) -> list[str]:
     change = (
         say(en="Change it", tr="Değiştir")
         if quoted is None
-        else say(en=f"Change it to {quoted}", tr=f"{quoted} olarak değiştir")
+        else say(en="Change it to {quoted}", tr="{quoted} olarak değiştir", quoted=quoted)
     )
     return [change, say(en="Keep it", tr="Böyle kalsın")]
 

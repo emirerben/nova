@@ -1,0 +1,44 @@
+{
+  "_doc": "KRI-1350 colour-moments wire, decoded by both the server (tests/kria/test_colour_moments.py) and the phone engine (ColorMomentsCompositionTests.testParityFixtureDecodesAndValidatesLikeTheServer). Each case's keys are merged into a 4 s base recipe; snake_case as on the API.",
+  "valid": [
+    {
+      "name": "mono with light leak in and dip out",
+      "color_moments": [
+        {"id": "cm1", "start": 1.0, "end": 2.5, "tone": "mono",
+         "enter": {"style": "light_leak", "duration": 0.3333}, "exit": {"style": "dip_black", "duration": 0.3333}}
+      ]
+    },
+    {
+      "name": "two moments, cut edges omitted (never written), warm and faded",
+      "color_moments": [
+        {"id": "a", "start": 0.0, "end": 1.0, "tone": "warm"},
+        {"id": "b", "start": 1.0, "end": 3.0, "tone": "faded", "enter": {"style": "flash_white", "duration": 0.2}}
+      ]
+    },
+    {
+      "name": "moment and end fade",
+      "color_moments": [{"id": "m", "start": 0.5, "end": 1.5, "tone": "mono"}],
+      "end_fade": {"duration": 1.6}
+    }
+  ],
+  "invalid": [
+    {"name": "overlapping windows", "color_moments": [
+      {"id": "a", "start": 0.0, "end": 2.0, "tone": "mono"},
+      {"id": "b", "start": 1.5, "end": 3.0, "tone": "warm"}]},
+    {"name": "past the end", "color_moments": [{"id": "a", "start": 3.0, "end": 4.5, "tone": "mono"}]},
+    {"name": "too short", "color_moments": [{"id": "a", "start": 1.0, "end": 1.2, "tone": "mono"}]},
+    {"name": "unknown tone", "color_moments": [{"id": "a", "start": 1.0, "end": 2.0, "tone": "sepia"}]},
+    {"name": "unknown edge style", "color_moments": [{"id": "a", "start": 1.0, "end": 2.0, "tone": "mono", "enter": {"style": "spin"}}]},
+    {"name": "edge too long", "color_moments": [{"id": "a", "start": 1.0, "end": 2.0, "tone": "mono", "enter": {"style": "light_leak", "duration": 0.9}}]},
+    {"name": "unknown key", "color_moments": [{"id": "a", "start": 1.0, "end": 2.0, "tone": "mono", "sfx": "whoosh"}]},
+    {"name": "duplicate ids", "color_moments": [
+      {"id": "a", "start": 0.0, "end": 1.0, "tone": "mono"},
+      {"id": "a", "start": 2.0, "end": 3.0, "tone": "mono"}]},
+    {"name": "seven moments", "color_moments": [
+      {"id": "1", "start": 0.0, "end": 0.5, "tone": "mono"}, {"id": "2", "start": 0.5, "end": 1.0, "tone": "mono"},
+      {"id": "3", "start": 1.0, "end": 1.5, "tone": "mono"}, {"id": "4", "start": 1.5, "end": 2.0, "tone": "mono"},
+      {"id": "5", "start": 2.0, "end": 2.5, "tone": "mono"}, {"id": "6", "start": 2.5, "end": 3.0, "tone": "mono"},
+      {"id": "7", "start": 3.0, "end": 3.5, "tone": "mono"}]},
+    {"name": "end fade too long", "end_fade": {"duration": 5.0}}
+  ]
+}

@@ -23,16 +23,20 @@ Failure modes the eval was written against (a cassette or fuzz row exists for ea
 * E3   hand-authored cassettes over the nermin-*, east-run and hand-authored contexts.
 * E4   the structlog events (shown, agent_run, tap), end to end into the funnel.
 
-What this does NOT prove: what gpt-6.1-sol actually picks, what it costs, or how often a real
-answer survives the witness. That is the paid live eval in tests/evals/README.md.
+What the replay does NOT prove: what gpt-6.1-sol actually picks, what it costs, or how often a
+real answer survives the witness. The thread tests at the bottom do, in ``--eval-mode=live``:
+the same real task body, one paid call per thread, booked under ``live_eval`` through the
+ledger (tests/evals/README.md). Without that flag they run against a zero-cost stand-in.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import random
 import sys
 from collections import Counter
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -207,7 +211,8 @@ def test_the_run_books_one_ledger_feature_under_the_suggestions_capability(monke
     assert ai_cost_control._credit_capability(request) == "suggestions"
     assert request.ctx.usage_purpose == "optional_background"
     assert "suggestions" in ai_cost_control._ALWAYS_ENFORCED_CAPABILITIES
-    assert settings.ai_openai_suggestions_budget_usd == 0, "the budget defaults to no spend"
+    default = type(settings).model_fields["ai_openai_suggestions_budget_usd"].default
+    assert default == 0, "the budget defaults to no spend"
 
 
 def test_a_non_openai_booking_under_the_suggestions_capability_is_refused():
@@ -1175,3 +1180,200 @@ def _picks_for(case, kind, why):
     return SuggestionAgentOutput(
         ranked=[RankedPick(kind=kind, target_ids=["all"], why=why, copy=None, rank=1)]
     )
+
+
+# ── Thread inputs: the same task body, a real model in live mode ─────────────────────
+
+THREADS = {c.name: c for c in sa.thread_cases()}
+
+
+def _live_env(monkeypatch, *, max_cost="2.0"):
+    for key, value in {
+        "NOVA_EVAL_MODE": "live",
+        "NOVA_EVAL_USAGE_PURPOSE": "live_eval",
+        "NOVA_EVAL_TEST_RUN_ID": "suggestion-agent-dry",
+        "NOVA_EVAL_MAX_COST_USD": max_cost,
+        "NOVA_EVAL_RESERVATION_APPROVED": "true",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_thread_inventory_covers_the_matrix_and_every_thread_builds_a_paid_call():
+    cases = list(THREADS.values())
+    assert len(cases) == 10
+    contexts = [sa.thread_context(c) for c in cases]
+    assert {c.state for c in contexts} == {"first_prompt", "ready"}
+    assert {c.language for c in contexts} == {"en", "tr"}
+    assert any(clip["kind"] == "image" for c in contexts for clip in c.clips)
+    assert any(len(c.clips) == 12 for c in contexts)
+    assert any(c.typed_request for c in contexts)
+    assert any(c.signals for c in contexts)
+    assert any(c.kind_inputs.get("transcripts") for c in contexts)
+    estimates = sa.preflight_estimates(cases)
+    cap = settings.kria_suggester_max_usd
+    assert all(0 < e <= cap for e in estimates.values()), estimates
+    for case in cases:
+        plan = sc.build_candidates(sa.thread_context(case))
+        assert plan.state == case.context_dict["state"], case.name
+        assert plan.levers, f"{case.name}: nothing for the agent to rank"
+
+
+@pytest.mark.parametrize("case", [pytest.param(c, id=n) for n, c in THREADS.items()])
+def test_thread_dry_run_through_the_real_task_costs_nothing_and_obeys_the_contract(case):
+    client = sa.DryRunClient()
+    run = sa.run_thread(case, client, live=False)
+    assert len(client.calls) == 1, "exactly one paid attempt per run"
+    assert not run.problems, run.problems
+    assert run.fallback_reason is None, run.fallback_reason
+    assert run.picks_made >= 1 and run.cost_usd == 0
+    assert run.latency_ms is not None
+
+
+def test_live_run_refuses_when_either_budget_is_below_the_batch_worst_case():
+    total = sum(sa.preflight_estimates(list(THREADS.values())).values())
+    assert sa.live_budget_shortfall(total, monthly=2, suggestions=2) is None
+    only_capability = sa.live_budget_shortfall(total, monthly=0, suggestions=2)
+    assert only_capability and "AI_OPENAI_MONTHLY_BUDGET_USD" in only_capability
+    only_monthly = sa.live_budget_shortfall(total, monthly=2, suggestions=0)
+    assert only_monthly and "AI_OPENAI_SUGGESTIONS_BUDGET_USD" in only_monthly
+
+
+def test_the_documented_live_command_sets_both_budgets_the_ledger_checks():
+    readme = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
+    command = readme.split("pytest tests/evals/test_suggestion_agent_evals.py --eval-mode=live", 1)[
+        0
+    ]
+    command = command.rsplit("```bash", 1)[1]
+    assert "AI_OPENAI_MONTHLY_BUDGET_USD=2" in command
+    assert "AI_OPENAI_SUGGESTIONS_BUDGET_USD=2" in command
+
+
+def test_the_thread_summary_reports_cost_latency_and_the_witness_share():
+    runs = [sa.run_thread(c, sa.DryRunClient(), live=False) for c in THREADS.values()]
+    summary = sa.summarize(runs)
+    assert summary["runs"] == 10 and summary["ok_runs"] == 10
+    assert 0 < summary["witness_pass_share"] <= 1
+    assert summary["picks_passing_witness"] <= summary["picks"]
+    assert summary["latency_ms_p50"] <= summary["latency_ms_p95"]
+    assert summary["contract_problems"] == 0
+    assert sa.percentile([1.0, 2.0, 3.0, 4.0], 0.5) == 2.0
+    assert sa.percentile([1.0, 2.0, 3.0, 4.0], 0.95) == 4.0
+    assert sa.percentile([], 0.5) is None
+
+
+def test_a_live_run_books_under_live_eval_with_the_conftest_attribution(monkeypatch):
+    _live_env(monkeypatch, max_cost="1.5")
+    case = next(iter(THREADS.values()))
+    ctx = sa.thread_context(case)
+    plan = sc.build_candidates(ctx)
+    _, _, _, requests = sa.run_agent(
+        ctx,
+        plan,
+        sa.DryRunClient(),
+        run_context=lambda: sa.eval_run_context(case),
+        real_ledger=False,
+    )
+    (request,) = requests
+    from app.services import ai_cost_control
+
+    assert request.feature == ai_cost_control._SUGGESTER_FEATURE
+    assert ai_cost_control._credit_capability(request) == "suggestions"
+    assert request.provider == "openai" and request.model == settings.kria_suggester_model
+    assert request.ctx.usage_purpose == "live_eval"
+    assert request.ctx.test_run_id == "suggestion-agent-dry"
+    assert request.ctx.estimated_max_cost_usd == 1.5
+    assert request.ctx.reservation_approved is True
+    assert request.ctx.extra["skip_agent_run_persist"] is True
+    assert request.estimated_cost_usd <= 1.5
+
+
+def test_a_replay_run_never_carries_live_attribution():
+    case = next(iter(THREADS.values()))
+    ctx = sa.thread_context(case)
+    _, _, _, requests = sa.run_agent(ctx, sc.build_candidates(ctx), sa.DryRunClient())
+    assert requests[0].ctx.usage_purpose == "optional_background"
+    assert requests[0].ctx.test_run_id is None
+
+
+@pytest.fixture(scope="session")
+def live_suggestion_client(eval_mode):
+    """The production ``ModelDispatcher`` for ``KRIA_SUGGESTER_MODEL`` (OpenAI), live only.
+
+    conftest's ``live_model_client`` is Gemini-keyed; this agent bills OpenAI, so it needs its
+    own key check. The gates themselves (purpose, run id, cap, acknowledgement) are conftest's.
+    """
+    if eval_mode != "live":
+        return None
+    key = settings.openai_api_key or os.environ.get("OPENAI_API_KEY")
+    if not key:
+        pytest.skip("the live suggestion eval requires OPENAI_API_KEY")
+    from app.agents._model_client import default_client
+
+    return default_client()
+
+
+@pytest.fixture(scope="session")
+def live_thread_report(eval_mode, request):
+    """Collects every live run and, at session end, prints and writes the numbers the README
+    records: ``.suggestion-agent-live/<test run id>/report.json``."""
+    runs: list[sa.ThreadRun] = []
+    yield runs
+    if eval_mode != "live" or not runs:
+        return
+    run_id = os.environ.get("NOVA_EVAL_TEST_RUN_ID", "unattributed")
+    out = sa.LIVE_REPORT_DIR / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    summary = sa.summarize(runs)
+    report = {
+        "test_run_id": run_id,
+        "model": settings.kria_suggester_model,
+        "prompt_version": sc.PROMPT_VERSION,
+        "summary": summary,
+        "runs": [r.as_row() for r in runs],
+    }
+    (out / "report.json").write_text(
+        json.dumps(report, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    reporter = request.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_line(f"suggestion-agent live summary -> {out / 'report.json'}")
+        reporter.write_line(json.dumps(summary, indent=1))
+
+
+@pytest.fixture(scope="session")
+def live_cost_preflight(eval_mode):
+    """Refuse the batch before the first call when the worst case of every thread together is
+    over the approved cap. The ledger enforces the same cap per call; this stops it starting."""
+    if eval_mode != "live":
+        return None
+    cap = float(os.environ["NOVA_EVAL_MAX_COST_USD"])
+    estimates = sa.preflight_estimates(list(THREADS.values()))
+    total = sum(estimates.values())
+    if total > cap:
+        pytest.exit(
+            f"Refusing live suggestion eval: worst-case ${total:.3f} over {len(estimates)} "
+            f"threads > ${cap:.2f} approved run cap.",
+            returncode=2,
+        )
+    shortfall = sa.live_budget_shortfall(
+        total,
+        monthly=settings.ai_openai_monthly_budget_usd,
+        suggestions=settings.ai_openai_suggestions_budget_usd,
+    )
+    if shortfall:
+        pytest.exit(shortfall, returncode=2)
+    return total
+
+
+@pytest.mark.parametrize("case", [pytest.param(c, id=n) for n, c in THREADS.items()])
+def test_live_thread(
+    case, eval_mode, live_suggestion_client, live_thread_report, live_cost_preflight
+):
+    if eval_mode != "live":
+        pytest.skip("paid: needs --eval-mode=live and the conftest gates")
+    run = sa.run_thread(case, live_suggestion_client, live=True)
+    live_thread_report.append(run)
+    assert run.fallback_reason not in sa.LIVE_HARD_ERRORS, (
+        f"{case.name}: no usable paid call ({run.fallback_reason})"
+    )
+    assert not run.problems, run.problems

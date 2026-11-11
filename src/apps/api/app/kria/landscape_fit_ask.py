@@ -182,16 +182,18 @@ def judge_landscape_fit(
             return FitVerdict(
                 "met",
                 say(
-                    en=f"Kept black bars on the {_clips(n)}, so nothing is cropped",
-                    tr=f"{_clips(n)} siyah bantlarla bütün kaldı, hiçbir şey kırpılmadı",
+                    en="Kept black bars on the {clips_n}, so nothing is cropped",
+                    tr="{clips_n} siyah bantlarla bütün kaldı, hiçbir şey kırpılmadı",
+                    clips_n=_clips(n),
                 ),
                 checked=True,
             )
         return FitVerdict(
             "partial",
             say(
-                en=f"You chose black bars, so the {_clips(n)} keep them",
-                tr=f"Siyah bantları seçtin, o yüzden {_clips(n)} bantlı kaldı",
+                en="You chose black bars, so the {clips_n} keep them",
+                tr="Siyah bantları seçtin, o yüzden {clips_n} bantlı kaldı",
+                clips_n=_clips(n),
             ),
             checked=True,
         )
@@ -199,8 +201,9 @@ def judge_landscape_fit(
         return FitVerdict(
             "partial",
             say(
-                en=f"You chose crop, so the {_clips(n)} are cropped to fill the frame",
-                tr=f"Kırpmayı seçtin, o yüzden {_clips(n)} ekranı dolduracak şekilde kırpıldı",
+                en="You chose crop, so the {clips_n} are cropped to fill the frame",
+                tr="Kırpmayı seçtin, o yüzden {clips_n} ekranı dolduracak şekilde kırpıldı",
+                clips_n=_clips(n),
             ),
             checked=True,
         )
@@ -209,8 +212,9 @@ def judge_landscape_fit(
         return FitVerdict(
             "met",
             say(
-                en=f"Cropped the {_clips(n)} to fill the vertical frame",
-                tr=f"{_clips(n)} dikey ekranı dolduracak şekilde kırpıldı",
+                en="Cropped the {clips_n} to fill the vertical frame",
+                tr="{clips_n} dikey ekranı dolduracak şekilde kırpıldı",
+                clips_n=_clips(n),
             ),
             checked=True,
         )
@@ -222,20 +226,24 @@ def judge_landscape_fit(
             "partial",
             say(
                 en=(
-                    f"Cropped {cropped} of {_clips(n)} to vertical; kept black bars on {barred} "
+                    "Cropped {cropped} of {clips_n} to vertical; kept black bars on {barred} "
                     "because the face moves too far for one vertical crop to keep it"
                 ),
                 tr=(
-                    f"{_clips(n)} içinden {cropped} tanesi dikey kırpıldı; {barred} tanesinde yüz "
+                    "{clips_n} içinden {cropped} tanesi dikey kırpıldı; {barred} tanesinde yüz "
                     "tek bir dikey kadraja sığmayacak kadar hareket ettiği için siyah bant kaldı"
                 ),
+                cropped=cropped,
+                clips_n=_clips(n),
+                barred=barred,
             ),
             checked=True,
         )
     follows = (
         say(
-            en=f"; the crop follows the main face on {faced}",
-            tr=f"; {faced} tanesinde kadraj ana yüzü takip ediyor",
+            en="; the crop follows the main face on {faced}",
+            tr="; {faced} tanesinde kadraj ana yüzü takip ediyor",
+            faced=faced,
         )
         if faced
         else ""
@@ -243,8 +251,10 @@ def judge_landscape_fit(
     return FitVerdict(
         "met",
         say(
-            en=f"Cropped the {_clips(n)} to fill the vertical frame{follows}",
-            tr=f"{_clips(n)} dikey ekranı dolduracak şekilde kırpıldı{follows}",
+            en="Cropped the {clips_n} to fill the vertical frame{follows}",
+            tr="{clips_n} dikey ekranı dolduracak şekilde kırpıldı{follows}",
+            clips_n=_clips(n),
+            follows=follows,
         ),
         checked=True,
     )

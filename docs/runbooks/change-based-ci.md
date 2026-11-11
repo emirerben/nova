@@ -77,7 +77,18 @@ mobile-contract job: three Macs per iOS PR saturated the account's five
 concurrent macOS runners (2026-10-27..30: median Mac wait 10-19 min, median PR
 67-87 min). The fixture-driven journeys still replay offline on Linux for every
 PR; their iPhone renders run nightly and on manual CI dispatch, which is how a
-PR gets native render evidence. The `unit` leg also skips the export/OCR unit
+PR gets native render evidence. A PR's selected UI scenarios run on the
+`unit` leg when they fit one shard (`ui_tests.PR_SHARD_TARGET_SECONDS`, 35 min
+of recorded time). A longer selection, such as an editor PR's group (88.6
+recorded min; 87 min serially on #2225 after build and unit tests), gets one
+`ui-<i>` leg per duration-balanced shard, up to three, and the unit leg only
+builds and runs unit tests. Each UI leg verifies exactly its part of the
+partition, and the `journey` aggregate recomputes the shard count and leg list
+so a missing or extra leg fails. A changed UI test file selects the group that
+owns its tests (`ui_tests.file_group`); a file with shared file-scope helpers
+needs an explicit `sources` mapping or selects `full`. Refresh the durations
+with `scripts/ios/refresh-ui-durations.py`, which reads both `iOS` and `CI`
+native legs. The `unit` leg also skips the export/OCR unit
 proofs listed in `scripts/ios/render_evidence.py` (real MP4 exports read back
 with Vision) unless the PR touches the render, export or text code in that
 file's trigger list, or a selected journey names them (`journey-gate.py

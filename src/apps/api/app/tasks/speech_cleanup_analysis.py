@@ -21,7 +21,8 @@ import tempfile
 import time
 import uuid
 import wave
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -36,10 +37,14 @@ from app.models import ContentPlan, PlanItem, SpeechCleanupAnalysis
 from app.pipeline.caption_language import crosscheck_detected_language
 from app.pipeline.silence_cut import NO_SPEECH_BAILOUTS
 from app.pipeline.speech_cleanup_analysis import (
+    MULTI_TAKE_PAYLOAD_VERSION,
     PROGRAMMING_ERRORS,
     TRANSCRIPTION_PROVIDER_MODULES,
     SpeechCleanupAnalysisInput,
     SpeechCleanupAnalysisResult,
+    SpeechCleanupMultiTakeResult,
+    SpeechCleanupTakeResult,
+    multi_take_public_receipt,
 )
 from app.pipeline.speech_cleanup_analysis import (
     analyze_speech_cleanup as run_speech_cleanup_engine,
@@ -117,6 +122,12 @@ class _ClaimedWork:
     # creator's other background analysis.
     plan_item_id: uuid.UUID | None = None
     creator_id: str | None = None
+    # KRI-720: a several-take row (`analysis_payload_version == "2"`). ``takes`` holds one
+    # ``(take, reference_transcript)`` per clip with sound, resolved again at claim time and
+    # fenced on the row's fingerprint; empty for a several-take row whose identity no longer
+    # resolves, which `_validate_work` refuses.
+    multi_take: bool = False
+    takes: tuple[tuple[Any, str | None], ...] = ()
 
     @property
     def duration_s(self) -> float:
@@ -147,6 +158,46 @@ def _plan_owner_id(db: Any, row: SpeechCleanupAnalysis) -> str | None:
     return str(plan.user_id) if plan is not None else None
 
 
+def _claimed_takes(db: Any, row: SpeechCleanupAnalysis) -> tuple[tuple[Any, str | None], ...]:
+    """KRI-720: the takes of a several-take row, as its plan item resolves them right now.
+
+    The row stores only the first take; the rest come from the item, and only when the item
+    still resolves to the row's exact fingerprint (same takes, order, bytes, windows and
+    policy). Anything else returns ``()`` and the claim fails closed.
+    """
+
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        resolve_item_narration,
+    )
+
+    item = db.get(PlanItem, row.plan_item_id)
+    if item is None:
+        return ()
+    source = resolve_item_narration(item, detector_policy=current_detector_policy()).source
+    if (
+        source is None
+        or not source.takes
+        or source.source_policy_fingerprint != row.source_policy_fingerprint
+    ):
+        return ()
+    return tuple(
+        (
+            take,
+            reference_transcript_for_source(
+                item, storage_path=take.storage_path, generation=take.generation
+            ),
+        )
+        for take in source.takes
+    )
+
+
+def _multi_take_fields(db: Any, row: SpeechCleanupAnalysis) -> dict[str, Any]:
+    if getattr(row, "analysis_payload_version", None) != MULTI_TAKE_PAYLOAD_VERSION:
+        return {}
+    return {"multi_take": True, "takes": _claimed_takes(db, row)}
+
+
 def _claim_work(analysis_id: str) -> _ClaimedWork | None:
     """Claim one row and copy private inputs before releasing its DB lock."""
 
@@ -173,6 +224,7 @@ def _claim_work(analysis_id: str) -> _ClaimedWork | None:
                 reference_transcript=_reference_transcript(db, row),
                 plan_item_id=row.plan_item_id,
                 creator_id=_plan_owner_id(db, row),
+                **_multi_take_fields(db, row),
             )
         else:
             work = _ClaimedWork(
@@ -188,6 +240,7 @@ def _claim_work(analysis_id: str) -> _ClaimedWork | None:
                 reference_transcript=_reference_transcript(db, row),
                 plan_item_id=row.plan_item_id,
                 creator_id=_plan_owner_id(db, row),
+                **_multi_take_fields(db, row),
             )
         db.commit()
         return work
@@ -211,6 +264,17 @@ def _validate_work(work: _ClaimedWork) -> None:
         raise SpeechCleanupOperationalError("snapshot_mismatch", detail="detector_version")
     if not work.source_storage_path.strip() or not work.source_generation.strip():
         raise SpeechCleanupOperationalError("snapshot_mismatch", detail="source_identity")
+    if work.multi_take:
+        if len(work.takes) < 2:
+            raise SpeechCleanupOperationalError("snapshot_mismatch", detail="multi_take_identity")
+        first = work.takes[0][0]
+        if (
+            first.storage_path != work.source_storage_path
+            or first.generation != work.source_generation
+            or not math.isclose(first.window_start_s, work.window_start_s, abs_tol=1e-6)
+            or not math.isclose(first.window_end_s, work.window_end_s, abs_tol=1e-6)
+        ):
+            raise SpeechCleanupOperationalError("snapshot_mismatch", detail="multi_take_identity")
 
 
 def _maximum_pcm_artifact_bytes(duration_s: float) -> int:
@@ -428,6 +492,18 @@ def _late_reference_transcript(work: _ClaimedWork) -> str | None:
         with sync_session() as db:
             row = db.get(SpeechCleanupAnalysis, work.claim.analysis_id)
             reference = _reference_transcript(db, row) if row is not None else None
+            if row is not None and work.source_storage_path != row.source_storage_path:
+                # KRI-720: a later take of a several-take row reads its own clip's transcript.
+                item = db.get(PlanItem, row.plan_item_id)
+                reference = (
+                    reference_transcript_for_source(
+                        item,
+                        storage_path=work.source_storage_path,
+                        generation=work.source_generation,
+                    )
+                    if item is not None
+                    else None
+                )
             db.rollback()
     except SQLAlchemyError as exc:
         # A best-effort refinement: the first result stays publishable.
@@ -770,8 +846,108 @@ def _retake_spans_for_timed_words(
         return ()
 
 
-def _analyze_work(work: _ClaimedWork) -> SpeechCleanupAnalysisResult:
+def _analyze_work(
+    work: _ClaimedWork,
+) -> SpeechCleanupAnalysisResult | SpeechCleanupMultiTakeResult:
     _validate_work(work)
+    if work.multi_take:
+        return _analyze_takes(work)
+    result = _analyze_source(work)
+    assert result is not None  # a single source raises instead of returning None
+    return result
+
+
+# A several-take analysis runs its takes side by side; each take's engine is the same bounded
+# single-source run, so the slowest take bounds the row (well inside the task's soft limit for
+# the 10 clips a Talking edit may carry, each capped like a single source).
+_MULTI_TAKE_WORKERS = 4
+
+
+def _analyze_takes(work: _ClaimedWork) -> SpeechCleanupMultiTakeResult:
+    """KRI-720: analyse every take of a several-take row as its own single source.
+
+    A take with no audible speech (footage with a silent track) records no analysis instead
+    of failing the row. Which takes talk is decided with the render's own rule
+    (`classify_talking_clips` over each take's words), so the public receipt counts only
+    the takes the render will play as speakers. No take that talks fails the row exactly
+    like a single silent source (``no_speech_track``).
+    """
+
+    from app.pipeline.phone_talking_cutaways import (  # noqa: PLC0415
+        TalkingClipEvidence,
+        classify_talking_clips,
+        speech_evidence,
+    )
+
+    take_works = [
+        replace(
+            work,
+            source_storage_path=take.storage_path,
+            source_generation=take.generation,
+            window_start_s=float(take.window_start_s),
+            window_end_s=float(take.window_end_s),
+            reference_transcript=reference,
+            multi_take=False,
+            takes=(),
+        )
+        for take, reference in work.takes
+    ]
+    for take_work in take_works:
+        _validate_work(take_work)
+    with ThreadPoolExecutor(max_workers=min(_MULTI_TAKE_WORKERS, len(take_works))) as pool:
+        results = list(
+            pool.map(lambda take_work: _analyze_source(take_work, allow_silent=True), take_works)
+        )
+    evidence = []
+    for (take, _reference), result in zip(work.takes, results, strict=True):
+        word_count, span_s = (
+            speech_evidence(list(result.timed_words)) if result is not None else (0, None)
+        )
+        evidence.append(
+            TalkingClipEvidence(
+                clip_id=take.media_id,
+                duration_s=float(take.window_end_s - take.window_start_s),
+                word_count=word_count,
+                audible=result is not None,
+                speech_span_s=span_s,
+            )
+        )
+    speakers = set(classify_talking_clips(evidence).speakers)
+    take_results = tuple(
+        SpeechCleanupTakeResult(
+            media_id=take.media_id,
+            storage_path=take.storage_path,
+            generation=take.generation,
+            window_start_s=float(take.window_start_s),
+            window_end_s=float(take.window_end_s),
+            speaker=take.media_id in speakers and result is not None,
+            analysis=result,
+        )
+        for (take, _reference), result in zip(work.takes, results, strict=True)
+    )
+    if not any(take.speaker for take in take_results):
+        raise SpeechCleanupOperationalError("no_speech_track", detail="no_talking_take")
+    log.info(
+        "speech_cleanup_analysis.multi_take",
+        analysis_id=str(work.claim.analysis_id),
+        takes=len(take_results),
+        speakers=sum(take.speaker for take in take_results),
+        silent=sum(take.analysis is None for take in take_results),
+    )
+    return SpeechCleanupMultiTakeResult(
+        source_fingerprint=work.claim.source_policy_fingerprint,
+        detector_version=work.detector_version,
+        takes=take_results,
+        public_receipt=multi_take_public_receipt(take_results),
+    )
+
+
+def _analyze_source(
+    work: _ClaimedWork, *, allow_silent: bool = False
+) -> SpeechCleanupAnalysisResult | None:
+    """One source window. ``allow_silent`` (a take of a several-take row) returns ``None`` for
+    a take with no audible speech instead of failing the whole row."""
+
     try:
         signed_url = signed_get_url_for_generation(
             work.source_storage_path,
@@ -822,6 +998,8 @@ def _analyze_work(work: _ClaimedWork) -> SpeechCleanupAnalysisResult:
                 active_s=round(presence.active_s, 2),
                 duration_s=round(presence.duration_s, 2),
             )
+            if allow_silent:
+                return None
             raise SpeechCleanupOperationalError(
                 "no_speech_track", detail=f"audio_{presence.status}"
             )
@@ -839,14 +1017,22 @@ def _analyze_work(work: _ClaimedWork) -> SpeechCleanupAnalysisResult:
                 analysis_id=str(work.claim.analysis_id),
                 bailout_reason=result.safety_signals.bailout_reason,
             )
+            if allow_silent:
+                return None
             raise SpeechCleanupOperationalError(
                 "no_speech_track", detail=str(result.safety_signals.bailout_reason)
             )
         return result
 
 
-def _persist_success(work: _ClaimedWork, result: SpeechCleanupAnalysisResult) -> bool:
+def _persist_success(
+    work: _ClaimedWork, result: SpeechCleanupAnalysisResult | SpeechCleanupMultiTakeResult
+) -> bool:
     receipt = result.public_receipt
+    # KRI-720: a several-take row's diagnostics are its first talking take's (scalar, safe).
+    diagnostic_source = (
+        result.primary().analysis if isinstance(result, SpeechCleanupMultiTakeResult) else result
+    )
     with sync_session() as db:
         persisted = finalize_analysis_success(
             db,
@@ -855,7 +1041,7 @@ def _persist_success(work: _ClaimedWork, result: SpeechCleanupAnalysisResult) ->
             candidate_count=receipt.candidate_count,
             category_counts=receipt.category_counts.model_dump(mode="json"),
             estimated_removed_ms=receipt.estimated_removed_ms,
-            diagnostic_receipt=_engine_diagnostic_receipt(result),
+            diagnostic_receipt=_engine_diagnostic_receipt(diagnostic_source),
         )
         db.commit()
         return persisted

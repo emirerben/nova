@@ -216,6 +216,11 @@ Flow (flag on):
    `named_guesses_settled`). The resolver runs as ONE call while the project
    fits the measured 12-clip x 8-intent (96-cell) load; bigger projects split into
    ~48-cell shards, which see only part of the footage at once.
+   The creator may write in any language while the records are English, so the
+   resolver matches an intent's attribute by meaning across languages and reads
+   `on_screen_text` and `brands` as evidence like `subject` (KRI-1359, prompt
+   `clip_request_resolver` 2026-11-10-cross-language-evidence; golden
+   `kri1359_german_lineup_sheet`: "das Aufstellungsblatt" -> the line-up sheet photo).
    A label that asks what happens in each clip ("explain the footages", "a summary
    on each clip"; `is_clip_description_label`, canonical attribute "what is
    happening in the clip") never asks the creator and never re-checks the
@@ -601,14 +606,8 @@ item's clips together and paid Gemini vision + Whisper twice.
   `analyze_pool_asset` dispatches (upload/register, reanalyze, the stale-asset
   reaper, creator-preparation recovery) use `settings.pool_asset_visuals_queue`:
   `VISUALS_ANALYSIS_QUEUE` when set, otherwise `POOL_ASSET_ANALYSIS_QUEUE`.
-  - Every fly.toml process that consumes `autoplace-jobs` (today only the unified
-    `worker`) also consumes `visuals-analysis`.
-  - KRI-1240: a small always-on `visuals` process (`--concurrency=6
-    -Q visuals-analysis`, shared-cpu-2x) analyses several Visuals at once. Release 2
-    had left them on the worker's single slot, so 10 Visuals took ~4.5 min. The
-    worker keeps `visuals-analysis` as the fallback consumer, and the CLIP prewarm
-    skips the visuals-only process (`VISUALS_WORKER_QUEUES` in
-    `app/services/queue_state.py`).
+  - Every fly.toml process that consumes `autoplace-jobs` (`autoplace`, and the
+    unified `worker`) also consumes `visuals-analysis`.
   - Kombu's Redis transport rotates between a worker's queues after each pick, so a
     photo waits for the next free slot, not behind the footage backlog.
   - The stale-analysis refresh backfill stays on `POOL_ASSET_ANALYSIS_QUEUE`, so a
@@ -618,8 +617,8 @@ item's clips together and paid Gemini vision + Whisper twice.
     Rollback: `fly secrets unset VISUALS_ANALYSIS_QUEUE --app nova-video`.
 
 Guards: `tests/test_pool_asset_fly_contract.py` and `tests/test_worker_prewarm_gate.py`
-(every `autoplace-jobs` consumer also drains the Visuals queue, the `visuals` process
-drains only it, light drains neither, and the switch is not in `[env]`); the queue assertions in `tests/routes/test_plan_item_assets.py` and
+(the Visuals queue has exactly the consumers of `autoplace-jobs`, and the switch is not
+in `[env]`); the queue assertions in `tests/routes/test_plan_item_assets.py` and
 `tests/tasks/test_pool_asset_reconcile.py`.
 
 ## Visuals analysis has one declared bound (KRI-820)
@@ -635,6 +634,15 @@ asset. On T08 a small JPEG stayed `analyzing` for 528.58 s.
   `now + claim_window + run_window` (image 10 min + 6 min, video 30 min + 12 min). The
   worker's claim may only shorten it to `claim + run_window`. Celery retries, broker
   re-sends and the reaper never extend it. Broker messages carry `expires=deadline`.
+- **The claim window budgets the one lane that is always there.** The unified worker
+  (`--concurrency=1`) drains `visuals-analysis` in every topology, and it may already be
+  running another task; a dedicated Visuals group can be draining, restarting or removed
+  (#2183 removes it for cost). So the claim window is base + one 40-min lane occupant (the
+  longest worker task, a Drive import) + the lane seconds ahead (`queue_backlog_stmt`:
+  7 min per photo, 13 min per video), capped at 4 h. A truly lost message on a quiet lane
+  therefore reads "Analyzing…" for up to 50 min (photo) / 70 min (video) plus its run
+  window. Constants are pinned to `fly.toml` and the task limits by
+  `tests/test_pool_asset_fly_contract.py`.
 - **Past the deadline** a queued/analyzing row is `failed / analysis_timed_out`,
   `retryable=true`. The list/Slider projection (`_asset_out`) shows that at once. The
   reaper (`reconcile_stale_pool_assets`, every 5 min) persists it and rotates the

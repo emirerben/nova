@@ -1019,24 +1019,27 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # underneath item 16. Re-frozen for the says-done group E rewording (#2131: caption count /
     # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
     # ending); the flag-off section was 14ad8c6e… before it. Re-frozen again for #2164 (the
-    # keep-the-take-whole line also records speech_cleanup false).
+    # keep-the-take-whole line also records speech_cleanup false), and for KRI-1292 (`hold_s`
+    # for a text at a spoken word), and for KRI-1327 (`subject_outline`, a line around a person),
+    # and for KRI-1355 (the typed no-title ask, `title: "off"`). The extractor prompt digests were
+    # re-frozen for KRI-1365 (shorter/faster asks and "revert to the old version" are edits).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "5d020e50a866f3d40d112f942f2b2364363e057af9c35b0b587d1d4b920594d8"
+        "c0151ced250653122f3510792a6ff85204f097703fd55f500e9bccedfafc3379"
     )
     assert digest(brief_prompt_section(True)) == (
-        "e212a447096d62a2f5126a17a96d6521bfeabdcaf69ea8e5486dada28b734cd9"
+        "a49e1033ccb62fb079006cc403e1a9e58e74b7aefd7d9e556deaddf5e9675948"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "cf65cdd123d476c25eebce0f6db508084122328a7d3945dec82be03520292961"
+        "0cdcbd1c0a89df7ac461c85cdbb71abf10328c89a56cb912a4cd87d7c72e22fe"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "38cb1ddb7ae94bc39ce23844ffacb13a7f1559169e463597af90d9e8f2f064f3"
+        "7510aa78cb918a0b7e42156c67a233bd66439ea5e1e75ee96eb36a04a1af0e74"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "db92cf32636380b4fdd80ca67d55fbe0745c593d446483a7143d80dde23bb3fd"),
-        (True, "bf306d8829712ed2258592a9794791f1fccfb9994cc1a0d85af04ef9675481d6"),
+        (False, "85abd22964f0f8312e2e6e89864e534a99c47b9a19ff92789a3322316e3d65ae"),
+        (True, "9f6aebcb471fc165a3c534e7697d6587f9007f220e5075384dd210cb1121261a"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

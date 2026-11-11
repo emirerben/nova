@@ -97,3 +97,5 @@ KR Bold), Arabic as a static line and as a karaoke line (whole run in Noto Sans 
 shaped right to left), and Serbian in its Latin spelling in Inter Tight. The verifier FAILs a
 missing glyph and, since KRI-1192, Arabic that would be drawn unshaped (isolated letters, left
 to right).
+
+`kri1312_new_fonts.json` burns an English line and a Turkish line in each of the 39 fonts added by KRI-1312, so a face that clips, drops a glyph or falls back to the wrong partner shows up in the montage. Faces without Turkish letters render the Turkish line in their `glyph-fallbacks.json` partner.

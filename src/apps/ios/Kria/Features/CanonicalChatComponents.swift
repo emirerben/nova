@@ -762,6 +762,9 @@ struct DirectionStage: View {
     /// Nil for a thread that predates the field or hasn't loaded it yet, which
     /// resolves to the same plain "Create this video" flow as `applicable: false`.
     var speechCleanup: [String: JSONValue]? = nil
+    /// The speech check has been running past `SpeechCheckWatch.giveUpAfter`: stop the spinner and
+    /// lead with "Create without cleanup". Retry stays off; the server only retries a failed check.
+    var speechCheckTimedOut = false
     /// KRI-306: the video shapes on offer and the creator's current pick. Nil
     /// (older server, nothing choosable) hides the picker; the parent reads the pick
     /// when it sends the approval, so `decide` needs no extra argument.
@@ -840,6 +843,13 @@ struct DirectionStage: View {
         switch resolution.offer {
         case .plain:
             Button(approval.retryOfExecutionID == nil ? "Create this video" : "Retry approved edit") { decide("approve", nil, resolution.analysisID) }
+                .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isBusy)
+        case .checking where speechCheckTimedOut:
+            Text("This is taking longer than usual.")
+                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                .accessibilityIdentifier("speech-cleanup-timed-out")
+            Button("Create without cleanup") { decide("approve", "create_without_cleanup", resolution.analysisID) }
                 .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
         case .checking:
@@ -1052,7 +1062,7 @@ struct ReadyStage: View {
                 if !suggestionCards.isEmpty {
                     Text("Ways to improve it")
                         .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                    SuggestionCardList(presentation: suggestionCards, idPrefix: "suggestion-card")
+                    SuggestionCardChips(presentation: suggestionCards, idPrefix: "suggestion-card")
                 }
             } else {
                 // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.

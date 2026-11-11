@@ -237,6 +237,7 @@ class BeforeState(NamedTuple):
     camera: list[dict[str, Any]]
     sfx: list[dict[str, Any]]
     overlays: list[dict[str, Any]] = []  # noqa: RUF012 - NamedTuple default, never mutated
+    split_screen_sections: tuple[dict[str, Any], ...] = ()
 
 
 def _slot_key(row: dict[str, Any]) -> str:
@@ -263,6 +264,7 @@ def snapshot_before(state: Any) -> BeforeState:
         camera=copy.deepcopy(state.camera_effects),
         sfx=copy.deepcopy(state.sound_effects),
         overlays=copy.deepcopy(getattr(state, "media_overlays", [])),
+        split_screen_sections=tuple(copy.deepcopy(getattr(state, "split_screen_sections", []))),
     )
 
 
@@ -418,11 +420,12 @@ def _slot_dur(row: Mapping[str, Any]) -> float | None:
     duration = _num(row.get("duration_s"))
     if duration is None or duration <= 0:
         return None
-    rate = _num(row.get("playback_rate"))
-    return duration / (rate if rate and rate > 0 else 1.0)
+    return duration
 
 
 _SLOT_FIELDS = (
+    ("muted", "timeline", lambda r: bool(r.get("muted"))),
+    ("source_audio_volume", "timeline", lambda r: _r(r.get("source_audio_volume", 1.0), 2)),
     ("duration_s", "timeline", lambda r: _r(_slot_dur(r), 2)),
     ("in_s", "timeline", lambda r: _r(r.get("in_s") or 0.0, 2)),
     ("look_preset", "timeline", lambda r: r.get("look_preset") or "none"),
@@ -435,6 +438,18 @@ _SLOT_FIELDS = (
         lambda r: (r.get("transition_after") or "cut", _r(r.get("transition_duration_s"), 2)),
     ),
 )
+
+
+def _timeline_total(rows: list[dict], sections: Iterable[dict]) -> float | None:
+    if any(_slot_dur(row) is None for row in rows):
+        return None
+    if sections:
+        from app.kria.split_screen import layout_split_timeline
+
+        return layout_split_timeline(rows, list(sections))[2]
+    from app.services.authored_text_fit import _segments
+
+    return max((segment["output_end_s"] for segment in _segments(rows)), default=0.0)
 
 
 def _slot_entries(before: BeforeState, state: Any) -> list[DiffEntry]:
@@ -500,14 +515,43 @@ def _slot_entries(before: BeforeState, state: Any) -> list[DiffEntry]:
                 ),
             )
         )
-    total_before = [_slot_dur(r) for _, r in live_before]
-    total_after = [_slot_dur(r) for _, r in live_after]
+    sections_after = getattr(state, "split_screen_sections", [])
+
+    def split_value(rows, sections):
+        return {
+            "sections": list(sections),
+            "members": [
+                (
+                    key,
+                    row.get("split_section_id"),
+                    row.get("split_panel_index"),
+                    row.get("split_offset_s"),
+                )
+                for key, row in rows
+                if row.get("split_section_id")
+            ],
+        }
+
+    split_before = split_value(live_before, before.split_screen_sections)
+    split_after = split_value(live_after, sections_after)
+    if split_before != split_after:
+        entries.append(
+            DiffEntry(
+                "timeline",
+                "split_screen",
+                (
+                    DiffTarget(
+                        "split_screen", "video", None, "split screen", split_before, split_after
+                    ),
+                ),
+            )
+        )
+    total_before = _timeline_total([row for _, row in live_before], before.split_screen_sections)
+    total_after = _timeline_total([row for _, row in live_after], sections_after)
     if (
-        total_before
-        and total_after
-        and None not in total_before
-        and None not in total_after
-        and abs(sum(total_before) - sum(total_after)) > 0.05  # type: ignore[arg-type]
+        total_before is not None
+        and total_after is not None
+        and abs(total_before - total_after) > 0.05
     ):
         entries.append(
             DiffEntry(
@@ -519,8 +563,8 @@ def _slot_entries(before: BeforeState, state: Any) -> list[DiffEntry]:
                         "video",
                         None,
                         "the video",
-                        round(sum(total_before), 2),
-                        round(sum(total_after), 2),  # type: ignore[arg-type]
+                        round(total_before, 2),
+                        round(total_after, 2),
                     ),
                 ),
             )
@@ -708,7 +752,7 @@ def describe_targets(entry: DiffEntry, live_text_count: int) -> str:
         if kinds == {"clip"}:
             if count == 1:
                 number = re.sub(r"\D", "", targets[0].text)
-                return say(en=f"clip {number}", tr=f"{number}. klip")
+                return say(en="clip {number}", tr="{number}. klip", number=number)
             return _plural(count, "clip", "klip")
         names = {
             "video": ("the video", "video"),
@@ -722,7 +766,7 @@ def describe_targets(entry: DiffEntry, live_text_count: int) -> str:
     if count == 2 and count == live_text_count:
         return say(en="both texts", tr="iki yazı")
     if count > 2 and count == live_text_count:
-        return say(en=f"all {count} texts", tr=f"{count} yazının hepsi")
+        return say(en="all {count} texts", tr="{count} yazının hepsi", count=count)
     if count == 1:
         only = targets[0]
         if only.kind == "title":
@@ -797,27 +841,28 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
     if name == "wording":
         if len(entry.targets) == 1:
             return say(
-                en=f"Changed {_quote(str(first.before or ''))} to {_quote(str(first.after or ''))}",
-                tr=(
-                    f"{_quote(str(first.before or ''))} yazısını "
-                    f"{_quote(str(first.after or ''))} yaptım"
-                ),
+                en="Changed {v1} to {v2}",
+                tr=("{v1} yazısını {v2} yaptım"),
+                v1=_quote(str(first.before or "")),
+                v2=_quote(str(first.after or "")),
             )
-        return say(en=f"Rewrote {who}", tr=f"{who} yeniden yazıldı")
+        return say(en="Rewrote {who}", tr="{who} yeniden yazıldı", who=who)
     if name == "added":
-        return say(en=f"Added {who}", tr=f"{who} eklendi")
+        return say(en="Added {who}", tr="{who} eklendi", who=who)
     if name == "removed":
-        return say(en=f"Removed {who}", tr=f"{who} kaldırıldı")
+        return say(en="Removed {who}", tr="{who} kaldırıldı", who=who)
     if name == "entrance":
         if common in (None, "none"):
             if common == "none":
                 return say(
-                    en=f"Removed the entrance animation from {who}",
-                    tr=f"{who} için giriş animasyonu kaldırıldı",
+                    en="Removed the entrance animation from {who}",
+                    tr="{who} için giriş animasyonu kaldırıldı",
+                    who=who,
                 )
             return say(
-                en=f"Changed the entrance animation on {who}",
-                tr=f"{who} için giriş animasyonu değişti",
+                en="Changed the entrance animation on {who}",
+                tr="{who} için giriş animasyonu değişti",
+                who=who,
             )
         return say(
             en=f"Added {_ENTRANCE_EN.get(str(common), 'an')} animation to {who}".replace(
@@ -827,32 +872,47 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
         )
     if name == "font_family":
         return say(
-            en=f"Font → {_font_display(first)} on {who}",
-            tr=f"{who} için yazı tipi → {_font_display(first)}",
+            en="Font → {font_display_first} on {who}",
+            tr="{who} için yazı tipi → {font_display_first}",
+            font_display_first=_font_display(first),
+            who=who,
         )
     if name == "color":
         hexa = str(common) if isinstance(common, str) else None
         family = color_family(hexa)
         shown = f"{family} ({hexa})" if family in ("white", "black") and hexa else (hexa or "")
         if not shown:
-            return say(en=f"Changed the colour of {who}", tr=f"{who} rengi değişti")
-        return say(en=f"Colour → {shown} on {who}", tr=f"{who} için renk → {shown}")
+            return say(en="Changed the colour of {who}", tr="{who} rengi değişti", who=who)
+        return say(
+            en="Colour → {shown} on {who}", tr="{who} için renk → {shown}", shown=shown, who=who
+        )
     if name == "size":
         old, new = _num(first.before), _num(first.after)
         if len(entry.targets) == 1 and old is not None and new is not None:
             word_en, word_tr = ("bigger", "büyüttüm") if new > old else ("smaller", "küçülttüm")
             return say(
-                en=f"Made {who} {word_en} ({old:g}→{new:g}px)",
-                tr=f"{who} {word_tr} ({old:g}→{new:g}px)",
+                en="Made {who} {word_en} ({old:g}→{new:g}px)",
+                tr="{who} {word_tr} ({old:g}→{new:g}px)",
+                who=who,
+                word_en=word_en,
+                old=old,
+                new=new,
+                word_tr=word_tr,
             )
-        return say(en=f"Resized {who}", tr=f"{who} yeniden boyutlandı")
+        return say(en="Resized {who}", tr="{who} yeniden boyutlandı", who=who)
     if name == "position":
         afters = [t.after for t in entry.targets if isinstance(t.after, tuple)]
         befores = [t.before for t in entry.targets if isinstance(t.before, tuple)]
         named = afters[0][0] if afters and afters[0][0] not in (None, "custom") else None
         if named and len({a[0] for a in afters}) == 1:
             spot_tr = {"top": "üst", "middle": "orta", "bottom": "alt"}.get(str(named), str(named))
-            return say(en=f"Moved {who} to the {named}", tr=f"{who} {spot_tr} konuma taşındı")
+            return say(
+                en="Moved {who} to the {named}",
+                tr="{who} {spot_tr} konuma taşındı",
+                who=who,
+                named=named,
+                spot_tr=spot_tr,
+            )
         xs = {a[1] for a in afters}
         height_kept = len(afters) == len(befores) and all(
             a[0] == "custom" and b[0] == "custom" and a[2] == b[2]
@@ -861,21 +921,31 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
         if len(xs) == 1 and height_kept and isinstance(next(iter(xs)), float):
             horizontal, _vertical = _where(next(iter(xs)), None)
             return say(
-                en=f"Lined up {who} on the {horizontal}",
-                tr=f"{who} {_SIDE_TR[horizontal]} hizalandı",
+                en="Lined up {who} on the {horizontal}",
+                tr="{who} {v1} hizalandı",
+                who=who,
+                horizontal=horizontal,
+                v1=_SIDE_TR[horizontal],
             )
-        return say(en=f"Moved {who}", tr=f"{who} taşındı")
+        return say(en="Moved {who}", tr="{who} taşındı", who=who)
     if name == "alignment":
         side = str(common) if isinstance(common, str) else None
         if side:
             return say(
-                en=f"Aligned {who} to the {side}", tr=f"{who} {_SIDE_TR.get(side, side)} hizalandı"
+                en="Aligned {who} to the {side}",
+                tr="{who} {side_tr_get_side_side} hizalandı",
+                who=who,
+                side=side,
+                side_tr_get_side_side=_SIDE_TR.get(side, side),
             )
-        return say(en=f"Changed the alignment of {who}", tr=f"{who} hizalaması değişti")
+        return say(en="Changed the alignment of {who}", tr="{who} hizalaması değişti", who=who)
     if name == "text_case":
         return say(
-            en=f"Set {who} to {_CASE_EN.get(str(common), 'a new case')}",
-            tr=f"{who} → {_CASE_TR.get(str(common), 'yeni harf biçimi')}",
+            en="Set {who} to {case_en_get_str_common}",
+            tr="{who} → {case_tr_get_str_common}",
+            who=who,
+            case_en_get_str_common=_CASE_EN.get(str(common), "a new case"),
+            case_tr_get_str_common=_CASE_TR.get(str(common), "yeni harf biçimi"),
         )
     if name == "timing":
         if (
@@ -890,12 +960,15 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
                 )
 
             return say(
-                en=f"Retimed {who} ({span(first.before)} → {span(first.after)})",
-                tr=f"{who} zamanlaması değişti ({span(first.before)} → {span(first.after)})",
+                en="Retimed {who} ({span_first_before} → {span_first_after})",
+                tr="{who} zamanlaması değişti ({span_first_before} → {span_first_after})",
+                who=who,
+                span_first_before=span(first.before),
+                span_first_after=span(first.after),
             )
-        return say(en=f"Retimed {who}", tr=f"{who} zamanlaması değişti")
+        return say(en="Retimed {who}", tr="{who} zamanlaması değişti", who=who)
     en, tr = _PLAIN_LABELS.get(name, (name.replace("_", " "), name.replace("_", " ")))
-    return say(en=f"Changed the {en} of {who}", tr=f"{who} için {tr} değişti")
+    return say(en="Changed the {v1} of {who}", tr="{who} için {v2} değişti", v1=en, who=who, v2=tr)
 
 
 def _font_display(target: DiffTarget) -> str:
@@ -918,7 +991,10 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
         _horizontal, vertical = _where(None, float(after))
         spot_tr = {"top": "üst", "middle": "orta", "bottom": "alt"}[vertical]
         return say(
-            en=f"Moved the captions to the {vertical}", tr=f"Altyazılar {spot_tr} konuma taşındı"
+            en="Moved the captions to the {vertical}",
+            tr="Altyazılar {spot_tr} konuma taşındı",
+            vertical=vertical,
+            spot_tr=spot_tr,
         )
     if name == "enabled" and isinstance(after, bool):
         if after:
@@ -932,7 +1008,11 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
     if name == "style" and after == "sentence":
         return say(en="Captions now show whole lines", tr="Altyazılar artık tam satır görünüyor")
     if name == "font" and isinstance(after, str) and after:
-        return say(en=f"Changed the caption font to {after}", tr=f"Altyazı yazı tipi {after} oldu")
+        return say(
+            en="Changed the caption font to {after}",
+            tr="Altyazı yazı tipi {after} oldu",
+            after=after,
+        )
     if name == "stroke_width" and is_number:
         if after == 0:
             return say(en="Removed the caption outline", tr="Altyazı konturu kaldırıldı")
@@ -950,8 +1030,10 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
         prior = before.get("entrance") if isinstance(before, dict) else None
         if vocab is not None and prior != entrance:
             return say(
-                en=f"Captions now enter with {vocab.label}",
-                tr=f"Altyazılar artık {vocab.label_tr} ile giriyor",
+                en="Captions now enter with {vocab_label}",
+                tr="Altyazılar artık {vocab_label_tr} ile giriyor",
+                vocab_label=vocab.label,
+                vocab_label_tr=vocab.label_tr,
             )
     if name in _CAPTION_META_WORDS:
         en, tr = _CAPTION_META_WORDS[name]
@@ -968,9 +1050,9 @@ def _describe_tilt(entry: DiffEntry, who: str) -> str:
         before.zoom != 1 and before.row() == {"rotation_deg": 0.0, "zoom": before.zoom}
         for before in befores
     ) and all(t.zoom == 1 and t.row() is None for t in tilts):
-        return say(en=f"Reset the zoom of {who}", tr=f"{who} yakınlaştırması sıfırlandı")
+        return say(en="Reset the zoom of {who}", tr="{who} yakınlaştırması sıfırlandı", who=who)
     if all(after is None for after in afters):
-        return say(en=f"Straightened {who}", tr=f"{who} düzeltildi")
+        return say(en="Straightened {who}", tr="{who} düzeltildi", who=who)
     if all(
         (before.rotation_deg, before.backdrop) == (tilt.rotation_deg, tilt.backdrop)
         and before.zoom != tilt.zoom
@@ -978,10 +1060,12 @@ def _describe_tilt(entry: DiffEntry, who: str) -> str:
     ):
         if len({tilt.zoom for tilt in tilts}) == 1:
             zoom = f"{tilts[0].zoom:g}x"
-            return say(en=f"Zoomed {who} to {zoom}", tr=f"{who} {zoom} yakınlaştırıldı")
-        return say(en=f"Changed the zoom of {who}", tr=f"{who} yakınlaştırması değişti")
+            return say(
+                en="Zoomed {who} to {zoom}", tr="{who} {zoom} yakınlaştırıldı", who=who, zoom=zoom
+            )
+        return say(en="Changed the zoom of {who}", tr="{who} yakınlaştırması değişti", who=who)
     if len({repr(after) for after in afters}) != 1:
-        return say(en=f"Changed the tilt of {who}", tr=f"{who} eğimi değişti")
+        return say(en="Changed the tilt of {who}", tr="{who} eğimi değişti", who=who)
     tilt = tilts[0]
     backdrop = tilt.backdrop
     behind_en = behind_tr = ""
@@ -995,8 +1079,11 @@ def _describe_tilt(entry: DiffEntry, who: str) -> str:
         )
     if all(before.rotation_deg == tilt.rotation_deg for before in befores):
         return say(
-            en=f"Changed the background behind {who}: {behind_en or 'plain'}",
-            tr=f"{who} arka planı değişti: {behind_tr or 'düz'}",
+            en="Changed the background behind {who}: {v1}",
+            tr="{who} arka planı değişti: {v2}",
+            who=who,
+            v1=behind_en or "plain",
+            v2=behind_tr or "düz",
         )
     amount = f"{abs(tilt.rotation_deg):g}"
     side_en, side_tr = ("right", "sağa") if tilt.rotation_deg > 0 else ("left", "sola")
@@ -1019,12 +1106,17 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
         if name == "duration_s":
             common = _common(entry)
             if isinstance(common, float):
-                return say(en=f"Set {who} to {common:g}s", tr=f"{who} {common:g} sn yapıldı")
-            return say(en=f"Changed the length of {who}", tr=f"{who} süresi değişti")
+                return say(
+                    en="Set {who} to {common:g}s",
+                    tr="{who} {common:g} sn yapıldı",
+                    who=who,
+                    common=common,
+                )
+            return say(en="Changed the length of {who}", tr="{who} süresi değişti", who=who)
         if name == "removed":
-            return say(en=f"Removed {who}", tr=f"{who} kaldırıldı")
+            return say(en="Removed {who}", tr="{who} kaldırıldı", who=who)
         if name == "added":
-            return say(en=f"Added {who}", tr=f"{who} eklendi")
+            return say(en="Added {who}", tr="{who} eklendi", who=who)
         if name == "order":
             if len(entry.targets) == 1 or not all(isinstance(t.after, int) for t in entry.targets):
                 return say(en="Reordered the clips", tr="Klipler yeniden sıralandı")
@@ -1038,22 +1130,41 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
                 for t in entry.targets
             ):
                 return say(
-                    en=f"Started {who} earlier in its footage",
-                    tr=f"{who} görüntüde daha erken başlıyor",
+                    en="Started {who} earlier in its footage",
+                    tr="{who} görüntüde daha erken başlıyor",
+                    who=who,
                 )
-            return say(en=f"Trimmed {who}", tr=f"{who} kırpıldı")
+            return say(en="Trimmed {who}", tr="{who} kırpıldı", who=who)
         if name == "look_preset":
-            return say(en=f"Changed the look of {who}", tr=f"{who} görünümü değişti")
+            return say(en="Changed the look of {who}", tr="{who} görünümü değişti", who=who)
         if name == "playback_rate":
-            return say(en=f"Changed the speed of {who}", tr=f"{who} hızı değişti")
+            return say(en="Changed the speed of {who}", tr="{who} hızı değişti", who=who)
         if name == "source_crop":
-            return say(en=f"Re-cropped {who}", tr=f"{who} yeniden kırpıldı")
+            return say(en="Re-cropped {who}", tr="{who} yeniden kırpıldı", who=who)
         if name == "tilt":
             return _describe_tilt(entry, who)
+        if name == "muted":
+            return say(
+                en=(f"Muted {who}" if first.after else f"Unmuted {who}"),
+                tr=(f"{who} sessize alındı" if first.after else f"{who} sesi açıldı"),
+            )
+        if name == "source_audio_volume":
+            return say(
+                en="Changed the source volume of {who}",
+                tr="{who} kaynak ses düzeyi değişti",
+                who=who,
+            )
+        if name == "split_screen":
+            return say(
+                en="Updated split-screen layout and panels",
+                tr="Bölünmüş ekran düzeni ve paneller güncellendi",
+            )
         if name == "total_duration":
             return say(
-                en=f"Video length {first.before:g}s → {first.after:g}s",
-                tr=f"Video süresi {first.before:g} sn → {first.after:g} sn",
+                en="Video length {first_before:g}s → {first_after:g}s",
+                tr="Video süresi {first_before:g} sn → {first_after:g} sn",
+                first_before=first.before,
+                first_after=first.after,
             )
     if lane == "transition":
         value = _common(entry)
@@ -1085,20 +1196,27 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
 
         before = f"{level(first.before)}{unit} → " if first.before is not None else "→ "
         return say(
-            en=f"{label[0]} {before}{level(first.after)}{unit}",
-            tr=f"{label[1]} {before}{level(first.after)}{unit}",
+            en="{label_0} {before}{level_first_after}{unit}",
+            tr="{label_1} {before}{level_first_after}{unit}",
+            label_0=label[0],
+            before=before,
+            level_first_after=level(first.after),
+            unit=unit,
+            label_1=label[1],
         )
     if lane == "title":
         return say(
-            en=f"Title → {_quote(str(first.after or ''))}",
-            tr=f"Başlık → {_quote(str(first.after or ''))}",
+            en="Title → {v1}",
+            tr="Başlık → {v1}",
+            v1=_quote(str(first.after or "")),
         )
     if lane == "caption_meta":
         return _describe_caption_meta(entry)
     if lane == "captions":
         return say(
-            en=f"Edited {_plural(len(entry.targets), 'caption', 'altyazı')}",
-            tr=f"{_plural(len(entry.targets), 'caption', 'altyazı')} düzenlendi",
+            en="Edited {plural_len_entry_targets}",
+            tr="{plural_len_entry_targets} düzenlendi",
+            plural_len_entry_targets=_plural(len(entry.targets), "caption", "altyazı"),
         )
     if lane in ("sfx", "camera_effects"):
         noun = (
@@ -1108,22 +1226,32 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
             name, ("Changed", "değişti")
         )
         return say(
-            en=f"{verb[0]} {_plural(len(entry.targets), noun[0], noun[1])}",
-            tr=f"{_plural(len(entry.targets), noun[0], noun[1])} {verb[1]}",
+            en="{verb_0} {v1}",
+            tr="{v1} {verb_1}",
+            verb_0=verb[0],
+            v1=_plural(len(entry.targets), noun[0], noun[1]),
+            verb_1=verb[1],
         )
     if lane == "media_overlays":
         verb = {"added": ("Added", "eklendi"), "removed": ("Removed", "kaldırıldı")}.get(
             name, ("Changed", "değişti")
         )
         return say(
-            en=f"{verb[0]} {_plural(len(entry.targets), 'picture', 'görsel')}",
-            tr=f"{_plural(len(entry.targets), 'picture', 'görsel')} {verb[1]}",
+            en="{verb_0} {plural_len_entry_targets}",
+            tr="{plural_len_entry_targets} {verb_1}",
+            verb_0=verb[0],
+            plural_len_entry_targets=_plural(len(entry.targets), "picture", "görsel"),
+            verb_1=verb[1],
         )
     if lane == "visual_media":
         return say(en="Removed visual items", tr="Görsel öğeler kaldırıldı")
     if lane == "speech_cut":
         return say(en="Applied the speech cut", tr="Konuşma kesimi uygulandı")
-    return say(en=f"Changed {name.replace('_', ' ')}", tr=f"{name.replace('_', ' ')} değişti")
+    return say(
+        en="Changed {name_replace}",
+        tr="{name_replace} değişti",
+        name_replace=name.replace("_", " "),
+    )
 
 
 def describe_diff(

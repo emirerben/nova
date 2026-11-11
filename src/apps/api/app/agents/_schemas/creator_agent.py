@@ -45,6 +45,7 @@ from app.agents._schemas.sfx_intent import (
     LicensedSfxIntent,
     SfxIntent,
 )
+from app.agents._schemas.split_screen import InitialSplitScreen
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
@@ -148,6 +149,10 @@ class CreatorMediaRef(_CreatorModel):
     # legitimately be longer than the two-minute rendered deliverable.
     duration_s: float | None = Field(default=None, gt=0.0)
     label: str | None = Field(default=None, max_length=160)
+    # KRI-1365: whether the clip's file has an audio track, as the upload probe recorded it
+    # (``None`` = unknown, never read as silent). Server-only: excluded from every dump, so the
+    # model prompt and both manifest hashes are byte-identical to before this field existed.
+    has_audio: bool | None = Field(default=None, exclude=True)
 
     @field_validator("media_id")
     @classmethod
@@ -417,6 +422,9 @@ class CreativeStrategy(_CreatorModel):
     the same font/color vocabulary as the authoritative TextElement schema.
     """
 
+    split_screen: InitialSplitScreen | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     direction: CreativeDirection = "fast_montage"
     edit_format: EditFormat = "montage"
     # KRI-118 lane L2: a chat-picked story SHAPE, not a separate edit_format.

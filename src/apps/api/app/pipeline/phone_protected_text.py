@@ -52,6 +52,11 @@ _MAX_COVERAGE = 0.05
 # All inside the 0.10-0.90 band a saved variant's caption position may hold
 # (`caption_look_from_variant`), so the editor reopens the captions where they were drawn.
 _CAPTION_Y_CANDIDATES = (0.86, 0.90, 0.72, 0.64, 0.56, 0.32, 0.24)
+# KRI-1327 (S3): a spot the creator asked for ("in the middle, never on my face") is tried
+# inside its own row first, nearest the asked centre and below it on a tie (a talking face sits
+# above the middle), before the ladder above. Without it a middle block that met her chin fell
+# straight to 0.86, the lower third.
+_ASKED_SPOT_STEP = 0.03
 _STATUS_RANK = {
     "clear": 0,
     "unverified": 1,
@@ -286,6 +291,19 @@ def merge_target_rows(plans: Sequence[ProtectedPlan]) -> tuple[dict[str, Any], .
     return tuple(merged)
 
 
+def _asked_spot_ladder(spot: str | None, centre: float) -> tuple[float, ...]:
+    """Block centres inside the asked row, nearest ``centre`` first, below it on a tie."""
+    from app.kria.caption_look_ask import caption_spot_band  # noqa: PLC0415
+
+    band = caption_spot_band(spot)
+    if band is None:
+        return ()
+    low, high = band
+    count = int((high - low) / _ASKED_SPOT_STEP + 1e-9) + 1
+    steps = [round(low + i * _ASKED_SPOT_STEP, 3) for i in range(count)]
+    return tuple(sorted(steps, key=lambda y: (abs(y - centre), y < centre)))
+
+
 def choose_caption_look(
     cues: Sequence[dict],
     *,
@@ -348,7 +366,18 @@ def choose_caption_look(
     typeface = cloud._resolve_typeface_for_overlay({"font_family": base.font_family}).typeface
     evaluated: list[dict[str, Any]] = []
     verified = True
-    candidates = list(dict.fromkeys((base.position_y_frac, *_CAPTION_Y_CANDIDATES)))
+    from app.services.phone_text_styling import caption_asked_spot  # noqa: PLC0415
+
+    spot = caption_asked_spot() if drawn is not None else None
+    candidates = list(
+        dict.fromkeys(
+            (
+                base.position_y_frac,
+                *_asked_spot_ladder(spot, base.position_y_frac),
+                *_CAPTION_Y_CANDIDATES,
+            )
+        )
+    )
     for y_frac in candidates:
         look = dataclasses.replace(base, position_y_frac=y_frac)
         layers = compile_caption_layers(

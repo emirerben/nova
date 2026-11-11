@@ -231,4 +231,20 @@ import XCTest
         XCTAssertEqual(DictationController.join("typed  ", " hello "), "typed hello")
         XCTAssertEqual(DictationController.join("typed", "  "), "typed")
     }
+
+    func testPreviewLocaleFollowsTheLastSpokenLanguageNotTheDeviceSetting() {
+        let turkishPhone = ["tr-TR", "en-US"]
+        XCTAssertEqual(DictationLanguage.resolve(stored: nil, preferred: turkishPhone).identifier, "tr-TR")
+        XCTAssertEqual(DictationLanguage.resolve(stored: "en", preferred: turkishPhone).identifier, "en")
+        XCTAssertEqual(DictationLanguage.resolve(stored: "", preferred: turkishPhone).identifier, "tr-TR")
+    }
+
+    func testOnlyAServerLanguageIsRemembered() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "dictation-language-\(UUID().uuidString)"))
+        DictationLanguage.remember(nil, defaults: defaults)
+        DictationLanguage.remember("  ", defaults: defaults)
+        XCTAssertEqual(DictationLanguage.recognizerLocale(defaults: defaults, preferred: ["tr-TR"]).identifier, "tr-TR")
+        DictationLanguage.remember("EN", defaults: defaults)
+        XCTAssertEqual(DictationLanguage.recognizerLocale(defaults: defaults, preferred: ["tr-TR"]).identifier, "en")
+    }
 }

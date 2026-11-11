@@ -1,0 +1,376 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-11-07-kri1292",
+  "input": {
+    "user_message": "When he says \"grilled cheese\", put PROVOLETA 🧀 big on screen for a bit longer than usual.",
+    "creator_request": "",
+    "creator_context": "Food creator who films short restaurant visits.",
+    "creator_direction": "",
+    "item_context": "{'idea': 'Don Julio lunch', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'subtitled', 'current_audio_mode': 'kria', 'has_recorded_voiceover': False}",
+    "media_context": [
+      {
+        "media_id": "analysis-proxy-ios-81CE940B-6259-43D9-9958-891671D2099E.mp4",
+        "kind": "video",
+        "duration_s": 8.2,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "subject": "a waiter talking to the camera",
+          "summary": "A waiter at a steakhouse names the cheese for a grilled cheese starter.",
+          "content_type": "talking_head",
+          "audio_type": "speech",
+          "people": {
+            "count": 1,
+            "note": "one man",
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": true,
+            "transcript": "Yes, I'm ready. What is this, sir? It's, uh, provolone cheese. Okay. Provolone, grilled cheese. Perfecto.",
+            "segments": [
+              {
+                "s": 0.0,
+                "e": 1.3600000143051147,
+                "text": "Yes, I'm ready."
+              },
+              {
+                "s": 1.4800000190734863,
+                "e": 2.4800000190734863,
+                "text": "What is this, sir?"
+              },
+              {
+                "s": 2.9000000953674316,
+                "e": 4.099999904632568,
+                "text": "It's, uh, provolone cheese."
+              },
+              {
+                "s": 4.400000095367432,
+                "e": 4.659999847412109,
+                "text": "Okay."
+              },
+              {
+                "s": 5.559999942779541,
+                "e": 6.800000190734863,
+                "text": "Provolone, grilled cheese."
+              },
+              {
+                "s": 7.239999771118164,
+                "e": 7.739999771118164,
+                "text": "Perfecto."
+              }
+            ]
+          },
+          "notable_moments": []
+        }
+      }
+    ],
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "What are we making? Pick a format and we’ll shape it together."
+      },
+      {
+        "role": "user",
+        "content": "When he says \"grilled cheese\", put PROVOLETA 🧀 big on screen for a bit longer than usual."
+      }
+    ],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-says-done-e",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "has_voiceover": false,
+      "narration": null,
+      "current_edit": null,
+      "media": [
+        {
+          "media_id": "analysis-proxy-ios-81CE940B-6259-43D9-9958-891671D2099E.mp4",
+          "kind": "video",
+          "duration_s": 8.2,
+          "label": null
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "f79b69faaab14beaa035db18ec32ac39",
+          "kind": "sound_effect",
+          "label": "Wrong buzzer"
+        },
+        {
+          "catalog_id": "4fcc09a5901f4f2eaba6571f1c183d3b",
+          "kind": "sound_effect",
+          "label": "Correct ding"
+        }
+      ],
+      "capabilities": {
+        "set_item_intent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_story": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "native_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "draft_guided_proposal": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "dispatch_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "select_ready_variant": {
+          "available": false,
+          "reason_code": "no_ready_variant",
+          "reason": "a ready variant is required before selection"
+        },
+        "caption_style": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "caption styling is disabled by the server"
+        },
+        "automatic_cut": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "automatic speech cuts are disabled by the server"
+        },
+        "guided_voiceover": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "guided voiceover is disabled by the server"
+        },
+        "main_creator_agent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "execution": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "execution is disabled by the server"
+        },
+        "review": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "review is disabled by the server"
+        },
+        "auto_iteration": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "auto_iteration is disabled by the server"
+        },
+        "guided_conversation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_direction_confirmation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_auto_design": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "transitions": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "transitions is disabled by the server"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "wide_looks cannot render on the iPhone yet"
+        },
+        "media_overlays": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "visual_blocks": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "motion_scenes": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "motion_scenes cannot render on the iPhone yet"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "sound_effects cannot render on the iPhone yet"
+        },
+        "phone_source_audio": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_still_images": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_visual_videos": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "media_overlays:video_cards": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:talking_head": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "talking_head does not render on this iPhone yet"
+        },
+        "phone_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:narrated": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated does not render on this iPhone yet"
+        },
+        "phone_format:narrated_planned": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated_planned does not render on this iPhone yet"
+        },
+        "phone_format:narrated_ready": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated_ready does not render on this iPhone yet"
+        },
+        "phone_format:slides": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "slides does not render on this iPhone yet"
+        },
+        "reaction_beats": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:talking_head": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:narrated": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:narrated_planned": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated_planned is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:narrated_ready": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated_ready is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:slides": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "slides is disabled or has no production renderer for this media snapshot"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "manifest_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\"brief_updates\": [{\"kind\": \"text\", \"scope\": \"global\", \"literal\": \"PROVOLETA 🧀\", \"description\": \"When he says \\\"grilled cheese\\\", put PROVOLETA 🧀 big on screen for a bit longer than usual.\", \"facts\": {\"triggers\": [\"grilled cheese\"], \"speaker\": \"he\"}}], \"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"subtitled\", \"archetype\": null, \"audio_strategy\": \"original_audio\", \"execution_contract\": null, \"media_scope\": \"all\", \"clip_intents\": [], \"story_structure\": [\"The waiter's take, captioned, with the text on his words\"], \"intro_hook\": null, \"pacing\": \"balanced\", \"target_duration_s\": 8, \"render_program\": \"native\", \"selected_media_ids\": [\"analysis-proxy-ios-81CE940B-6259-43D9-9958-891671D2099E.mp4\"], \"optional_treatments\": [], \"rationale\": \"One talking take, captioned, with the text on the word.\", \"caption_style\": \"karaoke\"}, \"summary\": \"I'll put PROVOLETA on screen when he says grilled cheese.\", \"render_intent_evidence\": {\"opening_title\": null, \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}}",
+  "output": null,
+  "meta": {
+    "source": "hand_authored_golden",
+    "prod_profile": true,
+    "settings": {
+      "phone_render_user_ids": [],
+      "phone_subtitled_rendering_enabled": true
+    },
+    "note": "KRI-1292 decoy: 'a bit longer' names no length, so no hold_s is recorded. Hand-authored golden answer (NOT a model recording): the cassette ignores the prompt, so replay proves only the answer shape, that the KRI-1292 `hold_s` teaching is in the rendered prompt (`prompt_contains`) and the `spoken_text_hold_brief` check through the product's own `requirement_spoken_text`. Live-model phrasing is unmeasured (paid run not made). Input shell: qendresa_title_hold_with_video_length; take from tests/fixtures/kri970_provolone_takes.json T1 (Don Julio lunch).",
+    "prompt_contains": [
+      "how long a text at a spoken word stays"
+    ],
+    "spoken_text_hold_brief": {
+      "hold_s": null,
+      "literal": "PROVOLETA 🧀"
+    }
+  }
+}

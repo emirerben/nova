@@ -56,6 +56,7 @@ from app.kria.order_replacement import OrderReplacementProof
 from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
+from app.kria.spoken_text_ask import with_valid_hold_fact
 from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
@@ -120,6 +121,26 @@ def brief_batch_chars(updates: Iterable[BriefUpdate]) -> int:
 _SCOPE_RE = re.compile(r"^(title|per_clip|global|clip:[A-Za-z0-9._:-]{1,100})$")
 _MAX_FACTS_BYTES = 2_000
 _MAX_DESCRIPTION_CHARS = 300
+MAX_LITERAL_CHARS = 200
+# Words shown a piece at a time can be a whole approved paragraph (KRI-1352): the opening title
+# that holds the first one takes 280 characters (`EditProposalSnapshot.opening_title`).
+MAX_SEQUENCE_LITERAL_CHARS = 280
+
+
+def _literal_field() -> Any:
+    return Field(
+        default=None,
+        max_length=MAX_SEQUENCE_LITERAL_CHARS,
+        description=(
+            f"Exact creator words: at most {MAX_LITERAL_CHARS} characters, or "
+            f"{MAX_SEQUENCE_LITERAL_CHARS} for kind text_sequence."
+        ),
+    )
+
+
+def _check_literal_length(kind: str | None, literal: str | None) -> None:
+    if literal and kind != "text_sequence" and len(literal) > MAX_LITERAL_CHARS:
+        raise ValueError(f"literal must be at most {MAX_LITERAL_CHARS} characters")
 
 
 def _nfc(value: str) -> str:
@@ -258,7 +279,7 @@ class BriefUpdate(_BriefModel):
     expected_version: int | None = Field(default=None, ge=0)
     kind: RequirementKind | None = None
     scope: str | None = None
-    literal: str | None = Field(default=None, max_length=200)
+    literal: str | None = _literal_field()
     description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     facts: dict[str, Any] = Field(default_factory=dict)
 
@@ -298,6 +319,19 @@ class BriefUpdate(_BriefModel):
         return value
 
     @model_validator(mode="after")
+    def _text_hold(self) -> BriefUpdate:
+        if self.kind == "text" and "hold_s" in self.facts:
+            self.facts = with_valid_hold_fact(self.facts)
+        return self
+
+    @model_validator(mode="after")
+    def _literal_length(self) -> BriefUpdate:
+        # A change without `kind` keeps its target's kind; the merged requirement checks it.
+        if self.kind is not None:
+            _check_literal_length(self.kind, self.literal)
+        return self
+
+    @model_validator(mode="after")
     def _needs_content(self) -> BriefUpdate:
         content = (self.kind, self.scope, self.literal, self.description)
         if self.operation == "remove":
@@ -328,7 +362,7 @@ class BriefRequirement(_BriefModel):
     id: str = Field(min_length=1, max_length=24)
     kind: RequirementKind
     scope: str
-    literal: str | None = Field(default=None, max_length=200)
+    literal: str | None = _literal_field()
     description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     facts: dict[str, Any] = Field(default_factory=dict)
     source_turn_id: str | None = None
@@ -353,6 +387,11 @@ class BriefRequirement(_BriefModel):
             or self.id == self.order_replacement.proposal.predecessor_requirement_id
         ):
             raise ValueError("A confirmed replacement belongs to a new global order requirement")
+        return self
+
+    @model_validator(mode="after")
+    def _literal_length(self) -> BriefRequirement:
+        _check_literal_length(self.kind, self.literal)
         return self
 
     @property
@@ -521,14 +560,22 @@ def _complete_change(target: BriefRequirement, update: BriefUpdate) -> BriefUpda
     """KRI-805: a partial change keeps every field it leaves out; a complete one replaces."""
     if update.operation != "change" or (update.kind is not None and update.scope is not None):
         return update
-    facts = {**target.facts, **update.facts}
+    kind = update.kind or target.kind
+    inherited = target.facts
+    if kind != target.kind and "hold_s" in inherited:
+        # KRI-1292: `hold_s` is a text's stay or a photo's hold; it is not the new kind's.
+        inherited = {k: v for k, v in inherited.items() if k != "hold_s"}
+    facts = {**inherited, **update.facts}
+    if kind == "text" and "hold_s" in update.facts:
+        # KRI-1292: a partial change skips BriefUpdate's text check (no kind yet); same rule here.
+        facts = with_valid_hold_fact(facts)
     if "duration_s" in update.facts and "duration_bound" not in update.facts:
         # KRI-847: a new length is exact until the update says it is a ceiling again, so
         # "at most 10 seconds" then "make it 15 seconds" does not become "at most 15".
         facts.pop("duration_bound", None)
     return update.model_copy(
         update={
-            "kind": update.kind or target.kind,
+            "kind": kind,
             "scope": update.scope or target.scope,
             "literal": target.literal if update.literal is None else update.literal,
             "description": target.description if update.description is None else update.description,
@@ -631,6 +678,7 @@ def merge_requirements(
 # (`speaker_small`).
 # KRI-1029: and the text's shape ("curved title"), which "make the title just X" restates
 # without.
+# KRI-1307: and that the recordings behind them be zoomed to read (`background_zoom`).
 # Qendresa item 16: and that the speaker starts full screen in their own take before the
 # background / corner (`speaker_full_opening`, with `speaker_full_opening_s` for a named length).
 STICKY_FACTS = frozenset(
@@ -651,6 +699,7 @@ STICKY_FACTS = frozenset(
         "speaker_small",
         "speaker_full_opening",
         "speaker_full_opening_s",
+        "background_zoom",
         APPROVED_COPY_FACT,
         TEXT_SHAPE_FACT,
     }

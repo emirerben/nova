@@ -1,0 +1,46 @@
+{
+  "issue": "KRI-1352",
+  "request_shape": "An informal but respectful explanation of a public date. One large text in the middle shown word by word, and the same text translated into English at the bottom, also word by word, shown together with it.",
+  "brief": [
+    {"id": "r1", "kind": "text_sequence", "scope": "global", "literal": null, "facts": {"mode": "agent_choice", "unit": "word", "position": "middle"}},
+    {"id": "r2", "kind": "text_sequence", "scope": "global", "literal": null, "facts": {"mode": "agent_choice", "unit": "word", "position": "bottom"}}
+  ],
+  "footage": {
+    "clips": 4,
+    "output_windows_s": [[0.0, 3.4], [3.4, 6.4], [6.4, 17.4], [17.4, 19.6]],
+    "research_decided_at": "render (no typed research requirement, no approved research)"
+  },
+  "expected": {
+    "layers": [
+      {"position": "middle", "language": "not en", "translation_of": null, "unit": "word"},
+      {"position": "bottom", "language": "en", "translation_of": 0, "unit": "word"}
+    ],
+    "translation_shown_together_with_original": true,
+    "pieces_stay_in_reviewed_window_and_place": true,
+    "every_piece_cites_its_layer_facts_and_sources": true
+  },
+  "must_fail": [
+    "test_unrelated_facts_rejected_by_review_fail_the_render",
+    "test_invented_date_is_rejected_before_review",
+    "test_uncited_fact_is_rejected",
+    "test_naming_who_is_pictured_needs_the_creator_or_a_label",
+    "test_translation_that_changes_a_number_is_rejected",
+    "test_mistranslation_rejected_by_review_fails_the_render",
+    "test_translation_citing_other_facts_is_rejected",
+    "test_a_missing_translation_layer_fails_instead_of_silently_dropping",
+    "test_unmet_layer_is_reported_not_rendered",
+    "test_shaping_cannot_write_its_own_text",
+    "test_shaping_cannot_reword_researched_text",
+    "test_shaping_cannot_move_the_translation_off_its_place",
+    "test_shaping_cannot_move_research_onto_unreviewed_footage",
+    "test_a_translation_shown_after_its_text_is_not_simultaneous",
+    "test_shaping_cannot_make_the_translation_follow_its_text",
+    "test_word_unit_needs_one_word_per_piece",
+    "test_saved_replay_refuses_multiword_pieces_for_a_word_ask",
+    "test_saved_replay_refuses_research_moved_off_its_reviewed_window",
+    "test_saved_replay_refuses_layers_moved_to_another_place",
+    "test_approved_layers_on_changed_footage_fail_instead_of_researching_again",
+    "test_approved_layers_on_recut_source_footage_fail",
+    "test_an_older_footage_explanation_approval_fails_plainly_for_authored_sequences"
+  ]
+}

@@ -33,7 +33,16 @@ from typing import Any
 from app.agents.prompt_vocab import render_vocab_tokens
 
 EDITOR_OPS_VERSION = 2
-LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides", "overlays", "background")
+LANES: tuple[str, ...] = (
+    "text",
+    "timeline",
+    "audio",
+    "slides",
+    "overlays",
+    "background",
+    "split_screen",
+    "color_moments",
+)
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
 # prompts stay byte-identical (KRI-301).
 SURFACE_ONLY_LANES: dict[str, str] = {"slides": "slide_post"}
@@ -49,11 +58,14 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     "background_windows": "speaker_background_windows.txt",
     # Qendresa item 18: aim / zoom the recordings, only while the focus gate is open.
     "background_focus": "speaker_background_focus.txt",
+    # KRI-1350: colour moments, only while the colour-moments gate is open.
+    "color_moments": "color_moments.txt",
 }
 # KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
 # byte-identical.
 FIELD_FRAGMENTS: dict[str, str] = {
+    "muted": "clip_audio.txt",
     "tilt": "clip_tilt.txt",
     # KRI-1139: appended after `clip_tilt.txt` only while the pool-photo backdrop is open too, so
     # a tilt-open edit without it keeps its exact prompt.
@@ -94,6 +106,9 @@ class OpSpec:
     coerce: CoerceFn | None = None
     # Extra fragment file under prompts/edit_copilot_ops/ (beyond <lane>.txt).
     prompt_fragment: str | None = None
+    # (en, tr) sentence that REPLACES the model's reply when this op's family is not offered and
+    # nothing else survives, so "Done" is never shown for a closed lane (KRI-1350).
+    closed_note: tuple[str, str] | None = None
 
 
 def lane_specs() -> list[OpSpec]:
@@ -122,6 +137,7 @@ class MergedRegistry:
     new_ops: frozenset[str] = frozenset()
     families: dict[str, frozenset[str]] = field(default_factory=dict)
     coerce: dict[str, CoerceFn] = field(default_factory=dict)
+    closed_notes: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 REGISTRY = MergedRegistry()
@@ -152,6 +168,8 @@ def merge_into_parser(
         op_fields[spec.name] = spec.fields | spec.required
         REGISTRY.families[spec.name] = spec.family
         REGISTRY.coerce[spec.name] = spec.coerce
+        if spec.closed_note is not None:
+            REGISTRY.closed_notes[spec.name] = spec.closed_note
     REGISTRY.new_ops = frozenset(new_ops) | REGISTRY.new_ops
     return REGISTRY
 
@@ -180,6 +198,8 @@ def family_fragments(snapshot: object) -> str:
     post = snapshot.get("post") if surface_of(snapshot) == "slide_post" else None
     if isinstance(post, dict) and post.get("tilt_zoom_enabled") is True:
         names.append(SLIDE_TILT_ZOOM_FRAGMENT)
+    if snapshot.get("split_screen_available") is True:
+        names.append("split_screen.txt")
     parts: list[str] = []
     for name in names:
         try:
@@ -196,7 +216,13 @@ def prompt_fragments(surface: str | None = None) -> str:
 
     Surface-only lanes (``SURFACE_ONLY_LANES``) contribute only on their surface.
     """
-    names = [f"{lane}.txt" for lane in LANES if SURFACE_ONLY_LANES.get(lane) in (None, surface)]
+    names = [
+        f"{lane}.txt"
+        for lane in LANES
+        # These two lanes' fragments are family-gated (see `family_fragments`).
+        if lane not in ("split_screen", "color_moments")
+        and SURFACE_ONLY_LANES.get(lane) in (None, surface)
+    ]
     for spec in lane_specs():
         if spec.prompt_fragment and spec.prompt_fragment not in names:
             names.append(spec.prompt_fragment)

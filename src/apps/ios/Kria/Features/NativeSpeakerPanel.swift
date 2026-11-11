@@ -4,7 +4,7 @@ import Vision
 
 /// The framed Talk-to-camera speaker, selected by tapping them on the preview: a size slider and the corner
 /// shortcuts, for people who would rather not pinch. Moving and resizing by hand happen on the preview itself
-/// (`NativeVideoPreview`); this panel and the gesture write the same `speaker_frame`, one undo step each.
+/// (`NativeVideoPreview`); this panel and the gesture share an explicit frame target, one undo step each.
 /// Rows: `docs/reviews/speaker-frame-direct-manipulation-failure-modes.md`. Identifiers: `native-editor-you-panel` / `-done`
 /// (from the lane panel's title), `native-editor-speaker-size`, `native-editor-speaker-spot-<preset>`.
 struct NativeSpeakerPanel: View {
@@ -15,7 +15,12 @@ struct NativeSpeakerPanel: View {
     @ObservedObject var session: NativeEditorSession
     let onDone: () -> Void
     @State private var tab = Tab.speaker
-    @State private var width = 0.42
+    @State private var sliderTarget: EditorSelection?
+
+    private var target: EditorSelection {
+        guard let selected = session.selection, selected.kind == .speaker else { return .speaker }
+        return selected
+    }
 
     private static let spots: [(preset: String, label: String, symbol: String)] = [
         ("small_top_left", "Top left", "arrow.up.left"), ("small_top_right", "Top right", "arrow.up.right"),
@@ -24,54 +29,81 @@ struct NativeSpeakerPanel: View {
     ]
 
     var body: some View {
+        let selected = target
+        let scoped = session.usesScopedSpeakerFrame(for: selected)
+        let inPanel = session.document.clips.first { $0.id == selected.id }?.splitSectionID != nil
+        let width = session.speakerEditingFrame(for: selected)?.widthFraction ?? 1
         NativeEditorLanePanel(title: "You", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Drag yourself on the video to move. Pinch, or drag a corner, to resize. One spot and size for the whole video.")
+                Text(scoped
+                    ? "Drag yourself to move. Pinch, or drag a corner, to resize. Changes affect only this clip."
+                    : "Drag yourself on the video to move. Pinch, or drag a corner, to resize. One spot and size for the whole video.")
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("native-editor-speaker-hint")
                 HStack(spacing: 10) {
                     Text("Size").font(KriaFont.body(13).weight(.semibold))
-                    NativeEditorSlider(session: session, value: $width, in: SpeakerBackgroundLimits.minFrameWidthFraction...1, step: 0.01) {
+                    NativeEditorSlider(session: session, value: Binding(
+                        get: { session.speakerEditingFrame(for: selected)?.widthFraction ?? 1 },
+                        set: { session.setSpeakerFrameWidth($0, for: sliderTarget ?? selected) }
+                    ), in: SpeakerBackgroundLimits.minFrameWidthFraction...1, step: 0.01,
+                    onEditingChanged: { sliderTarget = $0 ? selected : nil }) {
                         Text("Size")
                     }
-                    .accessibilityValue("\(Int((width * 100).rounded())) percent of the video width")
+                    .accessibilityValue("\(Int((width * 100).rounded())) percent of the \(inPanel ? "panel" : "video") width")
                     .accessibilityIdentifier("native-editor-speaker-size")
                     Text("\(Int((width * 100).rounded()))%").font(KriaFont.body(13).monospacedDigit())
                         .frame(minWidth: 40, alignment: .trailing)
                 }
                 HStack(spacing: 4) {
                     ForEach(Self.spots, id: \.preset) { spot in
-                        let selected = session.speakerFrame?.presetName == spot.preset
-                        Button { session.setSpeakerFrame(preset: spot.preset) } label: {
+                        let active = spot.preset == "full" ? session.speakerFrame(for: selected) == nil
+                            : session.speakerFrame(for: selected)?.presetName == spot.preset
+                        Button { session.setSpeakerFrame(preset: spot.preset, for: selected) } label: {
                             Image(systemName: spot.symbol).font(.system(size: 15, weight: .semibold))
                                 .frame(maxWidth: .infinity, minHeight: 44)
                                 .foregroundStyle(KriaColor.ink)
-                                .background(selected ? KriaColor.sage : KriaColor.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                                .background(active ? KriaColor.sage : KriaColor.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                                 .contentShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(spot.label)
-                        .accessibilityAddTraits(selected ? .isSelected : [])
+                        .accessibilityLabel(inPanel && spot.preset == "full" ? "Fill panel" : spot.label)
+                        .accessibilityAddTraits(active ? .isSelected : [])
                         .accessibilityIdentifier("native-editor-speaker-spot-" + spot.preset)
                     }
                 }
+                if scoped {
+                    Button("Use default framing") { session.resetSpeakerFrame(for: selected) }
+                        .accessibilityIdentifier("native-editor-speaker-use-default")
+                }
             }
+            .disabled(!session.canEditSpeakerFrame(for: selected))
         }
         .onAppear {
-            width = session.speakerFrame?.widthFraction ?? width
             panelLifecycle?.register(owner: lifecycleOwner) { session.endTransaction() }
         }
         .onDisappear { panelLifecycle?.unregister(owner: lifecycleOwner); session.endTransaction() }
-        // A pinch on the preview, an undo or a corner button moves the slider; the slider writes back only a real change.
-        .onChange(of: session.speakerFrame?.widthFraction) { _, value in if let value, value != width { width = value } }
-        .onChange(of: width) { _, value in
-            if let current = session.speakerFrame?.widthFraction, abs(current - value) > 0.0001 { session.setSpeakerFrameWidth(value) }
-        }
     }
 }
 
 /// Geometry and face lookup shared by the preview's speaker gesture.
+enum NativeSpeakerPanelGeometry {
+    static func pixelRect(_ rect: CGRect, canvas: CGSize) -> CGRect {
+        CGRect(x: rect.minX * canvas.width, y: rect.minY * canvas.height,
+               width: rect.width * canvas.width, height: rect.height * canvas.height)
+    }
+
+    static func canvasPoint(_ point: CGPoint, viewport: CGRect, canvas: CGSize) -> CGPoint {
+        CGPoint(x: (viewport.minX + point.x * viewport.width) * canvas.width,
+                y: (viewport.minY + point.y * viewport.height) * canvas.height)
+    }
+
+    static func movedPosition(from point: CGPoint, translation: CGSize, canvas: CGSize, viewport: CGRect) -> CGPoint {
+        NativeTextTransformMath.movedPosition(from: point, translation: translation,
+                                            canvas: CGSize(width: canvas.width * viewport.width, height: canvas.height * viewport.height))
+    }
+}
+
 enum NativeSpeakerFrameGesture {
     /// How close (canvas fraction) the speaker's centre must come to the middle line before it snaps there.
     static let centerSnap = 0.02

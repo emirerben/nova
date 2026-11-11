@@ -40,7 +40,8 @@ struct NativeEditorAddClipSheet: View {
                 Text(choosingSource ? "Upload from" : "Add a clip or photo").kriaType(.heading).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                 if !choosingSource {
-                    Text("Adds to the end of your video.").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    Text("Adds to the end of your video.")
+                        .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 }
             }
             if choosingSource {
@@ -48,7 +49,9 @@ struct NativeEditorAddClipSheet: View {
             } else {
                 KriaSourceRow(options: [
                     model.localAccountID == nil ? nil : .record(caption: "Film now", identifier: "native-editor-add-clip-record", isEnabled: !session.isAddingClip) { showsCamera = true },
-                    .upload(caption: "Use existing video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) { choosingSource = true }
+                    .upload(caption: "Use a photo or video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) {
+                        choosingSource = true
+                    }
                 ].compactMap { $0 })
             }
             // Normally invisible: the sheet closes as soon as a file is chosen. Kept for the moment

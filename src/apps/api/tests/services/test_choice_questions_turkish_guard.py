@@ -472,6 +472,14 @@ def test_source_hands_every_choice_intro_and_reason_through_say() -> None:
     problems: list[str] = []
 
     def is_say(node: ast.AST) -> bool:
+        """A ``say()`` call, a choice between ``say()`` calls (one template per branch), or two
+        ``say()`` results joined (each piece is its own catalog key)."""
+        if isinstance(node, ast.IfExp):
+            return is_say(node.body) and is_say(node.orelse)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return is_say(node.left) and (
+                is_say(node.right) or isinstance(node.right, ast.Name)  # ``+ more`` (a say())
+            )
         return (
             isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "say"
         )

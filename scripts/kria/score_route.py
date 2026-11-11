@@ -725,6 +725,8 @@ def approval_card(fx: dict) -> dict[str, Any]:
         facts,
         phone_talking=talking_writer and fmt in {"subtitled", "talking_head"},
         caption_words_at_render=talking_writer,
+        # The draft turn binds the sending build (`kria_runtime`), as a recorded fixture does.
+        client_protocol=fx.get("client_protocol"),
         phone_text=defers_text_to_phone(creator_id=CREATOR_ID, clip_paths=paths),
         phone_narrated=defers_to_narrated_render(clip_paths=paths, **common),
         phone_montage=defers_to_unified_montage(clip_paths=paths, **common),
@@ -775,6 +777,14 @@ def approval_card(fx: dict) -> dict[str, Any]:
     disclosures = (
         card_disclosures(brief.live(), strategy, route=route, media=media) if shown else []
     )
+    try:  # KRI-1347: the draft turn drops a heads-up line a Done line contradicts
+        from app.kria.reply_consistency import reconcile_disclosures
+    except ImportError:  # code that predates the consistency check
+        reconcile_disclosures = None
+    if disclosures and reconcile_disclosures is not None:
+        disclosures = reconcile_disclosures(
+            disclosures, requirements=brief.live(), receipts=receipts, strategy=strategy
+        )
     if disclosures:
         reply = f"{reply}\n{card_text(disclosures)}"
     arguments = SimpleNamespace(

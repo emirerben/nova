@@ -63,40 +63,13 @@ def test_unreadable_sender_fails_closed():
 
 
 def test_gate_matches_every_render_worker_queue_individually():
-    """Any single render-sized queue is enough — the gate must stay in sync
-    with RENDER_WORKER_QUEUES, not hardcode `celery`. Queues the small
-    `visuals` VM also serves are the one exception (next test)."""
-    from app.services.queue_state import RENDER_WORKER_QUEUES, VISUALS_WORKER_QUEUES
+    """Any single render queue is enough — the gate must stay in sync with
+    RENDER_WORKER_QUEUES, not hardcode `celery`."""
+    from app.services.queue_state import RENDER_WORKER_QUEUES
     from app.worker import _worker_consumes_render_queues
 
-    render_sized = RENDER_WORKER_QUEUES - VISUALS_WORKER_QUEUES
-    assert render_sized, "the render worker must keep queues of its own"
-    for queue in render_sized:
+    for queue in RENDER_WORKER_QUEUES:
         assert _worker_consumes_render_queues(_sender_consuming(queue)) is True
-
-
-def test_visuals_only_worker_never_prewarms_clip():
-    """KRI-1240: the 2GB `visuals` machine consumes only visuals-analysis, which
-    is also a render-worker queue (the worker is its fallback). Without this
-    exception the prewarm would load torch + ViT-B/32 (~450-600MB) into the
-    small VM next to six analysis children — the 2026-08-02 light OOM shape."""
-    from app.services.queue_state import VISUALS_WORKER_QUEUES
-    from app.worker import _worker_consumes_render_queues
-
-    assert _worker_consumes_render_queues(_sender_consuming(*VISUALS_WORKER_QUEUES)) is False
-    assert _worker_consumes_render_queues(_sender_consuming("visuals-analysis")) is False
-
-
-def test_worker_consuming_visuals_plus_render_queues_still_prewarms():
-    """The unified worker also consumes visuals-analysis; that must not switch
-    its prewarm off."""
-    from app.worker import _worker_consumes_render_queues
-
-    sender = _sender_consuming("visuals-analysis", "autoplace-jobs")
-    assert _worker_consumes_render_queues(sender) is True
-    assert _worker_consumes_render_queues(_fly_sender("worker")) is True
-    assert _worker_consumes_render_queues(_fly_sender("visuals")) is False
-    assert _worker_consumes_render_queues(_fly_sender("light")) is False
 
 
 def _fly_toml_queues(process_name: str) -> set[str]:
@@ -109,11 +82,6 @@ def _fly_toml_queues(process_name: str) -> set[str]:
     match = re.search(rf'^\s*{process_name}\s*=\s*"[^"]*-Q\s+([^"\s]+)', fly_toml, re.MULTILINE)
     assert match, f"could not find the {process_name} process's -Q list in fly.toml"
     return set(match.group(1).split(","))
-
-
-def _fly_sender(process_name: str) -> MagicMock:
-    """A worker_ready sender shaped exactly like the fly.toml process line."""
-    return _sender_consuming(*_fly_toml_queues(process_name))
 
 
 def test_render_worker_queues_match_fly_toml_worker_command():
@@ -137,53 +105,23 @@ def test_light_queues_stay_disjoint_from_render_queues():
     assert _fly_toml_queues("light").isdisjoint(RENDER_WORKER_QUEUES)
 
 
-def test_visuals_worker_queues_match_fly_toml_visuals_command():
-    """VISUALS_WORKER_QUEUES is hand-synced with fly.toml's visuals `-Q` list,
-    the same way RENDER_WORKER_QUEUES is with the worker's. Adding a queue to
-    the visuals line alone would otherwise switch the prewarm back on there."""
-    from app.services.queue_state import VISUALS_WORKER_QUEUES
-
-    assert _fly_toml_queues("visuals") == set(VISUALS_WORKER_QUEUES)
-
-
-def test_visuals_process_serves_only_visuals_analysis():
-    """KRI-1240: the small visuals VM runs creator-facing Visuals analysis and
-    nothing else. autoplace-jobs carries poster repair and intent-review
-    evidence (full MP4 download + ffmpeg); speech-analysis runs bounded
-    transcription — both stay on the worker. And the worker keeps
-    visuals-analysis as the fallback, so a down or deploying visuals machine
-    only slows Visuals, never strands them."""
-    from app.services.queue_state import RENDER_WORKER_QUEUES, VISUALS_WORKER_QUEUES
-
-    assert VISUALS_WORKER_QUEUES == {"visuals-analysis"}
-    assert VISUALS_WORKER_QUEUES <= RENDER_WORKER_QUEUES
-    assert VISUALS_WORKER_QUEUES <= _fly_toml_queues("worker")
-
-
-def test_analysis_queues_have_exactly_the_intended_consumers():
-    """Release 2 + KRI-1240: autoplace-jobs and speech-analysis are consumed only
-    by the unified worker; visuals-analysis by the worker and the dedicated
-    visuals process; light (Beat, 1GB) by none of them."""
+def test_analysis_queues_are_consumed_only_by_the_unified_worker():
+    """Release 2: the dedicated autoplace/speech processes no longer exist."""
     from app.services.queue_state import RENDER_WORKER_QUEUES
 
     analysis = {"autoplace-jobs", "speech-analysis", "visuals-analysis"}
     assert analysis.issubset(RENDER_WORKER_QUEUES)
     assert analysis.issubset(_fly_toml_queues("worker"))
     assert analysis.isdisjoint(_fly_toml_queues("light"))
-    assert _fly_toml_queues("visuals") & analysis == {"visuals-analysis"}
 
 
-def test_every_autoplace_jobs_consumer_also_drains_visuals():
-    """Visuals analysis is split out of autoplace-jobs for fairness: every process
-    that consumes autoplace-jobs must also consume visuals-analysis (so turning
-    on VISUALS_ANALYSIS_QUEUE never loses a consumer), and the media download
-    never belongs on the 1GB light machine. The reverse no longer holds: the
-    visuals process drains visuals-analysis without autoplace-jobs."""
-    for process in ("worker", "light", "visuals"):
+def test_visuals_queue_has_the_same_consumers_as_autoplace_jobs():
+    """Visuals analysis is split out of autoplace-jobs only for fairness; it must
+    keep every consumer autoplace-jobs has, and the media download never belongs
+    on the 1GB light machine."""
+    for process in ("worker", "light"):
         queues = _fly_toml_queues(process)
-        if "autoplace-jobs" in queues:
-            assert "visuals-analysis" in queues, process
-    assert "visuals-analysis" not in _fly_toml_queues("light")
+        assert ("visuals-analysis" in queues) == ("autoplace-jobs" in queues), process
 
 
 def test_real_celery_app_exposes_the_introspection_surface():
@@ -198,10 +136,6 @@ def test_real_celery_app_exposes_the_introspection_surface():
     assert hasattr(consume_from, "keys")
     # Default app (no -Q select) must include the default render queue.
     assert "celery" in set(consume_from.keys())
-    # worker_direct would add a per-host `.dq` queue to consume_from, and the
-    # visuals-only check (consumed <= VISUALS_WORKER_QUEUES) would then fail
-    # open on the small VM.
-    assert not celery_app.conf.worker_direct
 
 
 # ── _prewarm_clip_font_matcher (hook wiring: gate short-circuits the thread) ─
@@ -223,12 +157,3 @@ def test_render_worker_spawns_prewarm_thread(mock_thread: MagicMock):
     _prewarm_clip_font_matcher(sender=_sender_consuming("celery", "plan-jobs", "overlay-jobs"))
 
     mock_thread.assert_called_once()
-
-
-@patch("app.worker.threading.Thread")
-def test_visuals_worker_never_spawns_prewarm_thread(mock_thread: MagicMock):
-    from app.worker import _prewarm_clip_font_matcher
-
-    _prewarm_clip_font_matcher(sender=_fly_sender("visuals"))
-
-    mock_thread.assert_not_called()

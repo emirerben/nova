@@ -309,6 +309,38 @@ class BackgroundSequenceEntry(BaseModel):
         return data
 
 
+MAX_BACKGROUND_LEFT_OUT = 8
+
+
+class BackgroundLeftOut(BaseModel):
+    """One repo / recording the planner left out of a background sequence, and why (KRI-1304).
+
+    ``why``: "no_recording" (the creator talks about it but no photo / video for it is attached,
+    so the previous one stays on) or "not_said" (a recording exists but the take never mentions
+    it). The worker carries it onto the lane receipt so the finished-video reply names it; the
+    planner's private ``summary`` never reaches the creator after a render.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(min_length=1, max_length=60)
+    why: Literal["no_recording", "not_said"]
+
+
+def _left_out_rows(value: object) -> tuple[dict[str, str], ...]:
+    """Valid ``{name, why}`` rows from model output; junk is dropped, never an error."""
+    rows: list[dict[str, str]] = []
+    for item in value if isinstance(value, (list, tuple)) else ():
+        raw = item.model_dump() if isinstance(item, BackgroundLeftOut) else item
+        if not isinstance(raw, dict):
+            continue
+        name = _clean(raw.get("name"))
+        why = raw.get("why")
+        if name and why in ("no_recording", "not_said"):
+            rows.append({"name": name[:60], "why": why})
+    return tuple(rows[:MAX_BACKGROUND_LEFT_OUT])
+
+
 def _opening_seconds(value: object) -> float | None:
     """A real number (never a bool or text) from 1 to 15 seconds, else ``None``."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -389,6 +421,15 @@ class BackgroundMedia(BaseModel):
     # Omitted from the dump while unused; lenient on junk (a bad model value never fails the turn).
     focus: Literal["left", "center", "right"] | None = None
     focus_zoom: float | None = None
+    # KRI-1304: what the planner left out of the sequence and why, so the finished-video reply can
+    # say it. Omitted from the dump while empty; lenient on junk (a bad model value never fails
+    # the turn).
+    left_out: tuple[BackgroundLeftOut, ...] = ()
+
+    @field_validator("left_out", mode="before")
+    @classmethod
+    def _lenient_left_out(cls, value: object) -> tuple[BackgroundLeftOut, ...]:
+        return tuple(BackgroundLeftOut(**row) for row in _left_out_rows(value))
 
     @field_validator("focus", mode="before")
     @classmethod
@@ -452,6 +493,8 @@ class BackgroundMedia(BaseModel):
             data.pop("focus", None)
         if data.get("focus_zoom") is None:
             data.pop("focus_zoom", None)
+        if not data.get("left_out"):
+            data.pop("left_out", None)
         return data
 
 

@@ -323,6 +323,29 @@ or spacing is a named miss, a word never said is "doesn't appear". Guards:
 `tests/pipeline/test_caption_spelling.py`, `tests/pipeline/test_kri961_named_phrase_near_match.py`,
 `tests/tasks/test_kri961_narrated_named_phrase.py`.
 
+### The job's own names (phone Talking + Narrated; KRI-1345, `CAPTION_NAME_VOCABULARY_ENABLED`)
+
+The request-name rule above skips names under 5 letters (a short name fuzzy-matched against every
+caption word turns ordinary words into brands), so yorum3's typed "Vela" stayed "Vila" in the
+captions (whisper-1 and Gemini both heard "Vila"). With the flag on, `app/pipeline/caption_names.py`
+runs right after the creator spellings with a per-job vocabulary: the 4-letter names the creator
+typed (same sentence and "don't" rules) and the names the job's media spell -- on-screen text of
+its clips and Visuals-pool assets (the stored understanding record), the brand labels of its
+photos (never of a video: Gemini can list a talking take's mishearing as a brand), the creator's
+asset notes and file names (camera names dropped). A media name that sounds like a typed name is
+dropped. A heard word is respelled only when the take writes it as a name (a capital not at a
+sentence start, in whisper's captions or in Gemini's hearing of the take), it is not next to an
+unknown capitalised word ("Aston Villa"), it sounds like exactly one name (a 4-letter name: one
+vowel different), and it is not a word the creator typed. One decision per job, applied word for
+word: no timing changes, Turkish endings kept. Phone Narrated also gets the typed request names.
+Deterministic and model-free on purpose: the correction model runs before the spellings, is paid
+and non-deterministic. Trace: `captions/name_vocabulary` (names, sources, respelled, changed lines).
+Guard: `tests/pipeline/test_kri1345_caption_names.py` (yorum3's real hearing through
+`_phone_talking_caption_text`). Default `false`; false is byte-identical. Not covered: the cloud
+writers (`_render_subtitled_variant`, `_render_narrated_variant`, retranscribe), the post-render
+`_check_caption_words` and the reaction-beat trigger match (`find_named_phrase`), which keep the
+5-letter rule.
+
 ### Unclear words (phone Talking; KRI-849)
 
 "If you can't tell what he says, ask me instead of guessing." The Main Creator (v76) and the
@@ -488,6 +511,39 @@ cards are dropped (the reburn path has no arbitration — persisting them would
 resurrect the occlusion the omission prevented). `media_overlays_applied_ids`
 separately records the subset that actually reached the burned video. Guard:
 `test_media_overlay_persistence_keeps_failed_cards_drops_omitted`.
+
+## Caption legibility on any background (KRI-1343 / KRI-1344)
+
+`CAPTION_LEGIBILITY_ENABLED` (default `false`; api + worker; `false` is byte-identical).
+Phone generations only (`phone_text_styling.caption_legibility_pass`, called from
+`phone_captions.compile_caption_layers`; rules in `app/pipeline/caption_legibility.py`):
+
+- **Treatment.** The worst WCAG contrast (p10/p90 luminance) between the caption fill and the
+  pixels under the caption block -- take frames, full-screen photo/video cards and B-roll
+  cutaways (`register_generation_fullscreen`) -- below 4.5:1 adds an outline of ~7.5% of the
+  size (2-6 px) in black or white, whichever reads on the fill. The fill is never changed, also
+  when the creator chose it ("small, white" is size and colour). A creator/account outline keeps
+  hers and gets a firm shadow instead; outline and shadow both set = nothing (receipt
+  `declined`). A caption box needs nothing.
+- **Full-screen pictures.** While a full-screen card is up, a line whose block touches edges of
+  the picture (gradient on a 270x480 grey cover-fit) moves to the nearest calm band
+  (`caption_editor_style.line_overrides[cue_id].position_y_frac`, honoured by the server compile
+  and the iPhone editor; cue ids `native-caption-<n>` are made explicit on generation). A picture
+  with no calm band whose least busy band is still text-dense hides the line for that window.
+  The part of a line over the take keeps off her face.
+- Persisted: `caption_stroke_width`, `caption_editor_style.{stroke_color,shadow_color,
+  shadow_opacity,line_overrides}` and the receipt `variant.caption_legibility`. The cloud burn
+  (`_caption_style_overrides` -> ASS) reads the same outline/shadow fields; it composites
+  full-screen cards above captions, so per-line moves do not apply there.
+- A hidden line is persisted on the cue as `hidden_spans` (`[[from, to], ...]`, seconds from the
+  cue's own start; `generation_persisted_cues`), kept by the caption whitelist (`CaptionCue`) on
+  every editor Save / PATCH, and honoured by one rule: `caption_legibility.visible_cues` in the
+  phone compile (`phone_captions._prepare_cues`) and the cloud burn
+  (`_burn_persisted_captions_onto_base`); the iPhone editor's compiler mirrors it
+  (`NativeEditorRenderCompiler.visibleCaptionSpans`). An iPhone build without that change draws
+  the line over the picture again after an editor edit (no crash): turn the switch on only once
+  the build carrying it is out.
+- Guard: `tests/pipeline/test_caption_legibility.py`.
 
 ## Guards (entry points)
 
