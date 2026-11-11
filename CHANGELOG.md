@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.163.0] - 2026-11-11
+
+### Changed
+- perf(ios): disk cache for speaker-matte masks, off by default (KRI-1185) (#2223) <!-- release-pr: 2223 -->
+
 ## [0.88.162.0] - 2026-11-11
 
 ### Fixed
