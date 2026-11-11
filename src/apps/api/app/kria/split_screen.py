@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 class SplitLayout(BaseModel):
@@ -15,6 +15,16 @@ class SplitLayout(BaseModel):
     panel_weights: list[float] = Field(default_factory=lambda: [1, 1], min_length=2, max_length=3)
     gutter: float = Field(default=0, ge=0, le=0.1)
     background_color: str = Field(default="#000000", pattern=r"^#[0-9a-fA-F]{6}$")
+    # Protocol 47: an ended panel gives its height to the panels still playing. Omitted
+    # from the wire when false so every pre-collapse section keeps its exact bytes.
+    collapse_empty_panels: bool = False
+
+    @model_serializer(mode="wrap")
+    def omit_default_collapse(self, handler):
+        payload = handler(self)
+        if not self.collapse_empty_panels:
+            payload.pop("collapse_empty_panels", None)
+        return payload
 
     @model_validator(mode="after")
     def valid_weights(self):
@@ -74,6 +84,36 @@ def transition_overlap(left: dict[str, Any], right: dict[str, Any]) -> float:
     return overlap if overlap >= 0.1 else 0.0
 
 
+def collapsed_section_durations(
+    rows: list[dict[str, Any]], sections: list[SplitScreenSection]
+) -> dict[str, float]:
+    """A collapsing section lasts until its longest member ends."""
+    collapsing = {section.id for section in sections if section.collapse_empty_panels}
+    ends: dict[str, float] = {}
+    for row in rows:
+        section_id = row.get("split_section_id")
+        if row.get("removed") or section_id not in collapsing:
+            continue
+        offset, duration = row.get("split_offset_s"), row.get("duration_s")
+        if all(
+            isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+            for value in (offset, duration)
+        ):
+            ends[section_id] = max(ends.get(section_id, 0.0), float(offset) + float(duration))
+    return ends
+
+
+def sync_collapsed_section_durations(
+    rows: list[dict[str, Any]], sections: list[dict[str, Any]]
+) -> None:
+    """Rewrite stored `duration_s` of collapsing sections to the derived duration, in place."""
+    parsed = [SplitScreenSection.model_validate(section) for section in sections]
+    ends = collapsed_section_durations(rows, parsed)
+    for section in sections:
+        if section["id"] in ends:
+            section["duration_s"] = max(0.1, ends[section["id"]])
+
+
 def layout_split_timeline(
     rows: list[dict[str, Any]], sections: list[SplitScreenSection | dict[str, Any]]
 ) -> tuple[list[float], list[RecipeSplitScreenSection], float]:
@@ -82,6 +122,13 @@ def layout_split_timeline(
     by_id = {section.id: section for section in parsed}
     if len(by_id) != len(parsed):
         raise ValueError("split section ids must be unique")
+    derived = collapsed_section_durations(rows, parsed)
+    by_id = {
+        key: section.model_copy(update={"duration_s": max(0.1, derived[key])})
+        if key in derived
+        else section
+        for key, section in by_id.items()
+    }
     placed: dict[str, RecipeSplitScreenSection] = {}
     coverage: dict[tuple[str, int], list[tuple[float, float, dict]]] = {}
     previous_row = None

@@ -35,13 +35,14 @@ def _hook(value: Any, _s: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f'I can\'t use the opening hook idea ("{_clip(value)}") on this video yet, '
+            'I can\'t use the opening hook idea ("{clip_value}") on this video yet, '
             "so it won't be shown as text"
         ),
         tr=(
-            f'Açılış kanca fikrini ("{_clip(value)}") bu videoda henüz kullanamıyorum, '
+            'Açılış kanca fikrini ("{clip_value}") bu videoda henüz kullanamıyorum, '
             "o yüzden yazı olarak gösterilmeyecek"
         ),
+        clip_value=_clip(value),
     )
 
 
@@ -51,13 +52,14 @@ def _story(value: Any, _s: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f"I can't follow the planned story structure ({_list(items)}) on this video yet, "
+            "I can't follow the planned story structure ({list_items}) on this video yet, "
             "so it won't change the order of the clips"
         ),
         tr=(
-            f"Planlanan hikâye yapısını ({_list(items)}) bu videoda henüz uygulayamıyorum, "
+            "Planlanan hikâye yapısını ({list_items}) bu videoda henüz uygulayamıyorum, "
             "o yüzden kliplerin sırasını değiştirmeyecek"
         ),
+        list_items=_list(items),
     )
 
 
@@ -70,13 +72,11 @@ def _pacing(value: Any, strategy: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f"The {str(value).replace('_', ' ')} pacing isn't applied on this video yet: "
+            "The {str_value_replace} pacing isn't applied on this video yet: "
             "the cuts follow a fast pace"
         ),
-        tr=(
-            f"{str(value).replace('_', ' ')} tempo bu videoda henüz uygulanmıyor: "
-            "kesimler hızlı tempoda"
-        ),
+        tr=("{str_value_replace} tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda"),
+        str_value_replace=str(value).replace("_", " "),
     )
 
 
@@ -85,13 +85,14 @@ def _direction(value: Any, _s: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f"The {str(value).replace('_', ' ')} direction isn't applied on this video yet: "
+            "The {str_value_replace} direction isn't applied on this video yet: "
             "it is cut as a fast montage"
         ),
         tr=(
-            f"{str(value).replace('_', ' ')} yönü bu videoda henüz uygulanmıyor: "
+            "{str_value_replace} yönü bu videoda henüz uygulanmıyor: "
             "hızlı bir montaj olarak kesiliyor"
         ),
+        str_value_replace=str(value).replace("_", " "),
     )
 
 
@@ -99,8 +100,9 @@ def _caption_style(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value or value in {"auto", "none"}:
         return None
     return say(
-        en=f"I can't apply the {value} caption style on this video yet, so it won't be used",
-        tr=f"{value} altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak",
+        en="I can't apply the {value} caption style on this video yet, so it won't be used",
+        tr="{value} altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak",
+        value=value,
     )
 
 
@@ -110,10 +112,10 @@ def _treatments(value: Any, _s: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f"I can't add the treatments ({_list(items)}) on this video yet, "
-            "so they won't be applied"
+            "I can't add the treatments ({list_items}) on this video yet, so they won't be applied"
         ),
-        tr=f"Şu efektleri ({_list(items)}) bu videoda henüz ekleyemiyorum, uygulanmayacak",
+        tr="Şu efektleri ({list_items}) bu videoda henüz ekleyemiyorum, uygulanmayacak",
+        list_items=_list(items),
     )
 
 
@@ -121,8 +123,9 @@ def _archetype(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
     return say(
-        en=f"I can't use the {str(value).replace('_', ' ')} story archetype on this video yet",
-        tr=f"{str(value).replace('_', ' ')} hikâye kalıbını bu videoda henüz kullanamıyorum",
+        en="I can't use the {str_value_replace} story archetype on this video yet",
+        tr="{str_value_replace} hikâye kalıbını bu videoda henüz kullanamıyorum",
+        str_value_replace=str(value).replace("_", " "),
     )
 
 
@@ -211,15 +214,16 @@ def story_lines_notice(strategy: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f"The planned story structure ({_list(items)}) sets the chapters "
+            "The planned story structure ({list_items}) sets the chapters "
             "(which clips are grouped together), but it won't reorder your clips: they stay in "
             "the order you gave"
         ),
         tr=(
-            f"Planlanan hikâye yapısı ({_list(items)}) bölümleri (hangi kliplerin birlikte "
+            "Planlanan hikâye yapısı ({list_items}) bölümleri (hangi kliplerin birlikte "
             "gruplanacağını) belirliyor ama kliplerinin sırasını değiştirmeyecek: verdiğin sırada "
             "kalacaklar"
         ),
+        list_items=_list(items),
     )
 
 

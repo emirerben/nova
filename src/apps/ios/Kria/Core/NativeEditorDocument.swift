@@ -50,6 +50,15 @@ enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
 }
 
 extension EditorDocument {
+    /// The same slots and removed slots once each is written the way Save writes it. Hydration builds a slot
+    /// with a minimal `raw`, while a merge round trip fills in every wire key, so `==` calls identical slots different.
+    func hasSameTimelineSlots(as other: EditorDocument) -> Bool {
+        func same(_ a: [EditorTimelineSlot], _ b: [EditorTimelineSlot]) -> Bool {
+            a == b || (a.count == b.count && zip(a, b).allSatisfy { encodeSlot($0) == other.encodeSlot($1) })
+        }
+        return same(clips, other.clips) && same(tombstones, other.tombstones)
+    }
+
     /// "9:16" / nil / "portrait" -> "portrait"; "16:9" / "landscape" -> "landscape"; anything else
     /// (e.g. "square") is kept as is.
     static func canonicalOrientation(_ raw: String?) -> String? {
@@ -835,6 +844,17 @@ struct EditorDocument: Equatable, Sendable {
     var drawings: [EditorDrawing]
     /// KRI-1118: nil = no background. See `EditorSpeakerBackground`.
     var speakerBackground: EditorSpeakerBackground?
+    /// KRI-1350: the server-owned colour-moments lane (`{moments, end_fade}`), written only by Kria chat. Read for
+    /// the preview; never part of a Save (no `EditorSection`), so the server's copy stays authoritative.
+    var colorMoments: JSONValue?
+    /// KRI-1350: the timeline the stored colour-moments lane is timed against (the server's saved slots). The preview
+    /// moves the moments from it onto the current Range edit exactly like the server's `reproject_color_moments` does
+    /// at Save. Empty whenever the edit has no lane, so every other document is unchanged.
+    var colorMomentsBaseSlots: [EditorTimelineSlot] = []
+    /// KRI-1350: the moment-owned sounds (`cmsfx-…`) with the latest settings each had while visible (loaded, then
+    /// refreshed on every Range edit), so a sound that disappears while its moment is trimmed away returns, unchanged,
+    /// when a later Range edit brings the moment back. Empty without a lane.
+    var colorMomentSoundsBase: [EditorTimedEffect] = []
     var carouselMoment: [String: JSONValue]?
     var lyrics: [String: JSONValue]?
     var title: String?
@@ -947,6 +967,7 @@ struct EditorDocument: Equatable, Sendable {
         document.backgroundMusic = decodeBackground(object(sections["background_music"] ?? snapshot["background_music"]))
         document.carouselMoment = object(sections["carousel_moment"] ?? snapshot["carousel_moment"])
         document.lyrics = object(sections["lyrics"] ?? snapshot["lyrics"])
+        if let lane = sections["color_moments"] ?? snapshot["color_moments"], lane != .null { document.colorMoments = lane }
         document.capabilities = decodeCapabilities(
             object(snapshot["editor_capabilities"])
                 ?? object(sections["editor_capabilities"])
@@ -959,6 +980,10 @@ struct EditorDocument: Equatable, Sendable {
         document.orientation = canonicalOrientation(document.orientation)
         if document.landscapeFit == nil { document.landscapeFit = document.capabilities["landscape_fit"]?.value.flatMap { ["fit", "fill"].contains($0) ? $0 : nil } }
         document.clips = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter { !$0.removed }
+        if document.colorMoments != nil {
+            // The server's own saved timeline wins over editor sections a merge may have replaced with local edits.
+            document.colorMomentsBaseSlots = decodeSlots(array(object(snapshot["user_timeline"])?["slots"] ?? sections["timeline_slots"]) ?? []).filter { !$0.removed }
+        }
         document.tombstones = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter(\.removed)
         let splitValue = sections["split_screen_sections"] ?? object(snapshot["user_timeline"])?["split_screen_sections"]
         let splitRows = array(splitValue) ?? []
@@ -968,6 +993,9 @@ struct EditorDocument: Equatable, Sendable {
         document.speechTimingBasis = object(sections["speech_timing_basis"] ?? snapshot["speech_timing_basis"]) ?? [:]
         document.captionCues = decodeCaptions(array(sections["caption_cues"] ?? snapshot["caption_cues"]) ?? [])
         document.soundEffects = decodeEffects(array(sections["sound_effects"] ?? snapshot["sound_effects"]) ?? [])
+        if document.colorMoments != nil {
+            document.colorMomentSoundsBase = document.soundEffects.filter { $0.id.hasPrefix(NativeSpeechTimelineProjection.colorMomentSoundPrefix) }
+        }
         document.mediaOverlays = decodeEffects(array(sections["media_overlays"] ?? snapshot["media_overlays"]) ?? [])
         document.visualBlocks = decodeVisual(array(sections["visual_blocks"] ?? snapshot["visual_blocks"]) ?? [])
         document.motionScenes = decodeMotion(array(sections["motion_scenes"] ?? snapshot["motion_scenes"]) ?? [])

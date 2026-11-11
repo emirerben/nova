@@ -79,6 +79,7 @@ from app.services.phone_sources import bind_phone_sources
 from app.services.pool_analysis_deadline import is_expired as is_pool_analysis_expired
 from app.services.sfx_catalog import planner_catalog
 from app.services.tiktok_style_observations import effective_persona_style
+from app.services.visual_talking_takes import adopted_asset_ids
 
 # KRI-181: a generic "add sound effects" ask on phone Talking (the
 # `reaction_beats` capability) resolves to nothing today -- the model
@@ -525,6 +526,11 @@ async def resolve_item_creator_context(
                 kind=clip_kind,
                 duration_s=duration_s,
                 label=user_note or None,
+                has_audio=(
+                    assignment["has_audio"]
+                    if clip_kind == "video" and isinstance(assignment.get("has_audio"), bool)
+                    else None
+                ),
             )
         )
         clip_entry: dict[str, Any] = {
@@ -581,9 +587,13 @@ async def resolve_item_creator_context(
             .limit(50)
         )
     ).scalars()
+    # KRI-1340: a Visual adopted as a Talking take is listed once, as the footage it became.
+    adopted = adopted_asset_ids(item.clip_assignments)
     for asset in assets:
         if len(media_refs) >= MAX_CREATOR_MEDIA_REFS:
             break
+        if str(asset.id) in adopted:
+            continue
         if is_pool_analysis_expired(asset):
             # KRI-820: past its declared analysis bound the asset is a failed,
             # retryable upload (the reaper persists that within one sweep);
@@ -868,9 +878,12 @@ async def load_intent_clips_for_item(
                 .limit(50)
             )
         ).scalars()
+        adopted = adopted_asset_ids(item.clip_assignments)  # KRI-1340
         for asset in assets:
             if len(clips) >= MAX_CREATOR_MEDIA_REFS:
                 break
+            if str(asset.id) in adopted:
+                continue
             media_id = f"asset-{asset.id}"
             if media_id in seen:
                 continue

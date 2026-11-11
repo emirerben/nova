@@ -54,8 +54,9 @@ def sequence_timing_plan(intent: SequenceTimingIntent, snapshot: dict) -> Sequen
         return SequenceTimingPlan(
             tuple(operations),
             say(
-                en=f"Set the video to {end:g}s while preserving the text timing.",
-                tr=f"Yazıların zamanlamasını koruyarak videoyu {end:g} saniye yap.",
+                en="Set the video to {end:g}s while preserving the text timing.",
+                tr="Yazıların zamanlamasını koruyarak videoyu {end:g} saniye yap.",
+                end=end,
             ),
             intent,
         )
@@ -313,8 +314,9 @@ def sequence_brief_updates(prior, plan: SequenceTimingPlan, snapshot: dict, mess
         replace_matching(
             matches,
             say(
-                en=f"Video length {plan.intent.target_s:g}s",
-                tr=f"Video süresi {plan.intent.target_s:g} saniye",
+                en="Video length {plan_intent_target_s:g}s",
+                tr="Video süresi {plan_intent_target_s:g} saniye",
+                plan_intent_target_s=plan.intent.target_s,
             ),
             {
                 "duration_s": plan.intent.target_s,

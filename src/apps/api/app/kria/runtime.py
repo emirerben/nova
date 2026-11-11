@@ -48,8 +48,10 @@ from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
 from app.kria.removed_messages import REMOVED_WHILE_WAITING
 from app.kria.reply_language import (
+    asks_for_video_text,
     creator_typed_language,
     needs_typed_history,
+    own_words_enabled,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -852,6 +854,34 @@ async def _validate_scoped_turn(
     return scope
 
 
+async def _answers_video_text_question(db: AsyncSession, thread: CreationThread) -> bool:
+    """True when the open question asks for words for the video (KRI-1363).
+
+    Read only when a message would move the chat to another language, so a normal turn pays
+    nothing for it.
+    """
+    if not own_words_enabled():
+        return False
+    rows = (
+        await db.execute(
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    return asks_for_video_text(
+        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+    )
+
+
 async def submit_turn(
     db: AsyncSession,
     *,
@@ -1088,6 +1118,19 @@ async def submit_turn(
     reply_language = resolve_reply_language(
         body.message, previous=previous_language, locale=locale, typed_elsewhere=typed_elsewhere
     )
+    if (
+        previous_language is not None
+        and reply_language != previous_language
+        and await _answers_video_text_question(db, thread)
+    ):
+        # KRI-1363: words typed for a title are the video's language, not the chat's.
+        reply_language = resolve_reply_language(
+            body.message,
+            previous=previous_language,
+            locale=locale,
+            typed_elsewhere=typed_elsewhere,
+            answers_video_text=True,
+        )
     remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
     with reply_language_for(reply_language):

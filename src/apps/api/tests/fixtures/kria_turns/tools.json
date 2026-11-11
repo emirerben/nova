@@ -1204,6 +1204,95 @@
           "title": "ClipSelectionIn",
           "type": "object"
         },
+        "ColorMoment": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "exclusiveMinimum": 0,
+              "maximum": 1800,
+              "title": "End",
+              "type": "number"
+            },
+            "enter": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ColorMomentEdge"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "exit": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ColorMomentEdge"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "id": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "start": {
+              "maximum": 1800,
+              "minimum": 0,
+              "title": "Start",
+              "type": "number"
+            },
+            "tone": {
+              "enum": [
+                "mono",
+                "warm",
+                "faded"
+              ],
+              "title": "Tone",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "start",
+            "end",
+            "tone"
+          ],
+          "title": "ColorMoment",
+          "type": "object"
+        },
+        "ColorMomentEdge": {
+          "additionalProperties": false,
+          "properties": {
+            "duration": {
+              "default": 0.3333333333333333,
+              "maximum": 0.6,
+              "minimum": 0.1,
+              "title": "Duration",
+              "type": "number"
+            },
+            "style": {
+              "enum": [
+                "cut",
+                "flash_white",
+                "light_leak",
+                "dip_black"
+              ],
+              "title": "Style",
+              "type": "string"
+            }
+          },
+          "required": [
+            "style"
+          ],
+          "title": "ColorMomentEdge",
+          "type": "object"
+        },
         "Crop": {
           "properties": {
             "scale": {
@@ -1675,6 +1764,33 @@
           "title": "EditorCommitCaptionMeta",
           "type": "object"
         },
+        "EditorCommitColorMoments": {
+          "additionalProperties": false,
+          "description": "KRI-1350: the whole colour-moments lane of a phone edit (written by the Kria chat op).\n\nOutput-timeline windows drawn black-and-white / warm / faded with flash, light-leak or\ndip edges, and an optional end fade to black. Compiled onto the pinned recipe by\n`with_color_moments` on every phone Save.",
+          "properties": {
+            "end_fade": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EndFade"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "moments": {
+              "items": {
+                "$ref": "#/$defs/ColorMoment"
+              },
+              "maxItems": 6,
+              "title": "Moments",
+              "type": "array"
+            }
+          },
+          "title": "EditorCommitColorMoments",
+          "type": "object"
+        },
         "EditorCommitMix": {
           "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is the\nfootage's own sound level: persisted on every variant, and honored by the phone\nrenderer for guided-story edits (including creator-song videos, where it plays WITH\nthe song; unset keeps the song video's camera silent) and by the cloud renderer for\nsong variants (footage plays UNDER the song) and original-audio variants (footage\nvolume). Cloud voiceover variants refuse it (422 original_audio_voiceover_unsupported).",
           "properties": {
@@ -2046,7 +2162,7 @@
         },
         "EditorStateIn": {
           "additionalProperties": false,
-          "description": "The editor's CURRENT UNSAVED state, sent with a chat turn.\n\nA lane present is the client's full current value; absent equals the saved variant.\nA present-but-empty ``lanes`` is still authoritative: \"no unsaved edits\".\nThe server never recomputes a hash; ``client_state_id`` is echoed verbatim.",
+          "description": "The editor's CURRENT UNSAVED state, sent with a chat turn.\n\nA lane present is the client's full current value; absent equals the saved variant.\nA present-but-empty ``lanes`` is authoritative (\"no unsaved edits\") only over chat\ndrafts the editor has seen: ``draft_revision`` is the newest one it staged or discarded,\nabsent from older builds and from an editor that never read the head (KRI-1333).\nThe server never recomputes a hash; ``client_state_id`` is echoed verbatim.",
           "properties": {
             "base_generation": {
               "maxLength": 128,
@@ -2058,6 +2174,19 @@
               "minLength": 1,
               "title": "Client State Id",
               "type": "string"
+            },
+            "draft_revision": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Draft Revision"
             },
             "lanes": {
               "$ref": "#/$defs/EditorStateLanes"
@@ -2160,6 +2289,17 @@
               "anyOf": [
                 {
                   "$ref": "#/$defs/CarouselMomentEditRequest"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "color_moments": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitColorMoments"
                 },
                 {
                   "type": "null"
@@ -2921,6 +3061,22 @@
             "in_s"
           ],
           "title": "EditorStateTimelineSlot",
+          "type": "object"
+        },
+        "EndFade": {
+          "additionalProperties": false,
+          "properties": {
+            "duration": {
+              "maximum": 4.0,
+              "minimum": 0.3,
+              "title": "Duration",
+              "type": "number"
+            }
+          },
+          "required": [
+            "duration"
+          ],
+          "title": "EndFade",
           "type": "object"
         },
         "GradientBackground": {
@@ -3916,6 +4072,11 @@
               "pattern": "^#[0-9a-fA-F]{6}$",
               "title": "Background Color",
               "type": "string"
+            },
+            "collapse_empty_panels": {
+              "default": false,
+              "title": "Collapse Empty Panels",
+              "type": "boolean"
             },
             "duration_s": {
               "maximum": 1800,

@@ -124,6 +124,8 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "clear_speaker_frame",
             # Qendresa item 18: aim / zoom the recordings behind the speaker.
             "set_background_focus",
+            # KRI-1350: black-and-white / warm / faded stretches, their flashes and the end fade.
+            "set_color_moments",
         }
     ),
 }
@@ -189,6 +191,7 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
             "background",
             "background_windows",
             "background_focus",
+            "color_moments",
         }
     ),
 }
@@ -218,6 +221,8 @@ FIELD_SECTIONS: dict[str, tuple[str, ...]] = {
     # KRI-1117: the Talking background is a look; a scoped update never touches it unless
     # the look is flagged.
     "speaker_background": ("look",),
+    # KRI-1350: colour moments are part of the look.
+    "color_moments": ("look",),
 }
 # Documentation of the contract table (4.3, last column); the code above is its inverse.
 SECTION_COMMIT_FIELDS: dict[str, tuple[str, ...]] = {
@@ -300,7 +305,10 @@ def section_label(section: str, *, lang: str = "en") -> str:
 
 def scope_phrase(sections: list[str]) -> str:
     """Localized "captions and music" (language comes from the active reply language)."""
-    names = [say(en=section_label(s), tr=section_label(s, lang="tr")) for s in sections]
+    names = [
+        say(en=_SECTION_LABELS.get(s, (s, s))[0], tr=_SECTION_LABELS.get(s, (s, s))[1])
+        for s in sections
+    ]
     if not names:
         return ""
     if len(names) == 1:
@@ -488,15 +496,21 @@ def left_alone_note(dropped: list[dict[str, str]], scope: list[str]) -> str:
     if not sections:
         return ""
     phrase = scope_phrase(sections)
-    return say(en=f"I left {phrase} alone.", tr=f"{phrase.capitalize()} bölümüne dokunmadım.")
+    return say(
+        en="I left {phrase} alone.",
+        tr="{phrase_capitalize} bölümüne dokunmadım.",
+        phrase=phrase,
+        phrase_capitalize=phrase.capitalize(),
+    )
 
 
 def nothing_in_scope_reply(dropped: list[dict[str, str]], scope: list[str]) -> str:
     sections = [s for s in SECTION_ORDER if any(d["section"] == s for d in dropped)]
     phrase = scope_phrase(sections) if sections else scope_phrase(scope)
     return say(
-        en=f"That would change {phrase}, which you did not flag. Flag it and try again.",
-        tr=(f"Bu, işaretlemediğin {phrase} bölümünü değiştirirdi. Onu da işaretleyip tekrar dene."),
+        en="That would change {phrase}, which you did not flag. Flag it and try again.",
+        tr=("Bu, işaretlemediğin {phrase} bölümünü değiştirirdi. Onu da işaretleyip tekrar dene."),
+        phrase=phrase,
     )
 
 
@@ -817,7 +831,12 @@ def repair_note(report: RepairReport, already_left_alone: list[str]) -> str:
     if not sections:
         return ""
     phrase = scope_phrase(sections)
-    return say(en=f"I left {phrase} alone.", tr=f"{phrase.capitalize()} bölümüne dokunmadım.")
+    return say(
+        en="I left {phrase} alone.",
+        tr="{phrase_capitalize} bölümüne dokunmadım.",
+        phrase=phrase,
+        phrase_capitalize=phrase.capitalize(),
+    )
 
 
 _TIMING_KEYS = frozenset({"start_s", "end_s", "start", "end", "at_s"})
@@ -958,8 +977,10 @@ def repair_compiled(
     changes = (
         [
             say(
-                en=f"Updated {scope_phrase(left)}.",
-                tr=f"{scope_phrase(left).capitalize()} güncellendi.",
+                en="Updated {scope_phrase_left}.",
+                tr="{scope_phrase_left_capitalize} güncellendi.",
+                scope_phrase_left=scope_phrase(left),
+                scope_phrase_left_capitalize=scope_phrase(left).capitalize(),
             )
         ]
         if left
@@ -1323,8 +1344,10 @@ def emit_scoped_update_feed(
 def _undo_reply(sections: list[str]) -> str:
     phrase = scope_phrase(sections)
     return say(
-        en=f"I put {phrase} back to how it was.",
-        tr=f"{phrase.capitalize()} önceki hâline döndürüldü.",
+        en="I put {phrase} back to how it was.",
+        tr="{phrase_capitalize} önceki hâline döndürüldü.",
+        phrase=phrase,
+        phrase_capitalize=phrase.capitalize(),
     )
 
 

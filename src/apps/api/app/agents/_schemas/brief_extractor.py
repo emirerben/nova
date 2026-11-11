@@ -28,6 +28,9 @@ class BriefExtractionInput(BaseModel):
     # (`insert_clip_candidates`), so the prompt may record that ask. Closed (default): the prompt
     # is byte-identical to before inserts existed.
     insert_clips_open: bool = False
+    # KRI-1360: this message answers the creator's "Change my request" tap. False (default):
+    # the prompt is byte-identical and the field is left out of input dumps.
+    changes_request: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class BriefExtractionOutput(BaseModel):

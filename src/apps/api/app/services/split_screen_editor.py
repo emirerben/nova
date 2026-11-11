@@ -3,7 +3,13 @@
 from fastapi import HTTPException
 
 from app.kria.split_screen import layout_split_timeline
-from app.services.phone_rollout import split_screen_client_supported, split_screen_supported
+from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL, SPLIT_SCREEN_PROTOCOL
+from app.services.phone_rollout import (
+    split_collapse_client_supported,
+    split_collapse_supported,
+    split_screen_client_supported,
+    split_screen_supported,
+)
 
 
 def require_split_screen_commit(variant, payload):
@@ -25,7 +31,21 @@ def require_split_screen_commit(variant, payload):
             detail={
                 "code": "client_update_required",
                 "feature": "split_screen",
-                "minimum_client_protocol": 46,
+                "minimum_client_protocol": SPLIT_SCREEN_PROTOCOL,
+            },
+        )
+    proposes_collapse = any(section.collapse_empty_panels for section in proposed or [])
+    # A build below 47 drops the field it cannot decode, so it never saves over a collapsing
+    # timeline either: its Save would render the saved edit with fixed panels.
+    if (proposes_collapse or any(s.get("collapse_empty_panels") for s in saved)) and (
+        not split_collapse_client_supported()
+    ):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "split_collapse",
+                "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
             },
         )
     if variant.get("render_destination") != "device":
@@ -34,6 +54,8 @@ def require_split_screen_commit(variant, payload):
         require_client=False
     ):
         raise HTTPException(422, detail={"code": "split_screen_unavailable"})
+    if proposes_collapse and not split_collapse_supported(require_client=False):
+        raise HTTPException(422, detail={"code": "split_collapse_unavailable"})
     if proposed is not None and payload.timeline_slots is None:
         raise HTTPException(422, detail={"code": "split_screen_requires_timeline"})
     if payload.timeline_slots is not None:

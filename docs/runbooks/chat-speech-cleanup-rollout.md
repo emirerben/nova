@@ -92,6 +92,49 @@ the extra cuts. No iPhone change: the phone applies the server's cut ranges.
    `pauses_over_limit` is 0; a noisy-room take reports `no_change`.
 3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
 
+## Off-script opening ("okay, starting", "we're recording", "başlıyorum")
+
+`SPEECH_CLEANUP_SLATE_CUT_ENABLED` (default off; off is byte-identical). A creator who says "okay,
+starting" or "okay, we're recording" before the first real sentence restarts nothing, so the
+pause, filler and retake rules all keep it (Çiğdem S2 "ss2b", prod job f4f81c07, KRI-1326;
+yorum3, prod job 7eba9903, KRI-1348). With the flag on, `app/pipeline/speech_slate.py` reads the
+take's opening utterances (from word 0, stopping at the first real one) and gives every word a
+role: filler, glue, production talk (recording, starting, rolling, mic/sound/camera/light checks,
+kayıt, başlıyorum, çekiyor …), countdown number, or cue (go, let's, "is this on", hadi, hazır mıyız …). An
+utterance is cut only when every word has a role and it has an anchor: a production word, a
+countdown of two or more numbers, or a cue followed by a pause of at least 0.6 s. A word with no
+role keeps it ("Okay, so here's the thing" stays), a production noun the take talks about later
+keeps it (a mic review's "Mic check."), and the cut ends within 8 s and leaves at least 3 words.
+New phrasings are new combinations of roles and need no code change. It is handed to the planner
+as a retake span (same snapping, voice-guard exemption, receipts), so it also needs both retake
+switches (`RETAKE_CUT_ENABLED` and `SPEECH_CLEANUP_RETAKES_ENABLED`, both on in prod since
+2026-11-04); with either off it is kept. The cleanup offer counts it among the "restarted
+sentences". Failure modes and checks: `docs/reviews/kri-1348-preroll-failure-modes.md` (and
+`docs/reviews/cigdem-s2-failure-modes.md` A for the first version).
+
+The flag is not part of the source-policy fingerprint: analyses already `ready` keep their plan
+(no consent is retired), and only analyses made after the restart see the opener. Test with a
+freshly sent take, not a re-approval of an old one.
+
+Rollout (an operator step; needs Yasin's OK — this PR does not change any secret):
+
+1. After the PR is merged and the Fly deploy of that commit finished, confirm `fly status --app
+   nova-video` shows that image on the `api` and `worker` process groups. The flag is read
+   by the API, by preflight analysis (the `speech-analysis` queue) and by the cloud render cut;
+   both queues run on `worker` since the former `speech_analysis` group was folded into it
+   (`fly.toml`). If `fly status` still lists a `speech_analysis` group, it must be on the same
+   image and restart with the others.
+2. `fly secrets set SPEECH_CLEANUP_SLATE_CUT_ENABLED=true --app nova-video`. Fly restarts every
+   machine on a secret change; confirm api and worker (and any `speech_analysis` machine)
+   restarted before testing.
+3. On the iPhone, send a NEW take that opens with "Okay, starting." (the Çiğdem S1 take
+   `IMG_7212.MOV` works) and approve with Clean up speech. Pass: the debug view's
+   `silence_cut.removed` starts with a `retake` row from 0 s, the first keep segment starts at the
+   first real word, and the video opens on "Ten minutes after…". Also send one take that opens
+   straight on its real first sentence (Çiğdem S4 `IMG_8120.MP4`): no `retake` row at 0 s.
+4. Kill switch: the same secret `=false` (api and worker restart); renders already pinned keep
+   their cuts.
+
 ## Gates and sequence
 
 Deploy migration, API, web, Beat, and the dedicated `speech_analysis` Fly process

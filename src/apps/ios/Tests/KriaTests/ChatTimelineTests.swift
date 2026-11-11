@@ -100,25 +100,37 @@ final class ChatTimelineTests: XCTestCase {
         }
     }
 
-    func testOnlyContiguousMediaReceiptsShareAGroupAndKeepServerIdentities() {
+    /// KRI-1351: every file of a media receipt is its own lazy row (a run of fifteen as one row blanked the chat
+    /// after Send with the keyboard up); only a row directly under another file joins its strip.
+    func testEveryMediaFileIsItsOwnRowAndOnlyContiguousFilesJoinAStrip() {
         let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000031")!
         let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000032")!
         let thirdID = UUID(uuidString: "00000000-0000-0000-0000-000000000033")!
+        func media(_ ids: String...) -> [String: JSONValue] {
+            ["media": .array(ids.map { .object(["media_id": .string($0), "kind": .string("video"), "filename": .string("\($0).mp4")]) })]
+        }
         let entries = ChatTimeline.build(
             events: [
-                event(id: "media-1", sequence: 1, role: "user", type: "media_added", content: nil, clientEventID: "ios-attach-\(firstID.uuidString)"),
-                event(id: "media-2", sequence: 2, role: "user", type: "media_added", content: nil, clientEventID: "ios-attach-\(secondID.uuidString)"),
+                event(id: "media-1", sequence: 1, role: "user", type: "media_added", content: nil, clientEventID: "ios-attach-\(firstID.uuidString)", payload: media("a")),
+                event(id: "media-2", sequence: 2, role: "user", type: "media_added", content: nil, clientEventID: "ios-attach-\(secondID.uuidString)", payload: media("b", "c")),
                 event(id: "assistant", sequence: 3, role: "assistant", type: "assistant_response", content: "Looks good"),
-                event(id: "media-3", sequence: 4, role: "user", type: "media_added", content: nil, clientEventID: "ios-attach-\(thirdID.uuidString)"),
+                event(id: "media-3", sequence: 4, role: "user", type: "media_added", content: nil, clientEventID: "ios-attach-\(thirdID.uuidString)", payload: media("d")),
             ],
             pending: [],
             stage: nil
         )
 
-        let groups = ChatTimelineGroup.group(entries)
-        XCTAssertEqual(groups.map(\.id), ["upload-\(firstID.uuidString)", "assistant", "upload-\(thirdID.uuidString)"])
-        XCTAssertEqual(groups.map(\.entries.count), [2, 1, 1])
-        XCTAssertEqual(groups[0].entries.map(\.id), ["upload-\(firstID.uuidString)", "upload-\(secondID.uuidString)"])
+        let rows = ChatTimelineRow.rows(entries)
+        XCTAssertEqual(rows.map(\.id), [
+            "upload-\(firstID.uuidString)", "upload-\(secondID.uuidString)", "upload-\(secondID.uuidString)#1",
+            "assistant", "upload-\(thirdID.uuidString)",
+        ])
+        XCTAssertEqual(rows.map(\.mediaIndex), [0, 0, 1, nil, 0])
+        XCTAssertEqual(rows.map(\.joinsMediaAbove), [false, true, true, false, false])
+        XCTAssertEqual(rows.map(\.entry.id), [
+            "upload-\(firstID.uuidString)", "upload-\(secondID.uuidString)", "upload-\(secondID.uuidString)",
+            "assistant", "upload-\(thirdID.uuidString)",
+        ])
     }
 
     func testSameTextWithDistinctClientIDsRemainsTwoServerMessages() {
@@ -228,7 +240,8 @@ final class ChatTimelineTests: XCTestCase {
         role: String,
         type: String,
         content: String?,
-        clientEventID: String? = nil
+        clientEventID: String? = nil,
+        payload: [String: JSONValue]? = nil
     ) -> ThreadEvent {
         ThreadEvent(
             id: id,
@@ -237,7 +250,7 @@ final class ChatTimelineTests: XCTestCase {
             role: role,
             eventType: type,
             content: content,
-            payload: nil,
+            payload: payload,
             createdAt: Date(timeIntervalSince1970: TimeInterval(sequence)),
             clientEventID: clientEventID
         )

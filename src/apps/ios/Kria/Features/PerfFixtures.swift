@@ -515,6 +515,7 @@ private final class PerfEditorHandoffState: @unchecked Sendable {
     private static var window: UIWindow?
 
     static func installIfNeeded() {
+        if PerfFixture.countersProbe { MainThreadStallProbe.shared.start() }
         guard PerfFixture.countersProbe, window == nil,
               let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
         let overlay = UIWindow(windowScene: scene)
@@ -526,6 +527,64 @@ private final class PerfEditorHandoffState: @unchecked Sendable {
         overlay.frame = CGRect(x: 0, y: 0, width: 4, height: 4)
         overlay.isHidden = false
         window = overlay
+    }
+}
+
+/// KRI-1239: how long the main thread was unable to run anything. A background thread posts a ping to the main
+/// queue every 20 ms and measures how late it ran: `main.maxStallMs` is the worst wait, `main.stalls250` how many
+/// waits passed 250 ms, `main.stall@<uptime ms>` each wait of 100 ms or more, `main.uptimeMs` the probe's clock.
+/// iOS kills an app whose main thread misses a scene update for 10 s, so a UI test can assert the transcript never
+/// comes near that (on a fast simulator, a far smaller bound).
+final class MainThreadStallProbe: @unchecked Sendable {
+    static let shared = MainThreadStallProbe()
+    private let lock = NSLock()
+    private var started = false
+
+    func start() {
+        lock.lock(); defer { lock.unlock() }
+        guard !started else { return }
+        started = true
+        let thread = Thread { Self.run() }
+        thread.name = "kria.main-stall-probe"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+    }
+
+    private static let dumpURL = FileManager.default.temporaryDirectory.appendingPathComponent("perf-counters.txt")
+
+    /// A copy of the counters on disk every half second, from its own thread: while the main thread is stuck, the
+    /// ping above waits and accessibility queries time out, but the simulator's app container can still be read.
+    private static func dump() {
+        while true {
+            var summary = PerfCounters.shared.summary
+            if let waiting = PerfCounters.shared.pingSentAt() {
+                summary += "\nmain.blockedNowMs=\(Int((DispatchTime.now().uptimeNanoseconds - waiting) / 1_000_000))"
+            }
+            try? summary.write(to: dumpURL, atomically: true, encoding: .utf8)
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+    }
+
+    private static func run() {
+        let dumper = Thread { dump() }
+        dumper.name = "kria.perf-counter-dump"
+        dumper.start()
+        while true {
+            let sent = DispatchTime.now().uptimeNanoseconds
+            PerfCounters.shared.markPing(sent)
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.main.async { done.signal() }
+            done.wait()
+            let now = DispatchTime.now().uptimeNanoseconds
+            PerfCounters.shared.markPing(nil)
+            let waitedMS = Int((now - sent) / 1_000_000)
+            // Each block of 100 ms or more is kept with the uptime (ms) it started at, so a test can look at one stretch.
+            if waitedMS >= 100 { PerfCounters.shared.raise("main.stall@\(sent / 1_000_000)", to: waitedMS) }
+            if waitedMS >= 250 { PerfCounters.shared.increment("main.stalls250") }
+            PerfCounters.shared.raise("main.maxStallMs", to: waitedMS)
+            PerfCounters.shared.set("main.uptimeMs", Int(now / 1_000_000))
+            Thread.sleep(forTimeInterval: 0.02)
+        }
     }
 }
 

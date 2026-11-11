@@ -39,6 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     PrivateAttr,
     field_validator,
@@ -61,9 +62,14 @@ from app.config import settings
 from app.database import get_db
 from app.kria.draft_schemas import DraftSnapshotOut
 from app.kria.media_sources import OriginalMediaDescriptor
+from app.kria.portable_color_moments import MAX_COLOR_MOMENTS, ColorMoment, EndFade
 from app.kria.portable_speaker_background import SpeakerFrameOverride
 from app.kria.recipes import MediaTransform
-from app.kria.split_screen import SplitScreenSection, layout_split_timeline
+from app.kria.split_screen import (
+    SplitScreenSection,
+    layout_split_timeline,
+    sync_collapsed_section_durations,
+)
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -1443,6 +1449,19 @@ class EditorCommitCaptionMeta(BaseModel):
         return clean.upper()
 
 
+class EditorCommitColorMoments(BaseModel):
+    """KRI-1350: the whole colour-moments lane of a phone edit (written by the Kria chat op).
+
+    Output-timeline windows drawn black-and-white / warm / faded with flash, light-leak or
+    dip edges, and an optional end fade to black. Compiled onto the pinned recipe by
+    `with_color_moments` on every phone Save.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    moments: list[ColorMoment] = Field(default_factory=list, max_length=MAX_COLOR_MOMENTS)
+    end_fade: EndFade | None = None
+
+
 class EditorCommitRequest(BaseModel):
     """One atomic editor Save: every provided section validates first; nothing
     persists unless ALL sections are valid. `base_generation` is the baseline the
@@ -1486,6 +1505,9 @@ class EditorCommitRequest(BaseModel):
     # KRI-1117: the Talk-to-camera background. TRI-STATE like `carousel_moment`: absent from
     # `model_fields_set` = leave unchanged; explicit `null` = clear; an object = set.
     speaker_background: EditorCommitSpeakerBackground | None = None
+    # KRI-1350: colour moments. TRI-STATE like `speaker_background`: absent = leave unchanged
+    # (the phone editor never sends it); explicit `null` = clear; an object = replace the lane.
+    color_moments: EditorCommitColorMoments | None = None
     # Carousel-moment edit (Blossom carousel), staged as a batched-Save section —
     # reuses `CarouselMomentEditRequest` verbatim (do not fork). Tri-state at
     # THIS level, mirroring `EditVariantRequest.carousel_moment` /
@@ -3575,6 +3597,26 @@ class CaptionCue(BaseModel):
     shadow_enabled: bool | None = Field(None, strict=True)
     # KRI-1007: this line's own animation; absent inherits `caption_animation_phases`.
     animation_phases: TextAnimationPhases | None = None
+    # KRI-1344: parts of this line's time it is not drawn (seconds from the cue's own start,
+    # [start, end] pairs), set by generation where a text-dense full-screen picture is up.
+    # Server-authored and round-tripped untouched (the PATCH replaces the whole cue list, so
+    # anything not listed here would be stripped on the first text edit). Read by
+    # `caption_legibility.visible_cues` (phone compile + cloud burn) and the iPhone editor.
+    hidden_spans: list[list[float]] | None = None
+
+    @field_validator("hidden_spans")
+    @classmethod
+    def _validate_hidden_spans(cls, v: list[list[float]] | None) -> list[list[float]] | None:
+        if v is None:
+            return v
+        from app.pipeline.caption_legibility import MAX_HIDDEN_SPANS  # noqa: PLC0415
+
+        if len(v) > MAX_HIDDEN_SPANS:
+            raise ValueError(f"Too many hidden spans on one caption line (max {MAX_HIDDEN_SPANS}).")
+        for span in v:
+            if len(span) != 2 or not 0 <= span[0] < span[1] <= 1800:
+                raise ValueError("Each hidden span must be a [start, end] pair, 0 <= start < end.")
+        return v
 
     @field_validator("font_family")
     @classmethod
@@ -7700,7 +7742,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
     }
-    from app.services.phone_rollout import split_screen_supported
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_collapse_planned_for, split_screen_supported
 
     if (
         variant.get("render_destination") == "device"
@@ -7708,6 +7751,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         and split_screen_supported()
     ):
         capabilities["split_screen"] = True
+        # The sender's stamp, not the request: a worker drafting for a build and the request
+        # re-checking it must offer the same capabilities (KRI-1321).
+        if split_collapse_planned_for(current_client_protocol()):
+            capabilities["split_collapse"] = True
     if (
         variant.get("editor_timeline_mode") == "authored"
         and variant.get("render_destination") == "device"
@@ -8730,6 +8777,18 @@ def _native_timeline_source(
             binding = PhoneSourceBinding.model_validate(matches[0])
         except ValueError:
             return None
+        if binding.pool_source is not None:
+            # KRI-1340: a take adopted from Visuals has no camera-roll binding on any phone;
+            # the editor plays its pinned pool bytes, exactly what the render downloads.
+            from app import storage  # noqa: PLC0415
+
+            try:
+                url = storage.signed_get_url_for_generation(
+                    binding.pool_source.gcs_path, generation=binding.pool_source.generation
+                )
+            except Exception:  # noqa: BLE001 - report an unavailable source, never stale bytes
+                return None
+            return {"media_id": binding.media_id, "source_url": url, "local_required": False}
         return {
             "media_id": binding.media_id,
             "original": binding.original.model_dump(),
@@ -11864,6 +11923,63 @@ def _validate_speaker_background_windows(
             )
 
 
+def _color_moments_only_removes(stored: Any, lane: dict) -> bool:
+    """Does ``lane`` only take things away from the stored colour-moments lane (KRI-1350)?
+
+    Every moment is one already stored, unchanged, and the end fade is the stored one or
+    gone. Removing never needs the switch, the token or a new app build; anything new does.
+    """
+    stored = stored if isinstance(stored, dict) else {}
+    kept = [m for m in stored.get("moments") or [] if isinstance(m, dict)]
+    if any(moment not in kept for moment in lane.get("moments") or []):
+        return False
+    return lane.get("end_fade") in (None, stored.get("end_fade"))
+
+
+def _validate_color_moments_section(
+    job: Job, variant: dict, payload: EditorCommitRequest
+) -> tuple[bool, dict | None]:
+    """Save-time gate for the KRI-1350 ``color_moments`` lane: ``(touched, stored value)``.
+
+    Absent = untouched. Only a device variant whose archetype recompiles lane-free sections
+    (the drawings shape) takes the lane. Clearing, or keeping only some of the stored moments
+    and fade, is always allowed so a creator can take them off with the switch off; anything
+    new needs `color_moments_supported` (kill switch, verified token, app build). Windows must
+    fit the current timeline.
+    """
+    from app.kria.portable_color_moments import validate_color_moments  # noqa: PLC0415
+    from app.services.phone_rollout import color_moments_supported  # noqa: PLC0415
+
+    if "color_moments" not in payload.model_fields_set:
+        return False, None
+    lane = payload.color_moments
+    if lane is None or (not lane.moments and lane.end_fade is None):
+        return True, None
+    if not _drawing_capabilities(job, variant)["delete"]["editable"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "color_moments_require_phone_render"},
+        )
+    if not color_moments_supported() and not _color_moments_only_removes(
+        variant.get("color_moments"), lane.model_dump(mode="json")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "color_moments_disabled"},
+        )
+    duration_s = visual_block_variant_duration(variant)
+    try:
+        validate_color_moments(lane.moments, duration_s)
+        if lane.end_fade is not None and lane.end_fade.duration > duration_s + 1e-6:
+            raise ValueError("the end fade is longer than the video")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "color_moments_invalid", "reason": str(exc)[:300]},
+        ) from exc
+    return True, lane.model_dump(mode="json")
+
+
 def _validate_speaker_background_section(
     job: Job, variant: dict, payload: EditorCommitRequest
 ) -> tuple[bool, dict | None]:
@@ -12306,6 +12422,7 @@ def _prepare_editor_commit(
         and payload.camera_effects is None
         and payload.drawings is None
         and "speaker_background" not in payload.model_fields_set
+        and "color_moments" not in payload.model_fields_set
         and payload.guided_revision is None
         and payload.title is None
         and not payload.remove_music
@@ -13151,6 +13268,9 @@ def _prepare_editor_commit(
     speaker_background_touched, validated_speaker_background = _validate_speaker_background_section(
         job, variant, payload
     )
+    color_moments_touched, validated_color_moments = _validate_color_moments_section(
+        job, variant, payload
+    )
 
     # Older clients may commit only the overlay section. Enforce the bundle
     # invariant server-side so linked generated effects cannot be orphaned.
@@ -13263,6 +13383,7 @@ def _prepare_editor_commit(
         or validated_camera_effects is not None
         or validated_drawings is not None
         or speaker_background_touched
+        or color_moments_touched
         or carousel_moment_touched
         or guided_timeline_commit
         or payload._lyric_line_suppressions is not None
@@ -13343,6 +13464,7 @@ def _prepare_editor_commit(
             )
             if split_sections:
                 layout_split_timeline(resolved_slots, split_sections)
+                sync_collapsed_section_durations(resolved_slots, split_sections)
                 updated["user_timeline"]["split_screen_sections"] = split_sections
         if payload.mix is not None:
             if payload.mix.music_level is not None:
@@ -13446,6 +13568,11 @@ def _prepare_editor_commit(
             updated["camera_effects"] = validated_camera_effects or None
         if validated_drawings is not None:
             updated["drawings"] = validated_drawings or None
+        if color_moments_touched:
+            if validated_color_moments is None:
+                updated.pop("color_moments", None)
+            else:
+                updated["color_moments"] = validated_color_moments
         if speaker_background_touched:
             # The phone Save recompiles the lanes and rewrites this row from them.
             if validated_speaker_background is None:
@@ -13627,6 +13754,8 @@ def _prepare_editor_commit(
             "motion_scenes": validated_motion_scenes is not None,
             "camera_effects": validated_camera_effects is not None,
             "drawings": validated_drawings is not None,
+            # KRI-1350: present only when touched, so every other Save's sections are unchanged.
+            **({"color_moments": True} if color_moments_touched else {}),
             "speaker_background": speaker_background_touched,
             "carousel_moment": carousel_moment_touched,
         },

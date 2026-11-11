@@ -60,6 +60,7 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledSoundEffect,
     sfx_path_is_playable,
 )
+from app.pipeline.phrase_window import phrase_window
 from app.pipeline.render_geometry import MediaFootprint, NormalizedBox, ProtectedRegion
 from app.services.phone_card_layout import CardLayoutContext
 from app.services.phone_overlay_grounding import (
@@ -338,7 +339,12 @@ def _named_phrase_windows(words: list[dict], phrase: str) -> list[_Heard]:
 
 
 def _phrase_windows(
-    stream: list[_Token], words: list[dict] | None, phrase: str, *, joined: bool = False
+    stream: list[_Token],
+    words: list[dict] | None,
+    phrase: str,
+    *,
+    joined: bool = False,
+    plural: bool = False,
 ) -> list[_Heard]:
     """Every spoken occurrence of ``phrase``, in time order: the exact folded-token matches;
     only when there are none, the creator-named phrase matcher's hearings (KRI-961, when the
@@ -350,6 +356,11 @@ def _phrase_windows(
     starts = _find_all([t.text for t in stream], tokens)
     if starts:
         return [(stream[i].start_s, stream[i + len(tokens) - 1].end_s, None) for i in starts]
+    # KRI-1327: a pop-in's named word heard with an "s" (opt-in: a list label's one-word item
+    # deliberately never hears "notions" for "Notion").
+    heard_plural = _plural_windows(stream, tokens) if plural else []
+    if heard_plural:
+        return heard_plural
     # KRI-1281: for a creator's on-screen text, "SpecKit", "Spec-kit" and "Spec Kit" are one
     # word spelled three ways. Opt-in: the background-follows-talk matcher deliberately keeps
     # "Mero pe" from hearing "Merope".
@@ -360,6 +371,28 @@ def _phrase_windows(
 
 
 _MIN_JOINED_CHARS = 5
+# KRI-1327 (S3): a named word heard with a plural / possessive "s" ("Nar" as "NARS", "café" as
+# "cafes."). Only words of this many letters or more, so "i" never takes "is".
+_MIN_PLURAL_STEM = 3
+
+
+def _plural_windows(stream: list[_Token], tokens: list[str]) -> list[_Heard]:
+    """Occurrences of ``tokens`` where some word was heard with an "s" or "es" added (and
+    every other word exactly); only when no exact hearing exists (the caller's order)."""
+
+    def reads_as(heard: str, wanted: str) -> bool:
+        return heard == wanted or (
+            len(wanted) >= _MIN_PLURAL_STEM
+            and wanted.isalpha()
+            and heard in (f"{wanted}s", f"{wanted}es")
+        )
+
+    m = len(tokens)
+    out: list[_Heard] = []
+    for i in range(len(stream) - m + 1):
+        if all(reads_as(stream[i + j].text, tokens[j]) for j in range(m)):
+            out.append((stream[i].start_s, stream[i + m - 1].end_s, None))
+    return out
 
 
 def _joined_spelling_windows(stream: list[_Token], tokens: list[str]) -> list[_Heard]:
@@ -387,6 +420,25 @@ def _joined_spelling_windows(stream: list[_Token], tokens: list[str]) -> list[_H
     return out
 
 
+def trigger_is_heard(words: list[dict], trigger: object, *, plural: bool = True) -> bool:
+    """KRI-1356: True when the reaction-beat matcher hears ``trigger`` in ``words`` at all.
+
+    The same lookup `ground_phone_reaction_beats` runs for a beat (exact after folding, the
+    plural / named-phrase fallbacks), so a False here is exactly a beat that would come back
+    ``never_heard``. A blank trigger is "heard" (there is nothing to look for). An ``after``
+    phrase is looked up as the matcher looks it up: ``plural=False``."""
+    phrase = str(trigger or "").strip()
+    if not fold_tokens(phrase):
+        return True
+    return bool(_phrase_windows(_token_stream(words), words, phrase, plural=plural))
+
+
+def first_heard_start_s(words: list[dict], phrase: object, *, plural: bool = True) -> float | None:
+    """KRI-1356: where the matcher first hears ``phrase`` (its start, seconds), else None."""
+    hits = _phrase_windows(_token_stream(words), words, str(phrase or "").strip(), plural=plural)
+    return hits[0][0] if hits else None
+
+
 @dataclass(frozen=True)
 class _MatchResult:
     windows: list[tuple[float, float]] = field(default_factory=list)
@@ -405,6 +457,7 @@ def _match_trigger(
     *,
     words: list[dict] | None = None,
     joined: bool = False,
+    plural: bool = False,
 ) -> _MatchResult:
     """Find qualifying spoken occurrences of ``trigger`` in ``stream``.
 
@@ -419,7 +472,7 @@ def _match_trigger(
     (`_named_phrase_windows`). Without it the match stays exact.
     """
 
-    hits = _phrase_windows(stream, words, trigger, joined=joined)
+    hits = _phrase_windows(stream, words, trigger, joined=joined, plural=plural)
     if not hits:
         return _MatchResult(reason="never_heard")
 
@@ -548,6 +601,66 @@ class _CardCandidate:
     asset: dict
     display_mode: str = "pip"
     following_clip_id: str | None = None
+    # KRI-1342: set when the window follows the phrase around the cue (`phrase_window`
+    # keyword arguments, minus ``not_before_s``), with the cue word's own times.
+    phrase_args: dict[str, Any] | None = None
+    cue_start_s: float = 0.0
+    cue_end_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class PhraseTiming:
+    """KRI-1342: a visual cued by what the talk is ABOUT starts with the phrase that names it.
+
+    Passed by a worker with ``BEAT_PHRASE_TIMING_ENABLED`` on; ``None`` (the default) keeps
+    every window on its cue word, byte for byte. ``min_s``/``max_s`` bound a full-screen
+    photo's phrase-sized hold, ``pip_min_s``/``pip_max_s`` a corner photo's (it covers less of
+    the speaker, so it may stay through the explanation after a name). ``word_cued`` holds the
+    folded spoken words the creator NAMED ("when I say X", the brief's ``facts.triggers``):
+    those beats keep their exact word timing.
+    """
+
+    min_s: float
+    max_s: float
+    pip_min_s: float = 2.0
+    pip_max_s: float = 5.5
+    word_cued: frozenset[str] = frozenset()
+
+
+# KRI-1342 bounds for a phrase-sized full-screen photo: Talking covers the speaker, so at most
+# 3 s; a Voiceover photo replaces footage under the voice, so 2-4 s around its old 3 s.
+TALKING_PHRASE_TIMING = PhraseTiming(min_s=TALKING_FULLSCREEN_HOLD_S_DEFAULT, max_s=3.0)
+VOICEOVER_PHRASE_TIMING = PhraseTiming(min_s=2.0, max_s=4.0)
+
+
+def creator_named_cues(requirements: Sequence[Any]) -> frozenset[str]:
+    """The folded spoken words the creator named for a picture or sound in live brief asks
+    ("when I say X", "'kano' dediğimde"): the trigger facts of every ask but a ``text`` one
+    (Qendresa Q1: the "1. Spec-kit" list labels name the repos too, but they time a TEXT;
+    the screenshots for those repos were asked "when I talk about something")."""
+    from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS  # noqa: PLC0415
+
+    out: set[str] = set()
+    for req in requirements or ():
+        facts = getattr(req, "facts", None)
+        if not isinstance(facts, dict) or getattr(req, "kind", None) == "text":
+            continue
+        for key in SPOKEN_TEXT_CUE_KEYS:
+            raw = facts.get(key)
+            values = raw if isinstance(raw, list | tuple) else [raw] if isinstance(raw, str) else []
+            for value in values:
+                folded = " ".join(fold_tokens(value))
+                if folded:
+                    out.add(folded)
+    return frozenset(out)
+
+
+def _phrase_cued(timing: PhraseTiming | None, *, trigger: str, after: object, slot: str) -> bool:
+    """Does this beat's picture follow the phrase (not the word)? Never for a sticker (a
+    reaction on the word), an ``after`` cue, or a word the creator named."""
+    if timing is None or after or slot == "sticker":
+        return False
+    return " ".join(fold_tokens(trigger)) not in timing.word_cued
 
 
 @dataclass
@@ -604,6 +717,39 @@ def _truncate_same_slot_overlaps(
     return survivors, dropped
 
 
+def _phrase_starts_after_earlier_cues(
+    cards: list[_CardCandidate], words: list[dict]
+) -> list[_CardCandidate]:
+    """KRI-1342: two pictures cued in one phrase ("the launch ... and the billboards") would
+    both take the phrase start, and the overlap rule would then drop the first. A phrase-timed
+    card never starts before the previous same-slot card's own cue word has been said."""
+    moved: dict[str, _CardCandidate] = {}
+    by_slot: dict[str, list[_CardCandidate]] = {}
+    for card in cards:
+        by_slot.setdefault(card.slot, []).append(card)
+    for slot_cards in by_slot.values():
+        ordered = sorted(slot_cards, key=lambda c: (c.cue_start_s, c.n))
+        previous: _CardCandidate | None = None
+        for card in ordered:
+            if (
+                previous is not None
+                and card.phrase_args is not None
+                and card.start_s < previous.cue_end_s
+            ):
+                window = phrase_window(
+                    words,
+                    card.cue_start_s,
+                    card.cue_end_s,
+                    not_before_s=previous.cue_end_s,
+                    **card.phrase_args,
+                )
+                if window is not None:
+                    card = replace(card, start_s=window.start_s, end_s=window.end_s)
+                    moved[card.id] = card
+            previous = card
+    return [moved.get(card.id, card) for card in cards]
+
+
 @dataclass(frozen=True)
 class GroundedReactionBeats:
     """The grounding result: ready-to-bind cards/sounds + a creator-safe
@@ -634,6 +780,7 @@ def ground_phone_reaction_beats(
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
     protected_regions: Sequence[ProtectedRegion] = (),
     card_layout: CardLayoutContext | None = None,
+    phrase_timing: PhraseTiming | None = None,
 ) -> GroundedReactionBeats:
     """Ground creator-authored reaction beats + closing media against the
     clip's raw Whisper words into phone Talking-lane cards/sounds (KRI-178).
@@ -668,6 +815,10 @@ def ground_phone_reaction_beats(
     open, every photo/video pop-in is laid out wide in the TOP or BOTTOM band exactly like the
     generic cards (`phone_overlay_grounding._lay_out_cards`) instead of the small top-right
     corner slot. Stickers/logos and the closing shot keep their own slots.
+
+    ``phrase_timing`` (KRI-1342, default ``None`` = unchanged): a photo/video picked for what
+    the talk is about starts with the phrase holding its cue (`app.pipeline.phrase_window`);
+    a full-screen photo with no ``hold_s`` is held for that phrase. The sound stays on the word.
 
     Fails open at every stage: a broken face sampler leaves no face regions
     protected (`face_sampling == "failed"`), a bad DB row is skipped, and any
@@ -755,7 +906,9 @@ def ground_phone_reaction_beats(
                 # They neither use PiP slots nor face/caption-safe geometry.
                 slot = "fullscreen"
 
-            match = _match_trigger(stream, trigger, after, str(occurrence_mode), words=words)
+            match = _match_trigger(
+                stream, trigger, after, str(occurrence_mode), words=words, plural=True
+            )
             if match.reason:
                 _record_beat_failure(beat_id, trigger, match.reason)
                 continue
@@ -815,6 +968,29 @@ def ground_phone_reaction_beats(
                 if asset is not None:
                     win_start = max(0.0, match_start_s)
                     win_end = min(duration_s, win_start + hold)
+                    phrase_args: dict[str, Any] | None = None
+                    if phrase_timing is not None and _phrase_cued(
+                        phrase_timing, trigger=trigger, after=after, slot=slot
+                    ):
+                        sized = hold_s is None and not is_video and following_clip_id is None
+                        full = display_mode == "fullscreen"
+                        bounds = (
+                            (phrase_timing.min_s, phrase_timing.max_s)
+                            if full
+                            else (phrase_timing.pip_min_s, phrase_timing.pip_max_s)
+                        )
+                        phrase_args = {
+                            "min_s": bounds[0] if sized else hold,
+                            "max_s": bounds[1] if sized else hold,
+                            "size_to_phrase": sized,
+                            "hold_s": hold,
+                            "duration_s": duration_s,
+                        }
+                        window = phrase_window(words, match_start_s, match_end_s, **phrase_args)
+                        if window is not None:
+                            win_start, win_end = window.start_s, window.end_s
+                        else:
+                            phrase_args = None
                     if win_end - win_start >= _MIN_CARD_WINDOW_S:
                         card_id = f"beat-{beat_id}-{occurrence_index}"
                         # A defensive de-dupe: a malformed `beat_id` colliding
@@ -837,6 +1013,9 @@ def ground_phone_reaction_beats(
                                 asset=asset,
                                 display_mode=display_mode,
                                 following_clip_id=following_clip_id,
+                                phrase_args=phrase_args,
+                                cue_start_s=match_start_s,
+                                cue_end_s=match_end_s,
                             )
                         )
                         occ.card_id = card_id
@@ -881,6 +1060,8 @@ def ground_phone_reaction_beats(
             _record_beat_failure(beat_id, trigger, f"error: {exc}"[:_MAX_REASON_LEN])
 
     # --- same-slot overlap truncation (beats only, before closing) ----------
+    if phrase_timing is not None:
+        card_candidates = _phrase_starts_after_earlier_cues(card_candidates, words)
     card_candidates, overlap_dropped = _truncate_same_slot_overlaps(card_candidates)
     cards_by_id = {c.id: c for c in card_candidates}
     for card_id, reason in overlap_dropped.items():
@@ -1214,6 +1395,10 @@ def ground_phone_reaction_beats(
                 entry["at_s"] = round(card.start_s, 3)
                 entry["end_s"] = round(card.end_s, 3)
                 entry["visual_label"] = _label_for_asset(card.asset)
+                if card.phrase_args is not None:
+                    # KRI-1342: the picture follows the phrase; the cue word stays on record.
+                    entry["timing"] = "phrase"
+                    entry["cue_at_s"] = round(card.cue_start_s, 3)
                 if card.display_mode == "fullscreen":
                     entry["card_id"] = card.id
                     entry["display_mode"] = "fullscreen"

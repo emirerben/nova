@@ -399,9 +399,11 @@ def test_control_t11_pins_seated_by_photos_pass_the_contract_and_readiness() -> 
 async def test_f6_a_blocked_pin_is_said_once_with_a_next_step_not_on_every_requirement(
     monkeypatch, language, refusal, next_step
 ) -> None:
-    """The refusal is the whole draft's, not each requirement's: M4 14:32Z showed the same
-    sentence under "Make it 20 seconds", "Skip the dark photo" and every label. Said once, with
-    what to do. (Words no row has, no room to add one: the refusal this fix leaves in place.)"""
+    """The refusal is the order ask's, not each requirement's: M4 14:32Z showed the same
+    sentence under "Make it 20 seconds", "Skip the dark photo" and every label. Said once, on
+    the order line, with what to do; every other ask keeps its own verdict (S3 Yorum2, Bug F:
+    the copy hid a cleanup shortfall for two turns). (Words no row has, no room to add one: the
+    refusal this fix leaves in place.)"""
     monkeypatch.setattr(planning, "MAX_CLIP_INTENTS", 16)
     _provider(monkeypatch)
     words = "the red smoke before kick-off"
@@ -412,10 +414,16 @@ async def test_f6_a_blocked_pin_is_said_once_with_a_next_step_not_on_every_requi
         report = _readiness(strategy, brief)
         reply = readiness_reply(brief, report)
 
-    assert report["policy_problem"] == refusal.format(words), report["policy_problem"]
+    rows = {row["requirement_id"]: row for row in report["requirements"]}
+    order_id = next(req.id for req in brief.live() if req.kind == "order")
+    assert report["policy_problem"] is None, report["policy_problem"]
     assert not report["ready"]
+    assert rows[order_id]["disposition"] == "unsupported"
+    assert rows[order_id]["reason"] == refusal.format(words)
+    assert not any(
+        row["reason"] == refusal.format(words) for rid, row in rows.items() if rid != order_id
+    ), rows
     assert reply.count(refusal.format(words)) == 1, reply
-    assert next_step in reply, reply
     held = [line for line in reply.splitlines() if line.startswith("- ")]
-    assert "- Make it 20 seconds" in held and len(held) == 9, held  # still named, once each
-    assert not any(words in line for line in held), held
+    [order_line] = [line for line in held if refusal.format(words) in line]
+    assert order_line.endswith(next_step), order_line

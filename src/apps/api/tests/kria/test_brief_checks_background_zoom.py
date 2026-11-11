@@ -4,7 +4,7 @@ Q2 run 1 dropped the zoom ask from the receipt while "full screen" said Done. Fa
 
  1. an aimed (zoomed) render says so and stays "met";
  2. a render the worker did NOT aim is "partial" and says small text may stay small;
- 3. a draft (nothing recorded yet) promises nothing it cannot confirm and keeps its status;
+ 3. a draft (nothing recorded yet) promises nothing it cannot confirm and is never Done;
  4. the creator's words alone never trigger it (KRI-667: only the typed fact counts);
  5. an editor Save's own document decides (focus present = aimed).
 """
@@ -78,7 +78,9 @@ def test_draft_does_not_claim_the_zoom():
         PlanFacts(), edit_format="subtitled", phone_talking=True, speaker_background=fact
     )
     receipt = _receipt(ZOOM, facts)
-    assert receipt.status == "met"
+    # KRI-1304 leftover (Q2 run 2): a draft never says Done for what only the render can show;
+    # readiness still approves it (`speaker_background_waits_for_render`).
+    assert receipt.status == "partial"
     assert "can't confirm" in receipt.reason
 
 

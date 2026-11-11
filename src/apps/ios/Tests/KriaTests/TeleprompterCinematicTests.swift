@@ -15,6 +15,7 @@ import XCTest
 ///    The original file stays until a verified replacement exists; otherwise an ordinary standard copy is kept.
 /// 6. A take recorded with Cinematic on silently comes out standard (the camera dropped the mode). The creator is told.
 /// 7. An old take manifest without the new field no longer decodes.
+/// The bake runs after Review opens, not before it: `TeleprompterCinematicBakeTests`.
 /// Scenarios 4–6 need a physical iPhone: `TeleprompterHardwareUITests.testPhysicalCinematicTake`.
 @MainActor final class TeleprompterCinematicTests: XCTestCase {
     private var root: URL!
@@ -73,7 +74,7 @@ import XCTest
         try await Self.writeStandardMovie(to: url)
         let before = try Data(contentsOf: url)
 
-        let outcome = await CinematicTakeFinisher.finish(movieAt: url)
+        let outcome = try await CinematicTakeFinisher.finish(movieAt: url)
 
         XCTAssertNil(outcome, "A movie that is not Cinematic is not touched.")
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: url)), SHA256.hash(data: before))

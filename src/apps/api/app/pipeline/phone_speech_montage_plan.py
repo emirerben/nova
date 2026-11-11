@@ -155,12 +155,14 @@ class PhoneSpeechSection(BaseModel):
 
 @dataclass(frozen=True)
 class PhoneClipLabel:
-    """Confirmed words to draw on one clip (KRI-939): every cut of ``media_id``, or the
-    ``shot_index``-th picture cut, exactly as the contract's ``clip`` text names it."""
+    """Confirmed words to draw on one clip (KRI-939): every cut of ``media_id``, the
+    ``shot_index``-th picture cut, or (KRI-1331) the first cut of a chapter's clips, exactly
+    as the contract's ``clip`` text names it."""
 
     text: str
     media_id: str | None = None
     shot_index: int | None = None
+    chapter_media_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -1002,6 +1004,10 @@ def _clip_label_elements(
             continue
         if label.shot_index is not None:
             targets = ordered[label.shot_index : label.shot_index + 1]
+        elif label.chapter_media_ids:
+            targets = [
+                c for c in ordered if media_of.get(c.source_asset_id) in label.chapter_media_ids
+            ][:1]
         else:
             targets = [c for c in ordered if media_of.get(c.source_asset_id) == label.media_id]
         for clip in targets:

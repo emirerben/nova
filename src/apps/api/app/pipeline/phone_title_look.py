@@ -76,6 +76,18 @@ _MAX_COVERAGE = title_mod._MAX_FACE_COVERAGE
 _SHRINK = (1.0, 0.85, 0.72, 0.6)
 _Y_DECIMALS = 4
 
+# KRI-1305 (coordinator review): when no spot clears her face AND her captions, the title
+# squeezes in before the captions are asked to wait (the kit's `captions_on` rule needs captions
+# in >= 80% of the talk). Smaller steps than `_SHRINK`, down to a legibility floor: the smallest
+# line's cap height stays >= 40 px of the 1920 px canvas (her captions: 64 px TikTok Sans Bold,
+# ~46 px caps; 40 px is the text-style readable floor, `phone_text_style._READABLE_FLOOR_PX`).
+# Lines are stacked ink to ink (the measured line box is ascent + descent, mostly empty above
+# caps), 12 px apart, each ink box padded 6 px for the high-visibility shadow.
+_SQUEEZE = (1.0, 0.92, 0.85, 0.78, 0.72, 0.66, 0.6, 0.55, 0.5, 0.45)
+_MIN_CAP_PX = 40.0
+_TIGHT_GAP_PX = 12.0
+_INK_PAD_PX = 6.0
+
 # Logo limits.
 _LOGO_WIDTH = 0.32
 _LOGO_MAX_HEIGHT = 0.16
@@ -410,6 +422,14 @@ def _candidates(
         found.append(("below_face", max(f.bottom for f in faces) + _FACE_GAP))
         above = min(f.top for f in faces) - _FACE_GAP - height
         found.append(("above_face", above))
+        if logo:
+            # KRI-1303: a close selfie leaves no room for the logo beside her head. The block
+            # sits just low enough for the logo (at each of its sizes) between her chin and it.
+            chin = max(f.bottom for f in faces)
+            found.extend(
+                ("logo_below_face", chin + _LOGO_GAP + _LOGO_MAX_HEIGHT * shrink + _LOGO_GAP)
+                for shrink in _LOGO_SHRINKS
+            )
     if avoid:
         # Between her face and her captions: the block's bottom just above the captions.
         found.append(("above_captions", min(a.top for a in avoid) - _FACE_GAP - height))
@@ -430,6 +450,95 @@ def _inside(boxes: Sequence[NormalizedBox]) -> bool:
         and b.bottom <= _Y_MAX + 1e-6
         for b in boxes
     )
+
+
+def _ink_insets(row: Mapping[str, Any], canvas: _Canvas) -> tuple[float, float]:
+    """The empty space (fractions of canvas height) inside a row's measured line box above its
+    tallest glyph and below its lowest one, from the font's own metrics. Conservative for a
+    wrapped row (the whole text's extremes)."""
+    import skia  # noqa: PLC0415
+
+    from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+
+    typeface = cloud._resolve_typeface_for_overlay(dict(row)).typeface
+    font = skia.Font(typeface, float(row["size_px"]))
+    metrics = font.getMetrics()
+    bounds = skia.Rect()
+    font.measureText(str(row.get("text") or ""), skia.TextEncoding.kUTF8, bounds)
+    top = max(0.0, -metrics.fAscent + bounds.top())
+    bottom = max(0.0, metrics.fDescent - bounds.bottom())
+    return top / canvas.height, bottom / canvas.height
+
+
+def _cap_px(row: Mapping[str, Any]) -> float:
+    """The row's cap height in canvas pixels (the ink of "H" at its size and face)."""
+    import skia  # noqa: PLC0415
+
+    from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+
+    typeface = cloud._resolve_typeface_for_overlay(dict(row)).typeface
+    bounds = skia.Rect()
+    skia.Font(typeface, float(row["size_px"])).measureText("H", skia.TextEncoding.kUTF8, bounds)
+    return float(bounds.height())
+
+
+def _clash(boxes: Sequence[NormalizedBox], others: Sequence[NormalizedBox]) -> float:
+    """Either way round: a small caption box inside a wide title line counts too."""
+    return max(
+        (max(b.coverage_by(o), o.coverage_by(b)) for b in boxes for o in others), default=0.0
+    )
+
+
+def _squeeze(
+    base: Sequence[dict],
+    *,
+    faces: Sequence[NormalizedBox],
+    hard: Sequence[NormalizedBox],
+    avoid: Sequence[NormalizedBox],
+    position: str | None,
+    reserve_logo: bool,
+    logo_fits: Any,
+    canvas: _Canvas,
+) -> tuple[float, list[dict], list[NormalizedBox], str] | None:
+    """KRI-1305: the biggest size (never below the cap-height floor) and spot where the title,
+    its lines stacked ink to ink, clears every face, object and caption line as drawn (and leaves
+    the logo room when one is asked). ``(factor, placed rows, ink boxes, spot kind)`` or None."""
+    gap = _TIGHT_GAP_PX / canvas.height
+    pad = _INK_PAD_PX / canvas.height
+    for factor in _SQUEEZE:
+        sized = _sized(base, factor)
+        if min(_cap_px(row) for row in sized) < _MIN_CAP_PX - 1e-6:
+            return None  # every smaller size is under the floor too
+        layout = [_measure(row, canvas) for row in sized]
+        insets = [_ink_insets(row, canvas) for row in sized]
+        heights = [
+            box.height - top - bottom for box, (top, bottom) in zip(layout, insets, strict=True)
+        ]
+        height = sum(heights) + gap * (len(heights) - 1)
+        for kind, top in _candidates(height, faces, position, logo=reserve_logo, avoid=avoid):
+            inks: list[NormalizedBox] = []
+            cursor = top
+            for box, ink_h in zip(layout, heights, strict=True):
+                inks.append(NormalizedBox(box.left, cursor, box.right, cursor + ink_h))
+                cursor += ink_h + gap
+            padded = [
+                NormalizedBox(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+                for b in inks
+            ]
+            if not _inside(inks):
+                continue
+            if _clash(padded, hard) > _MAX_COVERAGE or _clash(padded, avoid) > _MAX_COVERAGE:
+                continue
+            if reserve_logo and not logo_fits(inks):
+                continue
+            placed = []
+            for row, box, ink, (top_inset, _bottom) in zip(
+                sized, layout, inks, insets, strict=True
+            ):
+                layout_top = ink.top - top_inset
+                placed.append({**row, "y_frac": round(layout_top + box.height / 2, _Y_DECIMALS)})
+            return factor, placed, inks, kind
+    return None
 
 
 def _sized(rows: Sequence[dict], scale: float) -> list[dict]:
@@ -454,6 +563,7 @@ def place_title_look(
     protect_all_faces: bool = False,
     position: str | None = None,
     reserve_logo: bool = False,
+    logo_below_band: bool = False,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Stack ``rows`` top to bottom in line order, clear of faces, objects and the frame edge.
 
@@ -462,7 +572,9 @@ def place_title_look(
     above the title): a spot only counts when the biggest logo also fits right above the
     block off every face (her V5: the block under her face, the logo beside her head); when
     no spot at any size leaves that room, the title keeps the spot it would have had without
-    a logo and the receipt's ``logo_room`` is false. Never raises."""
+    a logo and the receipt's ``logo_room`` is false. ``logo_below_band`` (KRI-1305: her captions
+    wait while the title shows) lets the logo sit below the caption-band line, between her chin
+    and the title (its card is then ``caption_clear``). Never raises."""
     try:
         window = (min(float(r["start_s"]) for r in rows), max(float(r["end_s"]) for r in rows))
         faces, receipt = title_mod._face_boxes(
@@ -504,7 +616,12 @@ def place_title_look(
             # too: the worker places the real logo against the same boxes.
             biggest = (_LOGO_WIDTH * canvas.width) / (_LOGO_MAX_HEIGHT * canvas.height)
             geometry, _miss = place_title_logo(
-                block, aspect=biggest, faces=hard, canvas=canvas, avoid=avoid
+                block,
+                aspect=biggest,
+                faces=hard,
+                canvas=canvas,
+                avoid=avoid,
+                below_band=logo_below_band,
             )
             return geometry is not None
 
@@ -538,6 +655,51 @@ def place_title_look(
                 )
         chosen = min(options, key=lambda option: option[0])[1] if options else None
         logo_room = bool(chosen and chosen[6]) if reserve_logo else None
+        squeezed = (
+            _squeeze(
+                base,
+                faces=faces,
+                hard=hard,
+                avoid=avoid,
+                position=position,
+                reserve_logo=reserve_logo,
+                logo_fits=logo_fits,
+                canvas=canvas,
+            )
+            if avoid and (chosen is None or chosen[5])
+            else None
+        )
+        if squeezed is not None:
+            # Text on text otherwise: smaller, tighter lines between her face and her captions
+            # beat captions that wait (KRI-1305 coordinator review).
+            factor, placed, inks, kind = squeezed
+            block = NormalizedBox(
+                min(b.left for b in inks),
+                min(b.top for b in inks),
+                max(b.right for b in inks),
+                max(b.bottom for b in inks),
+            )
+            return placed, {
+                **receipt,
+                "status": "squeezed",
+                "spot": kind,
+                "coverage": round(_worst(inks, hard), 5),
+                "face_collision": False,
+                "text_overlap": False,
+                "lines": len(placed),
+                "line_gap": "tight",
+                # The drawn ink of the stack (what the face / caption checks measured).
+                "block": block.as_dict(),
+                "face_boxes": [f.as_dict() for f in faces],
+                "object_boxes": [b.as_dict() for b in object_boxes],
+                "caption_boxes": [a.as_dict() for a in avoid],
+                "faces": receipt.get("faces"),
+                "scale": factor,
+                "min_cap_px": round(min(_cap_px(row) for row in placed), 1),
+                "objects": object_receipts,
+                **({"logo_room": True} if reserve_logo else {}),
+                **({"logo_below_band": True} if logo_below_band else {}),
+            }
         if chosen is not None:
             kind, factor, sized, boxes, coverage, overlap, _logo_ok = chosen
             status = (
@@ -581,6 +743,7 @@ def place_title_look(
             "scale": factor,
             "objects": object_receipts,
             **({"logo_room": logo_room} if reserve_logo else {}),
+            **({"logo_below_band": True} if logo_below_band else {}),
         }
     except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
         log.warning("phone_title_look.placement_failed", error=str(exc)[:200])
@@ -674,6 +837,7 @@ def place_title_logo(
     canvas: _Canvas,
     alignment: str = "center",
     avoid: Sequence[NormalizedBox] = (),
+    below_band: bool = False,
 ) -> tuple[dict | None, str | None]:
     """The logo's centre and width (fraction of canvas width) right above ``block``.
 
@@ -682,7 +846,12 @@ def place_title_logo(
     narrower than a phone card can be (0.05 of the width), and never lower than the
     caption-band line the compiler pulls every card centre up to. When nothing fits:
     ``(None, "no_room_off_captions")`` if a spot off her face was there but only on her
-    captions, else ``(None, "no_room_above_title")``."""
+    captions, else ``(None, "no_room_above_title")``.
+
+    ``below_band`` (KRI-1303/1305: no caption is on screen while the title shows) lifts the
+    caption-band limit: the logo may sit between her chin and the title, and the geometry then
+    carries ``caption_clear`` so the compiler keeps its spot instead of pulling it up onto her
+    face. Its bottom still never passes the frame margin."""
     aspect = aspect if aspect > 0 else 1.0
     to_height = canvas.width / (aspect * canvas.height)  # logo height per unit of width
     width = min(_LOGO_WIDTH, _LOGO_MAX_HEIGHT / to_height)
@@ -693,7 +862,9 @@ def place_title_logo(
             w = math.floor(width * shrink * 10**_Y_DECIMALS) / 10**_Y_DECIMALS
             h = w * to_height
             top = bottom - h
-            if w < _CARD_MIN_WIDTH or top < _Y_MIN - 1e-6 or top + h / 2 > CAPTION_BAND_TOP_FRAC:
+            if w < _CARD_MIN_WIDTH or top < _Y_MIN - 1e-6:
+                continue
+            if top + h / 2 > CAPTION_BAND_TOP_FRAC and (not below_band or bottom > _Y_MAX):
                 continue
             home = block.left + w / 2 if alignment == "left" else (block.left + block.right) / 2
             edges = (_LOGO_EDGE + w / 2, 1.0 - _LOGO_EDGE - w / 2)
@@ -702,10 +873,12 @@ def place_title_logo(
                     continue
                 box = NormalizedBox(cx - w / 2, top, cx + w / 2, bottom)
                 if _worst([box], others) <= _MAX_COVERAGE:
+                    below = top + h / 2 > CAPTION_BAND_TOP_FRAC
                     return {
                         "x_frac": round(cx, _Y_DECIMALS),
                         "y_frac": round(top + h / 2, _Y_DECIMALS),
                         "scale": round(w, _Y_DECIMALS),
+                        **({"caption_clear": True} if below else {}),
                     }
         return None
 
