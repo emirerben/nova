@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.168.0] - 2026-11-11
+
+### Changed
+- feat(kria): speech cleanup across several Talking takes — tight pauses, restarts, named lines, old builds (KRI-720) (#2255) <!-- release-pr: 2255 -->
+
 ## [0.88.167.0] - 2026-11-11
 
 ### Changed
