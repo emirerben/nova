@@ -398,6 +398,81 @@ def apply_landscape_fit(
     return EditRecipeV2(**fields)
 
 
+def compile_color_moments(stored: dict | None, *, timeline_duration_s: float):
+    """The variant's stored ``color_moments`` lane as recipe values, clamped to the timeline.
+
+    ``stored`` is ``{"moments": [...], "end_fade": {"duration": s} | None}`` (KRI-1350), written
+    only by the Kria chat op. Tolerant like `compile_drawing_layers`: a moment a shorter cut
+    pushed past the end is shortened, or dropped once it would last under the minimum; an end
+    fade longer than the video is dropped. Returns ``(moments, end_fade)``.
+    """
+    from app.kria.portable_color_moments import (  # noqa: PLC0415
+        END_FADE_RANGE_S,
+        MAX_COLOR_MOMENTS,
+        MIN_COLOR_MOMENT_S,
+        ColorMoment,
+        EndFade,
+    )
+
+    if not isinstance(stored, dict):
+        return [], None
+    moments: list[ColorMoment] = []
+    for raw in stored.get("moments") or []:
+        try:
+            moment = ColorMoment.model_validate(raw)
+        except ValueError:
+            continue
+        end = min(moment.end, timeline_duration_s)
+        if end - moment.start < MIN_COLOR_MOMENT_S - 1e-9:
+            continue
+        if moments and moment.start < moments[-1].end - 1e-6:
+            continue
+        moments.append(moment.model_copy(update={"end": end}) if end != moment.end else moment)
+    moments = moments[:MAX_COLOR_MOMENTS]
+    end_fade = None
+    raw_fade = stored.get("end_fade")
+    if isinstance(raw_fade, dict):
+        try:
+            candidate = EndFade.model_validate(raw_fade)
+        except ValueError:
+            candidate = None
+        if (
+            candidate is not None
+            and END_FADE_RANGE_S[0] <= timeline_duration_s
+            and (candidate.duration <= timeline_duration_s)
+        ):
+            end_fade = candidate
+    return moments, end_fade
+
+
+def with_color_moments(recipe: EditRecipeV2, stored: dict | None) -> EditRecipeV2:
+    """``recipe`` carrying exactly the colour moments the variant's stored lane compiles to.
+
+    Run on every phone editor Save right after `with_drawings`, from the variant's STORED
+    ``color_moments`` (KRI-1350), whichever sections the Save carried: the creator's own phone
+    Saves never send this lane, so it rides along untouched. ``None`` strips them (and the
+    ``colorMoments`` capability), which a patching compiler does BEFORE it changes the
+    duration. Returns ``recipe`` itself when nothing changes, so a recipe without colour
+    moments stays byte-identical.
+    """
+    moments, end_fade = compile_color_moments(stored, timeline_duration_s=recipe.duration)
+    if not moments and end_fade is None and not recipe.color_moments and recipe.end_fade is None:
+        return recipe
+    if [m.model_dump(mode="json") for m in moments] == [
+        m.model_dump(mode="json") for m in recipe.color_moments
+    ] and (end_fade.model_dump() if end_fade else None) == (
+        recipe.end_fade.model_dump() if recipe.end_fade else None
+    ):
+        return recipe
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        color_moments=moments,
+        end_fade=end_fade,
+        required_capabilities=set(recipe.required_capabilities) - {"colorMoments"},
+    )
+    return EditRecipeV2(**fields)
+
+
 def with_drawings(recipe: EditRecipeV2, drawings: list[dict] | None) -> EditRecipeV2:
     """``recipe`` carrying exactly the freehand drawing layers ``drawings`` compile to (KRI-589).
 

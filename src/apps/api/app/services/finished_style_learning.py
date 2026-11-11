@@ -626,14 +626,16 @@ _ROLE_TR = {
     "caption": "altyazı",
     "lyric": "şarkı sözü",
 }
+# Keyed by the English the instruction shows (the stored value with spaces), so `say_in` finds
+# it in a catalog language too (KRI-1362).
 _POSITION_TR = {
-    "top_left": "sol üst",
+    "top left": "sol üst",
     "top": "üst",
-    "top_right": "sağ üst",
+    "top right": "sağ üst",
     "middle": "orta",
-    "bottom_left": "sol alt",
+    "bottom left": "sol alt",
     "bottom": "alt",
-    "bottom_right": "sağ alt",
+    "bottom right": "sağ alt",
 }
 
 
@@ -661,42 +663,69 @@ def _instruction(
     language: str | None = None,
     automatic_font: bool = False,
 ) -> str:
-    if language == "tr":
-        return _instruction_tr(role, prop, value, automatic_font=automatic_font)
-    label = role.capitalize()
-    if automatic_font:
-        return f"Use automatic {role} fonts and exclude {value[0]} from selection."
-    if prop == "favorite_fonts":
-        return f"Favor {value[0]} when automatically choosing {role} fonts."
-    if prop == "excluded_fonts":
-        return f"Exclude {value[0]} from automatic {role} text selection."
-    if prop == "position":
-        return f"Place {role} text at {value.replace('_', ' ')} in future videos."
-    if prop == "color":
-        return f"Use {value} for {role} text in future videos."
-    if prop == "stroke_width":
-        return f"{label} outlines {'off' if value == 0 else f'{value:g}px'} in future videos."
-    return f"{label} shadows {'on' if value else 'off'} in future videos."
+    """The memory screen's line for one learned text-style preference, in ``language``."""
+    from app.kria.reply_language import say_in  # noqa: PLC0415
 
-
-def _instruction_tr(role: str, prop: str, value: Any, *, automatic_font: bool) -> str:
-    phrase = _ROLE_TR.get(role, role)
-    head = phrase[:1].upper() + phrase[1:]
+    phrase = say_in(language, en=role, tr=_ROLE_TR.get(role, role))
+    words = {"role": phrase, "head": phrase[:1].upper() + phrase[1:], "label": phrase.capitalize()}
     if automatic_font:
-        return f"{head} için yazı tipi otomatik seçilsin, {value[0]} seçimden çıkarılsın."
+        return say_in(
+            language,
+            en="Use automatic {role} fonts and exclude {font} from selection.",
+            tr="{head} için yazı tipi otomatik seçilsin, {font} seçimden çıkarılsın.",
+            font=value[0],
+            **words,
+        )
     if prop == "favorite_fonts":
-        return f"{head} için yazı tipi otomatik seçilirken {value[0]} tercih edilsin."
+        return say_in(
+            language,
+            en="Favor {font} when automatically choosing {role} fonts.",
+            tr="{head} için yazı tipi otomatik seçilirken {font} tercih edilsin.",
+            font=value[0],
+            **words,
+        )
     if prop == "excluded_fonts":
-        return f"{head} için otomatik yazı tipi seçiminde {value[0]} kullanılmasın."
+        return say_in(
+            language,
+            en="Exclude {font} from automatic {role} text selection.",
+            tr="{head} için otomatik yazı tipi seçiminde {font} kullanılmasın.",
+            font=value[0],
+            **words,
+        )
     if prop == "position":
-        where = _POSITION_TR.get(value, value.replace("_", " "))
-        return f"Gelecek videolarda {phrase} {where} kısımda dursun."
+        spaced = value.replace("_", " ")
+        return say_in(
+            language,
+            en="Place {role} text at {where} in future videos.",
+            tr="Gelecek videolarda {role} {where} kısımda dursun.",
+            where=say_in(language, en=spaced, tr=_POSITION_TR.get(spaced, spaced)),
+            **words,
+        )
     if prop == "color":
-        return f"Gelecek videolarda {phrase} için {value} rengi kullanılsın."
+        return say_in(
+            language,
+            en="Use {color} for {role} text in future videos.",
+            tr="Gelecek videolarda {role} için {color} rengi kullanılsın.",
+            color=value,
+            **words,
+        )
     if prop == "stroke_width":
-        outline = "kapalı" if value == 0 else f"{value:g}px"
-        return f"Gelecek videolarda {phrase} için kenar çizgisi {outline} olsun."
-    return f"Gelecek videolarda {phrase} için gölge {'açık' if value else 'kapalı'} olsun."
+        return say_in(
+            language,
+            en="{label} outlines {outline} in future videos.",
+            tr="Gelecek videolarda {role} için kenar çizgisi {outline} olsun.",
+            outline=say_in(language, en="off", tr="kapalı") if value == 0 else f"{value:g}px",
+            **words,
+        )
+    return say_in(
+        language,
+        en="{label} shadows {state} in future videos.",
+        tr="Gelecek videolarda {role} için gölge {state} olsun.",
+        state=say_in(language, en="on", tr="açık")
+        if value
+        else say_in(language, en="off", tr="kapalı"),
+        **words,
+    )
 
 
 async def _clear_history(db: AsyncSession, user: User) -> None:

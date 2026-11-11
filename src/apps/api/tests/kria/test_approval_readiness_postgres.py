@@ -29,6 +29,7 @@ from app.models import (
     CreatorEditDraft,
     PlanItem,
 )
+from app.services.client_protocol import bind_sending_build, unbind_sending_build
 from app.tasks.kria_runtime import run_kria_turn
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, _submit
 
@@ -69,6 +70,9 @@ async def prepare(
     summary=None,
     action=None,
     prompts=None,
+    sender_protocol=None,
+    extra_phone_features=(),
+    silent=False,
 ):
     user_id, thread_id, _ = seed or _seed_runtime_project()
     with sync_session() as db:
@@ -111,7 +115,7 @@ async def prepare(
                     **row,
                     "manifest_identity": "clip-1",
                     "storage_generation": "1",
-                    "has_audio": True,
+                    "has_audio": not silent,
                     "upload_contract": {
                         "purpose": "analysis_proxy",
                         "proxy": {
@@ -125,7 +129,7 @@ async def prepare(
                                 "duration_s": 8.0,
                                 "width": 640,
                                 "height": 360,
-                                "has_audio": True,
+                                "has_audio": not silent,
                             },
                         },
                     },
@@ -142,6 +146,7 @@ async def prepare(
                     "local1080Export",
                     "positionedText",
                     "audioMix",
+                    *extra_phone_features,
                 ],
             )
         revision = thread.revision
@@ -199,7 +204,12 @@ async def prepare(
     )
     if extra:
         message += " " + (extra.get("description") or extra.get("literal") or "")
-    accepted = await _submit(user_id, thread_id, message, revision)
+    # The build the message came from is stamped on the turn; the worker binds it back.
+    sender = bind_sending_build(sender_protocol)
+    try:
+        accepted = await _submit(user_id, thread_id, message, revision)
+    finally:
+        unbind_sending_build(sender)
     result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
     assert result["status"] in {"completed", "awaiting_approval"}, result
     assert len(calls) == 1, "Readiness must not add model calls"
@@ -241,7 +251,15 @@ def _head_readiness(thread_id) -> dict:  # noqa: ANN001
         return draft.snapshot_json["brief_coverage"]["approval_readiness"]
 
 
-async def _approve_over_http(monkeypatch, user_id, thread_id, approval) -> httpx.Response:  # noqa: ANN001
+async def _approve_over_http(
+    monkeypatch,  # noqa: ANN001
+    user_id,  # noqa: ANN001
+    thread_id,  # noqa: ANN001
+    approval,  # noqa: ANN001
+    *,
+    protocol: int | None = None,
+) -> httpx.Response:
+    headers = {"X-Kria-Client-Protocol": str(protocol)} if protocol is not None else {}
     with sync_session() as db:
         body = {
             "expected_thread_revision": db.get(CreationThread, thread_id).revision,
@@ -256,8 +274,35 @@ async def _approve_over_http(monkeypatch, user_id, thread_id, approval) -> httpx
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         return await client.post(
-            f"/creation-threads/{thread_id}/approvals/{approval.id}/approve", json=body
+            f"/creation-threads/{thread_id}/approvals/{approval.id}/approve",
+            json=body,
+            headers=headers,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", [45, 46])
+async def test_split_screen_gate_agrees_between_the_draft_turn_and_the_approve_request(
+    monkeypatch, protocol
+):
+    """KRI-1321: build 1926 (protocol 45) drafted in a worker and approved over HTTP.
+
+    The draft turn has no request context and the approve has one; a capability gate that
+    reads that difference makes the saved readiness digest differ from the re-check and
+    cancels every approval. Both sides must offer split screens to the same builds.
+    """
+    user_id, thread_id, approvals, events = await prepare(
+        monkeypatch,
+        phone=True,
+        sender_protocol=protocol,
+        extra_phone_features=("splitScreen",),
+    )
+    assert len(approvals) == 1, events[-1].content
+    result = await _approve_over_http(
+        monkeypatch, user_id, thread_id, approvals[0], protocol=protocol
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "approved"
 
 
 @pytest.mark.asyncio

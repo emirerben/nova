@@ -217,3 +217,22 @@ def _build_task_table_lock():
                 connection.close()
             finally:
                 engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _stub_db_has_no_stored_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Planner unit tests pass stub dbs; they hold no draft (KRI-1365 reads the draft's sound)."""
+    import sys
+
+    planner = sys.modules.get("app.kria.planner")
+    if planner is None:
+        return
+    real = planner._load_draft_strategy
+
+    async def load(db, item_id):  # noqa: ANN001, ANN202
+        try:
+            return await real(db, item_id)
+        except AttributeError:  # a stub db (no execute, or an execute result with no rows API)
+            return None
+
+    monkeypatch.setattr(planner, "_load_draft_strategy", load)

@@ -106,10 +106,14 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # `hold_s`; before: 63a22d0d… / 7ed8c8f9…); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
+# KRI-1327: the brief section teaches `subject_outline` (a line drawn around a person): the two
+# brief-on hashes re-pinned (before: 9fc58bb0… / 891266d1…); brief-off unchanged.
+# KRI-1355: the brief section teaches the typed no-title ask (`facts.title == "off"`): the two
+# brief-on hashes re-pinned (before: ae8b21b4… / 3b5a507b…); brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "9fc58bb0742ecf8fe56ddd862622b2b1975a1d114db22a9e47411620ba91c8c6",
+    (True, True): "5ac96e9a1909de36430a3641ab104edafae4a20af1fa9bf8f30f20d25705ec77",
     (True, False): "42a19e30cae3fadac2dd65318b2af49ca4a5d70332e17f714aa5875af6433914",
-    (False, True): "891266d1a4eb81153c7845a50aefb9b03cf6b17f4f963f0a8463e63479431a48",
+    (False, True): "4ad9471f016b045c48ca1c328d4334a7c69179c221770d5c17416b09e98c0631",
     (False, False): "68d42cab5cc0d03ccf3cf164d19bccba9193f01a9409d802acc0454b4adce777",
 }
 

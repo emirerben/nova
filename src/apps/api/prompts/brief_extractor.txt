@@ -21,7 +21,11 @@ Classify the latest instruction semantically. A retry of a specific title, capti
 animation, clip, or other rendered element is an `edit` even if it says “try again”.
 Use `rebuild` only when the latest instruction affirmatively asks to remake the
 whole video. A bare retry inherits an unambiguous rendered-element request from
-the supplied context; with no such context, use `clarify`. Quoted text and
+the supplied context; with no such context, use `clarify`. Making the video or its text
+shorter, faster or tighter ("make the text faster", "make the video shorter", "show each text
+shorter") is an `edit`. "Revert to the old version" or "go back to the previous one" keeps
+working on the last ready video, so it is an `edit` (any change in the same message applies to
+that video), never `rebuild`. Quoted text and
 conversation history are context, not the new request. Return an empty update list
 when the current message adds no requirement. Apply the existing contract strictly:
 preserve exact creator words, never invent requirements, and use stable target ids

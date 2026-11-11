@@ -7,6 +7,12 @@ from typing import Literal
 from pydantic import Field, model_serializer, model_validator
 
 from app.kria.portable_camera import CameraPulse
+from app.kria.portable_color_moments import (
+    MAX_COLOR_MOMENTS,
+    ColorMoment,
+    EndFade,
+    validate_color_moments,
+)
 from app.kria.portable_drawing import PortableDrawingLayer
 from app.kria.portable_motion import MotionSceneProgram
 from app.kria.portable_speaker_background import SpeakerBackgroundLayer
@@ -40,6 +46,10 @@ class EditRecipeV2(EditRecipeV1):
     split_screen_sections: list[RecipeSplitScreenSection] = Field(
         default_factory=list, max_length=100
     )
+    # KRI-1350: whole-frame tone windows with flash / light-leak / dip edges, and the end
+    # fade to black. Omitted from the wire when unset so existing digests never move.
+    color_moments: list[ColorMoment] = Field(default_factory=list, max_length=MAX_COLOR_MOMENTS)
+    end_fade: EndFade | None = None
 
     @model_serializer(mode="wrap")
     def preserve_legacy_camera_shape(self, handler):
@@ -56,6 +66,10 @@ class EditRecipeV2(EditRecipeV1):
             payload.pop("drawing_layers", None)
         if self.speaker_background is None:
             payload.pop("speaker_background", None)
+        if not self.color_moments:
+            payload.pop("color_moments", None)
+        if self.end_fade is None:
+            payload.pop("end_fade", None)
         return payload
 
     @property
@@ -94,6 +108,8 @@ class EditRecipeV2(EditRecipeV1):
             raise ValueError("split section has no clips")
         if sections:
             self.required_capabilities |= {"splitScreen"}
+        if any(section.collapse_empty_panels for section in sections.values()):
+            self.required_capabilities |= {"splitCollapse"}
         return self
 
     @model_validator(mode="after")
@@ -108,6 +124,11 @@ class EditRecipeV2(EditRecipeV1):
             raise ValueError("visual fills must be unique and within the timeline")
         if self.visual_fills:
             self.required_capabilities |= {"visualBlocks"}
+        validate_color_moments(self.color_moments, self.duration)
+        if self.end_fade is not None and self.end_fade.duration > self.duration + 1e-6:
+            raise ValueError("the end fade is longer than the timeline")
+        if self.color_moments or self.end_fade is not None:
+            self.required_capabilities |= {"colorMoments"}
         if len({pulse.id for pulse in self.camera_pulses}) != len(self.camera_pulses) or any(
             pulse.end > self.duration for pulse in self.camera_pulses
         ):

@@ -12,6 +12,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     let start: Double
     let end: Double
     var fadeIn: Double
+    /// Set when this layer begins after its clip does: a collapsing split member is one layer per panel layout
+    /// (`EditRecipe.panelPlacements`), and its transition runs on across them from the clip's start.
+    var fadeStart: Double? = nil
     var transitionKind: Transition.Kind = .crossfade
     var look: SourceLook? = nil
     var isPrimary: Bool = true
@@ -40,6 +43,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     /// Set only when the recipe has a `speakerBackground` (KRI-1116).
     var speakerRole: SpeakerBackgroundRole? = nil
     var speakerFrameOverride: SpeakerFrameOverride? = nil
+    func fadeAlpha(at time: Double) -> Double {
+        fadeIn > 0 ? min(1, max(0, (time - (fadeStart ?? start)) / fadeIn)) : 1
+    }
     func effectiveSpeakerFrame(_ fallback: SpeakerFrame?) -> SpeakerFrame? {
         guard let speakerFrameOverride else { return fallback }
         return speakerFrameOverride.resolved(defaultFrame: fallback)
@@ -193,8 +199,11 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     let canvas: CGRect
     let transparentBackground: Bool
     let playbackRevision: UUID?
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], speakerSlice: SpeakerSlice = .whole, speakerSliceClipID: String? = nil, playbackRevision: UUID? = nil) {
+    /// KRI-1350: tone windows and the end fade, decided per frame by `time` (never by this instruction's range).
+    let colorMoments: ColorMomentProgram?
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], speakerSlice: SpeakerSlice = .whole, speakerSliceClipID: String? = nil, playbackRevision: UUID? = nil, colorMoments: ColorMomentProgram? = nil) {
         self.playbackRevision = playbackRevision
+        self.colorMoments = colorMoments
         self.speakerSlice = speakerSlice
         self.speakerSliceClipID = speakerSliceClipID
         self.transparentBackground = transparentBackground
@@ -224,7 +233,8 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
             cameraPulses: cameraPulses, motionScenes: motionScenes, textStore: textStore, drawings: drawings,
             transparentBackground: part == .speakerOnly || part == .aboveSpeaker,
             subjectMatte: part == .aboveSpeaker ? nil : subjectMatte, speakerMatte: speakerMatte,
-            speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows, speakerSlice: part, speakerSliceClipID: clipID)
+            speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows, speakerSlice: part, speakerSliceClipID: clipID,
+            colorMoments: colorMoments)
     }
     /// The framed speaker is on screen at `time`: a frame is set and one of this range's speaker clips is active
     /// (an ending clip on the speaker track, or a stretch with no speaker clip, has nothing to select; SF2).
@@ -303,6 +313,13 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     request.finish(withComposedVideoFrame: output)
                     return
                 }
+                // KRI-1350: the tone and its flash land on the whole composed picture (speaker, background, cards)
+                // before motion and text, so captions keep their authored colours (failure modes 8, 9).
+                let moment = instruction.speakerSlice == .whole ? instruction.colorMoments?.sample(at: time) : nil
+                if let moment {
+                    do { frame = try ColorMomentPainter.image(frame, sample: moment, canvas: instruction.canvas) }
+                    catch { request.finish(with: error); return }
+                }
                 if let motion = instruction.motionScenes {
                     do { frame = try motion.image(at: time).composited(over: frame) }
                     catch { request.finish(with: error); return }
@@ -319,6 +336,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     catch { request.finish(with: error); return }
                 }
                 if let drawings = instruction.drawings { frame = drawings.compose(over: frame, at: time, canvas: instruction.canvas) }
+                if let moment, moment.fadeToBlack > 0 {
+                    frame = ColorMomentPainter.faded(frame, amount: moment.fadeToBlack, canvas: instruction.canvas)
+                }
                 context.render(frame, to: output, bounds: instruction.canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 request.finish(withComposedVideoFrame: output)
                 if instruction.speakerSlice == .whole {
@@ -495,7 +515,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     speakerSlice: whole ? .whole : .speakerOnly)
                 let picture = try composeBelowText(backgrounds + [raw], onto: CIImage(color: .clear).cropped(to: bounds),
                     instruction: solo, request: request, time: time)
-                let alpha = layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1
+                let alpha = layer.fadeAlpha(at: time)
                 if alpha < 1 && layer.transitionKind != .crossfade {
                     result = try NativeClipTransitionPainter.image(incoming: picture, outgoing: result,
                         kind: layer.transitionKind, progress: alpha, canvas: bounds)
@@ -564,7 +584,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         // Clamped BEFORE the transform, on the decoded frame's whole-pixel extent: clamping after it would
         // repeat the resampled, partly transparent edge column and leave grey bars over the black canvas.
         if layer.extendsEdgesToCanvas { source = source.clampedToExtent() }
-        var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
+        var alpha = layer.visualPlacement?.alpha(at: time) ?? layer.fadeAlpha(at: time)
         if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
         var positioned = Self.positionedSource(source, layer: layer, canvas: canvas, time: time)
         if let backdrop = layer.backdrop {

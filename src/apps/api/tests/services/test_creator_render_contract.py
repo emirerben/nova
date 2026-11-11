@@ -1160,7 +1160,14 @@ def test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it
     asked never to show). Rolling-deploy plan: the field is left out of the stored contract
     when empty, so every other job is byte-identical and an older worker reads it (pinned
     below). A job that hides a part is refused by an older or rolled-back worker, which is
-    the privacy-safe outcome: a sibling dict would be ignored there and render the part."""
+    the privacy-safe outcome: a sibling dict would be ignored there and render the part.
+
+    KRI-1331 changed it a second time: ``TextRequirement.chapter_media_ids`` (a chapter's one
+    title, e.g. "a title at the beginning of each event"). Same plan: left out when empty,
+    so only a contract with a multi-clip creator-worded caption carries it; an older or
+    rolled-back worker refuses that one ("I couldn't read this edit's confirmed requirements")
+    instead of drawing the title on every clip of the chapter, and a retry after the deploy
+    renders it. ``tests/tasks/test_kri1331_event_titles_once.py`` pins the older read."""
     import json
     from pathlib import Path
 

@@ -148,12 +148,20 @@ def fallback_note(reason: str, direction: str, *, future: bool = False) -> str:
     label_en, label_tr = _DIRECTION_LABEL.get(direction, (direction, direction))
     if future:
         return say(
-            en=f"I'll cut this as a fast montage instead of a {label_en}: {en}",
-            tr=f"Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {tr}",
+            en="I'll cut this as a fast montage instead of a {label_en}: {v1}",
+            tr="Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2}",
+            label_en=label_en,
+            v1=en,
+            label_tr=label_tr,
+            v2=tr,
         )
     return say(
-        en=f"I cut this as a fast montage instead of a {label_en}: {en}.",
-        tr=f"Bunu {label_tr} yerine hızlı montaj olarak kestim: {tr}.",
+        en="I cut this as a fast montage instead of a {label_en}: {v1}.",
+        tr="Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}.",
+        label_en=label_en,
+        v1=en,
+        label_tr=label_tr,
+        v2=tr,
     )
 
 

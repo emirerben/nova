@@ -51,9 +51,13 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
             "Check fixture provenance and transferred bytes",
         ):
             step = ci.split(f"- name: {name}", 1)[1].split("- name:", 1)[0]
+            condition = step.split("\n        if: ", 1)[1].split("\n", 1)[0]
             with self.subTest(step=name):
-                self.assertIn(
-                    "if: needs.changes.outputs.journey_needs_native == 'true'", step
+                self.assertTrue(
+                    condition.strip('"').endswith(
+                        "needs.changes.outputs.journey_needs_native == 'true'"
+                    ),
+                    condition,
                 )
 
     def test_superseded_pr_native_work_can_be_cancelled(self):

@@ -15,7 +15,7 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import structlog
@@ -27,6 +27,7 @@ from app.agents._schemas.text_element import TextElement
 from app.agents.edit_copilot import (
     EditCopilotAgent,
     EditCopilotInput,
+    EditCopilotOutput,
     _font_catalog,
     _format_snapshot,
 )
@@ -34,7 +35,7 @@ from app.kria.brief import BriefRequirement
 from app.kria.text_sequence import is_text_sequence
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.research import PreparedResearch
-from app.schemas.text_composition import TextCompositionProgram
+from app.schemas.text_composition import ResearchLayerShape, TextCompositionProgram
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
 log = structlog.get_logger()
@@ -128,6 +129,15 @@ text requirement requests it. A title styling request never authorizes another c
 """
 
 
+_RESEARCHED_COPY_INSTRUCTIONS = """RESEARCHED COPY
+Research is done: the sourced, reviewed wording is already on its bars (Confirmed copy), one bar
+per requested text layer at its requested position. Never return research_request. Do not add,
+reword or remove text: only shape those bars (replace_text_sequence for words shown a piece at a
+time, timing, style), and keep each bar at its position. Report any requested behavior the
+timing cannot support as unmet.
+"""
+
+
 _CAPTION_LANE_INSTRUCTIONS = """CAPTION LANE
 The creator's song lyrics are already on screen as timed captions in the caption lane
 (see Caption lane below). Requests for captions, subtitles, karaoke or lyrics on screen are
@@ -149,7 +159,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v19-sequence-own-bar",
+        prompt_version="v20-researched-copy",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -168,9 +178,11 @@ class CreationTextComposer(EditCopilotAgent):
             "Non-text requirements are already handled by the base planner. "
         )
         caption_lane = (input.variant_snapshot or {}).get("caption_lane")
+        researched_copy = (input.variant_snapshot or {}).get("researched_copy")
         return "\n\n".join(
             [
                 _INSTRUCTIONS,
+                *([_RESEARCHED_COPY_INSTRUCTIONS] if researched_copy else []),
                 *(
                     [
                         _HIDDEN_CAPTION_LANE_INSTRUCTIONS
@@ -387,7 +399,11 @@ def _check_added_text(
 ) -> None:
     if requirements is None or _authorizing_asks(requirements):
         return
-    if any(op.get("op") == "add_text" for op in operations):
+    # Server-attributed research text answers the creator's own research ask, as in
+    # `_drop_unasked_added_text`.
+    if any(
+        op.get("op") == "add_text" and not isinstance(op.get("research"), dict) for op in operations
+    ):
         raise CreationTextCompositionError("Text composition added unrequested text")
 
 
@@ -543,8 +559,12 @@ def _drop_unasked_added_text(
     pinned_ops: list[dict],
     snapshot: EditProposalSnapshot,
     ctx: RunContext | None,
+    shaped_after_pins: bool = False,
 ) -> list[dict]:
     """Drop composer ``add_text`` ops that are not the creator's own words (item 22).
+
+    ``shaped_after_pins``: the program runs ``pinned_ops`` as its first bundle and the composer's
+    ops as ``then`` (seeded approved sequences), so the check replays that same shape.
 
     "Just this text, nothing else" must not render an invented line or a second copy of
     hers, and her line must read exactly as she wrote it (``_exact_covers``): a line that
@@ -589,7 +609,11 @@ def _drop_unasked_added_text(
     digest = _digest(texts, slots)
 
     def replay(ops: list[dict]) -> list[dict]:
-        program = TextCompositionProgram(base_digest=digest, operations=[*pinned_ops, *ops])
+        program = (
+            TextCompositionProgram(base_digest=digest, operations=list(pinned_ops), then=ops)
+            if shaped_after_pins
+            else TextCompositionProgram(base_digest=digest, operations=[*pinned_ops, *ops])
+        )
         return replay_text_composition(plan, program)["text_elements"]
 
     # An add_text never changes a planned bar and no later op can address an added one, so
@@ -722,9 +746,16 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     texts, slots = _lanes(plan)
     if program.base_digest != _digest(texts, slots):
         raise CreationTextCompositionError("Text composition no longer matches its base timeline")
-    if any(op.get("op") not in _TEXT_OPS for op in program.operations):
+    if any(op.get("op") not in _TEXT_OPS for op in [*program.operations, *program.then]):
         raise CreationTextCompositionError("Text composition contains a non-text operation")
+    writing = sorted({str(op.get("op")) for op in program.then} & _WRITING_OPS)
+    if writing and any(shape.source == "research" for shape in program.research_layers):
+        raise CreationTextCompositionError(
+            "Researched text can only be shaped, not written again: " + ", ".join(writing)
+        )
     if not program.operations:
+        if program.then:
+            raise CreationTextCompositionError("Text composition has a second bundle only")
         _check_copy(texts, program.copy_constraints)
         if program.text_look is None:
             return plan
@@ -733,6 +764,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         # add_text uses random IDs in interactive editing. Bind new identities
         # deterministically here so compiling an approved snapshot is repeatable.
         known = {row.get("id") for row in texts}
+        id_prefix = f"creation-{program.base_digest[:12]}-"
 
         def stabilize_added_ids(op, state, phase):
             state.variant["output_orientation"] = plan.get("output_orientation", "portrait")
@@ -741,7 +773,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
             for index, row in enumerate(state.text):
                 old_id = row.get("id")
                 if old_id not in known and str(old_id).startswith("kria-"):
-                    row["id"] = f"creation-{program.base_digest[:12]}-{index}"
+                    row["id"] = f"{id_prefix}{index}"
                 known.add(row.get("id"))
             from app.services.phone_text_styling import current_phone_text_policy
 
@@ -783,6 +815,13 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         )
         if state.slots != slots or state.changed - {"text"}:
             raise ValueError("non-text lane changed")
+        if program.then:
+            id_prefix = f"creation-{program.base_digest[:12]}-then-"
+            state = apply_text_lane_ops(
+                state.text, copy.deepcopy(slots), program.then, hook=stabilize_added_ids
+            )
+            if state.slots != slots or state.changed - {"text"}:
+                raise ValueError("non-text lane changed")
         # The caption lane (narration words, song lyrics) belongs to its own lane and the
         # caption panel: no composer op may edit, restyle, retime or remove one of its rows.
         lane_before = {row["id"]: row for row in texts if is_caption_text_bar(row)}
@@ -806,6 +845,8 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     result = copy.deepcopy(plan)
     result["text_elements"] = rows
     _check_copy(rows, program.copy_constraints)
+    if program.research_layers:
+        _check_research_layers(rows, program)
     # Match the canonical execution schema's serialization, including all defaults.
     from app.pipeline.guided_story import GuidedStoryExecutionPlan
 
@@ -1250,6 +1291,540 @@ def _is_story_snapshot(snapshot: EditProposalSnapshot) -> bool:
     return any(beat.beat_id.startswith(STORY_BEAT_PREFIX) for beat in snapshot.story_beats)
 
 
+def research_needs_text_layers(requirements: Sequence[BriefRequirement] | None) -> bool:
+    """Asks whose words research must write and the footage-window writer cannot draw: words
+    shown a piece at a time, or two text layers at once (a translation under the text).
+
+    Only asks without a literal count: a literal sequence is the creator's own words, already
+    on its own bar for the composer to split (`unified_montage.brief_view`). Typed facts only.
+    """
+    authored = [
+        req
+        for req in requirements or ()
+        if req.live and (req.kind == "text" or is_text_sequence(req)) and not req.literal
+    ]
+    positions = {str(req.facts["position"]) for req in authored if req.facts.get("position")}
+    return any(is_text_sequence(req) for req in authored) or len(positions) > 1
+
+
+def _asks_needing_research(requirements: Sequence[BriefRequirement] | None) -> bool:
+    """Live text asks with no creator wording: a plain explanation or a sequence to write."""
+    return any(
+        req.live and (req.kind == "text" or is_text_sequence(req)) and not req.literal
+        for req in requirements or ()
+    )
+
+
+def _sequence_literal_asks(
+    requirements: Sequence[BriefRequirement] | None,
+) -> list[BriefRequirement]:
+    """Live title or whole-video word sequences that carry the creator's exact words."""
+    return [
+        req
+        for req in requirements or ()
+        if req.live
+        and is_text_sequence(req)
+        and req.scope in _SEQUENCE_TITLE_SCOPES
+        and req.literal
+    ]
+
+
+def _is_sequence_seed(
+    op: Mapping[str, Any], requirements: Sequence[BriefRequirement] | None
+) -> bool:
+    """The exact bar `_unplaced_sequence_bars` adds for an approved word sequence, nothing more."""
+    patch = op.get("patch") or {}
+    return (
+        op.get("op") == "add_text"
+        and set(op) <= {"op", "text", "start_s", "end_s", "patch"}
+        and set(patch) <= {"position"}
+        and float(op.get("start_s") or 0) == 0.0
+        and any(op.get("text") == req.literal for req in _sequence_literal_asks(requirements))
+    )
+
+
+def _approved_sequence_shapes(
+    lane: list[dict],
+    requirements: Sequence[BriefRequirement] | None,
+    slots: list[dict],
+    *,
+    offset: int,
+) -> list[ResearchLayerShape]:
+    """The approved word sequences a program that seeded one must keep on every replay.
+
+    Each is checked on the bar holding its exact words: its requested place, one word per piece
+    when asked, and, for sequences asked at different places, shown together.
+    """
+    from app.kria.text_sequence import text_sequence_unit  # noqa: PLC0415
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    total = max((float(row.get("output_end_s") or 0) for row in slots), default=0.0)
+    holders = {fold_text(str(row.get("text") or "")): row for row in lane if not row.get("removed")}
+    shapes: list[ResearchLayerShape] = []
+    for req in _sequence_literal_asks(requirements):
+        row = holders.get(fold_text(req.literal or ""))
+        if row is None:
+            continue
+        position = req.facts.get("position")
+        position = position if position in {"top", "middle", "bottom"} else None
+        first_elsewhere = next(
+            (
+                index
+                for index, shape in enumerate(shapes)
+                if position and shape.position and shape.position != position
+            ),
+            None,
+        )
+        shapes.append(
+            ResearchLayerShape(
+                bar_id=row["id"],
+                position=position,
+                start_s=0.0,
+                end_s=total,
+                unit=text_sequence_unit(req),
+                together_with=None if first_elsewhere is None else offset + first_elsewhere,
+                source="approved",
+            )
+        )
+    return shapes
+
+
+def _unplaced_sequence_bars(
+    texts: list[dict], requirements: Sequence[BriefRequirement] | None, slots: list[dict]
+) -> list[dict]:
+    """A whole-video bar for each live title or global word sequence no bar holds yet.
+
+    The plan seeds the opening title and short sentences as clip labels
+    (`unified_montage.brief_view`). An approved paragraph longer than a label gets no bar, and a
+    composer bundle cannot add a bar and split it (KRI-1352), so its exact words are added here, at
+    the place it asks for, as confirmed copy for the composer to shape.
+    """
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    total = max((float(row.get("output_end_s") or 0) for row in slots), default=0.0)
+    held = {fold_text(str(row.get("text") or "")) for row in texts if not row.get("removed")}
+    ops = []
+    for req in _sequence_literal_asks(requirements):
+        words = fold_text(req.literal or "")
+        if not words or words in held or total <= 0:
+            continue
+        held.add(words)
+        position = req.facts.get("position")
+        ops.append(
+            {
+                "op": "add_text",
+                "text": req.literal,
+                "start_s": 0.0,
+                "end_s": total,
+                **(
+                    {"patch": {"position": position}}
+                    if position in {"top", "middle", "bottom"}
+                    else {}
+                ),
+            }
+        )
+    return ops
+
+
+@dataclass(frozen=True)
+class _ServerTimedSequence:
+    bar_id: str
+    words: list[str]
+    text: str
+    position: str | None
+
+
+# The pace the composer prompt names ("about 0.45 s per word reads well"): the server paces the
+# approved words itself at it, never faster than a piece can be read (`_MIN_PIECE_S`).
+_READ_PIECE_S = 0.45
+
+
+def _server_timed_sequences(
+    lane: list[dict], requirements: Sequence[BriefRequirement] | None
+) -> list[_ServerTimedSequence]:
+    """The approved word-by-word asks the server splits and paces itself, bar by bar.
+
+    The creator's words are fixed and so is the unit, so nothing here needs a model; what the
+    composer got wrong (KRI-1365) was the timing, each paragraph at its own pace, so a pair shown
+    together ended at different times. Phrase units and build-ups ("keep them on screen") are the
+    composer's call, and so is a set of sequences sharing one place (they would draw over each
+    other, so their order is a layout choice), and any set the lane does not hold in full.
+    """
+    from app.kria.text_sequence import text_sequence_mode, text_sequence_unit  # noqa: PLC0415
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    asks = _sequence_literal_asks(requirements)
+    if not asks or any(
+        text_sequence_unit(req) != "word" or text_sequence_mode(req) == "cumulative" for req in asks
+    ):
+        return []
+    positions = [req.facts.get("position") for req in asks]
+    if len(set(positions)) != len(positions):
+        return []
+    holders = {fold_text(str(row.get("text") or "")): row for row in lane if not row.get("removed")}
+    owned = []
+    for req, position in zip(asks, positions, strict=True):
+        row = holders.get(fold_text(req.literal or ""))
+        if row is None or len(str(row["text"]).split()) < 2:
+            return []
+        owned.append(
+            _ServerTimedSequence(
+                bar_id=row["id"],
+                words=str(row["text"]).split(),
+                text=str(row["text"]),
+                position=position if position in {"top", "middle", "bottom"} else None,
+            )
+        )
+    return owned
+
+
+def _shared_span(owned: list[_ServerTimedSequence], total: float) -> tuple[float, float]:
+    """One span for every server-timed sequence, long enough for the longest at a readable pace.
+
+    Sequences asked at different places are shown together, so they start and end together
+    (`_check_research_layers`); each one's pieces share the span equally. Words that cannot be
+    read one at a time inside the video are reported, never squeezed into flicker.
+    """
+    from app.services.kria_editor_ops_text import _MIN_PIECE_S  # noqa: PLC0415
+
+    longest = max(len(item.words) for item in owned)
+    needed = longest * _MIN_PIECE_S
+    if needed > total + 1e-6:
+        raise CreationTextCompositionError(
+            f"Text composition is incomplete: showing {longest} words one at a time needs at "
+            f"least {needed:.1f} s and the video is {total:.1f} s"
+        )
+    return 0.0, round(min(total, max(needed, longest * _READ_PIECE_S)), 3)
+
+
+def _without_owned_sequences(
+    ops: list[dict], owned_ids: set[str]
+) -> tuple[list[dict], dict[str, dict]]:
+    """The composer's ops minus the timing and split of server-timed bars, and the style it put
+    on their split (an entrance), which the server's split keeps."""
+    kept: list[dict] = []
+    styles: dict[str, dict] = {}
+    for op in ops:
+        ids = op.get("target_ids")
+        if op.get("op") in {"set_texts_timing", "replace_text_sequence"} and isinstance(ids, list):
+            if ids and set(ids) <= owned_ids:
+                if op["op"] == "replace_text_sequence" and isinstance(op.get("patch"), dict):
+                    styles[ids[0]] = op["patch"]
+                continue
+            if set(ids) & owned_ids and set(op.get("selector") or {}) == {"ids"}:
+                rest = [value for value in ids if value not in owned_ids]
+                op = {
+                    **op,
+                    "selector": {"ids": rest},
+                    "target_ids": rest,
+                    "expected_count": len(rest),
+                }
+        kept.append(op)
+    return kept, styles
+
+
+def _server_sequence_ops(
+    owned: list[_ServerTimedSequence], span: tuple[float, float], styles: Mapping[str, dict]
+) -> list[dict]:
+    """Time every server-timed bar to the shared span, then split it one word per piece.
+
+    Timing comes first: a split bar's id is gone afterwards (`replace_text_sequence` binds the
+    lane its bundle started from).
+    """
+
+    def target(item: _ServerTimedSequence) -> dict:
+        return {
+            "selector": {"ids": [item.bar_id]},
+            "target_ids": [item.bar_id],
+            "expected_count": 1,
+        }
+
+    timing = [
+        {"op": "set_texts_timing", **target(item), "start_s": span[0], "end_s": span[1]}
+        for item in owned
+    ]
+    splits = []
+    for item in owned:
+        patch = {
+            **styles.get(item.bar_id, {}),
+            **({"position": item.position} if item.position else {}),
+        }
+        splits.append(
+            {
+                "op": "replace_text_sequence",
+                **target(item),
+                "segments": item.words,
+                "expected_source_text": item.text,
+                **({"patch": patch} if patch else {}),
+            }
+        )
+    return [*timing, *splits]
+
+
+def _run_composer(
+    composer_input: EditCopilotInput, *, slots: list[dict], bar_count: int, ctx: RunContext | None
+) -> EditCopilotOutput:
+    try:
+        return CreationTextComposer(default_client()).run(composer_input, ctx=ctx)
+    except ProviderOutcomeUnknownError:
+        # KRI-673: the pro call may still be running, so it is never retried on the same
+        # model. A second, separate reservation on the flash model is safe and bounded.
+        log.warning(
+            "creation_text_composer_fallback",
+            slot_count=len(slots),
+            bar_count=bar_count,
+            job_id=getattr(ctx, "job_id", None),
+        )
+        fast_ctx = (
+            replace(ctx, request_id=f"{ctx.request_id}:fast" if ctx.request_id else None)
+            if ctx is not None
+            else None
+        )
+        try:
+            return CreationTextComposerFast(default_client()).run(composer_input, ctx=fast_ctx)
+        except ProviderOutcomeUnknownError as exc:
+            raise CreationTextTimeoutError(
+                f"Text composition timed out for {len(slots)} clips", slot_count=len(slots)
+            ) from exc
+
+
+def uncovered_layer_asks(
+    layers: Sequence[Any], requirements: Sequence[BriefRequirement] | None
+) -> list[str]:
+    """Live text asks with a requested position that no researched layer fills."""
+    positions = {layer.position for layer in layers}
+    return [
+        req.description or req.id
+        for req in requirements or ()
+        if req.live
+        and (req.kind == "text" or is_text_sequence(req))
+        and req.facts.get("position")
+        and req.facts["position"] not in positions
+    ]
+
+
+def _compose_from_research(
+    request: Any,
+    *,
+    approved: PreparedResearch | None = None,
+    snapshot: EditProposalSnapshot,
+    creator_request: str,
+    plan: dict,
+    base_digest: str,
+    lane: list[dict],
+    slots: list[dict],
+    pinned_ops: list[dict],
+    constraints: Mapping[str, str],
+    text_requirements: Sequence[BriefRequirement] | None,
+    ctx: RunContext | None,
+) -> tuple[EditCopilotOutput, list[dict], dict[str, str], list[ResearchLayerShape]]:
+    """Reviewed research writes the words; the text composer only shapes them.
+
+    The layers are either ``approved`` before render (KRI-881: replayed by
+    ``pinned_layer_operations``, no search, no model, no rewrite) or written now by
+    ``write_research_layers`` (search, one text layer per requested layer with a translation as
+    its own layer, the deterministic evidence checks and the claim review). Each layer becomes
+    one cited bar. A composer bundle can never split a bar it adds (`replace_text_sequence`
+    binds a bar already in its snapshot), so the composer shapes the bars in the program's
+    ``then`` bundle, with them held as confirmed copy and no way to add or reword text. Returns
+    the shaping answer with the layers' ops as ``ops`` (full lane, after ``pinned_ops``), the
+    ``then`` ops, the researched bars' copy constraints, and the layer shapes the program
+    records so every replay keeps them as reviewed.
+    """
+    from app.services.researched_text import (  # noqa: PLC0415
+        ResearchUnavailable,
+        layer_operations,
+        pinned_layer_operations,
+        prepared_layers,
+        write_research_layers,
+    )
+
+    model_snapshot = creation_model_snapshot(
+        snapshot,
+        texts=lane,
+        slots=slots,
+        constraints=constraints,
+        text_requirements=text_requirements,
+    )
+    try:
+        if approved is not None:
+            layers = approved.layers
+            first = pinned_layer_operations(approved, model_snapshot)
+        else:
+            written, evidence = write_research_layers(
+                request, utterance=creator_request, snapshot=model_snapshot, ctx=ctx
+            )
+            if written.unmet_requests:
+                raise CreationTextCompositionError(
+                    "Text composition is incomplete: " + "; ".join(written.unmet_requests)
+                )
+            layers = prepared_layers(written.layers, evidence, slots)
+            first = layer_operations(
+                layers,
+                slots,
+                retrieved_at=evidence.retrieved_at,
+                search_entry_html=evidence.search_entry_html,
+            )
+    except ResearchUnavailable as exc:
+        raise CreationTextCompositionError(str(exc)) from exc
+    uncovered = uncovered_layer_asks(layers, text_requirements)
+    if uncovered:
+        raise CreationTextCompositionError(
+            "Text composition is incomplete: no researched text for " + "; ".join(uncovered)
+        )
+    known = {row.get("id") for row in lane}
+    written_lane = replay_text_composition(
+        plan, TextCompositionProgram(base_digest=base_digest, operations=[*pinned_ops, *first])
+    )["text_elements"]
+    layer_rows = [row for row in written_lane if row.get("id") not in known]
+    researched = {row["id"]: row["text"] for row in layer_rows}
+    shaping_snapshot = creation_model_snapshot(
+        snapshot,
+        texts=written_lane,
+        slots=slots,
+        constraints={**constraints, **researched},
+        text_requirements=text_requirements,
+    )
+    shaped = CreationTextComposer(default_client()).run(
+        EditCopilotInput(
+            utterance=creator_request,
+            variant_snapshot={**shaping_snapshot, "researched_copy": True},
+        ),
+        ctx=ctx,
+    )
+    if shaped.research_request is not None:
+        raise CreationTextCompositionError("The text pass asked to research again")
+    second = (
+        _to_full_bar_indexes(shaped.ops, written_lane)
+        if "caption_lane" in shaping_snapshot
+        else shaped.ops
+    )
+    shapes = _layer_shapes(layer_rows, layers, text_requirements)
+    # Replay checks the shapes (`_check_research_layers`): the same rule a saved program meets.
+    replay_text_composition(
+        plan,
+        TextCompositionProgram(
+            base_digest=base_digest,
+            operations=[*pinned_ops, *first],
+            then=second,
+            copy_constraints={**constraints, **researched},
+            research_layers=shapes,
+        ),
+    )
+    return shaped.model_copy(update={"ops": first}), second, researched, shapes
+
+
+_WRITING_OPS = frozenset({"add_text", "rewrite_text", "edit_text"})
+
+
+def _layer_shapes(
+    layer_rows: list[dict],
+    layers: Sequence[Any],
+    text_requirements: Sequence[BriefRequirement] | None,
+) -> list[ResearchLayerShape]:
+    """The reviewed layers as the program records them, with each sequence ask's unit."""
+    from app.kria.text_sequence import text_sequence_unit  # noqa: PLC0415
+
+    sequences = [req for req in text_requirements or () if req.live and is_text_sequence(req)]
+    shapes = []
+    for row, layer in zip(layer_rows, layers, strict=True):
+        asked = [req for req in sequences if req.facts.get("position") == layer.position] or [
+            req for req in sequences if not req.facts.get("position")
+        ]
+        shapes.append(
+            ResearchLayerShape(
+                bar_id=row["id"],
+                language=layer.language,
+                position=layer.position,
+                start_s=layer.start_s,
+                end_s=layer.end_s,
+                translation_of=layer.translation_of,
+                unit=text_sequence_unit(asked[0]) if asked else None,
+            )
+        )
+    return shapes
+
+
+def _check_research_layers(rows: list[dict], program: TextCompositionProgram) -> None:
+    """What review or approval fixed is what shows, on every replay of a program that records it.
+
+    Every piece stays at its layer's position and inside its window (a researched layer's
+    citations and pictured clips are that window's); a translation in another place, or a layer
+    asked to show together with another, spans the same time; a sequence ask is split in its unit
+    (one word per piece, or one more word per step when the words build up).
+    """
+    shapes = program.research_layers
+    shown = [
+        sorted((row for row in rows if _owns(row, shape.bar_id)), key=lambda row: row["start_s"])
+        for shape in shapes
+    ]
+    for shape, pieces in zip(shapes, shown, strict=True):
+        name = _layer_name(shape)
+        if not pieces:
+            raise CreationTextCompositionError(f"{name} is missing")
+        if shape.position and any(piece.get("position") != shape.position for piece in pieces):
+            raise CreationTextCompositionError(
+                f"{name} moved off its requested {shape.position} place"
+            )
+        if any(
+            piece["start_s"] < shape.start_s - _FRAME_S or piece["end_s"] > shape.end_s + _FRAME_S
+            for piece in pieces
+        ):
+            window = "reviewed" if shape.source == "research" else "approved"
+            raise CreationTextCompositionError(
+                f"{name} was moved outside its {window} "
+                f"{shape.start_s:.1f}-{shape.end_s:.1f} s window"
+            )
+    for index, (shape, pieces) in enumerate(zip(shapes, shown, strict=True)):
+        partner = shape.together_with
+        if (
+            partner is None
+            and shape.translation_of is not None
+            and shapes[shape.translation_of].position != shape.position
+        ):
+            partner = shape.translation_of
+        if partner is not None and partner != index:
+            theirs = shown[partner]
+            span = (pieces[0]["start_s"], pieces[-1]["end_s"])
+            other = (theirs[0]["start_s"], theirs[-1]["end_s"])
+            if any(abs(a - b) > _FRAME_S for a, b in zip(span, other)):
+                what = (
+                    f"The {shape.language} translation"
+                    if shape.translation_of is not None
+                    else _layer_name(shape)
+                )
+                raise CreationTextCompositionError(
+                    f"{what} is not on screen together with {_layer_name(shapes[partner]).lower()}"
+                )
+        if shape.unit is None:
+            continue
+        lead = _layer_name(shape, lead=False)
+        if len(pieces) < 2:
+            raise CreationTextCompositionError(
+                f"Text composition is incomplete: {lead} is not shown a piece at a time"
+            )
+        if shape.unit == "word":
+            counts = [len(piece["text"].split()) for piece in pieces]
+            builds_up = all(
+                (piece.get("source_params") or {}).get("sequence_mode") == "cumulative"
+                for piece in pieces
+            )
+            if counts != (list(range(1, len(pieces) + 1)) if builds_up else [1] * len(pieces)):
+                raise CreationTextCompositionError(
+                    f"Text composition is incomplete: {lead} is not shown one word at a time"
+                )
+
+
+def _layer_name(shape: ResearchLayerShape, *, lead: bool = True) -> str:
+    if shape.source == "research":
+        return f"Researched {shape.language} text" if lead else f"the {shape.language} text"
+    where = f" {shape.position}" if shape.position else ""
+    return f"The approved{where} text" if lead else f"the approved{where} text"
+
+
+_FRAME_S = 1 / 30
+
+
 def _compose_creation_text(
     snapshot: EditProposalSnapshot,
     *,
@@ -1273,8 +1848,24 @@ def _compose_creation_text(
         if prepared_research is not None and prepared_research.status == "ready"
         else None
     )
+    # Approved text layers (a word-sequence or translated ask) replay through the layers route;
+    # `pinned_research` below is the footage-explanation replay only.
+    approved_layers = pinned_research if pinned_research and pinned_research.layers else None
+    if approved_layers is not None:
+        pinned_research = None
+    elif pinned_research is not None and research_needs_text_layers(text_requirements):
+        # Approved before reviewed text layers existed: footage explanations cannot become words
+        # shown a piece at a time or a translation, and researching again would bypass approval.
+        raise CreationTextCompositionError(
+            "The approved sourced explanations cannot be shown word by word or with a "
+            "translation. Ask for a new version to research and approve that text."
+        )
     if snapshot.text_composition is not None:
-        _check_added_text(snapshot.text_composition.operations, text_requirements)
+        program = snapshot.text_composition
+        seeds_kept_out = [
+            op for op in program.operations if not _is_sequence_seed(op, text_requirements)
+        ]
+        _check_added_text([*seeds_kept_out, *program.then], text_requirements)
         plan = compile_proposal_execution_plan(snapshot)
         _check_editorial_text(snapshot, plan)
         constraints = dict(copy_constraints or {})
@@ -1295,7 +1886,7 @@ def _compose_creation_text(
                 }
             )
         return snapshot
-    if not creator_request.strip() and pinned_research is None:
+    if not creator_request.strip() and pinned_research is None and approved_layers is None:
         _check_editorial_text(snapshot, compile_proposal_execution_plan(snapshot))
         return snapshot
     if len(creator_request) > 12000:
@@ -1306,7 +1897,12 @@ def _compose_creation_text(
     if text_requirements is not None:
         constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
     _check_copy(texts, constraints)
-    if text_requirements is not None and constraints and pinned_research is None:
+    if (
+        text_requirements is not None
+        and constraints
+        and pinned_research is None
+        and approved_layers is None
+    ):
         from app.kria.brief_checks import (
             check_requirement,
             plan_facts_from_editor_payload,
@@ -1394,6 +1990,25 @@ def _compose_creation_text(
     else:
         pinned_ops = []
         texts_for_model = texts
+    seeded = (
+        _unplaced_sequence_bars(texts_for_model, text_requirements, slots)
+        if approved_layers is None
+        else []
+    )
+    if seeded:
+        seeded_lane = replay_text_composition(
+            plan,
+            TextCompositionProgram(
+                base_digest=_digest(texts, slots), operations=[*pinned_ops, *seeded]
+            ),
+        )["text_elements"]
+        held = {row.get("id") for row in texts_for_model}
+        constraints = {
+            **constraints,
+            **{row["id"]: row["text"] for row in seeded_lane if row.get("id") not in held},
+        }
+        pinned_ops = [*pinned_ops, *seeded]
+        texts_for_model = seeded_lane
     model_snapshot = creation_model_snapshot(
         snapshot,
         texts=texts_for_model,
@@ -1408,29 +2023,52 @@ def _compose_creation_text(
         utterance=creator_request or "Keep the approved sourced explanations.",
         variant_snapshot=model_snapshot,
     )
-    try:
-        output = CreationTextComposer(default_client()).run(composer_input, ctx=ctx)
-    except ProviderOutcomeUnknownError:
-        # KRI-673: the pro call may still be running, so it is never retried on the same
-        # model. A second, separate reservation on the flash model is safe and bounded.
-        log.warning(
-            "creation_text_composer_fallback",
-            slot_count=len(slots),
-            bar_count=len(model_texts),
-            job_id=getattr(ctx, "job_id", None),
+    if approved_layers is not None:
+        # The approved layers are the text: nothing to research or write, only shape.
+        output = EditCopilotOutput(intent="describe", ops=[], confidence=1.0, reply="")
+    else:
+        output = _run_composer(composer_input, slots=slots, bar_count=len(model_texts), ctx=ctx)
+    full_lane_ops = False
+    then: list[dict] = []
+    shapes: list[ResearchLayerShape] = []
+    owned = (
+        _server_timed_sequences(texts_for_model, text_requirements)
+        if approved_layers is None
+        else []
+    )
+    if (
+        owned
+        and output.research_request is not None
+        and pinned_research is None
+        and not _asks_needing_research(text_requirements)
+    ):
+        # The creator's words are approved, so there is nothing to research or write. Sending them
+        # to the footage writer (180 characters in a clip's window) failed a 26-word sentence as
+        # a bug (KRI-1365); the server splits and paces them below.
+        log.info("creation_text_research_skipped_for_approved_sequences", count=len(owned))
+        output = output.model_copy(update={"research_request": None})
+    if approved_layers is not None or (
+        output.research_request is not None
+        and pinned_research is None
+        and research_needs_text_layers(text_requirements)
+    ):
+        output, then, researched, shapes = _compose_from_research(
+            output.research_request,
+            approved=approved_layers,
+            snapshot=snapshot,
+            creator_request=creator_request,
+            plan=plan,
+            base_digest=_digest(texts, slots),
+            lane=texts_for_model,
+            slots=slots,
+            pinned_ops=pinned_ops,
+            constraints=constraints,
+            text_requirements=text_requirements,
+            ctx=ctx,
         )
-        fast_ctx = (
-            replace(ctx, request_id=f"{ctx.request_id}:fast" if ctx.request_id else None)
-            if ctx is not None
-            else None
-        )
-        try:
-            output = CreationTextComposerFast(default_client()).run(composer_input, ctx=fast_ctx)
-        except ProviderOutcomeUnknownError as exc:
-            raise CreationTextTimeoutError(
-                f"Text composition timed out for {len(slots)} clips", slot_count=len(slots)
-            ) from exc
-    if output.research_request is not None and pinned_research is not None:
+        constraints = {**constraints, **researched}
+        full_lane_ops = True
+    elif output.research_request is not None and pinned_research is not None:
         # The creator approved this research before render: it is never searched again.
         log.info(
             "creation_text_pinned_research_replayed",
@@ -1439,18 +2077,24 @@ def _compose_creation_text(
         )
         output = output.model_copy(update={"research_request": None})
     elif output.research_request is not None:
-        from app.services.researched_text import run_researched_revision
-
-        output = run_researched_revision(
-            output.research_request,
-            utterance=creator_request,
-            snapshot=model_snapshot,
-            ctx=ctx,
-            # The creator's "with animations" reaches the explanations that replace the
-            # composer's output (None unless they asked, so the ops stay byte-identical).
-            look=_research_entrance_patch(research_look),
-            handled_elsewhere=("animation",) if research_look else (),
+        from app.services.researched_text import (  # noqa: PLC0415
+            ResearchUnavailable,
+            run_researched_revision,
         )
+
+        try:
+            output = run_researched_revision(
+                output.research_request,
+                utterance=creator_request,
+                snapshot=model_snapshot,
+                ctx=ctx,
+                # The creator's "with animations" reaches the explanations that replace the
+                # composer's output (None unless they asked, so the ops stay byte-identical).
+                look=_research_entrance_patch(research_look),
+                handled_elsewhere=("animation",) if research_look else (),
+            )
+        except ResearchUnavailable as exc:
+            raise CreationTextCompositionError(str(exc)) from exc
     if (
         output.needs_clarification
         or output.unmet_requests
@@ -1469,8 +2113,8 @@ def _compose_creation_text(
 
     asked_only = settings.text_composer_asked_only_enabled
     if not asked_only:
-        _check_added_text(operations, text_requirements)
-    if caption_lane is not None:
+        _check_added_text([*operations, *then], text_requirements)
+    if caption_lane is not None and not full_lane_ops:
         operations = _to_full_bar_indexes(operations, texts_for_model)
     if asked_only:
         operations = _drop_unasked_added_text(
@@ -1482,11 +2126,34 @@ def _compose_creation_text(
             pinned_ops=pinned_ops,
             snapshot=snapshot,
             ctx=ctx,
+            shaped_after_pins=bool(seeded) and not full_lane_ops,
         )
-    # The composer addressed the lane with the approved research already in place.
-    operations = [*pinned_ops, *operations]
+    if owned and not full_lane_ops:
+        operations, styles = _without_owned_sequences(operations, {item.bar_id for item in owned})
+        total = max((float(row.get("output_end_s") or 0) for row in slots), default=0.0)
+        operations = [
+            *operations,
+            *_server_sequence_ops(owned, _shared_span(owned, total), styles),
+        ]
+    if seeded and not full_lane_ops:
+        # The composer shaped bars the first bundle adds; a later bundle's selectors bind them.
+        then, operations = operations, list(pinned_ops)
+    else:
+        # The composer addressed the lane with the approved research already in place.
+        operations = [*pinned_ops, *operations]
+    if seeded:
+        shapes = [
+            *shapes,
+            *_approved_sequence_shapes(
+                texts_for_model, text_requirements, slots, offset=len(shapes)
+            ),
+        ]
     program = TextCompositionProgram(
-        base_digest=_digest(texts, slots), operations=operations, copy_constraints=constraints
+        base_digest=_digest(texts, slots),
+        operations=operations,
+        then=then,
+        research_layers=shapes,
+        copy_constraints=constraints,
     )
     composed = replay_text_composition(plan, program)
     _check_editorial_text(snapshot, composed)

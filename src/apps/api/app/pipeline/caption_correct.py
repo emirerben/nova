@@ -12,6 +12,8 @@ import json
 import os
 import re
 import unicodedata
+from collections.abc import Sequence
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, NamedTuple
 
@@ -20,6 +22,7 @@ import structlog
 from app.config import settings
 from app.pipeline.caption_language import LANGUAGE_NAMES
 from app.pipeline.caption_spelling import _merge_words, _split_word
+from app.text_fold import fold_case
 
 log = structlog.get_logger()
 
@@ -65,6 +68,18 @@ _LEGACY_SYSTEM_PROMPT = (
     "between lines, never translate, never add commentary or punctuation-only lines. "
     'Return ONLY JSON: {{"lines": [...]}} with exactly the same length as the input.'
 )
+# KRI-1361: appended only when the request carries spelling_hints, so a request without
+# hints is byte-identical to the pre-hint one.
+_LEGACY_HINTS_SENTENCE = (
+    " The input may also carry spelling_hints: names seen in the creator's own photos and "
+    "footage (signs, documents, logos). When the audio plausibly says one of these names, "
+    "write it exactly as the hint spells it (joined or split the same way, with its number); "
+    "never add a name the speaker did not say."
+)
+_SPELLING_HINTS_MAX = 40
+_SPELLING_HINT_MAX_CHARS = 60
+_SPELLING_HINT_MAX_TOKENS = 5
+_HINT_EDGE = re.compile(r"^[\W_]+|[\W_]+$", re.UNICODE)
 
 
 def _language_name(language: str | None) -> str:
@@ -183,28 +198,34 @@ def _llm_propose_substitutions(
     return [item for item in substitutions if isinstance(item, dict)]
 
 
-def _llm_correct_lines(texts: list[str], language: str | None, *, model: str) -> list[str]:
-    """Pre-v2 correction contract retained only for non-Smart/v1 byte stability."""
+def _llm_correct_lines(
+    texts: list[str],
+    language: str | None,
+    *,
+    model: str,
+    spelling_hints: Sequence[str] = (),
+) -> list[str]:
+    """Pre-v2 correction contract retained only for non-Smart/v1 byte stability.
+
+    ``spelling_hints`` (KRI-1361) are names from the creator's own media; with none, the
+    request is byte-identical to the pre-hint one.
+    """
 
     import openai  # noqa: PLC0415
 
+    system = _LEGACY_SYSTEM_PROMPT.format(language=_language_name(language))
+    user: dict[str, Any] = {"language": _language_name(language), "lines": texts}
+    if spelling_hints:
+        system += _LEGACY_HINTS_SENTENCE
+        user["spelling_hints"] = list(spelling_hints)
     client = openai.OpenAI(api_key=settings.openai_api_key)
     response = client.chat.completions.create(
         model=model,
         temperature=0,
         response_format={"type": "json_object"},
         messages=[
-            {
-                "role": "system",
-                "content": _LEGACY_SYSTEM_PROMPT.format(language=_language_name(language)),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {"language": _language_name(language), "lines": texts},
-                    ensure_ascii=False,
-                ),
-            },
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
         ],
     )
     payload = json.loads(response.choices[0].message.content or "{}")
@@ -228,15 +249,284 @@ class _Retimed(NamedTuple):
     cue: dict[str, Any] | None
     accepted: int
     reverted: int
+    # KRI-1361: accepted changes the guard alone would have refused, let through because
+    # the written run is a name the creator's own media spells that way.
+    hinted: int = 0
+
+
+@dataclass(frozen=True)
+class SpellingHints:
+    """KRI-1361: names the creator's own media spells, by how far the word guard trusts them.
+
+    ``brands`` are names the analyzer read as brands/logos (verbatim club and brand names:
+    "1. FC Nürnberg"). ``names`` are runs from on-screen text, which in German is every
+    noun and sentence start too, so they unlock a change only when they look like a name.
+    A plain sequence of strings passed as hints counts as ``names`` (the lower trust).
+    """
+
+    brands: tuple[str, ...] = ()
+    names: tuple[str, ...] = ()
+
+    @property
+    def all(self) -> tuple[str, ...]:
+        """Every hint, brands first: what the proofreader is shown."""
+        return self.brands + self.names
+
+    def __bool__(self) -> bool:
+        return bool(self.brands or self.names)
+
+
+class _HintRuns(NamedTuple):
+    """Comparison keys the word guard accepts, by the shape of the change.
+
+    ``whole``: a 1:1 respelling must write a WHOLE brand hint or a whole name-shaped one.
+    ``runs``: two heard words written as one (or one as two) may write a contiguous run of
+    a brand hint, or a run of a name hint that holds a name-shaped token ("BayArena").
+    ``prefix``: a dropped "1." may be restored only to complete a whole BRAND hint.
+    """
+
+    whole: frozenset[str]
+    runs: frozenset[str]
+    prefix: frozenset[str]
+
+
+def _hint_key(text: str) -> str:
+    """Case-insensitive, whitespace-free key with outer punctuation dropped.
+
+    "1. FC Nürnberg", "1.FC Nürnberg" and "1. FC Nürnberg." share one key.
+    """
+
+    return _HINT_EDGE.sub("", "".join(fold_case(text).split()))
+
+
+def _letter_count(text: str) -> int:
+    return sum(ch.isalpha() for ch in text)
+
+
+def _name_shaped(token: str) -> bool:
+    """A token spelled like a name, not a dictionary word: letters with a digit ("1.FC",
+    "S04") or a capital inside mixed case ("BayArena", "DFB-Pokal"). A plain capitalised
+    word ("Mannschaft", "Spiel") or an all-caps one ("SPIEL") is not."""
+
+    letters = [ch for ch in token if ch.isalpha()]
+    if not letters:
+        return False
+    if any(ch.isdigit() for ch in token):
+        return True
+    return any(ch.islower() for ch in letters) and any(ch.isupper() for ch in letters[1:])
+
+
+def clean_spelling_hints(hints: Sequence[str], *, seen: set[str] | None = None) -> list[str]:
+    """Bounded, deduplicated names safe to put in the request (KRI-1361)."""
+
+    out: list[str] = []
+    seen = set() if seen is None else seen
+    for raw in hints or ():
+        text = " ".join(str(raw or "").split())
+        if (
+            not text
+            or len(text) > _SPELLING_HINT_MAX_CHARS
+            or len(text.split()) > _SPELLING_HINT_MAX_TOKENS
+            or _letter_count(text) < 2
+            or _CONTROL.search(text)
+            or _PROMPTISH.search(text)
+        ):
+            continue
+        key = _hint_key(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+        if len(out) >= _SPELLING_HINTS_MAX:
+            break
+    return out
+
+
+_ORDINAL = re.compile(r"\d{1,2}\.")
+_OCR_TOKEN_EDGE = re.compile(r"[,;:!?\"'()\[\]]+$")
+_OCR_RUN_MAX_TOKENS = 3
+_OCR_PHRASES_PER_TEXT = 12
+
+
+def _name_like(token: str) -> bool:
+    """A capitalised token with two or more letters ("BayArena", "1.FC", "DFB-Pokal")."""
+
+    if "/" in token or ":" in token or _letter_count(token) < 2:
+        return False
+    first_letter = next(ch for ch in token if ch.isalpha())
+    return first_letter.isupper()
+
+
+def _names_in_text(text: str) -> list[str]:
+    """Runs of capitalised tokens in on-screen text, at most three tokens each; a short
+    ordinal ("1.") may open a run when a name follows it ("1. FC Nürnberg")."""
+
+    tokens = [_OCR_TOKEN_EDGE.sub("", token) for token in str(text or "").split()]
+    phrases: list[str] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        if run and any(_name_like(token) for token in run):
+            phrases.append(" ".join(run))
+        run.clear()
+
+    for index, token in enumerate(tokens):
+        following = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if _ORDINAL.fullmatch(token) and _name_like(following):
+            flush()
+            run.append(token)
+            continue
+        if not _name_like(token):
+            flush()
+            continue
+        run.append(token)
+        if len(run) >= _OCR_RUN_MAX_TOKENS:
+            flush()
+    flush()
+    return phrases[:_OCR_PHRASES_PER_TEXT]
+
+
+def _bounded_hints(brands: Sequence[str], names: Sequence[str]) -> SpellingHints:
+    """Clean both kinds; a name that folds onto a brand stays a brand; at most 40 in all."""
+
+    seen: set[str] = set()
+    kept_brands = clean_spelling_hints([str(b) for b in brands or () if b], seen=seen)
+    kept_names = clean_spelling_hints([str(n) for n in names or () if n], seen=seen)
+    room = max(0, _SPELLING_HINTS_MAX - len(kept_brands))
+    return SpellingHints(tuple(kept_brands), tuple(kept_names[:room]))
+
+
+def media_spelling_hints(brands: Sequence[str], on_screen_texts: Sequence[str]) -> SpellingHints:
+    """KRI-1361: names the creator's own photos and footage spell -- brands verbatim, then
+    name-like runs from their on-screen text -- deduplicated and bounded."""
+
+    names: list[str] = []
+    for text in on_screen_texts or ():
+        names.extend(_names_in_text(str(text or "")))
+    return _bounded_hints(brands, names)
+
+
+def _coerce_spelling_hints(value: SpellingHints | Sequence[str]) -> SpellingHints:
+    if isinstance(value, SpellingHints):
+        return _bounded_hints(value.brands, value.names)
+    return _bounded_hints((), [str(item) for item in value or ()])
+
+
+def _hint_runs(hints: SpellingHints) -> _HintRuns:
+    whole: set[str] = set()
+    runs: set[str] = set()
+    prefix: set[str] = set()
+    for hint, is_brand in [(b, True) for b in hints.brands] + [(n, False) for n in hints.names]:
+        tokens = hint.split()
+        if is_brand or any(_name_shaped(token) for token in tokens):
+            whole.add(_hint_key(hint))
+        if is_brand:
+            prefix.add(_hint_key(hint))
+        for i in range(len(tokens)):
+            for j in range(i + 1, len(tokens) + 1):
+                if is_brand or any(_name_shaped(token) for token in tokens[i:j]):
+                    runs.add(_hint_key(" ".join(tokens[i:j])))
+    for keys in (whole, runs, prefix):
+        keys.discard("")
+    return _HintRuns(frozenset(whole), frozenset(runs), frozenset(prefix))
+
+
+def _hinted_replace(
+    spoken: list[dict[str, Any]], written: list[str], hints: _HintRuns | None
+) -> bool:
+    """A refused replace the creator's media spells, still sounding like the spoken words.
+
+    Word for word, the written run must be a WHOLE trusted hint (a brand, or a name-shaped
+    on-screen name); two heard words written as one (or one as two) may write a run of
+    one ("Bayern Arena" -> "BayArena"). Other shapes are never hinted. A hint fixes
+    spelling or spacing only, never which product is named: the numbers must stay the
+    same, in order and in shape ("PS4" never becomes "PS5", "iPhone 13" never "iPhone15",
+    "Model1.5" never "Model15").
+    """
+
+    if hints is None or not written:
+        return False
+    heard = " ".join(str(word["text"]) for word in spoken)
+    run = " ".join(written)
+    if _numeric_tokens(heard) != _numeric_tokens(run):
+        return False
+    if len(spoken) == len(written):
+        allowed = hints.whole
+    elif (len(spoken), len(written)) in {(2, 1), (1, 2)}:
+        allowed = hints.runs
+    else:
+        return False
+    key = _hint_key(run)
+    if _letter_count(key) < 2 or key not in allowed:
+        return False
+    return _phonetic_overlap(heard, run) >= _PROPOSAL_MIN_OVERLAP
+
+
+def _hinted_prefix(
+    tokens: list[str],
+    j1: int,
+    j2: int,
+    next_opcode: tuple[str, int, int, int, int] | None,
+    hints: _HintRuns | None,
+) -> bool:
+    """A refused insert of one number token ("1.", "04") that, with the spoken words right
+    after it, completes a WHOLE brand hint ("1. FC Nürnberg"). Only digits with an optional
+    trailing period are inserted -- no letter at all ("A Bathing Ape", "1a.") -- and
+    on-screen text never unlocks it ("2. Bundesliga Tabelle")."""
+
+    if hints is None or j2 - j1 != 1 or not _INSERTED_NUMBER.fullmatch(tokens[j1]):
+        return False
+    if next_opcode is None or next_opcode[0] != "equal":
+        return False
+    following = next_opcode[4] - next_opcode[3]
+    for k in range(1, min(following, _SPELLING_HINT_MAX_TOKENS) + 1):
+        if _hint_key(" ".join(tokens[j1 : j2 + k])) in hints.prefix:
+            return True
+    return False
+
+
+_INSERTED_NUMBER = re.compile(r"\d+\.?")
+
+
+# A separator that sits between two numerals belongs to the number: "1.5", "1,5", "4:0",
+# "1/2", "2024-05-01". A trailing period ("1.") does not.
+_NUMBER_JOINERS = frozenset(".,:/'\u2019-\u2013\u2044\u066b\u066c")
+
+
+def _numeric_tokens(text: str) -> tuple[str, ...]:
+    """The numbers of ``text`` in order, each with its internal separators, compatibility
+    forms folded ("㎟" -> "2"), so a hinted edit can prove it kept them: "1.5" and "15" are
+    different numbers even though their digits match. The one numeric probe in this module."""
+
+    stream: list[str] = []
+    for ch in text:
+        decomposed = unicodedata.normalize("NFKD", ch)  # single-fold: numeric probe
+        if any(c.isnumeric() for c in decomposed):
+            stream.extend(decomposed)
+        else:
+            stream.append(ch)
+    out: list[str] = []
+    token: list[str] = []
+    for index, ch in enumerate(stream):
+        if ch.isnumeric():
+            token.append(ch)
+            continue
+        following = stream[index + 1] if index + 1 < len(stream) else ""
+        if token and ch in _NUMBER_JOINERS and following.isnumeric():
+            token.append(ch)
+            continue
+        if token:
+            out.append("".join(token))
+            token = []
+    if token:
+        out.append("".join(token))
+    return tuple(out)
 
 
 def _has_numeric_content(text: str) -> bool:
     """Include fractions/numerals and compatibility forms such as ㎟ -> mm2."""
 
-    return any(ch.isnumeric() for ch in text) or any(
-        ch.isnumeric()
-        for ch in unicodedata.normalize("NFKD", text)  # single-fold: numeric probe
-    )
+    return bool(_numeric_tokens(text))
 
 
 def _word_key(text: str) -> str:
@@ -300,7 +590,9 @@ def _is_respacing(old: str, new: str) -> bool:
     )
 
 
-def _retime_corrected_text(cue: dict[str, Any], new_text: str) -> _Retimed:
+def _retime_corrected_text(
+    cue: dict[str, Any], new_text: str, hints: _HintRuns | None = None
+) -> _Retimed:
     """Apply corrected text onto a timed cue, one word at a time.
 
     The spoken and corrected words are aligned (`difflib`), then each change is judged
@@ -309,6 +601,12 @@ def _retime_corrected_text(cue: dict[str, Any], new_text: str) -> _Retimed:
     its bound (a rewording, a dropped or added word, a new number) keeps the spoken word
     and counts as reverted; the rest of the line still lands. A line whose word count
     moves by more than two is kept whole (KRI-708's rewording guard).
+
+    ``hints`` (KRI-1361, names the creator's own media spells) let through only a change
+    the guard refused whose written run is one of those names: two heard words written as
+    one ("Bayern Arena" -> "BayArena"), or one number-like token inserted before the spoken
+    words it completes a name with ("FC Nürnberg" -> "1. FC Nürnberg"). Without hints the
+    guard is unchanged.
     """
 
     words = _timed_words(cue)
@@ -323,14 +621,20 @@ def _retime_corrected_text(cue: dict[str, Any], new_text: str) -> _Retimed:
         return _Retimed(None, 0, refused)
 
     out: list[dict[str, Any]] = []
-    accepted = reverted = 0
+    accepted = reverted = hinted = 0
     respelled_in_place: list[tuple[int, dict[str, Any]]] = []
     beside_refused: set[int] = set()
-    for tag, i1, i2, j1, j2 in opcodes:
+    pending_prefix: str | None = None
+    for index, (tag, i1, i2, j1, j2) in enumerate(opcodes):
         spoken, written = words[i1:i2], tokens[j1:j2]
-        start, reverted_before = len(out), reverted
+        start, reverted_before, accepted_before = len(out), reverted, accepted
         if tag == "equal":
             for word, token in zip(spoken, written):
+                if pending_prefix is not None:
+                    # KRI-1361: the hinted "1." shares the next spoken word's time.
+                    prefix_piece, word = _split_word(word, pending_prefix, str(word["text"]))
+                    out.append(prefix_piece)
+                    pending_prefix = None
                 if word["text"] != token:
                     respelled_in_place.append((len(out), word))
                 out.append({**word, "text": token})
@@ -358,9 +662,30 @@ def _retime_corrected_text(cue: dict[str, Any], new_text: str) -> _Retimed:
             else:
                 reverted += 2
                 out.extend(spoken)
+        elif tag == "insert" and _hinted_prefix(
+            tokens, j1, j2, opcodes[index + 1] if index + 1 < len(opcodes) else None, hints
+        ):
+            accepted += 1
+            hinted += 1
+            pending_prefix = written[0]
         else:
             reverted += max(len(spoken), len(written))
             out.extend(spoken)
+        if (
+            reverted > reverted_before
+            and tag == "replace"
+            and _hinted_replace(spoken, written, hints)
+        ):
+            # KRI-1361: undo this opcode's refusal and write the hinted name instead.
+            del out[start:]
+            reverted, accepted = reverted_before, accepted_before + 1
+            hinted += 1
+            if len(spoken) == len(written):
+                out.extend({**word, "text": token} for word, token in zip(spoken, written))
+            elif len(spoken) == 2:
+                out.append(_merge_words(spoken[0], spoken[1], written[0]))
+            else:
+                out.extend(_split_word(spoken[0], written[0], written[1]))
         if reverted > reverted_before:
             beside_refused.update((start - 1, len(out)))
     # Case and punctuation on a matched word move with the words beside it, so the ones
@@ -376,6 +701,7 @@ def _retime_corrected_text(cue: dict[str, Any], new_text: str) -> _Retimed:
         {**cue, "text": " ".join(str(word["text"]) for word in out), "words": out},
         accepted,
         reverted,
+        hinted,
     )
 
 
@@ -384,10 +710,17 @@ def _legacy_correct_caption_cues(
     language: str | None,
     *,
     model: str,
+    spelling_hints: SpellingHints | Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     texts = [str(cue.get("text", "")) for cue in cues]
+    hint_set = _coerce_spelling_hints(spelling_hints)
+    hints = list(hint_set.all)
+    hint_runs = _hint_runs(hint_set) if hint_set else None
     try:
-        corrected = _llm_correct_lines(texts, language, model=model)
+        # Passed only when present, so a call without hints stays exactly as before.
+        corrected = _llm_correct_lines(
+            texts, language, model=model, **({"spelling_hints": hints} if hints else {})
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("caption_correction_failed", error=str(exc)[:200], language=language)
         return cues
@@ -397,7 +730,7 @@ def _legacy_correct_caption_cues(
     out: list[dict[str, Any]] = []
     changes: list[dict[str, str]] = []
     reverted_examples: list[dict[str, str]] = []
-    accepted_words = reverted_words = reverted_lines = 0
+    accepted_words = reverted_words = reverted_lines = hinted_words = 0
     for cue, new_text in zip(cues, corrected):
         stripped = new_text.strip()
         if not stripped or stripped == str(cue.get("text", "")).strip():
@@ -407,9 +740,10 @@ def _legacy_correct_caption_cues(
             changes.append({"before": str(cue.get("text", ""))[:300], "after": stripped[:300]})
             out.append({**cue, "text": stripped})
             continue
-        retimed = _retime_corrected_text(cue, stripped)
+        retimed = _retime_corrected_text(cue, stripped, hint_runs)
         accepted_words += retimed.accepted
         reverted_words += retimed.reverted
+        hinted_words += retimed.hinted
         if retimed.reverted:
             reverted_examples.append(
                 {"before": str(cue.get("text", ""))[:300], "proposed": stripped[:300]}
@@ -437,20 +771,20 @@ def _legacy_correct_caption_cues(
     try:
         from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-        record_pipeline_event(
-            "captions",
-            "caption_correction",
-            {
-                "model": model,
-                "language": language,
-                "changed": len(changes),
-                "changes": changes[:20],
-                "accepted_words": accepted_words,
-                "reverted_words": reverted_words,
-                "reverted_lines": reverted_lines,
-                "reverted_examples": reverted_examples[:10],
-            },
-        )
+        event: dict[str, Any] = {
+            "model": model,
+            "language": language,
+            "changed": len(changes),
+            "changes": changes[:20],
+            "accepted_words": accepted_words,
+            "reverted_words": reverted_words,
+            "reverted_lines": reverted_lines,
+            "reverted_examples": reverted_examples[:10],
+        }
+        if hints:
+            event["spelling_hints"] = len(hints)
+            event["hinted_words"] = hinted_words
+        record_pipeline_event("captions", "caption_correction", event)
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -508,8 +842,14 @@ def correct_caption_cues(
     model: str | None = None,
     enabled: bool = True,
     trusted_aliases: list[str] | None = None,
+    spelling_hints: SpellingHints | Sequence[str] = (),
 ) -> list[dict[str, Any]]:
-    """Apply only model-proposed substitutions that pass deterministic alignment."""
+    """Apply only model-proposed substitutions that pass deterministic alignment.
+
+    ``spelling_hints`` (KRI-1361) only reach the free proofreader (no trusted aliases):
+    names from the creator's own media, offered to the model and allowed past the word
+    guard only when the written run is one of them (``SpellingHints`` says how far).
+    """
 
     if not enabled or not cues:
         return cues
@@ -518,7 +858,9 @@ def correct_caption_cues(
         return cues
     model = (model or "").strip() or settings.caption_correction_model or "gpt-4o"
     if trusted_aliases is None:
-        return _legacy_correct_caption_cues(cues, language, model=model)
+        return _legacy_correct_caption_cues(
+            cues, language, model=model, spelling_hints=spelling_hints
+        )
     aliases = [alias for raw in trusted_aliases if (alias := _safe_display_name(str(raw)))]
     if not aliases:
         return cues

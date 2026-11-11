@@ -232,6 +232,64 @@ private actor RetryGate {
         await sessions.stopAll()
     }
 
+    /// Failure modes: a published status for a request this phone has not seen yet published `.preparing`
+    /// before the cancel and snapshot awaits, so the editor's "Preparing your video…" halo showed, vanished
+    /// at `.synced`, and could show again; replacing an earlier request must not do it either.
+    func testPublishedStatusNeverPublishesPreparing() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let first = request(job)
+        let next = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: job, variantID: "first",
+            recipeRevision: 2, recipeDigest: String(repeating: "b", count: 64)), recipe: first.recipe)
+        let status = SessionStatus(phase: "published", request: first)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            let request = await status.request
+            return DeviceRenderStatusResponse(phase: await status.phase, request: request, publishedGeneration: "published-\(request.identity.recipeRevision)")
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: SessionPublisher())
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        var seen: [DeviceRenderPhase?] = []
+        sessions.reconciliationCheckpoint = { [unowned sessions] _ in seen.append(sessions.presentations[key]?.phase) }
+
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertFalse(seen.contains(.preparing), "A fresh published request shows nothing until it is synced: \(seen)")
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
+        XCTAssertEqual(sessions.presentations[key]?.publishedGeneration, "published-1")
+
+        seen = []
+        await status.set(phase: "published", request: next)
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertFalse(seen.contains(.preparing), "A replaced request that is already published never reads as preparing: \(seen)")
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
+        XCTAssertEqual(sessions.presentations[key]?.publishedGeneration, "published-2")
+        XCTAssertEqual(sessions.request(for: key)?.identity, next.identity)
+        sessions.reconciliationCheckpoint = nil
+        await sessions.stopAll()
+    }
+
+    /// Control for the case above: work that is still to be done keeps announcing `.preparing` while the
+    /// previous request is cancelled.
+    func testUnfinishedStatusStillPublishesPreparingWhileReplacingTheRequest() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let status = SessionStatus(phase: "awaiting_device", request: request(job))
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: await status.phase, request: await status.request)
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: SessionPublisher())
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        var atCancel: DeviceRenderPhase?
+        sessions.reconciliationCheckpoint = { [unowned sessions] point in
+            if point == "cancel" { atCancel = sessions.presentations[key]?.phase }
+        }
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(atCancel, .preparing)
+        sessions.reconciliationCheckpoint = nil
+        await sessions.stopAll()
+    }
+
     func testDisabledGateNeverStartsExport() async throws {
         let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: output) }

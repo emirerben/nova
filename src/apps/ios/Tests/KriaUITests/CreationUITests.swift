@@ -14,11 +14,13 @@ final class CreationUITests: XCTestCase {
         captureEditorAIActivity(variant: "opaque", reduceMotion: false, opaque: true)
     }
 
-    func testImproveAndAIActivityStaySeparateDuringPreviewPreparation() {
-        let app = launchSuggestionCards("ready", extra: ["KRIA_EDITOR_TIMELINE_DELAY_MS": "12000"])
+    /// The editor has no Improve button. Suggestions live only in the AI chat, so the AI control stays reachable while the
+    /// preview prepares, and its chat sheet shows the same chips and fills the composer from them.
+    func testTheEditorHasNoImproveButtonAndItsChatSheetOffersTheSuggestionChips() {
+        let app = launchSuggestionCards("ready", nonce: "e" + UUID().uuidString.prefix(6), extra: ["KRIA_EDITOR_TIMELINE_DELAY_MS": "12000"])
         defer { app.terminate() }
         let cardsReady = app.buttons["suggestion-card-0"].waitForExistence(timeout: 30)
-        XCTAssertTrue(cardsReady, "Improve must have a real ready suggestion set before the editor opens")
+        XCTAssertTrue(cardsReady, "the chat has a real ready suggestion set before the editor opens")
         guard cardsReady else { return }
         let open = app.buttons["Open editor"]
         let canOpen = open.waitForExistence(timeout: 30)
@@ -27,33 +29,17 @@ final class CreationUITests: XCTestCase {
         open.tap()
         let activity = app.buttons["native-editor-conversation"]
         guard waitForEditorActivity("Preparing preview…", control: activity) else { return }
-        let improve = app.buttons["native-editor-improve"]
-        XCTAssertTrue(improve.exists)
-        guard improve.exists else { return }
-        XCTAssertFalse(activity.frame.intersects(improve.frame), "The expanded activity control must not cover Improve")
+        XCTAssertFalse(app.buttons["native-editor-improve"].exists, "Improve is gone from the editor")
         XCTAssertTrue(app.windows.firstMatch.frame.contains(activity.frame))
-        XCTAssertTrue(app.windows.firstMatch.frame.contains(improve.frame))
         XCTAssertTrue(activity.isHittable)
-        XCTAssertTrue(improve.isHittable)
-        improve.tap()
-        let sheet = app.descendants(matching: .any)["improve-sheet"].firstMatch
-        let opened = sheet.waitForExistence(timeout: 5)
-        XCTAssertTrue(opened)
-        guard opened else { return }
-        let doneButtons = app.buttons.matching(NSPredicate(format: "label == %@", "Done"))
-        let hasDone = doneButtons.firstMatch.waitForExistence(timeout: 5)
-        XCTAssertTrue(hasDone)
-        guard hasDone, let done = doneButtons.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
-            XCTFail("The Improve sheet must show a reachable Done button")
-            return
-        }
-        done.tap()
-        let dismissed = sheet.waitForNonExistence(timeout: 5)
-        XCTAssertTrue(dismissed)
-        guard dismissed, waitForEditorIdle(control: activity) else { return }
-        XCTAssertTrue(improve.isHittable, "Improve remains available after actual preview preparation finishes")
-        improve.tap()
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        activity.tap()
+        let conversation = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(conversation.waitForExistence(timeout: 10))
+        let chip = visibleChip(2, in: app)
+        guard let composer = editorConversationComposer(in: app) else { return }
+        chip.tap()
+        XCTAssertTrue(eventually(timeout: 5) { (composer.value as? String ?? "").contains("Cut the filler words") }, "a chip fills the sheet's composer")
+        XCTAssertTrue(chip.isSelected)
     }
 
     private func captureEditorAIActivity(variant: String, reduceMotion: Bool, opaque: Bool = false) {
@@ -773,6 +759,132 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "the pick ends back in the chat")
         let reachedUpload = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'couldn\u{2019}t be read'")).firstMatch
         XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
+    }
+
+    /// KRI-1351: fifteen videos picked through the composer's +, then a long prompt typed and sent with the keyboard
+    /// up. The sent prompt and the clips above it stay on screen. Before the fix the fifteen receipts were one lazy
+    /// row far taller than the chat left visible above the keyboard, and Send left the transcript blank (top bar
+    /// and composer only) until the reader dragged it.
+    func testSendingALongPromptWithTheKeyboardUpAfterFifteenUploadsKeepsTheChatOnScreen() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        // The picks reserve, upload and attach like on the real server, so the pending rows become receipts.
+        app.launchEnvironment["KRIA_CHAT_UPLOADS_LAND"] = "1"
+        // The reported chat (thread 147eb928) had 15 videos.
+        let picks = 15
+        app.launchEnvironment["KRIA_SEED_PHOTO_VIDEO_COUNT"] = "\(picks)"
+        app.launchEnvironment["KRIA_CHAT_MONTAGE_MAX_CLIPS"] = "20"
+        // The turn's answer takes a few seconds, as on a real network, so the moment right after Send can be checked.
+        app.launchEnvironment["KRIA_CHAT_SEND_DELAY"] = "4"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-montage"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        func snapshot(_ name: String) {
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = name
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+
+        let plus = app.buttons["chat-attach"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 10))
+        plus.tap()
+        let upload = app.buttons["attach-upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 5))
+        upload.tap()
+        let photos = app.buttons["upload-source-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let count = app.staticTexts["gallery-count"]
+        for index in 0..<picks {
+            let tile = app.buttons["gallery-tile-\(index)"]
+            XCTAssertTrue(tile.waitForExistence(timeout: 40), app.debugDescription)
+            if !tile.isHittable { app.swipeUp() }
+            tile.tap()
+            XCTAssertTrue(eventually { count.label.hasPrefix("\(index + 1) of") }, count.label)
+        }
+        app.buttons["photos-picker-done"].tap()
+        XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "the pick ends back in the chat")
+        let pending = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'chat-upload-'"))
+        XCTAssertTrue(eventually(timeout: 60) { pending.count == 0 }, "uploads still pending: \(pending.count)")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'couldn\u{2019}t be read'")).firstMatch.exists,
+                       "the picks were read and uploaded")
+
+        // All fifteen landed, not just some: a failed upload never blocks Send, so fewer receipts would quietly
+        // shrink this below the case that blanked. The rows are lazy, so read them while scrolling up to the
+        // footage card, which states the server's count.
+        let clips = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'chat-media-'"))
+        let readyCount = app.descendants(matching: .any)["footage-ready-count"]
+        var receipts = Set<String>()
+        func collectReceipts() { receipts.formUnion(clips.allElementsBoundByIndex.map(\.identifier)) }
+        collectReceipts()
+        for _ in 0..<14 where !readyCount.exists || !readyCount.isHittable {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)))
+            collectReceipts()
+        }
+        XCTAssertTrue(readyCount.exists, "the footage card is reachable above the clips\n\(app.debugDescription)")
+        XCTAssertEqual(readyCount.label, "\(picks) clips ready")
+        XCTAssertEqual(receipts.count, picks, "one receipt per uploaded file: \(receipts.sorted())")
+        // Back to the end, where the reader was: the newest clips sit above the composer again.
+        let latest = app.buttons["chat-jump-to-latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "scrolled away from the end, the Latest pill is offered")
+        latest.tap()
+        XCTAssertTrue(eventually(timeout: 5) { clips.allElementsBoundByIndex.contains { $0.isHittable } && !latest.exists },
+                      "the newest clips are on screen again\n\(app.debugDescription)")
+
+        // The prompt is typed and sent with the keyboard up, as on the phone.
+        let prompt = "I want a text that explains the importance of 10 November in Turkey. It should not sound formal but should be respectful. I want one large text in the middle, word by word of the text block. In the bottom of the screen, I want the same but for the english translation"
+        let field = app.textFields["Message Kria"]
+        let composer = field.waitForExistence(timeout: 10) ? field : app.textViews["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), app.debugDescription)
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the software keyboard is up: it is what leaves so little of the chat visible")
+        composer.typeText(prompt)
+        snapshot("1-prompt-typed")
+        // The strip of chat between the header and the composer, in screen points.
+        func visibleTranscript() -> CGRect {
+            let top = app.buttons["workspace-menu-toggle"].frame.maxY
+            let bottom = min(plus.frame.minY, composer.frame.minY)
+            return CGRect(x: 0, y: top, width: app.frame.width, height: max(bottom - top, 0))
+        }
+        func isInView(_ element: XCUIElement) -> Bool {
+            element.exists && element.frame.intersection(visibleTranscript()).height >= 16
+        }
+        let send = app.buttons["chat-send-message"]
+        XCTAssertTrue(eventually(timeout: 10) { send.isEnabled })
+        send.tap()
+
+        // While the turn is still on its way (the fixture answers four seconds late), the sent prompt is drawn
+        // inside the visible chat.
+        let sent = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "word by word")).firstMatch
+        XCTAssertTrue(eventually(timeout: 3) { isInView(sent) },
+                      "the sent prompt is in the visible chat: \(sent.exists ? "\(sent.frame)" : "not drawn") vs \(visibleTranscript())\n\(app.debugDescription)")
+        snapshot("2-after-send")
+        // And once Kria's reply has landed, the chat is still drawn, with the keyboard still up.
+        let reply = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'direction I'")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 30), "Kria's reply arrived\n\(app.debugDescription)")
+        // The chat follows the reply's end, so its opening line may have scrolled up: any of the transcript's text counts.
+        let transcriptText = app.otherElements["Conversation history"].descendants(matching: .staticText)
+        XCTAssertTrue(eventually(timeout: 5) { transcriptText.allElementsBoundByIndex.contains(where: isInView) },
+                      "the transcript is drawn in the visible chat \(visibleTranscript())\n\(app.debugDescription)")
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        snapshot("3-after-reply")
     }
 
     /// Full-access Photos returns to the attachment flow on Done. A selected
@@ -2432,55 +2544,74 @@ final class CreationUITests: XCTestCase {
         return app
     }
 
-    /// One mock set drives both surfaces: the cards under the finished video (exact hook text, measured fact, price), a
-    /// dismissal that leaves both, a tap that sends the card's prompt as the creator's own chat message pinned to the set
-    /// and card, and the editor's Improve sheet reading the same set.
-    func testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet() {
+    /// The editor's chat sheet opens over the chat, so a chip id can match twice; the one the creator can touch is the sheet's.
+    private func visibleChip(_ index: Int, in app: XCUIApplication) -> XCUIElement {
+        let chips = app.buttons.matching(identifier: "suggestion-card-\(index)")
+        XCTAssertTrue(chips.firstMatch.waitForExistence(timeout: 10))
+        return chips.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? chips.firstMatch
+    }
+
+    private func sendButton(in app: XCUIApplication) -> XCUIElement {
+        let sends = app.buttons.matching(NSPredicate(format: "label == %@", "Send message"))
+        XCTAssertTrue(sends.firstMatch.waitForExistence(timeout: 5))
+        return sends.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? sends.firstMatch
+    }
+
+    /// The chips under the finished video are AI suggestions: a tap adds the chip's prompt to the composer and nothing
+    /// sends until Send. Several can be combined, one after the other, and a second tap takes a chip out again.
+    func testSuggestionChipsFillTheComposerOneAfterAnotherAndSendOnePlainMessage() {
         let nonce = "r" + UUID().uuidString.prefix(6)
         let app = launchSuggestionCards("ready", nonce: nonce)
+        defer { app.terminate() }
         let hook = app.buttons["suggestion-card-0"]
-        XCTAssertTrue(hook.waitForExistence(timeout: 30), "the finished video offers the server's cards")
-        XCTAssertTrue(hook.label.contains("I almost missed this view"), "a hook card shows the exact text the tap approves")
-        XCTAssertTrue(app.buttons["suggestion-card-1"].label.contains("Wind in clip 3"), "evidence rides on the card")
-        XCTAssertTrue(app.buttons["suggestion-card-4"].label.contains("Costs $0.04"), "generated media states its price first")
+        XCTAssertTrue(hook.waitForExistence(timeout: 30), "the finished video offers the server's chips")
+        XCTAssertTrue(hook.label.contains("I almost missed this view"), "a hook chip shows the exact text a send would approve")
+        XCTAssertTrue(app.buttons["suggestion-card-1"].label.contains("Wind in clip 3"), "evidence rides on the chip for VoiceOver")
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "0.04")).firstMatch.exists, "no price anywhere")
+        XCTAssertFalse(app.buttons["suggestion-card-0-dismiss"].exists, "a chip has no dismiss button")
         XCTAssertFalse(app.buttons["suggestion-chip-0"].exists, "cards replace the chip row")
-        keepScreenshot(app, "Suggestion cards in the chat's ready stage")
-        for index in 0..<5 {
-            for id in ["suggestion-card-\(index)", "suggestion-card-\(index)-dismiss"] {
-                let element = app.buttons[id]
-                XCTAssertTrue(element.exists, id)
-                XCTAssertGreaterThanOrEqual(element.frame.height, 44, "\(id) is a 44 pt target")
-            }
-        }
+        for index in 0..<5 { XCTAssertGreaterThanOrEqual(app.buttons["suggestion-card-\(index)"].frame.height, 44, "chip \(index) is a 44 pt target") }
+        keepScreenshot(app, "Suggestion chips in the chat's ready stage")
 
-        // Dismissing is local at once and leaves the card out of the editor too.
-        app.buttons["suggestion-card-3-dismiss"].tap()
-        XCTAssertTrue(eventually { !app.buttons["suggestion-card-4"].exists }, "four cards remain")
-        XCTAssertFalse(app.buttons["suggestion-card-0"].label.isEmpty)
+        guard let composer = editorConversationComposer(in: app) else { return }
+        let mute = app.buttons["suggestion-card-1"], filler = app.buttons["suggestion-card-2"]
+        mute.tap()
+        filler.tap()
+        let both = "Mute clip 3, it has wind noise \(nonce)\nCut the filler words \(nonce)"
+        XCTAssertTrue(eventually(timeout: 5) { (composer.value as? String) == both }, "each tap adds its prompt after the last")
+        XCTAssertTrue(mute.isSelected && filler.isSelected)
+        XCTAssertFalse(app.staticTexts["You: Mute clip 3, it has wind noise \(nonce)"].exists, "a tap sends nothing")
+        keepScreenshot(app, "Two chips selected, both prompts in the composer")
 
-        app.buttons["Open editor"].tap()
-        let improve = app.buttons["native-editor-improve"]
-        XCTAssertTrue(improve.waitForExistence(timeout: 15), "the editor offers Improve while the set has cards")
-        improve.tap()
-        let sheet = app.descendants(matching: .any)["improve-sheet"].firstMatch
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["improve-card-3"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["improve-card-4"].exists, "the editor reads the same set: the dismissed card is gone here too")
-        XCTAssertTrue(app.buttons["improve-card-0"].label.contains("I almost missed this view"))
-        keepScreenshot(app, "Improve sheet in the editor")
+        mute.tap()
+        XCTAssertTrue(eventually(timeout: 5) { (composer.value as? String) == "Cut the filler words \(nonce)" }, "a second tap takes only that prompt out")
+        XCTAssertFalse(mute.isSelected)
+        mute.tap()
 
-        // The mute card: the tap IS the creator's message, pinned to this set and card.
-        app.buttons["improve-card-1"].tap()
-        XCTAssertTrue(eventually(timeout: 5) { !sheet.exists }, "the sheet closes on a tap")
-        // The tap opens the conversation so the creator watches the message land; the sheet opens at the newest end, so the message sits just above it.
-        let conversation = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
-        XCTAssertTrue(conversation.waitForExistence(timeout: 10), "the conversation opens after the sheet closes")
-        let sent = app.staticTexts["You: Mute clip 3, it has wind noise \(nonce)"]
-        var swipes = 0
-        while !sent.waitForExistence(timeout: 4), swipes < 5 { conversation.swipeDown(); swipes += 1 }
-        keepScreenshot(app, "Conversation after tapping a card in the Improve sheet")
-        XCTAssertTrue(sent.exists, "the card's prompt arrives as the creator's own message")
-        app.terminate()
+        sendButton(in: app).tap()
+        let plain = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "suggestion[none/none]")).firstMatch
+        XCTAssertTrue(plain.waitForExistence(timeout: 15), "two prompts go out as one plain message carrying no pin")
+        XCTAssertTrue(eventually(timeout: 10) {
+            !app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Mute clip 3")).firstMatch.exists
+                && !app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Cut the filler words")).firstMatch.exists
+        }, "the chips whose prompts went out are handled")
+    }
+
+    /// A draft that is exactly one chip's prompt still carries that chip's pin, so the hook the creator read is the hook
+    /// the server applies.
+    func testALoneHookChipIsSentPinnedToTheSetAndCard() {
+        let nonce = "h" + UUID().uuidString.prefix(6)
+        let app = launchSuggestionCards("ready", nonce: nonce)
+        defer { app.terminate() }
+        let hook = app.buttons["suggestion-card-0"]
+        XCTAssertTrue(hook.waitForExistence(timeout: 30))
+        guard let composer = editorConversationComposer(in: app) else { return }
+        hook.tap()
+        XCTAssertTrue(eventually(timeout: 5) { (composer.value as? String) == "Add this hook to the opening \(nonce)" })
+        sendButton(in: app).tap()
+        let pinned = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "suggestion[sg_fixture_ready_v2/ss_")).firstMatch
+        XCTAssertTrue(pinned.waitForExistence(timeout: 15), "one chip alone carries {set_id, chip_id}")
+        XCTAssertTrue(eventually(timeout: 10) { !app.buttons["suggestion-card-0"].label.contains("I almost missed this view") }, "the sent chip leaves")
     }
 
     /// The server declines a pinned card the edit has outgrown the way it really does: an ordinary turn whose reply says
@@ -2489,10 +2620,12 @@ final class CreationUITests: XCTestCase {
     func testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet() {
         let nonce = "s" + UUID().uuidString.prefix(6)
         let app = launchSuggestionCards("stale", nonce: nonce)
+        defer { app.terminate() }
         let stale = app.buttons["suggestion-card-0"]
         XCTAssertTrue(stale.waitForExistence(timeout: 30))
         XCTAssertTrue(stale.label.contains("Mute clip 3"))
         stale.tap()
+        sendButton(in: app).tap()
 
         let reply = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "no longer fits your edit")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 15), "the server's reply is the notice")
@@ -2502,44 +2635,31 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(eventually(timeout: 10) { refreshed.label.contains("Add captions") }, "the refreshed set replaced the declined card")
         XCTAssertFalse(app.buttons["suggestion-card-1"].exists)
         XCTAssertTrue(app.buttons["Open editor"].exists, "the chat is intact")
-        app.terminate()
     }
 
-    /// KRI-1253, the card that spends. Declining the price sends nothing and keeps the card; agreeing sends the pinned tap
-    /// once, the card is spent and its image row takes over ("making", then "ready"), and Review hands the image to the
-    /// same overlay review "Add media" uses, where it waits for the creator's Use.
-    func testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview() {
+    /// KRI-1253, the chip that spends. It states no price. Alone in the composer it sends the pinned tap once, the card is
+    /// spent and its image row takes over ("making", then "ready"), and Review hands the image to the same overlay review
+    /// "Add media" uses, where it waits for the creator's Use.
+    func testGeneratedImageChipMakesOneImageAndHandsItToReview() {
         let nonce = "g" + UUID().uuidString.prefix(6)
         let app = launchSuggestionCards("generated", nonce: nonce, extra: ["KRIA_GENERATED_MEDIA": "1"], arguments: ["-reset-chat-drafts"])
-        let card = app.buttons["suggestion-card-0"]
-        XCTAssertTrue(card.waitForExistence(timeout: 30), "the finished video offers the paid card")
-        XCTAssertTrue(card.label.contains("Costs $0.04"), "the price is on the card before any tap")
+        defer { app.terminate() }
+        let chip = app.buttons["suggestion-card-0"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 30), "the finished video offers the image chip")
+        XCTAssertFalse(chip.label.contains("$") || chip.label.contains("Costs"), "the chip states no price")
+        guard let composer = editorConversationComposer(in: app) else { return }
+        chip.tap()
+        XCTAssertTrue(eventually(timeout: 5) { (composer.value as? String) == "Add a generated image overlay \(nonce)" })
+        XCTAssertFalse(app.buttons["suggestion-spend-confirm"].exists, "no price sheet")
+        XCTAssertFalse(app.descendants(matching: .any)["suggestion-card-generated"].exists, "a tap alone starts no image")
 
-        // Consent declined: nothing leaves the phone and the card stays.
-        card.tap()
-        let sheet = app.buttons["suggestion-spend-confirm"]
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "a paid card asks before it sends")
-        let terms = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Nothing goes in your video until you say so")).firstMatch
-        XCTAssertTrue(terms.exists, "the sheet says what is not done until the creator agrees")
-        XCTAssertTrue(terms.label.contains("$0.04"), "the sheet repeats the price")
-        keepScreenshot(app, "Cost consent sheet")
-        app.buttons["suggestion-spend-cancel"].tap()
-        XCTAssertTrue(eventually(timeout: 5) { !sheet.exists }, "Not now closes the sheet")
-        XCTAssertTrue(card.exists, "declining leaves the card where it was")
-        XCTAssertFalse(app.staticTexts["You: Add a generated image overlay \(nonce)"].exists, "declining sends nothing")
-        XCTAssertFalse(app.descendants(matching: .any)["suggestion-card-generated"].exists, "declining starts no image")
-
-        // Consent given: one tap goes out, the image row replaces the card.
-        card.tap()
-        XCTAssertTrue(app.buttons["suggestion-spend-confirm"].waitForExistence(timeout: 5))
-        app.buttons["suggestion-spend-confirm"].tap()
+        sendButton(in: app).tap()
         let status = app.staticTexts["suggestion-card-generated-status"]
-        XCTAssertTrue(status.waitForExistence(timeout: 20), "the image row appears once the tap is accepted")
+        XCTAssertTrue(status.waitForExistence(timeout: 20), "the image row appears once the send is accepted")
         XCTAssertTrue(eventually(timeout: 20) { status.label == "Your image is ready" }, "the image settles to ready")
         XCTAssertFalse(app.buttons["suggestion-card-0"].exists, "a spent card leaves the set")
         keepScreenshot(app, "Generated image row, ready")
 
-        // Review: the same screen Add media uses for an image made there.
         let review = app.buttons["suggestion-card-generated-review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         review.tap()
@@ -2549,33 +2669,47 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: use)], timeout: 15), .completed,
                        "Use is enabled: the image is ready for the creator's yes")
         keepScreenshot(app, "Generated image handed to the overlay review")
-        app.terminate()
+    }
+
+    /// The same image, made from the editor's chat sheet: Review closes the sheet first and then opens the overlay review.
+    func testGeneratedImageReviewOpensFromTheEditorsChatSheet() {
+        let nonce = "k" + UUID().uuidString.prefix(6)
+        let app = launchSuggestionCards("generated", nonce: nonce, extra: ["KRIA_GENERATED_MEDIA": "1"], arguments: ["-reset-chat-drafts"])
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["suggestion-card-0"].waitForExistence(timeout: 30))
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30))
+        open.tap()
+        let activity = app.buttons["native-editor-conversation"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 30))
+        activity.tap()
+        visibleChip(0, in: app).tap()
+        sendButton(in: app).tap()
+        let status = app.staticTexts.matching(identifier: "suggestion-card-generated-status")
+        XCTAssertTrue(status.firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(eventually(timeout: 20) { status.allElementsBoundByIndex.contains { $0.label == "Your image is ready" && $0.isHittable } })
+        let review = app.buttons.matching(identifier: "suggestion-card-generated-review")
+        XCTAssertTrue(eventually(timeout: 5) { review.allElementsBoundByIndex.contains { $0.isHittable } })
+        review.allElementsBoundByIndex.first(where: { $0.isHittable })?.tap()
+        XCTAssertTrue(app.buttons["generated-media-use"].waitForExistence(timeout: 30), "the overlay review opens over the editor")
+        keepScreenshot(app, "Generated image review opened from the editor's chat sheet")
     }
 
     /// Long Turkish text with the dotted and dotless i at the largest accessibility text size: the exact hook text is
-    /// shown whole (never clipped to a line), and both targets stay tappable.
-    func testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize() {
+    /// shown whole (never clipped to a line) and the chip stays a tappable 44 pt target.
+    func testSuggestionChipsKeepTurkishHookTextWholeAtAccessibilityTextSize() {
         let nonce = "t" + UUID().uuidString.prefix(6)
         let app = launchSuggestionCards("turkish", nonce: nonce, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityM"])
+        defer { app.terminate() }
         let hook = app.buttons["suggestion-card-0"]
         XCTAssertTrue(hook.waitForExistence(timeout: 30))
         XCTAssertTrue(hook.label.contains("Şu manzarayı kaçırıyordum neredeyse, ışıklar yanınca ıslak taşlar parladı"))
         XCTAssertTrue(hook.label.contains("İlk saniyeye bir kanca ekle"))
-        keepScreenshot(app, "Turkish hook card at accessibility text size")
-        let dismiss = app.buttons["suggestion-card-0-dismiss"]
-        XCTAssertGreaterThanOrEqual(dismiss.frame.height, 44)
-        XCTAssertGreaterThanOrEqual(dismiss.frame.width, 44)
-        // The card is taller than the visible chat at this size; tap the part of it that is on screen once the scroll has settled.
+        XCTAssertGreaterThanOrEqual(hook.frame.height, 44)
+        keepScreenshot(app, "Turkish hook chip at accessibility text size")
         XCTAssertTrue(eventually(timeout: 10) { hook.isHittable })
-        let window = app.windows.firstMatch.frame
-        let visibleTop = max(hook.frame.minY, window.minY + 220), visibleBottom = min(hook.frame.maxY, window.maxY - 180)
-        XCTAssertGreaterThan(visibleBottom, visibleTop + 20, "part of the card is on screen")
-        app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: hook.frame.midX, dy: (visibleTop + visibleBottom) / 2)).tap()
-        // At this size the new bubble can sit outside the rendered window; the accepted tap is what proves it went out.
-        XCTAssertTrue(app.buttons["suggestion-card-0"].waitForNonExistence(timeout: 15) || !app.buttons["suggestion-card-0"].label.contains("Şu manzarayı"),
-                      "the tapped hook card leaves once the server took it")
-        app.terminate()
+        hook.tap()
+        XCTAssertTrue(hook.isSelected, "the tap selected the chip")
     }
 
     /// Taps "Create this video" and waits for the recovery card's message,

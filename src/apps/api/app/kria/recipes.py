@@ -293,6 +293,9 @@ MediaCapability = Literal[
     # aimed at its readable text ({x, y, zoom}). Derived from the layer; own verified token.
     "backgroundFocus",
     "splitScreen",
+    # Protocol 47: a split section whose ended panels give their height to the rest
+    # (`split_screen_sections[].collapse_empty_panels`). Always accompanies `splitScreen`.
+    "splitCollapse",
     # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
     # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
     "clipTilt",
@@ -302,6 +305,9 @@ MediaCapability = Literal[
     # KRI-1192: a text run drawn in a script-fallback face (Noto Sans KR / Noto Sans Arabic),
     # bundled in the app from protocol 35. Derived from the run's font asset file.
     "scriptFonts",
+    # KRI-1350: `color_moments` (whole-frame tone windows with flash / light-leak / dip edges)
+    # and/or `end_fade` on the V2 recipe root, drawn on device by `ColorMomentPainter`.
+    "colorMoments",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the

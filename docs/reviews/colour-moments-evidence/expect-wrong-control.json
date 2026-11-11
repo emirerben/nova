@@ -1,0 +1,31 @@
+{
+  "fps": 30.0,
+  "expected": [
+    {
+      "kind": "mono",
+      "start": 33,
+      "end": 77,
+      "start_max": 38,
+      "end_min": 72
+    },
+    {
+      "kind": "flash",
+      "peak": 33,
+      "style": "light_leak"
+    },
+    {
+      "kind": "dip",
+      "peak": 78,
+      "style": "dip_black"
+    },
+    {
+      "kind": "sound",
+      "start": 78
+    },
+    {
+      "kind": "end_fade",
+      "start": 90,
+      "end": 119
+    }
+  ]
+}

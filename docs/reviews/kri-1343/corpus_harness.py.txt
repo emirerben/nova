@@ -1,0 +1,272 @@
+"""Corpus before/after for caption legibility (KRI-1343/1344). Free, offline.
+
+For every kit run folder with a video: the first video is the take (a 540x960 proxy is made, as
+prod uses analysis proxies), up to two photos become full-screen cards (3-5 s, 6-8 s). Each run
+is compiled with the five caption asks seen in prod (51 jobs: none, yorum3's, words:2, small
+white, grey box), EN or TR cue text, switch OFF (before) and ON (after), through the real
+`compile_phone_subtitled_plan` + real environment sampler + real face sampler.
+
+Judge (independent of the pass): for each compiled caption layer, the background the phone
+draws at its mid-time (the take frame or the photo, cover-fit), the WCAG contrast of the fill
+against the p10/p90 of the pixels under the drawn block, or against its own outline when it has
+one; and, during a card, whether the block intersects any Apple Vision OCR box of that photo.
+
+Run: SP=... CORPUS_OUT=... pytest --noconftest -p tests.conftest -s test_corpus.py
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+from pathlib import Path
+
+from PIL import Image
+
+from app.config import settings
+from app.kria.media_sources import OriginalMediaDescriptor
+from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, SubtitledOverlayCard
+from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+from app.services import phone_text_styling as styling
+from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
+
+SP = Path(os.environ["SP"])
+OUT = Path(os.environ.get("CORPUS_OUT", SP / "corpus_eval"))
+CACHE = SP / "corpus_cache"
+OCR = {
+    json.loads(line)["path"]: json.loads(line)
+    for line in (SP / "ocr_photos.jsonl").read_text().splitlines()
+}
+ASKS = {
+    "none": None,
+    "yorum3_white_small_middle_lower": {
+        "case": "lower",
+        "size": "small",
+        "color": "#FFFFFF",
+        "position": "middle",
+    },
+    "white_middle_words2": {"color": "#FFFFFF", "position": "middle", "words": 2},
+    "white_small_middle": {"color": "#FFFFFF", "position": "middle", "size": "small"},
+    "grey_box_bottom": {"box": "#E5E5E5", "position": "bottom"},
+}
+EN = [
+    "okay, starting.",
+    "ten minutes after lumo launched its",
+    "first foldable phone, vela posted on",
+    "first, welcome, lumo.",
+    "we've been waiting for you",
+    "for five years, so how do i read this",
+]
+TR = [
+    "tamam, başlıyorum.",
+    "lumo katlanabilir telefonunu tanıttıktan",
+    "on dakika sonra vela şunu paylaştı",
+    "önce, hoş geldin lumo.",
+    "seni beş yıldır bekliyorduk",
+    "peki ben bunu nasıl okuyorum, söyleyin",
+]
+VIDEO = {".mov", ".mp4", ".m4v"}
+PHOTO = {".jpg", ".jpeg", ".png"}
+
+
+def _runs():
+    runs = []
+    for folder in sorted(Path.home().glob("Downloads/kria-*-test/upload/*")):
+        if not folder.is_dir():
+            continue
+        files = sorted(folder.iterdir())
+        videos = [f for f in files if f.suffix.lower() in VIDEO]
+        photos = [f for f in files if f.suffix.lower() in PHOTO and str(f) in OCR]
+        if videos:
+            runs.append((folder, videos[0], photos[:2]))
+    return runs
+
+
+def _proxy(video: Path) -> tuple[Path, float]:
+    CACHE.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha1(str(video).encode()).hexdigest()[:12]
+    out = CACHE / f"{key}.mp4"
+    if not out.exists():
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(video), "-t", "12", "-an", "-vf",
+             "scale=540:960:force_original_aspect_ratio=increase,crop=540:960,fps=10",
+             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", str(out)],
+            check=True,
+        )
+    dur = float(
+        subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+             str(out)], capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    )
+    return out, dur
+
+
+def _grey_at(path: Path, at: float | None) -> Image.Image:
+    args = ["ffmpeg", "-v", "error"] + ([] if at is None else ["-ss", f"{at:.3f}"])
+    raw = subprocess.run(
+        args + ["-i", str(path), "-vf",
+                "scale=540:960:force_original_aspect_ratio=increase,crop=540:960,format=gray",
+                "-frames:v", "1", "-f", "rawvideo", "-"],
+        capture_output=True, check=True,
+    ).stdout
+    return Image.frombytes("L", (540, 960), raw)
+
+
+def _lum(level: float) -> float:
+    v = level / 255
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def _ink_lum(ink) -> float:
+    r, g, b = (_lum(round(c * 255)) for c in (ink.red, ink.green, ink.blue))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _ratio(a: float, b: float) -> float:
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+
+def _ink_box(layer):
+    xs, ys = [], []
+    for run in layer.runs:
+        bleed = run.stroke_width / 2
+        xs += [run.x - bleed, run.x + 0.62 * run.font_size * len(run.text) + bleed]
+        ys += [run.baseline_y - 0.85 * run.font_size - bleed,
+               run.baseline_y + 0.3 * run.font_size + bleed]
+    if layer.background is not None:
+        b = layer.background
+        xs += [b.left, b.left + b.width]
+        ys += [b.top, b.top + b.height]
+    return (max(0, min(xs) / 1080), max(0, min(ys) / 1920), min(1, max(xs) / 1080),
+            min(1, max(ys) / 1920))
+
+
+def _judge(layer, background: Image.Image) -> float:
+    run = layer.runs[0]
+    fill = _ink_lum(run.fill)
+    if layer.background is not None:  # a caption box: text against its own box
+        return _ratio(fill, _ink_lum(layer.background.color))
+    box = _ink_box(layer)
+    crop = background.crop((int(box[0] * 540), int(box[1] * 960), int(box[2] * 540) + 1,
+                            int(box[3] * 960) + 1))
+    pixels = sorted(crop.tobytes())
+    plain = min(_ratio(fill, _lum(pixels[len(pixels) // 10])),
+                _ratio(fill, _lum(pixels[9 * len(pixels) // 10])))
+    if run.stroke_width >= 4:
+        return max(plain, _ratio(fill, _ink_lum(run.stroke)))
+    return plain
+
+
+def _ocr_boxes(photo: Path):
+    d = OCR[str(photo)]
+    iw, ih = d["width"], d["height"]
+    s = max(1080 / iw, 1920 / ih)
+    ox, oy = (iw * s - 1080) / 2, (ih * s - 1920) / 2
+    out = []
+    for x0, y0, x1, y1, _text in d["boxes"]:
+        out.append(((x0 * iw * s - ox) / 1080, (y0 * ih * s - oy) / 1920,
+                    (x1 * iw * s - ox) / 1080, (y1 * ih * s - oy) / 1920))
+    return out
+
+
+def _overlaps(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def test_corpus(monkeypatch):
+    import app.storage as storage
+
+    OUT.mkdir(parents=True, exist_ok=True)
+    results = []
+    runs = _runs()
+    for run_index, (folder, video, photos) in enumerate(runs):
+        proxy, dur = _proxy(video)
+        span = min(10.0, dur - 0.2)
+        if span < 4:
+            continue
+        lang = "tr" if any(k in str(folder) for k in ("turkish", "leverkusen", "cigdem/upload/T2", "boat")) else "en"
+        lang = "tr" if run_index % 2 else lang  # half the corpus in each language
+        texts = TR if lang == "tr" else EN
+        cues = [
+            {"text": t, "start_s": round(i * span / 6, 2), "end_s": round((i + 1) * span / 6 - 0.1, 2)}
+            for i, t in enumerate(texts)
+        ]
+        windows = [(span * 0.3, span * 0.5), (span * 0.6, span * 0.8)]
+        cards = [
+            SubtitledOverlayCard(
+                id=f"beat-{i}", media_id=f"photo-{i}", gcs_path=f"pool/photo-{i}{p.suffix.lower()}",
+                generation="1", start_s=w[0], end_s=w[1], display_mode="fullscreen",
+            )
+            for i, (p, w) in enumerate(zip(photos, windows, strict=False))
+        ]
+        by_remote = {f"pool/photo-{i}{p.suffix.lower()}": p for i, p in enumerate(photos)}
+
+        def download(remote, local, *a, **k):  # noqa: ARG001
+            source = proxy if "analysis-proxy" in str(remote) else by_remote[str(remote)]
+            Path(local).write_bytes(Path(source).read_bytes())
+            return local
+
+        monkeypatch.setattr(storage, "download_to_file", download)
+        binding = PhoneSourceBinding(
+            media_id="take", proxy_path="user/analysis-proxy-take.mp4", generation="1",
+            original=OriginalMediaDescriptor(sha256="a" * 64, byte_count=1000, duration_s=dur,
+                                             width=1080, height=1920, orientation_degrees=0,
+                                             has_audio=True),
+        )
+        visuals = tuple(
+            PhoneVisualBinding(media_id=c.media_id, gcs_path=c.gcs_path, generation="1",
+                               sha256="b" * 64, byte_count=2048)
+            for c in cards
+        )
+        backgrounds = {}
+        for ask_name, ask in ASKS.items():
+            for flag in (False, True):
+                monkeypatch.setattr(settings, "caption_legibility_enabled", flag)
+                policy = {"version": 1, "preferences": {"all_text": {}}, "requested": {},
+                          "caption_ask": ask,
+                          "_source_bindings": [binding.model_dump(mode="json")]}
+                try:
+                    with styling.phone_text_policy_scope(policy):
+                        recipe = compile_phone_subtitled_plan(
+                            (binding,),
+                            caption_cues=styling.generation_caption_cues([dict(c) for c in cues]),
+                            visuals=visuals,
+                            lanes=PhoneSubtitledLanes(overlays=cards) if cards else None,
+                        )
+                        fields = styling.generation_style_fields()
+                except Exception as exc:  # noqa: BLE001
+                    results.append({"run": str(folder), "ask": ask_name, "flag": flag,
+                                    "error": repr(exc)[:200]})
+                    continue
+                layers = [l for l in recipe.text_layers if l.id.startswith("caption-")]
+                judged = []
+                for layer in layers:
+                    mid = (layer.start + layer.end) / 2
+                    card = next((c for c in cards if c.start_s <= mid < c.end_s), None)
+                    key = card.media_id if card else round(mid, 1)
+                    if key not in backgrounds:
+                        backgrounds[key] = (_grey_at(by_remote[card.gcs_path], None) if card
+                                            else _grey_at(proxy, mid))
+                    contrast = _judge(layer, backgrounds[key])
+                    box = _ink_box(layer)
+                    hits = []
+                    for c in cards:
+                        if layer.start < c.end_s and c.start_s < layer.end:
+                            hits += [b for b in _ocr_boxes(by_remote[c.gcs_path]) if _overlaps(box, b)]
+                    judged.append({"id": layer.id, "start": layer.start, "end": layer.end,
+                                   "contrast": round(contrast, 2), "text_hits": len(hits),
+                                   "box": [round(v, 3) for v in box],
+                                   "over_photo": card.media_id if card else None})
+                results.append({
+                    "run": str(folder).split("Downloads/")[-1], "video": video.name,
+                    "photos": [p.name for p in photos], "lang": lang, "ask": ask_name,
+                    "flag": flag, "layers": judged,
+                    "look": {k: fields.get(k) for k in ("caption_text_color", "caption_size_px",
+                                                       "caption_stroke_width",
+                                                       "caption_shadow_enabled")},
+                    "receipt": fields.get("caption_legibility"),
+                })
+        (OUT / "results.json").write_text(json.dumps(results, indent=1))
+    (OUT / "results.json").write_text(json.dumps(results, indent=1))

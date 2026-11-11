@@ -1,0 +1,79 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-11-v122",
+  "input": {
+    "utterance": "40 ile 55 arası siyah beyaz olsun, beyaz flaşla girsin, videonun sonunda da kararsın",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "color_moments",
+        "sfx"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 60.0,
+      "color_moments": {
+        "moments": [],
+        "end_fade_s": null,
+        "duration_s": 60.0
+      },
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {
+            "id": "whoosh-fast",
+            "label": "Whoosh fast",
+            "category": "transition",
+            "duration_s": 0.6
+          },
+          {
+            "id": "cinematic-hit",
+            "label": "Cinematic hit",
+            "category": "impact",
+            "duration_s": 1.2
+          }
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_color_moments\", \"moments\": [{\"start_s\": 40, \"end_s\": 55, \"tone\": \"mono\", \"enter\": \"flash_white\", \"exit\": \"cut\"}], \"end_fade_s\": 1.6}], \"confidence\": 0.92, \"reply\": \"40-55 aras\\u0131 art\\u0131k siyah beyaz, beyaz bir fla\\u015fla ba\\u015fl\\u0131yor; video sonda karar\\u0131yor.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_color_moments",
+        "moments": [
+          {
+            "id": "cm1",
+            "start": 40.0,
+            "end": 55.0,
+            "tone": "mono",
+            "enter": {
+              "style": "flash_white",
+              "duration": 0.3333333333333333
+            }
+          }
+        ],
+        "end_fade_s": 1.6
+      }
+    ],
+    "confidence": 0.92,
+    "reply": "40-55 arası artık siyah beyaz, beyaz bir flaşla başlıyor; video sonda kararıyor.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "TR: black-and-white window with a white-flash entry plus the end fade",
+    "lane": "color_moments"
+  }
+}

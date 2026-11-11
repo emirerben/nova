@@ -65,6 +65,9 @@
   ],
   "generic": [
     "automatic_cut_unavailable",
+    "color_moments_disabled",
+    "color_moments_invalid",
+    "color_moments_require_phone_render",
     "drawings_disabled",
     "drawings_invalid",
     "evolving_type_disabled",

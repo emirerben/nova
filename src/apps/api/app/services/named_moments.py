@@ -278,15 +278,17 @@ def named_moments(
             "moment_order_count_mismatch",
             say(
                 en=(
-                    f"You asked for {moment_count} moments from the video, but I matched "
-                    f"{len(moments)} to it. Please tell me which moments to keep or correct "
+                    "You asked for {moment_count} moments from the video, but I matched "
+                    "{len_moments} to it. Please tell me which moments to keep or correct "
                     "the clip choices before I prepare the edit."
                 ),
                 tr=(
-                    f"Videodan {moment_count} an istedin, ancak {len(moments)} tanesini "
+                    "Videodan {moment_count} an istedin, ancak {len_moments} tanesini "
                     "videoyla eşleştirdim. Düzenlemeyi hazırlamadan önce hangi anları "
                     "tutacağımı belirtir veya klip seçimlerini düzeltir misin?"
                 ),
+                moment_count=moment_count,
+                len_moments=len(moments),
             ),
         )
     duration = row.get("duration_s")
@@ -688,7 +690,9 @@ def fold_moment_orders(events: Iterable[tuple[str, Any]]) -> MomentFold:
 
 def model_echo(language: str | None) -> str:
     """The neutral line models read for a ``moment_order`` answer."""
-    return MOMENT_ORDER_ANSWER_MESSAGE_TR if language == "tr" else MOMENT_ORDER_ANSWER_MESSAGE
+    from app.kria.reply_language import say_in  # noqa: PLC0415 - keeps this module import-light
+
+    return say_in(language, en=MOMENT_ORDER_ANSWER_MESSAGE, tr=MOMENT_ORDER_ANSWER_MESSAGE_TR)
 
 
 # -- the gate's decision -----------------------------------------------------------------------
@@ -872,11 +876,13 @@ def question_text(question: Mapping[str, Any]) -> str:
     found = sum(1 for row in rows if row.get("status") in ("grounded", "answered"))
     return say(
         en=(
-            f"I found {found} of your {total} moments in the clip. Put them in order and show "
+            "I found {found} of your {total} moments in the clip. Put them in order and show "
             "me where each one is, and I'll cut exactly those."
         ),
         tr=(
-            f"Saydığın {total} andan {found} tanesini klipte buldum. Onları sıraya koy ve her "
+            "Saydığın {total} andan {found} tanesini klipte buldum. Onları sıraya koy ve her "
             "birinin nerede olduğunu göster, tam olarak onları keseyim."
         ),
+        found=found,
+        total=total,
     )

@@ -210,6 +210,7 @@ def copilot_schema():
         "delay",
         "amount",
         "cadence_s",
+        "end_fade_s",
     }
     list_strings = {"target_ids", "segments", "slide_ids", "asset_ids"}
     map_fields = {
@@ -233,6 +234,23 @@ def copilot_schema():
             return enum(*get_args(ProposalPace))
         if name == "backdrop":
             return enum("blank", "color", "blur")
+        if name == "moments":
+            # KRI-1350: `set_color_moments` replaces the whole colour-moments lane.
+            edge = enum("cut", "flash_white", "light_leak", "dip_black")
+            return arr(
+                obj(
+                    {
+                        "start_s": number,
+                        "end_s": number,
+                        "tone": enum("mono", "warm", "faded"),
+                        "enter": edge,
+                        "exit": edge,
+                        "sound": string,
+                        "sound_at": enum("enter", "exit"),
+                    },
+                    ("start_s", "end_s", "tone"),
+                )
+            )
         if name == "preset":
             # KRI-1162: the speaker's corner, a name and never numbers (S37).
             return enum(

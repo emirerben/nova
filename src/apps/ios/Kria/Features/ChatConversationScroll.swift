@@ -17,11 +17,13 @@ struct ChatConversationScroll<Content: View>: View {
     /// scrolling to an end marker anchored to the frame bottom left the last
     /// content under the composer.
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
+    /// How many more content-height changes may scroll to the end before the transcript itself changes again.
+    @State private var heightFollows = HeightFollowBudget()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: ChatConversationSpacing.row) {
                 content()
             }
             .frame(maxWidth: 620, alignment: .leading)
@@ -35,6 +37,7 @@ struct ChatConversationScroll<Content: View>: View {
         .opacity(isLoaded ? 1 : 0)
         .task(id: isLoaded) {
             guard isLoaded else { return }
+            heightFollows.refill()
             scrollToEnd()
         }
         .scrollDismissesKeyboard(.interactively)
@@ -56,10 +59,18 @@ struct ChatConversationScroll<Content: View>: View {
         }
         .onScrollPhaseChange { _, phase in
             userIsScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
-            if phase == .idle { followsLatest = nearBottom }
+            if phase == .idle {
+                followsLatest = nearBottom
+                heightFollows.refill()
+            }
         }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
-            if old != new, followsLatest, !userIsScrolling { scrollToEnd() }
+            // KRI-1239: in a lazy stack, scrolling to the end measures other rows, which changes the height again.
+            // On a long transcript (12-receipt replies) that loop did not settle: after "Make it without these" it
+            // rebuilt every row 90+ times in a few seconds, or forever, and iOS killed the app (0x8BADF00D). New
+            // content refills the budget; re-measuring alone cannot keep scrolling.
+            guard old != new, followsLatest, !userIsScrolling, heightFollows.take() else { return }
+            scrollToEnd()
         }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.bottom } action: { old, new in
             // Keyboard / composer growth changes the bottom inset; keep the end in view for a
@@ -67,9 +78,11 @@ struct ChatConversationScroll<Content: View>: View {
             if old != new, followsLatest, !userIsScrolling { scrollToEnd() }
         }
         .onChange(of: updateToken) { _, _ in
+            heightFollows.refill()
             if followsLatest && !userIsScrolling { scrollToEnd() }
         }
         .onChange(of: scrollRequest) { _, _ in
+            heightFollows.refill()
             followsLatest = true
             scrollToEnd()
         }
@@ -105,6 +118,7 @@ struct ChatConversationScroll<Content: View>: View {
     /// Streaming auto-follow stays instant (it must not fight the reader); only the
     /// explicit "Latest" tap glides.
     private func scrollToEnd(animated: Bool = false) {
+        Perf.event("chat.scrollToEnd")
         if animated && !reduceMotion {
             withAnimation(.smooth(duration: 0.35)) { scrollPosition.scrollTo(edge: .bottom) }
             return
@@ -113,4 +127,27 @@ struct ChatConversationScroll<Content: View>: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) { scrollPosition.scrollTo(edge: .bottom) }
     }
+}
+
+enum ChatConversationSpacing {
+    /// Between two rows of the transcript.
+    static let row: CGFloat = 20
+    /// Between two files of one media strip. Each file is its own row, pulled up to this distance.
+    static let mediaStrip: CGFloat = 8
+}
+
+/// A count kept outside SwiftUI's state on purpose: spending it inside a geometry callback must not redraw the
+/// transcript (that redraw is what fed the loop it bounds).
+final class HeightFollowBudget {
+    /// Opening a long chat measured up to 6 rows into place in the KRI-1239 replay; a little headroom on top.
+    static let limit = 10
+    private var remaining = HeightFollowBudget.limit
+
+    func take() -> Bool {
+        guard remaining > 0 else { return false }
+        remaining -= 1
+        return true
+    }
+
+    func refill() { remaining = Self.limit }
 }

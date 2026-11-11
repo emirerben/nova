@@ -257,8 +257,6 @@ protocol KriaAPIClient: ReviewPlanTransport, SlidePostProposalClient, SongRangeC
     func creationBrief(threadID: UUID) async throws -> CreativeBrief
     /// KRI-756: footage-aware suggestion chips. Nil = the server has none to offer (no endpoint, or unreadable).
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet?
-    /// AI suggestion blocks: tells the server a card was dismissed so it is never offered again. Never throws.
-    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
@@ -420,6 +418,8 @@ struct ProjectPage: Sendable {
 struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
     let text: String
     let reason: String?
+    /// The language the server heard (KRI-1328). Absent from older servers.
+    let language: String?
 }
 
 extension KriaAPIClient {
@@ -464,7 +464,6 @@ extension KriaAPIClient {
     func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet? { nil }
-    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async {}
     func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
     func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted { throw APIError.unsupported }
@@ -1401,7 +1400,16 @@ enum KriaClientProtocolContract {
     /// `generated_overlay` card only to this protocol, because an older build would spend on one touch.
     ///
     /// 46 (KRI-1231) preserves editable split-screen sections and renders ordinary media in independent panel viewports.
-    static let version = 46
+    ///
+    /// 47 (KRI-1335) round-trips a split section's `collapse_empty_panels` and renders it: the panels still playing grow
+    /// to fill the screen when another panel's clips end. A build below it would drop the key on Save, so the server
+    /// offers collapse (and `splitCollapse`) only to this protocol.
+    ///
+    /// 48 (KRI-1350): decodes and draws `color_moments` (black-and-white / warm / faded windows with white-flash,
+    /// light-leak or dip-to-black edges) and `end_fade`, and the `colorMoments` capability. The server serves such a
+    /// recipe only to this protocol (`COLOR_MOMENTS_ENABLED` + `colorMoments` verified) and answers 426
+    /// `client_update_required` (`color_moments`) to an older build.
+    static let version = 48
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2611,8 +2619,11 @@ struct EditorStateRequest: Codable, Sendable, Equatable {
     var version = 1
     var baseGeneration: String
     var clientStateID: String
+    /// The newest chat draft revision this editor staged or discarded; nil when it never read one.
+    /// Without it the server builds a clean state's turn on the draft head (KRI-1333).
+    var draftRevision: Int? = nil
     var lanes: EditorCommitRequest
-    enum CodingKeys: String, CodingKey { case version; case baseGeneration = "base_generation"; case clientStateID = "client_state_id"; case lanes }
+    enum CodingKeys: String, CodingKey { case version; case baseGeneration = "base_generation"; case clientStateID = "client_state_id"; case draftRevision = "draft_revision"; case lanes }
 }
 extension EditorCommitRequest: Equatable {
     static func == (l: Self, r: Self) -> Bool { (try? JSONEncoder().encode(l)) == (try? JSONEncoder().encode(r)) }
@@ -3031,9 +3042,12 @@ extension DraftSnapshot {
     /// an older head may still exist when the editor is reopened. The status
     /// variant is authoritative for every renderer-owned section and baseline.
     func editorDraft(projectID: UUID, authoritativeVariant: [String: JSONValue]? = nil) -> EditorDraft {
+        // A chat draft stamps `editor_state_version` too (the phone's state carries it), but its flat
+        // lane keys mark it as edits over the variant, not a committed snapshot (KRI-1333).
         if let authoritativeVariant,
            authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
-           Self.object(snapshot["editor_payload"])?["editor_state_version"] == .number(2) {
+           let payload = Self.object(snapshot["editor_payload"]), payload["editor_state_version"] == .number(2),
+           !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }) {
             // A committed full snapshot owns authoring state. The variant is
             // a render projection and may lag this exact durable revision.
             var document = snapshot

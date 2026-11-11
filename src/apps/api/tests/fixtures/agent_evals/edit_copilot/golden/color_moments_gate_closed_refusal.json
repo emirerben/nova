@@ -1,0 +1,72 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-11-v122",
+  "input": {
+    "utterance": "make the history part black and white",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "sfx"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 60.0,
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {
+            "id": "whoosh-fast",
+            "label": "Whoosh fast",
+            "category": "transition",
+            "duration_s": 0.6
+          },
+          {
+            "id": "cinematic-hit",
+            "label": "Cinematic hit",
+            "category": "impact",
+            "duration_s": 1.2
+          }
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_color_moments\", \"moments\": [{\"start_s\": 16, \"end_s\": 22, \"tone\": \"mono\"}]}], \"confidence\": 0.92, \"reply\": \"Done, that part is black and white now.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [],
+    "confidence": 0.92,
+    "reply": "Black-and-white moments, flashes and the end fade are not available here yet.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "unsupported",
+    "rejection_reasons": [
+      {
+        "op": "set_color_moments",
+        "reason": "capability_unavailable",
+        "detail": "I can't change that on this edit yet."
+      }
+    ],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "Black-and-white moments, flashes and the end fade are not available here yet.",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "closed gate: the snapshot does not offer colour moments, so the success claim is replaced and no op survives",
+    "lane": "color_moments",
+    "capability_contract": {
+      "intent": "edit",
+      "needs_clarification": false,
+      "reply_contains": [
+        "not available here yet"
+      ],
+      "reply_excludes": [
+        "Done, that part"
+      ]
+    }
+  }
+}

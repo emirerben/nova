@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
 from app.models import Job, TikTokPublication
+from app.services.job_status import JOB_CANCELLABLE_STATUSES
 from app.services.speech_cleanup_terminal import (
     active_speech_claim_task_id,
     terminalize_required_speech_generations,
@@ -32,14 +33,7 @@ log = structlog.get_logger()
 
 # Mirror of CANCELLABLE_STATUSES in src/apps/web/src/app/admin/jobs/[id]/page.tsx.
 # Keep this list intentional -- broader is dangerous.
-CANCELLABLE_STATUSES = (
-    "importing",
-    "queued",
-    "processing",
-    "matching",
-    "rendering",
-    "posting",
-)
+CANCELLABLE_STATUSES = JOB_CANCELLABLE_STATUSES
 
 
 class JobCancelError(Exception):

@@ -33,13 +33,18 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from app.pipeline.silence_cut import CutPlan, is_filler_token, plan_summary, remap_words
-from app.pipeline.speech_cleanup_analysis import SpeechCleanupAnalysisResult
+from app.pipeline.speech_cleanup_analysis import (
+    SpeechCleanupAnalysisResult,
+    SpeechCleanupMultiTakeResult,
+)
 from app.pipeline.transcribe import Transcript, Word
 
 SpeechCleanupSourceKind = Literal["voiceover", "embedded_spine"]
 SpeechCleanupAnalysisView = Literal["full_clip", "talking_head_spine_capped"]
 
 SNAPSHOT_SCHEMA_VERSION = 1
+# KRI-720: a several-take Talking snapshot (``analysis`` is a `SpeechCleanupMultiTakeResult`).
+MULTI_TAKE_SNAPSHOT_SCHEMA_VERSION = 2
 PREFLIGHT_JOB_CONTRACT_FIELD = "speech_cleanup_preflight_contract"
 PREFLIGHT_JOB_CONTRACT_VALUE = "snapshot_v1"
 SUPPORTED_SNAPSHOT_ENGINE_VERSIONS = frozenset({"preflight-v1-2026-09-05"})
@@ -126,10 +131,23 @@ class HydratedSpeechCleanupSnapshot:
     # envelope.  The preflight row itself is independent of render clip slots.
     job_source_slot: int | None = None
     job_source_instance_id: str | None = None
+    # KRI-720: every take of a several-take Talking snapshot, each a single-source snapshot of
+    # its own clip (the scalar fields above are the first TALKING take's, so a single-source
+    # reader sees one coherent source). Empty for every single-source snapshot.
+    takes: tuple[HydratedSpeechCleanupTake, ...] = ()
 
     @property
     def window_duration_s(self) -> float:
         return self.window_end_s - self.window_start_s
+
+    @property
+    def multi_take(self) -> bool:
+        return bool(self.takes)
+
+    def take(self, storage_path: str) -> HydratedSpeechCleanupTake | None:
+        """KRI-720: the take whose clip is ``storage_path`` (None: not analysed)."""
+
+        return next((take for take in self.takes if take.storage_path == storage_path), None)
 
     @property
     def cut_plan(self) -> CutPlan:
@@ -254,10 +272,33 @@ class HydratedSpeechCleanupSnapshot:
         return plan_summary(self.cut_plan, original_duration_s=self.window_duration_s)
 
 
+@dataclass(frozen=True, slots=True)
+class HydratedSpeechCleanupTake:
+    """KRI-720: one take of a several-take snapshot.
+
+    ``snapshot`` is that take as an ordinary single-source snapshot (its own words, CutPlan
+    and window in its own source time), or None for a take with no audible speech. The
+    render cuts a talking take only through this, fenced like a single source.
+    """
+
+    media_identity: str
+    storage_path: str
+    generation: str
+    window_start_s: float
+    window_end_s: float
+    speaker: bool
+    snapshot: HydratedSpeechCleanupSnapshot | None
+
+
 def hydrate_speech_cleanup_snapshot(value: object) -> HydratedSpeechCleanupSnapshot:
     """Validate one raw ``preflight_snapshot`` mapping and hydrate its CutPlan."""
 
     outer = _required_mapping(value, detail="missing_snapshot")
+    if (
+        set(outer) == _OUTER_KEYS
+        and outer.get("schema_version") == MULTI_TAKE_SNAPSHOT_SCHEMA_VERSION
+    ):
+        return _hydrate_multi_take_snapshot(outer)
     if set(outer) != _OUTER_KEYS or outer.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
         raise SpeechCleanupSnapshotError("outer_schema")
 
@@ -341,6 +382,128 @@ def hydrate_speech_cleanup_snapshot(value: object) -> HydratedSpeechCleanupSnaps
     )
 
 
+def _hydrate_multi_take_snapshot(outer: Mapping[str, Any]) -> HydratedSpeechCleanupSnapshot:
+    """KRI-720: a several-take snapshot. The ``source`` block is the row's first take (as the
+    row stores it); every take's analysis is validated exactly like a single source, and the
+    returned scalar fields are the first talking take's."""
+
+    analysis_id = _required_token(outer.get("analysis_id"), detail="analysis_id", maximum=64)
+    try:
+        uuid.UUID(analysis_id)
+    except ValueError as exc:
+        raise SpeechCleanupSnapshotError("analysis_id") from exc
+    engine_version = _required_token(
+        outer.get("engine_version"), detail="engine_version", maximum=100
+    )
+    if engine_version not in SUPPORTED_SNAPSHOT_ENGINE_VERSIONS:
+        raise SpeechCleanupSnapshotError("engine_version")
+    detector_version = _required_token(
+        outer.get("detector_version"), detail="detector_version", maximum=100
+    )
+    source = _required_mapping(outer.get("source"), detail="source")
+    if set(source) != _SOURCE_KEYS or source.get("kind") != "embedded_spine":
+        raise SpeechCleanupSnapshotError("source_schema")
+    fingerprint = _required_token(
+        source.get("source_policy_fingerprint"),
+        detail="source_policy_fingerprint",
+        maximum=64,
+    )
+    if not _FINGERPRINT_RE.fullmatch(fingerprint):
+        raise SpeechCleanupSnapshotError("source_policy_fingerprint")
+    try:
+        result = SpeechCleanupMultiTakeResult.from_payload(
+            _required_mapping(outer.get("analysis"), detail="analysis")
+        )
+    except (SpeechCleanupSnapshotError, ValidationError, TypeError, ValueError) as exc:
+        raise SpeechCleanupSnapshotError("analysis_schema") from exc
+    if result.source_fingerprint != fingerprint:
+        raise SpeechCleanupSnapshotError("analysis_source_fingerprint")
+    if result.detector_version != detector_version:
+        raise SpeechCleanupSnapshotError("analysis_detector_version")
+    first = result.takes[0]
+    if (
+        first.media_id != source.get("media_identity")
+        or first.storage_path != source.get("storage_path")
+        or first.generation != source.get("generation")
+        or not math.isclose(
+            first.window_start_s,
+            _required_float(source.get("window_start_s"), detail="window_start"),
+            rel_tol=0,
+            abs_tol=_FLOAT_TOLERANCE_S,
+        )
+        or not math.isclose(
+            first.window_end_s,
+            _required_float(source.get("window_end_s"), detail="window_end"),
+            rel_tol=0,
+            abs_tol=_FLOAT_TOLERANCE_S,
+        )
+    ):
+        raise SpeechCleanupSnapshotError("analysis_source_window")
+
+    takes: list[HydratedSpeechCleanupTake] = []
+    for take in result.takes:
+        if take.window_end_s - take.window_start_s > MAX_SNAPSHOT_WINDOW_S + _FLOAT_TOLERANCE_S:
+            raise SpeechCleanupSnapshotError("source_window")
+        take_snapshot = None
+        if take.analysis is not None:
+            duration = take.window_end_s - take.window_start_s
+            if any(
+                word.end_s > duration + _FLOAT_TOLERANCE_S for word in take.analysis.timed_words
+            ):
+                raise SpeechCleanupSnapshotError("analysis_word_window")
+            take_snapshot = HydratedSpeechCleanupSnapshot(
+                analysis_id=analysis_id,
+                engine_version=engine_version,
+                detector_version=detector_version,
+                source_kind="embedded_spine",
+                media_identity=take.media_id,
+                storage_path=take.storage_path,
+                generation=take.generation,
+                window_start_s=take.window_start_s,
+                window_end_s=take.window_end_s,
+                source_policy_fingerprint=fingerprint,
+                analysis=take.analysis,
+            )
+        takes.append(
+            HydratedSpeechCleanupTake(
+                media_identity=take.media_id,
+                storage_path=take.storage_path,
+                generation=take.generation,
+                window_start_s=take.window_start_s,
+                window_end_s=take.window_end_s,
+                speaker=take.speaker,
+                snapshot=take_snapshot,
+            )
+        )
+    primary = next(take.snapshot for take in takes if take.speaker and take.snapshot)
+    return _with_takes(primary, tuple(takes))
+
+
+def _with_takes(
+    snapshot: HydratedSpeechCleanupSnapshot,
+    takes: tuple[HydratedSpeechCleanupTake, ...],
+    *,
+    job_source_slot: int | None = None,
+    job_source_instance_id: str | None = None,
+) -> HydratedSpeechCleanupSnapshot:
+    return HydratedSpeechCleanupSnapshot(
+        analysis_id=snapshot.analysis_id,
+        engine_version=snapshot.engine_version,
+        detector_version=snapshot.detector_version,
+        source_kind=snapshot.source_kind,
+        media_identity=snapshot.media_identity,
+        storage_path=snapshot.storage_path,
+        generation=snapshot.generation,
+        window_start_s=snapshot.window_start_s,
+        window_end_s=snapshot.window_end_s,
+        source_policy_fingerprint=snapshot.source_policy_fingerprint,
+        analysis=snapshot.analysis,
+        job_source_slot=job_source_slot,
+        job_source_instance_id=job_source_instance_id,
+        takes=takes,
+    )
+
+
 # detail card -> generate(analysis_id, choice?, revision)
 #                     |
 #        lock + validate + atomic decision/Job row
@@ -415,6 +578,7 @@ def hydrate_job_speech_cleanup_snapshot(
         analysis=snapshot.analysis,
         job_source_slot=source_slot,
         job_source_instance_id=source_instance_id,
+        takes=snapshot.takes,
     )
 
 

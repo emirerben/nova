@@ -149,6 +149,10 @@ class CreatorMediaRef(_CreatorModel):
     # legitimately be longer than the two-minute rendered deliverable.
     duration_s: float | None = Field(default=None, gt=0.0)
     label: str | None = Field(default=None, max_length=160)
+    # KRI-1365: whether the clip's file has an audio track, as the upload probe recorded it
+    # (``None`` = unknown, never read as silent). Server-only: excluded from every dump, so the
+    # model prompt and both manifest hashes are byte-identical to before this field existed.
+    has_audio: bool | None = Field(default=None, exclude=True)
 
     @field_validator("media_id")
     @classmethod

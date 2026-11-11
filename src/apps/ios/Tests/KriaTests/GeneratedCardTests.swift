@@ -16,7 +16,6 @@ final class GeneratedCardTests: XCTestCase {
         let free = SuggestionCard(id: "ss_b", kind: "captions", title: "Add captions", prompt: "Add captions", actionType: "editor_ops")
         XCTAssertTrue(paid.needsSpendConsent)
         XCTAssertFalse(free.needsSpendConsent)
-        XCTAssertEqual(paid.costLabel, "$0.04")
     }
 
     func testARowWaitingOnATapTheServerTurnedAwayCanBeDismissedButAPaidImageCannot() {

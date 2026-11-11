@@ -163,9 +163,10 @@ def test_fresh_state_wins_over_a_fresher_looking_fresh_head() -> None:
     assert base.prior_payload["base_generation"] == "G2"
 
 
-def test_head_is_ignored_even_for_empty_lanes() -> None:
+def test_head_is_ignored_even_for_empty_lanes_once_the_editor_saw_it() -> None:
     variant = _variant("G2")
-    base = resolve_editor_base(_job(variant), variant, _head("G2"), _state({}))
+    seen = _state({}).model_copy(update={"draft_revision": 3})
+    base = resolve_editor_base(_job(variant), variant, _head("G2"), seen)
     assert base.source == "client_state"
     assert _bars(base.projected)["label"]["text"] == "Saved label"
     assert "Stale" not in str(base.projected)
@@ -198,6 +199,80 @@ def test_malformed_lane_falls_back_instead_of_crashing() -> None:
     assert base.fallback_reason and base.fallback_reason.startswith("client_state_unusable")
     base = resolve_editor_base(_job(variant), variant, None, bad)
     assert base.source == "variant" and base.fallback_reason
+
+
+# --- KRI-1333: a clean state from an editor that never staged the chat head -------------
+
+# What the phone sends with no unsaved edits: Save defaults it always encodes, no lane.
+_IOS_CLEAN_LANES = {"remove_music": False, "editor_state_version": 2}
+
+
+def _chat_head(revision: int = 7, *, base: str = "G2") -> SimpleNamespace:
+    """A runtime-v2 chat draft head as a turn stores it: the client's flat lanes merged with
+    the chat's edit, no nested ``sections`` (thread 1894f8d0: rev 7 kept one text)."""
+    kept = copy.deepcopy(_variant()["text_elements"][:1])
+    kept[0]["text"] = "Chat kept one title"
+    return SimpleNamespace(
+        draft_revision=revision,
+        base_generation_id=base,
+        snapshot_json={
+            "kind": "editor",
+            "editor_payload": {
+                **_IOS_CLEAN_LANES,
+                "base_generation": base,
+                "text_elements": kept,
+            },
+        },
+    )
+
+
+def _seen(revision: int | None) -> EditorStateIn:
+    return EditorStateIn.model_validate(
+        {
+            "base_generation": "G2",
+            "client_state_id": "cs-clean",
+            "lanes": _IOS_CLEAN_LANES,
+            **({"draft_revision": revision} if revision is not None else {}),
+        }
+    )
+
+
+@pytest.mark.parametrize("seen", [None, 5])
+def test_clean_state_that_never_staged_the_chat_head_builds_on_the_head(seen) -> None:  # noqa: ANN001
+    variant = _variant("G2")
+    base = resolve_editor_base(_job(variant), variant, _chat_head(7), _seen(seen))
+    assert base.source == "head", "the unsaved chat edits must not be rebuilt from the video"
+    assert [row["text"] for row in base.projected["text_elements"]] == ["Chat kept one title"]
+
+
+def test_clean_state_that_saw_the_chat_head_is_a_deliberate_discard() -> None:
+    variant = _variant("G2")
+    base = resolve_editor_base(_job(variant), variant, _chat_head(7), _seen(7))
+    assert base.source == "client_state"
+    assert _bars(base.projected)["label"]["text"] == "Saved label"
+
+
+def test_clean_state_stays_authoritative_without_unseen_chat_lanes() -> None:
+    variant = _variant("G2")
+    bootstrap = SimpleNamespace(
+        draft_revision=1,
+        base_generation_id="G2",
+        snapshot_json={
+            "kind": "editor",
+            "editor_payload": {"base_generation": "G2", "sections": {}},
+        },
+    )
+    for head in (None, bootstrap, _chat_head(7, base="G1")):
+        base = resolve_editor_base(_job(variant), variant, head, _seen(None))
+        assert base.source == "client_state", head
+        assert _bars(base.projected)["label"]["text"] == "Saved label"
+
+
+def test_unsaved_lanes_stay_authoritative_over_an_unseen_chat_head() -> None:
+    variant = _variant("G2")
+    base = resolve_editor_base(_job(variant), variant, _chat_head(7), _state(_moved()))
+    assert base.source == "client_state"
+    assert _bars(base.projected)["label"]["text"] == "Creator label"
 
 
 def test_parse_editor_state_tolerates_garbage() -> None:

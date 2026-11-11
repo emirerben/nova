@@ -88,11 +88,15 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # 4b280598 / 83b280d6.
 # Re-pinned for KRI-1292: the brief section teaches `hold_s` for a text at a spoken word;
 # removing that clause reproduces the values above.
+# Re-pinned for KRI-1327: the brief section teaches `subject_outline` (a line around a person);
+# the values before it were ce15504f / 8a7a2c85 / 68edb943 / d29283f2.
+# Re-pinned for KRI-1355: the brief section teaches the typed no-title ask (`title: "off"`);
+# the values before it were b52730bb / 72041f99 / 3116efd4 / 7cc917df.
 MAIN_PROMPT_SHA = {
-    "neither": "ce15504fa5dce5d85ecda204ea5b1a92c51f8997c7a0eeca5271ccf120459f0d",
-    (True, True): "8a7a2c85d4236c8c303d080506009e9996eb874ac08287252a31f92032dea0a2",
-    (True, False): "68edb943bf51c03e6f78d3fc9f1eb75e20602d174767f2018181679ec04c6e1c",
-    (False, True): "d29283f2d0c4cf5c1c4b150f1a52c99e817b9658479283f6e57c6ce165a6e9b2",
+    "neither": "62cb90f09ed39561094307dcbe86fb5858d82957b0373a3ba5b14a1973912e00",
+    (True, True): "2c83102a5775194593119b0cd004a6593d9c9b3622815419da09aedf33c3f181",
+    (True, False): "f2f80a6e20025407fbe0a2dffb0176c7a534a42eac2faf3fea4de2649242bec8",
+    (False, True): "d0df791e74b22894ca12b7933e8f5c3d2144f9156b273939d998eb618efae5ed",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

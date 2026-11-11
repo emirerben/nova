@@ -188,7 +188,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                     // The dragged text itself paints plain while the finger is down (F8); the scene below keeps its occlusion.
                     subjectMatte: above ? nil : original.subjectMatte, speakerMatte: above ? nil : original.speakerMatte,
                     speakerFrame: above ? nil : original.speakerFrame,
-                    fullScreenWindows: above ? [] : original.fullScreenWindows)
+                    fullScreenWindows: above ? [] : original.fullScreenWindows,
+                    colorMoments: above ? nil : original.colorMoments)
             }
             return copy
         }
@@ -222,7 +223,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                     drawings: paintsDrawings ? original.drawings : nil, transparentBackground: transparent,
                     subjectMatte: transparent ? nil : original.subjectMatte, speakerMatte: transparent ? nil : original.speakerMatte,
                     speakerFrame: transparent ? nil : original.speakerFrame,
-                    fullScreenWindows: transparent ? [] : original.fullScreenWindows)
+                    fullScreenWindows: transparent ? [] : original.fullScreenWindows,
+                    colorMoments: transparent ? nil : original.colorMoments)
             }
             return copy
         }
@@ -420,7 +422,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                 // The background is unchanged apart from a moved frame (guarded above), so its layer, its matte and its
                 // full-screen windows carry over.
                 speakerMatte: first.speakerMatte, speakerFrame: movesSpeakerFrame ? next.speakerBackground?.speakerFrame : first.speakerFrame,
-                fullScreenWindows: first.fullScreenWindows, playbackRevision: playbackRevision)
+                fullScreenWindows: first.fullScreenWindows, playbackRevision: playbackRevision,
+                colorMoments: ColorMomentProgram(recipe: next, total: total))
         }
         // Publish only after every layer validates successfully. Never touch
         // `audioMix` here (see `withoutVisuals`).

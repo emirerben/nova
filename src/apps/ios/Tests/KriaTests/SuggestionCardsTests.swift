@@ -49,8 +49,7 @@ final class SuggestionCardsTests: XCTestCase {
         XCTAssertEqual(mute.evidence, ["Wind in clip 3"])
         XCTAssertEqual(mute.clipOrdinal, 3)
         XCTAssertEqual(mute.mediaID, "m3")
-        XCTAssertEqual(try XCTUnwrap(cards.first { $0.kind == "generated_overlay" }).costLabel, "$0.04")
-        XCTAssertNil(mute.costLabel)
+        XCTAssertEqual(try XCTUnwrap(cards.first { $0.kind == "generated_overlay" }).costUSD, 0.04)
     }
 
     func testAnUnknownKindAndActionStillRenderAndOnlyTheBrokenCardIsDropped() throws {
@@ -161,16 +160,25 @@ final class SuggestionCardsTests: XCTestCase {
         XCTAssertFalse(ledger.begin(a), "an applied card cannot be sent twice")
     }
 
-    func testANewSetBringsBackHandledCardsExceptDismissedOnes() {
+    func testANewSetBringsBackHandledCards() {
         let ledger = SuggestionCardLedger()
         let a = card(id: "a"), b = card(id: "b")
         ledger.reconcile(with: SuggestionSet(setID: "sg_1", state: "ready", status: "ok", chips: [], cards: [a, b]))
-        XCTAssertTrue(ledger.begin(a)); ledger.finish(a, accepted: true)
-        ledger.dismiss(b)
+        ledger.markApplied(a)
         ledger.reconcile(with: SuggestionSet(setID: "sg_1", state: "ready", status: "ok", chips: [], cards: [a, b]))
-        XCTAssertEqual(ledger.visible([a, b]), [], "the same set: both stay gone")
+        XCTAssertEqual(ledger.visible([a, b]).map(\.id), ["b"], "the same set: a handled card stays gone")
         ledger.reconcile(with: SuggestionSet(setID: "sg_2", state: "ready", status: "ok", chips: [], cards: [a, b]))
-        XCTAssertEqual(ledger.visible([a, b]).map(\.id), ["a"], "a new set may offer an applied card again; a dismissal is for good")
+        XCTAssertEqual(ledger.visible([a, b]).map(\.id), ["a", "b"], "a new set may offer an applied card again")
+    }
+
+    func testAMarkedCardCannotBeSentAgainAndASendingOneIsLeftAlone() {
+        let ledger = SuggestionCardLedger()
+        let a = card(id: "a"), b = card(id: "b")
+        ledger.markApplied(a)
+        XCTAssertFalse(ledger.begin(a))
+        XCTAssertTrue(ledger.begin(b))
+        ledger.markApplied(b)
+        XCTAssertEqual(ledger.phase(of: "b"), .sending, "an in-flight pinned tap settles through finish, not through the sweep")
     }
 
     func testASetChangingMidTapKeepsTheTapSending() {
@@ -183,26 +191,74 @@ final class SuggestionCardsTests: XCTestCase {
         XCTAssertFalse(ledger.begin(a))
     }
 
-    // MARK: wire
+    // MARK: the composer draft is the selection
 
-    func testDismissPostsTheSetAndCardAndNeverThrows() async throws {
-        var seen: (method: String?, path: String?, body: [String: String])?
-        NativeEditorURLProtocol.handler = { request in
-            let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: String])
-            seen = (request.httpMethod, request.url?.path, body)
-            return (200, Data("{}".utf8))
-        }
-        let api = NativeEditorTestSupport.api()
-        await api.dismissSuggestion(threadID: PreviewFixtures.projectID, setID: "sg_1", suggestionID: "ss_2")
-        XCTAssertEqual(seen?.method, "POST")
-        XCTAssertEqual(seen?.path, "/creation-threads/\(PreviewFixtures.projectID.uuidString)/suggestions/dismiss")
-        XCTAssertEqual(seen?.body, ["set_id": "sg_1", "chip_id": "ss_2"])
+    private let wind = SuggestionCard(id: "w", kind: "mute_clip", title: "Mute clip 3", prompt: "Mute clip 3", rank: 1)
+    private let windFull = SuggestionCard(id: "wf", kind: "mute_clip", title: "Mute clip 3 and 4", prompt: "Mute clip 3 and 4", rank: 2)
+    private let cap = SuggestionCard(id: "c", kind: "captions", title: "Add captions", prompt: "Add captions", rank: 3)
 
-        for status in [404, 405, 500] {
-            NativeEditorURLProtocol.handler = { _ in (status, Data("{}".utf8)) }
-            await api.dismissSuggestion(threadID: PreviewFixtures.projectID, setID: "sg_1", suggestionID: "ss_2")
-        }
+    func testTappingChipsAppendsEachPromptOnItsOwnLineAfterTheLast() {
+        var draft = ""
+        draft = SuggestionDraft.toggle(wind, in: draft)
+        XCTAssertEqual(draft, "Mute clip 3", "an empty box gets no leading newline")
+        draft = SuggestionDraft.toggle(cap, in: draft)
+        XCTAssertEqual(draft, "Mute clip 3\nAdd captions")
+        XCTAssertTrue(SuggestionDraft.isSelected(wind, in: draft))
+        XCTAssertTrue(SuggestionDraft.isSelected(cap, in: draft))
     }
+
+    func testTappingASelectedChipRemovesOnlyItsOwnLine() {
+        let typed = "Make it punchier\nMute clip 3\nMute clip 3 and 4\nAdd captions"
+        let after = SuggestionDraft.toggle(wind, in: typed)
+        XCTAssertEqual(after, "Make it punchier\nMute clip 3 and 4\nAdd captions", "the longer prompt that starts the same way stays")
+        XCTAssertTrue(SuggestionDraft.isSelected(windFull, in: after))
+        XCTAssertFalse(SuggestionDraft.isSelected(wind, in: after))
+    }
+
+    func testCreatorTextIsKeptWhenAChipIsAddedAndWhenItIsRemoved() {
+        let added = SuggestionDraft.toggle(cap, in: "Keep it under 20 seconds")
+        XCTAssertEqual(added, "Keep it under 20 seconds\nAdd captions")
+        XCTAssertEqual(SuggestionDraft.toggle(cap, in: added), "Keep it under 20 seconds")
+        XCTAssertEqual(SuggestionDraft.toggle(cap, in: "Keep it short\n"), "Keep it short\nAdd captions", "a trailing newline is not doubled")
+    }
+
+    func testRemovingTheOnlyLineLeavesAnEmptyBox() {
+        XCTAssertEqual(SuggestionDraft.toggle(cap, in: "Add captions"), "")
+    }
+
+    func testSelectionIgnoresCaseAndSpacingTheSameWayTheServerMatches() {
+        XCTAssertTrue(SuggestionDraft.isSelected(cap, in: "  add   CAPTIONS \n"))
+        XCTAssertEqual(SuggestionDraft.toggle(cap, in: "  add   CAPTIONS "), "")
+    }
+
+    func testADoubleTapNeverDuplicatesAPrompt() {
+        let once = SuggestionDraft.toggle(cap, in: "")
+        XCTAssertEqual(SuggestionDraft.toggle(cap, in: once), "", "the second tap is the unselect")
+        XCTAssertEqual(SuggestionDraft.toggle(cap, in: SuggestionDraft.toggle(cap, in: once)), "Add captions")
+    }
+
+    func testAChipIsNotSelectedByTextThatMerelyContainsItsPrompt() {
+        XCTAssertFalse(SuggestionDraft.isSelected(cap, in: "Add captions and a hook"))
+        XCTAssertFalse(SuggestionDraft.isSelected(wind, in: "Mute clip 3 and 4"))
+    }
+
+    func testOnlyAWholeDraftThatIsOneCardsPromptIsPinned() {
+        let cards = [wind, windFull, cap]
+        XCTAssertEqual(SuggestionDraft.pinnedCard(for: "Add captions", among: cards)?.id, "c")
+        XCTAssertEqual(SuggestionDraft.pinnedCard(for: "  add captions \n", among: cards)?.id, "c")
+        XCTAssertEqual(SuggestionDraft.pinnedCard(for: "Mute clip 3", among: cards)?.id, "w", "the shorter prompt does not pin the longer card")
+        XCTAssertNil(SuggestionDraft.pinnedCard(for: "Mute clip 3\nAdd captions", among: cards), "two prompts are a plain message")
+        XCTAssertNil(SuggestionDraft.pinnedCard(for: "Add captions please", among: cards), "a prompt plus creator words is a plain message")
+        XCTAssertNil(SuggestionDraft.pinnedCard(for: "", among: cards))
+        XCTAssertNil(SuggestionDraft.pinnedCard(for: "Add captions", among: [wind]))
+    }
+
+    func testEveryCardWhosePromptIsALineIsFoundForTheSentSweep() {
+        let found = SuggestionDraft.cards(in: "Make it warmer\nMute clip 3\nadd captions", among: [wind, windFull, cap])
+        XCTAssertEqual(found.map(\.id), ["w", "c"])
+    }
+
+    // MARK: wire
 
     func testTheCardTapReusesThePinnedWireShape() throws {
         let tap = SuggestionTap(setID: "sg_1", chipID: "ss_9")

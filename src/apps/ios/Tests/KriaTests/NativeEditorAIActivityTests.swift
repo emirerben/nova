@@ -58,6 +58,14 @@ final class NativeEditorAIActivityTests: XCTestCase {
         }
     }
 
+    /// A published phone render the session has not presented yet (no presentation, no preview work) shows
+    /// no activity, and a presentation that has moved on to `.synced` never revives one.
+    func testNoPresentationAndNoPreviewWorkShowsNoStatus() {
+        XCTAssertNil(status(render: nil))
+        XCTAssertNil(status(preview: .ready, pending: false, render: nil))
+        XCTAssertNil(status(render: .init(phase: .synced, publishedGeneration: "generation-1")))
+    }
+
     private func activity(sending: Bool = false, sendID: String? = nil,
                           thinking: Bool = false, turnID: String? = nil) -> NativeEditorAIActivity? {
         NativeEditorAIActivity.current(projectID: project, isSending: sending, sendingRequestID: sendID,

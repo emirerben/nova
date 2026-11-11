@@ -178,15 +178,16 @@ def story_lines_notice(strategy: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f"The planned story structure ({lines.listed(items)}) sets the chapters "
+            "The planned story structure ({lines_listed_items}) sets the chapters "
             "(which clips are grouped together), but it won't reorder your clips: they stay in "
             "the order you gave"
         ),
         tr=(
-            f"Planlanan hikâye yapısı ({lines.listed(items)}) bölümleri (hangi kliplerin birlikte "
+            "Planlanan hikâye yapısı ({lines_listed_items}) bölümleri (hangi kliplerin birlikte "
             "gruplanacağını) belirliyor ama kliplerinin sırasını değiştirmeyecek: verdiğin sırada "
             "kalacaklar"
         ),
+        lines_listed_items=lines.listed(items),
     )
 
 

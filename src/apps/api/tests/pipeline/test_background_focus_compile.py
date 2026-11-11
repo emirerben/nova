@@ -214,7 +214,8 @@ def test_the_measured_column_becomes_the_fill_focus(monkeypatch):
     _gate(monkeypatch, open_=True)
     recipe = _compile(_background(), visuals=(_measured(FILL),))
     expected = _expected()
-    assert expected is not None and expected.zoom != 1.0
+    # KRI-1307: the measure aims the view (x) even where it keeps the cover zoom (1x).
+    assert expected is not None and (expected.x, expected.zoom) != (0.5, 1.0)
     assert _wire(recipe)["focus"] == {"x": expected.x, "y": expected.y, "zoom": expected.zoom}
     assert "backgroundFocus" in recipe.required_capabilities
 
