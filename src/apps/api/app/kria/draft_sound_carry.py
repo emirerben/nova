@@ -71,6 +71,13 @@ def asks_camera_sound(brief: CreativeBrief | None) -> bool:
     )
 
 
+def asks_no_music(brief: CreativeBrief | None) -> bool:
+    """True when a live ask is the typed "no music" (KRI-1164), e.g. "I'll add a song on TikTok"."""
+    from app.kria.brief_checks import wants_no_music  # noqa: PLC0415
+
+    return brief is not None and any(wants_no_music(req) for req in brief.live())
+
+
 def carry_draft_audio_strategy(
     strategy: CreativeStrategy, draft_strategy: Mapping[str, Any] | None
 ) -> CreativeStrategy:
@@ -145,6 +152,7 @@ def carry_draft_sound(
 
 __all__ = [
     "asks_camera_sound",
+    "asks_no_music",
     "carry_draft_audio_strategy",
     "carry_draft_sound",
     "has_sound_ask",

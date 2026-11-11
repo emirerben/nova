@@ -142,6 +142,38 @@ def test_an_explicit_camera_sound_ask_on_silent_footage_is_a_question_not_a_swap
     assert "music" in refused.question.lower()
 
 
+def test_a_no_music_ask_on_silent_footage_stays_silent_instead_of_gaining_music(
+    prod_profile,
+) -> None:
+    """KRI-1294 Q3: "I'll add a song on TikTok" is a stated ask; music must not be swapped in."""
+    manifest = _manifest(False, False)
+    checked = _check(manifest, _montage(manifest), creator_asked_no_music=True)
+    assert isinstance(checked, CheckedStrategy), checked
+    assert checked.strategy.audio_strategy == "original_audio"
+    assert checked.strategy.montage_audio == MontageAudioPlan(preserve_source_audio=False)
+    assert not any("has sound" in n for n in checked.notices)
+    # Re-checking the saved strategy (approval, readiness) without the flag changes nothing.
+    again = _check(manifest, checked.strategy)
+    assert isinstance(again, CheckedStrategy), again
+    assert again.strategy == checked.strategy
+
+
+def test_neighbours_of_the_no_music_ask_keep_their_verdicts(prod_profile) -> None:
+    manifest = _manifest(False, False)
+    # No stated sound ask: music still replaces camera audio (the KRI-1365 default).
+    assert _check(manifest, _montage(manifest)).strategy.audio_strategy == "licensed_music"
+    # A camera-sound ask still wins as a question, even beside no-music.
+    refused = _check(
+        manifest, _montage(manifest), creator_asked_camera_sound=True, creator_asked_no_music=True
+    )
+    assert isinstance(refused, RefusedStrategy)
+    # A strategy that already chose music is not flipped to silence by the no-music flag.
+    music = _montage(manifest, audio_strategy="licensed_music", montage_audio=None)
+    kept = _check(manifest, music, creator_asked_no_music=True)
+    assert isinstance(kept, CheckedStrategy)
+    assert kept.strategy.audio_strategy == "licensed_music"
+
+
 @pytest.mark.parametrize("audio", [(True, False), (True, True), (None, None), (False, None)])
 def test_control_footage_with_or_possibly_with_sound_keeps_camera_audio(
     prod_profile, audio
