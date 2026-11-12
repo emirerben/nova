@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.173.0] - 2026-11-12
+
+### Changed
+- fix(kria): server reports whether a draft is current, codes Save refusals, repairs stranded saved drafts (KRI-1367) (#2278) <!-- release-pr: 2278 -->
+
 ## [0.88.172.0] - 2026-11-12
 
 ### Fixed
