@@ -33,14 +33,21 @@ final class SpeakerMaskCacheParityTests: XCTestCase {
         let events = EventCounter()
         EngineSignpost.observer = { name, _, _ in events.add(name) }
         addTeardownBlock { EngineSignpost.observer = nil }
-        func render(_ name: String) async throws -> (frames: [SpeakerTestFrame], seconds: Double, failedFrames: Int) {
+        // The composed frames, exactly as the compositor hands them to the encoder. The encoded file is not an exact witness:
+        // the hardware encoder's output for identical frames varies with how quickly they arrive (a cache hit is the fastest
+        // pipeline), so decoded pixels differ between two renders of identical composed frames.
+        addTeardownBlock { RecipeWriter.frameTap = nil }
+        func render(_ name: String) async throws -> (frames: [SpeakerTestFrame], composed: [String], seconds: Double, failedFrames: Int) {
             let before = events.failedFrames
+            let composed = ComposedFrames()
+            composed.install()
+            defer { RecipeWriter.frameTap = nil }
             let start = ContinuousClock.now
             let file = try await exportSpeakerRecipe(scene.recipe, urls: scene.urls, directory: directory, name: name)
             let elapsed = seconds(start.duration(to: .now))
             var frames: [SpeakerTestFrame] = []
             for time in times { frames.append(try await fileFrame(file, at: time)) }
-            return (frames, elapsed, events.failedFrames - before)
+            return (frames, composed.hashes, elapsed, events.failedFrames - before)
         }
         func worst(_ a: [SpeakerTestFrame], _ b: [SpeakerTestFrame]) -> (maxDelta: Int, meanDelta: Double, differing: Double) {
             let all = zip(a, b).map { $0.difference(from: $1) }
@@ -51,7 +58,7 @@ final class SpeakerMaskCacheParityTests: XCTestCase {
         let runs = max(1, Int(ProcessInfo.processInfo.environment["KRIA_MASK_CACHE_RUNS"] ?? "") ?? 1)
 
         SpeakerMaskStore.installed = nil
-        var uncached: [(frames: [SpeakerTestFrame], seconds: Double, failedFrames: Int)] = []
+        var uncached: [(frames: [SpeakerTestFrame], composed: [String], seconds: Double, failedFrames: Int)] = []
         for run in 0..<max(2, runs) { uncached.append(try await render("uncached-\(run)")) }
         let first = uncached[0], second = uncached[1]
         let noise = worst(first.frames, second.frames)
@@ -63,7 +70,7 @@ final class SpeakerMaskCacheParityTests: XCTestCase {
         let miss = try await render("cache-miss")
         store.flush()
         let afterMiss = store.statistics
-        var warm: [(frames: [SpeakerTestFrame], seconds: Double, failedFrames: Int)] = []
+        var warm: [(frames: [SpeakerTestFrame], composed: [String], seconds: Double, failedFrames: Int)] = []
         for run in 0..<runs { warm.append(try await render("cache-hit-\(run)")) }
         let afterHit = store.statistics
 
@@ -79,26 +86,18 @@ final class SpeakerMaskCacheParityTests: XCTestCase {
         XCTAssertEqual(afterMiss.droppedWrites, 0)
         XCTAssertEqual(afterMiss.corruptEntries + afterHit.corruptEntries, 0)
 
-        // The cache property, exact: a warm render replays the very masks the cold render stored, so the two are identical
-        // whatever Vision does from run to run. The export itself is not deterministic on a heavily loaded Mac (two
-        // uncached renders then differ by tens of levels, which the noise-floor line shows), so a warm render that differs is
-        // rendered again. A real cache fault differs on every replay; load noise does not.
-        var hit = warm[0]
-        var hitAgainstMiss = worst(hit.frames, miss.frames)
-        var replayDeltas = [hitAgainstMiss.maxDelta]
-        while hitAgainstMiss.maxDelta != 0, replayDeltas.count < 3 {
-            hit = try await render("cache-hit-replay-\(replayDeltas.count)")
-            hitAgainstMiss = worst(hit.frames, miss.frames)
-            replayDeltas.append(hitAgainstMiss.maxDelta)
+        // The cache property, exact: a warm render replays the very masks the cold render stored, so the frames the compositor
+        // composes are identical, at the default overlap too. Decoded pixels are reported below, not asserted (encoder noise).
+        for (index, hit) in warm.enumerated() {
+            XCTAssertEqual(hit.composed.count, frameCount)
+            XCTAssertEqual(hit.composed, miss.composed, "warm render \(index): a hit composes every frame the cold render composed")
+            XCTAssertEqual(hit.failedFrames, miss.failedFrames, "warm render \(index): a hit holds or drops exactly the frames the cold render did")
         }
-        print("MASKCACHE mac replay: cache-hit vs cache-miss render max delta per warm render \(replayDeltas), worst differing fraction of the last \(String(format: "%.5f", hitAgainstMiss.differing))")
-        XCTAssertEqual(hitAgainstMiss.maxDelta, 0, "a hit replays the stored mask byte for byte (deltas per warm render: \(replayDeltas))")
-        XCTAssertEqual(hit.failedFrames, miss.failedFrames, "a hit holds or drops exactly the frames the cold render did")
+        let hit = warm[0]
+        let hitAgainstMiss = worst(hit.frames, miss.frames)
+        print("MASKCACHE mac decoded: cache-hit vs cache-miss file max delta \(hitAgainstMiss.maxDelta), worst differing fraction \(String(format: "%.5f", hitAgainstMiss.differing)) (the composed frames are asserted identical above; any file difference is the encoder)")
 
-        // The cache against no cache is Vision's own run-to-run noise plus nothing: reported, not asserted. One earlier run
-        // on a heavily loaded Mac (load average above 40) saw both cached renders differ from the uncached pair by up to
-        // 42 levels while the uncached pair matched each other. It was the export, not the cache: at load average 25 to 40 a later
-        // run had the two uncached renders differ by 46 levels with no store installed.
+        // The cache against no cache is Vision's own run-to-run noise plus nothing: reported, not asserted.
         let missAgainstUncached = worst(miss.frames, first.frames), hitAgainstUncached = worst(hit.frames, first.frames)
         print("MASKCACHE mac parity: cache-miss vs uncached max delta \(missAgainstUncached.maxDelta), cache-hit vs uncached max delta \(hitAgainstUncached.maxDelta), worst mean \(String(format: "%.5f", hitAgainstUncached.meanDelta)), worst differing fraction \(String(format: "%.5f", hitAgainstUncached.differing)), uncached reference failures \(first.failedFrames)/\(second.failedFrames)")
     }
