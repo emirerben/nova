@@ -2138,6 +2138,31 @@ device performance and full preview/export visual parity remain release gates.
    with no crashes or critical thermal state. Enable only verified groups;
    KRI-29 remains incomplete until every agreed group passes.
 
+## Overlapped export frames (KRI-1185)
+
+Every on-device export (the editor Save and the server-driven phone renders of every edit type) draws two frames at once.
+A frame spends most of its time on Vision's neural engine and then on the GPU, so a second frame in flight roughly halves
+a Talking Save (iPhone 13 Pro, 30 s: 32.4 s to 16.9 s). `RecipeWriter` hands the export a copy of the player's composition
+whose compositor is `RecipeExportVideoCompositor` (or the Look twin); AVPlayer and the image generator keep the serial one.
+`RecipeFramePipeline` keeps matte decisions and the text, drawing and motion stores in frame order.
+
+- **Setting.** `ExportFrameOverlap.framesInFlight` (default 2, range 1 to 4). The app applies `UserDefaults`
+  `kria.exportFramesInFlight` at launch (`ExportOverlapSwitch`). Launch argument `-kria.exportFramesInFlight 1` is the QA off
+  switch: at 1 `RecipeWriter` returns the player's composition untouched (no copy, no class swap), the exact old path.
+  Depth 3 and 4 measured the same time as 2 on the phone and cost memory, so 2 is the default.
+- **Low memory.** Depth 2 costs about 100 MB more at an export's peak (measured on a 6 GB iPhone 13 Pro: `phys_footprint` growth
+  median 226 MB against 122 MB at depth 1). A phone reporting under 5 GB of physical memory (the 4 GB iPhone 12 and SE 3 report
+  about 3.7 GB) therefore defaults to depth 1, the old path, unless `kria.exportFramesInFlight` is set (`ExportOverlapSwitch.lowMemoryBytes`).
+  4 GB phones were not tested.
+- **Not byte for byte.** Two saves of the same recipe can differ in decoded pixels: the hardware H.264 encoder's output for
+  identical frames varies with how quickly they arrive. Compare composed frames (`RecipeWriter.frameTap`), never the file.
+- **Remote kill switch (not built).** Feed the setting from the `phone_rendering` capabilities block the app already fetches
+  (`CreationFlow.swift` decodes `recipe_versions` and `verified_features` from it; API side `routes/device_render.py`): add
+  an `export_frames_in_flight` field, and set `ExportFrameOverlap.framesInFlight` where the app stores that block. Until then
+  the switch is a launch argument only.
+- **Tests.** `ExportFramePipelineTests` (composed-frame hashes, cut, full-screen window, text, injected failure, cancel),
+  `ExportOverlapSwitchTests`, and the opt-in device benchmark `TalkSaveBench` (`TALKSAVE_RUN=1`).
+
 ## Preview instrumentation and parity (KRI-95)
 
 `NativeEditorSession.previewInstrumentation` (a `KriaMediaEngine.MetricsCollector`)

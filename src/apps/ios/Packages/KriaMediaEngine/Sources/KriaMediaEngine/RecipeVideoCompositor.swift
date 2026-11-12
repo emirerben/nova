@@ -245,6 +245,10 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
             && layers.contains { $0.speakerRole == .speaker && $0.effectiveSpeakerFrame(speakerFrame) != nil && time >= $0.start && time < $0.end }
             && layers.contains { $0.speakerRole == .background && time >= $0.start && time < $0.end }
     }
+    /// More than one matte per frame (split panels, per-clip speaker frames): the frame draws alone, as the serial queue did.
+    var drawsSpeakersOneFrameAtATime: Bool {
+        layers.contains { $0.speakerRole == .speaker && ($0.panelViewport != nil || ($0.speakerFrameOverride != nil && $0.speakerFrameOverride?.mode != .inherit)) }
+    }
     func activeText(at time: Double) throws -> [RecipeTextLayer] {
         guard let textStore else { return text.filter { time >= $0.start && time < $0.end } }
         return text.filter { $0.portable == nil && time >= $0.start && time < $0.end }
@@ -292,60 +296,104 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     ]
     private let context = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: CGColorSpace(name: CGColorSpace.linearSRGB)!, .outputColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
     private let queue = DispatchQueue(label: "com.kria.recipe-compositor")
+    /// Frames in flight at once: 1 (this class) draws them one at a time on `queue`, which is what AVPlayer and the image
+    /// generator need. An export overlaps frames (`RecipeExportVideoCompositor`), because a frame spends most of its time
+    /// waiting on Vision's neural engine and then on the GPU, and neither is busy while the other runs.
+    class var framesInFlight: Int { 1 }
+    private let pipeline: RecipeFramePipeline?
+    private let workers = DispatchQueue(label: "com.kria.recipe-compositor.frames", attributes: .concurrent)
+    private let issueLock = NSLock()
+    override init() {
+        let depth = Self.framesInFlight
+        pipeline = depth > 1 ? RecipeFramePipeline(depth: depth) : nil
+        super.init()
+    }
     func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {}
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
-        queue.async { [self] in
-            autoreleasepool {
-                guard let instruction = request.videoCompositionInstruction as? RecipeVideoInstruction,
-                      let output = request.renderContext.newPixelBuffer() else {
-                    request.finish(with: MediaEngineError.exportFailed)
-                    return
-                }
-                let time = request.compositionTime.seconds
-                var frame = CIImage(color: instruction.transparentBackground ? .clear : .black).cropped(to: instruction.canvas)
-                let belowText = instruction.layers.filter { time >= $0.start && time < $0.end && !$0.overlayAboveText }
-                do { frame = try composeBelowText(belowText, onto: frame, instruction: instruction, request: request, time: time) }
-                catch { request.finish(with: error); return }
-                // The stills under the speaker and of the speaker alone end here: motion, text, above-text media and
-                // drawings all sit above the speaker and belong to `.aboveSpeaker`.
-                if instruction.speakerSlice == .belowSpeaker || instruction.speakerSlice == .speakerOnly {
-                    context.render(frame, to: output, bounds: instruction.canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
-                    request.finish(withComposedVideoFrame: output)
-                    return
-                }
-                // KRI-1350: the tone and its flash land on the whole composed picture (speaker, background, cards)
-                // before motion and text, so captions keep their authored colours (failure modes 8, 9).
-                let moment = instruction.speakerSlice == .whole ? instruction.colorMoments?.sample(at: time) : nil
-                if let moment {
-                    do { frame = try ColorMomentPainter.image(frame, sample: moment, canvas: instruction.canvas) }
-                    catch { request.finish(with: error); return }
-                }
-                if let motion = instruction.motionScenes {
-                    do { frame = try motion.image(at: time).composited(over: frame) }
-                    catch { request.finish(with: error); return }
-                }
-                let activeText: [RecipeTextLayer]
-                do {
-                    activeText = try instruction.activeText(at: time)
-                } catch { request.finish(with: error); return }
-                let occlusion = instruction.subjectOcclusion(scene: frame, activeText: activeText, time: time)
-                do { frame = try Self.paintText(activeText, over: frame, canvas: instruction.canvas, time: time, occlusion: occlusion) }
-                catch { request.finish(with: error); return }
-                for layer in instruction.layers where time >= layer.start && time < layer.end && layer.overlayAboveText {
-                    do { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
-                    catch { request.finish(with: error); return }
-                }
-                if let drawings = instruction.drawings { frame = drawings.compose(over: frame, at: time, canvas: instruction.canvas) }
-                if let moment, moment.fadeToBlack > 0 {
-                    frame = ColorMomentPainter.faded(frame, amount: moment.fadeToBlack, canvas: instruction.canvas)
-                }
+        let enqueuedAt = DispatchTime.now().uptimeNanoseconds
+        guard let pipeline else {
+            queue.async { [self] in render(request, turn: nil, enqueuedAt: enqueuedAt) }
+            return
+        }
+        let serial = (request.videoCompositionInstruction as? RecipeVideoInstruction)?.drawsSpeakersOneFrameAtATime ?? true
+        // Numbering a frame and queueing it are one step, so two callers can never queue frames out of number order.
+        issueLock.lock()
+        let turn = pipeline.issue(exclusive: serial)
+        workers.async { [self] in
+            turn.admit()
+            defer { turn.finish() }
+            render(request, turn: turn, enqueuedAt: enqueuedAt)
+        }
+        issueLock.unlock()
+    }
+    /// Test hook: an error for the frame at this composition time makes that frame fail, as a draw error would.
+    nonisolated(unsafe) static var frameFault: ((Double) -> Error?)?
+    private func render(_ request: AVAsynchronousVideoCompositionRequest, turn: RecipeFramePipeline.Frame?, enqueuedAt: UInt64) {
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        EngineSignpost.stage("talk.stage.queueWait", since: enqueuedAt, to: startedAt)
+        defer { EngineSignpost.stage("talk.stage.frame", since: startedAt) }
+        autoreleasepool {
+            guard let instruction = request.videoCompositionInstruction as? RecipeVideoInstruction,
+                  let output = request.renderContext.newPixelBuffer() else {
+                request.finish(with: MediaEngineError.exportFailed)
+                return
+            }
+            let time = request.compositionTime.seconds
+            if let fault = Self.frameFault, let error = fault(time) { request.finish(with: error); return }
+            var frame = CIImage(color: instruction.transparentBackground ? .clear : .black).cropped(to: instruction.canvas)
+            let belowText = instruction.layers.filter { time >= $0.start && time < $0.end && !$0.overlayAboveText }
+            let composeStart = DispatchTime.now().uptimeNanoseconds
+            do { frame = try composeBelowText(belowText, onto: frame, instruction: instruction, request: request, time: time, turn: turn) }
+            catch { request.finish(with: error); return }
+            EngineSignpost.stage("talk.stage.composeBelowText", since: composeStart)
+            // Text, drawings and motion keep their frame-order state: from here on frames take turns.
+            turn?.beginRest()
+            // The stills under the speaker and of the speaker alone end here: motion, text, above-text media and
+            // drawings all sit above the speaker and belong to `.aboveSpeaker`.
+            if instruction.speakerSlice == .belowSpeaker || instruction.speakerSlice == .speakerOnly {
                 context.render(frame, to: output, bounds: instruction.canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 request.finish(withComposedVideoFrame: output)
-                if instruction.speakerSlice == .whole {
-                    playbackFrameReceipt.complete(revision: instruction.playbackRevision, at: time)
-                }
+                return
+            }
+            // KRI-1350: the tone and its flash land on the whole composed picture (speaker, background, cards)
+            // before motion and text, so captions keep their authored colours (failure modes 8, 9).
+            let moment = instruction.speakerSlice == .whole ? instruction.colorMoments?.sample(at: time) : nil
+            if let moment {
+                do { frame = try ColorMomentPainter.image(frame, sample: moment, canvas: instruction.canvas) }
+                catch { request.finish(with: error); return }
+            }
+            if let motion = instruction.motionScenes {
+                do { frame = try motion.image(at: time).composited(over: frame) }
+                catch { request.finish(with: error); return }
+            }
+            let activeText: [RecipeTextLayer]
+            do {
+                activeText = try instruction.activeText(at: time)
+            } catch { request.finish(with: error); return }
+            let occlusion = instruction.subjectOcclusion(scene: frame, activeText: activeText, time: time)
+            do { frame = try Self.paintText(activeText, over: frame, canvas: instruction.canvas, time: time, occlusion: occlusion) }
+            catch { request.finish(with: error); return }
+            for layer in instruction.layers where time >= layer.start && time < layer.end && layer.overlayAboveText {
+                do { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
+                catch { request.finish(with: error); return }
+            }
+            if let drawings = instruction.drawings { frame = drawings.compose(over: frame, at: time, canvas: instruction.canvas) }
+            if let moment, moment.fadeToBlack > 0 {
+                frame = ColorMomentPainter.faded(frame, amount: moment.fadeToBlack, canvas: instruction.canvas)
+            }
+            let renderStart = DispatchTime.now().uptimeNanoseconds
+            context.render(frame, to: output, bounds: instruction.canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            EngineSignpost.stage("talk.stage.finalRender", since: renderStart)
+            request.finish(withComposedVideoFrame: output)
+            if instruction.speakerSlice == .whole {
+                playbackFrameReceipt.complete(revision: instruction.playbackRevision, at: time)
             }
         }
+    }
+    /// The speaker trace counts runs of frames, so a frame that does not ask the matte records in its matte turn.
+    private func recordInOrder(_ turn: RecipeFramePipeline.Frame?, _ record: () -> Void) {
+        guard let turn else { return record() }
+        turn.ordered(record)
     }
     /// The layers under the text. With a speaker background the order is: layers sorted below the first
     /// speaker layer, the background, the speaker layer(s) times the person mask, then every other layer
@@ -353,7 +401,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     /// speaker is ever matted (S8). The background shows only under an active speaker clip, so an ending
     /// clip on the same track is untouched.
     private func composeBelowText(_ candidates: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
-                                  request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage {
+                                  request: AVAsynchronousVideoCompositionRequest, time: Double,
+                                  turn: RecipeFramePipeline.Frame? = nil) throws -> CIImage {
         let layers = candidates.filter { $0.backdropAssetID == nil }
         if layers.contains(where: { $0.speakerRole == .speaker && $0.panelViewport != nil }) {
             return try composePanelSpeakers(layers, onto: canvas, instruction: instruction, request: request, time: time)
@@ -369,7 +418,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         // "below" paints anything.
         if !instruction.fullScreenWindows.isEmpty, SpeakerBackgroundLayer.fullScreen(instruction.fullScreenWindows, at: time) {
             guard slice == .whole || slice == .belowSpeaker else { return frame }
-            instruction.speakerMatte?.trace.record(.fullScreen, at: time)
+            recordInOrder(turn) { instruction.speakerMatte?.trace.record(.fullScreen, at: time) }
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
             return frame
         }
@@ -382,7 +431,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             // A background is part of the edit but no clip can ever be cut out of it: say so instead of drawing the room
             // silently. A speaker-less stretch of an edit that does have speaker clips (the ending clip) is not this.
             if slice == .whole, let matte = instruction.speakerMatte, !backgrounds.isEmpty, matte.trace.hasNoSpeakerClips {
-                matte.trace.record(.noSpeakerLayer, at: time)
+                recordInOrder(turn) { matte.trace.record(.noSpeakerLayer, at: time) }
             }
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
             return frame
@@ -403,9 +452,11 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         }
         let speakers = layers[first...].filter { $0.speakerRole == .speaker }
         var speaker = CIImage(color: .clear).cropped(to: instruction.canvas)
+        let speakerStart = DispatchTime.now().uptimeNanoseconds
         for layer in speakers { speaker = try composeVideoLayer(layer, onto: speaker, instruction: instruction, request: request, time: time) }
+        EngineSignpost.stage("talk.stage.speakerLayer", since: speakerStart)
         let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
-        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil) {
+        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil, frame: turn) {
         case .cutout(let mask):
             if slice != .speakerOnly { try compose(background) }
             // The mask was computed on the full-size speaker layer; only then is the cut-out moved into its frame (S27).
@@ -769,7 +820,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
 
     // Requests are serialized and each finishes exactly once. Draining the queue avoids leaving
     // requests outstanding while AVFoundation changes its render context after a seek.
-    func cancelAllPendingVideoCompositionRequests() { queue.sync {} }
+    func cancelAllPendingVideoCompositionRequests() { queue.sync {}; workers.sync(flags: .barrier) {} }
     private static func opacity(_ image: CIImage, _ value: Double) -> CIImage {
         image.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: value)])
     }
@@ -777,9 +828,32 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
 
 /// A look requires original YUV samples, before RGB clipping or resampling.
 /// Leave decoder negotiation for recipes without looks unchanged.
-final class RecipeLookVideoCompositor: RecipeVideoCompositor, @unchecked Sendable {
+class RecipeLookVideoCompositor: RecipeVideoCompositor, @unchecked Sendable {
     override var sourcePixelBufferAttributes: [String: any Sendable]? { [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
     ] }
+}
+
+/// What an export draws with: the player's frames, a few at a time (`RecipeFramePipeline`).
+final class RecipeExportVideoCompositor: RecipeVideoCompositor, @unchecked Sendable {
+    override class var framesInFlight: Int { ExportFrameOverlap.framesInFlight }
+}
+final class RecipeExportLookVideoCompositor: RecipeLookVideoCompositor, @unchecked Sendable {
+    override class var framesInFlight: Int { ExportFrameOverlap.framesInFlight }
+}
+
+/// How many frames an on-device export draws at once. A frame spends most of its time waiting on Vision's neural engine and
+/// then on the GPU, and neither is busy while the other runs, so a second frame in flight roughly halves a Talking Save. On a
+/// phone AVFoundation keeps two requests outstanding whatever the depth, so a larger value only costs memory. Each extra frame
+/// holds an output buffer, Vision's input and mask, and Core Image scratch.
+///
+/// `1` is the switch off: `RecipeWriter` then hands the export the player's own composition, with the compositor it always
+/// used. The app sets this at launch from `UserDefaults` (`kria.exportFramesInFlight`).
+public enum ExportFrameOverlap {
+    public static let defaultFramesInFlight = 2
+    public static let range = 1...4
+    nonisolated(unsafe) public static var framesInFlight = defaultFramesInFlight {
+        didSet { if !range.contains(framesInFlight) { framesInFlight = min(range.upperBound, max(range.lowerBound, framesInFlight)) } }
+    }
 }
 #endif

@@ -99,7 +99,17 @@ final class SpeakerMatte: @unchecked Sendable {
     /// `speaker` is the speaker layer alone, after its transform, over a transparent canvas.
     /// `backgroundStaysDrawn`: the caller draws the background under an `.original` answer too (a corner speaker),
     /// which the trace must not count as a hidden background.
-    func answer(for speaker: CIImage, at time: Double, canvas: CGRect, clipKey: String, backgroundStaysDrawn: Bool = false) -> Answer {
+    /// `frame`: set by an export that overlaps frames. The segmentation then runs before the frame's turn and only the
+    /// state decisions run in it, so the answers are the ones the one-frame-at-a-time order gives.
+    func answer(for speaker: CIImage, at time: Double, canvas: CGRect, clipKey: String, backgroundStaysDrawn: Bool = false,
+                frame: RecipeFramePipeline.Frame? = nil) -> Answer {
+        guard let frame else { return decide(speaker, at: time, canvas: canvas, clipKey: clipKey, backgroundStaysDrawn: backgroundStaysDrawn, raw: nil) }
+        let overlaps = config.maskRate == nil && segmenter?.supportsConcurrentRequests == true
+        let raw = overlaps ? EngineSignpost.measure("talk.matte.segment") { rawSegment(speaker, canvas: canvas) } : nil
+        return frame.ordered { decide(speaker, at: time, canvas: canvas, clipKey: clipKey, backgroundStaysDrawn: backgroundStaysDrawn, raw: raw) }
+    }
+
+    private func decide(_ speaker: CIImage, at time: Double, canvas: CGRect, clipKey: String, backgroundStaysDrawn: Bool, raw: Raw?) -> Answer {
         lock.lock(); defer { lock.unlock() }
         // A cut to another speaker clip or a seek must never inherit the previous silhouette (S7).
         let cutToAnotherClip = clipKey != self.clipKey
@@ -114,37 +124,47 @@ final class SpeakerMatte: @unchecked Sendable {
             trace.record(tick.outcome, at: time, backgroundDrawn: backgroundStaysDrawn)
             return tick.answer
         }
-        let (answer, outcome) = EngineSignpost.measure("talk.matte.segment") { segment(speaker, at: time, canvas: canvas) }
+        let (answer, outcome) = raw.map { resolve($0, at: time, canvas: canvas) }
+            ?? EngineSignpost.measure("talk.matte.segment") { resolve(rawSegment(speaker, canvas: canvas), at: time, canvas: canvas) }
         trace.record(outcome, at: time, backgroundDrawn: backgroundStaysDrawn)
         if let index { tick = (index, answer, outcome) }
         return answer
     }
 
-    private func segment(_ speaker: CIImage, at time: Double, canvas: CGRect) -> (Answer, SpeakerBackgroundTrace.Outcome) {
+    /// What the segmenter said about one frame, before any decision that depends on the frames around it.
+    private enum Raw {
+        case noSegmenter, threw, unreadable
+        case mask(SpeakerMaskReading)
+    }
+
+    private func rawSegment(_ speaker: CIImage, canvas: CGRect) -> Raw {
+        guard let segmenter else { return .noSegmenter }
+        do {
+            guard let buffer = try segmenter.personMask(for: speaker, canvas: canvas, config: config),
+                  let reading = SpeakerMaskReading(buffer, config: config) else { return .unreadable }
+            return .mask(reading)
+        } catch {
+            return .threw
+        }
+    }
+
+    private func resolve(_ raw: Raw, at time: Double, canvas: CGRect) -> (Answer, SpeakerBackgroundTrace.Outcome) {
         var failure = SpeakerBackgroundTrace.Outcome.originalNoSegmenter
-        if let segmenter {
-            do {
-                if let buffer = try segmenter.personMask(for: speaker, canvas: canvas, config: config) {
-                    if let reading = SpeakerMaskReading(buffer, config: config) {
-                        if reading.coverage < config.minCoverage {
-                            lastGood = (.backgroundOnly, time)
-                            return (.backgroundOnly, .backgroundOnly)
-                        }
-                        if reading.isUsable(by: config) {
-                            let answer = Answer.cutout(reading.mask(canvas: canvas))
-                            lastGood = (answer, time)
-                            return (answer, .cutout)
-                        }
-                        failure = .originalCoverage
-                    } else {
-                        failure = .originalUnreadable
-                    }
-                } else {
-                    failure = .originalUnreadable
-                }
-            } catch {
-                failure = .originalError
+        switch raw {
+        case .noSegmenter: break
+        case .unreadable: failure = .originalUnreadable
+        case .threw: failure = .originalError
+        case .mask(let reading):
+            if reading.coverage < config.minCoverage {
+                lastGood = (.backgroundOnly, time)
+                return (.backgroundOnly, .backgroundOnly)
             }
+            if reading.isUsable(by: config) {
+                let answer = Answer.cutout(reading.mask(canvas: canvas))
+                lastGood = (answer, time)
+                return (answer, .cutout)
+            }
+            failure = .originalCoverage
         }
         if let lastGood, abs(time - lastGood.time) <= config.holdGrace {
             EngineSignpost.count("talk.matte.held")
