@@ -65,10 +65,17 @@ edits both apply on top of it, and the creator is never asked to resolve a confl
 - **Who heals** (restages on observation, because many code paths write a generation id):
   draft GET, draft PUT, undo and Save. A head left on an older generation is moved
   before the request is served; it is not a conflict.
+- **A rebase is per lane.** Each head records the committed lanes it was authored on
+  (`base_lanes`); moving it onto a newer generation keeps a lane only when the head changed it
+  and the committed state did not. When both changed it, the committed value wins and the lane
+  is listed in `replaced_lanes`. Heads written before `base_lanes` existed keep their flat
+  chat lanes. A restage records `restage: {of, reason}`, and only the approval's own render
+  and a phone publish keep an approval's draft current.
 - **A chat turn with a stale phone state** builds on the latest. The phone sends only the
   lanes the creator changed. The turn starts from the head (healed in memory) or the
-  committed variant, lays those lanes on top, and lets the latest win where it changed the
-  same lane. Timeline lanes from an older generation are dropped. The turn is never refused.
+  committed variant and lays those lanes on top by the same per-lane rule. Timeline lanes
+  from an older generation are dropped and the turn trace names every dropped creator lane.
+  The turn is never refused.
 - **Repair.** `python -m app.cli.repair_editor_heads --item <uuid> [--apply]` restages the
   heads of one item, and `--list-stranded` lists heads that are off their baseline. It is a
   dry run unless `--apply` is given. A production run needs owner approval; show the

@@ -72,12 +72,25 @@ both apply on top of it; the creator is never asked to resolve a conflict.
 - Restaged by the writers that move the generation: approval execution, phone publish,
   speech-cut publish and manual Save. Healed on observation by draft GET, draft PUT, undo
   and Save. A restage is a no-op when the head is already on the baseline.
+- A rebase is per lane. Every head records `editor_payload.base_lanes` (a hash of each
+  committed lane at the generation it was authored on; the server stamps it in
+  `drafts.with_base_lanes`, which every head writer calls). Moving a head onto a newer
+  generation is a three-way merge per lane (`editor_head.rebase_payload`): a lane the head did
+  not change takes the committed value, a lane only the head changed survives, a lane both
+  changed takes the committed value (`replaced_lanes` records it). A row written before
+  `base_lanes` existed keeps its flat top-level lanes and takes committed for lanes that exist
+  only under a full `sections` document. A restage row records `restage: {of, reason}`;
+  `draft_still_current` (approval claim, render retry, intent review) accepts only the
+  approval's own render and a phone publish as lineage, so an old approval never runs on top
+  of a manual Save. Undo skips restage rows and is unavailable when it would change nothing.
 - A chat turn whose phone state is older than the variant is rebased, not refused.
   `resolve_editor_base` starts from the head (healed in memory by the same function the
   restage persists) or the committed variant, then lays on the lanes the creator changed
-  (the phone sends only those). The latest wins where it changed the same lane; timeline
-  lanes from an older generation are dropped. The turn proceeds; the planner snapshot and
-  the locked compile call the same resolver, so they agree.
+  (the phone sends only those) by the same rule: exact three-way when the head recorded its
+  base for the phone's generation, otherwise the creator's lanes apply except the timeline
+  lanes of an older generation. A creator lane that could not be kept is on the turn trace
+  (`editor_state_dropped_lanes`). The turn proceeds; the planner snapshot and the locked
+  compile call the same resolver, so they agree.
 - Stranded heads from before the heal existed: `python -m app.cli.repair_editor_heads`
   (dry run by default; `--apply`, `--list-stranded`). It needs owner approval before a
   production run.
