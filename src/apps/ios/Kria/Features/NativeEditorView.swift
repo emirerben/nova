@@ -280,19 +280,7 @@ struct NativeEditorView: View {
 
     @ViewBuilder private var noticeCard: some View {
         Group {
-            if let conflict = session.mergeConflictMessage {
-                NativeEditorNoticeCard(
-                    title: "Review conflicting changes",
-                    message: conflict,
-                    primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {
-                        session.resolveMergeConflicts(keepingLocal: false)
-                    },
-                    secondary: session.canKeepLocalMergeConflicts
-                        ? NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-merge-local") {
-                            session.resolveMergeConflicts(keepingLocal: true)
-                        } : nil,
-                    isDisabled: session.isSaving)
-            } else if let newer = session.newerJobPrompt {
+            if let newer = session.newerJobPrompt {
                 NativeEditorNoticeCard(
                     title: "A new version of your video is ready",
                     message: "Switching discards your unsaved edits.",
@@ -302,16 +290,15 @@ struct NativeEditorView: View {
                     secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-keep-editing") {
                         session.keepEditingCurrentJob()
                     })
-            } else if let message = session.latestJobRefreshMessage {
+            } else if let message = session.convergeNotice ?? session.latestJobRefreshMessage {
                 NativeEditorNoticeCard(message: message)
             }
         }
     }
 
     private var topNoticeKey: String {
-        if let conflict = session.mergeConflictMessage { return "conflict:\(conflict):\(session.canKeepLocalMergeConflicts)" }
         if let newer = session.newerJobPrompt { return "newer:\(newer.id)" }
-        return session.latestJobRefreshMessage.map { "refresh:\($0)" } ?? "none"
+        return (session.convergeNotice ?? session.latestJobRefreshMessage).map { "refresh:\($0)" } ?? "none"
     }
 
     private func editorExitControls<Content: View>(_ content: Content) -> some View {

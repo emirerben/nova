@@ -108,10 +108,6 @@ enum EditorOpenIntent { case warm, open }
     /// compatibility projection for first-pass views and test fixtures.
     @Published private(set) var document: EditorDocument {
         didSet {
-            if let checkpoint = mergeDecisionCheckpoint, checkpoint.isOpen, document != checkpoint.before {
-                document = checkpoint.before
-                return
-            }
             draftProjectionCache = nil
             timelineItemsCache = nil
             timelineClipsCache = nil
@@ -190,66 +186,34 @@ enum EditorOpenIntent { case warm, open }
     @Published var hasUnsavedChanges = false
     @Published var saveState: NativeEditorSaveState = .idle
     @Published var splitScreenActionError: String?
-    @Published private(set) var mergeConflictMessage: String?
-    @Published private(set) var canKeepLocalMergeConflicts = true
-    private enum MergeOrigin: Equatable { case rendered, submittedChat, unprovenChat }
-    private struct MergeAuthority: Equatable {
-        let identity: EditorOperationIdentity
-        let owner: String?
-        let generation: String
-        let clean: EditorDocument
-        let song: JSONValue?
-    }
-    private var mergeAuthority: MergeAuthority {
-        MergeAuthority(identity: editorOperationIdentity, owner: api?.mediaLibraryOwner,
-            generation: cleanDocument.revision.baseGeneration, clean: cleanDocument,
-            song: Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong,
-                job: jobID, generation: cleanDocument.revision.baseGeneration))
-    }
-    private struct PendingMerge {
-        let id = UUID()
-        var origin: MergeOrigin = .rendered
-        var authority: MergeAuthority? = nil
-        var localOverride: EditorDocument? = nil
-        var stagedSections: Set<EditorSection> = []
+    /// A non-blocking, self-dismissing note that the editor moved to the latest version.
+    @Published private(set) var convergeNotice: String?
+    private var convergeNoticeTask: Task<Void, Never>?
+    /// Where a converge lands. A parameter of the call, never session state: nothing waits on it.
+    private struct ConvergeTarget {
+        /// The document the creator's unsaved edits were made against.
         let base: EditorDocument
+        /// The render's own document: the new clean baseline.
         let clean: EditorDocument
-        let remote: EditorDocument
-        let baseSong: JSONValue?
+        /// What the editor shows with no creator edits: `clean` plus any chat edit staged on it.
+        let latest: EditorDocument
         let variant: [String: JSONValue]?
-        let forcePreview: Bool
-        let thread: UUID?
-        let originalJob: UUID?
-        let originalVariant: String?
-        let destinationJob: UUID?
-        let destinationVariant: String?
-        let destinationItem: String?
-        let stagedRevision: Int?
-        let remoteETag: String?
-        let legacySnapshot: [String: JSONValue]?
+        let destination: (job: UUID?, variant: String?, item: String?)
+        /// False when the target is a chat draft staged on the version already shown.
+        var isNewVersion = true
+        var forcePreview = false
+        var stagedSections: Set<EditorSection> = []
+        var stagedRevision: Int?
+        var remoteETag: String?
+        var legacySnapshot: [String: JSONValue]?
     }
-    private var pendingMerge: PendingMerge?
-    /// A decision boundary is not an executable document checkpoint. Reopening it
-    /// shows the original local document read-only until the destination is chosen.
-    private struct MergeDecisionCheckpoint {
-        let context: PendingMerge
-        let before: EditorDocument
-        let after: EditorDocument
-        let authority: MergeAuthority
-        var isOpen = false
+    /// The creator's own unsaved edits. Nil when the editor is clean or holds only what an AI chat staged,
+    /// which the server already has and a newer version supersedes. Every converge passes this as `local`.
+    private var creatorDocument: EditorDocument? {
+        !hasUnsavedChanges || hasOnlyChatStagedChanges ? nil : document
     }
-    private var mergeDecisionCheckpoint: MergeDecisionCheckpoint?
-    private var mutatingDocumentHistory = false
-    var isReviewingPreviousMerge: Bool { mergeDecisionCheckpoint?.isOpen == true }
-    private var decisionIsCurrent: Bool { mergeDecisionCheckpoint?.authority == mergeAuthority }
-    private func clearMergeDecisionCheckpoint() {
-        let checkpoint = mergeDecisionCheckpoint
-        mergeDecisionCheckpoint = nil
-        if let checkpoint, checkpoint.isOpen {
-            document = checkpoint.after
-            pendingMerge = nil; mergeConflictMessage = nil; canKeepLocalMergeConflicts = true
-        }
-    }
+    /// A gesture or text entry owns the document; a converge waits for it to settle.
+    private var isQuietForConverge: Bool { pendingText == nil && transactionBaseline == nil && !isTimingGestureActive }
 
     @Published private(set) var refreshSync: NativeEditorRefreshSync = .idle
     /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
@@ -1217,10 +1181,7 @@ enum EditorOpenIntent { case warm, open }
     private let minimumClipDuration: TimeInterval = 0.1
     private let historyLimit = 100
     private var undoStack: [EditorDocument] = [] {
-        didSet {
-            undoHistoryVersion &+= 1
-            if !mutatingDocumentHistory { clearMergeDecisionCheckpoint() }
-        }
+        didSet { undoHistoryVersion &+= 1 }
     }
     /// KRI-240: changes on every undo-history change (new step, undo, trim at the
     /// limit, clear), so the caption editor's Undo notice can tell its removal is
@@ -1305,7 +1266,9 @@ enum EditorOpenIntent { case warm, open }
     private struct SubmittedEditorState {
         let document: EditorDocument
         let sections: Set<EditorSection>
-        let authority: MergeAuthority
+        let identity: EditorOperationIdentity
+        let owner: String?
+        let clean: EditorDocument
     }
     private var submittedEditorStates: [String: SubmittedEditorState] = [:]
     private var submittedEditorStateOrder: [String] = []
@@ -1325,7 +1288,6 @@ enum EditorOpenIntent { case warm, open }
     /// must fall back to the legacy save-then-send flow. A clean editor exports
     /// request metadata without changed lanes, meaning "no unsaved edits".
     func exportEditorState(maxBytes: Int? = nil) -> EditorStateRequest? {
-        guard !isReviewingPreviousMerge else { return nil }
         guard loadState == .loaded, !isSaving, document.splitScreenIsValid else { return nil }
         // A text field still being typed is part of the creator's current state.
         _ = finishTextCreation()
@@ -1345,7 +1307,8 @@ enum EditorOpenIntent { case warm, open }
             Self.stagingLog.debug("editor_state over cap bytes=\(encoded.count, privacy: .public) max=\(maxBytes, privacy: .public); legacy flush")
             return nil
         }
-        submittedEditorStates[request.clientStateID] = SubmittedEditorState(document: document, sections: changedSections, authority: mergeAuthority)
+        submittedEditorStates[request.clientStateID] = SubmittedEditorState(document: document, sections: changedSections,
+            identity: editorOperationIdentity, owner: api?.mediaLibraryOwner, clean: cleanDocument)
         submittedEditorStateOrder.append(request.clientStateID)
         while submittedEditorStateOrder.count > Self.submittedEditorStateLimit {
             submittedEditorStates[submittedEditorStateOrder.removeFirst()] = nil
@@ -1360,28 +1323,22 @@ enum EditorOpenIntent { case warm, open }
         return probe == a
     }
 
-    /// Only an echoed, lifetime-scoped submitted state proves the chat's base.
+    /// Only an echoed, lifetime-scoped submitted state proves the chat's base. Without one the clean document is
+    /// the base; the creator's edits and the chat's both land, the chat's winning any overlap.
     private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>),
                                 submitted: SubmittedEditorState?, revision: Int) {
-        let proven = submitted.flatMap { $0.authority == mergeAuthority ? $0 : nil }
-        let cumulativeChatOnly = hasOnlyChatStagedChanges
+        let proven = submitted.flatMap {
+            $0.identity == editorOperationIdentity && $0.owner == api?.mediaLibraryOwner && $0.clean == cleanDocument ? $0 : nil
+        }
         // A chat-only editor already holds the earlier draft, which a reused submitted state predates.
-        let base = cumulativeChatOnly ? document : (proven?.document ?? cleanDocument)
-        var remote = base
-        for section in staged.sections { copy(section, from: staged.document, into: &remote) }
+        let base = hasOnlyChatStagedChanges ? document : (proven?.document ?? cleanDocument)
+        var latest = base
+        for section in staged.sections { copy(section, from: staged.document, into: &latest) }
         // Chat changes authored fields; rendered authority remains the current one.
-        remote.revision = document.revision
-        remote.capabilities = document.capabilities
-        let requiresChoice = proven == nil && hasUnsavedChanges && !cumulativeChatOnly
-        let context = PendingMerge(origin: requiresChoice ? .unprovenChat : .submittedChat,
-            authority: mergeAuthority, stagedSections: staged.sections,
-            base: base, clean: cleanDocument, remote: remote, baseSong: mergeAuthority.song,
-            variant: previewVariant, forcePreview: false, thread: threadID,
-            originalJob: jobID, originalVariant: variantKey, destinationJob: jobID,
-            destinationVariant: variantKey, destinationItem: itemID, stagedRevision: revision,
-            remoteETag: nil, legacySnapshot: nil)
-        pendingMerge = context
-        _ = applyMerge(context, preference: nil)
+        latest.revision = document.revision
+        latest.capabilities = document.capabilities
+        applyConverged(ConvergeTarget(base: base, clean: cleanDocument, latest: latest, variant: previewVariant,
+            destination: (jobID, variantKey, itemID), isNewVersion: false, stagedSections: staged.sections, stagedRevision: revision))
     }
 
     var hasOnlyChatStagedChanges: Bool {
@@ -1624,7 +1581,6 @@ enum EditorOpenIntent { case warm, open }
                                 variantKey: variantKey, threadID: threadID)
     }
     private func beginEditorLoad() -> UInt64 {
-        clearMergeDecisionCheckpoint()
         clipIDsBySlot.removeAll()
         editorLoadEpoch &+= 1
         resetLatestJobDrain()
@@ -1718,7 +1674,6 @@ enum EditorOpenIntent { case warm, open }
     private let playbackEndTolerance: TimeInterval = 0.05
 
     var videoDownloadTarget: NativeEditorVideoDownloadTarget? {
-        guard !isReviewingPreviousMerge else { return nil }
         guard let jobID, let variantKey else { return nil }
         let generation = document.revision.baseGeneration.isEmpty ? nil : document.revision.baseGeneration
         return NativeEditorVideoDownloadTarget(
@@ -1730,7 +1685,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     var canDownloadCurrentVideo: Bool {
-        guard !isShowingPreviousPreview, !isReviewingPreviousMerge else { return false }
+        guard !isShowingPreviousPreview else { return false }
         guard document.editorState != "empty" else { return false }
         if savedEditDeviceRenderFile() != nil { return true }
         let displayedVideoIsCurrent: Bool
@@ -1754,7 +1709,6 @@ enum EditorOpenIntent { case warm, open }
     var exportBlockReason: String? {
         if isShowingPreviousPreview { return "The preview shows the previous version. Check the preview update before exporting." }
         guard !canDownloadCurrentVideo else { return nil }
-        if isReviewingPreviousMerge { return "Choose which changes to keep, or Redo, before exporting." }
         if document.editorState == "empty" { return "Add a clip before exporting." }
         if isSaving { return "Saving your changes…" }
         if hasUnsavedChanges { return "Save your changes to export the current video." }
@@ -1773,7 +1727,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
-        guard !isShowingPreviousPreview, !isReviewingPreviousMerge else { throw NativeEditorVideoDownloadError.unavailable }
+        guard !isShowingPreviousPreview else { throw NativeEditorVideoDownloadError.unavailable }
         let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile)
         if let rendered, case .localFile = rendered { return rendered }
         if let own = savedEditDeviceRenderFile() { return .localFile(own) }
@@ -1853,7 +1807,7 @@ enum EditorOpenIntent { case warm, open }
     /// cloud render. The user must always get what the preview shows.
     func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)? = nil) async throws -> NativeEditorTemporaryVideo {
         guard !isShowingPreviousPreview else { throw NativeEditorVideoDownloadError.unavailable }
-        guard !isReviewingPreviousMerge, sourcePreviewState == .ready, sourcePreviewSettled,
+        guard sourcePreviewState == .ready, sourcePreviewSettled,
               let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else {
             throw NativeEditorVideoDownloadError.unavailable
@@ -2198,10 +2152,10 @@ enum EditorOpenIntent { case warm, open }
         latestJobDrainTask?.cancel()
     }
 
-    var canUndo: Bool { !isReviewingPreviousMerge && (!undoStack.isEmpty || (mergeDecisionCheckpoint != nil && decisionIsCurrent)) }
+    var canUndo: Bool { !undoStack.isEmpty }
     var undoHistoryCount: Int { undoStack.count }
     var isTimingGestureActive: Bool { activeTimedEdit != nil || activeTrim != nil }
-    var canRedo: Bool { isReviewingPreviousMerge ? decisionIsCurrent : !redoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
     var selectedClipID: UUID? {
         get { guard selection?.kind == .clip else { return nil }; return UUID(uuidString: selection?.id ?? "") }
         set { selection = newValue.map { EditorSelection(kind: .clip, id: $0.uuidString) } }
@@ -2234,7 +2188,6 @@ enum EditorOpenIntent { case warm, open }
     /// typed mutation APIs while a transaction is open update the document but
     /// do not append additional undo entries.
     func beginTransaction() {
-        guard !isReviewingPreviousMerge else { return }
         guard transactionBaseline == nil else { return }
         transactionBaseline = document
     }
@@ -2246,13 +2199,9 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func appendUndo(_ value: EditorDocument, isRedo: Bool = false) {
-        guard !isReviewingPreviousMerge else { return }
-        mutatingDocumentHistory = true
-        defer { mutatingDocumentHistory = false }
         saveHistory?.appendUndo(value, isRedo: isRedo)
         undoStack.append(value)
         if undoStack.count > historyLimit {
-            clearMergeDecisionCheckpoint()
             undoStack.removeFirst(undoStack.count - historyLimit)
         }
     }
@@ -2550,7 +2499,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func synchronizePromptRevision(identity: EditorOperationIdentity, owner: String?) async {
-        guard !isReviewingPreviousMerge, editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
+        guard editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
         // The open holds the session until its preview is built; runPromptRevisionSync would drop this, so remember it.
         if openFlight != nil, isSaving || loadState != .loaded { syncDroppedByOpen = true }
         // A concurrent save/hydration can change the clean baseline while this
@@ -2564,7 +2513,6 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func runPromptRevisionSync(identity: EditorOperationIdentity, owner: String?) async {
-        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
         guard editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
         if isSaving, loadState == .loaded, !promptSyncStopped,
            refreshSync == .reconnecting || isRunningRefreshRetry {
@@ -2689,14 +2637,13 @@ enum EditorOpenIntent { case warm, open }
                 Self.stagingLog.debug("sync rebase: newer version under local edits rev=\(snapshot.draftRevision, privacy: .public)")
                 if !sameTarget { appliedChatDraftRevision = nil }
                 if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
-                var remote = nextDocument
+                var latest = nextDocument
                 if let staged {
-                    for section in staged.sections { copy(section, from: staged.document, into: &remote) }
+                    for section in staged.sections { copy(section, from: staged.document, into: &latest) }
                 }
-                guard rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget,
-                    remoteEdits: remote, destination: (nextJobID, nextVariantKey, snapshot.itemID),
-                    stagedRevision: staged == nil ? nil : snapshot.draftRevision) else { return }
-                if staged != nil { appliedChatDraftRevision = snapshot.draftRevision }
+                applyConverged(ConvergeTarget(base: cleanDocument, clean: nextDocument, latest: latest, variant: variant,
+                    destination: (nextJobID, nextVariantKey, snapshot.itemID), forcePreview: !sameTarget,
+                    stagedSections: staged?.sections ?? [], stagedRevision: staged == nil ? nil : snapshot.draftRevision))
                 return
             }
             let selected = selection
@@ -2905,7 +2852,7 @@ enum EditorOpenIntent { case warm, open }
         } catch {
             // An obsolete open is handled: it must never authorize caller reload.
             guard editorOperationIdentity == identity else { return true }
-            let hasOwnEdits = hasUnsavedChanges && !hasOnlyChatStagedChanges
+            let hasOwnEdits = creatorDocument != nil
             // Superseded (re-plan) keeps the full path, which follows the thread to its new job.
             // Anything else (a dropped connection) must not wipe local edits or error the editor.
             switch Self.refreshFailure(error) {
@@ -2927,7 +2874,7 @@ enum EditorOpenIntent { case warm, open }
             }
         }
         guard editorOperationIdentity == identity else { return true }
-        let hasOwnEdits = hasUnsavedChanges && !hasOnlyChatStagedChanges
+        let hasOwnEdits = creatorDocument != nil
         guard !isSaving else { return true }
         if variantUnchanged(current) {
             loadedServerRevision = project.serverRevision
@@ -3176,20 +3123,16 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func resetLatestJobDrain() {
-        clearMergeDecisionCheckpoint()
         savedSongProjectionLag = nil
         watchedLatestProject = nil
         latestJobGate.reset()
         latestJobDrainTask?.cancel()
         latestJobDrainTask = nil
-        pendingMerge = nil
-        mergeConflictMessage = nil
-        canKeepLocalMergeConflicts = true
+        convergeNoticeTask?.cancel(); convergeNotice = nil
         latestJobRefreshMessage = nil
     }
 
     private func drainPendingLatestJob() {
-        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
         guard observersVisible, !isSaving, activeSaveAttemptID == nil, let ticket = latestJobGate.pending,
               ticket.threadID == threadID, let api else { return }
         latestJobDrainTask?.cancel()
@@ -3366,7 +3309,8 @@ enum EditorOpenIntent { case warm, open }
                 guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
                 let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: variantID) }
                 guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
-                      threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
+                      threadID == ticket.threadID, editorOperationIdentity == identity, !isSaving, activeSaveAttemptID == nil,
+                      await settledForConverge(ticket, identity: identity) else { return }
                 let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
                 let snapshot = DraftSnapshot(draftID: "latest-\(target.uuidString)", itemID: item, variantKey: variantID,
                     draftRevision: 0, snapshotHash: "", etag: "", baseJobID: target.uuidString,
@@ -3376,8 +3320,9 @@ enum EditorOpenIntent { case warm, open }
                 clean.revision.baseGeneration = generation ?? ""
                 latestJobGate.finish(ticket)
                 newerJobPrompt = nil
-                _ = rebaseLocalEdits(onto: clean, variant: variant, forcePreviewRebuild: true,
-                    destination: (target, variantID, item), remoteETag: "", legacySnapshot: draft.serverSnapshot)
+                applyConverged(ConvergeTarget(base: cleanDocument, clean: clean, latest: clean, variant: variant,
+                    destination: (target, variantID, item), forcePreview: true, remoteETag: "",
+                    legacySnapshot: draft.serverSnapshot))
                 return
             }
             guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
@@ -3396,14 +3341,16 @@ enum EditorOpenIntent { case warm, open }
             guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
             let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: snapshot.variantKey) }
             guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
-                  threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
+                  threadID == ticket.threadID, editorOperationIdentity == identity, !isSaving, activeSaveAttemptID == nil,
+                  await settledForConverge(ticket, identity: identity) else { return }
             let latestDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
             let latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestJobGate.finish(ticket)
             newerJobPrompt = nil
-            if rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: true,
-                destination: (target, snapshot.variantKey, snapshot.itemID), remoteETag: snapshot.etag,
-                legacySnapshot: conversationRuntimeVersion == 1 ? latestDraft.serverSnapshot : nil) { latestJobRefreshMessage = nil }
+            applyConverged(ConvergeTarget(base: cleanDocument, clean: latestClean, latest: latestClean, variant: variant,
+                destination: (target, snapshot.variantKey, snapshot.itemID), forcePreview: true, remoteETag: snapshot.etag,
+                legacySnapshot: conversationRuntimeVersion == 1 ? latestDraft.serverSnapshot : nil))
+            latestJobRefreshMessage = nil
             return
         }
         latestJobGate.finish(ticket)
@@ -3411,6 +3358,17 @@ enum EditorOpenIntent { case warm, open }
         // own load entrypoint after the target has already been fenced.
         latestJobDrainTask = nil
         await switchToLatestJob(project, api: api)
+    }
+
+    /// A gesture or text entry owns the document: wait for it, then converge. False when the ticket, the editor
+    /// or a save moved on first; the ticket stays pending, so the next drain converges instead.
+    private func settledForConverge(_ ticket: NativeEditorLatestGate.Ticket, identity: EditorOperationIdentity) async -> Bool {
+        while !isQuietForConverge {
+            do { try await latestJobReadSleep(.milliseconds(250)) } catch { return false }
+            guard !Task.isCancelled, observersVisible, latestJobGate.matches(ticket), editorOperationIdentity == identity,
+                  !isSaving, activeSaveAttemptID == nil else { return false }
+        }
+        return true
     }
 
     enum JobReadiness: Equatable { case ready, rendering, failed }
@@ -4167,7 +4125,6 @@ enum EditorOpenIntent { case warm, open }
     }
 
     func prepareSourcePreview() async {
-        guard !isReviewingPreviousMerge else { return }
         guard let api, let jobID, let variantKey else { return }
         #if DEBUG
         sourcePreviewBuildCountForTesting += 1
@@ -4716,7 +4673,6 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func scheduleSourcePreviewUpdate() {
-        guard !isReviewingPreviousMerge else { return }
         guard resolvedSources != nil, sourceCompiler != nil else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
@@ -4747,7 +4703,6 @@ enum EditorOpenIntent { case warm, open }
     static let previewCoalesceMilliseconds = 80
 
     private func rebuildSourcePreview(sequence: Int) async {
-        guard !isReviewingPreviousMerge else { return }
         guard let compiler = sourceCompiler, var sources = resolvedSources else { return }
         let workTicket = currentPreviewWork
         guard workTicket.sequence == sequence, !Task.isCancelled else { return }
@@ -5005,7 +4960,6 @@ enum EditorOpenIntent { case warm, open }
 
     func togglePlayback() {
         invalidatePreviewResumeIntent()
-        guard !isReviewingPreviousMerge else { return }
         guard document.editorState != "empty" else { return }
         if !isPlaying, !canDisplayCurrentPlayer, sourcePreviewState == .preparing { showVersionBeforeStagedEdit() }
         guard canPlayCanvasVideo, let player else {
@@ -8628,51 +8582,12 @@ enum EditorOpenIntent { case warm, open }
     }
 
     func undo() {
-        guard !isReviewingPreviousMerge else { return }
-        if !isSaving, transactionBaseline == nil, !isTimingGestureActive,
-           undoStack.isEmpty, var checkpoint = mergeDecisionCheckpoint, decisionIsCurrent {
-            pausePlayback()
-            promptRefreshSequence &+= 1
-            latestJobDrainTask?.cancel(); latestJobDrainTask = nil
-            previewRefreshTask?.cancel(); previewRefreshTask = nil
-            sourcePreviewTask?.cancel(); sourcePreviewQuietRetryTask?.cancel()
-            sourcePreviewSequence &+= 1
-            pendingPlayRequest = false
-            checkpoint.isOpen = true
-            mergeDecisionCheckpoint = checkpoint
-            pendingMerge = checkpoint.context
-            document = checkpoint.before
-            sourcePreviewState = .failed("Review your previous edits and choose which changes to keep before preparing a preview.")
-            let context = checkpoint.context
-            if case .resolved = NativeEditorMerge.documents(base: context.base, local: checkpoint.before,
-                remote: context.remote, baseSong: context.baseSong, remoteSong: checkpoint.authority.song,
-                preference: .local) {
-                canKeepLocalMergeConflicts = true
-            } else { canKeepLocalMergeConflicts = false }
-            mergeConflictMessage = "Your previous edits are shown read-only. Choose which changes to keep on the current version, or Redo the previous choice."
-            refreshDirtyState(); refreshDuration()
-            return
-        }
-        mutatingDocumentHistory = true
-        defer { mutatingDocumentHistory = false }
         guard let previous = undoStack.popLast() else { return }
         saveHistory?.recordUndo(to: previous, from: document)
         appendRedo(document); document = previous; refreshDirtyState(); refreshDuration()
     }
 
     func redo() {
-        if let checkpoint = mergeDecisionCheckpoint, checkpoint.isOpen {
-            guard !isSaving, decisionIsCurrent else { return }
-            var restored = checkpoint
-            restored.isOpen = false
-            mergeDecisionCheckpoint = restored
-            pendingMerge = nil; mergeConflictMessage = nil; canKeepLocalMergeConflicts = true
-            document = checkpoint.after
-            refreshDirtyState(); refreshDuration()
-            refreshRebasedSourcePreview(force: true)
-            rearmLatestJobAfterMergeDecision()
-            return
-        }
         guard let next = redoStack.popLast() else { return }
         appendUndo(document, isRedo: true); document = next; refreshDirtyState(); refreshDuration()
     }
@@ -8682,7 +8597,6 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func save(retrying retrySections: Set<EditorSection>) async {
-        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
         guard !isSaving, activeSaveAttemptID == nil else { return }
         let attemptID = UUID()
         let identity = editorOperationIdentity
@@ -8707,8 +8621,6 @@ enum EditorOpenIntent { case warm, open }
             let reload = await reloadLatestKeepingLocalEdits(saveAttemptID: attemptID)
             guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
             switch reload {
-            case .needsResolution:
-                return
             case .reloaded:
                 if !retrySections.isEmpty {
                     // Consent covered the previous generation's render. A retry
@@ -8741,10 +8653,6 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func saveOnce(retrying retrySections: Set<EditorSection> = []) async {
-        guard pendingMerge == nil else {
-            saveState = .failed("Resolve the conflicting changes before saving.")
-            return
-        }
         guard !isSaving, hasUnsavedChanges || !retrySections.isEmpty else { return }
         let saveEditorEpoch = editorLoadEpoch
         defer { if editorLoadEpoch == saveEditorEpoch { userSongRetry = nil } }
@@ -8994,12 +8902,11 @@ enum EditorOpenIntent { case warm, open }
     /// reloading forever; Retry clears it.
     private var previewConflictReloadGeneration: String?
 
-    private enum LatestReload { case reloaded, needsResolution, alreadyTried, superseded, failed(Error) }
+    private enum LatestReload { case reloaded, alreadyTried, superseded, failed(Error) }
 
-    /// Load the newest renderer-owned version and three-way merge it with the clean
-    /// baseline and current edits. Independent changes merge automatically; overlapping
-    /// edits retain both versions for a choice. `fencingPreviewConflict` allows one reload per server
-    /// generation and always rebuilds the preview, even when the generation is unchanged.
+    /// Load the newest renderer-owned version and converge onto it: the creator's own edits that apply
+    /// cleanly stay on top, the latest version wins any overlap. `fencingPreviewConflict` allows one reload
+    /// per server generation and always rebuilds the preview, even when the generation is unchanged.
     private func reloadLatestKeepingLocalEdits(fencingPreviewConflict: Bool = false, saveAttemptID: UUID? = nil) async -> LatestReload {
         guard !isSaving, activeSaveAttemptID == saveAttemptID,
               let api, let jobID, let variantKey, let itemID else {
@@ -9040,151 +8947,108 @@ enum EditorOpenIntent { case warm, open }
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = latestDraft.serverSnapshot }
             var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestClean.revision.baseGeneration = generation
-            return rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
-                ? .reloaded : .needsResolution
+            // A chat draft newer than this render is staged on top of it, as on load. Unreadable: the next sync stages it.
+            var staged: (document: EditorDocument, sections: Set<EditorSection>)?
+            var stagedRevision: Int?
+            if conversationRuntimeVersion == 2, let threadID, let head = try? await api.draft(threadID: threadID) {
+                guard editorOperationIdentity == identity else { return .superseded }
+                let headDraft = head.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
+                staged = stagedChatDocument(snapshot: head, draft: headDraft, variant: variant)
+                stagedRevision = staged == nil ? nil : head.draftRevision
+            }
+            var latest = latestClean
+            for section in staged?.sections ?? [] { if let staged { copy(section, from: staged.document, into: &latest) } }
+            applyConverged(ConvergeTarget(base: cleanDocument, clean: latestClean, latest: latest, variant: variant,
+                destination: (jobID, variantKey, itemID), forcePreview: fencingPreviewConflict,
+                stagedSections: staged?.sections ?? [], stagedRevision: stagedRevision))
+            return .reloaded
         } catch {
             guard editorOperationIdentity == identity else { return .superseded }
             return .failed(error)
         }
     }
 
-    /// Retain both sides until every overlapping authored change is resolved.
-    @discardableResult
-    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool,
-                                 remoteEdits: EditorDocument? = nil,
-                                 destination: (job: UUID?, variant: String?, item: String?)? = nil,
-                                 stagedRevision: Int? = nil, remoteETag: String? = nil,
-                                 legacySnapshot: [String: JSONValue]? = nil) -> Bool {
-        guard !isReviewingPreviousMerge else { return false }
-        let context = PendingMerge(authority: mergeAuthority, base: cleanDocument, clean: latestClean, remote: remoteEdits ?? latestClean,
-            baseSong: Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong, job: jobID, generation: cleanDocument.revision.baseGeneration), variant: variant, forcePreview: forcePreviewRebuild,
-            thread: threadID, originalJob: jobID, originalVariant: variantKey,
-            destinationJob: destination?.job ?? jobID, destinationVariant: destination?.variant ?? variantKey,
-            destinationItem: destination?.item ?? itemID, stagedRevision: stagedRevision,
-            remoteETag: remoteETag, legacySnapshot: legacySnapshot)
-        pendingMerge = context
-        return applyMerge(context, preference: nil)
-    }
-
-    func resolveMergeConflicts(keepingLocal: Bool) {
-        guard let context = pendingMerge, !isSaving else { return }
-        guard !keepingLocal || canKeepLocalMergeConflicts else { return }
-        if applyMerge(context, preference: keepingLocal ? .local : .remote) {
-            rearmLatestJobAfterMergeDecision()
-        }
-    }
-
-    private func rearmLatestJobAfterMergeDecision() {
-        let authority = mergeAuthority
-        Task { @MainActor [weak self] in
-            guard let self, self.mergeAuthority == authority else { return }
-            self.drainPendingLatestJob()
-        }
-    }
-
-    private func mergeRemoteSong(for context: PendingMerge) -> JSONValue? {
-        return context.variant.map { variant in
-            let overlay = Self.serverSavedSongOverlay(for: variant, job: context.destinationJob, variantKey: context.destinationVariant)
-                ?? savedSongOverlay(for: variant, thread: context.thread, job: context.destinationJob,
-                item: context.destinationItem, variantKey: context.destinationVariant,
-                generation: context.clean.revision.baseGeneration)
+    private func mergeRemoteSong(for target: ConvergeTarget) -> JSONValue? {
+        target.variant.map { variant in
+            let overlay = Self.serverSavedSongOverlay(for: variant, job: target.destination.job, variantKey: target.destination.variant)
+                ?? savedSongOverlay(for: variant, thread: threadID, job: target.destination.job,
+                item: target.destination.item, variantKey: target.destination.variant,
+                generation: target.clean.revision.baseGeneration)
             return Self.mergeSongAuthority(variant: variant, effective: NativeUserSong(variant: variant)?.applying(overlay),
-                job: context.destinationJob, generation: context.clean.revision.baseGeneration)
-        } ?? context.baseSong
+                job: target.destination.job, generation: target.clean.revision.baseGeneration)
+        } ?? currentSongAuthority
     }
 
-    private func applyMerge(_ context: PendingMerge, preference: AuthoredJSONMerge.Preference?) -> Bool {
-        guard !isReviewingPreviousMerge || preference != nil else { return false }
-        guard pendingMerge?.id == context.id, context.authority == mergeAuthority else { return false }
-        guard context.origin == .rendered || context.remote.capabilities == document.capabilities else { return false }
-        let local = context.localOverride ?? document
-        if context.origin == .unprovenChat, preference == nil {
-            canKeepLocalMergeConflicts = true
-            mergeConflictMessage = "This chat edit has no matching submitted state. Choose your current edits or the chat edit; nothing changes until you choose."
-            return false
-        }
-        let remoteSong = mergeRemoteSong(for: context)
-        // An unproven base is only a conservative comparison aid after an explicit
-        // choice; it never authorizes automatic replacement of local work.
-        let result = NativeEditorMerge.documents(base: context.base, local: local, remote: context.remote,
-            baseSong: context.baseSong, remoteSong: remoteSong, preference: preference)
-        let rebased: EditorDocument
-        switch result {
-        case .resolved(let value): rebased = value
-        case .conflicts(let conflicts):
-            let connected = conflicts.contains(where: { $0.path.first == "dependent" })
-            canKeepLocalMergeConflicts = context.baseSong == remoteSong || (local.userSong?.isEmpty != false && !connected)
-            mergeConflictMessage = !canKeepLocalMergeConflicts
-                ? "The latest version may use a different song. Use it, then edit the song."
-                : connected
-                ? "Timing or deletions affect connected content. Choose which version to keep."
-                : "You and the latest version changed the same content. Choose which one to keep."
-            return false
-        case .unsupported(let message):
-            canKeepLocalMergeConflicts = false
-            mergeConflictMessage = message
-            return false
-        }
+    private var currentSongAuthority: JSONValue? {
+        Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong, job: jobID,
+            generation: cleanDocument.revision.baseGeneration)
+    }
+
+    /// Always lands: the editor shows `target.latest` plus the creator's own edits that apply cleanly. The
+    /// caller owns the staleness fence (`editorOperationIdentity` after its last await); this runs synchronously.
+    private func applyConverged(_ target: ConvergeTarget) {
+        let local = creatorDocument
+        let before = document
+        let converged = NativeEditorMerge.converge(base: target.base, local: local, latest: target.latest,
+            baseSong: currentSongAuthority, latestSong: mergeRemoteSong(for: target))
         let selected = selection
         let retentionSequence = sourcePreviewSequence
-        if jobID == context.destinationJob, variantKey == context.destinationVariant, itemID == context.destinationItem {
-            retainAdmittedPreview()
-        }
+        let sameDestination = jobID == target.destination.job && variantKey == target.destination.variant
+            && itemID == target.destination.item
+        if sameDestination { retainAdmittedPreview() }
         defer {
             if sourcePreviewSequence == retentionSequence { retirePreviousPreview() }
         }
-        let chatOnlyBefore = !hasUnsavedChanges || hasOnlyChatStagedChanges
-        let before = local
-        let preservesAuthority = context.localOverride == nil && !isReviewingPreviousMerge
-            && before.revision.baseGeneration == context.clean.revision.baseGeneration
-            && context.originalJob == context.destinationJob
-            && context.originalVariant == context.destinationVariant
-            && context.clean.revision.baseGeneration == cleanDocument.revision.baseGeneration
-            && context.baseSong == remoteSong
-        if !preservesAuthority || isReviewingPreviousMerge { mergeDecisionCheckpoint = nil }
-        let authoredChanged = before.editorState != rebased.editorState
-            || before.deletions != rebased.deletions || before.userSong != rebased.userSong
-            || EditorSection.allCases.contains { before.snapshot(for: $0) != rebased.snapshot(for: $0) }
-        if preservesAuthority, authoredChanged { appendUndo(before) }
-        if context.originalJob != context.destinationJob { discardPlaybackForNewJob() }
-        document = rebased
-        cleanDocument = context.clean
-        jobID = context.destinationJob; variantKey = context.destinationVariant; itemID = context.destinationItem
-        if let value = context.remoteETag { etag = value }
-        if let value = context.legacySnapshot { legacyPromptSnapshot = value }
-        pendingMerge = nil
-        mergeConflictMessage = nil
-        canKeepLocalMergeConflicts = true
-        if let revision = context.stagedRevision { appliedChatDraftRevision = revision }
-        if context.origin == .rendered {
+        // Undo steps carry the base generation they were made on; they survive only a same-generation merge.
+        let sameBase = sameDestination && target.clean.revision.baseGeneration == cleanDocument.revision.baseGeneration
+        let undoEntry = sameBase ? before : converged.undo
+        if !sameDestination { discardPlaybackForNewJob() }
+        document = converged.document
+        cleanDocument = target.clean
+        jobID = target.destination.job; variantKey = target.destination.variant; itemID = target.destination.item
+        if let value = target.remoteETag { etag = value }
+        if let value = target.legacySnapshot { legacyPromptSnapshot = value }
+        if let revision = target.stagedRevision { appliedChatDraftRevision = revision }
+        if target.stagedSections.isEmpty {
             chatStagedDocument = nil; chatStagedSections = []; chatStagedHasNoManualBase = false
         } else {
-            chatStagedHasNoManualBase = chatOnlyBefore
-            chatStagedDocument = context.remote
-            chatStagedSections = context.stagedSections
+            chatStagedHasNoManualBase = local == nil
+            chatStagedDocument = target.latest
+            chatStagedSections = target.stagedSections
         }
-        if !preservesAuthority || authoredChanged { redoStack.removeAll() }
-        if context.origin == .rendered { configureCapabilities(from: context.variant) }
-        refreshRebasedSourcePreview(force: context.forcePreview)
+        if !sameBase { undoStack.removeAll(); redoStack.removeAll() }
+        var pushedUndo = false
+        if let undoEntry, undoEntry != converged.document {
+            if sameBase { redoStack.removeAll() }
+            appendUndo(undoEntry)
+            pushedUndo = true
+        }
+        if target.isNewVersion { configureCapabilities(from: target.variant) }
+        refreshRebasedSourcePreview(force: target.forcePreview)
         refreshDirtyState()
         explicitlyDirtySections.formIntersection(changedSections)
-        if !preservesAuthority {
-            undoStack.removeAll()
-            var decision = context
-            decision.authority = mergeAuthority
-            decision.localOverride = before
-            mergeDecisionCheckpoint = MergeDecisionCheckpoint(context: decision, before: before,
-                after: document, authority: mergeAuthority)
-        }
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
-        setAuthoritativeDuration(Self.number(context.variant?["duration_s"]))
+        setAuthoritativeDuration(Self.number(target.variant?["duration_s"]))
         refreshDuration()
-        return true
+        if local != nil, converged.replacedCreatorEdits || (target.isNewVersion && converged.document != before) {
+            showConvergeNotice(replaced: converged.replacedCreatorEdits, canUndo: pushedUndo)
+        }
+    }
+
+    private func showConvergeNotice(replaced: Bool, canUndo: Bool) {
+        convergeNotice = replaced
+            ? "Updated to the latest version. Some of your edits were replaced." + (canUndo ? " Undo to restore them." : "")
+            : "Updated to the latest version."
+        convergeNoticeTask?.cancel()
+        convergeNoticeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            self?.convergeNotice = nil
+        }
     }
 
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
-        guard !isReviewingPreviousMerge else { return }
         var next = draft; body(&next); guard next != draft else { return }
         invalidateDurationSources(for: Set([section]))
         let before = document
@@ -9202,7 +9066,6 @@ enum EditorOpenIntent { case warm, open }
 
     /// `rebasesSplitLanes: false` is only for an edit that keeps every clip's window where it was.
     private func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, _ body: (inout EditorDocument) -> Void) {
-        guard !isReviewingPreviousMerge else { return }
         var next = document; body(&next)
         let retainedSplitIDs = Set(next.clips.filter { !$0.removed }.compactMap(\.splitSectionID))
         next.splitScreenSections.removeAll { !retainedSplitIDs.contains($0.id) }
@@ -9219,7 +9082,6 @@ enum EditorOpenIntent { case warm, open }
     }
 
     func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
-        guard !isReviewingPreviousMerge else { return false }
         for key in keys {
             if let capability = document.capabilities[key] { return capability.editable }
         }
@@ -9767,7 +9629,6 @@ enum EditorOpenIntent { case warm, open }
         }
     }
     private func canEditSection(_ section: EditorSection) -> Bool {
-        guard !isReviewingPreviousMerge else { return false }
         if cloudEditorUnavailableMessage != nil { return false }
         if let capability = capability(for: section) { return capability.editable }
         switch section {
@@ -10264,7 +10125,6 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func startPendingPlaybackIfPossible() {
-        guard !isReviewingPreviousMerge else { return }
         guard pendingPlayRequest, canPlayCanvasVideo, !isPlaying else { return }
         togglePlayback()
     }
@@ -10291,22 +10151,17 @@ enum EditorOpenIntent { case warm, open }
         let identity = editorOperationIdentity
         let sequence = sourcePreviewSequence
         Task { @MainActor [weak self] in
-            // The editor's own load (or a Save) is still finishing; reload once it settles.
+            // The editor's own load (or a Save), a gesture or text entry is still finishing; reload once it settles.
             for _ in 0..<200 {
-                guard let self, self.editorOperationIdentity == identity, self.isSaving else { break }
+                guard let self, self.editorOperationIdentity == identity, self.isSaving || !self.isQuietForConverge else { break }
                 try? await Task.sleep(for: .milliseconds(50))
             }
             // Another job, or a newer preview build, owns the state now.
             guard let self, self.editorOperationIdentity == identity, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
-            guard !self.isSaving else { return self.failSourcePreview(error, reloadsLatestOnConflict: false) }
+            guard !self.isSaving, self.isQuietForConverge else { return self.failSourcePreview(error, reloadsLatestOnConflict: false) }
             let result = await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true)
             guard self.editorOperationIdentity == identity else { return }
             switch result {
-            case .needsResolution:
-                guard !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
-                self.sourcePreviewState = .failed("Review the conflicting changes above to prepare your preview. Your edits are still here.")
-                self.pendingPlayRequest = false
-                return
             case .reloaded:
                 return
             case .superseded:
