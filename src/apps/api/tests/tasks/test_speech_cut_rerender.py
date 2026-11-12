@@ -113,6 +113,7 @@ def _inflight_job(
     }
     return SimpleNamespace(
         status="processing",
+        content_plan_item_id=None,
         assembly_plan={
             "silence_cut_disabled": False,
             "speech_cut_control": control,

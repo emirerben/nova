@@ -41233,7 +41233,7 @@ def _publish_speech_cut_rerender(
     with _sync_session() as db:
         # Lock order is Item before Job: the restage below needs the plan item.
         unlocked = db.get(Job, uuid.UUID(job_id))
-        item_id = getattr(unlocked, "content_plan_item_id", None)
+        item_id = unlocked.content_plan_item_id if unlocked is not None else None
         item = db.get(PlanItem, item_id, with_for_update=True) if item_id is not None else None
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True, populate_existing=True)
         if job is None:
