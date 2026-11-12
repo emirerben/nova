@@ -60,7 +60,9 @@ the latest and replays its own staged AI edit. The one server write is at Save: 
 whose pinned saved draft is no longer current has that row replaced by the committed document
 (the timeline GET serves the same document without writing). `python -m app.cli.repair_editor_heads`
 is the owner-run repair for heads already left behind. `app/kria/editor_head.py` holds the
-read-only predicate.
+read-only predicate. On a variant that has only `render_finished_at`, a head stamped with that
+value (written by this branch, or by `main`'s plan-review undo) is current; `main`'s draft PUT
+refused such rows and this branch accepts them.
 
 ## What is hard and what is not
 

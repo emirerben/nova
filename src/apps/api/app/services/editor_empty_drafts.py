@@ -12,6 +12,7 @@ import uuid
 from dataclasses import replace
 from typing import Any
 
+import structlog
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,8 @@ from app.kria.editor_head import (
 )
 from app.models import CreationThread, CreatorEditDraft, Job, PlanItem
 from app.services.phone_editor import _StagedJob
+
+log = structlog.get_logger()
 
 _DIRECT_SECTIONS = (
     "editor_split_screen_origin",
@@ -118,6 +121,30 @@ def _attachable(job: Job, variant: dict[str, Any], row: CreatorEditDraft) -> boo
     return column_accepted(job, variant, row)
 
 
+def _committed_keeping_removed_clips(
+    row: CreatorEditDraft, *, state: dict[str, Any], item: PlanItem, job: Job, variant_key: str
+) -> KriaDraftDocument:
+    """``committed_document`` plus the pinned draft's removed clips.
+
+    A Save records a removed clip only in the pinned draft's ``timeline_slots`` (the variant's
+    timeline drops it), and the next Save's deletion baseline reads that list. Only clips the
+    committed timeline does not already hold come across, and only as removed.
+    """
+    document = committed_document(state=state, item=item, job=job, variant_key=variant_key)
+    sections = (document.editor_payload or {}).get("sections") or {}
+    committed = sections.get("timeline_slots")
+    if not isinstance(committed, list):
+        return document
+    pinned = ((row.snapshot_json or {}).get("editor_payload") or {}).get("sections") or {}
+    known = {slot.get("slot_id") for slot in committed if isinstance(slot, dict)}
+    sections["timeline_slots"] = committed + [
+        copy.deepcopy(slot)
+        for slot in pinned.get("timeline_slots") or []
+        if isinstance(slot, dict) and slot.get("removed") and slot.get("slot_id") not in known
+    ]
+    return document
+
+
 async def _committed_in_place_of(db: AsyncSession, job: Job, row: CreatorEditDraft) -> Any:  # noqa: ANN401
     """A stranded pinned v2 draft, served as the variant's committed state. Writes nothing.
 
@@ -126,7 +153,8 @@ async def _committed_in_place_of(db: AsyncSession, job: Job, row: CreatorEditDra
     """
     thread = await db.get(CreationThread, row.thread_id)
     item = await db.get(PlanItem, row.item_id)
-    document = committed_document(
+    document = _committed_keeping_removed_clips(
+        row,
         state=dict(thread.state or {}) if thread is not None else {},
         item=item,
         job=job,
@@ -188,9 +216,16 @@ async def attach_saved_editor_drafts(
             continue
         if not _attachable(job, variant, row):
             if str(row.variant_key) == committed_for and not is_empty_editor_variant(variant):
-                job._stranded_editor_drafts[str(row.variant_key)] = await _committed_in_place_of(
-                    db, job, row
-                )
+                try:
+                    stranded = await _committed_in_place_of(db, job, row)
+                except Exception:  # noqa: BLE001 - an unbuildable fallback must stay main's 409
+                    log.exception(
+                        "editor_committed_fallback_failed",
+                        job_id=str(job.id),
+                        variant_id=str(row.variant_key),
+                    )
+                else:
+                    job._stranded_editor_drafts[str(row.variant_key)] = stranded
             continue
         snapshots[str(row.variant_key)] = _out(
             row,
@@ -243,7 +278,8 @@ async def replace_stranded_saved_draft(
         return False
     thread = await db.get(CreationThread, row.thread_id)
     snapshot, digest = canonical_snapshot(
-        committed_document(
+        _committed_keeping_removed_clips(
+            row,
             state=dict(thread.state or {}) if thread is not None else {},
             item=item,
             job=job,

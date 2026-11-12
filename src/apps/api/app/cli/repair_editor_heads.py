@@ -76,6 +76,7 @@ _STRANDED_SQL = text(
     WHERE d.is_head
       AND jsonb_typeof(d.snapshot_json->'editor_payload') = 'object'
       AND v->>'variant_id' = d.variant_key
+      AND COALESCE(v->>'editor_state', '') <> 'empty'
       AND NOT (
         d.base_job_id IS NOT DISTINCT FROM j.id
         AND COALESCE(d.base_generation_id, '') IN (s.gen, COALESCE(s.src, s.gen))

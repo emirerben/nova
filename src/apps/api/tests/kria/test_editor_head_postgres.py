@@ -867,50 +867,23 @@ async def test_a_stranded_empty_state_variant_is_exactly_main() -> None:
 
 
 @pytest.mark.asyncio
-async def test_another_variants_unbuildable_fallback_does_not_fail_the_requested_variant(
+async def test_an_unbuildable_committed_fallback_is_main_409_not_a_500(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    other = "song_text"
-    user_id, thread_id, item_id, job_id, staged = await _stranded_pinned(empty=False)
+    user_id, thread_id, item_id, job_id, _staged = await _stranded_pinned(empty=False)
     try:
-        with sync_session() as db:
-            source = db.get(CreatorEditDraft, staged.draft_id)
-            twin = CreatorEditDraft(
-                creator_id=source.creator_id,
-                thread_id=source.thread_id,
-                item_id=source.item_id,
-                variant_key=other,
-                base_job_id=source.base_job_id,
-                base_generation_id=source.base_generation_id,
-                draft_revision=0,
-                snapshot_json=copy.deepcopy(source.snapshot_json),
-                snapshot_hash=source.snapshot_hash,
-                is_head=True,
-            )
-            db.add(twin)
-            db.flush()
-            job = db.get(Job, job_id, with_for_update=True)
-            plan = copy.deepcopy(job.assembly_plan)
-            second = copy.deepcopy(plan["variants"][0])
-            second.update(variant_id=other, editor_draft={"draft_id": str(twin.id)})
-            plan["variants"].append(second)
-            job.assembly_plan = plan
-            db.commit()
-
         from app.services import editor_empty_drafts as module
 
-        real = module.committed_document
+        def unbuildable(**kwargs):  # noqa: ANN003, ANN202
+            raise ValueError("cannot project this variant")
 
-        def broken_for_other(*, variant_key, **kwargs):  # noqa: ANN003, ANN202
-            if variant_key == other:
-                raise ValueError("cannot project this variant")
-            return real(variant_key=variant_key, **kwargs)
-
-        monkeypatch.setattr(module, "committed_document", broken_for_other)
+        monkeypatch.setattr(module, "committed_document", unbuildable)
+        rows = _rows(item_id)
         async with _client_for(user_id) as client:
-            requested = await client.get(f"/plan-items/{item_id}/variants/{VARIANT}/timeline")
-            assert requested.status_code == 200, "the other variant is skipped, as on main"
-            assert requested.json()["draft"] is not None
+            timeline = await client.get(f"/plan-items/{item_id}/variants/{VARIANT}/timeline")
+            assert timeline.status_code == 409, timeline.text
+            assert timeline.json()["detail"] == "editor_draft_unavailable"
+        assert _rows(item_id) == rows
     finally:
         _clear_user_override()
         await async_engine.dispose()
@@ -972,6 +945,54 @@ async def test_ataturk_ai_draft_then_approval_then_phone_publish_stays_usable(
             await publish()
             _set_variant(job_id, render_destination="cloud")
         await _observe(user_id, thread_id, item_id, job_id, approved)
+    finally:
+        _clear_user_override()
+        await async_engine.dispose()
+
+
+def _pinned_slots(job_id) -> list[tuple[str, bool]]:  # noqa: ANN001
+    with sync_session() as db:
+        snap = db.get(CreatorEditDraft, uuid.UUID(_pinned(job_id))).snapshot_json
+    rows = snap["editor_payload"]["sections"]["timeline_slots"]
+    return [(row["slot_id"], bool(row.get("removed"))) for row in rows]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strand", [False, True])
+async def test_a_removed_clip_survives_a_second_save_whether_or_not_the_pin_was_stranded(
+    strand: bool,
+) -> None:
+    """The pinned draft is the only place a removed clip is recorded (the variant drops it)."""
+    user_id, _thread_id, item_id, job_id = _seed(_variant(**V2_EXTRAS))
+    try:
+        base = f"/plan-items/{item_id}/variants/{VARIANT}"
+        async with _client_for(user_id) as client:
+            first = await client.post(
+                f"{base}/editor-commit",
+                json={
+                    "base_generation": "generation-1",
+                    "editor_state_version": 2,
+                    "timeline_slots": _variant()["ai_timeline"]["slots"],
+                    "deletions": [{"kind": "clip", "id": "s1"}],
+                },
+            )
+            assert first.status_code == 200, first.text
+            assert _pinned_slots(job_id) == [("s0", False), ("s1", True)]
+            generation = _variant_of(job_id)["render_generation_id"]
+            if strand:
+                generation = "generation-X"
+                _set_variant(job_id, render_generation_id=generation)
+            second = await client.post(
+                f"{base}/editor-commit",
+                json={
+                    "base_generation": generation,
+                    "editor_state_version": 2,
+                    "text_elements": [{**HOOK, "text": B}],
+                    "deletions": [{"kind": "clip", "id": "s1"}],
+                },
+            )
+            assert second.status_code == 200, second.text
+        assert _pinned_slots(job_id) == [("s0", False), ("s1", True)]
     finally:
         _clear_user_override()
         await async_engine.dispose()

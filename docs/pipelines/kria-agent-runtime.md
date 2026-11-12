@@ -69,6 +69,9 @@ head when the generation moves**: approval execution, phone publish, speech cut 
 writer leave the head rows as they are, and a head on an old generation is not current and every
 reader ignores it. The server never merges draft content. `GET /draft` adds `head_current` and
 `base_generation`; the phone converges on the latest and replays its own staged AI edit.
+On a variant that has only `render_finished_at`, a head stamped with that value (written by this
+branch, or by `main`'s plan-review undo) is current; `main`'s draft PUT refused such rows and
+this branch accepts them.
 
 - **The one server write** is at Save: a v2 variant whose pinned `editor_draft` is not current
   (409 `editor_draft_unavailable` forever before) has the PINNED row replaced by the committed

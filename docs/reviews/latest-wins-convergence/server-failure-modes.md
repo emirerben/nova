@@ -27,12 +27,14 @@ payload stamp, the Draft PUT and the saved draft read the column, as on `main`; 
    untouched).
 4. **Variant with only `render_finished_at`.** `main` stamped its heads column None / payload "";
    new heads are stamped on the baseline. `main`'s old rows keep `main`'s acceptance at the Draft
-   PUT and saved-draft attach (`is_unstamped_main_head`).
+   PUT and saved-draft attach (`is_unstamped_main_head`). The one change from `main`: a head
+   stamped with that `render_finished_at` value (written by this branch, or by `main`'s plan-review
+   undo, which already stamps the baseline) is current, where `main`'s draft PUT refused such rows.
 5. **Save 409/412.** `detail` is unchanged; a sibling `problem {code, recovery,
    current_base_generation}` says `reload` only for `baseline_conflict`, `GUIDED_REVISION_STALE`,
    `deletion_target_stale`.
 6. **Stranded pinned v2 saved draft** (409 `editor_draft_unavailable` forever on `main`). Save
-   replaces the pinned ROW with the committed document (not a head; the pin moves only from that
+   replaces the pinned ROW with the committed document plus the pinned row's removed clips, which only the pin records (not a head; the pin moves only from that
    row to its replacement, so a chat head carrying an unsaved AI title is never committed or
    pinned); the timeline GET serves the same document and writes nothing, for the requested
    variant only. An empty-state variant keeps `main`'s 409.
