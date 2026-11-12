@@ -63,40 +63,24 @@ Default off and byte-identical off (guard: `tests/services/test_creation_text_as
 
 ### One latest editable document
 
-The server moves an editor draft head in exactly two cases, because only there does it know what
-the generation move did. In every other case a head on an old generation is simply not current
-and every reader ignores it (the same as before `editor_head.py` existed). **The server never
-merges draft content, and the phone converges on the latest by itself** (it replays its own
-staged AI edit).
+A draft head is current only while its stamps match the variant's generation (or the generation a
+phone publish was made from; `app/kria/editor_head.py`, read-only). **The server never moves a
+head when the generation moves**: approval execution, phone publish, speech cut and every other
+writer leave the head rows as they are, and a head on an old generation is not current and every
+reader ignores it. The server never merges draft content. `GET /draft` adds `head_current` and
+`base_generation`; the phone converges on the latest and replays its own staged AI edit.
 
-- **Approval execution retires the head** (`tasks/kria_runtime.py`, in the claim's transaction):
-  the render holds the approved edit, so the head becomes the document a fresh read would create
-  for the variant (`drafts.committed_document`; a v2 variant's sections come from the builder its
-  Save uses). Redelivery inserts nothing.
-- **Phone publish restamps the head** (`routes/device_render.py`), only when the head's column and
-  payload base both equal the generation the publish was made from
-  (`published_source_generation`). Same content, new id. Any other head is left alone.
-- "Current" is one predicate, `editor_head.is_head_current`: same job, and column and payload base
-  both name the render baseline or the publish source. Draft GET/PUT, the timeline reads, the
-  chat planner and `attach_saved_editor_drafts` all use it. `GET /draft` adds `head_current` and
-  `base_generation`.
-- A restage row records `restage: {of, reason, origin_revision}`. `draft_still_current` (approval
-  claim, render retry, intent review) follows the lineage through `approval_execution` and
-  `phone_publish` rows only, and requires the head to still be current, so an old approval never
-  runs on top of a manual Save. A phone state that names revision N as seen stays a discard after
-  a restamp wrote N+1 (`origin_revision`).
-- Undo looks past restage rows. Across `phone_publish` rows it restores the earlier draft with the
-  same restamp; across an approval row it answers `draft_undo_unavailable` (committed work is not
-  undone by draft undo) and `can_undo` is false in the draft and timeline reads
-  (`drafts.can_undo`).
-- A v2 variant whose pinned `editor_draft` is not current (409 `editor_draft_unavailable` before):
-  Save retires it and attaches the result; the timeline GET writes nothing and serves the
-  committed state in the retired document's shape. An empty-state variant keeps its 409.
-- A chat turn whose phone state names an older generation is refused as before
-  (`EditorStateStaleError`); a head on an old generation is ignored by the turn.
+- **The one server write** is at Save: a v2 variant whose pinned `editor_draft` is not current
+  (409 `editor_draft_unavailable` forever before) has the PINNED row replaced by the committed
+  document (`editor_empty_drafts.replace_stranded_saved_draft`; the pin moves from that row to
+  its replacement and nowhere else, and no head is touched). The timeline GET serves the same
+  document without writing. An empty-state variant keeps its 409.
+- Editor-commit 409/412 carry `problem {code, recovery, current_base_generation}` beside the
+  unchanged `detail`; `reload` only for `baseline_conflict`, `GUIDED_REVISION_STALE`,
+  `deletion_target_stale`.
 - Heads already left behind: `python -m app.cli.repair_editor_heads` is a dry run by default;
-  `--apply` needs an explicit `--variant` and `--operation {retire,keep-ai-lanes}`. It needs the
-  owner's approval before a production run. `keep-ai-lanes` exists only there.
+  `--apply` needs `--variant` and `--operation {retire,keep-ai-lanes}`, refuses a current head,
+  and needs the owner's approval before a production run.
 
 Runtime-v1 threads keep their existing controller and projections. A thread never
 changes runtime owner because a flag changes during its lifetime.

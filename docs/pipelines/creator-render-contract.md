@@ -52,22 +52,15 @@ or reread from mutable chat during a retry.
 
 ## One latest editable document
 
-The server moves an editor draft head only at approval execution (`retire`: the render holds the
-edit, so the head becomes the committed document) and phone publish (`restamp`: same content,
-new generation id, only for a head on the very generation the publish was made from). In every
-other case a head on an old generation is not current and every reader ignores it; the server
-never merges draft content and never guesses. The phone converges on the latest by itself.
-
-- **One predicate.** `app/kria/editor_head.py` defines "current" (`is_head_current`) and "exactly
-  on the baseline" (`is_head_on_baseline`); every reader imports it.
-- **Lineage.** A server-written row records `restage: {of, reason, origin_revision}`.
-  `draft_still_current` (approval claim, render retry, intent review) accepts only the approval's
-  own render and a phone publish, and only while the head is still current.
-- **Undo** skips restage rows; it is unavailable across an approval and works across a restamp.
-- **Stranded v2 draft.** Save retires a pinned draft that is not current; the timeline GET serves
-  the committed state without writing. An empty-state variant keeps its 409.
-- **Repair.** `python -m app.cli.repair_editor_heads` is read-only by default; `--apply` needs
-  `--variant` and `--operation {retire,keep-ai-lanes}` and the owner's approval for production.
+A draft head is current only while its stamps match the variant's generation (or the generation a
+phone publish was made from). The server never moves a head when the generation moves: it does
+not create, restamp, retire or repoint one, and it never merges draft content. The draft
+snapshot reports `head_current` (and `base_generation`) so the phone knows; the phone converges on
+the latest and replays its own staged AI edit. The one server write is at Save: a v2 variant
+whose pinned saved draft is no longer current has that row replaced by the committed document
+(the timeline GET serves the same document without writing). `python -m app.cli.repair_editor_heads`
+is the owner-run repair for heads already left behind. `app/kria/editor_head.py` holds the
+read-only predicate.
 
 ## What is hard and what is not
 
