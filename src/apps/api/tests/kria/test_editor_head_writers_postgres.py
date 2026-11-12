@@ -337,7 +337,13 @@ async def test_approval_that_leaves_the_generation_alone_inserts_no_head_row(
         await async_engine.dispose()
 
 
-def _publish_device_export(job_id, user_id, monkeypatch):  # noqa: ANN001, ANN202
+def _publish_device_export(  # noqa: ANN202
+    job_id,  # noqa: ANN001
+    user_id,  # noqa: ANN001
+    monkeypatch,  # noqa: ANN001
+    *,
+    base_generation: str = "generation-1",
+):
     """Pin a device recipe on the real Job and return (attempt id, call that publishes it)."""
     from app.kria.device_render import make_device_request
     from app.kria.recipes import EditRecipeV1
@@ -374,7 +380,7 @@ def _publish_device_export(job_id, user_id, monkeypatch):  # noqa: ANN001, ANN20
         job = db.get(Job, job_id, with_for_update=True)
         job.assembly_plan = copy.deepcopy(job.assembly_plan)
         job.assembly_plan["variants"][0]["render_destination"] = "device"
-        pin_device_request(job, request, base_generation="generation-1")
+        pin_device_request(job, request, base_generation=base_generation)
         record = device_record(job, VARIANT)
         record["status"]["phase"] = "syncing"
         record["attempts"][attempt] = {"path": path, "size": 12, "sha256": "a" * 64}
@@ -518,4 +524,224 @@ async def test_speech_cut_publication_restages_the_head_as_the_committed_cut(
         assert _text(head) == "Cut hook", "latest wins: the old head does not undo the cut"
         assert head["snap"]["changes"] == []
     finally:
+        await async_engine.dispose()
+
+
+# The Ataturk regression: one document, whichever step the variant is on.
+
+
+async def _observe_one_document(user_id, thread_id, item_id, job_id) -> str:  # noqa: ANN001
+    """Open the draft, the timeline and Save the way the iPhone does; all must agree."""
+    import httpx
+
+    from app.auth import get_current_user
+    from app.main import app
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        id=user_id, email="qa@test.local"
+    )
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            current = _variant_of(job_id)["render_generation_id"]
+            base = f"/plan-items/{item_id}/variants/{VARIANT}"
+            before = await client.get(f"{base}/timeline")
+            assert before.status_code == 200, before.text
+
+            draft = await client.get(f"/creation-threads/{thread_id}/draft")
+            assert draft.status_code == 200, draft.text
+            snapshot = draft.json()
+            assert snapshot["head_current"] is True
+            assert snapshot["base_generation"] == current
+            assert snapshot["snapshot"]["editor_payload"]["base_generation"] == current
+
+            after = await client.get(f"{base}/timeline")
+            assert after.status_code == 200, after.text
+            for timeline in (before.json(), after.json()):
+                assert timeline.get("base_generation") in (None, current)
+
+            save = await client.post(
+                f"{base}/editor-commit",
+                json={
+                    "base_generation": snapshot["base_generation"],
+                    "editor_state_version": 1,
+                    "text_elements": [{**HOOK, "text": "Saved on the one document"}],
+                },
+            )
+            assert save.status_code == 200, save.text
+            # The Save moved the variant to a new generation; the head must not lag it.
+            saved = _variant_of(job_id)["render_generation_id"]
+            assert saved != current
+            assert _head_is_current(item_id, job_id), "the head lags a Save until someone reads it"
+            again = await client.get(f"/creation-threads/{thread_id}/draft")
+            assert again.status_code == 200, again.text
+            assert again.json()["head_current"] is True
+            assert again.json()["base_generation"] == saved
+            assert _head_is_current(item_id, job_id)
+            assert _head(item_id)["payload_base"] == saved
+            return current
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("through", ["ai_draft", "approval_render", "phone_publish"])
+async def test_ataturk_draft_then_generation_advance_serves_one_document(
+    monkeypatch: pytest.MonkeyPatch, through: str
+) -> None:
+    """AI draft on G1 -> approval executes (G2) -> phone publish (G3).
+
+    After each step the draft, the timeline and a Save all succeed on the same generation,
+    the head is current, and its payload base equals the variant's ``render_generation_id``.
+    Each parameter runs the sequence up to its step on its own project, because a Save
+    itself advances the generation.
+    """
+    monkeypatch.setattr("app.routes.plan_items.enqueue_editor_commit_render", lambda *a, **k: None)
+    from tests.routes.test_editor_commit import _arm
+
+    _arm(monkeypatch)
+    user_id, thread_id, item_id, job_id = _seed()
+    try:
+        approval_id = await _approved_ai_edit(monkeypatch, user_id, thread_id, EDIT_HOOK)
+        if through != "ai_draft":
+            await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+            rows = _rows(item_id)
+            await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+            assert _rows(item_id) == rows, "the approval task run twice adds no draft row"
+        if through == "phone_publish":
+            _attempt, publish = _publish_device_export(
+                job_id,
+                user_id,
+                monkeypatch,
+                base_generation=_variant_of(job_id)["render_generation_id"],
+            )
+            await publish()
+            # The phone Save compiler needs a guided story plan (see test_phone_editor_commit);
+            # the head invariant does not depend on it, so the Save runs on the cloud compiler.
+            with sync_session() as db:
+                job = db.get(Job, job_id, with_for_update=True)
+                plan = copy.deepcopy(job.assembly_plan)
+                plan["variants"][0]["render_destination"] = "cloud"
+                job.assembly_plan = plan
+                db.commit()
+
+        before = _head(item_id)
+        generation = await _observe_one_document(user_id, thread_id, item_id, job_id)
+
+        assert before["payload_base"] == generation
+        assert _head_is_current(item_id, job_id)
+    finally:
+        await async_engine.dispose()
+
+
+def _client_for(user_id):  # noqa: ANN001, ANN202
+    import httpx
+
+    from app.auth import get_current_user
+    from app.main import app
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        id=user_id, email="qa@test.local"
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+def _clear_user_override() -> None:
+    from app.auth import get_current_user
+    from app.main import app
+
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+async def _strand_pinned_v2_draft(monkeypatch, user_id, thread_id, job_id):  # noqa: ANN001, ANN202
+    """A v2 variant pinned to a saved draft, then a legacy dispatcher moves its generation."""
+    from tests.routes.test_editor_commit import _arm
+
+    _arm(monkeypatch)
+    monkeypatch.setattr("app.routes.plan_items.enqueue_editor_commit_render", lambda *a, **k: None)
+    staged = await _stage_ai_edit(user_id, thread_id, "Pinned hook")
+    with sync_session() as db:
+        job = db.get(Job, job_id, with_for_update=True)
+        plan = copy.deepcopy(job.assembly_plan)
+        variant = plan["variants"][0]
+        variant.update(
+            editor_state_version=2,
+            editor_timeline_mode="authored",
+            editor_draft={"draft_id": staged.draft_id},
+        )
+        job.assembly_plan = plan
+        db.commit()
+        plan = copy.deepcopy(job.assembly_plan)
+        plan["variants"][0]["render_generation_id"] = "generation-2"
+        job.assembly_plan = plan
+        db.commit()
+    return staged
+
+
+@pytest.mark.asyncio
+async def test_stranded_pinned_draft_is_served_from_the_committed_variant_and_save_heals_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, thread_id, item_id, job_id = _seed()
+    try:
+        staged = await _strand_pinned_v2_draft(monkeypatch, user_id, thread_id, job_id)
+        base = f"/plan-items/{item_id}/variants/{VARIANT}"
+        rows_before = len(_rows(item_id))
+        async with _client_for(user_id) as client:
+            timeline = await client.get(f"{base}/timeline")
+            # GET stays write-free: the pinned draft is not served, the committed state is.
+            assert timeline.status_code == 200, timeline.text
+            assert timeline.json().get("draft") is None
+            assert _head(item_id)["id"] == uuid.UUID(staged.draft_id)
+            assert len(_rows(item_id)) == rows_before
+
+            save = await client.post(
+                f"{base}/editor-commit",
+                json={
+                    "base_generation": "generation-2",
+                    "editor_state_version": 2,
+                    "text_elements": [{**HOOK, "text": "Saved over the stranded draft"}],
+                },
+            )
+            assert save.status_code == 200, save.text
+        assert _head_is_current(item_id, job_id)
+    finally:
+        _clear_user_override()
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_save_refusals_name_their_cause_and_only_a_moved_baseline_asks_for_a_reload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.routes.test_editor_commit import _arm
+
+    _arm(monkeypatch)
+    user_id, _thread_id, item_id, job_id = _seed()
+    try:
+        base = f"/plan-items/{item_id}/variants/{VARIANT}/editor-commit"
+        body = {"base_generation": "generation-0", "editor_state_version": 1}
+        async with _client_for(user_id) as client:
+            moved = await client.post(base, json=body)
+            assert moved.status_code == 409
+            assert moved.json() == {
+                "detail": "baseline_conflict",
+                "problem": {
+                    "code": "baseline_conflict",
+                    "recovery": "reload",
+                    "current_base_generation": "generation-1",
+                },
+            }
+
+            with sync_session() as db:
+                db.get(Job, job_id).status = "cancelled"
+                db.commit()
+            cancelled = await client.post(base, json=body)
+            assert cancelled.status_code == 409
+            assert cancelled.json()["detail"] == "Cancelled videos cannot be edited."
+            assert cancelled.json()["problem"]["code"] == "video_cancelled"
+            assert cancelled.json()["problem"]["recovery"] == "none"
+    finally:
+        _clear_user_override()
         await async_engine.dispose()

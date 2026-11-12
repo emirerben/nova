@@ -148,8 +148,13 @@ async def attach_saved_editor_drafts(db: AsyncSession, job: Job | None) -> None:
     job._saved_editor_drafts = snapshots
 
 
+def current_saved_editor_draft(job: Job, variant_id: str) -> DraftSnapshotOut | None:
+    """The pinned draft when it is on the variant's current generation, else None."""
+    return getattr(job, "_saved_editor_drafts", {}).get(variant_id)
+
+
 def saved_editor_draft(job: Job, variant_id: str) -> DraftSnapshotOut:
-    draft = getattr(job, "_saved_editor_drafts", {}).get(variant_id)
+    draft = current_saved_editor_draft(job, variant_id)
     if draft is None:
         raise HTTPException(409, detail="editor_draft_unavailable")
     return draft
