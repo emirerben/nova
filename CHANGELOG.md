@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.172.0] - 2026-11-12
+
+### Fixed
+- perf(ios): overlap frames in the on-device Talking export, about 1.9x faster (KRI-1185) (#2277) <!-- release-pr: 2277 -->
+
 ## [0.88.171.0] - 2026-11-12
 
 ### Changed
