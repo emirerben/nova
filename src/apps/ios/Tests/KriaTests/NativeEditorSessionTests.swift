@@ -223,11 +223,12 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertEqual(fake.commitCount, 1)
             return
         }
-        _ = await waitUntil { runtimeVersion == 1 ? session.mergeConflictMessage != nil : session.newerJobPrompt?.activeJobID == newJob }
+        _ = await waitUntil { runtimeVersion == 1 ? session.convergeNotice != nil : session.newerJobPrompt?.activeJobID == newJob }
         XCTAssertGreaterThanOrEqual(fake.projectCallCount, readsBefore + 2)
         if runtimeVersion == 1 {
-            XCTAssertNotNil(session.mergeConflictMessage)
+            XCTAssertNotNil(session.convergeNotice, "the latest version is adopted without a choice")
             XCTAssertEqual(fake.draftCallCount, draftReadsBefore)
+            session.undo()
         } else { XCTAssertEqual(session.newerJobPrompt?.activeJobID, newJob) }
         XCTAssertEqual(session.document.textElements.first?.text, "Still editing")
         XCTAssertTrue(session.hasUnsavedChanges)
@@ -254,7 +255,10 @@ final class NativeEditorSessionTests: XCTestCase {
         )
         XCTAssertThrowsError(try NativeEditorSession.currentDeviceNarrationRequest(
             status, jobID: jobID, variantID: "variant", generation: "generation-2"
-        )) { XCTAssertEqual($0 as? APIError, .conflict) }
+        )) {
+            XCTAssertEqual($0 as? APIError, .conflict)
+            XCTAssertTrue(($0 as? APIError)?.isBaselineConflict == true, "a generation mismatch means a newer version: reload")
+        }
         XCTAssertThrowsError(try NativeEditorSession.currentDeviceNarrationRequest(
             status, jobID: UUID(), variantID: "variant", generation: "generation-1"
         )) { XCTAssertEqual($0 as? APIError, .conflict) }
@@ -274,7 +278,11 @@ final class NativeEditorSessionTests: XCTestCase {
                 jobID: jobID, variantID: "variant", generation: "saved-g2"), request)
             for (job, variant, generation) in [(UUID(), "variant", "saved-g2"), (jobID, "other", "saved-g2"), (jobID, "variant", "older-g1")] {
                 XCTAssertThrowsError(try NativeEditorSession.currentDeviceRecipeRequest(status,
-                    jobID: job, variantID: variant, generation: generation)) { XCTAssertEqual($0 as? APIError, .conflict) }
+                    jobID: job, variantID: variant, generation: generation)) {
+                    XCTAssertEqual($0 as? APIError, .conflict)
+                    // Only the generation mismatch is a newer version; another job or variant is not.
+                    XCTAssertEqual((($0 as? APIError)?.isBaselineConflict) == true, job == jobID && variant == "variant")
+                }
             }
             let legacy = DeviceRenderStatusResponse(phase: phase, request: request)
             XCTAssertThrowsError(try NativeEditorSession.currentDeviceRecipeRequest(legacy,
@@ -759,7 +767,7 @@ final class NativeEditorSessionTests: XCTestCase {
         // returning the original song would represent a conflicting remote restoration.
         fake.authoritativeVariant?["user_song"] = nil
         fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-3",
             sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
             revisionNumber: 3, revisionHash: "h", expectedDuration: nil)
@@ -773,51 +781,24 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(fake.lastRequest?.userSong, "nor does a retry after a conflict rebase")
     }
 
-    func testChangedSongAuthorityUndoCannotReapplyOldRelativeSongEdit() async throws {
+    func testChangedSongAuthorityConvergesToLatestWithoutReapplyingOldRelativeSongEdit() async throws {
         let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
         session.setUserSongVolume(0.4)
         session.setUserSongStart(1.5)
-        let original = session.document
-        XCTAssertEqual(original.userSong, EditorUserSongState(volume: 0.4, windowStartS: 1.5))
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.4, windowStartS: 1.5))
         let originalSongMetadata = fake.authoritativeVariant?["user_song"]
         // Identical projected metadata is not proof that a relative edit belongs
         // to the new generation's song authority.
         fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
         XCTAssertEqual(fake.authoritativeVariant?["user_song"], originalSongMetadata)
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         await session.save()
-        XCTAssertNotNil(session.mergeConflictMessage)
-        XCTAssertFalse(session.canKeepLocalMergeConflicts)
-        XCTAssertEqual(session.document, original)
-        session.resolveMergeConflicts(keepingLocal: false)
         let adopted = session.document
         XCTAssertEqual(adopted.revision.baseGeneration, "generation-2")
         XCTAssertNil(adopted.userSong, "the old relative song command cannot bind to the new source authority")
-        XCTAssertNil(session.mergeConflictMessage)
-        let commitsBeforeReview = fake.commitCount
-
-        session.undo()
-        XCTAssertEqual(session.document, original, "review shows the complete old document, including its own revision")
-        XCTAssertTrue(session.isReviewingPreviousMerge)
-        XCTAssertFalse(session.canKeepLocalMergeConflicts)
-        XCTAssertNil(session.exportEditorState())
-        XCTAssertNil(session.videoDownloadTarget)
-        XCTAssertFalse(session.canDownloadCurrentVideo)
-        XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: nil))
-        await session.save()
-        XCTAssertEqual(fake.commitCount, commitsBeforeReview)
-        session.resolveMergeConflicts(keepingLocal: true)
-        XCTAssertEqual(session.document, original)
-        XCTAssertTrue(session.isReviewingPreviousMerge, "an unsupported old-song choice remains read-only")
-        XCTAssertNotNil(session.mergeConflictMessage)
-
-        session.resolveMergeConflicts(keepingLocal: false)
-        XCTAssertEqual(session.document, adopted)
-        XCTAssertEqual(session.document.revision.baseGeneration, "generation-2")
-        XCTAssertNil(session.document.userSong)
-        XCTAssertFalse(session.isReviewingPreviousMerge)
-        XCTAssertNil(session.mergeConflictMessage)
-        XCTAssertEqual(fake.commitCount, commitsBeforeReview, "choosing current authority does not submit an old relative song edit")
+        XCTAssertFalse(session.canUndo, "an old relative song edit has no restorable form on the new song")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(fake.commitCount, 1, "converging never resubmits the old relative song edit")
     }
 
     func testSavedSongRemovalSurvivesExactGenerationRenderRecoveryProjectionWithoutResending() async throws {
@@ -835,13 +816,12 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
         fake.authoritativeVariant?["editor_revision_number"] = .number(2)
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
             sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
             revisionNumber: 2, revisionHash: "saved", expectedDuration: nil,
             renderStarted: false, renderRecovery: "Your edit is saved; its render needs more footage.")
         await session.save()
-        XCTAssertNil(session.mergeConflictMessage, "the exact saved removal outranks its retained render plan")
         XCTAssertEqual(fake.commitCount, 3, "one conflict refresh and one resend")
         XCTAssertNil(fake.lastRequest?.userSong, "the acknowledged removal must not be sent twice")
         XCTAssertTrue(session.userSongRemoved)
@@ -3472,7 +3452,6 @@ final class NativeEditorSessionTests: XCTestCase {
         } else {
             XCTAssertEqual(session.document, before, "old-owner response cannot replace the document: \(stage)")
             XCTAssertEqual(session.refreshSync, beforeRefresh, "old-owner failure cannot schedule current-owner recovery: \(stage)")
-            XCTAssertNil(session.mergeConflictMessage, stage)
             if stage.hasPrefix("legacy-project") || stage == "draft" {
                 XCTAssertEqual(fake.editorVariantCalls, variantsBeforeResume,
                     "reject the old-owner response before another account's follow-up read: \(stage)")
@@ -3513,21 +3492,9 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.saveState, .idle)
         XCTAssertEqual(fake.draftCallCount, 0)
-        let rebased = session.document
-        session.undo()
-        XCTAssertEqual(session.document, local, "Undo restores the complete pre-application local document")
-        XCTAssertTrue(session.isReviewingPreviousMerge)
-        XCTAssertNotNil(session.mergeConflictMessage)
-        XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertNil(session.exportEditorState())
-        XCTAssertFalse(session.canDownloadCurrentVideo)
-        await session.save()
-        XCTAssertEqual(fake.commitCount, 0, "reviewing old authority cannot submit a Save")
-        session.redo()
-        XCTAssertEqual(session.document, rebased)
-        XCTAssertFalse(session.isReviewingPreviousMerge)
-        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
-        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertFalse(session.canUndo, "nothing overlapped, so nothing was replaced and no old-generation step is kept")
+        XCTAssertNil(session.convergeNotice.flatMap { $0.contains("replaced") ? $0 : nil })
+        XCTAssertNotNil(session.exportEditorState(), "no state blocks sending the next chat turn")
         XCTAssertEqual(fake.draftCallCount, 0, "history never calls the runtime-v2 draft route")
     }
 
@@ -3749,7 +3716,7 @@ final class NativeEditorSessionTests: XCTestCase {
             }
         }
         func previewDiagnostics() -> String {
-            "generation=\(session.document.revision.baseGeneration); conflict=\(String(describing: session.mergeConflictMessage)); sourceState=\(session.sourcePreviewState); sourcePoolCalls=\(fake.sourcePoolCallCount)"
+            "generation=\(session.document.revision.baseGeneration); notice=\(String(describing: session.convergeNotice)); sourceState=\(session.sourcePreviewState); sourcePoolCalls=\(fake.sourcePoolCallCount)"
         }
         func awaitPreparedPreview() async throws {
             let ready = await waitUntil {
@@ -3793,40 +3760,36 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document, afterSave)
         XCTAssertTrue(session.hasUnsavedChanges)
 
+        if retainsPreview {
+            try await awaitPreparedPreview()
+            session.beginPreviewPresentation()
+            let player = try XCTUnwrap(session.player)
+            XCTAssertEqual(player.currentItem?.status, .readyToPlay)
+            let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
+            session.previewFrameWasShown(player: player, ticket: ticket)
+            XCTAssertFalse(session.isPreparingCurrentPreview)
+            XCTAssertNil(session.previousPreviewPresentation)
+            pinPreviewSources("g3")
+        }
         fake.authoritativeVariant = renderedVariant(duration: overlappingTrim ? 1.4 : 1.5,
             generation: "g3", textEnd: overlappingTrim ? 1 : 0.8)
         await session.synchronizePromptRevision()
         if overlappingTrim {
-            XCTAssertNotNil(session.mergeConflictMessage, "two different trims require a choice")
-            XCTAssertEqual(session.document, afterSave, "neither side overwrites the local edit before a choice")
-            XCTAssertTrue(session.hasUnsavedChanges)
+            XCTAssertEqual(session.document.revision.baseGeneration, "g3")
+            XCTAssertEqual(session.document.clips.first?.durationS, 1.4, "two different trims: the latest wins")
             XCTAssertTrue(session.canUndo)
-            XCTAssertEqual(fake.commitCount, 1, "a background conflict does not save")
-            if retainsPreview {
-                try await awaitPreparedPreview()
-                XCTAssertEqual(session.sourcePreviewState, .ready)
-                session.beginPreviewPresentation()
-                let player = try XCTUnwrap(session.player)
-                XCTAssertEqual(player.currentItem?.status, .readyToPlay)
-                let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
-                session.previewFrameWasShown(player: player, ticket: ticket)
-                XCTAssertFalse(session.isPreparingCurrentPreview)
-                XCTAssertNil(session.previousPreviewPresentation, "The conflict choice itself is not preview work")
-            }
-            pinPreviewSources("g3")
-            session.resolveMergeConflicts(keepingLocal: true)
+            XCTAssertEqual(fake.commitCount, 1, "a background converge does not save")
             if retainsPreview {
                 XCTAssertEqual(session.previousPreviewPresentation?.status, .updating,
-                               "Resolving a deferred same-target conflict keeps its admitted picture during preparation")
+                               "Converging keeps the admitted picture during preparation")
             }
+            session.undo()
         } else {
-            XCTAssertNil(session.mergeConflictMessage, "remote timing and local wording merge automatically")
             XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
             XCTAssertEqual(session.document.textElements.first?.endS, 0.8)
         }
         let rebased = session.document
         XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(rebased.revision.baseGeneration, "g3")
         if retainsPreview {
             let resolvedTimeline = try XCTUnwrap(rebased.snapshot(for: .timeline))
@@ -3884,10 +3847,8 @@ final class NativeEditorSessionTests: XCTestCase {
                 fake.authoritativeVariant = renderedVariant(duration: 1.4, generation: "g4")
                 await session.synchronizePromptRevision()
                 let adopted = session.document.revision.baseGeneration == "g4"
-                let merged = session.mergeConflictMessage == nil
                 XCTAssertTrue(adopted, "The failure must belong to adopted g4: \(previewDiagnostics())")
-                XCTAssertTrue(merged, "A merge conflict must not substitute for the source failure: \(previewDiagnostics())")
-                guard adopted, merged else { throw APIError.invalidResponse }
+                guard adopted else { throw APIError.invalidResponse }
                 let requested = await waitUntil(timeout: .seconds(5)) {
                     fake.sourcePoolCallCount > sourceCallsBeforeFailure
                 }
@@ -3902,7 +3863,6 @@ final class NativeEditorSessionTests: XCTestCase {
                 XCTAssertFalse(session.isPreparingCurrentPreview)
                 XCTAssertEqual(session.previousPreviewPresentation?.status, .failed)
                 XCTAssertTrue(session.hasUnsavedChanges)
-                XCTAssertNil(session.mergeConflictMessage)
                 XCTAssertEqual(session.document.snapshot(for: .timeline), expectedTimeline)
                 XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: localCandidate))
 
@@ -7774,7 +7734,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 "render_generation_id": .string("g1"), "editor_capabilities": .object(["timeline": .bool(true)]),
                 "user_timeline": .object(["slots": .array([.object(["slot_id": .string(clipID.uuidString),
                     "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])],
-            commitError: .conflict
+            commitError: .baselineConflict
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)
@@ -7795,13 +7755,100 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.canUndo)
     }
 
+    /// Only `baseline_conflict` means a newer version exists. Any other 409 is an ordinary refused Save: no reload,
+    /// no resend, the creator's edit stays and Save stays available.
+    func testSaveRefusedWithANonBaselineConflictNeverReloadsOrResends() async {
+        for code in ["TIMELINE_STALE", "editor_draft_unavailable", "variant_initial_render_in_progress",
+                     "deletion_target_stale", "editor_source_catalog_invalid"] {
+            let threadID = UUID()
+            let clipID = UUID()
+            let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clipID.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])])]
+            let fake = EditorCommitSpy(
+                draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+                authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+                    "render_generation_id": .string("g1"), "editor_capabilities": .object(["timeline": .bool(true)]),
+                    "user_timeline": .object(["slots": .array([.object(["slot_id": .string(clipID.uuidString),
+                        "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])],
+                commitError: APIError.conflict(detail: ConflictDetail(code, code: code))
+            )
+            let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+            await session.load(api: fake, threadID: threadID)
+            let selected = try! XCTUnwrap(session.timelineClips.first?.id)
+            session.selectClip(selected)
+            session.trimSelected(edge: .trailing, to: 1.5)
+            let editedDocument = session.document
+            let variantReadsBeforeSave = fake.editorVariantCalls
+
+            await session.save()
+
+            XCTAssertEqual(fake.commitCount, 1, "\(code): sent once, never resent after a reload")
+            XCTAssertEqual(fake.editorVariantCalls, variantReadsBeforeSave, "\(code): nothing reloads")
+            guard case .failed(let message) = session.saveState else { return XCTFail("\(code): expected a Save failure, got \(session.saveState)") }
+            XCTAssertTrue(message.contains("Your edits are still here"), "\(code): \(message)")
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("changed"), "\(code): \(message)")
+            XCTAssertEqual(session.document, editedDocument, "\(code): the creator's edit is untouched")
+            XCTAssertTrue(session.hasUnsavedChanges, code)
+            XCTAssertNil(session.convergeNotice, code)
+        }
+    }
+
     /// A remote interval change and local wording change merge before the one automatic resend.
     func testSaveConflictLoadsLatestKeepsLocalSectionsAndResendsAutomatically() async {
         await exerciseSaveConflictMerge(overlappingText: false)
     }
 
-    func testSaveConflictOnSameTextRequiresChoiceBeforeResending() async {
+    func testSaveConflictOnSameTextLatestWinsAndUndoRestoresMyWording() async {
         await exerciseSaveConflictMerge(overlappingText: true)
+    }
+
+    /// Failure mode 25: a gesture that opens while the latest version is being read owns the document. The
+    /// converge waits for it, then lands on the newest version; no Undo step carries the old generation.
+    func testSaveConflictConvergeWaitsForAGestureOpenedDuringTheLatestRead() async throws {
+        let threadID = UUID()
+        let textID = UUID().uuidString
+        func text(_ value: String, end: Double = 2) -> JSONValue {
+            .array([.object(["id": .string(textID), "text": .string(value), "start_s": .number(0), "end_s": .number(end)])])
+        }
+        let snapshot: [String: JSONValue] = ["editor_payload": .object([
+            "base_generation": .string("g1"), "sections": .object(["text_elements": text("Original")])])]
+        let original: [String: JSONValue] = [
+            "render_generation_id": .string("g1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+            "editor_capabilities": .object(["text_elements": .bool(true)]), "text_elements": text("Original")]
+        var latest = original
+        latest["render_generation_id"] = .string("g2")
+        latest["text_elements"] = text("Original", end: 1.5)
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e",
+                baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: original)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        session.updateTextContent(id: textID, content: "My edit")
+        fake.authoritativeVariant = latest
+        // The resend is refused too, so the editor stays on the newest version for the assertions below.
+        fake.commitErrorQueue = [.baselineConflict, .baselineConflict]
+        fake.suspendNextEditorVariant = true
+        let saving = Task { await session.save() }
+        _ = await waitUntil { fake.editorVariantIsSuspended }
+        XCTAssertTrue(fake.editorVariantIsSuspended)
+
+        // The creator starts typing while the latest version is in flight.
+        session.beginTransaction()
+        session.updateTextContent(id: textID, content: "My edit, still typing")
+        fake.resumeEditorVariant()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(session.document.revision.baseGeneration, "g1", "nothing replaces the document under an open gesture")
+        XCTAssertEqual(session.document.textElements.first?.text, "My edit, still typing")
+
+        session.endTransaction()
+        await saving.value
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.document.textElements.first?.text, "My edit, still typing", "the finished gesture is kept")
+        XCTAssertEqual(session.document.textElements.first?.endS, 1.5, "on top of the latest version")
+        while session.canUndo {
+            session.undo()
+            XCTAssertEqual(session.document.revision.baseGeneration, "g2", "no Undo step carries the old generation")
+        }
     }
 
     func testLatestJobWaitsForWholeConflictSaveAttemptThenRechecksAutomatically() async {
@@ -7846,11 +7893,10 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.load(api: fake, threadID: threadID)
         XCTAssertEqual(session.document.textElements.first?.text, "Original", "both edits share an explicit clean baseline")
         session.updateTextContent(id: textID, content: "My local edit")
-        let localDocument = session.document
 
         // Someone else saved g2; the server refuses this Save once as stale.
         fake.authoritativeVariant = latestVariant
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
         if queueLatestDuringConflict {
             fake.suspendNextEditorVariant = true
@@ -7880,22 +7926,27 @@ final class NativeEditorSessionTests: XCTestCase {
         }
 
         if overlappingText {
-            XCTAssertEqual(fake.commitCount, 1, "the conflicting save is not blindly resent")
-            XCTAssertNotNil(session.mergeConflictMessage)
-            XCTAssertEqual(session.document, localDocument)
-            XCTAssertTrue(session.hasUnsavedChanges)
+            // The latest wording wins the overlap. The creator's independent wrap edit stays unsaved, so Undo can
+            // still restore the wording; nothing is resent until they Save.
+            XCTAssertEqual(fake.commitCount, 1)
+            XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+            XCTAssertEqual(session.document.textElements.first?.text, "Changed elsewhere")
             XCTAssertTrue(session.canUndo)
-            session.resolveMergeConflicts(keepingLocal: true)
-            XCTAssertNil(session.mergeConflictMessage)
+            session.undo()
+            XCTAssertEqual(session.document.textElements.first?.text, "My local edit", "Undo restores the replaced wording")
             XCTAssertTrue(session.hasUnsavedChanges)
-            XCTAssertEqual(fake.commitCount, 1, "choosing a conflict does not itself issue a save")
             await session.save()
+            XCTAssertEqual(fake.commitCount, 2)
+            XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2", "against the newest version")
+            XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["text"]?.stringValue, "My local edit")
+            XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["end_s"]?.numberValue, 2)
+            return
         }
-        XCTAssertEqual(fake.commitCount, 2, "one resend follows either an independent merge or an explicit conflict choice")
+        XCTAssertEqual(fake.commitCount, 2, "one resend follows the independent merge")
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2", "against the newest version")
         XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["text"]?.stringValue, "My local edit")
-        XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["end_s"]?.numberValue,
-            overlappingText ? 2 : 1.5, "the remote independent interval survives the local text edit")
+        XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["end_s"]?.numberValue, 1.5,
+            "the remote independent interval survives the local text edit")
         XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
         XCTAssertFalse(session.hasUnsavedChanges)
         XCTAssertEqual(session.saveState, .previewPending)
@@ -7939,7 +7990,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1",
                 snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
-        fake.sourcePoolError = .conflict
+        fake.sourcePoolError = .baselineConflict
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: threadID)
 
@@ -7970,115 +8021,30 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.sourcePoolCallCount, calls, "no reload loop")
     }
 
-    func testPreviewConflictNeedingChoiceStopsPreparingWithoutResolvingLocalEdits() async throws {
+    func testPreviewConflictOverlapShowsLatestAndUndoRestoresMyTrim() async throws {
         let thread = UUID(), job = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
             draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
             snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
-        fake.sourcePoolError = .conflict
-        let session = NativeEditorSession()
-        await session.load(api: fake, threadID: thread)
-        let initialFailure = await waitUntil(timeout: .seconds(3)) { session.sourcePreviewState.isFailure }
-        XCTAssertTrue(initialFailure)
-        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
-        let local = session.document
-        fake.authoritativeVariant = Self.variant(duration: 1.2, generation: "g2")
-        await session.retryPreview()
-        let needsChoice = await waitUntil(timeout: .seconds(3)) {
-            session.mergeConflictMessage != nil && session.sourcePreviewState.isFailure
-        }
-        XCTAssertTrue(needsChoice, "a merge decision is actionable, not an indefinitely preparing preview")
-        guard case .failed(let message) = session.sourcePreviewState else { return XCTFail("expected a visible preview failure") }
-        XCTAssertTrue(message.contains("conflicting changes"))
-        XCTAssertEqual(session.document, local, "the preview must not choose either side of the conflict")
-        XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertTrue(session.canUndo)
-        XCTAssertEqual(fake.commitCount, 0)
-    }
-
-    func testCrossGenerationMergeUndoReviewsOriginalWithoutExecutingItsAuthority() async throws {
-        let thread = UUID(), job = UUID()
-        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
-            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
-            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
-        fake.sourcePoolError = .conflict
+        fake.sourcePoolError = .baselineConflict
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: thread)
         let initialFailure = await waitUntil(timeout: .seconds(3)) { session.sourcePreviewState.isFailure }
         XCTAssertTrue(initialFailure)
         let clipID = try XCTUnwrap(session.timelineClips.first?.id)
         session.setClipTiming(clipID: clipID, durationS: 1.5)
-        let original = session.document
+        let local = session.document.snapshot(for: .timeline)
         fake.authoritativeVariant = Self.variant(duration: 1.2, generation: "g2")
         await session.retryPreview()
-        let needsChoice = await waitUntil(timeout: .seconds(3)) { session.mergeConflictMessage != nil }
-        XCTAssertTrue(needsChoice)
-        let notificationJob = UUID()
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
-        {"id":"\#(thread.uuidString)","title":"Latest","status":"active","revision":2,"runtime_version":2,
-         "active_job_id":"\#(notificationJob.uuidString)","active_plan_item_id":"item","state":{"selected_variant_id":"initial"},
-         "job":{"id":"\#(notificationJob.uuidString)","status":"failed","variants":[{"variant_id":"initial","render_status":"failed"}]},
-         "updated_at":"2026-09-09T08:00:00Z"}
-        """#.utf8))
-        let notification = try XCTUnwrap(fake.refreshedThread?.summary)
-        let readsBeforeChoice = fake.projectCallCount
-        await session.adoptLatestJob(notification, api: fake)
-        XCTAssertEqual(fake.projectCallCount, readsBeforeChoice, "the pending choice defers its queued check")
-        fake.sourcePoolError = .offline
-        session.resolveMergeConflicts(keepingLocal: false)
-        let drainedAfterChoice = await waitUntil(timeout: .seconds(3)) { fake.projectCallCount > readsBeforeChoice }
-        XCTAssertTrue(drainedAfterChoice, "choosing must rearm the queued notification without another event")
-        let adopted = session.document
-        XCTAssertEqual(adopted.revision.baseGeneration, "g2")
-        XCTAssertNil(session.mergeConflictMessage)
-
-        // Edits above the decision boundary remain normal document history.
-        session.setClipTiming(clipID: clipID, durationS: 1.0)
-        let laterEdit = session.document
-        XCTAssertNotEqual(laterEdit, adopted)
+        let converged = await waitUntil(timeout: .seconds(3)) { session.document.revision.baseGeneration == "g2" }
+        XCTAssertTrue(converged, "the latest version is shown without a choice")
+        XCTAssertEqual(session.document.clips.first?.durationS, 1.2)
+        XCTAssertTrue(session.canUndo)
         session.undo()
-        XCTAssertEqual(session.document, adopted)
-        session.undo()
-        XCTAssertEqual(session.document, original)
-        XCTAssertTrue(session.isReviewingPreviousMerge)
-        XCTAssertNotNil(session.mergeConflictMessage)
-        XCTAssertNil(session.exportEditorState())
-        session.setClipTiming(clipID: clipID, durationS: 0.5)
-        session.transactDocument(section: .timeline) { $0.clips.removeAll() }
-        session.togglePlayback()
-        await session.save()
-        await session.synchronizePromptRevision()
-        XCTAssertEqual(session.document, original, "old-authority review cannot execute edits or background adoption")
-        XCTAssertFalse(session.isPlaying)
+        XCTAssertEqual(session.document.snapshot(for: .timeline), local)
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(fake.commitCount, 0)
-        let readsBeforeRedo = fake.projectCallCount
-        await session.adoptLatestJob(notification, api: fake)
-        XCTAssertEqual(fake.projectCallCount, readsBeforeRedo, "read-only review defers its queued check")
-        session.redo()
-        let drainedAfterRedo = await waitUntil(timeout: .seconds(3)) { fake.projectCallCount > readsBeforeRedo }
-        XCTAssertTrue(drainedAfterRedo, "Redo must rearm the queued notification without another event")
-        XCTAssertEqual(session.document, adopted)
-        XCTAssertFalse(session.isReviewingPreviousMerge)
-        session.redo()
-        XCTAssertEqual(session.document, laterEdit, "redo preserves the edit above the decision boundary")
-
-        session.undo()
-        session.undo()
-        XCTAssertTrue(session.isReviewingPreviousMerge)
-        session.resolveMergeConflicts(keepingLocal: false)
-        XCTAssertEqual(session.document, adopted)
-        XCTAssertFalse(session.isReviewingPreviousMerge)
-        session.undo()
-        XCTAssertEqual(session.document, original)
-        XCTAssertTrue(session.isReviewingPreviousMerge, "rechoosing cannot turn the old generation into executable document history")
-        XCTAssertNil(session.exportEditorState())
-        await session.load(api: fake, threadID: UUID())
-        let replacement = session.document
-        session.resolveMergeConflicts(keepingLocal: false)
-        session.redo()
-        XCTAssertEqual(session.document, replacement, "a replacement lifetime cannot replay the previous decision")
-        XCTAssertFalse(session.isReviewingPreviousMerge)
     }
 
     func testPreviewConflictReloadCancellationDoesNotLeavePreparationRunning() async throws {
@@ -8090,7 +8056,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: variant)
         fake.editorVariantScript = [.success(variant)]
         fake.editorVariantThrow = CancellationError()
-        fake.sourcePoolError = .conflict
+        fake.sourcePoolError = .baselineConflict
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: threadID)
         let stopped = await waitUntil(timeout: .seconds(5)) {

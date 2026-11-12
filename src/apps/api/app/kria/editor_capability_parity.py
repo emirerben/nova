@@ -315,12 +315,6 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "overlayDocumentFingerprint",
         reason="Read-only proposal planning, identity checks and editor clock conversion.",
     ),
-    "concurrent_edit_conflict_choice": _g(
-        "agent_unsupported",
-        "resolveMergeConflicts",
-        reason="Choosing local or remote conflicting authored values requires the creator's "
-        "explicit choice; chat cannot silently discard either version.",
-    ),
     # ----------------------------------------------------------- not an edit
     "lifecycle_and_sync": _g(
         "not_an_edit",

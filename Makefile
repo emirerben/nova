@@ -1,6 +1,6 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
         ios-generate ios-build ios-test ios-verify \
-        kria-replay verify-kria verify-kria-turns verify-protected-text verify-phone-render \
+        kria-replay verify-kria verify-kria-turns verify-protected-text verify-phone-render verify-converge \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
@@ -39,6 +39,12 @@ verify-kria-turns:
 # "couldn't refresh"). Exit 0 pass, 1 fail, 3 pass with drift to review.
 verify-phone-render:
 	$(PYTHON) formal/ios_edit_flow/verify.py
+
+# TLA+ model of the iPhone editor converging onto the latest version (no merge choice state).
+# Runs the spec, five negative controls and a source-drift check. Same tools as the target
+# above. Exit 0 pass, 1 fail, 3 pass with drift to review.
+verify-converge:
+	$(PYTHON) formal/ios_edit_flow/verify_converge.py
 
 # KRI-827: text stays off the creator's marked object (and faces) for every row's whole
 # visible interval; writes .protected-verify/report.json + montage.png, exits 1 on a false

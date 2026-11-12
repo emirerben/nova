@@ -324,7 +324,6 @@
         "testPhoneGalleryJobUsesCreationThreadForLocalOriginals",
         "testDeviceLocalExportPreferredOverRemoteOutputURL",
         "testReadyCreationProjectHydratesListProjectionAndLoadsItsExistingPlanItem",
-        "testDraftLoadFailureIsNotReportedAsSaveFailure",
         "testDraftLoadFailsWhenAuthoritativeVariantCannotBeFetched",
         "testHydratedProjectRetainsFinishedOutputWhenSourcePreviewFails",
         "testAddClipUploadsReservesAndAppendsTimelineSlot",
@@ -387,7 +386,7 @@
         "testFailedPreviewPollKeepsAcknowledgedSectionsRetryable",
         "testPersistentSaveConflictRetriesOnceAndKeepsLocalDocumentSelectionAndUndo",
         "testSaveConflictLoadsLatestKeepsLocalSectionsAndResendsAutomatically",
-        "testSaveConflictOnSameTextRequiresChoiceBeforeResending",
+        "testSaveConflictOnSameTextLatestWinsAndUndoRestoresMyWording",
         "testLatestJobWaitsForWholeConflictSaveAttemptThenRechecksAutomatically",
         "testPreviewConflictLoadsNewestVersionOncePerGenerationThenRetryReloads",
         "testPreviewConflictReloadCancellationDoesNotLeavePreparationRunning",
@@ -418,7 +417,9 @@
         "testCaptionCueMetadataAndMusicMutationsUseSeparateDirtySections",
         "testCapabilityReasonIsExposedAndDisablesTypedMutation",
         "testTimedLanesMutateWithOneGestureAndHonorWireKeys",
-        "testMotionRuntimeMismatchIsAlwaysReadOnly"
+        "testMotionRuntimeMismatchIsAlwaysReadOnly",
+        "testChangedSongAuthorityConvergesToLatestWithoutReapplyingOldRelativeSongEdit",
+        "testPreviewConflictOverlapShowsLatestAndUndoRestoresMyTrim"
       ]
     },
     {
@@ -439,7 +440,6 @@
         "testStaleGenerationDraftIsIgnored",
         "testNoChatDraftLeavesTheEditorClean",
         "testChatDraftArrivingAfterOpenStagesOnceAndNotAfterUndo",
-        "testOverlappingLocalEditTakesTheChatEditWithOneUndoBack",
         "testDisjointLocalEditKeepsBothSides",
         "testFlatOnlyAndStaleSectionsDraftsStageLikeNestedOnes",
         "testFlatOnlyStaleGenerationIgnoredAndArrivalAfterOpenStages",
@@ -452,8 +452,6 @@
         "testFirstOpenHidesTheOldRenderWhileAStagedChatEditPrepares",
         "testFirstOpenWithNothingStagedStillShowsTheCurrentRender",
         "testFirstOpenHidesTheObsoleteRenderWhenTheStagedEditCannotBePreviewed",
-        "testReopenAsksBeforeReloadingOverANewerRenderWithManualEdits",
-        "testSwitchingToTheNewerRenderDiscardsOnlyBecauseTheCreatorChose",
         "testReopenOverANewerRenderReloadsWithoutAskingWhenNothingOfTheirsIsAtStake",
         "testReopenKeepsManualEditsThroughDroppedConnectionAndSupersededJob",
         "testChatStagedEditsAloneNeedNoFlushButLocalEditsDo",
@@ -461,7 +459,6 @@
         "testSaveCommitsChatAndManualLanesThenTheStaleDraftIsIgnored",
         "testOpeningAfterAReplanTargetsTheNewJobAndDropsTheOldPlayback",
         "testReplanWithOnlyChatStagedEditsSwitchesToTheNewJobWithoutCommitting",
-        "testReplanWithManualEditsPromptsThenSwitchDiscardsAndKeepEditingStays",
         "testOpenEditorFollowsAReplanWhenTheOldJobIsSuperseded",
         "testDraftHeadOnTheNewJobAdoptsItToo",
         "testSupersededJobWithManualEditsPromptsInsteadOfSwitching",
@@ -475,7 +472,6 @@
         "testUnloadedEditorCannotExport",
         "testSecondChatDraftUndoReturnsToThePreChatUnsavedState",
         "testEditDuringTurnOnADisjointLaneKeepsBothSides",
-        "testEditDuringTurnOnTheSameLaneTakesTheChatEditWithOneUndoBack",
         "testDraftWithAnUnknownStateIDFallsBackToTheLegacyHeadLogic",
         "testStaleGenerationDraftWithAStateIDIsStillIgnored",
         "testIncidentReplayChatBuiltOnUnsavedEditsKeepsAllOfThemAndUndoRestoresThem",
@@ -489,7 +485,6 @@
         "testPersistentVariantConflictAfterAGoodDraftReadStaysBounded",
         "testReconnectDuringASaveClearsTheOfflineHintAndStillRetries",
         "testReplanStillRenderingKeepsTheOldVideoThenSwitchesWhenReady",
-        "testReplanStillRenderingWithManualEditsAsksOnlyOnceItIsReady",
         "testChatSyncDuringAReplanRenderShowsTheNeutralChipNotAFailure",
         "testFailedNewRenderLeavesTheCurrentVideoAndNoChip",
         "testReopenOfflineKeepsACleanEditorInsteadOfTheCouldntOpenScreen",
@@ -510,7 +505,13 @@
         "testOfflinePollsDoNotSpendThePreviewBudget",
         "testExhaustedSavedPreviewRecoversWithoutCheckAndPausesWhileHidden",
         "testSavedPreviewRetainsSixHundredSecondReadDeadline",
-        "testPreviewPollErrorsNeverShowConflictCopy"
+        "testPreviewPollErrorsNeverShowConflictCopy",
+        "testNewerRenderOverlapShowsLatestAndUndoRestoresMyEditOnTheNewBase",
+        "testChatTransitionWinsAnOverlapWithAManualOneAndUndoRestoresTheManualOne",
+        "testNewerRenderChangingTheSameTransitionWinsAndUndoRestoresMine",
+        "testPostSubmitOverlappingWordingChatWinsKeepsIndependentFieldsAndUndoRestoresMine",
+        "testPostSubmitTimelineAndChatTimingChatWinsAndUndoRestoresMyTrim",
+        "testConvergeReadInFlightWhenTheEditorLoadsAnotherEditIsDropped"
       ]
     },
     {
@@ -527,8 +528,7 @@
         "testLegacyRoundedSavedDraftColdOpenCompileAndExplicitRetryKeepExactLanes",
         "testSavedRenderRetryIsSingleFlightAndKeepsNewerLocalEdits",
         "testUnchangedRetryConflictNeverReplaysOldTimelineOverNewerTrimAndOrder",
-        "testRetryConflictKeepsConcurrentLocalEditsWithoutAutomaticallySubmittingThem",
-        "testRetryConflictPreservesDirtyTextWithoutReplayingCleanTimeline",
+        "testRetryConflictShowsLatestAndUndoRestoresConcurrentLocalEditsWithoutSubmittingThem",
         "testTransientRetryFailuresKeepVisibleActionWithoutDirtyingLanes",
         "testRetryConflictFailedReloadKeepsActionAndGenerationFence",
         "testUncertainRetryResponseRetainsExplicitActionAndReconcilesCommittedGeneration",
@@ -547,8 +547,10 @@
         "testReopenPreservesEditsMadeDuringReadAndNeverAuthorizesStaleFallback",
         "testResetClearsAppliedBadgeAndReplacementAnnouncementDismisses",
         "testFallbackLoadRechecksEditsAfterReconcileReturns",
-        "testGenuineTimelineSaveRetainsExistingConflictRebaseContract",
-        "testFailedProjectLoadsSavedLanesWithoutRenderAndReconcilesOwnDirtyEdits"
+        "testFailedProjectLoadsSavedLanesWithoutRenderAndReconcilesOwnDirtyEdits",
+        "testRetryConflictRemoteTimelineWinsOverDirtyTextAndUndoRestoresIt",
+        "testGenuineTimelineSaveConflictShowsLatestAndUndoThenSaveSendsMyTrimOnTheNewGeneration",
+        "testTimelineSaveLatestWinsWhenTrimRetimesTheNewerWording"
       ]
     },
     {
@@ -1001,7 +1003,7 @@
     }
   ],
   "source_candidate_counts": {
-    "app": 781,
+    "app": 783,
     "package": 39,
     "ui": 8
   },
@@ -1023,7 +1025,7 @@
     "src/apps/ios/Kria/Core/AppState.swift": "1e1a06261f8ae29aa6ad9b27d26f0c09e5ecdd39683ca2c4f2db9311ef68a151",
     "src/apps/ios/Kria/DesignSystem/BrandComponents.swift": "504502b5b7b89655a720d46766af1a357a1b7b950c192cfadc2f8e237a2ec462"
   },
-  "selection_revision_note": "Source-only current-main integration selection. Incoming speed tests and extension classes included; no compilation/discovery/execution.",
+  "selection_revision_note": "Source-only current-main integration selection. Incoming speed tests and extension classes included; no compilation/discovery/execution. Latest-wins revision: the three editor session classes list the current convergence tests; hashes were not refreshed.",
   "integration_main_target": "4bfa30f34fe450d4b5ea8dd15a1fe1796b021d13",
   "historical_main_integration_commit": "789789214046faf15c5e944c2d85cc5badc35666",
   "backend_correction_commit": "72c248d5ccd8600f93f8f6fa6abe1666dba688a8"

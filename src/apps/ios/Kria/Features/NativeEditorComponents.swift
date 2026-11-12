@@ -385,15 +385,6 @@ struct NativeEditorNoticeCard: View {
 #Preview("Editor notices") {
     VStack(spacing: 12) {
         NativeEditorNoticeCard(
-            title: "Review conflicting changes",
-            message: "You and the latest version changed the same content. Choose which one to keep.",
-            primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {},
-            secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-merge-local") {})
-        NativeEditorNoticeCard(
-            title: "Review conflicting changes",
-            message: "The latest version may use a different song. Use it, then edit the song.",
-            primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {})
-        NativeEditorNoticeCard(
             title: "A new version of your video is ready",
             message: "Switching discards your unsaved edits.",
             primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-switch-job") {},

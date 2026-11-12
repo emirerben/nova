@@ -338,7 +338,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let sent = try XCTUnwrap(session.exportEditorState())
         fake.draftSnapshot = Self.echoing(sent.clientStateID, try Self.wordingDraft(from: before, text: "changed"))
         await session.synchronizePromptRevision()
-        XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(session.saveState, .idle)
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
         XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"))
@@ -361,7 +360,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let sent = try XCTUnwrap(session.exportEditorState())
         fake.draftSnapshot = Self.echoing(sent.clientStateID, try Self.wordingDraft(from: before, text: "changed", revision: 5))
         await session.synchronizePromptRevision()
-        XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(session.dirtySections, [.timeline, .text])
         XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, 1.2)
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
@@ -442,6 +440,29 @@ final class ChatDraftStagingTests: XCTestCase {
 
     private static func encoded(_ state: EditorStateRequest) throws -> [String: JSONValue] {
         try XCTUnwrap(JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(state)).objectValue)
+    }
+
+    /// Which variant a committed snapshot belongs to: its generation id, else its finish time; an unstamped draft keeps
+    /// owning authoring state on a variant that carries no generation id.
+    func testCommittedSnapshotOwnsAuthoringStateOnlyForItsOwnVariantBaseline() {
+        func text(base: String?, variant: [String: JSONValue]) -> [String] {
+            let payload: [String: JSONValue] = [
+                "editor_state_version": .number(2),
+                "sections": .object(["text_elements": .array([.object(["id": .string("road"), "text": .string("Road trip"),
+                                                                       "start_s": .number(0), "end_s": .number(3)])])]),
+            ]
+            let snapshot = DraftSnapshot(draftID: "saved", itemID: "item", variantKey: "initial", draftRevision: 4,
+                snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: base,
+                snapshot: ["kind": .string("editor"), "editor_payload": .object(payload)], canUndo: true, createdAt: .now)
+            return EditorDocument(snapshot: snapshot.editorDraft(projectID: UUID(), authoritativeVariant: variant).serverSnapshot).textElements.map(\.text)
+        }
+        var finishedOnly = Self.variant()
+        finishedOnly["render_generation_id"] = nil
+        finishedOnly["render_finished_at"] = .string("2026-11-01T10:00:00Z")
+        XCTAssertEqual(text(base: "2026-11-01T10:00:00Z", variant: finishedOnly), ["Road trip"], "stamped with the finish time")
+        XCTAssertEqual(text(base: nil, variant: finishedOnly), ["Road trip"], "no base id on either side: unchanged")
+        XCTAssertEqual(text(base: "2026-10-01T10:00:00Z", variant: finishedOnly), ["hello"], "another render's snapshot")
+        XCTAssertEqual(text(base: nil, variant: Self.variant()), ["hello"], "a variant with a generation the draft never named")
     }
 
     func testAChatHeadIsNotACommittedSnapshotSoTheCleanDocumentIsTheVariant() throws {
@@ -730,7 +751,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
         XCTAssertTrue(handled)
         XCTAssertNil(session.newerJobPrompt)
-        XCTAssertNil(session.mergeConflictMessage)
         assertAuthoredDocument(session.document, equals: before)
         XCTAssertEqual(session.document.revision.baseGeneration, "g2")
         XCTAssertTrue(session.hasUnsavedChanges)
@@ -739,50 +759,28 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 0)
     }
 
-    func testNewerRenderOverlapUndoReviewsExactPriorDocumentWithoutExecutingIt() async throws {
-        for keepingLocal in [true, false] {
-            let id = UUID()
-            let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
-            let session = NativeEditorSession(project: threadProject(id, revision: 5))
-            await session.load(project: threadProject(id, revision: 5), api: fake)
-            session.updateTextContent(id: "t1", content: "local wording")
-            let before = session.document
-            var latest = Self.variant(generation: "g2")
-            guard case var .array(rows)? = latest["text_elements"], case var .object(row) = rows[0] else { return XCTFail("text fixture missing") }
-            row["text"] = .string("remote wording"); rows[0] = .object(row); latest["text_elements"] = .array(rows)
-            fake.authoritativeVariant = latest
-            _ = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
-            XCTAssertNotNil(session.mergeConflictMessage)
-            XCTAssertEqual(session.document, before)
-            XCTAssertTrue(session.canUndo)
-            XCTAssertEqual(fake.commitCount, 0)
-            session.resolveMergeConflicts(keepingLocal: keepingLocal)
-            XCTAssertNil(session.mergeConflictMessage)
-            XCTAssertEqual(session.document.textElements.first?.text, keepingLocal ? "local wording" : "remote wording")
-            XCTAssertEqual(session.document.revision.baseGeneration, "g2")
-            let chosen = session.document
-            session.undo()
-            XCTAssertEqual(session.document, before, "prior content and revision are visible only as a read-only decision checkpoint")
-            XCTAssertEqual(session.document.revision, before.revision)
-            XCTAssertTrue(session.isReviewingPreviousMerge)
-            XCTAssertNotNil(session.mergeConflictMessage)
-            XCTAssertNil(session.exportEditorState())
-            XCTAssertFalse(session.canDownloadCurrentVideo)
-            XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: nil))
-            session.updateTextContent(id: "t1", content: "must not edit historical content")
-            XCTAssertEqual(session.document, before)
-            session.togglePlayback()
-            XCTAssertFalse(session.isPlaying)
-            await session.save()
-            XCTAssertEqual(fake.commitCount, 0, "historical content has no executable save authority")
-            session.redo()
-            XCTAssertFalse(session.isReviewingPreviousMerge)
-            XCTAssertNil(session.mergeConflictMessage)
-            XCTAssertEqual(session.document, chosen)
-            XCTAssertEqual(session.document.revision.baseGeneration, "g2")
-            XCTAssertEqual(fake.editorVariantJobIDs.last, UUID(uuidString: Self.jobID))
-            XCTAssertEqual(fake.commitCount, 0)
-        }
+    func testNewerRenderOverlapShowsLatestAndUndoRestoresMyEditOnTheNewBase() async throws {
+        let id = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        let session = NativeEditorSession(project: threadProject(id, revision: 5))
+        await session.load(project: threadProject(id, revision: 5), api: fake)
+        session.updateTextContent(id: "t1", content: "local wording")
+        var latest = Self.variant(generation: "g2")
+        guard case var .array(rows)? = latest["text_elements"], case var .object(row) = rows[0] else { return XCTFail("text fixture missing") }
+        row["text"] = .string("remote wording"); rows[0] = .object(row); latest["text_elements"] = .array(rows)
+        fake.authoritativeVariant = latest
+        _ = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+        XCTAssertEqual(session.document.textElements.first?.text, "remote wording", "the latest version wins an overlap")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.convergeNotice, "Updated to the latest version. Some of your edits were replaced. Undo to restore them.")
+        XCTAssertTrue(session.canUndo)
+        session.undo()
+        XCTAssertEqual(session.document.textElements.first?.text, "local wording")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2", "Undo never restores the old base generation")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        session.redo()
+        XCTAssertEqual(session.document.textElements.first?.text, "remote wording")
+        XCTAssertEqual(fake.commitCount, 0)
     }
 
     func testReopenOverANewerRenderReloadsWithoutAskingWhenNothingOfTheirsIsAtStake() async throws {
@@ -840,6 +838,35 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
     }
 
+    /// Failure mode 26: a newer AI draft replacing an earlier staged AI lane is not "your edits were replaced".
+    func testNewerAIDraftOverlappingAnEarlierStagedAILaneNeverClaimsTheCreatorsEditsWereReplaced() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.setMusicLevel(0.5)
+        fake.draftSnapshot = Self.chatSnapshot(revision: 3, textOnly: true, shape: .flatOnly)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        XCTAssertFalse(session.hasOnlyChatStagedChanges, "the creator's mix edit sits beside the AI's text lane")
+        XCTAssertNil(session.convergeNotice)
+        fake.draftSnapshot = Self.chatSnapshot(revision: 4, textOnly: true, shape: .flatOnly, effect: "pop")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.raw["effect"], .string("pop"), "the newer AI draft wins the AI lane")
+        XCTAssertEqual(session.document.mix["music_level"], .number(0.5), "the creator's own edit is untouched")
+        XCTAssertNil(session.convergeNotice, "nothing of the creator's was replaced")
+    }
+
+    /// Failure mode 23 on the sync path: a newer render with no fresh head under a chat-only editor.
+    func testNewerRenderWithoutAFreshHeadKeepsTheAIStagedEditOnTheNewVersion() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges, "still the AI's edit, still unsaved")
+        XCTAssertNil(session.convergeNotice)
+        XCTAssertFalse(session.canUndo)
+    }
+
     private static func transitionDraft(revision: Int, base: String = "g1", transitions: [String: String], echo: String? = nil) -> DraftSnapshot {
         let slots: [JSONValue] = [("s1", 0.0), ("s2", 1.0), ("s3", 2.0)].map { id, index in
             .object(["slot_id": .string(id), "clip_index": .number(index), "in_s": .number(0), "duration_s": .number(2),
@@ -867,7 +894,6 @@ final class ChatDraftStagingTests: XCTestCase {
             fake.authoritativeVariant = Self.variant(generation: generation)
             fake.draftSnapshot = Self.transitionDraft(revision: revision, base: generation, transitions: ["s1": "crossfade"])
             await session.synchronizePromptRevision()
-            XCTAssertNil(session.mergeConflictMessage, generation)
             XCTAssertEqual(session.document.revision.baseGeneration, generation)
             XCTAssertEqual(Self.transition(session, "s1"), "crossfade", generation)
             XCTAssertTrue(session.hasOnlyChatStagedChanges, "the AI's edit is still the AI's after \(generation)")
@@ -880,35 +906,32 @@ final class ChatDraftStagingTests: XCTestCase {
         let sent = try XCTUnwrap(session.exportEditorState())
         fake.draftSnapshot = Self.transitionDraft(revision: 3, transitions: ["s1": "crossfade"], echo: sent.clientStateID)
         await session.synchronizePromptRevision()
-        XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
         XCTAssertTrue(session.hasOnlyChatStagedChanges)
 
         fake.draftSnapshot = Self.transitionDraft(revision: 4, transitions: ["s1": "crossfade", "s2": "dip_to_black"], echo: sent.clientStateID)
         await session.synchronizePromptRevision()
-        XCTAssertNil(session.mergeConflictMessage, "the AI never conflicts with its own earlier revision")
         XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
         XCTAssertEqual(Self.transition(session, "s2"), "dip_to_black")
         XCTAssertTrue(session.hasOnlyChatStagedChanges)
         XCTAssertEqual(fake.commitCount, 0)
     }
 
-    func testManualTransitionEditStillConflictsWithADifferentChatTransition() async throws {
+    func testChatTransitionWinsAnOverlapWithAManualOneAndUndoRestoresTheManualOne() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         let sent = try XCTUnwrap(session.exportEditorState())
         session.setClipTransition(clipID: "s1", transition: "flash")
-        let before = session.document
         fake.draftSnapshot = Self.transitionDraft(revision: 3, transitions: ["s1": "crossfade"], echo: sent.clientStateID)
         await session.synchronizePromptRevision()
-        XCTAssertNotNil(session.mergeConflictMessage)
-        XCTAssertEqual(session.document, before, "neither side is applied before the creator chooses")
-        XCTAssertFalse(session.hasOnlyChatStagedChanges)
+        XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
+        XCTAssertTrue(session.canUndo)
+        session.undo()
+        XCTAssertEqual(Self.transition(session, "s1"), "flash")
     }
 
-    func testManualTransitionEditStillConflictsWithANewerRenderChangingTheSameTransition() async throws {
+    func testNewerRenderChangingTheSameTransitionWinsAndUndoRestoresMine() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         session.setClipTransition(clipID: "s1", transition: "flash")
-        let before = session.document
         var latest = Self.variant(generation: "g2")
         guard case var .object(timeline)? = latest["user_timeline"], case var .array(slots)? = timeline["slots"],
               case var .object(first) = slots[0] else { return XCTFail("timeline fixture missing") }
@@ -916,8 +939,11 @@ final class ChatDraftStagingTests: XCTestCase {
         timeline["slots"] = .array(slots); latest["user_timeline"] = .object(timeline)
         fake.authoritativeVariant = latest
         await session.synchronizePromptRevision()
-        XCTAssertNotNil(session.mergeConflictMessage)
-        XCTAssertEqual(session.document, before)
+        XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        session.undo()
+        XCTAssertEqual(Self.transition(session, "s1"), "flash")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
     }
 
     func testSaveCommitsChatAndManualLanesThenTheStaleDraftIsIgnored() async throws {
@@ -931,6 +957,52 @@ final class ChatDraftStagingTests: XCTestCase {
         fake.authoritativeVariant = Self.variant(generation: "g2")
         await session.synchronizePromptRevision()
         XCTAssertFalse(session.isDirty(.text) || session.isDirty(.timeline), "draft based on g1 is stale after the commit")
+    }
+
+    /// Failure mode 23: the AI's staged edit is replayed on a latest that does not contain it. It stays the AI's.
+    func testSaveConflictReplaysAnAIStagedEditOnALatestWithoutItAndKeepsItTheAIs() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot())
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        // Another device saved g2 (without the AI edit); the head on g1 can neither restage nor be applied again.
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        fake.commitErrorQueue = [.baselineConflict, .baselineConflict]
+        await session.save()
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.document.textElements.first?.text, "changed", "the AI edit is still shown")
+        XCTAssertEqual(session.document.clips.compactMap(\.id), ["s3", "s1"])
+        XCTAssertTrue(session.hasUnsavedChanges, "it is still unsaved, not reported as saved")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges, "and it is still the AI's, not the creator's")
+        XCTAssertNil(session.convergeNotice)
+        XCTAssertFalse(session.canUndo, "no creator undo step for the AI's edit")
+        XCTAssertNotEqual(session.saveState, .saved)
+    }
+
+    func testSaveConflictSendsTheReplayedAIEditOnTheNewBase() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot())
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        fake.commitErrorQueue = [.baselineConflict]
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 2)
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["text"]?.stringValue, "changed")
+        XCTAssertNotNil(fake.lastRequest?.timelineSlots)
+        XCTAssertNil(session.convergeNotice)
+    }
+
+    /// The latest is a (quantized) render of the same edit: it wins every overlap, nothing is left to save.
+    func testSaveConflictWhereTheLatestRenderedTheSameAIEditShowsTheLatestAndSaves() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot(textOnly: true))
+        var latest = Self.variant(generation: "g2")
+        guard case var .array(rows)? = latest["text_elements"], case var .object(row) = rows[0] else { return XCTFail("fixture") }
+        row["text"] = .string("changed (rendered)"); rows[0] = .object(row); latest["text_elements"] = .array(rows)
+        fake.authoritativeVariant = latest
+        fake.commitErrorQueue = [.baselineConflict]
+        await session.save()
+        XCTAssertEqual(session.document.textElements.first?.text, "changed (rendered)")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.saveState, .saved)
+        XCTAssertEqual(fake.commitCount, 1, "nothing of the AI's is left to send")
+        XCTAssertNil(session.convergeNotice)
     }
 
     /// Real-thread shape (80ade387): a re-plan re-rendered as a NEW job.
@@ -1095,7 +1167,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let adopted = await settle { session.document.revision.baseGeneration == "gNew" }
         XCTAssertTrue(adopted)
         XCTAssertNil(session.newerJobPrompt)
-        XCTAssertNil(session.mergeConflictMessage)
         assertAuthoredDocument(session.document, equals: before)
         XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, 1.1)
         XCTAssertTrue(session.hasUnsavedChanges)
@@ -1243,14 +1314,13 @@ final class ChatDraftStagingTests: XCTestCase {
     }
 
     /// Real sequence (thread 8f208e18): rev A edits labels, rev B (cumulative) changes the title.
-    func testProvenReplyEchoingManualFontCannotAuthorizeUnprovenCumulativeOverwrite() async throws {
+    func testProvenReplyEchoingManualFontDoesNotMakeThatFontChatOwned() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         session.setTextStyle(id: "t1", style: "Inter")
         let submitted = session.document
         let sent = try XCTUnwrap(session.exportEditorState())
         fake.draftSnapshot = Self.echoing(sent.clientStateID, try Self.wordingDraft(from: submitted, text: "first reply", revision: 2))
         await session.synchronizePromptRevision()
-        XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(session.document.textElements.first?.text, "first reply")
         XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"))
         XCTAssertFalse(session.hasOnlyChatStagedChanges, "echoing an existing manual font does not make that font chat-owned")
@@ -1260,12 +1330,12 @@ final class ChatDraftStagingTests: XCTestCase {
         overwritten.textElements[0].raw["font_family"] = .string("Courier")
         fake.draftSnapshot = Self.echoing("unknown-cumulative-state", try Self.wordingDraft(from: overwritten, text: "second reply", revision: 3))
         await session.synchronizePromptRevision()
-        XCTAssertNotNil(session.mergeConflictMessage)
-        XCTAssertEqual(session.document, before, "a cumulative result without submitted provenance cannot overwrite the manual base")
-        XCTAssertEqual(session.undoHistoryCount, history)
-        XCTAssertTrue(session.canUndo)
+        XCTAssertEqual(session.document.textElements.first?.text, "second reply", "the AI's newer reply is shown")
+        XCTAssertEqual(session.undoHistoryCount, history + 1)
+        session.undo()
+        XCTAssertEqual(session.document, before, "Undo restores the creator's own edit")
         await session.save()
-        XCTAssertEqual(fake.commitCount, 0)
+        XCTAssertEqual(fake.commitCount, 1, "no state blocks Save")
     }
 
     func testCumulativeTitleChangeReplacesTheStagedLabelsAndUpdatesTheDocument() async throws {
@@ -1485,7 +1555,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let before = session.document
         fake.draftSnapshot = Self.echoing(sent.clientStateID, try Self.wordingDraft(from: submitted, text: "from chat", revision: 2))
         await session.synchronizePromptRevision()
-        XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(session.saveState, .idle)
         XCTAssertEqual(session.document.textElements.first?.text, "from chat")
         XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"))
@@ -1500,95 +1569,74 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 0)
     }
 
-    func testPostSubmitOverlappingWordingAndMissingProvenanceRequireExplicitChoice() async throws {
+    func testPostSubmitOverlappingWordingChatWinsKeepsIndependentFieldsAndUndoRestoresMine() async throws {
         for provenance in ["submitted", "missing", "unknown"] {
-            for keepingLocal in [true, false] {
-                let (session, fake) = await loaded(Self.bootstrapSnapshot())
-                let submitted = session.document
-                let sent = try XCTUnwrap(session.exportEditorState())
-                session.updateTextContent(id: "t1", content: "local after submission")
-                session.setTextStyle(id: "t1", style: "Inter")
-                let before = session.document
-                let undoBefore = session.canUndo
-                let redoBefore = session.canRedo
-                let response = try Self.wordingDraft(from: submitted, text: "chat wording", positionX: 0.8)
-                switch provenance {
-                case "submitted": fake.draftSnapshot = Self.echoing(sent.clientStateID, response)
-                case "unknown": fake.draftSnapshot = Self.echoing("not-this-session", response)
-                default: fake.draftSnapshot = response
-                }
-                await session.synchronizePromptRevision()
-                XCTAssertNotNil(session.mergeConflictMessage, provenance)
-                XCTAssertEqual(session.document, before, "neither side is applied before choice: \(provenance)")
-                XCTAssertEqual(session.canUndo, undoBefore)
-                XCTAssertEqual(session.canRedo, redoBefore)
-                await session.save()
-                XCTAssertEqual(fake.commitCount, 0, "unresolved authored conflict cannot dispatch Save")
-                session.resolveMergeConflicts(keepingLocal: keepingLocal)
-                XCTAssertNil(session.mergeConflictMessage)
-                XCTAssertEqual(session.document.textElements.first?.text, keepingLocal ? "local after submission" : "chat wording")
-                XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"), "choice preserves independent local style")
-                XCTAssertEqual(session.document.textElements.first?.raw["x_frac"], .number(0.8), "choice preserves independent remote positioning")
-                XCTAssertEqual(session.document.revision.baseGeneration, "g1")
-                XCTAssertEqual(fake.commitCount, 0, "choice stages; it does not save")
-                let chosen = session.document
-                session.undo()
-                assertAuthoredDocument(session.document, equals: before)
-                XCTAssertEqual(session.document.revision, before.revision)
-                await session.synchronizePromptRevision()
-                assertAuthoredDocument(session.document, equals: before)
-                session.redo()
-                assertAuthoredDocument(session.document, equals: chosen)
-                XCTAssertEqual(session.document.revision.baseGeneration, "g1")
-                XCTAssertEqual(fake.commitCount, 0)
+            let (session, fake) = await loaded(Self.bootstrapSnapshot())
+            let submitted = session.document
+            let sent = try XCTUnwrap(session.exportEditorState())
+            session.updateTextContent(id: "t1", content: "local after submission")
+            session.setTextStyle(id: "t1", style: "Inter")
+            let before = session.document
+            let response = try Self.wordingDraft(from: submitted, text: "chat wording", positionX: 0.8)
+            switch provenance {
+            case "submitted": fake.draftSnapshot = Self.echoing(sent.clientStateID, response)
+            case "unknown": fake.draftSnapshot = Self.echoing("not-this-session", response)
+            default: fake.draftSnapshot = response
             }
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.textElements.first?.text, "chat wording", provenance)
+            XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"), "independent local style is kept")
+            XCTAssertEqual(session.document.textElements.first?.raw["x_frac"], .number(0.8), "independent chat positioning is kept")
+            XCTAssertEqual(session.document.revision.baseGeneration, "g1")
+            XCTAssertEqual(fake.commitCount, 0, "converging stages; it does not save")
+            let applied = session.document
+            session.undo()
+            assertAuthoredDocument(session.document, equals: before)
+            await session.synchronizePromptRevision()
+            assertAuthoredDocument(session.document, equals: before)
+            session.redo()
+            assertAuthoredDocument(session.document, equals: applied)
+            await session.save()
+            XCTAssertEqual(fake.commitCount, 1, "no state blocks Save: \(provenance)")
         }
     }
 
-    func testPostSubmitTimelineAndChatTimingRemainAConnectedConflict() async throws {
+    func testPostSubmitTimelineAndChatTimingChatWinsAndUndoRestoresMyTrim() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         let sent = try XCTUnwrap(session.exportEditorState())
         session.setClipTiming(clipID: "s1", durationS: 1.2)
         let before = session.document
         fake.draftSnapshot = Self.echoing(sent.clientStateID, Self.chatSnapshot(textOnly: true))
         await session.synchronizePromptRevision()
-        XCTAssertNotNil(session.mergeConflictMessage, "the chat payload changes text end from 2 to 3600 seconds")
-        XCTAssertEqual(session.document, before)
-        XCTAssertEqual(session.document.textElements.first?.endS, 2)
+        XCTAssertEqual(session.document.textElements.first?.endS, 3600, "the chat payload's text timing is shown")
         XCTAssertTrue(session.canUndo)
+        session.undo()
+        XCTAssertEqual(session.document, before)
         await session.save()
-        XCTAssertEqual(fake.commitCount, 0)
+        XCTAssertEqual(fake.commitCount, 1)
     }
 
-    func testPendingChatChoiceCannotApplyAfterLoadAndSongAuthorityReplacement() async throws {
+    func testConvergeReadInFlightWhenTheEditorLoadsAnotherEditIsDropped() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         let submitted = session.document
         let sent = try XCTUnwrap(session.exportEditorState())
         session.updateTextContent(id: "t1", content: "local after submission")
         fake.draftSnapshot = Self.echoing(sent.clientStateID, try Self.wordingDraft(from: submitted, text: "old chat result"))
-        await session.synchronizePromptRevision()
-        XCTAssertNotNil(session.mergeConflictMessage)
-        let oldLifetime = session.editorLifetimeID
-        let replacementJob = UUID(), replacementThread = UUID(), replacementSong = UUID().uuidString
-        var replacementVariant = Self.variant(generation: "replacement-generation")
-        replacementVariant["music_track_id"] = .string(replacementSong)
+        fake.suspendNextEditorVariant = true
+        let reading = Task { await session.synchronizePromptRevision() }
+        let held = await settle { fake.editorVariantIsSuspended }
+        XCTAssertTrue(held)
+        let replacementJob = UUID(), replacementThread = UUID()
         let replacementAPI = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "replacement", itemID: "replacement-item", variantKey: "initial",
             draftRevision: 1, snapshotHash: "replacement", etag: "replacement", baseJobID: replacementJob.uuidString,
-            baseGenerationID: "replacement-generation", snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: replacementVariant)
+            baseGenerationID: "replacement-generation", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(generation: "replacement-generation"))
         await session.load(api: replacementAPI, threadID: replacementThread)
         let replacement = session.document
-        XCTAssertNotEqual(session.editorLifetimeID, oldLifetime)
-        XCTAssertEqual(replacement.revision.baseGeneration, "replacement-generation")
-        XCTAssertNotEqual(replacement.snapshot(for: .music), submitted.snapshot(for: .music))
-        let canUndo = session.canUndo, canRedo = session.canRedo
-        for keepingLocal in [true, false] {
-            session.resolveMergeConflicts(keepingLocal: keepingLocal)
-            XCTAssertNil(session.mergeConflictMessage)
-            XCTAssertEqual(session.document, replacement)
-            XCTAssertEqual(session.canUndo, canUndo)
-            XCTAssertEqual(session.canRedo, canRedo)
-        }
-        XCTAssertEqual(replacementAPI.editorVariantJobIDs.last, replacementJob)
+        fake.resumeEditorVariant()
+        await reading.value
+        XCTAssertEqual(session.document, replacement, "a read that started before the load cannot converge into the new editor")
+        XCTAssertNil(session.convergeNotice)
         XCTAssertEqual(fake.commitCount + replacementAPI.commitCount, 0)
     }
 
@@ -1615,13 +1663,11 @@ final class ChatDraftStagingTests: XCTestCase {
             await reading.value
             XCTAssertEqual(session.document, duringGesture, "the read must not fall through into rebase while \(gesture) owns edits")
             XCTAssertEqual(session.undoHistoryCount, historyDuringGesture)
-            XCTAssertNil(session.mergeConflictMessage)
             XCTAssertEqual(fake.commitCount, 0)
             if gesture == "transaction" { session.endTransaction() } else { session.endTrim() }
             let beforeApplication = session.document
             await session.synchronizePromptRevision()
             XCTAssertEqual(session.document.textElements.first?.text, "after gesture")
-            XCTAssertNil(session.mergeConflictMessage)
             if gesture == "transaction" {
                 XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"))
             } else {
@@ -1633,43 +1679,6 @@ final class ChatDraftStagingTests: XCTestCase {
         }
     }
 
-    func testPromptReadStartedBeforeHistoricalUndoCannotReplaceReadOnlyCheckpoint() async throws {
-        let id = UUID()
-        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
-        let session = NativeEditorSession(project: threadProject(id, revision: 5))
-        await session.load(project: threadProject(id, revision: 5), api: fake)
-        session.updateTextContent(id: "t1", content: "original local wording")
-        let original = session.document
-        var latest = Self.variant(generation: "g2")
-        guard case var .array(rows)? = latest["text_elements"], case var .object(row) = rows[0] else { return XCTFail("text fixture missing") }
-        row["text"] = .string("new rendered wording"); rows[0] = .object(row); latest["text_elements"] = .array(rows)
-        fake.authoritativeVariant = latest
-        _ = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
-        XCTAssertNotNil(session.mergeConflictMessage)
-        session.resolveMergeConflicts(keepingLocal: false)
-        let chosen = session.document
-        XCTAssertEqual(chosen.revision.baseGeneration, "g2")
-        let sent = try XCTUnwrap(session.exportEditorState())
-        fake.draftSnapshot = Self.echoing(sent.clientStateID, try Self.wordingDraft(from: chosen, text: "late observer result", revision: 9))
-        fake.suspendNextEditorVariant = true
-        let reading = Task { await session.synchronizePromptRevision() }
-        let held = await settle { fake.editorVariantIsSuspended }
-        XCTAssertTrue(held)
-        session.undo()
-        XCTAssertTrue(session.isReviewingPreviousMerge)
-        XCTAssertEqual(session.document, original)
-        fake.resumeEditorVariant()
-        await reading.value
-        XCTAssertEqual(session.document, original, "a read issued before Undo cannot publish into historical review")
-        XCTAssertTrue(session.isReviewingPreviousMerge)
-        XCTAssertNotNil(session.mergeConflictMessage)
-        XCTAssertNil(session.exportEditorState())
-        XCTAssertEqual(fake.commitCount, 0)
-        session.redo()
-        XCTAssertFalse(session.isReviewingPreviousMerge)
-        XCTAssertEqual(session.document, chosen, "Redo restores the chosen result, not the late callback")
-    }
-
     func testDraftWithAnUnknownStateIDFallsBackToTheLegacyHeadLogic() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         XCTAssertFalse(session.hasUnsavedChanges, "no local authored edit needs overwrite permission")
@@ -1677,7 +1686,6 @@ final class ChatDraftStagingTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertTrue(session.hasOnlyChatStagedChanges, "legacy staging path")
-        XCTAssertNil(session.mergeConflictMessage, "missing provenance alone must not prompt on a clean editor")
         XCTAssertEqual(fake.commitCount, 0)
     }
 
@@ -1943,7 +1951,6 @@ extension ChatDraftStagingTests {
         let merged = await settle { session.document.revision.baseGeneration == "gNew" }
         XCTAssertTrue(merged)
         XCTAssertNil(session.newerJobPrompt)
-        XCTAssertNil(session.mergeConflictMessage)
         assertAuthoredDocument(session.document, equals: before)
         XCTAssertTrue(session.hasUnsavedChanges, "automatic adoption preserves manual edits")
         XCTAssertFalse(session.isBehindActiveJob(newProject))
@@ -2320,5 +2327,62 @@ extension ChatDraftStagingTests {
         XCTAssertTrue(failed)
         guard case let .previewFailed(message) = session.saveState else { return }
         XCTAssertFalse(message.contains("changed elsewhere"), message)
+    }
+    // MARK: - One definition of the variant's current generation (B4)
+
+    /// A variant that never went through the editor has no `render_generation_id`; its baseline is `render_finished_at`.
+    private static func finishTimeOnlyVariant(_ finishedAt: String = "2026-09-10T10:00:00Z") -> [String: JSONValue] {
+        var value = variant()
+        value["render_generation_id"] = nil
+        value["render_finished_at"] = .string(finishedAt)
+        return value
+    }
+
+    private func stage(base: String, headCurrent: Bool?, variant: [String: JSONValue]) -> DraftSnapshot.StagedChatEdit? {
+        var head = Self.chatSnapshot(base: base, shape: .flatOnly)
+        head.headCurrent = headCurrent
+        let input = Self.bootstrapSnapshot().editorDraft(projectID: UUID(), authoritativeVariant: variant).serverSnapshot
+        return head.stagedChatEdit(over: input, variant: variant, appliedRevision: nil)
+    }
+
+    func testHeadBasedOnTheVariantsFinishTimeIsStaged() {
+        let finished = "2026-09-10T10:00:00Z"
+        XCTAssertNotNil(stage(base: finished, headCurrent: nil, variant: Self.finishTimeOnlyVariant(finished)),
+                        "the finish time is the baseline when there is no generation id")
+    }
+
+    func testHeadMarkedCurrentByTheServerIsAcceptedWhateverItsBase() {
+        XCTAssertNotNil(stage(base: "source-generation", headCurrent: true, variant: Self.variant(generation: "upload-attempt")),
+                        "a head the server certified is never dropped by a phone-side re-derivation")
+    }
+
+    func testHeadWithoutTheFlagOrMarkedStaleIsStillComparedAgainstTheBaseline() {
+        XCTAssertNil(stage(base: "old", headCurrent: nil, variant: Self.variant(generation: "new")), "older server, stale head")
+        XCTAssertNil(stage(base: "old", headCurrent: false, variant: Self.variant(generation: "new")), "server says not current")
+        XCTAssertNotNil(stage(base: "same", headCurrent: false, variant: Self.variant(generation: "same")),
+                        "not-current does not veto a head whose base matches the baseline")
+    }
+
+    func testDraftSnapshotDecodesTheServersHeadCurrentFields() throws {
+        func decode(_ extra: String) throws -> DraftSnapshot {
+            let json = """
+            {"draft_id":"d","item_id":"i","variant_key":"v","draft_revision":1,"snapshot_hash":"h","etag":"e",
+             "base_job_id":null,"base_generation_id":"g","snapshot":{},"can_undo":false,"created_at":"2026-09-10T10:00:00Z"\(extra)}
+            """
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(DraftSnapshot.self, from: Data(json.utf8))
+        }
+        let current = try decode(#","head_current":true,"base_generation":"g2""#)
+        XCTAssertEqual(current.headCurrent, true)
+        let older = try decode("")
+        XCTAssertNil(older.headCurrent, "an older server omits the field")
+    }
+
+    func testVariantBaselineFollowsTheServersRule() {
+        XCTAssertEqual(variantBaseline(["render_generation_id": .string("g"), "render_finished_at": .string("t")]), "g")
+        XCTAssertEqual(variantBaseline(["render_generation_id": .string(""), "render_finished_at": .string("t")]), "t")
+        XCTAssertEqual(variantBaseline(["render_finished_at": .string("t")]), "t")
+        XCTAssertEqual(variantBaseline([:]), "")
+        XCTAssertEqual(variantBaseline(nil), "")
     }
 }

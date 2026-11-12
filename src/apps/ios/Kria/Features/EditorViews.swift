@@ -381,8 +381,7 @@ struct NativeEditorVideoDownloader {
         // Fetch the selected editor variant at action time. The job-level
         // playback endpoint may point at a different library-preview variant.
         let variant = try await api.editorVariant(jobID: target.jobID, variantID: target.variantID)
-        let generation = variant["render_generation_id"]?.stringValue
-            ?? variant["render_finished_at"]?.stringValue
+        let generation = variantBaseline(variant)
         if let expected = target.expectedGenerationID, generation != expected {
             throw NativeEditorVideoDownloadError.rendering
         }
