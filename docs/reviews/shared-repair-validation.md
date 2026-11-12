@@ -81,7 +81,8 @@ Optional recovery scope distinguishes no pending recovery from a valid nil owner
 
 ## Formal scope and controls
 
-`python3 formal/ios_edit_flow/verify_merge_decision.py` ran serially after native
+`python3 formal/ios_edit_flow/verify_merge_decision.py` (since replaced by
+`verify_converge.py`, which models the latest-wins editor) ran serially after native
 execution with Java 21 and the existing pinned TLC v1.8.0 jar. SHA-256:
 `fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e`.
 Each run had a 120-second limit; the outer batch limit was 15 minutes.
