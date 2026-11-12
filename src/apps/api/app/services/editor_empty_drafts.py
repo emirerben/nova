@@ -23,11 +23,13 @@ from app.kria.drafts import (
     _editor_snapshot,
     _out,
     can_undo,
+    canonical_snapshot,
+    committed_document,
     editor_variant_target,
     stage_editor_variant_draft,
 )
 from app.kria.editor_head import is_head_current, variant_baseline
-from app.models import CreatorEditDraft, Job, PlanItem
+from app.models import CreationThread, CreatorEditDraft, Job, PlanItem
 from app.services.phone_editor import _StagedJob
 
 _DIRECT_SECTIONS = (
@@ -109,24 +111,28 @@ def _reference(variant: dict[str, Any]) -> uuid.UUID | None:
         return None
 
 
-async def _healed_in_memory(
-    db: AsyncSession, job: Job, variant: dict[str, Any], row: CreatorEditDraft
+async def _committed_in_place_of(
+    db: AsyncSession, job: Job, row: CreatorEditDraft
 ) -> DraftSnapshotOut | None:
-    """A pinned draft off the baseline as ``GET /draft`` would heal it, without writing.
+    """A pinned v2 draft that is not current, as the variant's committed state. Writes nothing.
 
-    The same document (``editor_head.moved_document``, operation ``heal``). The row keeps its
-    own identity and ETag: a write that echoes them is answered ``draft_stale`` after the heal.
+    The document is what retiring the draft would create (``committed_document``); the row keeps
+    its own identity and ETag, so a write that echoes them is refused as stale and the phone
+    reloads. ``head_current`` is false: the saved draft itself is not the committed video.
     """
-    from app.kria.drafts import canonical_snapshot  # noqa: PLC0415
-    from app.kria.editor_head import moved_document  # noqa: PLC0415
-
     if (row.snapshot_json or {}).get("kind") != "editor":
         return None
-    try:
-        document = moved_document(job, str(row.variant_key), row, "heal")
-        snapshot, _hash = canonical_snapshot(document)
-    except Exception:  # noqa: BLE001 - an unusable stored draft is served as unavailable
+    thread = await db.get(CreationThread, row.thread_id)
+    item = await db.get(PlanItem, row.item_id)
+    if item is None:
         return None
+    document = committed_document(
+        state=dict(thread.state or {}) if thread is not None else {},
+        item=item,
+        job=job,
+        variant_key=str(row.variant_key),
+    )
+    snapshot, _hash = canonical_snapshot(document)
     shim = SimpleNamespace(
         id=row.id,
         item_id=row.item_id,
@@ -134,31 +140,28 @@ async def _healed_in_memory(
         draft_revision=row.draft_revision,
         snapshot_hash=row.snapshot_hash,
         base_job_id=row.base_job_id,
-        base_generation_id=variant_baseline(variant) or None,
+        base_generation_id=variant_baseline(_variant(job, str(row.variant_key))) or None,
         created_at=row.created_at,
         snapshot_json=snapshot,
     )
-    return _out(
-        shim,  # type: ignore[arg-type]
-        can_undo=await can_undo(db, job, str(row.variant_key), row),
-        head_current=False,
-    )
+    return _out(shim, can_undo=await can_undo(db, row), head_current=False)  # type: ignore[arg-type]
 
 
 async def attach_saved_editor_drafts(
-    db: AsyncSession, job: Job | None, *, rebase_stale: bool = False
+    db: AsyncSession, job: Job | None, *, committed_fallback: bool = False
 ) -> None:
     """Load pinned snapshots once; never overwrite ORM variant JSON on a read.
 
-    ``rebase_stale`` (the timeline reads) also serves a pinned draft that is not on the current
-    generation, healed in memory by the function that restaging persists, so the timeline and
-    ``GET /draft`` show one document. Save keeps the strict form and heals with a write.
+    ``committed_fallback`` (the timeline reads) also serves a stranded pinned v2 draft as the
+    variant's committed state, in ``job._stranded_editor_drafts``. An empty-state variant's
+    content exists only in its draft, so it never gets one: its 409 stays.
     """
     if job is None:
         return
     # A repeated projection of this ORM instance must not retain an earlier
     # snapshot after its reference, ownership graph or generation changes.
     job._saved_editor_drafts = {}
+    job._stranded_editor_drafts = {}
     variants = [v for v in (job.assembly_plan or {}).get("variants") or [] if isinstance(v, dict)]
     references = {_reference(v): v for v in variants if _reference(v) is not None}
     if not references:
@@ -187,23 +190,21 @@ async def attach_saved_editor_drafts(
         ):
             continue
         if not is_head_current(job, variant, row):
-            stale = await _healed_in_memory(db, job, variant, row) if rebase_stale else None
-            if stale is not None:
-                snapshots[str(row.variant_key)] = stale
+            if committed_fallback and not is_empty_editor_variant(variant):
+                stranded = await _committed_in_place_of(db, job, row)
+                if stranded is not None:
+                    job._stranded_editor_drafts[str(row.variant_key)] = stranded
             continue
-        snapshots[str(row.variant_key)] = _out(
-            row, can_undo=await can_undo(db, job, str(row.variant_key), row), head_current=True
-        )
+        snapshots[str(row.variant_key)] = _out(row, can_undo=await can_undo(db, row))
     job._saved_editor_drafts = snapshots
 
 
-def current_saved_editor_draft(job: Job, variant_id: str) -> DraftSnapshotOut | None:
-    """The pinned draft when it is on the variant's current generation, else None."""
-    return getattr(job, "_saved_editor_drafts", {}).get(variant_id)
-
-
-def saved_editor_draft(job: Job, variant_id: str) -> DraftSnapshotOut:
-    draft = current_saved_editor_draft(job, variant_id)
+def saved_editor_draft(
+    job: Job, variant_id: str, *, committed_fallback: bool = False
+) -> DraftSnapshotOut:
+    draft = getattr(job, "_saved_editor_drafts", {}).get(variant_id)
+    if draft is None and committed_fallback:
+        draft = getattr(job, "_stranded_editor_drafts", {}).get(variant_id)
     if draft is None:
         raise HTTPException(409, detail="editor_draft_unavailable")
     return draft

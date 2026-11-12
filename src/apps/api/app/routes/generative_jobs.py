@@ -9039,9 +9039,6 @@ def dispatch_get_timeline(
     if variant and variant.get("editor_state") == "empty":
         from app.services.editor_empty_drafts import saved_editor_draft  # noqa: PLC0415
 
-        # The empty state's content exists only in its draft, so the committed (last non-empty)
-        # variant is never a fallback; a pinned draft on an older generation is rebased in
-        # memory. The 409 remains only when no draft row backs the variant at all.
         draft = saved_editor_draft(job, variant_id)
         timeline.update(
             slots=[],
@@ -9053,20 +9050,18 @@ def dispatch_get_timeline(
             base_generation=variant_render_baseline(variant),
         )
     elif variant and variant.get("editor_state_version") == 2:
-        from app.services.editor_empty_drafts import current_saved_editor_draft
+        from app.services.editor_empty_drafts import saved_editor_draft
 
-        # Serves the pinned row, healed in memory (GET never writes) by the function GET /draft
-        # heals with, so the timeline and the draft read one document.
-        draft = current_saved_editor_draft(job, variant_id)
-        if draft is not None:
-            sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
-            if "timeline_slots" in sections:
-                timeline["slots"] = copy.deepcopy(sections["timeline_slots"] or [])
-            timeline.update(
-                draft=draft.model_dump(mode="json"),
-                base_generation=variant_render_baseline(variant),
-                has_user_edits=True,
-            )
+        # A stranded pinned draft is served as the committed state (read-only; Save retires it).
+        draft = saved_editor_draft(job, variant_id, committed_fallback=True)
+        sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
+        if "timeline_slots" in sections:
+            timeline["slots"] = copy.deepcopy(sections["timeline_slots"] or [])
+        timeline.update(
+            draft=draft.model_dump(mode="json"),
+            base_generation=variant_render_baseline(variant),
+            has_user_edits=True,
+        )
     from app.services.saved_user_song import saved_user_song_for_variant
 
     projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
@@ -14894,7 +14889,7 @@ async def get_variant_timeline(
     )
     from app.services.editor_empty_drafts import attach_saved_editor_drafts  # noqa: PLC0415
 
-    await attach_saved_editor_drafts(db, job, rebase_stale=True)
+    await attach_saved_editor_drafts(db, job, committed_fallback=True)
     variant = _find_variant(job, variant_id)
     image_preview_paths = (
         await guided_timeline_image_preview_paths(db, job.content_plan_item_id)

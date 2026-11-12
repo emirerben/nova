@@ -26,7 +26,6 @@ class FakeJob:
         self.assembly_plan = assembly_plan
         self.all_candidates = all_candidates or {}
         self.status = status
-        self.content_plan_item_id = None
 
 
 def patch_job_session(monkeypatch, job, *, noop_flag_modified: bool = False) -> None:

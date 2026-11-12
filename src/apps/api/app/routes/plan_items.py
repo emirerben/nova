@@ -7079,7 +7079,7 @@ async def get_item_timeline(
         if variant and variant.get("resolved_archetype") == "guided_story"
         else {}
     )
-    await attach_saved_editor_drafts(db, job, rebase_stale=True)
+    await attach_saved_editor_drafts(db, job, committed_fallback=True)
     return TimelineResponse(
         **dispatch_get_timeline(
             job,
@@ -8089,8 +8089,9 @@ async def _editor_commit_item(
     ):
         await attach_saved_editor_drafts(db, locked_job)
         if variant_id not in locked_job._saved_editor_drafts:
-            # The pinned draft names an older generation. Item then Job are locked here, so
-            # move the head onto the current one instead of refusing the creator's Save.
+            # The pinned draft is not on the current generation, so main answered 409
+            # editor_draft_unavailable for good. Item then Job are locked: retire it (the head
+            # becomes the committed state, nothing old comes back) and attach that.
             from app.kria.editor_head import restage_editor_head  # noqa: PLC0415
 
             await restage_editor_head(
@@ -8533,20 +8534,6 @@ async def _editor_commit_item(
             variant_id=variant_id,
             creator_id=user.id,
             body=commit_body,
-        )
-    else:
-        from app.kria.editor_head import restage_editor_head  # noqa: PLC0415
-
-        # The Save moved the variant to a new generation with no draft revision of its own:
-        # the head becomes the committed state, in this transaction, so it never lags.
-        await restage_editor_head(
-            db,
-            item=item,
-            job=locked_job,
-            variant_key=variant_id,
-            creator_id=user.id,
-            operation="retire",
-            reason="editor_save",
         )
     await db.commit()
     # Kick AFTER the commit so a worker that grabs the task instantly always

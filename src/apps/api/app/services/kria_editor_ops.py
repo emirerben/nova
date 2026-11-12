@@ -29,7 +29,7 @@ from app.agents._schemas.text_element import (
 )
 from app.config import settings
 from app.kria.clip_tilt import ClipTilt
-from app.kria.editor_head import is_head_current
+from app.kria.editor_head import authored_revision, is_head_current
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
@@ -1962,10 +1962,11 @@ def _summary(op: dict[str, Any]) -> str:
 def fresh_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> dict[str, Any]:  # noqa: ANN401
     """The head draft's editor payload iff the head is on the variant's CURRENT generation.
 
-    "Current" is ``editor_head.is_head_current``: same job, and both the column and the
-    payload base name the render baseline (or the generation a phone publish was made
-    from). A stale head must not be overlaid on a newer render. Returns ``{}`` (build on
-    the saved variant) when absent, non-editor, or not current.
+    "Current" is ``editor_head.is_head_current``: same job, and both the column and the payload
+    base name the render baseline (or the generation a phone publish was made from). A head on
+    an older generation must not be overlaid on a newer render, and nothing moves it for the
+    turn: it is ignored. Returns ``{}`` (build on the saved variant) when absent, non-editor, or
+    not current.
     """
     snapshot = getattr(head, "snapshot_json", None) if head is not None else None
     if not isinstance(snapshot, dict) or snapshot.get("kind") != "editor":
@@ -1976,33 +1977,6 @@ def fresh_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> d
     if not is_head_current(job, variant, head):
         return {}
     return payload
-
-
-def latest_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> dict[str, Any]:  # noqa: ANN401
-    """The head's editor payload as it stands on the variant's CURRENT generation.
-
-    A current head is returned as stored. A head of this job that is off the baseline is moved
-    in memory by operation ``heal`` (what draft GET persists), so the chat's earlier unsaved
-    edits are the base of the next turn and the planner stays read-only. A head from another job
-    is never replayed. Returns ``{}`` (build on the saved variant) otherwise.
-    """
-    payload = fresh_editor_head_payload(head, variant, job)
-    if payload or head is None or head.base_job_id != getattr(job, "id", None):
-        return payload
-    snapshot = getattr(head, "snapshot_json", None)
-    stored = snapshot.get("editor_payload") if isinstance(snapshot, dict) else None
-    if not isinstance(snapshot, dict) or snapshot.get("kind") != "editor" or not stored:
-        return {}
-    from app.kria import editor_head  # noqa: PLC0415 - editor_head lazily imports drafts
-
-    try:
-        document = editor_head.moved_document(
-            job, str(variant.get("variant_id") or ""), head, "heal"
-        )
-    except Exception:  # noqa: BLE001 - a malformed stored head must not fail the turn
-        log.warning("editor_head_heal_unusable", job_id=str(getattr(job, "id", "")))
-        return {}
-    return dict(document.editor_payload or {})
 
 
 class EditorDraftBasis(NamedTuple):
@@ -2327,10 +2301,12 @@ def _unseen_chat_head(head: Any, variant: dict[str, Any], job: Any, client_state
     if _carries_edits(state.get("lanes") or {}):
         return {}
     seen = state.get("draft_revision")
-    revision = getattr(head, "draft_revision", None)
+    # A restage row (phone-publish restamp) stands for the row it moved: a deliberate discard of
+    # revision N stays a discard after the server wrote N+1 with the same lanes.
+    revision = authored_revision(head)
     if seen is not None and (revision is None or seen >= revision):
         return {}
-    fresh = latest_editor_head_payload(head, variant, job)
+    fresh = fresh_editor_head_payload(head, variant, job)
     if str(fresh.get("base_generation") or "") != str(state.get("base_generation") or ""):
         return {}
     return fresh if _carries_edits(fresh) else {}
@@ -2347,7 +2323,7 @@ def resolve_editor_base(
          never saw the head's chat lanes (``_unseen_chat_head``): then the head.
          A different baseline raises ``EditorStateStaleError`` (never silently rebased).
          Untrusted: a projection failure falls back to 2/3 with ``fallback_reason``.
-      2. the head draft when current, or healable in memory (``latest_editor_head_payload``).
+      2. the head draft when fresh (``fresh_editor_head_payload``).
       3. the bare saved variant.
     """
     reason: str | None = None
@@ -2372,7 +2348,7 @@ def resolve_editor_base(
             return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
         except Exception as exc:  # noqa: BLE001 - client state is untrusted input
             reason = f"client_state_unusable:{type(exc).__name__}"
-    fresh = latest_editor_head_payload(head, variant, job)
+    fresh = fresh_editor_head_payload(head, variant, job)
     if fresh:
         return EditorBase(project_editor_draft(variant, fresh, job), fresh, "head", reason)
     return EditorBase(project_editor_draft(variant, {}, job), {}, "variant", reason)
