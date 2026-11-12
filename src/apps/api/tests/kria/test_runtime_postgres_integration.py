@@ -1543,9 +1543,10 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
                 item_id = draft.item_id
                 first_revision = draft.draft_revision
                 if followup == "stale_head":
-                    # A surviving head of this job whose stamps are off the baseline is
-                    # healed in memory (editor_head operation `heal`), so the chat's unsaved
-                    # edit is still the input to the planner and the next draft.
+                    # A surviving head from an older render must not become input
+                    # to either the planner or the next committed draft.
+                    # Freshness is the payload's own base_generation (the column
+                    # and session pointer go stale after an editor Save).
                     snapshot = copy.deepcopy(draft.snapshot_json)
                     snapshot["editor_payload"]["base_generation"] = "older-generation"
                     draft.snapshot_json = snapshot
@@ -1572,7 +1573,9 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
                 await _plan_editor_revision(
                     db, thread_id=thread_id, item=item, user_message="Make that hook red"
                 )
-            expected_text = "Fresh matcha, finally"
+            expected_text = (
+                "Old matcha hook" if followup == "stale_head" else "Fresh matcha, finally"
+            )
             assert observed_snapshots[0]["text_bars"][0]["text"] == expected_text
 
             editor_plan = adapt_editor_action(

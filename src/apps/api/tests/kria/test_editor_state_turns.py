@@ -176,16 +176,9 @@ def test_precedence_head_then_variant_without_state() -> None:
     variant = _variant("G2")
     head = resolve_editor_base(_job(variant), variant, _head("G2"), None)
     assert head.source == "head" and _bars(head.projected)["label"]["text"] == "Stale label"
-    # A head of another job names slots that are not on this timeline: never replayed.
-    other_job = _head("G2")
-    other_job.base_job_id = uuid.UUID(int=99)
-    foreign = resolve_editor_base(_job(variant), variant, other_job, None)
-    assert foreign.source == "variant" and foreign.prior_payload == {}
-    assert _bars(foreign.projected)["label"]["text"] == "Saved label"
-    # A head of this job that is merely off the baseline is healed in memory, not "no head".
-    behind = resolve_editor_base(_job(variant), variant, _head("G1"), None)
-    assert behind.source == "head" and _bars(behind.projected)["label"]["text"] == "Stale label"
-    assert behind.prior_payload["base_generation"] == "G2"
+    stale_head = resolve_editor_base(_job(variant), variant, _head("G1"), None)
+    assert stale_head.source == "variant" and stale_head.prior_payload == {}
+    assert _bars(stale_head.projected)["label"]["text"] == "Saved label"
 
 
 def test_stale_state_is_never_silently_rebased() -> None:
@@ -271,19 +264,10 @@ def test_clean_state_stays_authoritative_without_unseen_chat_lanes() -> None:
             "editor_payload": {"base_generation": "G2", "sections": {}},
         },
     )
-    for head in (None, bootstrap):
+    for head in (None, bootstrap, _chat_head(7, base="G1")):
         base = resolve_editor_base(_job(variant), variant, head, _seen(None))
         assert base.source == "client_state", head
         assert _bars(base.projected)["label"]["text"] == "Saved label"
-
-
-def test_clean_state_that_never_saw_a_healable_chat_head_builds_on_it() -> None:
-    """A chat head one generation behind is healed in memory, so its lanes are not lost."""
-    variant = _variant("G2")
-    base = resolve_editor_base(_job(variant), variant, _chat_head(7, base="G1"), _seen(None))
-    assert base.source == "head"
-    assert [row["text"] for row in base.projected["text_elements"]] == ["Chat kept one title"]
-    assert base.prior_payload["base_generation"] == "G2"
 
 
 def test_unsaved_lanes_stay_authoritative_over_an_unseen_chat_head() -> None:

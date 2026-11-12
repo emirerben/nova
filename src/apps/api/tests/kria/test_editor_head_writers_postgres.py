@@ -1,8 +1,8 @@
 """Real-Postgres proof that every writer which advances a generation restages the head.
 
-Failure modes 18-24 of ``docs/reviews/latest-wins-convergence/server-failure-modes.md``
-("Writers"). Each test drives the real code path (approval execution, phone publish,
-speech-cut publication) and asserts rows and returned documents only.
+The two writers that move a head (``docs/reviews/latest-wins-convergence/server-failure-modes.md``):
+approval execution (``retire``) and phone publish (``restamp``), driven through the real code
+paths, plus the Ataturk sequence. Rows and returned documents only.
 """
 
 from __future__ import annotations
@@ -42,7 +42,6 @@ from tests.kria.test_editor_head_generation_postgres import (
     _chat_head,
     _committed_sections,
     _flat,
-    _phone_head,
     _timeline,
 )
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
@@ -201,6 +200,8 @@ async def _approved_ai_edit(  # noqa: ANN202
     monkeypatch.setattr(
         "app.tasks.kria_runtime.enqueue_editor_commit_render", lambda *_a, **_k: None
     )
+    with sync_session() as db:
+        revision = db.get(CreationThread, thread_id).revision
     async with AsyncSessionLocal() as db:
         accepted, _ = await submit_turn(
             db,
@@ -209,7 +210,7 @@ async def _approved_ai_edit(  # noqa: ANN202
             body=SubmitTurnBody(
                 message="Apply the edit",
                 client_event_id=f"editor-{uuid.uuid4().hex}",
-                expected_thread_revision=2,
+                expected_thread_revision=revision,
             ),
         )
     result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
@@ -267,7 +268,11 @@ async def test_approval_execution_restages_the_head_on_the_new_generation_once(
         assert "editor_text_diff" not in head["snap"]
         assert _flat(staged) and _flat(head) == {}, "retire: no flat lane is left to re-stage"
         assert head["snap"]["editor_payload"]["sections"] == _committed_sections(job_id)
-        assert head["snap"]["restage"] == {"of": str(staged["id"]), "reason": "approval_execution"}
+        assert head["snap"]["restage"] == {
+            "of": str(staged["id"]),
+            "reason": "approval_execution",
+            "origin_revision": staged["rev"],
+        }
         rows_after_first = _rows(item_id)
 
         # The same task delivered again after it dispatched: nothing more to restage.
@@ -433,7 +438,11 @@ async def test_phone_publish_restamps_the_head_and_keeps_its_content_byte_identi
         expected = copy.deepcopy(staged["snap"])
         expected["editor_payload"]["base_generation"] = attempt
         assert {k: v for k, v in head["snap"].items() if k != "restage"} == expected
-        assert head["snap"]["restage"] == {"of": str(staged["id"]), "reason": "phone_publish"}
+        assert head["snap"]["restage"] == {
+            "of": str(staged["id"]),
+            "reason": "phone_publish",
+            "origin_revision": staged["rev"],
+        }
         rows_after = _rows(item_id)
 
         await publish()  # a retried completion answers from the record: no second row
@@ -454,73 +463,6 @@ async def test_phone_publish_without_an_editor_head_creates_none(
 
         assert _variant_of(job_id)["render_generation_id"] == attempt
         assert _rows(item_id) == []
-    finally:
-        await async_engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_speech_cut_publication_drops_the_timeline_lanes_and_keeps_the_text_edit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app.tasks import generative_build as gb
-
-    operation_id, attempt_id, cut_generation = "op-1", "attempt-1", "generation-cut"
-    control = {
-        "operation_id": operation_id,
-        "variant_id": VARIANT,
-        "render_generation_id": cut_generation,
-        "desired_disabled": True,
-        "forced_removals": [],
-        "operation": {"operation": "apply_speech_cut_candidate", "candidate_id": "cut-1"},
-        "finalizer_claim": {
-            "operation_id": operation_id,
-            "attempt_id": attempt_id,
-            "render_generation_id": cut_generation,
-        },
-    }
-    user_id, thread_id, item_id, job_id = _seed()
-    try:
-        # A chat head staged on the generation the cut replaces: flat timeline, text and mix lanes.
-        await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
-        staged = _head(item_id)
-        assert {"timeline_slots", "text_elements", "mix"} <= set(_flat(staged))
-        cut = _timeline()
-        cut["slots"] = [{**cut["slots"][0], "duration_s": 1.5}]
-        with sync_session() as db:
-            job = db.get(Job, job_id, with_for_update=True)
-            plan = copy.deepcopy(job.assembly_plan)
-            plan["variants"][0]["render_generation_id"] = cut_generation
-            plan["variants"][0]["ai_timeline"] = cut
-            plan["variants"][0]["silence_cut"] = {"removed": []}
-            plan["speech_cut_control"] = control  # the cut starts after the chat turn
-            job.assembly_plan = plan
-            db.commit()
-        monkeypatch.setattr(
-            gb, "_reconcile_retired_variant_posters_after_terminal_commit", lambda *_a, **_k: None
-        )
-
-        await asyncio.to_thread(
-            gb._publish_speech_cut_rerender,
-            str(job_id),
-            expected_operation_id=operation_id,
-            expected_attempt_id=attempt_id,
-        )
-
-        published = _variant_of(job_id)
-        assert published["render_generation_id"] == cut_generation
-        assert published["speech_cut_in_flight"] is None
-        head = _head(item_id)
-        assert head["parent"] == staged["id"]
-        assert head["col"] == head["payload_base"] == cut_generation
-        assert _head_is_current(item_id, job_id)
-        sections = head["snap"]["editor_payload"]["sections"]
-        assert [(row["slot_id"], row["duration_s"]) for row in sections["timeline_slots"]] == [
-            ("s0", 1.5)
-        ], "the slots are the cut's"
-        assert sections == _committed_sections(job_id)
-        assert sorted(_flat(head)) == ["mix", "text_elements"], "the timeline lanes were dropped"
-        assert _flat(head)["text_elements"][0]["text"] == "AI hook", "the text edit survives"
-        assert head["snap"]["changes"] == staged["snap"]["changes"]
     finally:
         await async_engine.dispose()
 
@@ -568,16 +510,7 @@ async def _observe_one_document(user_id, thread_id, item_id, job_id) -> str:  # 
                 },
             )
             assert save.status_code == 200, save.text
-            # The Save moved the variant to a new generation; the head must not lag it.
-            saved = _variant_of(job_id)["render_generation_id"]
-            assert saved != current
-            assert _head_is_current(item_id, job_id), "the head lags a Save until someone reads it"
-            again = await client.get(f"/creation-threads/{thread_id}/draft")
-            assert again.status_code == 200, again.text
-            assert again.json()["head_current"] is True
-            assert again.json()["base_generation"] == saved
-            assert _head_is_current(item_id, job_id)
-            assert _head(item_id)["payload_base"] == saved
+            assert _variant_of(job_id)["render_generation_id"] != current
             return current
     finally:
         app.dependency_overrides.pop(get_current_user, None)
@@ -592,6 +525,7 @@ async def test_ataturk_draft_then_generation_advance_serves_one_document(
 
     After each step the draft, the timeline and a Save all succeed on the same generation,
     the head is current, and its payload base equals the variant's ``render_generation_id``.
+    The Save then moves the variant on by itself; the server leaves the head where it was.
     Each parameter runs the sequence up to its step on its own project, because a Save
     itself advances the generation.
     """
@@ -628,7 +562,6 @@ async def test_ataturk_draft_then_generation_advance_serves_one_document(
         generation = await _observe_one_document(user_id, thread_id, item_id, job_id)
 
         assert before["payload_base"] == generation
-        assert _head_is_current(item_id, job_id)
     finally:
         await async_engine.dispose()
 
@@ -650,66 +583,6 @@ def _clear_user_override() -> None:
     from app.main import app
 
     app.dependency_overrides.pop(get_current_user, None)
-
-
-async def _strand_pinned_v2_draft(monkeypatch, user_id, thread_id, job_id):  # noqa: ANN001, ANN202
-    """A v2 variant pinned to a saved draft, then a legacy dispatcher moves its generation."""
-    from tests.routes.test_editor_commit import _arm
-
-    _arm(monkeypatch)
-    monkeypatch.setattr("app.routes.plan_items.enqueue_editor_commit_render", lambda *a, **k: None)
-    staged = await _phone_head(user_id, thread_id, "Pinned hook")
-    with sync_session() as db:
-        job = db.get(Job, job_id, with_for_update=True)
-        plan = copy.deepcopy(job.assembly_plan)
-        variant = plan["variants"][0]
-        variant.update(
-            editor_state_version=2,
-            editor_timeline_mode="authored",
-            editor_draft={"draft_id": staged.draft_id},
-        )
-        job.assembly_plan = plan
-        db.commit()
-        plan = copy.deepcopy(job.assembly_plan)
-        plan["variants"][0]["render_generation_id"] = "generation-2"
-        job.assembly_plan = plan
-        db.commit()
-    return staged
-
-
-@pytest.mark.asyncio
-async def test_stranded_pinned_draft_is_served_from_the_committed_variant_and_save_heals_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user_id, thread_id, item_id, job_id = _seed()
-    try:
-        staged = await _strand_pinned_v2_draft(monkeypatch, user_id, thread_id, job_id)
-        base = f"/plan-items/{item_id}/variants/{VARIANT}"
-        rows_before = len(_rows(item_id))
-        async with _client_for(user_id) as client:
-            timeline = await client.get(f"{base}/timeline")
-            # GET stays write-free and serves the pinned draft healed in memory: a phone-written
-            # head has no flat lane, so it is the committed document.
-            assert timeline.status_code == 200, timeline.text
-            served = timeline.json()["draft"]
-            assert served["snapshot"]["editor_payload"]["base_generation"] == "generation-2"
-            assert served["snapshot"]["editor_payload"]["sections"] == _committed_sections(job_id)
-            assert _head(item_id)["id"] == uuid.UUID(staged.draft_id)
-            assert len(_rows(item_id)) == rows_before
-
-            save = await client.post(
-                f"{base}/editor-commit",
-                json={
-                    "base_generation": "generation-2",
-                    "editor_state_version": 2,
-                    "text_elements": [{**HOOK, "text": "Saved over the stranded draft"}],
-                },
-            )
-            assert save.status_code == 200, save.text
-        assert _head_is_current(item_id, job_id)
-    finally:
-        _clear_user_override()
-        await async_engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -808,105 +681,4 @@ async def test_an_approved_draft_stays_current_through_its_render_and_a_publish_
         )
     finally:
         _clear_user_override()
-        await async_engine.dispose()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["legacy", "v2"])
-async def test_a_manual_save_over_an_ai_chat_head_leaves_the_saved_document_and_no_flat_lane(
-    monkeypatch: pytest.MonkeyPatch, path: str
-) -> None:
-    from app.kria.editor_head import flat_lane_names
-    from tests.routes.test_editor_commit import _arm
-
-    _arm(monkeypatch)
-    monkeypatch.setattr("app.routes.plan_items.enqueue_editor_commit_render", lambda *a, **k: None)
-    user_id, thread_id, item_id, job_id = _seed()
-    try:
-        await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
-        staged = _head(item_id)
-        assert {"text_elements", "mix"} <= set(_flat(staged))
-        body = {
-            "base_generation": "generation-1",
-            "editor_state_version": 1 if path == "legacy" else 2,
-            "text_elements": [{**HOOK, "text": "Creator Save"}],
-        }
-        if path == "legacy":
-            body["mix"] = {"music_level": 0.7}  # the AI left 0.2 unsaved
-        else:
-            with sync_session() as db:
-                job = db.get(Job, job_id, with_for_update=True)
-                plan = copy.deepcopy(job.assembly_plan)
-                plan["variants"][0].update(
-                    editor_state_version=2,
-                    editor_timeline_mode="authored",
-                    editor_draft={"draft_id": str(staged["id"])},
-                )
-                job.assembly_plan = plan
-                db.commit()
-        base = f"/plan-items/{item_id}/variants/{VARIANT}"
-        async with _client_for(user_id) as client:
-            save = await client.post(f"{base}/editor-commit", json=body)
-            assert save.status_code == 200, save.text
-            saved_generation = _variant_of(job_id)["render_generation_id"]
-            assert saved_generation != "generation-1"
-
-            head = _head(item_id)
-            assert _flat(head) == {}, "nothing is left for the phone to re-stage"
-            assert head["col"] == head["payload_base"] == saved_generation
-            assert _text(head) == "Creator Save"
-            assert _variant_of(job_id)["text_elements"][0]["text"] == "Creator Save"
-            if path == "legacy":
-                assert head["snap"]["editor_payload"]["sections"] == _committed_sections(job_id)
-                assert _variant_of(job_id)["mix"] == 0.7, "the saved level wins over the AI's"
-
-            draft = await client.get(f"/creation-threads/{thread_id}/draft")
-            assert draft.status_code == 200, draft.text
-            drafted = draft.json()
-            assert drafted["head_current"] is True
-            assert flat_lane_names(drafted["snapshot"]["editor_payload"]) == []
-            assert (
-                drafted["snapshot"]["editor_payload"]["sections"]["text_elements"][0]["text"]
-                == "Creator Save"
-            )
-
-            timeline = await client.get(f"{base}/timeline")
-            assert timeline.status_code == 200, timeline.text
-            if path == "v2":
-                assert timeline.json()["draft"]["snapshot"] == drafted["snapshot"]
-                assert timeline.json()["base_generation"] == saved_generation
-            else:
-                assert "draft" not in timeline.json() or timeline.json()["draft"] is None
-    finally:
-        _clear_user_override()
-        await async_engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_undo_after_an_approval_render_has_nothing_to_undo_and_cancels_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app.kria.drafts import read_or_bootstrap_draft, undo_draft
-    from app.kria.runtime import RuntimeFailure
-
-    user_id, thread_id, item_id, job_id = _seed()
-    try:
-        approval_id = await _approved_ai_edit(monkeypatch, user_id, thread_id, EDIT_HOOK)
-        await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
-        head = _head(item_id)
-        rows_before = _rows(item_id)
-
-        async with AsyncSessionLocal() as db:
-            served = await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
-        assert served.can_undo is False, "the render holds the edit: undoing it is a no-op"
-        async with AsyncSessionLocal() as db:
-            with pytest.raises(RuntimeFailure) as raised:
-                await undo_draft(
-                    db, thread_id=thread_id, creator_id=user_id, expected_revision=head["rev"]
-                )
-        assert raised.value.code == "draft_undo_unavailable"
-        assert _rows(item_id) == rows_before
-        with sync_session() as db:
-            assert db.get(CreatorAgentApproval, approval_id).status == "consumed"
-    finally:
         await async_engine.dispose()

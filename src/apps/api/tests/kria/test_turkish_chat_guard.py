@@ -237,7 +237,9 @@ async def test_undo_says_what_it_restored_in_turkish(
         return head
 
     async def _insert(*_a: Any, **_k: Any) -> Any:
-        return SimpleNamespace(id=uuid.uuid4(), draft_revision=4)
+        return SimpleNamespace(
+            id=uuid.uuid4(), draft_revision=4, base_job_id=None, base_generation_id=None
+        )
 
     async def _owned(*_a: Any, **_k: Any) -> Any:
         return thread

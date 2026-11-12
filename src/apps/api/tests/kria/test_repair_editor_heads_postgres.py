@@ -57,6 +57,14 @@ def _run(capsys: pytest.CaptureFixture[str], *argv: str) -> tuple[int, str]:
     return code, capsys.readouterr().out
 
 
+def _refused(capsys: pytest.CaptureFixture[str], *argv: str) -> str:
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(list(argv))
+    assert exit_.value.code == 2
+    return capsys.readouterr().err
+
+
 @pytest.mark.asyncio
 async def test_dry_run_reports_the_stranded_head_and_changes_nothing(capsys, monkeypatch) -> None:
     try:
@@ -69,46 +77,47 @@ async def test_dry_run_reports_the_stranded_head_and_changes_nothing(capsys, mon
         for expected in (
             f"variant {VARIANT}",
             "generation=generation-2",
+            f"rev={head['rev']}",
             "column_base=generation-1",
             "payload_base=generation-1",
             f"base_job_id={job_id}",
+            "pinned=-",
             "on_baseline=no",
-            "flat lanes: mix, text_elements, timeline_slots; has sections: yes",
-            "heal (selected): sections become the committed document; flat lanes kept: mix",
-            "retire: becomes the committed document: sections replaced, no flat lane kept",
+            "flat lanes: mix, text_elements, timeline_slots",
+            "retire: the head becomes the committed document: nothing pending, no flat lane kept",
+            "keep-ai-lanes: stamped current; flat lanes kept: mix, text_elements, timeline_slots;"
+            " sections become the committed document",
+            "WARNING: keep-ai-lanes puts these lanes over the committed video: use only if "
+            "nothing was saved or rendered after this draft",
             "dry run",
         ):
-            assert expected in out
+            assert expected in out, expected
         assert _rows(item_id) == before, "a dry run adds, demotes and rewrites nothing"
     finally:
         await async_engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_apply_heals_by_default_and_a_second_apply_adds_nothing(capsys, monkeypatch) -> None:
+async def test_apply_needs_an_explicit_operation_and_an_explicit_variant(
+    capsys, monkeypatch
+) -> None:
     try:
-        _user, _thread, item_id, job_id = await _stranded(monkeypatch)
-        stranded = _head(item_id)
-        code, out = _run(capsys, "--item", str(item_id), "--apply")
-        assert code == 0
-        assert "heal -> new head=" in out and "on_baseline=yes" in out
-        healed = _head(item_id)
-        assert healed["id"] != stranded["id"] and healed["parent"] == stranded["id"]
-        assert healed["col"] == healed["payload_base"] == "generation-2"
-        assert _flat(healed) == _flat(stranded), "the AI's unsaved lanes survive the repair"
-        assert _sections(healed) == _committed_sections(job_id)
-
-        rows = len(_rows(item_id))
-        code, out = _run(capsys, "--item", str(item_id), "--apply")
-        assert code == 0 and "nothing to do" in out
-        assert len(_rows(item_id)) == rows, "a second apply adds zero rows"
-        assert _head(item_id)["id"] == healed["id"]
+        _user, _thread, item_id, _job = await _stranded(monkeypatch)
+        before = _rows(item_id)
+        for argv in (
+            ("--item", str(item_id), "--apply"),
+            ("--item", str(item_id), "--apply", "--variant", VARIANT),
+            ("--item", str(item_id), "--apply", "--operation", "retire"),
+            ("--item", str(item_id), "--operation", "retire"),
+        ):
+            assert "--" in _refused(capsys, *argv)
+        assert _rows(item_id) == before
     finally:
         await async_engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_apply_with_the_retire_operation_makes_the_head_the_committed_document(
+async def test_apply_retire_makes_the_head_the_committed_document_and_a_second_run_is_a_noop(
     capsys, monkeypatch
 ) -> None:
     try:
@@ -117,15 +126,52 @@ async def test_apply_with_the_retire_operation_makes_the_head_the_committed_docu
         _update_variant(
             job_id, text_elements=[{**_variant()["text_elements"][0], "text": "AI hook"}]
         )
-        code, out = _run(capsys, "--item", str(item_id), "--apply", "--operation", "retire")
+        stranded = _head(item_id)
+        args = ("--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire")
+        code, out = _run(capsys, *args)
         assert code == 0 and "retire -> new head=" in out
         head = _head(item_id)
+        assert head["parent"] == stranded["id"]
         assert head["col"] == head["payload_base"] == "generation-2"
         assert _flat(head) == {} and head["snap"]["changes"] == []
         assert _sections(head) == _committed_sections(job_id) and _text(head) == "AI hook"
+        assert head["snap"]["restage"]["reason"] == "repair_cli"
 
         rows = len(_rows(item_id))
-        code, out = _run(capsys, "--item", str(item_id), "--apply", "--operation", "retire")
+        code, out = _run(capsys, *args)
+        assert code == 0 and "nothing to do" in out
+        assert len(_rows(item_id)) == rows
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_apply_keep_ai_lanes_stamps_the_head_current_and_keeps_its_lanes(
+    capsys, monkeypatch
+) -> None:
+    try:
+        _user, _thread, item_id, job_id = await _stranded(monkeypatch)
+        stranded = _head(item_id)
+        args = (
+            "--item",
+            str(item_id),
+            "--variant",
+            VARIANT,
+            "--apply",
+            "--operation",
+            "keep-ai-lanes",
+        )
+        code, out = _run(capsys, *args)
+        assert code == 0 and "keep-ai-lanes -> new head=" in out
+        head = _head(item_id)
+        assert head["parent"] == stranded["id"]
+        assert head["col"] == head["payload_base"] == "generation-2"
+        assert _flat(head) == _flat(stranded), "the AI's unsaved lanes are kept"
+        assert _sections(head) == _committed_sections(job_id)
+        assert head["snap"]["changes"] == stranded["snap"]["changes"]
+
+        rows = len(_rows(item_id))
+        code, out = _run(capsys, *args)
         assert code == 0 and "nothing to do" in out
         assert len(_rows(item_id)) == rows
     finally:
@@ -146,7 +192,9 @@ async def test_apply_repoints_the_pinned_editor_draft(capsys, monkeypatch) -> No
         )
         _code, out = _run(capsys, "--item", str(item_id))
         assert f"pinned={staged['id']}" in out
-        _run(capsys, "--item", str(item_id), "--apply")
+        _run(
+            capsys, "--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire"
+        )
         with sync_session() as db:
             variant = db.get(Job, job_id).assembly_plan["variants"][0]
         assert variant["editor_draft"] == {"draft_id": str(_head(item_id)["id"])}
@@ -162,7 +210,9 @@ async def test_a_head_from_another_job_is_named_in_the_dry_run(capsys, monkeypat
         new_job_id = _add_job(item_id, user_id, _variant("generation-1", text="New job hook"))
         _code, out = _run(capsys, "--item", str(item_id))
         assert f"base_job_id={old_job_id}" in out and "other job" in out
-        _run(capsys, "--item", str(item_id), "--apply")
+        _run(
+            capsys, "--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire"
+        )
         assert _head(item_id)["job"] == new_job_id
     finally:
         await async_engine.dispose()
@@ -186,7 +236,9 @@ async def test_missing_job_head_variant_and_item_are_reported_not_crashed(
 
             bare = db.get(CreationThread, thread_id).active_plan_item_id
             assert db.get(PlanItem, bare).current_job_id is None
-        code, out = _run(capsys, "--item", str(bare), "--apply")
+        code, out = _run(
+            capsys, "--item", str(bare), "--variant", VARIANT, "--apply", "--operation", "retire"
+        )
         assert code == 0 and "no current job" in out
     finally:
         await async_engine.dispose()
@@ -218,7 +270,9 @@ async def test_a_non_editor_head_is_never_touched(capsys, monkeypatch) -> None:
             )
             db.commit()
         before = _rows(item_id)
-        _code, out = _run(capsys, "--item", str(item_id), "--apply")
+        _code, out = _run(
+            capsys, "--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire"
+        )
         assert "no editor payload" in out
         assert _rows(item_id) == before
         _code, out = _run(capsys, "--list-stranded")
@@ -233,7 +287,9 @@ async def test_list_stranded_finds_the_item_until_it_is_repaired(capsys, monkeyp
         _user, _thread, item_id, _job_id = await _stranded(monkeypatch)
         _code, out = _run(capsys, "--list-stranded", "--limit", "500")
         assert str(item_id) in out and "payload_base=generation-1" in out
-        _run(capsys, "--item", str(item_id), "--apply")
+        _run(
+            capsys, "--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire"
+        )
         _code, out = _run(capsys, "--list-stranded", "--limit", "500")
         assert str(item_id) not in out
     finally:

@@ -934,18 +934,7 @@ async def test_undo_all_with_render_restores_every_updated_section_and_plain_und
             plain, successor = await undo_draft(
                 db, thread_id=thread_id, creator_id=user_id, expected_revision=head["rev"]
             )
-        # The parent predates generation-3, so undo lands it on the current generation: its
-        # flat lanes (the undone section's captions) stay, `sections` is the committed document.
-        assert successor is None
-        landed = plain.snapshot["editor_payload"]
-        assert landed["base_generation"] == "generation-3"
-        parent_payload = parent["snap"]["editor_payload"]
-        assert {k: v for k, v in landed.items() if k not in ("base_generation", "sections")} == {
-            k: v for k, v in parent_payload.items() if k not in ("base_generation", "sections")
-        }
-        assert {k: v for k, v in plain.snapshot.items() if k != "editor_payload"} == {
-            k: v for k, v in parent["snap"].items() if k != "editor_payload"
-        }
+        assert successor is None and plain.snapshot == parent["snap"]
         with sync_session() as db:
             turns_after = len(
                 db.execute(select(CreatorAgentTurn).where(CreatorAgentTurn.thread_id == thread_id))
