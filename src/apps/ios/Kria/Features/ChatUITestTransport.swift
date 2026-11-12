@@ -2451,12 +2451,28 @@ extension CreationChatFixture {
 /// the server's draft head, based on generation `gen-1`. By the time the creator taps Save the server holds `gen-2`,
 /// which already contains the same edit with its durations quantized to a 0.5 s grid, so the first Save answers
 /// `baseline_conflict` like the real server. Seeded chats only (`KRIA_CHAT_SEED_THREADS` + `KRIA_EDITOR_FIXTURE=1`).
+///
+/// Two more scenarios share the same shortened draft head:
+/// - `-ui-testing-editor-chat-finished-at`: the variant never went through the editor, so it has only
+///   `render_finished_at` (no `render_generation_id`); the head is stamped with that time and the server does not
+///   send `head_current` (an older server). The AI's edit must still open.
+/// - `-ui-testing-editor-chat-stale-save`: the head is current and the first Save answers 409 `TIMELINE_STALE`,
+///   a conflict that says nothing about a newer version.
 enum ChatShortenFixture {
     static let title = "SHORT LISBON TITLE"
     private static let lock = NSLock()
     nonisolated(unsafe) private static var serverAdvanced = false
 
-    static var isEnabled: Bool { ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-chat-shorten") }
+    private enum Mode { case shorten, finishedAt, staleSave }
+    private static let mode: Mode? = {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-ui-testing-editor-chat-finished-at") { return .finishedAt }
+        if arguments.contains("-ui-testing-editor-chat-stale-save") { return .staleSave }
+        return arguments.contains("-ui-testing-editor-chat-shorten") ? .shorten : nil
+    }()
+    private static let finishedAt = "2026-09-10T10:00:00Z"
+
+    static var isEnabled: Bool { mode != nil }
 
     private static let sourceDurations = [4.6, 6.0, 4.6]
     private static let aiDurations = [1.4, 1.2, 1.3]
@@ -2477,22 +2493,25 @@ enum ChatShortenFixture {
 
     private static func variant(advanced: Bool) -> [String: Any] {
         let durations = advanced ? renderedDurations : [2.0, 2.0, 2.0]
-        return [
-            "variant_id": "montage", "render_generation_id": advanced ? "gen-2" : "gen-1", "render_status": "ready",
+        let generation: [String: Any] = mode == .finishedAt
+            ? ["render_finished_at": finishedAt] : ["render_generation_id": advanced ? "gen-2" : "gen-1"]
+        return generation.merging([
+            "variant_id": "montage", "render_status": "ready",
             "duration_s": durations.reduce(0, +), "output_url": PerfFixture.editorRenderURL, "resolved_archetype": "montage",
             "editor_capabilities": ["timeline": true, "text_elements": true, "mix": false],
             "user_timeline": ["slots": slots(durations)],
             "text_elements": [advanced ? text(title, end: 4.0) : text("OLD LISBON TITLE", end: 6)],
-        ]
+        ]) { current, _ in current }
     }
 
     private static func draftHead(threadID: String) -> [String: Any] {
         let lanes = slots(aiDurations)
         let words = [text(title, end: aiDurations.reduce(0, +))]
+        let base = mode == .finishedAt ? finishedAt : "gen-1"
         return ["draft_id": "chat-shorten-\(threadID)", "item_id": threadID, "variant_key": "montage", "draft_revision": 1,
-                "snapshot_hash": "chat-shorten-1", "etag": "chat-shorten-1", "base_job_id": threadID, "base_generation_id": "gen-1",
+                "snapshot_hash": "chat-shorten-1", "etag": "chat-shorten-1", "base_job_id": threadID, "base_generation_id": base,
                 "snapshot": ["kind": "editor", "editor_payload": [
-                    "editor_state_version": 2, "base_generation": "gen-1", "timeline_slots": lanes, "text_elements": words,
+                    "editor_state_version": 2, "base_generation": base, "timeline_slots": lanes, "text_elements": words,
                     "sections": ["timeline_slots": lanes, "text_elements": words],
                 ]],
                 "can_undo": false, "created_at": "2026-09-10T10:00:00Z"]
@@ -2535,9 +2554,15 @@ enum ChatShortenFixture {
                     "original": NSNull(), "local_required": false,
                 ] as [String: Any]]
             }
-            return json(["base_generation": serverAdvanced ? "gen-2" : "gen-1", "clips": clips, "slots": [], "native_assets": []])
+            let generation = mode == .finishedAt ? finishedAt : serverAdvanced ? "gen-2" : "gen-1"
+            return json(["base_generation": generation, "clips": clips, "slots": [], "native_assets": []])
         }
         if method == "POST", parts.count == 5, parts[0] == "plan-items", parts[4] == "editor-commit" {
+            if mode == .staleSave { return json(["detail": ["code": "TIMELINE_STALE"]], status: 409) }
+            if mode == .finishedAt {
+                return json(["ok": true, "generation": "gen-3", "sections": ["timeline": true, "text_elements": true],
+                             "revision_number": 4, "revision_hash": "fixture-hash", "expected_duration_s": 4.0])
+            }
             // The server rendered the AI edit (`gen-2`) while the creator was reviewing it on `gen-1`.
             let sentBase = body(of: request)["base_generation"] as? String
             let current = serverAdvanced ? "gen-2" : "gen-1"
