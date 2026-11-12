@@ -25,6 +25,8 @@ import structlog
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
 from fastapi import UploadFile as MultipartFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -212,6 +214,7 @@ from app.services.editor_empty_drafts import (
     attach_saved_editor_drafts,
     is_empty_editor_variant,
     prepare_empty_editor_sections,
+    replace_stranded_saved_draft,
     stage_empty_editor_commit,
     stage_initial_authored_baseline,
     stage_saved_draft_baseline,
@@ -7077,7 +7080,7 @@ async def get_item_timeline(
         if variant and variant.get("resolved_archetype") == "guided_story"
         else {}
     )
-    await attach_saved_editor_drafts(db, job)
+    await attach_saved_editor_drafts(db, job, committed_for=variant_id)
     return TimelineResponse(
         **dispatch_get_timeline(
             job,
@@ -7878,7 +7881,7 @@ async def editor_commit_item(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     native_client: NativeClient = False,
-) -> EditorCommitResponse:
+) -> EditorCommitResponse | JSONResponse:
     """Route wrapper: logs every refusal (detail + payload section keys, no content).
 
     A rejected Save stores nothing, so this line is the only record of why a creator's Save
@@ -7904,7 +7907,65 @@ async def editor_commit_item(
                 sections=sorted(body.model_fields_set),
                 deletion_kinds=sorted({d.kind for d in body.deletions}),
             )
-        raise
+        if exc.status_code not in (status.HTTP_409_CONFLICT, status.HTTP_412_PRECONDITION_FAILED):
+            raise
+        # The phone reads every 409 as "a newer version exists". `detail` is unchanged for
+        # builds that read it; `problem` says which refusal this is, so only a real
+        # baseline_conflict is answered by reloading.
+        code = _editor_commit_problem_code(exc.detail)
+        await db.rollback()
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "detail": jsonable_encoder(exc.detail),
+                "problem": {
+                    "code": code,
+                    "recovery": _editor_commit_problem_recovery(code),
+                    "current_base_generation": await _current_base_generation(
+                        item_id, variant_id, user.id, db
+                    ),
+                },
+            },
+            headers=exc.headers,
+        )
+
+
+# The refusals that mean "your copy is older than the server's": reloading answers them. The
+# phone answered every 409 that way before `problem` existed, and it still reads the guided
+# revision token mismatch as one.
+_EDITOR_COMMIT_RELOAD_CODES = frozenset(
+    {"baseline_conflict", "GUIDED_REVISION_STALE", "deletion_target_stale"}
+)
+
+
+def _editor_commit_problem_recovery(code: str) -> str:
+    return "reload" if code in _EDITOR_COMMIT_RELOAD_CODES else "none"
+
+
+_EDITOR_COMMIT_PROSE_CODES = {"Cancelled videos cannot be edited.": "video_cancelled"}
+
+
+def _editor_commit_problem_code(detail: object) -> str:
+    """A Save refusal's stable machine code: its own, or one named here for its prose."""
+    if isinstance(detail, dict) and isinstance(detail.get("code"), str):
+        return detail["code"]
+    if isinstance(detail, str):
+        return _EDITOR_COMMIT_PROSE_CODES.get(detail) or (
+            detail if detail.isidentifier() else "editor_commit_conflict"
+        )
+    return "editor_commit_conflict"
+
+
+async def _current_base_generation(
+    item_id: str, variant_id: str, user_id: uuid.UUID, db: AsyncSession
+) -> str | None:
+    """The generation the variant is on now, for a refusal that names a stale base."""
+    try:
+        job = await _owned_item_render_job(item_id, user_id, db)
+        variant = _find_variant(job, variant_id)
+        return variant_render_baseline(variant) if variant is not None else None
+    except Exception:  # noqa: BLE001 - the refusal itself is what matters
+        return None
 
 
 async def _editor_commit_item(
@@ -8028,6 +8089,10 @@ async def _editor_commit_item(
         and locked_variant.get("editor_timeline_mode") == "authored"
     ):
         await attach_saved_editor_drafts(db, locked_job)
+        if variant_id not in locked_job._saved_editor_drafts and (
+            await replace_stranded_saved_draft(db, item=item, job=locked_job, variant_id=variant_id)
+        ):
+            await attach_saved_editor_drafts(db, locked_job)
         draft_baseline = stage_saved_draft_baseline(locked_job, variant_id, body)
     elif needs_authored_deletion_baseline or durable_authored_save:
         draft_baseline = stage_initial_authored_baseline(

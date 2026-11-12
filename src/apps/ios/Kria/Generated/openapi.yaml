@@ -3282,6 +3282,12 @@
       },
       "DraftSnapshotOut": {
         "properties": {
+          "base_generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Generation",
+            "type": "string"
+          },
           "base_generation_id": {
             "default": null,
             "nullable": true,
@@ -3315,6 +3321,11 @@
           "etag": {
             "title": "Etag",
             "type": "string"
+          },
+          "head_current": {
+            "default": true,
+            "title": "Head Current",
+            "type": "boolean"
           },
           "item_id": {
             "title": "Item Id",

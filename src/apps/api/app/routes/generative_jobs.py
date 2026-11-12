@@ -9052,7 +9052,8 @@ def dispatch_get_timeline(
     elif variant and variant.get("editor_state_version") == 2:
         from app.services.editor_empty_drafts import saved_editor_draft
 
-        draft = saved_editor_draft(job, variant_id)
+        # A stranded pinned draft is served as the committed state (read-only; Save replaces it).
+        draft = saved_editor_draft(job, variant_id, committed_fallback=True)
         sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
         if "timeline_slots" in sections:
             timeline["slots"] = copy.deepcopy(sections["timeline_slots"] or [])
@@ -14888,7 +14889,7 @@ async def get_variant_timeline(
     )
     from app.services.editor_empty_drafts import attach_saved_editor_drafts  # noqa: PLC0415
 
-    await attach_saved_editor_drafts(db, job)
+    await attach_saved_editor_drafts(db, job, committed_for=variant_id)
     variant = _find_variant(job, variant_id)
     image_preview_paths = (
         await guided_timeline_image_preview_paths(db, job.content_plan_item_id)

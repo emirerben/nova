@@ -24,6 +24,12 @@ from app.agents._schemas.text_element import resolve_narrated_storyboard_rows
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
 from app.kria.brief_binding import BriefBinding
+from app.kria.editor_head import (
+    column_accepted,
+    is_head_current,
+    payload_base,
+    variant_baseline,
+)
 from app.kria.runtime import (
     RuntimeFailure,
     _append_event,
@@ -322,7 +328,7 @@ async def _target(
                 current_revision=int(thread.revision),
             )
         variant_key = str(selected["variant_id"])
-        generation_id = str(selected.get("render_generation_id") or "") or None
+        generation_id = variant_baseline(selected) or None
     return DraftTarget(
         thread=thread,
         item=item,
@@ -400,7 +406,7 @@ async def editor_variant_target(
         item=item,
         job=job,
         variant_key=variant_key,
-        generation_id=str(variant.get("render_generation_id") or "") or None,
+        generation_id=variant_baseline(variant) or None,
     )
 
 
@@ -451,7 +457,7 @@ async def _insert_revision(
     return row
 
 
-def _out(row: CreatorEditDraft, *, can_undo: bool) -> DraftSnapshotOut:
+def _out(row: CreatorEditDraft, *, can_undo: bool, head_current: bool = True) -> DraftSnapshotOut:
     if row.snapshot_json is None:
         raise RuntimeFailure(
             410,
@@ -472,6 +478,8 @@ def _out(row: CreatorEditDraft, *, can_undo: bool) -> DraftSnapshotOut:
         snapshot=dict(row.snapshot_json),
         can_undo=can_undo,
         created_at=row.created_at,
+        head_current=head_current,
+        base_generation=payload_base(row),
     )
 
 
@@ -536,37 +544,94 @@ def bootstrap_editor_payload(
     )
 
 
+def bootstrap_document(
+    *,
+    state: Mapping[str, Any],
+    item: PlanItem,
+    job: Any,  # noqa: ANN401
+    variant_key: str,
+    generation_id: str | None,
+) -> KriaDraftDocument:
+    """The draft a read creates for a variant that has no head."""
+    return KriaDraftDocument(
+        kind="initial" if job is None else "editor",
+        intent=str(state.get("intent") or "")[:4000],
+        edit_format=str(item.edit_format or state.get("edit_format") or "montage"),
+        editor_payload=(
+            bootstrap_editor_payload(job, variant_key, generation_id) if job is not None else None
+        ),
+        changes=[],
+    )
+
+
+def committed_document(
+    *,
+    state: Mapping[str, Any],
+    item: PlanItem,
+    job: Any,  # noqa: ANN401
+    variant_key: str,
+) -> KriaDraftDocument:
+    """The variant's committed state as a draft: what a fresh read would create for it.
+
+    A v2 variant's sections come from the builder its own Save uses (``editor_sections``), which
+    carries every lane a Save pins; the bootstrap key set is smaller and would drop them.
+    """
+    variant = _variant(job, variant_key) or {}
+    baseline = variant_baseline(variant)
+    document = bootstrap_document(
+        state=state, item=item, job=job, variant_key=variant_key, generation_id=baseline
+    )
+    if variant.get("editor_state_version") == 2:
+        from app.services.editor_empty_drafts import editor_sections  # noqa: PLC0415
+
+        document = document.model_copy(
+            update={
+                "editor_payload": {
+                    "base_generation": baseline,
+                    "sections": editor_sections(job, variant_key),
+                    "editor_state_version": 2,
+                }
+            }
+        )
+    return document
+
+
+def _current(target: DraftTarget, head: CreatorEditDraft) -> bool:
+    """The rule ``write_draft`` applies to the head: same job, and its column is current."""
+    if target.job is None:
+        return head.base_job_id is None and head.base_generation_id == target.generation_id
+    variant = _variant(target.job, target.variant_key)
+    if variant is None:
+        return head.base_job_id == target.job.id and head.base_generation_id == target.generation_id
+    return column_accepted(target.job, variant, head)
+
+
+def _head_current(target: DraftTarget, head: CreatorEditDraft) -> bool:
+    """What the snapshot reports: ``editor_head.is_head_current`` for the target's variant."""
+    variant = _variant(target.job, target.variant_key) if target.job is not None else None
+    if variant is None:
+        return _current(target, head)
+    return is_head_current(target.job, variant, head)
+
+
 async def read_or_bootstrap_draft(
     db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
 ) -> DraftSnapshotOut:
     target = await _target(db, thread_id=thread_id, creator_id=creator_id, lock_item=True)
     head = await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=True)
     if head is None:
-        state = dict(target.thread.state or {})
-        document = KriaDraftDocument(
-            kind="initial" if target.job is None else "editor",
-            intent=str(state.get("intent") or "")[:4000],
-            edit_format=str(target.item.edit_format or state.get("edit_format") or "montage"),
-            editor_payload=(
-                bootstrap_editor_payload(target.job, target.variant_key, target.generation_id)
-                if target.job is not None
-                else None
-            ),
-            changes=[],
+        document = bootstrap_document(
+            state=dict(target.thread.state or {}),
+            item=target.item,
+            job=target.job,
+            variant_key=target.variant_key,
+            generation_id=target.generation_id,
         )
         head = await _insert_revision(db, target=target, document=document, parent=None)
         await db.commit()
-    return _out(head, can_undo=head.parent_draft_id is not None)
-
-
-def _published_from(target: DraftTarget, generation: str | None) -> bool:
-    """The target's current video is the phone's published export of ``generation``."""
-    from app.services.device_render import published_source_generation  # noqa: PLC0415
-
-    if target.job is None or not generation:
-        return False
-    variant = _variant(target.job, target.variant_key)
-    return variant is not None and generation == published_source_generation(target.job, variant)
+    return _out(
+        head, can_undo=head.parent_draft_id is not None, head_current=_head_current(target, head)
+    )
 
 
 async def write_draft(
@@ -597,10 +662,7 @@ async def write_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    if head.base_job_id != (target.job.id if target.job is not None else None) or (
-        head.base_generation_id != target.generation_id
-        and not _published_from(target, head.base_generation_id)
-    ):
+    if not _current(target, head):
         raise RuntimeFailure(
             409,
             "draft_base_stale",
@@ -646,7 +708,7 @@ async def write_draft(
     document = KriaDraftDocument.model_validate(snapshot)
     row = await _insert_revision(db, target=target, document=document, parent=head)
     await db.commit()
-    return _out(row, can_undo=True)
+    return _out(row, can_undo=True, head_current=_head_current(target, row))
 
 
 POINTER_SYNC = "pointer_sync"
@@ -1058,7 +1120,7 @@ async def undo_draft(
             "cancelled_approval_ids": [str(approval.id) for approval in approvals],
         },
     )
-    result = _out(row, can_undo=True)
+    result = _out(row, can_undo=True, head_current=_head_current(target, row))
     owner_thread_id = thread.id
     await db.commit()
     successor_id = await _promote_queued_successor(db, thread_id=owner_thread_id)
