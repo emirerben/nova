@@ -1,25 +1,64 @@
 # KRI-1185: overlapped on-device export (Talking Save speed)
 
 Evidence record for the PR that overlaps frames in the on-device export. Device: iPhone 13 Pro (iPhone14,2, 6 GB), USB,
-Debug build of the app-hosted `TalkSaveBenchTests` (`TALKSAVE_RUN=1`). Scene: a 30 s phone-shaped take (1080x1920 HEVC
+optimized Debug build of the app-hosted `TalkSaveBenchTests` (`TALKSAVE_RUN=1`). Scene: a 30 s phone-shaped take (1080x1920 HEVC
 through a rotated 1920x1080 stream), Talking edit with a speaker image background, captions and the Kria branding; 948
 frames. Raw lines are the `TALKSAVE` output of the benchmark.
 
-## What was measured, and on which build
+## Final head (default depth 2, off switch in place)
 
-The device runs below are from the engine as of the first commit of this PR before the off switch, the issue/enqueue lock and
-the matte precondition were added. Those three changes do not touch the drawing path. The final head was NOT re-measured on
-the phone: the paired iPhone was offline (devicectl `tunnelState: unavailable`, no USB device on the Mac) for the whole
-session after the last code change. Re-run before relying on the final-head numbers:
+Measured on the same phone and scene after the off switch, the issue lock and the matte precondition were added (engine as at
+`a81f1a47c`, plus the benchmark warm-up change below). Built as the earlier runs were, `SWIFT_OPTIMIZATION_LEVEL=-O GCC_OPTIMIZATION_LEVEL=s` on the Debug
+configuration; a plain unoptimized Debug build is about 2.5x slower in both arms (depth 1 median 86.5 s, depth 2 median 45.1 s,
+still 1.9x) and is not comparable with these numbers. `base` is depth 1, the arm that
+`-kria.exportFramesInFlight 1` selects (`RecipeWriter` returns the player's composition untouched); `p2` is the new default.
+
+Interleaved, 5 rounds, wall seconds for 948 frames:
+
+| round | depth 1 (old path) | depth 2 (default) |
+| --- | --- | --- |
+| 0 | 33.85 | 31.37 |
+| 1 | 34.65 | 18.43 |
+| 2 | 36.10 | 16.48 |
+| 3 | 33.76 | 20.51 |
+| 4 | 33.78 | 16.41 |
+| median | 33.85 | 18.43 |
+
+The medians give 1.84x. Round 0 of depth 2 (31.37 s) is an outlier that I did not drop: the thermal state went from fair to
+serious during that export. Rounds 1 to 4 alone give 34.2 s against 17.5 s, 1.95x. Depth 1 on the final head (33.85 s median)
+matches the old path measured before (32.36 s median over five rounds, 33.16 s over three).
+
+Peak memory, the growth of the app's `phys_footprint` between the start of an export and its peak (sampled every 20 ms in the
+same five rounds, so each depth-1 and depth-2 pair shares the phone's state):
+
+| | depth 1 | depth 2 |
+| --- | --- | --- |
+| growth per export (MB), rounds 0 to 4 | 110.6, 128.1, 108.2, 122.3, 134.9 | 225.6, 228.6, 235.4, 206.2, 217.8 |
+| median | 122.3 | 225.6 |
+
+The default depth costs about 100 MB more at peak than depth 1 on this scene (a 30 s single take with captions and an image
+background; no look, one clip). That is more than the buffer estimate (about 8.3 MB output, about 2 MB Vision input, its mask
+and Core Image scratch per frame in flight), so the extra cost is in the Vision and Core Image working set; a third frame in
+flight would likely add about the same again for no speed. The lowest `os_proc_available_memory` seen was 2.36 GB (depth 2,
+last round) against 2.49 GB (depth 1), which includes about 50 MB per export of the benchmark's own retained decoded frames.
+The 13 Pro has 6 GB; a 4 GB phone was not tested, and a 60 s multi-clip edit with a look was not built.
+
+Composed frames, 2 rounds with the frame tap on (`TALKSAVE_TAP=1`): `TALKSAVE composed arm=p2 vs first base run: 0 of 948 composed
+frames differ`. The tap hashes every frame on the encoder thread, so the wall times of that run (36.7 and 37.8 s against 29.8
+and 28.9 s) are not a speed measurement. Decoded files in that run: depth 1 repeat identical, depth 2 against its own first
+run up to 42 levels in about 39% of pixels, the encoder noise described below.
+
+Reproduce:
 
 ```
-TEST_RUNNER_TALKSAVE_RUN=1 TEST_RUNNER_TALKSAVE_ARMS=base,p2,p3 TEST_RUNNER_TALKSAVE_RUNS=5 \
+TEST_RUNNER_TALKSAVE_RUN=1 TEST_RUNNER_TALKSAVE_ARMS=base,p2 TEST_RUNNER_TALKSAVE_RUNS=5 \
   xcodebuild test -project Kria.xcodeproj -scheme Kria -destination 'platform=iOS,id=<udid>' \
-  -only-testing:KriaTests/TalkSaveBenchTests/testTalkSaveBench
+  -only-testing:KriaTests/TalkSaveBenchTests/testTalkSaveBench SWIFT_OPTIMIZATION_LEVEL=-O GCC_OPTIMIZATION_LEVEL=s
 ```
 
-`base` is depth 1 (what `-kria.exportFramesInFlight 1` selects: the old serial path), `p2` is the new default, `p3` and `p4`
-are deeper depths.
+## Earlier head (before the off switch)
+
+`p3` and `p4` are depths 3 and 4.
 
 ### Five interleaved rounds, depth 1 against depth 3 (wall seconds, 948 frames)
 
@@ -65,7 +104,5 @@ in 41% of pixels, different every run, with unchanged quality (mean error agains
 - A 4 GB phone (iPhone 12, SE 3). The 13 Pro has 6 GB.
 - A real signed-in Save end to end. Upload, the server check and the 2/4/8/16/30 s poll sit outside the export and are untimed.
 - Audio loudness comparison between depth 1 and depth 2.
-- Peak memory on the phone, depth 1 against 2. The benchmark now samples `phys_footprint` and `os_proc_available_memory` every
-  20 ms during each export (`TALKSAVE memory` lines) but could not run: the phone was offline. The memory argument for depth 2
-  over 3 is by construction (each extra frame in flight holds an output buffer of about 8.3 MB, Vision's input of about 2 MB,
-  its mask and Core Image scratch), not measured.
+- Peak memory for a 60 s multi-clip edit with a look, and on a 4 GB phone. Depth 3 against depth 2 memory was not measured
+  either; the argument for 2 over 3 is the unchanged speed.
