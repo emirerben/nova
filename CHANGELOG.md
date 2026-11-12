@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.175.0] - 2026-11-12
+
+### Changed
+- fix(kria): let word-by-word text shrink to one frame per word (KRI-1370) (#2279) <!-- release-pr: 2279 -->
+
 ## [0.88.174.0] - 2026-11-12
 
 ### Fixed
