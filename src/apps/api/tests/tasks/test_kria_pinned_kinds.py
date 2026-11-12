@@ -850,12 +850,11 @@ async def test_a_commit_error_reply_is_typed_marked_and_replayable(
 
 
 @pytest.mark.asyncio
-async def test_a_state_gone_stale_under_the_lock_is_typed_but_leaves_the_card_tappable(
-    world, monkeypatch
-):
+async def test_a_state_gone_stale_under_the_lock_is_a_typed_base_moved_refusal(world, monkeypatch):
     """R5/R6: the phone's unsaved state was built on a render that a Save replaced between the
-    plan and the row lock. Nothing is wrong with the card, so the record is typed (the phone can
-    tell) and the card is not spent."""
+    plan and the row lock. The stale state is rebased onto the latest, so the tap is no longer
+    refused for the old copy; but its index-addressed ops were planned against the older base, so
+    the existing base-moved check refuses it (typed, nothing applied)."""
     seeded = h.seed_ready_thread()
     await k.serve_cards(seeded)
 
@@ -867,7 +866,7 @@ async def test_a_state_gone_stale_under_the_lock_is_typed_but_leaves_the_card_ta
 
     accepted, replay = await tap_run_and_replay(seeded, "sfx", editor_state=HAND_EDITED)
 
-    await assert_typed_refusal(seeded, "sfx", accepted, replay, "target_unavailable", marked=False)
+    await assert_typed_refusal(seeded, "sfx", accepted, replay, "base_moved")
     assert h.counts(seeded) == before
 
 
