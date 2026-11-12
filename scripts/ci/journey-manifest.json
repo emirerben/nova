@@ -2258,6 +2258,8 @@
         "src/apps/api/app/pipeline/phone_authored_timeline.py",
         "src/apps/api/app/services/editor_empty_drafts.py",
         "src/apps/api/app/kria/drafts.py",
+        "src/apps/api/app/kria/draft_schemas.py",
+        "src/apps/api/app/kria/editor_head.py",
         "src/apps/api/app/routes/generative_jobs.py",
         "src/apps/ios/Kria/Core/NativeSpeechTimelineProjection.swift",
         "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
