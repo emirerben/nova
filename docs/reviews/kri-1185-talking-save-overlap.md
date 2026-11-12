@@ -83,7 +83,7 @@ Median ratio 1.92x. Thermal state moved from nominal to serious across the five 
 | 4 | 16.43, 17.46, 17.24 | 17.24 |
 
 Depth 2, 3 and 4 are the same speed: AVFoundation keeps exactly two requests outstanding on the phone, so a deeper pipeline
-only costs memory. The default is 2.
+only costs memory. The default is 2 on a phone with 5 GB or more of memory and 1 below that (about 100 MB more at the peak, measured on a 6 GB phone; 4 GB phones untested).
 
 ### Composed frames
 

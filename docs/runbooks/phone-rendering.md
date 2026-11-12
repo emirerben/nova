@@ -2150,6 +2150,10 @@ whose compositor is `RecipeExportVideoCompositor` (or the Look twin); AVPlayer a
   `kria.exportFramesInFlight` at launch (`ExportOverlapSwitch`). Launch argument `-kria.exportFramesInFlight 1` is the QA off
   switch: at 1 `RecipeWriter` returns the player's composition untouched (no copy, no class swap), the exact old path.
   Depth 3 and 4 measured the same time as 2 on the phone and cost memory, so 2 is the default.
+- **Low memory.** Depth 2 costs about 100 MB more at an export's peak (measured on a 6 GB iPhone 13 Pro: `phys_footprint` growth
+  median 226 MB against 122 MB at depth 1). A phone reporting under 5 GB of physical memory (the 4 GB iPhone 12 and SE 3 report
+  about 3.7 GB) therefore defaults to depth 1, the old path, unless `kria.exportFramesInFlight` is set (`ExportOverlapSwitch.lowMemoryBytes`).
+  4 GB phones were not tested.
 - **Not byte for byte.** Two saves of the same recipe can differ in decoded pixels: the hardware H.264 encoder's output for
   identical frames varies with how quickly they arrive. Compare composed frames (`RecipeWriter.frameTap`), never the file.
 - **Remote kill switch (not built).** Feed the setting from the `phone_rendering` capabilities block the app already fetches
