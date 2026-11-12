@@ -6,11 +6,14 @@
     python -m app.cli.repair_editor_heads --list-stranded [--limit N]
 
 The server never moves such a head by itself (``app/kria/editor_head.py``): it is not current
-and readers ignore it. This tool exists for an owner who has looked at one item. The dry run
+and readers ignore it. This tool is the only code that writes a head for that reason (besides the
+Save-time replacement of a stranded pinned saved draft, ``replace_stranded_saved_draft``). It
+exists for an owner who has looked at one item. The dry run
 (the default; the session is read-only) prints, per variant, the head, its generations, the
 pinned draft, its flat lanes and exactly what each operation would leave. ``--apply`` needs an
 explicit ``--operation`` and an explicit ``--variant``, runs in one transaction (Item, then
-Job, the head last) and a second run finds nothing to do.
+Job, the head last) and a second run finds nothing to do. A head that is current is reported as
+such and refused.
 
 ``retire``         the head becomes the committed document (what a fresh read would create).
 ``keep-ai-lanes``  the head is stamped current and keeps its flat lanes, over the committed
@@ -23,28 +26,20 @@ Production runs need the owner's approval: show the dry run first.
 from __future__ import annotations
 
 import argparse
+import copy
 import sys
 import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.database import sync_session
-from app.kria.drafts import KriaDraftDocument, committed_document
-from app.kria.editor_head import (
-    insert_restage_row,
-    is_head_current,
-    is_head_on_baseline,
-    locked_head,
-    payload_base,
-    restage_editor_head_sync,
-    variant_baseline,
-)
+from app.kria.drafts import KriaDraftDocument, canonical_snapshot, committed_document
+from app.kria.editor_head import is_head_current, payload_base, variant_baseline
 from app.models import CreationThread, CreatorEditDraft, Job, PlanItem
 
-REASON = "repair_cli"
 DEFAULT_LIST_LIMIT = 50
 
 # Heads on an editor payload that ``editor_head.is_head_current`` rejects: another job, or a column
@@ -145,7 +140,6 @@ class HeadReport:
     base_job_id: uuid.UUID | None = None
     pinned: str | None = None
     has_payload: bool = False
-    on_baseline: bool = True
     current: bool = False
     other_job: bool = False
     empty_state: bool = False
@@ -198,7 +192,6 @@ def _report(db: Session, item: PlanItem, job: Job, variant: dict[str, Any]) -> H
         base_job_id=head.base_job_id,
         pinned=str(pinned) if pinned else None,
         has_payload=base is not None,
-        on_baseline=is_head_on_baseline(job, variant, head),
         current=is_head_current(job, variant, head),
         other_job=head.base_job_id != job.id,
         empty_state=variant.get("editor_state") == "empty",
@@ -223,7 +216,7 @@ def _line(report: HeadReport) -> str:
         f"  head={report.head_id} rev={report.revision} column_base={report.column_base or '-'} "
         f"payload_base={report.payload_base if report.payload_base is not None else '-'} "
         f"base_job_id={report.base_job_id} pinned={report.pinned or '-'} "
-        f"on_baseline={'yes' if report.on_baseline else 'no'}"
+        f"current={'yes' if report.current else 'no'}"
     )
     notes = []
     if report.other_job:
@@ -232,8 +225,8 @@ def _line(report: HeadReport) -> str:
         notes.append("no editor payload, not touched")
     if report.empty_state:
         notes.append("empty-state variant, not touched")
-    if report.current and not report.on_baseline:
-        notes.append("current (published source), not touched")
+    if report.current:
+        notes.append("current, not touched")
     suffix = f" ({'; '.join(notes)})" if notes else ""
     lines = [
         f"variant {report.variant_key} generation={report.generation or '-'}",
@@ -262,35 +255,94 @@ def inspect_item(db: Session, item_id: uuid.UUID, only: str | None = None) -> li
     return [_report(db, item, job, variant) for variant in _targets(job, only)]
 
 
-def _keep_ai_lanes(db: Session, item: PlanItem, job: Job, key: str, head: CreatorEditDraft) -> None:
-    """Stamp the head current and keep its flat lanes; ``sections`` is the committed document."""
+def _variant(job: Job, key: str) -> dict[str, Any]:
+    return next(row for row in _variants(job) if str(row.get("variant_id") or "") == key)
+
+
+def _locked_head(db: Session, item_id: uuid.UUID, variant_key: str) -> CreatorEditDraft | None:
+    return db.execute(
+        select(CreatorEditDraft)
+        .where(
+            CreatorEditDraft.item_id == item_id,
+            CreatorEditDraft.variant_key == variant_key,
+            CreatorEditDraft.is_head.is_(True),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+
+def _replace_head(
+    db: Session,
+    item: PlanItem,
+    job: Job,
+    key: str,
+    head: CreatorEditDraft,
+    document: KriaDraftDocument,
+) -> None:
+    """Demote ``head`` and insert ``document`` as the head on the variant's generation.
+
+    The variant's pinned saved draft follows only when it IS the replaced head.
+    """
+    variant = _variant(job, key)
+    snapshot, digest = canonical_snapshot(document)
+    revision = int(
+        db.execute(
+            select(func.coalesce(func.max(CreatorEditDraft.draft_revision), -1)).where(
+                CreatorEditDraft.item_id == item.id, CreatorEditDraft.variant_key == key
+            )
+        ).scalar_one()
+    )
+    head.is_head = False
+    db.flush()
+    row = CreatorEditDraft(
+        creator_id=head.creator_id,
+        thread_id=head.thread_id,
+        item_id=item.id,
+        variant_key=key,
+        base_job_id=job.id,
+        base_generation_id=variant_baseline(variant) or None,
+        draft_revision=revision + 1,
+        parent_draft_id=head.id,
+        snapshot_json=snapshot,
+        snapshot_hash=digest,
+        is_head=True,
+    )
+    db.add(row)
+    db.flush()
+    reference = variant.get("editor_draft")
+    if (
+        variant.get("editor_state_version") == 2
+        and isinstance(reference, dict)
+        and str(reference.get("draft_id")) == str(head.id)
+    ):
+        # JSON columns are replaced, never mutated in place.
+        assembly = copy.deepcopy(job.assembly_plan)
+        pinned = next(v for v in assembly["variants"] if v.get("variant_id") == key)
+        pinned["editor_draft"] = {**pinned["editor_draft"], "draft_id": str(row.id)}
+        job.assembly_plan = assembly
+
+
+def _committed(db: Session, item: PlanItem, job: Job, key: str, head: CreatorEditDraft):  # noqa: ANN202
     thread = db.get(CreationThread, head.thread_id)
-    committed = committed_document(
+    return committed_document(
         state=dict(thread.state or {}) if thread is not None else {},
         item=item,
         job=job,
         variant_key=key,
     )
-    snapshot = {k: v for k, v in (head.snapshot_json or {}).items() if k != "restage"}
+
+
+def _keep_ai_lanes(db: Session, item: PlanItem, job: Job, key: str, head: CreatorEditDraft) -> None:
+    """Stamp the head current and keep its flat lanes; ``sections`` is the committed document."""
+    committed = _committed(db, item, job, key, head)
+    snapshot = dict(head.snapshot_json or {})
     snapshot["editor_payload"] = {
         **snapshot["editor_payload"],
         "sections": (committed.editor_payload or {}).get("sections") or {},
         "base_generation": variant_baseline(_variant(job, key)),
     }
-    insert_restage_row(
-        db,
-        item=item,
-        job=job,
-        variant_key=key,
-        creator_id=head.creator_id,
-        head=head,
-        document=KriaDraftDocument.model_validate(snapshot),
-        reason=f"{REASON}_keep_ai_lanes",
-    )
-
-
-def _variant(job: Job, key: str) -> dict[str, Any]:
-    return next(row for row in _variants(job) if str(row.get("variant_id") or "") == key)
+    _replace_head(db, item, job, key, head, KriaDraftDocument.model_validate(snapshot))
 
 
 def repair_item(
@@ -311,16 +363,15 @@ def repair_item(
         before = _report(db, item, job, variant)
         after = None
         if before.needs_repair and not (operation == "keep-ai-lanes" and before.other_job):
-            head = locked_head(db, item.id, before.variant_key)
+            head = _locked_head(db, item.id, before.variant_key)
             if operation == "retire":
-                restage_editor_head_sync(
+                _replace_head(
                     db,
-                    item=item,
-                    job=job,
-                    variant_key=before.variant_key,
-                    creator_id=head.creator_id,
-                    operation="retire",
-                    reason=REASON,
+                    item,
+                    job,
+                    before.variant_key,
+                    head,
+                    _committed(db, item, job, before.variant_key, head),
                 )
             else:
                 _keep_ai_lanes(db, item, job, before.variant_key, head)
@@ -410,23 +461,23 @@ def main(argv: list[str] | None = None) -> int:
         if args.apply:
             results = repair_item(db, args.item, args.variant, args.operation)
             repaired = _print_item(results, args.operation)
-            if any(before.current and not before.on_baseline for before, _ in results):
+            if any(before.current for before, _ in results):
                 db.rollback()
                 print(
-                    "refused: this head is current through the phone's published source; "
-                    "retiring it would drop edits that are still current",
+                    "refused: this head is current; moving it would drop edits that are "
+                    "still current",
                     file=sys.stderr,
                 )
                 return 2
             db.commit()
-            print(f"applied: {repaired} head(s) restaged" if repaired else "nothing to do")
+            print(f"applied: {repaired} head(s) replaced" if repaired else "nothing to do")
         else:
             repaired = _print_item(
                 [(r, None) for r in inspect_item(db, args.item, args.variant)], None
             )
             db.rollback()
             print(
-                f"dry run: {repaired} head(s) would be restaged; pass --apply"
+                f"dry run: {repaired} head(s) would be replaced; pass --apply"
                 if repaired
                 else "nothing to do"
             )
