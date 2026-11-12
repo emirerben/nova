@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.174.0] - 2026-11-12
+
+### Fixed
+- test(ios): the Cinematic availability test compiles for a real device (#2275) <!-- release-pr: 2275 -->
+
 ## [0.88.173.0] - 2026-11-12
 
 ### Changed
