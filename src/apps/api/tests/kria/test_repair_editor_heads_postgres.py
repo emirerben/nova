@@ -20,10 +20,13 @@ from app.models import CreatorEditDraft, Job, PlanItem
 from tests.kria.test_editor_head_generation_postgres import (
     VARIANT,
     _add_job,
+    _chat_head,
+    _committed_sections,
+    _flat,
     _head,
     _rows,
+    _sections,
     _seed,
-    _stage_ai_edit,
     _text,
     _update_variant,
     _variant,
@@ -34,12 +37,16 @@ from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 @pytest.fixture(autouse=True)
 def _flags(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(
+        "app.tasks.kria_runtime.enqueue_editor_commit_render", lambda *_a, **_k: None
+    )
 
 
-async def _stranded():  # noqa: ANN202
-    """An AI edit staged on generation-1, then a dispatcher moves the variant to generation-2."""
+async def _stranded(monkeypatch):  # noqa: ANN001, ANN202
+    """An AI chat edit on generation-1, then a dispatcher moves the variant to generation-2."""
     user_id, thread_id, item_id, job_id = _seed()
-    await _stage_ai_edit(user_id, thread_id, "AI hook")
+    await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
     _update_variant(job_id, render_generation_id="generation-2")
     return user_id, thread_id, item_id, job_id
 
@@ -51,9 +58,9 @@ def _run(capsys: pytest.CaptureFixture[str], *argv: str) -> tuple[int, str]:
 
 
 @pytest.mark.asyncio
-async def test_dry_run_reports_the_stranded_head_and_changes_nothing(capsys) -> None:
+async def test_dry_run_reports_the_stranded_head_and_changes_nothing(capsys, monkeypatch) -> None:
     try:
-        _user, _thread, item_id, job_id = await _stranded()
+        _user, _thread, item_id, job_id = await _stranded(monkeypatch)
         before = _rows(item_id)
         code, out = _run(capsys, "--item", str(item_id))
         assert code == 0
@@ -66,6 +73,9 @@ async def test_dry_run_reports_the_stranded_head_and_changes_nothing(capsys) -> 
             "payload_base=generation-1",
             f"base_job_id={job_id}",
             "on_baseline=no",
+            "flat lanes: mix, text_elements, timeline_slots; has sections: yes",
+            "heal (selected): sections become the committed document; flat lanes kept: mix",
+            "retire: becomes the committed document: sections replaced, no flat lane kept",
             "dry run",
         ):
             assert expected in out
@@ -75,17 +85,18 @@ async def test_dry_run_reports_the_stranded_head_and_changes_nothing(capsys) -> 
 
 
 @pytest.mark.asyncio
-async def test_apply_makes_the_head_current_and_a_second_apply_adds_nothing(capsys) -> None:
+async def test_apply_heals_by_default_and_a_second_apply_adds_nothing(capsys, monkeypatch) -> None:
     try:
-        _user, _thread, item_id, _job_id = await _stranded()
+        _user, _thread, item_id, job_id = await _stranded(monkeypatch)
         stranded = _head(item_id)
         code, out = _run(capsys, "--item", str(item_id), "--apply")
         assert code == 0
-        assert "restaged" in out and "on_baseline=yes" in out
+        assert "heal -> new head=" in out and "on_baseline=yes" in out
         healed = _head(item_id)
         assert healed["id"] != stranded["id"] and healed["parent"] == stranded["id"]
         assert healed["col"] == healed["payload_base"] == "generation-2"
-        assert _text(healed) == "AI hook", "the AI lanes survive the repair"
+        assert _flat(healed) == _flat(stranded), "the AI's unsaved lanes survive the repair"
+        assert _sections(healed) == _committed_sections(job_id)
 
         rows = len(_rows(item_id))
         code, out = _run(capsys, "--item", str(item_id), "--apply")
@@ -97,18 +108,44 @@ async def test_apply_makes_the_head_current_and_a_second_apply_adds_nothing(caps
 
 
 @pytest.mark.asyncio
-async def test_apply_repoints_the_pinned_editor_draft(capsys) -> None:
+async def test_apply_with_the_retire_operation_makes_the_head_the_committed_document(
+    capsys, monkeypatch
+) -> None:
+    try:
+        # Stranded by "approval rendered, then the phone published": the video holds the draft.
+        _user, _thread, item_id, job_id = await _stranded(monkeypatch)
+        _update_variant(
+            job_id, text_elements=[{**_variant()["text_elements"][0], "text": "AI hook"}]
+        )
+        code, out = _run(capsys, "--item", str(item_id), "--apply", "--operation", "retire")
+        assert code == 0 and "retire -> new head=" in out
+        head = _head(item_id)
+        assert head["col"] == head["payload_base"] == "generation-2"
+        assert _flat(head) == {} and head["snap"]["changes"] == []
+        assert _sections(head) == _committed_sections(job_id) and _text(head) == "AI hook"
+
+        rows = len(_rows(item_id))
+        code, out = _run(capsys, "--item", str(item_id), "--apply", "--operation", "retire")
+        assert code == 0 and "nothing to do" in out
+        assert len(_rows(item_id)) == rows
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_apply_repoints_the_pinned_editor_draft(capsys, monkeypatch) -> None:
     try:
         user_id, thread_id, item_id, job_id = _seed()
-        staged = await _stage_ai_edit(user_id, thread_id, "AI hook")
+        await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
+        staged = _head(item_id)
         _update_variant(
             job_id,
             editor_state_version=2,
-            editor_draft={"draft_id": staged.draft_id},
+            editor_draft={"draft_id": str(staged["id"])},
             render_generation_id="generation-2",
         )
         _code, out = _run(capsys, "--item", str(item_id))
-        assert f"pinned={staged.draft_id}" in out
+        assert f"pinned={staged['id']}" in out
         _run(capsys, "--item", str(item_id), "--apply")
         with sync_session() as db:
             variant = db.get(Job, job_id).assembly_plan["variants"][0]
@@ -118,10 +155,10 @@ async def test_apply_repoints_the_pinned_editor_draft(capsys) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_head_from_another_job_is_named_in_the_dry_run(capsys) -> None:
+async def test_a_head_from_another_job_is_named_in_the_dry_run(capsys, monkeypatch) -> None:
     try:
         user_id, thread_id, item_id, old_job_id = _seed()
-        await _stage_ai_edit(user_id, thread_id, "Old job AI hook")
+        await _chat_head(monkeypatch, user_id, thread_id, "Old job AI hook")
         new_job_id = _add_job(item_id, user_id, _variant("generation-1", text="New job hook"))
         _code, out = _run(capsys, "--item", str(item_id))
         assert f"base_job_id={old_job_id}" in out and "other job" in out
@@ -132,7 +169,9 @@ async def test_a_head_from_another_job_is_named_in_the_dry_run(capsys) -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_job_head_variant_and_item_are_reported_not_crashed(capsys) -> None:
+async def test_missing_job_head_variant_and_item_are_reported_not_crashed(
+    capsys, monkeypatch
+) -> None:
     try:
         _user, _thread, item_id, _job = _seed()
         code, out = _run(capsys, "--item", str(item_id))  # a job, but no head yet
@@ -154,7 +193,7 @@ async def test_missing_job_head_variant_and_item_are_reported_not_crashed(capsys
 
 
 @pytest.mark.asyncio
-async def test_a_non_editor_head_is_never_touched(capsys) -> None:
+async def test_a_non_editor_head_is_never_touched(capsys, monkeypatch) -> None:
     try:
         _user, _thread, item_id, _job = _seed()
         from app.kria.drafts import KriaDraftDocument, canonical_snapshot
@@ -189,9 +228,9 @@ async def test_a_non_editor_head_is_never_touched(capsys) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_stranded_finds_the_item_until_it_is_repaired(capsys) -> None:
+async def test_list_stranded_finds_the_item_until_it_is_repaired(capsys, monkeypatch) -> None:
     try:
-        _user, _thread, item_id, _job_id = await _stranded()
+        _user, _thread, item_id, _job_id = await _stranded(monkeypatch)
         _code, out = _run(capsys, "--list-stranded", "--limit", "500")
         assert str(item_id) in out and "payload_base=generation-1" in out
         _run(capsys, "--item", str(item_id), "--apply")
@@ -202,10 +241,12 @@ async def test_list_stranded_finds_the_item_until_it_is_repaired(capsys) -> None
 
 
 @pytest.mark.asyncio
-async def test_list_stranded_survives_a_job_whose_variants_is_not_an_array(capsys) -> None:
+async def test_list_stranded_survives_a_job_whose_variants_is_not_an_array(
+    capsys, monkeypatch
+) -> None:
     try:
         user_id, thread_id, item_id, job_id = _seed()
-        await _stage_ai_edit(user_id, thread_id, "AI hook")
+        await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
         with sync_session() as db:
             db.execute(
                 text(

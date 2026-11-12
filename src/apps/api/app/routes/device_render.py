@@ -2277,6 +2277,7 @@ async def _complete_device_export(
                 job=job,
                 variant_key=body.identity.variant_id,
                 creator_id=user_id,
+                operation="restamp",
                 reason="phone_publish",
             )
     await db.commit()

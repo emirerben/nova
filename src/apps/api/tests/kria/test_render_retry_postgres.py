@@ -744,7 +744,7 @@ def test_retry_is_accepted_after_the_approval_restaged_the_head(client):
             job=job,
             variant_key="first",
             creator_id=case.user_id,
-            committed_contains_head=True,
+            operation="retire",
             reason="approval_execution",
         )
         assert restaged is not None and restaged.parent_draft_id == draft.id

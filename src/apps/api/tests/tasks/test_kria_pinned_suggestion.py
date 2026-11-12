@@ -602,18 +602,15 @@ async def test_fm10_the_card_is_rebuilt_on_unsaved_editor_state_and_undo_returns
 
 
 @pytest.mark.asyncio
-async def test_fm10_a_stale_client_state_builds_the_tap_on_the_latest(world):
+async def test_fm10_a_stale_client_state_is_the_honest_stale_editor_reply(world):
+    from app.services.kria_editor_ops import EDITOR_STATE_STALE_REPLY
+
     seeded = h.seed_ready_thread()
     await h.serve(seeded)
+    before = h.counts(seeded)
     stale = {**HAND_EDITED, "base_generation": "generation-0"}
-    accepted, result = await _tap_and_run(seeded, "sfx", editor_state=stale)
-    assert result["status"] == "completed", result
-    (chat,) = [d for d in h.drafts(seeded.thread_id) if d["head"]]
-    assert chat["gen"] == "generation-1", "stamped on the variant's current generation"
-    lanes = _lanes(chat["snap"])
-    assert len(lanes["sound_effects"]) == 1
-    # The creator's dirty text lane rides on the latest; nothing was refused.
-    assert lanes["text_elements"][0]["text"] == "Creator hook"
+    await _tap_and_run(seeded, "sfx", editor_state=stale)
+    _refused_untouched(seeded, before, reply=EDITOR_STATE_STALE_REPLY)
 
 
 @pytest.mark.asyncio

@@ -534,7 +534,7 @@ async def test_failed_job_with_a_ready_variant_is_not_a_first_render(
     assert planner._editor_target_miss_guarded()
 
 
-async def test_ready_variant_with_stale_editor_state_is_planned_on_the_latest(
+async def test_ready_variant_with_stale_editor_state_still_gets_the_stale_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tests.kria.test_editor_state_turns import _state
@@ -554,8 +554,9 @@ async def test_ready_variant_with_stale_editor_state_is_planned_on_the_latest(
         user_message="The hook should say 'Weekend away'",
         editor_state=_state({}, base="G1"),
     )
-    assert result.plan.turn_value != "recovery"
-    assert len(runs) == 1  # the turn was planned, not refused for an old phone copy
+    assert result.plan.turn_value == "recovery"
+    assert result.plan.response == planner.EDITOR_STATE_STALE_REPLY
+    assert runs == []
 
 
 # --- conversation cap: MainCreatorInput.conversation is max 20 --------------------------

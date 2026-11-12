@@ -1,15 +1,18 @@
 """Move stranded editor draft heads onto their variant's current generation.
 
     python -m app.cli.repair_editor_heads --item <uuid> [--variant <key>]            # dry run
-    python -m app.cli.repair_editor_heads --item <uuid> [--variant <key>] --apply
+    python -m app.cli.repair_editor_heads --item <uuid> [--variant <key>] --apply \\
+        [--operation {heal,retire}]
     python -m app.cli.repair_editor_heads --list-stranded [--limit N]
 
 The dry run prints, per variant of the item's current job, the head, whether it sits on the
-variant's baseline and, for a head that needs repair, what happens to each lane (kept from
-head / taken from committed / replaced), computed by the same per-lane rebase the restage
-uses; it changes nothing (the session is read-only). ``--apply`` runs that restage, in one
-transaction per item, locking Item, then Job (the head is locked last inside the restage). A
-second run finds nothing to do.
+variant's baseline and, for a head that needs repair, its flat lane names, whether it has
+``sections`` and what each operation would do to it (see ``app/kria/editor_head.py``); it
+changes nothing (the session is read-only). ``--apply`` runs one operation, in one transaction
+per item, locking Item, then Job (the head is locked last inside the restage). ``heal`` (the
+default) keeps the head's flat lanes, ``retire`` makes the head the committed document: pick it
+when the committed video is known to contain the draft (an approval rendered, then the phone
+published). A second run finds nothing to do.
 
 Production runs need the owner's approval: show the dry run first.
 """
@@ -27,8 +30,9 @@ from sqlalchemy.orm import Session
 
 from app.database import sync_session
 from app.kria.editor_head import (
+    HeadOperation,
+    flat_lane_names,
     is_head_on_baseline,
-    rebase_head,
     restage_editor_head_sync,
     variant_baseline,
 )
@@ -69,11 +73,7 @@ _STRANDED_SQL = text(
 )
 
 
-_OUTCOME_TEXT = {
-    "head": "kept from head",
-    "committed": "taken from committed",
-    "replaced": "replaced (the head's value lost to a newer committed one)",
-}
+OPERATIONS: tuple[HeadOperation, ...] = ("heal", "retire")
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,9 @@ class HeadReport:
     has_payload: bool = False
     on_baseline: bool = True
     other_job: bool = False
-    lanes: tuple[tuple[str, str], ...] = ()
+    empty_state: bool = False
+    flat_lanes: tuple[str, ...] = ()
+    has_sections: bool = False
 
     @property
     def needs_repair(self) -> bool:
@@ -124,10 +126,8 @@ def _report(db: Session, item: PlanItem, job: Job, variant: dict[str, Any]) -> H
     payload_base = _payload_base(head)
     pinned = (variant.get("editor_draft") or {}).get("draft_id")
     on_baseline = is_head_on_baseline(job, variant, head)
-    lanes: tuple[tuple[str, str], ...] = ()
-    if payload_base is not None and not on_baseline:
-        _, outcome = rebase_head(job, key, head)
-        lanes = tuple(sorted(outcome.outcomes.items()))
+    payload = (head.snapshot_json or {}).get("editor_payload")
+    payload = payload if isinstance(payload, dict) else {}
     return HeadReport(
         variant_key=key,
         generation=generation,
@@ -140,11 +140,26 @@ def _report(db: Session, item: PlanItem, job: Job, variant: dict[str, Any]) -> H
         has_payload=payload_base is not None,
         on_baseline=on_baseline,
         other_job=head.base_job_id != job.id,
-        lanes=lanes,
+        empty_state=variant.get("editor_state") == "empty",
+        flat_lanes=tuple(flat_lane_names(payload)),
+        has_sections=isinstance(payload.get("sections"), dict),
     )
 
 
-def _line(report: HeadReport) -> str:
+def _effect(report: HeadReport, operation: HeadOperation) -> str:
+    """What ``operation`` would do to this head; the same rules as ``moved_document``."""
+    if report.empty_state:
+        return "sections kept as they are (empty-state variant); only the generation stamps move"
+    if report.other_job:
+        return "head of another job: becomes the committed document, no flat lane kept"
+    if operation == "retire" or not report.flat_lanes:
+        return "becomes the committed document: sections replaced, no flat lane kept"
+    return (
+        f"sections become the committed document; flat lanes kept: {', '.join(report.flat_lanes)}"
+    )
+
+
+def _line(report: HeadReport, operation: HeadOperation) -> str:
     if report.head_id is None:
         return f"variant {report.variant_key} generation={report.generation or '-'}\n  no head"
     head = (
@@ -163,7 +178,15 @@ def _line(report: HeadReport) -> str:
         f"variant {report.variant_key} generation={report.generation or '-'}",
         f"{head}{suffix}",
     ]
-    lines.extend(f"  lane {lane}: {_OUTCOME_TEXT[outcome]}" for lane, outcome in report.lanes)
+    if report.needs_repair:
+        lines.append(
+            f"  flat lanes: {', '.join(report.flat_lanes) or 'none'}; "
+            f"has sections: {'yes' if report.has_sections else 'no'}"
+        )
+        lines.extend(
+            f"  {name}{' (selected)' if name == operation else ''}: {_effect(report, name)}"
+            for name in OPERATIONS
+        )
     return "\n".join(lines)
 
 
@@ -184,9 +207,12 @@ def inspect_item(db: Session, item_id: uuid.UUID, only: str | None = None) -> li
 
 
 def repair_item(
-    db: Session, item_id: uuid.UUID, only: str | None = None
+    db: Session,
+    item_id: uuid.UUID,
+    only: str | None = None,
+    operation: HeadOperation = "heal",
 ) -> list[tuple[HeadReport, HeadReport | None]]:
-    """Restage every stranded head of the item (before, after); the caller commits.
+    """Move every stranded head of the item (before, after); the caller commits.
 
     Lock order is Item, then Job; the restage locks the head last.
     """
@@ -208,6 +234,7 @@ def repair_item(
                 job=job,
                 variant_key=before.variant_key,
                 creator_id=head.creator_id,
+                operation=operation,
                 reason=REASON,
             )
             after = _report(db, item, job, variant)
@@ -219,12 +246,14 @@ def list_stranded(db: Session, limit: int) -> list[dict[str, Any]]:
     return [dict(row._mapping) for row in db.execute(_STRANDED_SQL, {"limit": limit})]
 
 
-def _print_item(reports: list[tuple[HeadReport, HeadReport | None]]) -> int:
+def _print_item(
+    reports: list[tuple[HeadReport, HeadReport | None]], operation: HeadOperation
+) -> int:
     for before, after in reports:
-        print(_line(before))
+        print(_line(before, operation))
         if after is not None:
-            print(f"  restaged -> new head={after.head_id}")
-            print(_line(after))
+            print(f"  {operation} -> new head={after.head_id}")
+            print(_line(after, operation))
     return sum(1 for before, _ in reports if before.needs_repair)
 
 
@@ -234,7 +263,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--item", type=uuid.UUID, help="plan item id")
     parser.add_argument("--variant", help="only this variant key (default: every variant)")
-    parser.add_argument("--apply", action="store_true", help="restage; the default is a dry run")
+    parser.add_argument("--apply", action="store_true", help="move heads; the default is a dry run")
+    parser.add_argument(
+        "--operation",
+        choices=OPERATIONS,
+        default="heal",
+        help="heal keeps a head's flat lanes (default); retire makes it the committed document",
+    )
     parser.add_argument(
         "--list-stranded", action="store_true", help="read-only list of stranded heads"
     )
@@ -277,11 +312,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"variant {args.variant!r} not found on job {job.id}", file=sys.stderr)
             return 2
         if args.apply:
-            repaired = _print_item(repair_item(db, args.item, args.variant))
+            repaired = _print_item(
+                repair_item(db, args.item, args.variant, args.operation), args.operation
+            )
             db.commit()
             print(f"applied: {repaired} head(s) restaged" if repaired else "nothing to do")
         else:
-            repaired = _print_item([(r, None) for r in inspect_item(db, args.item, args.variant)])
+            repaired = _print_item(
+                [(r, None) for r in inspect_item(db, args.item, args.variant)], args.operation
+            )
             db.rollback()
             print(
                 f"dry run: {repaired} head(s) would be restaged; pass --apply"

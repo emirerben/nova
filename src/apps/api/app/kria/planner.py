@@ -236,10 +236,12 @@ from app.services.creator_sessions import (
 from app.services.creator_song_rule import planner_catalog_song_blocked, withheld_song_notice
 from app.services.kept_sound_lines import kept_line_records
 from app.services.kria_editor_ops import (
+    EDITOR_STATE_STALE_REPLY,
     MAX_BACKGROUND_POOL_ROWS,
     MAX_EDITOR_OPS,
     SPEECH_CUT_NEEDS_SAVE_REPLY,
     EditorDraftBasis,
+    EditorStateStaleError,
     background_state,
     build_editor_snapshot,
     clip_facts_by_media_id,
@@ -2351,6 +2353,7 @@ _GUARDED_MISSES = frozenset(
         "session_job_mismatch",
         "no_ready_variant",
         "no_allowed_families",
+        "editor_state_stale",
         "failed_draft_unavailable",
         "render_outcome_unknown",
     }
@@ -2564,7 +2567,7 @@ async def _load_editor_target(
     )
     # The editor snapshot reads only editable lanes (never rendered artifacts), so a
     # creator's CURRENT editor state may be answered while a render is in flight; a
-    # state built on an older render is rebased onto the latest just below.
+    # state built on an older render is caught as stale just below.
     if (
         variant is None
         and editor_state is not None
@@ -2614,9 +2617,18 @@ async def _load_editor_target(
             ],
         )
         return None
-    # ONE resolver (client state > latest head > saved variant) shared with the draft
+    # ONE resolver (client state > fresh head > saved variant) shared with the draft
     # compile in tasks/kria_runtime so the snapshot and the compile base cannot diverge.
-    resolved = resolve_editor_base(job, variant, head, editor_state)
+    try:
+        resolved = resolve_editor_base(job, variant, head, editor_state)
+    except EditorStateStaleError:
+        _miss(
+            "editor_state_stale",
+            session_id=str(session.id),
+            state_base_generation=getattr(editor_state, "base_generation", None),
+            variant_baseline=variant_render_baseline(variant),
+        )
+        return None
     variant = resolved.projected
     if resolved.fallback_reason:
         log.warning(
@@ -5927,15 +5939,26 @@ def _state_kw(editor_state: Any) -> dict[str, Any]:
     return {"editor_state": editor_state} if editor_state is not None else {}
 
 
+def _editor_state_stale() -> bool:
+    return _editor_target_miss.get() == "editor_state_stale"
+
+
+_EDITOR_STATE_STALE_REPLY_TR = "Videon değişti. Editörü yeniden açıp tekrar dene."
 _SPEECH_CUT_NEEDS_SAVE_REPLY_TR = "Önce düzenlemelerini kaydet, sonra sessiz kısımları kesebilirim."
+
+
+def _editor_state_stale_reply() -> str:
+    return say(en=EDITOR_STATE_STALE_REPLY, tr=_EDITOR_STATE_STALE_REPLY_TR)
 
 
 def localized_editor_state_reply(reply: str) -> str:
     """The chat-language wording of an ``EditorStateReplyError.reply`` (KRI-520).
 
-    The reply is a module constant in ``kria_editor_ops`` (English, shared with the
+    The two replies are module constants in ``kria_editor_ops`` (English, shared with the
     compile-time refusal in ``tasks/kria_runtime``); any other text passes through.
     """
+    if reply == EDITOR_STATE_STALE_REPLY:
+        return _editor_state_stale_reply()
     if reply == SPEECH_CUT_NEEDS_SAVE_REPLY:
         return say(en=SPEECH_CUT_NEEDS_SAVE_REPLY, tr=_SPEECH_CUT_NEEDS_SAVE_REPLY_TR)
     return reply
@@ -6007,6 +6030,8 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
             response=(
                 say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR)
                 if miss == "render_in_flight"
+                else _editor_state_stale_reply()
+                if miss == "editor_state_stale"
                 else say(en=_EDITOR_TARGET_RECOVERY_REPLY, tr=_EDITOR_TARGET_RECOVERY_REPLY_TR)
             ),
         ),
@@ -6775,6 +6800,8 @@ async def _plan_scoped_turn(
             return _reply(
                 say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR)
             )
+        if miss == "editor_state_stale":
+            return _reply(_editor_state_stale_reply())
         if miss == "source_replaced":
             return _reply(
                 say(
@@ -7077,6 +7104,8 @@ async def plan_pinned_suggestion_turn(
                 say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR),
                 pinned.TARGET_UNAVAILABLE,
             )
+        if miss == "editor_state_stale":
+            return _reply(_editor_state_stale_reply(), pinned.TARGET_UNAVAILABLE)
         return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
     if target.recovery_basis is not None:
         # A failed render's correction carries a pinned recovery basis only the copilot path mints.
@@ -7527,7 +7556,7 @@ async def _plan_live_turn(
             editor_plan is None
             and _editor_target_miss_guarded()
             and has_render
-            and _fast_path_eligible(user_message)
+            and (_fast_path_eligible(user_message) or _editor_state_stale())
         ):
             return _editor_target_recovery(manifest)
         if editor_plan is not None:
@@ -8030,7 +8059,11 @@ async def _plan_live_turn(
         )
         shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
         await db.rollback()
-        if target is None and _editor_target_miss_guarded() and _fast_path_eligible(user_message):
+        if (
+            target is None
+            and _editor_target_miss_guarded()
+            and (_fast_path_eligible(user_message) or _editor_state_stale())
+        ):
             # The route below would be a re-plan caused solely by the missing target.
             return _editor_target_recovery(manifest)
     route = route_requirements(

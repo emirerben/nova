@@ -214,13 +214,4 @@ async def test_real_planner_copy_repair_stages_exact_words_and_undo(
     async with AsyncSessionLocal() as db:
         await undo_draft(db, thread_id=thread_id, creator_id=user_id, expected_revision=head["rev"])
     restored = next(draft for draft in _drafts(thread_id) if draft["head"])
-    original = next(draft["snap"] for draft in before if draft["head"])
-
-    def without_base(snapshot: dict) -> dict:
-        # A restored row records the committed lanes of the moment it is written; this test
-        # edits the variant after the first head was staged, so only the lanes are compared.
-        payload = {**snapshot["editor_payload"]}
-        payload.pop("base_lanes", None)
-        return {**snapshot, "editor_payload": payload}
-
-    assert without_base(restored["snap"]) == without_base(original)
+    assert restored["snap"] == next(draft["snap"] for draft in before if draft["head"])

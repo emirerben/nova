@@ -8099,6 +8099,7 @@ async def _editor_commit_item(
                 job=locked_job,
                 variant_key=variant_id,
                 creator_id=user.id,
+                operation="retire",
                 reason="editor_save",
             )
             locked_variant = _find_variant(locked_job, variant_id) or locked_variant
@@ -8544,6 +8545,7 @@ async def _editor_commit_item(
             job=locked_job,
             variant_key=variant_id,
             creator_id=user.id,
+            operation="retire",
             reason="editor_save",
         )
     await db.commit()

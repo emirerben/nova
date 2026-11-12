@@ -1981,10 +1981,10 @@ def fresh_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> d
 def latest_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> dict[str, Any]:  # noqa: ANN401
     """The head's editor payload as it stands on the variant's CURRENT generation.
 
-    A current head is returned as stored. A head of this job on an older generation (or with
-    disagreeing stamps) is rebased in memory by the function that restaging persists, so the
-    chat's earlier unsaved edits are kept and the planner stays read-only. A head from
-    another job is never replayed. Returns ``{}`` (build on the saved variant) otherwise.
+    A current head is returned as stored. A head of this job that is off the baseline is moved
+    in memory by operation ``heal`` (what draft GET persists), so the chat's earlier unsaved
+    edits are the base of the next turn and the planner stays read-only. A head from another job
+    is never replayed. Returns ``{}`` (build on the saved variant) otherwise.
     """
     payload = fresh_editor_head_payload(head, variant, job)
     if payload or head is None or head.base_job_id != getattr(job, "id", None):
@@ -1996,9 +1996,11 @@ def latest_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> 
     from app.kria import editor_head  # noqa: PLC0415 - editor_head lazily imports drafts
 
     try:
-        document = editor_head.rebased_document(job, str(variant.get("variant_id") or ""), head)
+        document = editor_head.moved_document(
+            job, str(variant.get("variant_id") or ""), head, "heal"
+        )
     except Exception:  # noqa: BLE001 - a malformed stored head must not fail the turn
-        log.warning("editor_head_rebase_unusable", job_id=str(getattr(job, "id", "")))
+        log.warning("editor_head_heal_unusable", job_id=str(getattr(job, "id", "")))
         return {}
     return dict(document.editor_payload or {})
 
@@ -2219,6 +2221,7 @@ def project_editor_draft(
     return projected
 
 
+EDITOR_STATE_STALE_REPLY = "Your video changed \u2014 reopen the editor and try again."
 SPEECH_CUT_NEEDS_SAVE_REPLY = "Save your edits first, then I can cut the silences."
 
 
@@ -2226,6 +2229,12 @@ class EditorStateReplyError(KriaEditorOpError):
     """A state-related refusal with an honest, user-facing reply (not a crash)."""
 
     reply = ""
+
+
+class EditorStateStaleError(EditorStateReplyError):
+    """The client's unsaved state was built on a render the server has since replaced."""
+
+    reply = EDITOR_STATE_STALE_REPLY
 
 
 class EditorStateSpeechCutError(EditorStateReplyError):
@@ -2253,8 +2262,6 @@ class EditorBase(NamedTuple):
     prior_payload: dict[str, Any]
     source: str
     fallback_reason: str | None = None
-    # Lanes of the creator's unsaved state that a stale-state rebase could not keep.
-    dropped_lanes: tuple[str, ...] = ()
 
 
 def _state_dict(client_state: Any) -> dict[str, Any]:
@@ -2299,12 +2306,7 @@ def client_state_payload(client_state: Any) -> dict[str, Any]:
 
 # Keys a phone state or a chat draft carries that are not edits. `remove_music: false` is
 # a Save default the phone always encodes; only `true` removes the music.
-_NOT_EDIT_KEYS = _STATE_DROP_KEYS | {
-    "base_generation",
-    "base_lanes",
-    "editor_state_version",
-    "sections",
-}
+_NOT_EDIT_KEYS = _STATE_DROP_KEYS | {"base_generation", "editor_state_version", "sections"}
 
 
 def _carries_edits(lanes: dict[str, Any]) -> bool:
@@ -2334,100 +2336,18 @@ def _unseen_chat_head(head: Any, variant: dict[str, Any], job: Any, client_state
     return fresh if _carries_edits(fresh) else {}
 
 
-def _rebase_stale_state(
-    job: Any, variant: dict[str, Any], head: Any, client_state: Any
-) -> EditorBase:
-    """A turn whose phone state predates the variant's current generation.
-
-    The phone encodes only the lanes the creator changed, so a lane present in the state is a
-    dirty lane. Start from the latest (the head rebased onto the current generation, else the
-    committed variant) and lay the creator's dirty lanes on top, by the same per-lane rule a head
-    is rebased by:
-
-    - the head recorded its base for the phone's generation: exact three-way. A phone lane the
-      committed state changed since that base loses (latest wins); a lane it left alone applies;
-    - otherwise the creator's dirty lanes are their newest action and apply, except the
-      generation-bound ones (slot ids and cut times belong to the generation the phone saw).
-
-    A creator lane that could not be kept is returned in ``dropped_lanes`` for the turn trace.
-    """
-    from app.kria import editor_head  # noqa: PLC0415 - editor_head lazily imports drafts
-
-    baseline = variant_render_baseline(variant)
-    key = str(variant.get("variant_id") or "")
-    latest = latest_editor_head_payload(head, variant, job)
-    phone_base = str(_state_dict(client_state).get("base_generation") or "")
-    stored = (getattr(head, "snapshot_json", None) or {}).get("editor_payload")
-    recorded = stored.get("base_lanes") if isinstance(stored, dict) else None
-    exact = (
-        isinstance(recorded, dict)
-        and bool(recorded)
-        and str(stored.get("base_generation") or "") == phone_base
-        and head.base_job_id == getattr(job, "id", None)
-    )
-    committed = editor_head.committed_view(job, key) if exact else {}
-    phone = editor_head.lane_view(
-        {
-            name: value
-            for name, value in client_state_payload(client_state).items()
-            if name not in _NOT_EDIT_KEYS and not (name == "remove_music" and value is False)
-        }
-    )
-    creator: dict[str, Any] = {}
-    dropped: list[str] = []
-    for lane, value in phone.items():
-        if exact:
-            base = recorded.get(lane, editor_head.NO_VALUE)
-            if editor_head.lane_hash(value) == base:
-                continue  # the phone did not change it after all
-            if editor_head.committed_lane_hash(committed, lane) != base:
-                dropped.append(lane)
-                continue
-        elif lane in editor_head.GENERATION_BOUND_LANES:
-            dropped.append(lane)
-            continue
-        members = value if lane in editor_head._LANE_MEMBERS else {lane: value}
-        creator.update(members)
-    if not creator:
-        if latest:
-            return EditorBase(
-                project_editor_draft(variant, latest, job),
-                latest,
-                "head",
-                "client_state_stale",
-                tuple(dropped),
-            )
-        return EditorBase(
-            project_editor_draft(variant, {}, job),
-            {},
-            "variant",
-            "client_state_stale",
-            tuple(dropped),
-        )
-    prior = merge_editor_draft(latest, creator)
-    prior["base_generation"] = baseline
-    return EditorBase(
-        project_editor_draft(variant, prior, job),
-        prior,
-        "client_state",
-        "client_state_rebased_onto_latest",
-        tuple(dropped),
-    )
-
-
 def resolve_editor_base(
     job: Any, variant: dict[str, Any], head: Any, client_state: Any = None
 ) -> EditorBase:
     """THE base a copilot turn edits; the planner snapshot and the compile both call this.
 
-    Every turn builds on the latest version; none is refused for an old phone copy.
     Precedence:
       1. ``client_state`` whose ``base_generation`` equals the variant's current render
          baseline -> authoritative, the head is IGNORED, unless the state is clean and
          never saw the head's chat lanes (``_unseen_chat_head``): then the head.
+         A different baseline raises ``EditorStateStaleError`` (never silently rebased).
          Untrusted: a projection failure falls back to 2/3 with ``fallback_reason``.
-         A different baseline is rebased (``_rebase_stale_state``).
-      2. the head draft when current or healable (``latest_editor_head_payload``).
+      2. the head draft when current, or healable in memory (``latest_editor_head_payload``).
       3. the bare saved variant.
     """
     reason: str | None = None
@@ -2438,24 +2358,20 @@ def resolve_editor_base(
             else dict(client_state).get("base_generation")
         )
         if str(base or "") != variant_render_baseline(variant):
-            try:
-                return _rebase_stale_state(job, variant, head, client_state)
-            except Exception as exc:  # noqa: BLE001 - client state is untrusted input
-                reason = f"client_state_unusable:{type(exc).__name__}"
-        else:
-            unseen = _unseen_chat_head(head, variant, job, client_state)
-            if unseen:
-                return EditorBase(
-                    project_editor_draft(variant, unseen, job),
-                    unseen,
-                    "head",
-                    "client_state_unseen_head",
-                )
-            try:
-                prior = client_state_payload(client_state)
-                return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
-            except Exception as exc:  # noqa: BLE001 - client state is untrusted input
-                reason = f"client_state_unusable:{type(exc).__name__}"
+            raise EditorStateStaleError("editor state is based on an older render")
+        unseen = _unseen_chat_head(head, variant, job, client_state)
+        if unseen:
+            return EditorBase(
+                project_editor_draft(variant, unseen, job),
+                unseen,
+                "head",
+                "client_state_unseen_head",
+            )
+        try:
+            prior = client_state_payload(client_state)
+            return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
+        except Exception as exc:  # noqa: BLE001 - client state is untrusted input
+            reason = f"client_state_unusable:{type(exc).__name__}"
     fresh = latest_editor_head_payload(head, variant, job)
     if fresh:
         return EditorBase(project_editor_draft(variant, fresh, job), fresh, "head", reason)

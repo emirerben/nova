@@ -22,6 +22,7 @@ from app.kria.drafts import (
     KriaDraftDocument,
     _editor_snapshot,
     _out,
+    can_undo,
     editor_variant_target,
     stage_editor_variant_draft,
 )
@@ -108,21 +109,21 @@ def _reference(variant: dict[str, Any]) -> uuid.UUID | None:
         return None
 
 
-def _rebased_in_memory(
-    job: Job, variant: dict[str, Any], row: CreatorEditDraft
+async def _healed_in_memory(
+    db: AsyncSession, job: Job, variant: dict[str, Any], row: CreatorEditDraft
 ) -> DraftSnapshotOut | None:
-    """A pinned draft on an older generation as ``GET /draft`` would heal it, without writing.
+    """A pinned draft off the baseline as ``GET /draft`` would heal it, without writing.
 
-    Same function as the heal (``editor_head.rebase_head``). The row keeps its own identity and
-    ETag, so a write that echoes them still passes the If-Match check and is rebased there.
+    The same document (``editor_head.moved_document``, operation ``heal``). The row keeps its
+    own identity and ETag: a write that echoes them is answered ``draft_stale`` after the heal.
     """
     from app.kria.drafts import canonical_snapshot  # noqa: PLC0415
-    from app.kria.editor_head import rebase_head  # noqa: PLC0415
+    from app.kria.editor_head import moved_document  # noqa: PLC0415
 
     if (row.snapshot_json or {}).get("kind") != "editor":
         return None
     try:
-        document, _ = rebase_head(job, str(row.variant_key), row)
+        document = moved_document(job, str(row.variant_key), row, "heal")
         snapshot, _hash = canonical_snapshot(document)
     except Exception:  # noqa: BLE001 - an unusable stored draft is served as unavailable
         return None
@@ -137,7 +138,11 @@ def _rebased_in_memory(
         created_at=row.created_at,
         snapshot_json=snapshot,
     )
-    return _out(shim, can_undo=row.parent_draft_id is not None, head_current=False)  # type: ignore[arg-type]
+    return _out(
+        shim,  # type: ignore[arg-type]
+        can_undo=await can_undo(db, job, str(row.variant_key), row),
+        head_current=False,
+    )
 
 
 async def attach_saved_editor_drafts(
@@ -146,7 +151,7 @@ async def attach_saved_editor_drafts(
     """Load pinned snapshots once; never overwrite ORM variant JSON on a read.
 
     ``rebase_stale`` (the timeline reads) also serves a pinned draft that is not on the current
-    generation, rebased in memory by the function that restaging persists, so the timeline and
+    generation, healed in memory by the function that restaging persists, so the timeline and
     ``GET /draft`` show one document. Save keeps the strict form and heals with a write.
     """
     if job is None:
@@ -182,12 +187,12 @@ async def attach_saved_editor_drafts(
         ):
             continue
         if not is_head_current(job, variant, row):
-            stale = _rebased_in_memory(job, variant, row) if rebase_stale else None
+            stale = await _healed_in_memory(db, job, variant, row) if rebase_stale else None
             if stale is not None:
                 snapshots[str(row.variant_key)] = stale
             continue
         snapshots[str(row.variant_key)] = _out(
-            row, can_undo=row.parent_draft_id is not None, head_current=True
+            row, can_undo=await can_undo(db, job, str(row.variant_key), row), head_current=True
         )
     job._saved_editor_drafts = snapshots
 

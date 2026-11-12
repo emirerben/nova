@@ -296,16 +296,6 @@ def _pair_counts(result: Any) -> Counter:
 _ROUTED_PAIRS = _FIXTURES / "copy_routed_pairs.json"
 
 
-# Sentences the code stopped saying on purpose; the merge base still has them until this lands.
-_RETIRED_PAIRS = {
-    (
-        "app/kria/planner.py",
-        "Your video changed \u2014 reopen the editor and try again.",
-        "Videon de\u011fi\u015fti. Edit\u00f6r\u00fc yeniden a\u00e7\u0131p tekrar dene.",
-    ),
-}
-
-
 # Converts every say() file at the merge base (~30 s locally): above the 30 s default.
 @pytest.mark.timeout(180)
 def test_codemod_kept_every_en_tr_pair() -> None:
@@ -322,14 +312,11 @@ def test_codemod_kept_every_en_tr_pair() -> None:
         converted[rel] = new if new is not None else text
     before = _pair_counts(build.harvest(converted))
     after = _pair_counts(_harvest())
-    assert set(before - after) - _RETIRED_PAIRS == set(), (
-        "a sentence was lost: retire it on purpose"
-    )
+    assert {k: v for k, v in (before - after).items()} == {}
     routed = {tuple(row) for row in _json(_ROUTED_PAIRS)["pairs"]}
     added = set(after - before)
     assert added - routed == set(), "new pairs: route copy through say() or pin them"
-    retired = {(en, tr) for _f, en, tr in _RETIRED_PAIRS}
-    assert {(en, tr) for _f, en, tr in before} - retired <= {(en, tr) for _f, en, tr in after}
+    assert {(en, tr) for _f, en, tr in before} <= {(en, tr) for _f, en, tr in after}
 
 
 # ---------------------------------------------------------------- (d) pseudo language

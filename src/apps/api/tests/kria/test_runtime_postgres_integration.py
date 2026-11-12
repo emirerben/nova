@@ -1543,10 +1543,9 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
                 item_id = draft.item_id
                 first_revision = draft.draft_revision
                 if followup == "stale_head":
-                    # A surviving head of this job on an older generation is healed in
-                    # memory onto the current one, so the chat's unsaved edit is still
-                    # the input to the planner and the next draft. Its stamps are the
-                    # payload's base_generation, the column and the session pointer.
+                    # A surviving head of this job whose stamps are off the baseline is
+                    # healed in memory (editor_head operation `heal`), so the chat's unsaved
+                    # edit is still the input to the planner and the next draft.
                     snapshot = copy.deepcopy(draft.snapshot_json)
                     snapshot["editor_payload"]["base_generation"] = "older-generation"
                     draft.snapshot_json = snapshot

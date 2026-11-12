@@ -41225,7 +41225,7 @@ def _publish_speech_cut_rerender(
     """Token-winning publication after the full render and lane composition."""
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
-    from app.kria.editor_head import restage_editor_head_sync  # noqa: PLC0415
+    from app.kria.editor_head import TIMELINE_LANES, restage_editor_head_sync  # noqa: PLC0415
     from app.models import PlanItem  # noqa: PLC0415
     from app.pipeline.speech_cut_state import cut_revision  # noqa: PLC0415
 
@@ -41419,15 +41419,16 @@ def _publish_speech_cut_rerender(
         job.assembly_plan = published_plan
         flag_modified(job, "assembly_plan")
         if item is not None:
-            # The cut rewrote the timeline: the committed cut wins that lane even for a head
-            # written before heads recorded their base; every other lane is a per-lane rebase.
+            # The cut rewrote the timeline, so the timeline lanes of a chat head are dropped
+            # (the committed cut wins); an unsaved text edit of the same head stays.
             restage_editor_head_sync(
                 db,
                 item=item,
                 job=job,
                 variant_key=str(variant_id),
                 creator_id=job.user_id,
-                committed_lanes=frozenset({"timeline"}),
+                operation="drop_lanes",
+                lanes=TIMELINE_LANES,
                 reason="speech_cut_publication",
             )
         db.commit()

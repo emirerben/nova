@@ -725,11 +725,7 @@ async def test_section_undo_round_trip_restores_only_that_section_and_toggles(mo
             "cue-1": CUES[0]["text"],
             "cue-2": CUES[1]["text"],
         }
-        assert set(lanes) == {
-            "base_generation",
-            "base_lanes",
-            "caption_cues",
-        }  # no other lane moved
+        assert set(lanes) == {"base_generation", "caption_cues"}  # no other lane moved
 
         with sync_session() as db:
             turn = db.get(CreatorAgentTurn, uuid.UUID(out.turn_id))
@@ -938,17 +934,18 @@ async def test_undo_all_with_render_restores_every_updated_section_and_plain_und
             plain, successor = await undo_draft(
                 db, thread_id=thread_id, creator_id=user_id, expected_revision=head["rev"]
             )
-        # The parent predates generation-3, so undo lands it on the current generation.
-        restored_parent = copy.deepcopy(parent["snap"])
-        restored_parent["editor_payload"]["base_generation"] = "generation-3"
-        # Rebased per lane: the parent's captions equal the committed ones on generation-3, so
-        # the restored head is the committed document (sections), not a flat copy of the parent.
+        # The parent predates generation-3, so undo lands it on the current generation: its
+        # flat lanes (the undone section's captions) stay, `sections` is the committed document.
         assert successor is None
         landed = plain.snapshot["editor_payload"]
         assert landed["base_generation"] == "generation-3"
-        assert (
-            landed["sections"]["caption_cues"] == restored_parent["editor_payload"]["caption_cues"]
-        )
+        parent_payload = parent["snap"]["editor_payload"]
+        assert {k: v for k, v in landed.items() if k not in ("base_generation", "sections")} == {
+            k: v for k, v in parent_payload.items() if k not in ("base_generation", "sections")
+        }
+        assert {k: v for k, v in plain.snapshot.items() if k != "editor_payload"} == {
+            k: v for k, v in parent["snap"].items() if k != "editor_payload"
+        }
         with sync_session() as db:
             turns_after = len(
                 db.execute(select(CreatorAgentTurn).where(CreatorAgentTurn.thread_id == thread_id))

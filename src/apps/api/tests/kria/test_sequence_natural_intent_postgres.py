@@ -313,37 +313,34 @@ async def test_preservation_conflict_asks_without_retiming(brief_project):
 
 
 @pytest.mark.asyncio
-async def test_sequence_editor_admission_keeps_a_pending_question_guarded(brief_project):
+@pytest.mark.parametrize("guard", ["stale_editor", "pending_copy"])
+async def test_sequence_editor_admission_keeps_guarded_requests_unchanged(brief_project, guard):
     project, models, _ = brief_project
-    user_id, thread_id, session_id, *_ = project
+    user_id, thread_id, session_id, _, rows, *_ = project
+    state = None
     message = "Fill the text the whole video"
-    _ask(thread_id, session_id)
+    if guard == "pending_copy":
+        _ask(thread_id, session_id)
+    else:
+        state = {
+            "base_generation": "obsolete-generation",
+            "client_state_id": "stale-sequence-state",
+            "lanes": {"text_elements": rows},
+        }
     before = _drafts(thread_id)
-    accepted = await _submit(user_id, thread_id, message)
-    with pytest.raises(AssertionError, match="Main Creator must not replan"):
-        await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
-    models.main.assert_called()
+    accepted = await _submit(user_id, thread_id, message, state)
+    if guard == "pending_copy":
+        with pytest.raises(AssertionError, match="Main Creator must not replan"):
+            await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        models.main.assert_called()
+    else:
+        assert (await asyncio.to_thread(run_kria_turn.run, accepted.turn_id))[
+            "status"
+        ] == "completed"
+        models.main.assert_not_called()
     assert ("copilot", message) not in models.calls
     assert _drafts(thread_id) == before
     _assert_job_unmodified(project)
-
-
-@pytest.mark.asyncio
-async def test_sequence_edit_with_a_stale_phone_state_applies_on_the_latest(brief_project):
-    project, models, _ = brief_project
-    user_id, thread_id, _session_id, _, rows, *_ = project
-    message = "Fill the text the whole video"
-    # Only the lanes the creator changed ride a state; the baseline it names is old.
-    state = {
-        "base_generation": "obsolete-generation",
-        "client_state_id": "stale-sequence-state",
-        "lanes": {"text_elements": rows},
-    }
-    accepted = await _submit(user_id, thread_id, message, state)
-    assert (await asyncio.to_thread(run_kria_turn.run, accepted.turn_id))["status"] == "completed"
-    models.main.assert_not_called()
-    assert ("copilot", message) in models.calls
-    assert any(d["head"] for d in _drafts(thread_id)), "the turn is applied, not refused"
 
 
 @pytest.mark.asyncio
