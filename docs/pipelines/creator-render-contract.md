@@ -52,43 +52,22 @@ or reread from mutable chat during a retry.
 
 ## One latest editable document
 
-For each (item, variant) there is one editor draft head, and it sits on the variant's
-current generation. The iPhone editor loads that one version and the phone converges onto
-it. The server never merges draft content: it has no reliable lane model, and the phone
-holds the real merge engine and the real base document.
+The server moves an editor draft head only at approval execution (`retire`: the render holds the
+edit, so the head becomes the committed document) and phone publish (`restamp`: same content,
+new generation id, only for a head on the very generation the publish was made from). In every
+other case a head on an old generation is not current and every reader ignores it; the server
+never merges draft content and never guesses. The phone converges on the latest by itself.
 
-- **The one predicate.** `app/kria/editor_head.py` defines "current" (`is_head_current`)
-  and "exactly on the baseline" (`is_head_on_baseline`). Everything else imports it.
-- **One operation per writer.** When a variant's generation moves, the writer that moved it
-  names how the head follows (`restage_editor_head_sync/async(operation=..., reason=...)`).
-  A head of another job is always retired. An empty-state variant keeps its draft-only
-  `sections` under every operation and only the stamps move.
-
-| Operation | Effect on the new head row | Used by |
-|---|---|---|
-| `restamp` | Content byte-identical; only the generation stamps move. | Phone publish |
-| `retire` | Head becomes the committed document: committed `sections`, no flat lane, no pending diff. | Approval execution, manual Save, a head of another job |
-| `drop_lanes` | Committed `sections`; the named flat lanes are removed, the others kept. | Speech-cut publish (the timeline lanes) |
-| `heal` | Committed `sections`; flat lanes kept, so an AI's unsaved edit stays reachable. A head with no flat lane becomes the committed document. | Heal-on-observe: an unknown writer moved the generation |
-
-- **Heal on observe** (a restage row with reason `observe`): draft GET, draft PUT, and the
-  repair CLI write it. Undo lands its restored row on the baseline by the same operation. A
-  chat turn and the timeline GET see the head healed in memory and write nothing.
-- **`PUT /draft` never merges.** A head off the baseline is healed first, then If-Match is
-  checked against the head as it now is: a heal makes the client's copy old, so the answer is
-  `draft_stale` (recovery refresh) and the phone re-reads and converges locally. A body whose
-  own `base_generation` is not current is `draft_stale` too, never restamped.
-- **Lineage.** A restage records `restage: {of, reason}`. `draft_still_current` (approval
-  claim, render retry, intent review) accepts only the approval's own render and a phone
-  publish, so an old approval never runs on top of a manual Save. Undo skips restage rows
-  and is unavailable (`draft_undo_unavailable`, `can_undo` false) when it would restore the
-  document the head already holds.
-- **Repair.** `python -m app.cli.repair_editor_heads --item <uuid> [--apply]
-  [--operation {heal,retire}]` moves the heads of one item (`heal` by default; use `retire`
-  when the committed video is known to contain the draft), and `--list-stranded` lists heads
-  that are off their baseline. It is a dry run unless `--apply` is given and prints each
-  head's flat lanes and what each operation would do. A production run needs owner approval;
-  show the dry-run output first.
+- **One predicate.** `app/kria/editor_head.py` defines "current" (`is_head_current`) and "exactly
+  on the baseline" (`is_head_on_baseline`); every reader imports it.
+- **Lineage.** A server-written row records `restage: {of, reason, origin_revision}`.
+  `draft_still_current` (approval claim, render retry, intent review) accepts only the approval's
+  own render and a phone publish, and only while the head is still current.
+- **Undo** skips restage rows; it is unavailable across an approval and works across a restamp.
+- **Stranded v2 draft.** Save retires a pinned draft that is not current; the timeline GET serves
+  the committed state without writing. An empty-state variant keeps its 409.
+- **Repair.** `python -m app.cli.repair_editor_heads` is read-only by default; `--apply` needs
+  `--variant` and `--operation {retire,keep-ai-lanes}` and the owner's approval for production.
 
 ## What is hard and what is not
 

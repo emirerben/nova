@@ -63,42 +63,40 @@ Default off and byte-identical off (guard: `tests/services/test_creation_text_as
 
 ### One latest editable document
 
-The head of `CreatorEditDraft` for an (item, variant) sits on the variant's current
-generation, so the iPhone editor loads one latest version. **The server never merges draft
-content; the phone converges.** It has no reliable lane model (committed lanes the accessor
-never reads, cleared keys, coarse lanes), and the phone owns the merge engine and the base
-document.
+The server moves an editor draft head in exactly two cases, because only there does it know what
+the generation move did. In every other case a head on an old generation is simply not current
+and every reader ignores it (the same as before `editor_head.py` existed). **The server never
+merges draft content, and the phone converges on the latest by itself** (it replays its own
+staged AI edit).
 
-- The one definition of "current" is `app/kria/editor_head.py` (`is_head_current`,
-  `is_head_on_baseline`). A chat payload holds flat top-level lanes (what the turn changed;
-  the phone stages exactly those, `stagedChatEdit`) and/or a full `sections` object
-  (bootstrap, phone-written, v2 Save). The writer that moves a generation names one
-  operation for the head (`restage_editor_head_sync/async(operation, reason)`):
-
-| Operation | Effect on the new head row | Used by |
-|---|---|---|
-| `restamp` | Content byte-identical; only the generation stamps (column + payload `base_generation`) move. | Phone publish (`routes/device_render.py`) |
-| `retire` | Head becomes the committed document: `sections` := committed, all flat lanes removed, `changes`/`editor_text_diff`/`client_state_id` cleared. | Approval execution (`tasks/kria_runtime.py`), manual Save (legacy and v2; `routes/plan_items.py`), a head of another job |
-| `drop_lanes` | `sections` := committed; the named flat lanes are removed, the others kept; `changes` kept only if a flat lane remains. | Speech-cut publish (`tasks/generative_build.py`) drops `timeline_slots` and `split_screen_sections` |
-| `heal` | `sections` := committed; flat lanes kept. A head with no flat lane becomes the committed document. | Heal-on-observe: draft GET, draft PUT, undo, Save heal, repair CLI; in memory for the chat turn and the timeline GET |
-
-  An empty-state variant keeps its head's `sections` under every operation; only the stamps
-  move (`changes` is cleared on `retire`).
-- `PUT /draft` heals first, then checks If-Match against the current head: a heal makes the
-  client's copy old, so the answer is `draft_stale` (recovery refresh) and the phone
-  re-reads. A body naming a non-current `base_generation` is `draft_stale` as well.
-- A restage row records `restage: {of, reason}`; `draft_still_current` (approval claim,
-  render retry, intent review) follows that lineage and accepts only reasons
-  `approval_execution` and `phone_publish`, so an old approval never runs on top of a manual
-  Save. Undo skips restage rows and answers `draft_undo_unavailable` (and `can_undo` is false
-  in the draft and timeline reads) when it would restore the document the head holds.
+- **Approval execution retires the head** (`tasks/kria_runtime.py`, in the claim's transaction):
+  the render holds the approved edit, so the head becomes the document a fresh read would create
+  for the variant (`drafts.committed_document`; a v2 variant's sections come from the builder its
+  Save uses). Redelivery inserts nothing.
+- **Phone publish restamps the head** (`routes/device_render.py`), only when the head's column and
+  payload base both equal the generation the publish was made from
+  (`published_source_generation`). Same content, new id. Any other head is left alone.
+- "Current" is one predicate, `editor_head.is_head_current`: same job, and column and payload base
+  both name the render baseline or the publish source. Draft GET/PUT, the timeline reads, the
+  chat planner and `attach_saved_editor_drafts` all use it. `GET /draft` adds `head_current` and
+  `base_generation`.
+- A restage row records `restage: {of, reason, origin_revision}`. `draft_still_current` (approval
+  claim, render retry, intent review) follows the lineage through `approval_execution` and
+  `phone_publish` rows only, and requires the head to still be current, so an old approval never
+  runs on top of a manual Save. A phone state that names revision N as seen stays a discard after
+  a restamp wrote N+1 (`origin_revision`).
+- Undo looks past restage rows. Across `phone_publish` rows it restores the earlier draft with the
+  same restamp; across an approval row it answers `draft_undo_unavailable` (committed work is not
+  undone by draft undo) and `can_undo` is false in the draft and timeline reads
+  (`drafts.can_undo`).
+- A v2 variant whose pinned `editor_draft` is not current (409 `editor_draft_unavailable` before):
+  Save retires it and attaches the result; the timeline GET writes nothing and serves the
+  committed state in the retired document's shape. An empty-state variant keeps its 409.
 - A chat turn whose phone state names an older generation is refused as before
-  (`EditorStateStaleError`); the phone converges and resends. A head that is merely off the
-  baseline is not "no head": the turn builds on it healed in memory
-  (`latest_editor_head_payload`).
-- Stranded heads from before the heal existed: `python -m app.cli.repair_editor_heads`
-  (dry run by default; `--apply [--operation {heal,retire}]`, `--list-stranded`). It needs
-  owner approval before a production run.
+  (`EditorStateStaleError`); a head on an old generation is ignored by the turn.
+- Heads already left behind: `python -m app.cli.repair_editor_heads` is a dry run by default;
+  `--apply` needs an explicit `--variant` and `--operation {retire,keep-ai-lanes}`. It needs the
+  owner's approval before a production run. `keep-ai-lanes` exists only there.
 
 Runtime-v1 threads keep their existing controller and projections. A thread never
 changes runtime owner because a flag changes during its lifetime.
