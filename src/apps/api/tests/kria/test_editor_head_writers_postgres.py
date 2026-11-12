@@ -481,11 +481,7 @@ async def test_speech_cut_publication_restages_the_head_as_the_committed_cut(
         },
     }
     user_id, thread_id, item_id, job_id = _seed(
-        _variant(
-            cut_generation,
-            text_elements=[{**HOOK, "text": "Cut hook"}],
-            silence_cut={"removed": []},
-        ),
+        _variant(cut_generation, silence_cut={"removed": []}),
         speech_cut_control=control,
     )
     try:
@@ -501,6 +497,7 @@ async def test_speech_cut_publication_restages_the_head_as_the_committed_cut(
             job = db.get(Job, job_id, with_for_update=True)
             plan = copy.deepcopy(job.assembly_plan)
             plan["variants"][0]["render_generation_id"] = cut_generation
+            plan["variants"][0]["text_elements"] = [{**HOOK, "text": "Cut hook"}]
             job.assembly_plan = plan
             db.commit()
         monkeypatch.setattr(
@@ -521,7 +518,7 @@ async def test_speech_cut_publication_restages_the_head_as_the_committed_cut(
         assert head["parent"] == uuid.UUID(staged.draft_id)
         assert head["col"] == head["payload_base"] == cut_generation
         assert _head_is_current(item_id, job_id)
-        assert _text(head) == "Cut hook", "latest wins: the old head does not undo the cut"
+        assert _text(head) == "Cut hook", "latest wins on a lane both changed"
         assert head["snap"]["changes"] == []
     finally:
         await async_engine.dispose()
@@ -690,9 +687,14 @@ async def test_stranded_pinned_draft_is_served_from_the_committed_variant_and_sa
         rows_before = len(_rows(item_id))
         async with _client_for(user_id) as client:
             timeline = await client.get(f"{base}/timeline")
-            # GET stays write-free: the pinned draft is not served, the committed state is.
+            # GET stays write-free and serves the pinned draft rebased in memory.
             assert timeline.status_code == 200, timeline.text
-            assert timeline.json().get("draft") is None
+            served = timeline.json()["draft"]
+            assert served["snapshot"]["editor_payload"]["base_generation"] == "generation-2"
+            assert (
+                served["snapshot"]["editor_payload"]["sections"]["text_elements"][0]["text"]
+                == "Pinned hook"
+            )
             assert _head(item_id)["id"] == uuid.UUID(staged.draft_id)
             assert len(_rows(item_id)) == rows_before
 

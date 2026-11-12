@@ -219,11 +219,12 @@ def test_stale_state_with_a_disjoint_dirty_lane_builds_on_the_latest_plus_that_l
     assert base.projected["caption_cues"][0]["text"] == "Creator caption"
 
 
-def test_stale_state_dirty_lane_the_latest_also_changed_loses_to_the_latest() -> None:
+def test_stale_state_dirty_lane_the_head_also_changed_is_the_creators_newest_action() -> None:
+    """No recorded base for the phone's generation: the creator's dirty lane applies."""
     variant = _variant("G3")
     base = resolve_editor_base(_job(variant), variant, _head("G3"), _state(_moved(), base="G2"))
-    assert _bars(base.projected)["title"]["x_frac"] == 0.9
-    assert _bars(base.projected)["label"]["text"] == "Stale label"
+    assert _bars(base.projected)["title"]["x_frac"] == 0.55
+    assert _bars(base.projected)["label"]["text"] == "Creator label"
 
 
 def test_stale_state_dirty_lane_applies_on_the_saved_variant_when_there_is_no_head() -> None:

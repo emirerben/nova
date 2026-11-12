@@ -471,10 +471,17 @@ async def test_stale_phone_state_against_a_sections_head_follows_the_three_way_r
     from app.kria.api_schemas import EditorStateIn
     from app.services.kria_editor_ops import resolve_editor_base
 
-    user_id, thread_id, item_id, job_id = _seed(_variant(music_track_id="song-A"))
+    user_id, thread_id, item_id, job_id = _seed(
+        _variant(music_track_id="song-A", user_timeline={"slots": SLOTS_BEFORE})
+    )
     try:
         await _stage_ai_edit(user_id, thread_id, "AI hook")
-        _update_variant(job_id, render_generation_id="generation-2", music_track_id="song-C")
+        _update_variant(
+            job_id,
+            render_generation_id="generation-2",
+            music_track_id="song-C",
+            user_timeline={"slots": SLOTS_CUT},
+        )
         cues = [{"id": "c1", "text": "Creator caption", "start_s": 0.0, "end_s": 1.0}]
         state = EditorStateIn.model_validate(
             {
@@ -502,7 +509,7 @@ async def test_stale_phone_state_against_a_sections_head_follows_the_three_way_r
         assert base.projected["music_track_id"] == "song-C", "the dispatcher's music is newer"
         assert base.projected["caption_cues"] == cues, "a lane only the creator changed applies"
         assert "timeline_slots" not in base.prior_payload, "an older timeline is not replayed"
-        assert {"music_track_id", "timeline_slots"} <= set(base.dropped_lanes), (
+        assert {"music", "timeline"} <= set(base.dropped_lanes), (
             "a creator lane that could not be kept is named, not dropped silently"
         )
     finally:
@@ -600,7 +607,7 @@ async def test_repair_cli_dry_run_reports_what_apply_would_do_per_lane(capsys) -
         out = capsys.readouterr().out
 
         assert "lane text_elements: kept from head" in out
-        assert "lane music_track_id: taken from committed" in out
+        assert "lane music: taken from committed" in out
         assert _rows(item_id) == before, "a dry run writes nothing"
 
         assert cli.main(["--item", str(item_id), "--apply"]) == 0
@@ -622,7 +629,7 @@ async def test_every_head_writer_records_the_committed_base_of_each_lane(
     user_id, thread_id, item_id, job_id = _seed(_variant(music_track_id="song-A"))
     try:
         bootstrapped = await _read(user_id, thread_id)
-        assert bootstrapped.snapshot["editor_payload"]["base_lanes"]["music_track_id"]
+        assert bootstrapped.snapshot["editor_payload"]["base_lanes"]["music"]
         await _stage_ai_edit(user_id, thread_id, "AI hook")
         written = _head(item_id)["snap"]["editor_payload"]["base_lanes"]
         assert written == bootstrapped.snapshot["editor_payload"]["base_lanes"], (
@@ -630,7 +637,7 @@ async def test_every_head_writer_records_the_committed_base_of_each_lane(
         )
         await _approved_ai_edit(monkeypatch, user_id, thread_id, EDIT_HOOK)
         chat = _head(item_id)["snap"]["editor_payload"]
-        assert chat["base_lanes"]["music_track_id"] == written["music_track_id"]
+        assert chat["base_lanes"]["music"] == written["music"]
         assert "base_lanes" in _rows(item_id)[-2]["snap"]["editor_payload"], "'Your edits' parent"
     finally:
         await async_engine.dispose()

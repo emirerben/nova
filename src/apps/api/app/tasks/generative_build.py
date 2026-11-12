@@ -41419,15 +41419,15 @@ def _publish_speech_cut_rerender(
         job.assembly_plan = published_plan
         flag_modified(job, "assembly_plan")
         if item is not None:
-            # The cut rewrote the timeline: the head becomes the committed cut, since
-            # laying an older head's slots back over it would undo the cut.
+            # The cut rewrote the timeline: the committed cut wins that lane even for a head
+            # written before heads recorded their base; every other lane is a per-lane rebase.
             restage_editor_head_sync(
                 db,
                 item=item,
                 job=job,
                 variant_key=str(variant_id),
                 creator_id=job.user_id,
-                contained=True,
+                committed_lanes=frozenset({"timeline"}),
                 reason="speech_cut_publication",
             )
         db.commit()

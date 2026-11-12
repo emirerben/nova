@@ -69,7 +69,7 @@ from app.kria.brief_checks import (
     with_planned_cuts,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
-from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.drafts import KriaDraftDocument, canonical_snapshot, with_base_lanes
 from app.kria.editor_head import draft_still_current, restage_editor_head_sync
 from app.kria.editor_receipts import (
     bind_editor_receipts,
@@ -2682,7 +2682,9 @@ def _complete_draft_turn(
                         ),
                         changes=[],
                     )
-                    your_edits_snapshot, your_edits_hash = canonical_snapshot(baseline)
+                    your_edits_snapshot, your_edits_hash = canonical_snapshot(
+                        with_base_lanes(baseline, job, variant_key)
+                    )
             from app.kria.editor_repair import verify_compiled_repair
 
             verify_compiled_repair(planned, compiled.payload)
@@ -2720,6 +2722,8 @@ def _complete_draft_turn(
                 changes=changes,
                 client_state_id=state_id,
             )
+            # Every head records the committed lanes it was authored on (editor_head.py).
+            document = with_base_lanes(document, job, variant_key)
             snapshot, snapshot_hash = canonical_snapshot(document)
             if client_state is not None:
                 state_trace = {
@@ -2727,6 +2731,13 @@ def _complete_draft_turn(
                     **(
                         {"editor_state_fallback": editor_base.fallback_reason}
                         if editor_base.fallback_reason
+                        else {}
+                    ),
+                    # A creator lane the stale-state rebase could not keep is on the turn's
+                    # trace (there is no reply copy for it yet).
+                    **(
+                        {"editor_state_dropped_lanes": list(editor_base.dropped_lanes)}
+                        if editor_base.dropped_lanes
                         else {}
                     ),
                 }
@@ -2739,7 +2750,9 @@ def _complete_draft_turn(
                     changes=[],
                     client_state_id=state_id,
                 )
-                your_edits_snapshot, your_edits_hash = canonical_snapshot(your_edits)
+                your_edits_snapshot, your_edits_hash = canonical_snapshot(
+                    with_base_lanes(your_edits, job, variant_key)
+                )
         if document is None:
             raise RuntimeError("Kria produced an unsupported draft tool")
         reply_text = arguments.summary
@@ -6723,7 +6736,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 job=current_job,
                 variant_key=approval.target_variant_id,
                 creator_id=thread.creator_id,
-                contained=True,
+                committed_contains_head=True,
                 reason="approval_execution",
             )
 

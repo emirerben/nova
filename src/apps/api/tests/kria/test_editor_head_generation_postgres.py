@@ -195,7 +195,7 @@ def _restage(  # noqa: ANN202
             job=job,
             variant_key=VARIANT,
             creator_id=user_id,
-            contained=contained,
+            committed_contains_head=contained,
             reason=reason,
         )
         row_id = row.id if row is not None else None
@@ -312,11 +312,9 @@ async def test_legacy_dispatcher_bump_strands_the_head_until_restaged() -> None:
     user_id, thread_id, item_id, job_id = _seed()
     try:
         await _stage_ai_edit(user_id, thread_id, "AI hook")
-        # A dispatcher re-renders from other state: new generation, other committed text.
+        # A dispatcher re-renders from other state: new generation, other committed music.
         _update_variant(
-            job_id,
-            render_generation_id="generation-legacy",
-            text_elements=[{**HOOK, "text": "Dispatcher"}],
+            job_id, render_generation_id="generation-legacy", music_track_id="song-dispatch"
         )
         assert not _current(item_id, job_id)
 
@@ -324,9 +322,8 @@ async def test_legacy_dispatcher_bump_strands_the_head_until_restaged() -> None:
 
         head = _head(item_id)
         assert head["col"] == head["payload_base"] == "generation-legacy"
-        assert _text(head) == "AI hook", (
-            "not contained: the staged edit rides on the new generation"
-        )
+        assert _text(head) == "AI hook", "a lane only the head changed rides on the new generation"
+        assert head["snap"]["editor_payload"]["sections"]["music_track_id"] == "song-dispatch"
         assert _current(item_id, job_id)
     finally:
         await async_engine.dispose()
@@ -411,7 +408,7 @@ async def test_undo_after_a_restage_leaves_a_head_that_is_exactly_current() -> N
     try:
         await _stage_ai_edit(user_id, thread_id, "AI hook")
         _update_variant(job_id, render_generation_id="generation-2")
-        _restage(item_id, job_id, user_id, contained=True, reason="approval")
+        _restage(item_id, job_id, user_id, contained=False, reason="observe")
         restaged = _head(item_id)
 
         async with AsyncSessionLocal() as db:
@@ -424,8 +421,8 @@ async def test_undo_after_a_restage_leaves_a_head_that_is_exactly_current() -> N
         assert head["col"] == head["payload_base"] == "generation-2"
         assert _current(item_id, job_id)
         assert undone.head_current is True and undone.base_generation == "generation-2"
-        assert _text(head) == "AI hook", (
-            "undo restores the parent's lanes on the current generation"
+        assert _text(head) == "Old matcha hook", (
+            "undo skips the restage row and restores the parent's lanes on the current generation"
         )
     finally:
         await async_engine.dispose()
@@ -638,7 +635,7 @@ async def test_async_twin_restages_exactly_like_the_sync_function() -> None:
                     job=job,
                     variant_key=VARIANT,
                     creator_id=user_id,
-                    contained=True,
+                    committed_contains_head=True,
                     reason="approval",
                 )
                 row_id = row.id if row is not None else None
@@ -662,9 +659,7 @@ async def test_reading_a_stranded_head_serves_a_current_head_with_the_ai_lanes_i
         staged = await _stage_ai_edit(user_id, thread_id, "AI hook")
         assert staged.head_current is True
         _update_variant(
-            job_id,
-            render_generation_id="generation-legacy",
-            text_elements=[{**HOOK, "text": "Dispatcher"}],
+            job_id, render_generation_id="generation-legacy", music_track_id="song-dispatch"
         )
         assert not _current(item_id, job_id)
 

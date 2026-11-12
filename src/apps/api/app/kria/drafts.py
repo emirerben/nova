@@ -25,10 +25,16 @@ from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
 from app.kria.brief_binding import BriefBinding
 from app.kria.editor_head import (
+    effective_lane_hashes,
     is_head_current,
     is_head_on_baseline,
-    rebased_document,
+    is_restage_row,
+    lane_hash,
+    lane_view,
+    rebase_head,
+    rebase_payload,
     restage_editor_head,
+    stamp_base_lanes,
     variant_baseline,
 )
 from app.kria.runtime import (
@@ -166,6 +172,11 @@ class KriaDraftDocument(BaseModel):
     brief_binding: BriefBinding | None = None
     brief_coverage: dict[str, Any] | None = None
     prepared_collection_story: dict[str, Any] | None = None
+    # A head the server moved onto a newer generation records who moved it and why
+    # (``{"of": <parent draft id>, "reason": ...}``) and the lanes whose head value lost to a
+    # newer committed one. Lineage checks read these; nothing infers a restage from other fields.
+    restage: dict[str, Any] | None = None
+    replaced_lanes: list[str] | None = None
 
     @model_validator(mode="after")
     def _shape_matches_kind(self) -> KriaDraftDocument:
@@ -191,6 +202,22 @@ class DraftTarget:
     generation_id: str | None
 
 
+def with_base_lanes(
+    document: KriaDraftDocument, job: Job | None, variant_key: str
+) -> KriaDraftDocument:
+    """``document`` recording the committed lanes it was authored on (editor drafts only).
+
+    The one stamp every head writer goes through: the async inserts here and the chat turn's
+    own insert in ``tasks/kria_runtime.py`` both call it before ``canonical_snapshot``.
+    """
+    if document.kind != "editor" or document.editor_payload is None or job is None:
+        return document
+    stamped = stamp_base_lanes(document.editor_payload, job, variant_key)
+    if stamped is document.editor_payload:
+        return document
+    return document.model_copy(update={"editor_payload": stamped})
+
+
 def canonical_snapshot(document: KriaDraftDocument) -> tuple[dict[str, Any], str]:
     snapshot = document.model_dump(mode="json")
     if snapshot.get("editor_text_diff") is None:
@@ -198,7 +225,13 @@ def canonical_snapshot(document: KriaDraftDocument) -> tuple[dict[str, Any], str
         snapshot.pop("editor_text_diff", None)
     if snapshot.get("client_state_id") is None:
         snapshot.pop("client_state_id", None)
-    for field in ("brief_binding", "brief_coverage", "prepared_collection_story"):
+    for field in (
+        "brief_binding",
+        "brief_coverage",
+        "prepared_collection_story",
+        "restage",
+        "replaced_lanes",
+    ):
         if snapshot.get(field) is None:
             snapshot.pop(field, None)
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -417,7 +450,7 @@ async def stage_editor_variant_draft(
     """Stage a saved editor draft in the caller's transaction; never render."""
     parent = await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=True)
     row = await _insert_revision(db, target=target, document=document, parent=parent)
-    return _out(row, can_undo=parent is not None)
+    return _out(row, can_undo=await _can_undo(db, target, row))
 
 
 async def _insert_revision(
@@ -427,6 +460,7 @@ async def _insert_revision(
     document: KriaDraftDocument,
     parent: CreatorEditDraft | None,
 ) -> CreatorEditDraft:
+    document = with_base_lanes(document, target.job, target.variant_key)
     snapshot, snapshot_hash = canonical_snapshot(document)
     latest_revision = int(
         (
@@ -527,8 +561,8 @@ async def _heal_head(
 ) -> CreatorEditDraft:
     """Move an editor head onto the variant's baseline; the caller holds Item and Job.
 
-    Same-job heads keep their lanes (``contained=False``): the head is the creator's newest
-    unsaved intent, so replacing it with the committed state would hide it.
+    Lane by lane (``editor_head.rebase_payload``): a lane the head changed and the committed
+    state did not stays, every other lane is the committed one.
     """
     if target.job is None or _on_baseline(target, head):
         return head
@@ -538,7 +572,6 @@ async def _heal_head(
         job=target.job,
         variant_key=target.variant_key,
         creator_id=creator_id,
-        contained=False,
         reason="observe",
     )
     healed = await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=True)
@@ -606,6 +639,64 @@ def bootstrap_editor_payload(
     )
 
 
+@dataclass(frozen=True)
+class UndoPlan:
+    parent: CreatorEditDraft
+    document: KriaDraftDocument
+
+
+async def _row(db: AsyncSession, draft_id: uuid.UUID | None) -> CreatorEditDraft | None:
+    if draft_id is None:
+        return None
+    return (
+        await db.execute(select(CreatorEditDraft).where(CreatorEditDraft.id == draft_id))
+    ).scalar_one_or_none()
+
+
+async def _undo_plan(
+    db: AsyncSession, target: DraftTarget, head: CreatorEditDraft
+) -> UndoPlan | None:
+    """What Undo would restore, or None when there is nothing unsaved to undo.
+
+    Restage rows are the server moving a head onto a newer generation, not edits, so the target
+    is the parent of the nearest non-restage row, rebased onto the current generation like any
+    head. When that equals what the head already stands for (an approval's render holds the
+    edit, so undoing it would only re-mark rendered changes as pending) Undo is unavailable.
+    """
+    row: CreatorEditDraft | None = head
+    for _ in range(32):
+        if row is None or not is_restage_row(row):
+            break
+        row = await _row(db, row.parent_draft_id)
+    if row is None or row.parent_draft_id is None:
+        return None
+    parent = await _row(db, row.parent_draft_id)
+    if parent is None or parent.snapshot_json is None:
+        return None
+    document = KriaDraftDocument.model_validate(parent.snapshot_json).model_copy(
+        update={"restage": None, "replaced_lanes": None}
+    )
+    if document.kind == "editor" and target.job is not None and head.snapshot_json is not None:
+        if not _on_baseline(target, parent):
+            document = rebase_head(target.job, target.variant_key, parent)[0]
+        head_payload = (head.snapshot_json or {}).get("editor_payload")
+        if isinstance(head_payload, dict) and document.editor_payload is not None:
+            head_now = (
+                head_payload
+                if _on_baseline(target, head)
+                else rebase_head(target.job, target.variant_key, head)[0].editor_payload
+            )
+            if effective_lane_hashes(
+                target.job, target.variant_key, document.editor_payload
+            ) == effective_lane_hashes(target.job, target.variant_key, head_now or {}):
+                return None
+    return UndoPlan(parent=parent, document=document)
+
+
+async def _can_undo(db: AsyncSession, target: DraftTarget, head: CreatorEditDraft) -> bool:
+    return head.parent_draft_id is not None and await _undo_plan(db, target, head) is not None
+
+
 async def read_or_bootstrap_draft(
     db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
 ) -> DraftSnapshotOut:
@@ -637,7 +728,9 @@ async def read_or_bootstrap_draft(
             await db.commit()
         head = healed
     return _out(
-        head, can_undo=head.parent_draft_id is not None, head_current=_current(target, head)
+        head,
+        can_undo=await _can_undo(db, target, head),
+        head_current=_current(target, head),
     )
 
 
@@ -650,6 +743,55 @@ def _on_target_generation(snapshot: dict[str, Any], target: DraftTarget) -> dict
         **snapshot,
         "editor_payload": {**payload, "base_generation": target.generation_id or ""},
     }
+
+
+def _moved_editor_write(
+    target: DraftTarget, head: CreatorEditDraft, snapshot: dict[str, Any]
+) -> bool:
+    head_payload = (head.snapshot_json or {}).get("editor_payload")
+    return (
+        target.job is not None
+        and snapshot.get("kind") == "editor"
+        and isinstance(snapshot.get("editor_payload"), dict)
+        and isinstance(head_payload, dict)
+        and not _on_baseline(target, head)
+    )
+
+
+def _rebase_body(
+    target: DraftTarget, seen_head: CreatorEditDraft, snapshot: dict[str, Any]
+) -> dict[str, Any]:
+    """A client body written against ``seen_head``, moved onto the current generation.
+
+    The body is a head whose base is the one ``seen_head`` recorded. Its dirty lanes are the
+    ones that differ from that row; where the row recorded nothing, those are the only lanes the
+    rule may keep. A body that only re-asserts old committed content therefore changes nothing.
+    """
+    seen_payload = (seen_head.snapshot_json or {})["editor_payload"]
+    body_payload = snapshot["editor_payload"]
+    seen_view = lane_view(seen_payload)
+    dirty = frozenset(
+        lane
+        for lane, value in lane_view(body_payload).items()
+        if lane_hash(value) != lane_hash(seen_view.get(lane))
+    )
+    recorded = seen_payload.get("base_lanes")
+    result = rebase_payload(
+        target.job,
+        target.variant_key,
+        body_payload,
+        same_job=seen_head.base_job_id == target.job.id,
+        base_lanes=recorded if isinstance(recorded, dict) else None,
+        dirty_lanes=dirty,
+    )
+    rebased = {**snapshot, "editor_payload": result.payload}
+    if result.replaced:
+        rebased["replaced_lanes"] = result.replaced
+    if not result.kept:
+        rebased["changes"] = []
+        for stale in ("editor_text_diff", "client_state_id"):
+            rebased.pop(stale, None)
+    return rebased
 
 
 async def write_draft(
@@ -682,9 +824,17 @@ async def write_draft(
             current_revision=int(target.thread.revision),
         )
     # The If-Match check above is the real precondition. A head left on an older generation
-    # is not a conflict: the editor always shows the one latest version, so move it first.
-    head = await _heal_head(db, target, head, creator_id=creator_id)
-    snapshot = _on_target_generation(dict(snapshot), target)
+    # is not a conflict: the editor always shows the one latest version. The body was authored
+    # against the head the client saw, so on a moved generation its dirty lanes are rebased
+    # onto the committed state instead of being stamped over it.
+    snapshot = dict(snapshot)
+    snapshot.pop("restage", None)
+    snapshot.pop("replaced_lanes", None)
+    if _moved_editor_write(target, head, snapshot):
+        snapshot = _rebase_body(target, head, snapshot)
+    else:
+        head = await _heal_head(db, target, head, creator_id=creator_id)
+        snapshot = _on_target_generation(snapshot, target)
     for field in ("brief_binding", "brief_coverage", "prepared_collection_story"):
         authoritative = (head.snapshot_json or {}).get(field)
         if field in snapshot and snapshot[field] != authoritative:
@@ -720,8 +870,9 @@ async def write_draft(
         )
     document = KriaDraftDocument.model_validate(snapshot)
     row = await _insert_revision(db, target=target, document=document, parent=head)
+    can_undo = await _can_undo(db, target, row)
     await db.commit()
-    return _out(row, can_undo=True, head_current=_current(target, row))
+    return _out(row, can_undo=can_undo, head_current=_current(target, row))
 
 
 POINTER_SYNC = "pointer_sync"
@@ -1033,7 +1184,8 @@ async def undo_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    if head.parent_draft_id is None:
+    plan = await _undo_plan(db, target, head)
+    if plan is None:
         raise RuntimeFailure(
             409,
             "draft_undo_unavailable",
@@ -1042,24 +1194,7 @@ async def undo_draft(
             recovery="none",
             current_revision=int(target.thread.revision),
         )
-    parent = (
-        await db.execute(
-            select(CreatorEditDraft).where(CreatorEditDraft.id == head.parent_draft_id)
-        )
-    ).scalar_one_or_none()
-    if parent is None or parent.snapshot_json is None:
-        raise RuntimeFailure(
-            409,
-            "draft_undo_unavailable",
-            "The earlier draft is no longer available.",
-            phase="tool",
-            recovery="refresh_replan",
-        )
-    document = KriaDraftDocument.model_validate(parent.snapshot_json)
-    if document.kind == "editor" and target.job is not None and not _on_baseline(target, parent):
-        # The parent predates a generation advance; restoring it verbatim would stamp the
-        # current generation over a payload built on an older one.
-        document = rebased_document(target.job, target.variant_key, parent, contained=False)
+    parent, document = plan.parent, plan.document
     row = await _insert_revision(db, target=target, document=document, parent=head)
     approvals = list(
         (

@@ -4,10 +4,12 @@
     python -m app.cli.repair_editor_heads --item <uuid> [--variant <key>] --apply
     python -m app.cli.repair_editor_heads --list-stranded [--limit N]
 
-The dry run prints, per variant of the item's current job, the head and whether it sits on
-the variant's baseline, and changes nothing (the session is read-only). ``--apply`` runs the
-same restage the writers use, in one transaction per item, locking Item, then Job (the head
-is locked last inside the restage). A second run finds nothing to do.
+The dry run prints, per variant of the item's current job, the head, whether it sits on the
+variant's baseline and, for a head that needs repair, what happens to each lane (kept from
+head / taken from committed / replaced), computed by the same per-lane rebase the restage
+uses; it changes nothing (the session is read-only). ``--apply`` runs that restage, in one
+transaction per item, locking Item, then Job (the head is locked last inside the restage). A
+second run finds nothing to do.
 
 Production runs need the owner's approval: show the dry run first.
 """
@@ -24,7 +26,12 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.database import sync_session
-from app.kria.editor_head import is_head_on_baseline, restage_editor_head_sync, variant_baseline
+from app.kria.editor_head import (
+    is_head_on_baseline,
+    rebase_head,
+    restage_editor_head_sync,
+    variant_baseline,
+)
 from app.models import CreatorEditDraft, Job, PlanItem
 
 REASON = "repair_cli"
@@ -62,6 +69,13 @@ _STRANDED_SQL = text(
 )
 
 
+_OUTCOME_TEXT = {
+    "head": "kept from head",
+    "committed": "taken from committed",
+    "replaced": "replaced (the head's value lost to a newer committed one)",
+}
+
+
 @dataclass(frozen=True)
 class HeadReport:
     variant_key: str
@@ -75,6 +89,7 @@ class HeadReport:
     has_payload: bool = False
     on_baseline: bool = True
     other_job: bool = False
+    lanes: tuple[tuple[str, str], ...] = ()
 
     @property
     def needs_repair(self) -> bool:
@@ -108,6 +123,11 @@ def _report(db: Session, item: PlanItem, job: Job, variant: dict[str, Any]) -> H
 
     payload_base = _payload_base(head)
     pinned = (variant.get("editor_draft") or {}).get("draft_id")
+    on_baseline = is_head_on_baseline(job, variant, head)
+    lanes: tuple[tuple[str, str], ...] = ()
+    if payload_base is not None and not on_baseline:
+        _, outcome = rebase_head(job, key, head)
+        lanes = tuple(sorted(outcome.outcomes.items()))
     return HeadReport(
         variant_key=key,
         generation=generation,
@@ -118,8 +138,9 @@ def _report(db: Session, item: PlanItem, job: Job, variant: dict[str, Any]) -> H
         base_job_id=head.base_job_id,
         pinned=str(pinned) if pinned else None,
         has_payload=payload_base is not None,
-        on_baseline=is_head_on_baseline(job, variant, head),
+        on_baseline=on_baseline,
         other_job=head.base_job_id != job.id,
+        lanes=lanes,
     )
 
 
@@ -138,7 +159,12 @@ def _line(report: HeadReport) -> str:
     if not report.has_payload:
         notes.append("no editor payload, not touched")
     suffix = f" ({'; '.join(notes)})" if notes else ""
-    return f"variant {report.variant_key} generation={report.generation or '-'}\n{head}{suffix}"
+    lines = [
+        f"variant {report.variant_key} generation={report.generation or '-'}",
+        f"{head}{suffix}",
+    ]
+    lines.extend(f"  lane {lane}: {_OUTCOME_TEXT[outcome]}" for lane, outcome in report.lanes)
+    return "\n".join(lines)
 
 
 def _targets(job: Job, only: str | None) -> list[dict[str, Any]]:
@@ -182,7 +208,6 @@ def repair_item(
                 job=job,
                 variant_key=before.variant_key,
                 creator_id=head.creator_id,
-                contained=False,
                 reason=REASON,
             )
             after = _report(db, item, job, variant)

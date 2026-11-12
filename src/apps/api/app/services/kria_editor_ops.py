@@ -1996,9 +1996,7 @@ def latest_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> 
     from app.kria import editor_head  # noqa: PLC0415 - editor_head lazily imports drafts
 
     try:
-        document = editor_head.rebased_document(
-            job, str(variant.get("variant_id") or ""), head, contained=False
-        )
+        document = editor_head.rebased_document(job, str(variant.get("variant_id") or ""), head)
     except Exception:  # noqa: BLE001 - a malformed stored head must not fail the turn
         log.warning("editor_head_rebase_unusable", job_id=str(getattr(job, "id", "")))
         return {}
@@ -2255,6 +2253,8 @@ class EditorBase(NamedTuple):
     prior_payload: dict[str, Any]
     source: str
     fallback_reason: str | None = None
+    # Lanes of the creator's unsaved state that a stale-state rebase could not keep.
+    dropped_lanes: tuple[str, ...] = ()
 
 
 def _state_dict(client_state: Any) -> dict[str, Any]:
@@ -2299,7 +2299,12 @@ def client_state_payload(client_state: Any) -> dict[str, Any]:
 
 # Keys a phone state or a chat draft carries that are not edits. `remove_music: false` is
 # a Save default the phone always encodes; only `true` removes the music.
-_NOT_EDIT_KEYS = _STATE_DROP_KEYS | {"base_generation", "editor_state_version", "sections"}
+_NOT_EDIT_KEYS = _STATE_DROP_KEYS | {
+    "base_generation",
+    "base_lanes",
+    "editor_state_version",
+    "sections",
+}
 
 
 def _carries_edits(lanes: dict[str, Any]) -> bool:
@@ -2329,39 +2334,75 @@ def _unseen_chat_head(head: Any, variant: dict[str, Any], job: Any, client_state
     return fresh if _carries_edits(fresh) else {}
 
 
-# Lanes whose content is tied to the generation the phone saw (slot ids, cut times): a lane
-# from an older generation cannot be replayed on a newer timeline, so the latest wins.
-_GENERATION_BOUND_LANES = frozenset({"timeline_slots", "split_screen_sections"})
-
-
 def _rebase_stale_state(
     job: Any, variant: dict[str, Any], head: Any, client_state: Any
 ) -> EditorBase:
     """A turn whose phone state predates the variant's current generation.
 
-    The phone encodes only the lanes the creator changed, so a lane present in the state is
-    a dirty lane. Start from the latest (the head rebased onto the current generation, else
-    the committed variant) and lay the creator's dirty lanes on top, except where the latest
-    changed the lane (it is in the head's own payload) or the lane is generation-bound.
+    The phone encodes only the lanes the creator changed, so a lane present in the state is a
+    dirty lane. Start from the latest (the head rebased onto the current generation, else the
+    committed variant) and lay the creator's dirty lanes on top, by the same per-lane rule a head
+    is rebased by:
+
+    - the head recorded its base for the phone's generation: exact three-way. A phone lane the
+      committed state changed since that base loses (latest wins); a lane it left alone applies;
+    - otherwise the creator's dirty lanes are their newest action and apply, except the
+      generation-bound ones (slot ids and cut times belong to the generation the phone saw).
+
+    A creator lane that could not be kept is returned in ``dropped_lanes`` for the turn trace.
     """
+    from app.kria import editor_head  # noqa: PLC0415 - editor_head lazily imports drafts
+
     baseline = variant_render_baseline(variant)
+    key = str(variant.get("variant_id") or "")
     latest = latest_editor_head_payload(head, variant, job)
-    latest_lanes = {key for key in latest if key not in _NOT_EDIT_KEYS}
-    creator = {
-        key: value
-        for key, value in client_state_payload(client_state).items()
-        if key not in _NOT_EDIT_KEYS
-        and key not in _GENERATION_BOUND_LANES
-        and key not in latest_lanes
-        and not (key == "remove_music" and value is False)
-    }
+    phone_base = str(_state_dict(client_state).get("base_generation") or "")
+    stored = (getattr(head, "snapshot_json", None) or {}).get("editor_payload")
+    recorded = stored.get("base_lanes") if isinstance(stored, dict) else None
+    exact = (
+        isinstance(recorded, dict)
+        and bool(recorded)
+        and str(stored.get("base_generation") or "") == phone_base
+        and head.base_job_id == getattr(job, "id", None)
+    )
+    committed = editor_head.committed_view(job, key) if exact else {}
+    phone = editor_head.lane_view(
+        {
+            name: value
+            for name, value in client_state_payload(client_state).items()
+            if name not in _NOT_EDIT_KEYS and not (name == "remove_music" and value is False)
+        }
+    )
+    creator: dict[str, Any] = {}
+    dropped: list[str] = []
+    for lane, value in phone.items():
+        if exact:
+            base = recorded.get(lane, editor_head.NO_VALUE)
+            if editor_head.lane_hash(value) == base:
+                continue  # the phone did not change it after all
+            if editor_head.committed_lane_hash(committed, lane) != base:
+                dropped.append(lane)
+                continue
+        elif lane in editor_head.GENERATION_BOUND_LANES:
+            dropped.append(lane)
+            continue
+        members = value if lane in editor_head._LANE_MEMBERS else {lane: value}
+        creator.update(members)
     if not creator:
         if latest:
             return EditorBase(
-                project_editor_draft(variant, latest, job), latest, "head", "client_state_stale"
+                project_editor_draft(variant, latest, job),
+                latest,
+                "head",
+                "client_state_stale",
+                tuple(dropped),
             )
         return EditorBase(
-            project_editor_draft(variant, {}, job), {}, "variant", "client_state_stale"
+            project_editor_draft(variant, {}, job),
+            {},
+            "variant",
+            "client_state_stale",
+            tuple(dropped),
         )
     prior = merge_editor_draft(latest, creator)
     prior["base_generation"] = baseline
@@ -2370,6 +2411,7 @@ def _rebase_stale_state(
         prior,
         "client_state",
         "client_state_rebased_onto_latest",
+        tuple(dropped),
     )
 
 

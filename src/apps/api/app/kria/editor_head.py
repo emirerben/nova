@@ -16,7 +16,10 @@ inside the restage function rather than at module level.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import uuid
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -92,23 +95,31 @@ def is_head_on_baseline(job: Any, variant: dict[str, Any], head: CreatorEditDraf
     )
 
 
-def _stamps(row: CreatorEditDraft) -> tuple[str, str | None]:
-    return (row.base_generation_id or "", _payload_base(row))
+# A restage is the head moved onto a newer generation by something other than the creator's
+# edit. Only the approval's own render and a phone publish (same document, new generation id)
+# leave an approval's draft "the one the creator is looking at"; a manual Save, a speech cut, a
+# repair or a heal after a legacy dispatcher does not.
+OWN_RENDER_REASONS = frozenset({"approval_execution", "phone_publish"})
 
 
-def _pending_changes(row: CreatorEditDraft) -> tuple[Any, Any]:
-    snapshot = row.snapshot_json if isinstance(row.snapshot_json, dict) else {}
-    return (snapshot.get("changes") or [], snapshot.get("editor_text_diff") or [])
+def restage_marker(row: Any) -> dict[str, Any] | None:  # noqa: ANN401
+    snapshot = getattr(row, "snapshot_json", None)
+    marker = snapshot.get("restage") if isinstance(snapshot, dict) else None
+    return marker if isinstance(marker, dict) else None
+
+
+def is_restage_row(row: Any) -> bool:  # noqa: ANN401
+    return restage_marker(row) is not None
 
 
 def draft_still_current(db: Session, draft: CreatorEditDraft) -> bool:
-    """The creator has not moved past ``draft``: it is the head, or the head is its restage.
+    """The creator has not moved past ``draft``: it is the head, or the head is its own render.
 
-    An approval render advances the generation and restages the head, which demotes the
-    approved draft without anyone having edited anything. A restage is told from a creator
-    write by what it changes: it always moves the generation stamps (a write heals the head
-    first, so its stamps equal its parent's), and it never adds a pending change the approved
-    draft did not carry (a contained restage clears them).
+    Every link from the head back to ``draft`` must be a restage (it records ``restage.of`` and
+    a reason) whose reason is the approval's own render or a phone publish, and no link may have
+    replaced a lane of ``draft`` with a newer committed value. A restage caused by a manual Save,
+    a speech cut, a repair or a heal after a legacy dispatcher breaks the lineage: an old
+    pending approval, render retry or intent-review post must not run on top of those.
     """
     if draft.is_head:
         return True
@@ -121,13 +132,22 @@ def draft_still_current(db: Session, draft: CreatorEditDraft) -> bool:
     ).scalar_one_or_none()
     if head is None or head.base_job_id != draft.base_job_id:
         return False
-    allowed = _pending_changes(draft)
+    draft_payload = (draft.snapshot_json or {}).get("editor_payload")
+    draft_lanes = set(lane_view(draft_payload)) if isinstance(draft_payload, dict) else set()
     link: CreatorEditDraft | None = head
     for _ in range(_MAX_RESTAGE_CHAIN):
-        parent = db.get(CreatorEditDraft, link.parent_draft_id) if link.parent_draft_id else None
-        if parent is None or _stamps(link) == _stamps(parent):
+        marker = restage_marker(link)
+        if (
+            marker is None
+            or marker.get("reason") not in OWN_RENDER_REASONS
+            or str(marker.get("of")) != str(link.parent_draft_id)
+        ):
             return False
-        if _pending_changes(link) not in (allowed, ([], [])):
+        replaced = (link.snapshot_json or {}).get("replaced_lanes") or []
+        if draft_lanes & set(replaced):
+            return False
+        parent = db.get(CreatorEditDraft, link.parent_draft_id)
+        if parent is None:
             return False
         if parent.id == draft.id:
             return True
@@ -186,57 +206,350 @@ def _repoint_pinned_draft(job: Job, variant_key: str, head_id: uuid.UUID) -> boo
     return True
 
 
-def rebased_document(
+# --- lanes ------------------------------------------------------------------------------
+#
+# A payload names its editor lanes in one of two shapes. A bootstrapped or phone-written head
+# holds every lane under ``sections``. A chat draft holds only the lanes the edit changed, flat
+# at the top level (``project_editor_draft`` reads only those). The iOS reader takes the flat
+# value first and ``sections`` for the rest, so that is the precedence here. A few keys are one
+# lane because the phone applies them together (``stagedLaneKeys`` in ``Services.swift``).
+
+NON_LANE_KEYS = frozenset(
+    {
+        "base_generation",
+        "base_lanes",
+        "sections",
+        "editor_state",
+        "editor_state_version",
+        "operation",
+        "candidate_id",
+        "expected_revision",
+        "copilot_receipt_ids",
+        "learning_temporary",
+        "deletions",
+        "accepted_suggestion_ids",
+        "retry_guided_revision",
+        "guided_revision",
+        "guided_revision_number",
+    }
+)
+_LANE_MEMBERS = {
+    "timeline": ("timeline_slots", "split_screen_sections"),
+    "music": ("music_track_id", "music_window", "remove_music"),
+    "motion_scenes": ("motion_scenes", "motion_runtime_hash"),
+}
+_LANE_OF = {member: lane for lane, members in _LANE_MEMBERS.items() for member in members}
+GENERATION_BOUND_LANES = frozenset({"timeline"})
+# A flat commit-shaped lane whose committed counterpart is spelled differently: the committed
+# document holds ``audio_mix`` where a chat draft writes ``mix``, and the caption keys where it
+# writes ``caption_meta``. Only the committed side reads through this table.
+_COMMITTED_COUNTERPART = {
+    "mix": ("audio_mix",),
+    "caption_meta": (
+        "captions_enabled",
+        "caption_style",
+        "caption_font",
+        "caption_y_frac",
+        "caption_size_px",
+        "caption_color",
+        "caption_highlight_color",
+        "caption_stroke_width",
+    ),
+}
+NO_VALUE = ""
+
+
+def _members(lane: str) -> tuple[str, ...]:
+    return _LANE_MEMBERS.get(lane, (lane,))
+
+
+def _flat_keys(payload: dict[str, Any]) -> list[str]:
+    # `remove_music: false` is a Save default the phone always encodes, not a lane.
+    return [
+        key
+        for key, value in payload.items()
+        if key not in NON_LANE_KEYS and not (key == "remove_music" and value is False)
+    ]
+
+
+def lane_view(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """``{lane: value}`` of an editor payload, whichever shape it is stored in.
+
+    A coupled lane's value is ``{member: value}`` over the members present. Flat keys win over
+    ``sections`` for the same member.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    sections = payload.get("sections") if isinstance(payload.get("sections"), dict) else {}
+    merged = {**sections, **{key: payload[key] for key in _flat_keys(payload)}}
+    view: dict[str, Any] = {}
+    for key, value in merged.items():
+        lane = _LANE_OF.get(key, key)
+        if lane in _LANE_MEMBERS:
+            view.setdefault(lane, {})[key] = value
+        else:
+            view[lane] = value
+    return view
+
+
+def flat_lanes(payload: dict[str, Any] | None) -> set[str]:
+    """The lanes a payload carries at its top level, i.e. the ones a chat draft changed."""
+    if not isinstance(payload, dict):
+        return set()
+    return {_LANE_OF.get(key, key) for key in _flat_keys(payload)}
+
+
+def _strip_none(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _strip_none(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [_strip_none(item) for item in value]
+    return value
+
+
+def lane_hash(value: object) -> str:
+    """Stable hash of one lane's value; ``NO_VALUE`` for a lane that is absent."""
+    if value is None:
+        return NO_VALUE
+    encoded = json.dumps(_strip_none(value), sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def committed_view(job: Any, variant_key: str) -> dict[str, Any]:  # noqa: ANN401
+    """The committed variant's lanes, read through the same accessor as a head's."""
+    from app.kria.drafts import bootstrap_editor_payload  # noqa: PLC0415
+
+    baseline = variant_baseline(_variant_of(job, variant_key))
+    return lane_view(bootstrap_editor_payload(job, variant_key, baseline))
+
+
+def committed_lane_hash(view: dict[str, Any], lane: str) -> str:
+    """Hash of the committed value of ``lane``, through its spelling in the committed document."""
+    keys = _COMMITTED_COUNTERPART.get(lane)
+    if keys is None:
+        return lane_hash(view.get(lane))
+    present = {key: view[key] for key in keys if key in view}
+    return lane_hash(present or None)
+
+
+def base_lanes_of(view: dict[str, Any]) -> dict[str, str]:
+    """``{lane: hash}`` recorded in a head's payload: the committed lanes it was authored on."""
+    recorded = {lane: lane_hash(value) for lane, value in view.items()}
+    for lane in _COMMITTED_COUNTERPART:
+        digest = committed_lane_hash(view, lane)
+        if digest != NO_VALUE:
+            recorded[lane] = digest
+    return recorded
+
+
+def stamp_base_lanes(payload: dict[str, Any], job: Any, variant_key: str) -> dict[str, Any]:  # noqa: ANN401
+    """``payload`` with ``base_lanes`` set to the committed lanes of ``job``'s variant now.
+
+    ``base_lanes`` lives inside ``editor_payload`` (older readers ignore an unknown key, and the
+    phone reads lanes by name). It is inside the hashed snapshot on purpose: the ETag then names
+    the base too, so two heads with the same lanes on different bases are different revisions.
+    The server always computes it; a value a client sent back is overwritten.
+    """
+    if payload.get("operation") or _variant_of(job, variant_key) is None:
+        # A speech-cut approval's payload is an instruction, not a document.
+        return payload
+    try:
+        return {**payload, "base_lanes": base_lanes_of(committed_view(job, variant_key))}
+    except Exception:  # noqa: BLE001 - a head without a recorded base is read by the legacy rule
+        log.warning("editor_head_base_lanes_unavailable", variant_key=variant_key, exc_info=True)
+        return payload
+
+
+def _variant_of(job: Any, variant_key: str) -> dict[str, Any] | None:  # noqa: ANN401
+    from app.kria.drafts import _variant  # noqa: PLC0415
+
+    return _variant(job, variant_key)
+
+
+@dataclass
+class LaneRebase:
+    """A payload moved onto the current generation, and what happened to each lane of it."""
+
+    payload: dict[str, Any]
+    outcomes: dict[str, str] = field(default_factory=dict)  # lane -> head | committed | replaced
+
+    @property
+    def kept(self) -> bool:
+        return "head" in self.outcomes.values()
+
+    @property
+    def replaced(self) -> list[str]:
+        return sorted(lane for lane, outcome in self.outcomes.items() if outcome == "replaced")
+
+
+def rebase_payload(
     job: Any,  # noqa: ANN401
     variant_key: str,
-    head: CreatorEditDraft,
+    payload: dict[str, Any],
     *,
-    contained: bool,
-) -> Any:  # noqa: ANN401
-    """The head's draft document moved onto the variant's current generation.
+    same_job: bool = True,
+    base_lanes: dict[str, str] | None = None,
+    dirty_lanes: frozenset[str] = frozenset(),
+    committed_contains_head: bool = False,
+    committed_lanes: frozenset[str] = frozenset(),
+) -> LaneRebase:
+    """Three-way rebase of ``payload`` (a head's editor payload) onto the committed variant.
 
-    Sections come from the committed variant. ``contained`` means the committed variant
-    already holds the head's edits (an approval rendered them), so the result is the
-    committed state with an empty diff. Otherwise the head's lane content is laid back
-    on top of it, a whole section at a time.
+    Per lane, with h the payload's value, c the committed value now, b the recorded base:
 
-    An empty-state variant's committed sections are its last non-empty render, not the
-    saved draft, so its head keeps its own sections either way. A head from another job
-    names slots that do not exist on this job's timeline, so it is never replayed.
+    - the payload lacks the lane: committed;
+    - ``base_lanes`` recorded: the payload changed the lane iff hash(h) != b, the committed
+      state changed it iff hash(c) != b. Unchanged by the payload: committed. Changed only by
+      the payload: the payload's value survives. Changed by both: committed (latest wins), and
+      the lane is reported as replaced when the two values differ;
+    - nothing recorded (a row written before the base was): a lane at the top level of the
+      payload is dirty by construction and survives, and so is a lane named in ``dirty_lanes``;
+      a lane that exists only inside a full ``sections`` document cannot be told apart and takes
+      the committed value;
+    - ``committed_contains_head`` (the approval's render holds the draft) and ``committed_lanes``
+      (lanes the writer itself rewrote) take the committed value on every such lane.
+
+    A head from another job names slots that are not on this timeline: nothing of it is replayed.
+    An empty-state variant's committed sections are its last non-empty render, not its saved
+    state, so its head keeps its own lanes.
     """
-    from app.kria.drafts import (  # noqa: PLC0415
-        KriaDraftDocument,
-        _variant,
-        bootstrap_editor_payload,
+    from app.kria.drafts import bootstrap_editor_payload  # noqa: PLC0415
+
+    variant = _variant_of(job, variant_key) or {}
+    baseline = variant_baseline(variant)
+    committed_sections = bootstrap_editor_payload(job, variant_key, baseline)["sections"]
+    committed = lane_view({"sections": committed_sections})
+    head_lanes = lane_view(payload) if same_job else {}
+    flat = flat_lanes(payload)
+    empty_state = variant.get("editor_state") == "empty"
+
+    outcomes: dict[str, str] = {}
+    for lane, value in head_lanes.items():
+        if empty_state:
+            outcomes[lane] = "committed" if committed_contains_head else "head"
+        elif committed_contains_head or lane in committed_lanes:
+            outcomes[lane] = "committed"
+        elif base_lanes is not None:
+            recorded = base_lanes.get(lane, NO_VALUE)
+            head_changed = lane_hash(value) != recorded
+            committed_changed = committed_lane_hash(committed, lane) != recorded
+            if not head_changed:
+                outcomes[lane] = "committed"
+            elif not committed_changed:
+                outcomes[lane] = "head"
+            elif lane_hash(value) != lane_hash(committed.get(lane)):
+                outcomes[lane] = "replaced"
+            else:
+                outcomes[lane] = "committed"
+        else:
+            outcomes[lane] = "head" if lane in flat or lane in dirty_lanes else "committed"
+
+    kept = {lane: head_lanes[lane] for lane, outcome in outcomes.items() if outcome == "head"}
+    return LaneRebase(
+        payload=_write_lanes(payload, kept, committed_sections, baseline, same_job=same_job),
+        outcomes=outcomes,
     )
 
-    variant = _variant(job, variant_key) or {}
-    baseline = variant_baseline(variant)
-    old = dict(head.snapshot_json or {})
-    old_payload = old.get("editor_payload") or {}
-    same_job = head.base_job_id == job.id
-    keeps_head_lanes = same_job and (not contained or variant.get("editor_state") == "empty")
 
-    if keeps_head_lanes and "sections" not in old_payload:
-        # A chat draft stores its lanes flat and overlays them on the variant; attaching
-        # committed sections beside them would add a second, competing copy.
-        document = {**old, "editor_payload": {**old_payload, "base_generation": baseline}}
-        return KriaDraftDocument.model_validate(document)
+def _write_lanes(
+    template: dict[str, Any],
+    kept: dict[str, Any],
+    committed_sections: dict[str, Any],
+    baseline: str,
+    *,
+    same_job: bool,
+) -> dict[str, Any]:
+    """``template`` rewritten on ``baseline`` with ``kept`` lanes over the committed ones.
 
-    sections = bootstrap_editor_payload(job, variant_key, baseline)["sections"]
-    if keeps_head_lanes:
-        sections = {**sections, **copy.deepcopy(old_payload.get("sections") or {})}
-    payload = {
-        **{k: v for k, v in old_payload.items() if k not in ("sections", "base_generation")},
-        "base_generation": baseline,
-        "sections": sections,
+    The result has the shape the template had: a full-``sections`` payload gets the committed
+    sections with the kept lanes laid over them (and a flat mirror for a lane that was flat, so
+    the phone still sees it staged); a flat payload keeps only its kept lanes at the top level.
+    A payload with no lane left is the committed document, so it gets its sections.
+    """
+    out = {
+        key: value
+        for key, value in template.items()
+        if key in NON_LANE_KEYS and key not in ("sections", "base_generation", "base_lanes")
     }
-    document = {**old, "editor_payload": payload}
-    if not (same_job and not contained):
+    flat_present = set(_flat_keys(template))
+    members = {
+        member: (value[member] if lane in _LANE_MEMBERS else value)
+        for lane, value in kept.items()
+        for member in _members(lane)
+        if lane not in _LANE_MEMBERS or member in value
+    }
+    for member, value in members.items():
+        if member in flat_present:
+            out[member] = copy.deepcopy(value)
+    if (same_job and isinstance(template.get("sections"), dict)) or not members:
+        sections = copy.deepcopy(committed_sections)
+        sections.update(copy.deepcopy(members))
+        out["sections"] = sections
+    out["base_generation"] = baseline
+    out["base_lanes"] = base_lanes_of(lane_view({"sections": committed_sections}))
+    return out
+
+
+def rebase_head(
+    job: Any,  # noqa: ANN401
+    variant_key: str,
+    head: Any,  # noqa: ANN401
+    *,
+    committed_contains_head: bool = False,
+    committed_lanes: frozenset[str] = frozenset(),
+) -> tuple[Any, LaneRebase]:
+    """The head's draft document moved onto the variant's current generation, per lane.
+
+    Returns the document and the per-lane outcomes. ``changes`` and the text diff describe
+    pending edits, so they survive only while at least one lane the head changed survives.
+    """
+    from app.kria.drafts import KriaDraftDocument  # noqa: PLC0415
+
+    old = dict(head.snapshot_json or {})
+    old.pop("restage", None)
+    old.pop("replaced_lanes", None)
+    payload = old.get("editor_payload") or {}
+    recorded = payload.get("base_lanes")
+    result = rebase_payload(
+        job,
+        variant_key,
+        payload,
+        same_job=head.base_job_id == job.id,
+        base_lanes=recorded if isinstance(recorded, dict) else None,
+        committed_contains_head=committed_contains_head,
+        committed_lanes=committed_lanes,
+    )
+    document = {**old, "editor_payload": result.payload}
+    if result.replaced:
+        document["replaced_lanes"] = result.replaced
+    if not result.kept:
         document["changes"] = []
         for stale in ("editor_text_diff", "client_state_id"):
             document.pop(stale, None)
-    return KriaDraftDocument.model_validate(document)
+    return KriaDraftDocument.model_validate(document), result
+
+
+def rebased_document(
+    job: Any,  # noqa: ANN401
+    variant_key: str,
+    head: Any,  # noqa: ANN401
+    *,
+    committed_contains_head: bool = False,
+    committed_lanes: frozenset[str] = frozenset(),
+) -> Any:  # noqa: ANN401
+    return rebase_head(
+        job,
+        variant_key,
+        head,
+        committed_contains_head=committed_contains_head,
+        committed_lanes=committed_lanes,
+    )[0]
+
+
+def effective_lane_hashes(job: Any, variant_key: str, payload: dict[str, Any]) -> dict[str, str]:  # noqa: ANN401
+    """``{lane: hash}`` of the document ``payload`` stands for (its lanes over the committed)."""
+    view = {**committed_view(job, variant_key), **lane_view(payload)}
+    return {lane: lane_hash(value) for lane, value in view.items()}
 
 
 def restage_editor_head_sync(
@@ -246,14 +559,17 @@ def restage_editor_head_sync(
     job: Job,
     variant_key: str,
     creator_id: uuid.UUID,
-    contained: bool,
     reason: str,
+    committed_contains_head: bool = False,
+    committed_lanes: frozenset[str] = frozenset(),
 ) -> CreatorEditDraft | None:
     """Insert a head revision on the variant's current generation; None when nothing to do.
 
     Nothing to do: no editor head, or both its stamps already equal the baseline exactly
-    (a retried Celery task lands here). Repoints a v2 / empty variant's ``editor_draft``
-    at the new head. The caller commits.
+    (a retried Celery task lands here). The new row records ``restage: {of, reason}`` so a
+    restage is never mistaken for a creator's edit, and ``replaced_lanes`` for lanes whose head
+    value lost to a newer committed one. Repoints a v2 / empty variant's ``editor_draft`` at the
+    new head. The caller commits.
     """
     from app.kria.drafts import _variant, canonical_snapshot  # noqa: PLC0415
 
@@ -268,9 +584,15 @@ def restage_editor_head_sync(
         _repoint_pinned_draft(job, variant_key, head.id)
         return None
 
-    snapshot, snapshot_hash = canonical_snapshot(
-        rebased_document(job, variant_key, head, contained=contained)
+    document, outcome = rebase_head(
+        job,
+        variant_key,
+        head,
+        committed_contains_head=committed_contains_head,
+        committed_lanes=committed_lanes,
     )
+    document = document.model_copy(update={"restage": {"of": str(head.id), "reason": reason}})
+    snapshot, snapshot_hash = canonical_snapshot(document)
     latest_revision = int(
         db.execute(
             select(func.coalesce(func.max(CreatorEditDraft.draft_revision), -1)).where(
@@ -303,7 +625,8 @@ def restage_editor_head_sync(
         item_id=str(item.id),
         job_id=str(job.id),
         variant_key=variant_key,
-        contained=contained,
+        committed_contains_head=committed_contains_head,
+        lanes=outcome.outcomes,
         from_generation=head.base_generation_id,
         to_generation=baseline,
     )
@@ -317,8 +640,9 @@ async def restage_editor_head(
     job: Job,
     variant_key: str,
     creator_id: uuid.UUID,
-    contained: bool,
     reason: str,
+    committed_contains_head: bool = False,
+    committed_lanes: frozenset[str] = frozenset(),
 ) -> CreatorEditDraft | None:
     """Async twin of :func:`restage_editor_head_sync`; the same code runs through ``run_sync``."""
 
@@ -329,8 +653,9 @@ async def restage_editor_head(
             job=job,
             variant_key=variant_key,
             creator_id=creator_id,
-            contained=contained,
             reason=reason,
+            committed_contains_head=committed_contains_head,
+            committed_lanes=committed_lanes,
         )
 
     return await db.run_sync(run)

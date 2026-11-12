@@ -9039,6 +9039,9 @@ def dispatch_get_timeline(
     if variant and variant.get("editor_state") == "empty":
         from app.services.editor_empty_drafts import saved_editor_draft  # noqa: PLC0415
 
+        # The empty state's content exists only in its draft, so the committed (last non-empty)
+        # variant is never a fallback; a pinned draft on an older generation is rebased in
+        # memory. The 409 remains only when no draft row backs the variant at all.
         draft = saved_editor_draft(job, variant_id)
         timeline.update(
             slots=[],
@@ -9052,8 +9055,8 @@ def dispatch_get_timeline(
     elif variant and variant.get("editor_state_version") == 2:
         from app.services.editor_empty_drafts import current_saved_editor_draft
 
-        # GET never writes, so a pinned draft that has not been moved onto the current
-        # generation yet is not served: the committed variant state is the one document.
+        # GET never writes: a pinned draft on an older generation was rebased in memory by
+        # `attach_saved_editor_drafts(rebase_stale=True)`, the same function GET /draft heals with.
         draft = current_saved_editor_draft(job, variant_id)
         if draft is not None:
             sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
@@ -14891,7 +14894,7 @@ async def get_variant_timeline(
     )
     from app.services.editor_empty_drafts import attach_saved_editor_drafts  # noqa: PLC0415
 
-    await attach_saved_editor_drafts(db, job)
+    await attach_saved_editor_drafts(db, job, rebase_stale=True)
     variant = _find_variant(job, variant_id)
     image_preview_paths = (
         await guided_timeline_image_preview_paths(db, job.content_plan_item_id)

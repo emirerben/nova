@@ -7079,7 +7079,7 @@ async def get_item_timeline(
         if variant and variant.get("resolved_archetype") == "guided_story"
         else {}
     )
-    await attach_saved_editor_drafts(db, job)
+    await attach_saved_editor_drafts(db, job, rebase_stale=True)
     return TimelineResponse(
         **dispatch_get_timeline(
             job,
@@ -7919,7 +7919,7 @@ async def editor_commit_item(
                 "detail": jsonable_encoder(exc.detail),
                 "problem": {
                     "code": code,
-                    "recovery": "reload" if code == "baseline_conflict" else "none",
+                    "recovery": _editor_commit_problem_recovery(code),
                     "current_base_generation": await _current_base_generation(
                         item_id, variant_id, user.id, db
                     ),
@@ -7927,6 +7927,18 @@ async def editor_commit_item(
             },
             headers=exc.headers,
         )
+
+
+# The refusals that mean "your copy is older than the server's": reloading answers them. The
+# phone answered every 409 that way before `problem` existed, and it still reads the guided
+# revision token mismatch as one.
+_EDITOR_COMMIT_RELOAD_CODES = frozenset(
+    {"baseline_conflict", "GUIDED_REVISION_STALE", "deletion_target_stale"}
+)
+
+
+def _editor_commit_problem_recovery(code: str) -> str:
+    return "reload" if code in _EDITOR_COMMIT_RELOAD_CODES else "none"
 
 
 _EDITOR_COMMIT_PROSE_CODES = {"Cancelled videos cannot be edited.": "video_cancelled"}
@@ -8087,7 +8099,6 @@ async def _editor_commit_item(
                 job=locked_job,
                 variant_key=variant_id,
                 creator_id=user.id,
-                contained=False,
                 reason="editor_save",
             )
             locked_variant = _find_variant(locked_job, variant_id) or locked_variant
@@ -8533,7 +8544,6 @@ async def _editor_commit_item(
             job=locked_job,
             variant_key=variant_id,
             creator_id=user.id,
-            contained=True,
             reason="editor_save",
         )
     await db.commit()
