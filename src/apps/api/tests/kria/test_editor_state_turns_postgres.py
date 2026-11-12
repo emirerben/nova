@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
 
 import pytest
@@ -295,8 +296,20 @@ async def test_state_turn_chain_your_edits_then_chat_child_ignoring_the_head(mon
         await async_engine.dispose()
 
 
+def _advance_generation(job_id: uuid.UUID, generation: str) -> None:
+    """What an approval render or a phone publish does: the variant moves to a newer id."""
+    with sync_session() as db:
+        job = db.get(Job, job_id, with_for_update=True)
+        plan = copy.deepcopy(job.assembly_plan)
+        plan["variants"][0]["render_generation_id"] = generation
+        job.assembly_plan = plan
+        db.commit()
+
+
 @pytest.mark.asyncio
-async def test_state_that_went_stale_during_the_model_call_is_refused(monkeypatch) -> None:
+async def test_state_that_went_stale_builds_the_draft_on_the_latest_not_a_refusal(
+    monkeypatch,
+) -> None:
     user_id, thread_id, session_id = _seed_runtime_project()
     _seed_job(user_id, session_id)
     _plan_with(
@@ -309,20 +322,52 @@ async def test_state_that_went_stale_during_the_model_call_is_refused(monkeypatc
         assert (await asyncio.to_thread(run_kria_turn.run, accepted.turn_id))[
             "status"
         ] == "completed"
-        assert _drafts(thread_id) == []
-        with sync_session() as db:
-            reply = (
-                db.execute(
-                    select(CreationThreadEvent).where(
-                        CreationThreadEvent.thread_id == thread_id,
-                        CreationThreadEvent.event_type == "assistant_response",
-                    )
-                )
-                .scalars()
-                .all()[-1]
-            )
-            assert reply.content == "Your video changed — reopen the editor and try again."
+        yours, draft = _drafts(thread_id)
+        assert yours["snap"]["intent"] == "Your edits" and draft["parent"] == yours["id"]
+        payload = draft["snap"]["editor_payload"]
+        # On the variant's current generation, with the creator's dirty lane carried.
+        assert draft["head"] and draft["gen"] == payload["base_generation"] == "generation-1"
+        assert yours["gen"] == yours["snap"]["editor_payload"]["base_generation"] == "generation-1"
+        assert (payload["text_elements"][0]["text"], payload["text_elements"][0]["color"]) == (
+            "Creator hook",
+            "#FF0000",
+        )
         assert _turn(accepted.turn_id) == (None, "completed")
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_turn_builds_on_a_chat_head_stranded_on_an_older_generation(monkeypatch) -> None:
+    user_id, thread_id, session_id = _seed_runtime_project()
+    job_id = _seed_job(user_id, session_id)
+    from app.tasks import kria_runtime
+
+    spied: list[str] = []
+    real = kria_runtime.resolve_editor_base
+
+    def spy(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        result = real(*args, **kwargs)
+        spied.append(result.source)
+        return result
+
+    monkeypatch.setattr(kria_runtime, "resolve_editor_base", spy)
+    try:
+        _plan_with(monkeypatch, [{"op": "edit_text", "bar_index": 0, "text": "Chat hook"}])
+        first = await _submit(user_id, thread_id, "Retitle", revision=2)
+        await asyncio.to_thread(run_kria_turn.run, first.turn_id)
+        _advance_generation(job_id, "generation-2")
+        _plan_with(
+            monkeypatch, [{"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FF0000"}}]
+        )
+        second = await _submit(user_id, thread_id, "Make it red")
+        assert (await asyncio.to_thread(run_kria_turn.run, second.turn_id))["status"] == "completed"
+        assert spied == ["variant", "head"], "the earlier chat head is not 'no head'"
+        chat1, chat2 = _drafts(thread_id)
+        assert chat2["parent"] == chat1["id"] and chat2["head"] and not chat1["head"]
+        bar = chat2["snap"]["editor_payload"]["text_elements"][0]
+        assert (bar["text"], bar["color"]) == ("Chat hook", "#FF0000")
+        assert chat2["gen"] == chat2["snap"]["editor_payload"]["base_generation"] == "generation-2"
     finally:
         await async_engine.dispose()
 

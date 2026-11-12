@@ -385,11 +385,6 @@ async def test_speech_cut_needs_save_reply(monkeypatch: pytest.MonkeyPatch) -> N
             "Düzenlemen hâlâ hazırlanıyor",
         ),
         (
-            "editor_state_stale",
-            "Your video changed — reopen the editor and try again.",
-            "Videon değişti",
-        ),
-        (
             "no_ready_variant",
             "I couldn't open your current edit to change it in place. Try again, "
             "or ask me for a new version.",
@@ -410,14 +405,11 @@ def test_editor_target_recovery_replies(miss: str, english: str, turkish_start: 
 
 
 def test_localized_editor_state_reply() -> None:
-    from app.services.kria_editor_ops import EDITOR_STATE_STALE_REPLY, SPEECH_CUT_NEEDS_SAVE_REPLY
+    from app.services.kria_editor_ops import SPEECH_CUT_NEEDS_SAVE_REPLY
 
-    for reply in (EDITOR_STATE_STALE_REPLY, SPEECH_CUT_NEEDS_SAVE_REPLY, "Something else."):
+    for reply in (SPEECH_CUT_NEEDS_SAVE_REPLY, "Something else."):
         assert planner.localized_editor_state_reply(reply) == reply
     with reply_language_for("tr"):
-        assert planner.localized_editor_state_reply(EDITOR_STATE_STALE_REPLY) == (
-            "Videon değişti. Editörü yeniden açıp tekrar dene."
-        )
         assert planner.localized_editor_state_reply(SPEECH_CUT_NEEDS_SAVE_REPLY) == (
             "Önce düzenlemelerini kaydet, sonra sessiz kısımları kesebilirim."
         )

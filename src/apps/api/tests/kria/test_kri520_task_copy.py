@@ -460,8 +460,8 @@ def test_an_editor_op_the_edit_cannot_honour_is_refused_in_the_turn_language(
 
 
 @pytest.mark.parametrize("language", [None, "tr"])
-@pytest.mark.parametrize("error_name", ["EditorStateStaleError", "EditorStateSpeechCutError"])
-def test_a_stale_editor_state_is_refused_in_the_turn_language(
+@pytest.mark.parametrize("error_name", ["EditorStateSpeechCutError"])
+def test_an_unsaved_editor_state_refusal_is_in_the_turn_language(
     monkeypatch: pytest.MonkeyPatch, language: str | None, error_name: str
 ) -> None:
     from app.kria.planner import localized_editor_state_reply

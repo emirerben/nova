@@ -1397,7 +1397,6 @@
     "Your text colour wouldn't be readable on that background, so the text is white.": "Yazı rengin o arka planda okunmazdı, o yüzden yazı beyaz.",
     "Your text covers your face: I found no spot clear of it": "Yazın yüzünün üstünde kalıyor: yüzünü açıkta bırakan bir yer bulamadım",
     "Your text ends at {exc_required_duration_s:g}s, beyond the requested {exc_requested_duration_s:g}s. Keep the video at least {exc_minimum_duration_s:g}s, or allow me to adjust the text timing? Nothing was changed.": "Yazıların {exc_required_duration_s:g}. saniyede bitiyor. Videoyu en az {exc_minimum_duration_s:g} saniye mi tutayım, yoksa yazıların zamanlamasını değiştirebilir miyim? Hiçbir şey değişmedi.",
-    "Your video changed — reopen the editor and try again.": "Videon değişti. Editörü yeniden açıp tekrar dene.",
     "Your video has no sound, so there's nothing to caption or cut.": "Videonda hiç ses yok, o yüzden altyazı eklenecek ya da kesilecek bir şey yok.",
     "Your video has no sound, so there's nothing to caption or cut. Record it again and check that nothing is covering the microphone.": "Videonda hiç ses yok, bu yüzden altyazı ekleyecek ya da kesecek bir şey bulamadım. Tekrar çek ve mikrofonun kapalı olmadığından emin ol.",
     "Your video wasn't made": "Videon oluşturulmadı",

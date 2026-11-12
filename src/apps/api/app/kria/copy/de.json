@@ -1397,7 +1397,6 @@
     "Your text colour wouldn't be readable on that background, so the text is white.": "Deine Textfarbe wäre auf diesem Hintergrund nicht lesbar, deshalb ist der Text weiß.",
     "Your text covers your face: I found no spot clear of it": "Dein Text verdeckt dein Gesicht: Ich habe keine Stelle gefunden, an der es frei bleibt",
     "Your text ends at {exc_required_duration_s:g}s, beyond the requested {exc_requested_duration_s:g}s. Keep the video at least {exc_minimum_duration_s:g}s, or allow me to adjust the text timing? Nothing was changed.": "Dein Text endet bei {exc_required_duration_s:g} s, also nach den gewünschten {exc_requested_duration_s:g} s. Soll das Video mindestens {exc_minimum_duration_s:g} s lang bleiben, oder darf ich das Timing des Textes anpassen? Es wurde nichts geändert.",
-    "Your video changed — reopen the editor and try again.": "Dein Video hat sich geändert. Öffne den Editor neu und versuch es nochmal.",
     "Your video has no sound, so there's nothing to caption or cut.": "Dein Video hat keinen Ton, deshalb gibt es nichts zu untertiteln oder zu schneiden.",
     "Your video has no sound, so there's nothing to caption or cut. Record it again and check that nothing is covering the microphone.": "Dein Video hat keinen Ton, deshalb gibt es nichts zu untertiteln oder zu schneiden. Nimm es nochmal auf und achte darauf, dass nichts das Mikrofon verdeckt.",
     "Your video wasn't made": "Dein Video wurde nicht erstellt",

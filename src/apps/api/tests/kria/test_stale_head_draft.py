@@ -205,13 +205,13 @@ async def _bars_of(target) -> dict:  # noqa: ANN001
 
 
 @pytest.mark.asyncio
-async def test_planner_ignores_stale_head_even_when_session_and_column_match(monkeypatch) -> None:
+async def test_planner_builds_on_a_head_one_generation_behind(monkeypatch) -> None:
+    """The head is healed in memory onto the current generation, as GET /draft would."""
     target = await _planner_snapshot(monkeypatch, _head("G1", column="G1"))
     assert target is not None
     bars = await _bars_of(target)
-    assert bars["title"]["x_frac"] == 0.2
-    assert bars["title"]["y_frac"] == 0.3
-    assert bars["label"]["text"] == "Saved label"
+    assert bars["title"]["x_frac"] == 0.9
+    assert bars["label"]["text"] == "Stale label"
 
 
 @pytest.mark.asyncio

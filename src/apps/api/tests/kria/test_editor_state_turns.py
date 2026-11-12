@@ -21,7 +21,6 @@ from app.kria.api_schemas import EDITOR_STATE_MAX_BYTES, EditorStateIn, SubmitTu
 from app.kria.runtime import request_digest
 from app.services import kria_editor_ops as ops
 from app.services.kria_editor_ops import (
-    EditorStateStaleError,
     compile_editor_ops,
     merge_editor_draft,
     resolve_editor_base,
@@ -176,15 +175,85 @@ def test_precedence_head_then_variant_without_state() -> None:
     variant = _variant("G2")
     head = resolve_editor_base(_job(variant), variant, _head("G2"), None)
     assert head.source == "head" and _bars(head.projected)["label"]["text"] == "Stale label"
-    stale_head = resolve_editor_base(_job(variant), variant, _head("G1"), None)
-    assert stale_head.source == "variant" and stale_head.prior_payload == {}
-    assert _bars(stale_head.projected)["label"]["text"] == "Saved label"
+    # A head from another job names slots that are not on this timeline: never replayed.
+    other_job = _head("G2")
+    other_job.base_job_id = uuid.UUID(int=99)
+    foreign = resolve_editor_base(_job(variant), variant, other_job, None)
+    assert foreign.source == "variant" and foreign.prior_payload == {}
+    assert _bars(foreign.projected)["label"]["text"] == "Saved label"
 
 
-def test_stale_state_is_never_silently_rebased() -> None:
+def test_a_head_one_generation_behind_is_the_latest_not_no_head() -> None:
+    """The chat's earlier unsaved edits survive an approval render or a phone publish."""
+    variant = _variant("G2")
+    behind = resolve_editor_base(_job(variant), variant, _head("G1"), None)
+    assert behind.source == "head"
+    assert _bars(behind.projected)["label"]["text"] == "Stale label"
+    assert behind.prior_payload["base_generation"] == "G2"
+    # Column and payload stamps that disagree heal the same way.
+    split = resolve_editor_base(_job(variant), variant, _head("G2", column="G1"), None)
+    assert split.source == "head" and split.prior_payload["base_generation"] == "G2"
+
+
+def test_a_head_that_cannot_be_rebased_builds_on_the_saved_variant(monkeypatch) -> None:
+    def broken(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        raise ValueError("unusable")
+
+    monkeypatch.setattr("app.kria.editor_head.rebased_document", broken)
+    variant = _variant("G2")
+    base = resolve_editor_base(_job(variant), variant, _head("G1"), None)
+    assert base.source == "variant" and base.prior_payload == {}
+
+
+def test_stale_state_with_a_disjoint_dirty_lane_builds_on_the_latest_plus_that_lane() -> None:
     variant = _variant("G3")
-    with pytest.raises(EditorStateStaleError):
-        resolve_editor_base(_job(variant), variant, _head("G3"), _state(_moved(), base="G2"))
+    cue = [{"id": "c1", "text": "Creator caption", "start_s": 0.0, "end_s": 1.0}]
+    base = resolve_editor_base(
+        _job(variant), variant, _head("G3"), _state({"caption_cues": cue}, base="G2")
+    )
+    assert base.source == "client_state"
+    assert base.fallback_reason == "client_state_rebased_onto_latest"
+    assert base.prior_payload["base_generation"] == "G3"
+    # The latest head's chat edit stays; the creator's own lane rides on top.
+    assert _bars(base.projected)["label"]["text"] == "Stale label"
+    assert base.projected["caption_cues"][0]["text"] == "Creator caption"
+
+
+def test_stale_state_dirty_lane_the_latest_also_changed_loses_to_the_latest() -> None:
+    variant = _variant("G3")
+    base = resolve_editor_base(_job(variant), variant, _head("G3"), _state(_moved(), base="G2"))
+    assert _bars(base.projected)["title"]["x_frac"] == 0.9
+    assert _bars(base.projected)["label"]["text"] == "Stale label"
+
+
+def test_stale_state_dirty_lane_applies_on_the_saved_variant_when_there_is_no_head() -> None:
+    variant = _variant("G3")
+    base = resolve_editor_base(_job(variant), variant, None, _state(_moved(), base="G2"))
+    assert base.source == "client_state"
+    assert _bars(base.projected)["title"]["x_frac"] == 0.55
+    assert _bars(base.projected)["label"]["text"] == "Creator label"
+    assert base.prior_payload["base_generation"] == "G3"
+
+
+def test_stale_timeline_lane_is_never_replayed_on_the_new_generation() -> None:
+    variant = _variant("G3")
+    rows = [{"slot_id": "old-slot", "clip_index": 0, "in_s": 0.0, "duration_s": 1.0}]
+    base = resolve_editor_base(
+        _job(variant), variant, None, _state({"timeline_slots": rows}, base="G2")
+    )
+    assert "timeline_slots" not in base.prior_payload
+    assert [s["slot_id"] for s in base.projected["ai_timeline"]["slots"]] == ["s0", "s1"]
+
+
+def test_clean_stale_state_builds_on_the_latest() -> None:
+    variant = _variant("G3")
+    with_head = resolve_editor_base(_job(variant), variant, _head("G3"), _state({}, base="G2"))
+    assert with_head.source == "head"
+    assert with_head.fallback_reason == "client_state_stale"
+    assert _bars(with_head.projected)["label"]["text"] == "Stale label"
+    bare = resolve_editor_base(_job(variant), variant, None, _state({}, base="G2"))
+    assert bare.source == "variant" and bare.prior_payload == {}
+    assert _bars(bare.projected)["label"]["text"] == "Saved label"
 
 
 def test_malformed_lane_falls_back_instead_of_crashing() -> None:
@@ -264,10 +333,19 @@ def test_clean_state_stays_authoritative_without_unseen_chat_lanes() -> None:
             "editor_payload": {"base_generation": "G2", "sections": {}},
         },
     )
-    for head in (None, bootstrap, _chat_head(7, base="G1")):
+    for head in (None, bootstrap):
         base = resolve_editor_base(_job(variant), variant, head, _seen(None))
         assert base.source == "client_state", head
         assert _bars(base.projected)["label"]["text"] == "Saved label"
+
+
+def test_clean_state_that_never_saw_a_healable_chat_head_builds_on_it() -> None:
+    """A chat head one generation behind is healed in memory, so its lanes are not lost."""
+    variant = _variant("G2")
+    base = resolve_editor_base(_job(variant), variant, _chat_head(7, base="G1"), _seen(None))
+    assert base.source == "head"
+    assert [row["text"] for row in base.projected["text_elements"]] == ["Chat kept one title"]
+    assert base.prior_payload["base_generation"] == "G2"
 
 
 def test_unsaved_lanes_stay_authoritative_over_an_unseen_chat_head() -> None:
@@ -321,20 +399,12 @@ async def test_planner_snapshot_is_the_clients_current_state(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_planner_stale_state_is_a_guarded_miss_with_the_recovery_reply(monkeypatch) -> None:
-    from structlog.testing import capture_logs
-
-    with capture_logs() as logs:
-        target = await _planner_target(monkeypatch, None, _state(_moved(), base="G1"))
-    assert target is None
-    assert planner._editor_target_miss.get() == "editor_state_stale"
-    assert planner._editor_target_miss_guarded()
-    assert [e["reason"] for e in logs if e["event"] == "kria_editor_target_unavailable"] == [
-        "editor_state_stale"
-    ]
-    reply = planner._editor_target_recovery(SimpleNamespace(manifest_hash="m", context_hash="c"))
-    assert reply.plan.turn_value == "recovery"
-    assert reply.plan.response == "Your video changed — reopen the editor and try again."
+async def test_planner_stale_state_plans_on_the_latest_instead_of_missing(monkeypatch) -> None:
+    target = await _planner_target(monkeypatch, None, _state(_moved(), base="G1"))
+    assert target is not None
+    assert planner._editor_target_miss.get() is None
+    bars = {row["id"]: row for row in target.snapshot["text_bars"]}
+    assert bars["label"]["text"] == "Creator label"
 
 
 @pytest.mark.asyncio
@@ -345,12 +415,11 @@ async def test_render_in_flight_guard_is_skipped_only_for_a_fresh_state(monkeypa
     # Fresh state: the snapshot reads only editable lanes, so it can answer.
     target = await _planner_target(monkeypatch, None, _state(_moved()), status="rendering")
     assert target is not None
-    # A state built on an older render is still refused.
+    # A state built on an older render is rebased on the latest, not refused.
     assert (
         await _planner_target(monkeypatch, None, _state(_moved(), base="G1"), status="rendering")
-        is None
+        is not None
     )
-    assert planner._editor_target_miss.get() == "editor_state_stale"
 
 
 @pytest.mark.asyncio

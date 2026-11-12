@@ -1978,6 +1978,33 @@ def fresh_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> d
     return payload
 
 
+def latest_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> dict[str, Any]:  # noqa: ANN401
+    """The head's editor payload as it stands on the variant's CURRENT generation.
+
+    A current head is returned as stored. A head of this job on an older generation (or with
+    disagreeing stamps) is rebased in memory by the function that restaging persists, so the
+    chat's earlier unsaved edits are kept and the planner stays read-only. A head from
+    another job is never replayed. Returns ``{}`` (build on the saved variant) otherwise.
+    """
+    payload = fresh_editor_head_payload(head, variant, job)
+    if payload or head is None or head.base_job_id != getattr(job, "id", None):
+        return payload
+    snapshot = getattr(head, "snapshot_json", None)
+    stored = snapshot.get("editor_payload") if isinstance(snapshot, dict) else None
+    if not isinstance(snapshot, dict) or snapshot.get("kind") != "editor" or not stored:
+        return {}
+    from app.kria import editor_head  # noqa: PLC0415 - editor_head lazily imports drafts
+
+    try:
+        document = editor_head.rebased_document(
+            job, str(variant.get("variant_id") or ""), head, contained=False
+        )
+    except Exception:  # noqa: BLE001 - a malformed stored head must not fail the turn
+        log.warning("editor_head_rebase_unusable", job_id=str(getattr(job, "id", "")))
+        return {}
+    return dict(document.editor_payload or {})
+
+
 class EditorDraftBasis(NamedTuple):
     draft_id: str
     snapshot_hash: str
@@ -2194,7 +2221,6 @@ def project_editor_draft(
     return projected
 
 
-EDITOR_STATE_STALE_REPLY = "Your video changed \u2014 reopen the editor and try again."
 SPEECH_CUT_NEEDS_SAVE_REPLY = "Save your edits first, then I can cut the silences."
 
 
@@ -2202,12 +2228,6 @@ class EditorStateReplyError(KriaEditorOpError):
     """A state-related refusal with an honest, user-facing reply (not a crash)."""
 
     reply = ""
-
-
-class EditorStateStaleError(EditorStateReplyError):
-    """The client's unsaved state was built on a render the server has since replaced."""
-
-    reply = EDITOR_STATE_STALE_REPLY
 
 
 class EditorStateSpeechCutError(EditorStateReplyError):
@@ -2303,10 +2323,54 @@ def _unseen_chat_head(head: Any, variant: dict[str, Any], job: Any, client_state
     revision = getattr(head, "draft_revision", None)
     if seen is not None and (revision is None or seen >= revision):
         return {}
-    fresh = fresh_editor_head_payload(head, variant, job)
+    fresh = latest_editor_head_payload(head, variant, job)
     if str(fresh.get("base_generation") or "") != str(state.get("base_generation") or ""):
         return {}
     return fresh if _carries_edits(fresh) else {}
+
+
+# Lanes whose content is tied to the generation the phone saw (slot ids, cut times): a lane
+# from an older generation cannot be replayed on a newer timeline, so the latest wins.
+_GENERATION_BOUND_LANES = frozenset({"timeline_slots", "split_screen_sections"})
+
+
+def _rebase_stale_state(
+    job: Any, variant: dict[str, Any], head: Any, client_state: Any
+) -> EditorBase:
+    """A turn whose phone state predates the variant's current generation.
+
+    The phone encodes only the lanes the creator changed, so a lane present in the state is
+    a dirty lane. Start from the latest (the head rebased onto the current generation, else
+    the committed variant) and lay the creator's dirty lanes on top, except where the latest
+    changed the lane (it is in the head's own payload) or the lane is generation-bound.
+    """
+    baseline = variant_render_baseline(variant)
+    latest = latest_editor_head_payload(head, variant, job)
+    latest_lanes = {key for key in latest if key not in _NOT_EDIT_KEYS}
+    creator = {
+        key: value
+        for key, value in client_state_payload(client_state).items()
+        if key not in _NOT_EDIT_KEYS
+        and key not in _GENERATION_BOUND_LANES
+        and key not in latest_lanes
+        and not (key == "remove_music" and value is False)
+    }
+    if not creator:
+        if latest:
+            return EditorBase(
+                project_editor_draft(variant, latest, job), latest, "head", "client_state_stale"
+            )
+        return EditorBase(
+            project_editor_draft(variant, {}, job), {}, "variant", "client_state_stale"
+        )
+    prior = merge_editor_draft(latest, creator)
+    prior["base_generation"] = baseline
+    return EditorBase(
+        project_editor_draft(variant, prior, job),
+        prior,
+        "client_state",
+        "client_state_rebased_onto_latest",
+    )
 
 
 def resolve_editor_base(
@@ -2314,13 +2378,14 @@ def resolve_editor_base(
 ) -> EditorBase:
     """THE base a copilot turn edits; the planner snapshot and the compile both call this.
 
+    Every turn builds on the latest version; none is refused for an old phone copy.
     Precedence:
       1. ``client_state`` whose ``base_generation`` equals the variant's current render
          baseline -> authoritative, the head is IGNORED, unless the state is clean and
          never saw the head's chat lanes (``_unseen_chat_head``): then the head.
-         A different baseline raises ``EditorStateStaleError`` (never silently rebased).
          Untrusted: a projection failure falls back to 2/3 with ``fallback_reason``.
-      2. the head draft when fresh (``fresh_editor_head_payload``).
+         A different baseline is rebased (``_rebase_stale_state``).
+      2. the head draft when current or healable (``latest_editor_head_payload``).
       3. the bare saved variant.
     """
     reason: str | None = None
@@ -2331,21 +2396,25 @@ def resolve_editor_base(
             else dict(client_state).get("base_generation")
         )
         if str(base or "") != variant_render_baseline(variant):
-            raise EditorStateStaleError("editor state is based on an older render")
-        unseen = _unseen_chat_head(head, variant, job, client_state)
-        if unseen:
-            return EditorBase(
-                project_editor_draft(variant, unseen, job),
-                unseen,
-                "head",
-                "client_state_unseen_head",
-            )
-        try:
-            prior = client_state_payload(client_state)
-            return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
-        except Exception as exc:  # noqa: BLE001 - client state is untrusted input
-            reason = f"client_state_unusable:{type(exc).__name__}"
-    fresh = fresh_editor_head_payload(head, variant, job)
+            try:
+                return _rebase_stale_state(job, variant, head, client_state)
+            except Exception as exc:  # noqa: BLE001 - client state is untrusted input
+                reason = f"client_state_unusable:{type(exc).__name__}"
+        else:
+            unseen = _unseen_chat_head(head, variant, job, client_state)
+            if unseen:
+                return EditorBase(
+                    project_editor_draft(variant, unseen, job),
+                    unseen,
+                    "head",
+                    "client_state_unseen_head",
+                )
+            try:
+                prior = client_state_payload(client_state)
+                return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
+            except Exception as exc:  # noqa: BLE001 - client state is untrusted input
+                reason = f"client_state_unusable:{type(exc).__name__}"
+    fresh = latest_editor_head_payload(head, variant, job)
     if fresh:
         return EditorBase(project_editor_draft(variant, fresh, job), fresh, "head", reason)
     return EditorBase(project_editor_draft(variant, {}, job), {}, "variant", reason)
