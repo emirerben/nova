@@ -29,7 +29,7 @@ from app.agents._schemas.text_element import (
 )
 from app.config import settings
 from app.kria.clip_tilt import ClipTilt
-from app.kria.editor_head import authored_revision, is_head_current
+from app.kria.editor_head import payload_current
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
@@ -1959,14 +1959,17 @@ def _summary(op: dict[str, Any]) -> str:
     return name[:1].upper() + name[1:]
 
 
-def fresh_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> dict[str, Any]:  # noqa: ANN401
-    """The head draft's editor payload iff the head is on the variant's CURRENT generation.
+def fresh_editor_head_payload(
+    head: Any, variant: dict[str, Any], job: Any = None
+) -> dict[str, Any]:
+    """The head draft's editor payload iff it was built on the variant's CURRENT render.
 
-    "Current" is ``editor_head.is_head_current``: same job, and both the column and the payload
-    base name the render baseline (or the generation a phone publish was made from). A head on
-    an older generation must not be overlaid on a newer render, and nothing moves it for the
-    turn: it is ignored. Returns ``{}`` (build on the saved variant) when absent, non-editor, or
-    not current.
+    The session pointer and ``CreatorEditDraft.base_generation_id`` go stale after an
+    editor Save bumps ``render_generation_id``, so they cannot prove freshness. The
+    payload's own ``base_generation`` (stamped from ``variant_render_baseline``) can:
+    a mismatch means the draft predates a saved render and must not be overlaid on it.
+    Returns ``{}`` (build on the saved variant) when absent, non-editor, or stale.
+    With ``job``, a phone-published export of the payload's generation is current too.
     """
     snapshot = getattr(head, "snapshot_json", None) if head is not None else None
     if not isinstance(snapshot, dict) or snapshot.get("kind") != "editor":
@@ -1974,7 +1977,7 @@ def fresh_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> d
     payload = snapshot.get("editor_payload")
     if not isinstance(payload, dict) or not payload:
         return {}
-    if not is_head_current(job, variant, head):
+    if not payload_current(job, variant, head):
         return {}
     return payload
 
@@ -2301,9 +2304,7 @@ def _unseen_chat_head(head: Any, variant: dict[str, Any], job: Any, client_state
     if _carries_edits(state.get("lanes") or {}):
         return {}
     seen = state.get("draft_revision")
-    # A restage row (phone-publish restamp) stands for the row it moved: a deliberate discard of
-    # revision N stays a discard after the server wrote N+1 with the same lanes.
-    revision = authored_revision(head)
+    revision = getattr(head, "draft_revision", None)
     if seen is not None and (revision is None or seen >= revision):
         return {}
     fresh = fresh_editor_head_payload(head, variant, job)

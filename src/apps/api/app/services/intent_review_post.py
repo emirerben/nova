@@ -26,7 +26,6 @@ from sqlalchemy.exc import OperationalError
 
 from app.database import sync_session
 from app.kria.brief_binding import BriefBinding
-from app.kria.editor_head import draft_still_current
 from app.kria.intent_review_copy import UncheckedReview
 from app.kria.intent_review_posts import POSTABLE_STATUSES, Post, compose_posts
 from app.kria.intent_review_tier import intent_review_tier, lower_tier, tier_rank
@@ -131,9 +130,9 @@ def _follow_up(db, row: CreatorGenerationReview) -> CreatorGenerationReview | No
 
 
 def _repair_is_head(db, row: CreatorGenerationReview) -> bool:
-    """Is the repair still the creator's draft, or only restaged by its own render?"""
+    """Is the repair still the creator's current draft, so that Undo would undo the fix?"""
     draft = db.get(CreatorEditDraft, row.repair_draft_id) if row.repair_draft_id else None
-    return draft is not None and draft_still_current(db, draft)
+    return bool(draft is not None and draft.is_head)
 
 
 def _reference_time(db, row: CreatorGenerationReview, child) -> datetime | None:

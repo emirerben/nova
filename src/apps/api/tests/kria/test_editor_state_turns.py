@@ -26,7 +26,7 @@ from app.services.kria_editor_ops import (
     merge_editor_draft,
     resolve_editor_base,
 )
-from tests.kria.test_stale_head_draft import _JOB_ID, _head, _job, _planner_db, _variant
+from tests.kria.test_stale_head_draft import _head, _job, _planner_db, _variant
 from tests.services._guided_timeline_fixtures import (
     arm_guided,
     guided_bars,
@@ -213,7 +213,6 @@ def _chat_head(revision: int = 7, *, base: str = "G2") -> SimpleNamespace:
     kept = copy.deepcopy(_variant()["text_elements"][:1])
     kept[0]["text"] = "Chat kept one title"
     return SimpleNamespace(
-        base_job_id=_JOB_ID,
         draft_revision=revision,
         base_generation_id=base,
         snapshot_json={
@@ -256,7 +255,6 @@ def test_clean_state_that_saw_the_chat_head_is_a_deliberate_discard() -> None:
 def test_clean_state_stays_authoritative_without_unseen_chat_lanes() -> None:
     variant = _variant("G2")
     bootstrap = SimpleNamespace(
-        base_job_id=_JOB_ID,
         draft_revision=1,
         base_generation_id="G2",
         snapshot_json={

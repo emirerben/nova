@@ -25,12 +25,9 @@ from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
 from app.kria.brief_binding import BriefBinding
 from app.kria.editor_head import (
-    MAX_RESTAGE_CHAIN,
-    RESTAMP_REASONS,
+    column_accepted,
     is_head_current,
-    is_unstamped_main_head,
     payload_base,
-    restage_marker,
     variant_baseline,
 )
 from app.kria.runtime import (
@@ -168,9 +165,6 @@ class KriaDraftDocument(BaseModel):
     brief_binding: BriefBinding | None = None
     brief_coverage: dict[str, Any] | None = None
     prepared_collection_story: dict[str, Any] | None = None
-    # A head the server moved onto a newer generation records which row it moved and why
-    # (``editor_head.restage_marker``); nothing infers a restage from other fields.
-    restage: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _shape_matches_kind(self) -> KriaDraftDocument:
@@ -203,7 +197,7 @@ def canonical_snapshot(document: KriaDraftDocument) -> tuple[dict[str, Any], str
         snapshot.pop("editor_text_diff", None)
     if snapshot.get("client_state_id") is None:
         snapshot.pop("client_state_id", None)
-    for field in ("brief_binding", "brief_coverage", "prepared_collection_story", "restage"):
+    for field in ("brief_binding", "brief_coverage", "prepared_collection_story"):
         if snapshot.get(field) is None:
             snapshot.pop(field, None)
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -472,12 +466,6 @@ def _out(row: CreatorEditDraft, *, can_undo: bool, head_current: bool = True) ->
             phase="tool",
             recovery="refresh_replan",
         )
-    payload = row.snapshot_json.get("editor_payload")
-    base_generation = (
-        str(payload.get("base_generation") or "")
-        if isinstance(payload, dict)
-        else row.base_generation_id
-    )
     return DraftSnapshotOut(
         draft_id=str(row.id),
         item_id=str(row.item_id),
@@ -491,7 +479,7 @@ def _out(row: CreatorEditDraft, *, can_undo: bool, head_current: bool = True) ->
         can_undo=can_undo,
         created_at=row.created_at,
         head_current=head_current,
-        base_generation=base_generation,
+        base_generation=payload_base(row),
     )
 
 
@@ -580,19 +568,20 @@ def committed_document(
     *,
     state: Mapping[str, Any],
     item: PlanItem,
-    job: Any,
-    variant_key: str,  # noqa: ANN401
+    job: Any,  # noqa: ANN401
+    variant_key: str,
 ) -> KriaDraftDocument:
-    """The variant's committed state as a draft: ``bootstrap_document`` on its current baseline.
+    """The variant's committed state as a draft: what a fresh read would create for it.
 
     A v2 variant's sections come from the builder its own Save uses (``editor_sections``), which
     carries every lane a Save pins; the bootstrap key set is smaller and would drop them.
     """
-    baseline = variant_baseline(_variant(job, variant_key) or {})
+    variant = _variant(job, variant_key) or {}
+    baseline = variant_baseline(variant)
     document = bootstrap_document(
         state=state, item=item, job=job, variant_key=variant_key, generation_id=baseline
     )
-    if (_variant(job, variant_key) or {}).get("editor_state_version") == 2:
+    if variant.get("editor_state_version") == 2:
         from app.services.editor_empty_drafts import editor_sections  # noqa: PLC0415
 
         document = document.model_copy(
@@ -607,57 +596,22 @@ def committed_document(
     return document
 
 
-async def _row(db: AsyncSession, draft_id: uuid.UUID | None) -> CreatorEditDraft | None:
-    if draft_id is None:
-        return None
-    return (
-        await db.execute(select(CreatorEditDraft).where(CreatorEditDraft.id == draft_id))
-    ).scalar_one_or_none()
-
-
-async def _undo_target(
-    db: AsyncSession, head: CreatorEditDraft
-) -> tuple[uuid.UUID | None, CreatorEditDraft | None]:
-    """The draft Undo restores, and the creator row it restores from when restamps lie between.
-
-    Restage rows are the server moving the head, not creator edits, so Undo looks past them. An
-    approval's render holds the edit, so Undo across one is unavailable (committed work is not
-    undone by draft undo): ``(None, None)``. A head with no restage row is ``main``'s case; the
-    second item is None there and for any other row without a restamp above it.
-    """
-    row: CreatorEditDraft | None = head
-    restamped = False
-    for _ in range(MAX_RESTAGE_CHAIN):
-        marker = restage_marker(row)
-        if marker is None:
-            return row.parent_draft_id, row if restamped else None
-        if marker.get("reason") not in RESTAMP_REASONS:
-            return None, None
-        restamped = True
-        row = await _row(db, row.parent_draft_id)
-        if row is None:
-            return None, None
-    return None, None
-
-
-async def can_undo(db: AsyncSession, head: CreatorEditDraft) -> bool:
-    """The one definition of ``can_undo``, used by the draft and the timeline reads."""
-    return (await _undo_target(db, head))[0] is not None
-
-
 def _current(target: DraftTarget, head: CreatorEditDraft) -> bool:
-    """``editor_head.is_head_current`` for the target's job and variant."""
+    """The rule ``write_draft`` applies to the head: same job, and its column is current."""
     if target.job is None:
         return head.base_job_id is None and head.base_generation_id == target.generation_id
     variant = _variant(target.job, target.variant_key)
     if variant is None:
         return head.base_job_id == target.job.id and head.base_generation_id == target.generation_id
-    return is_head_current(target.job, variant, head)
+    return column_accepted(target.job, variant, head)
 
 
-def _unstamped_main_head(target: DraftTarget, head: CreatorEditDraft) -> bool:
+def _head_current(target: DraftTarget, head: CreatorEditDraft) -> bool:
+    """What the snapshot reports: ``editor_head.is_head_current`` for the target's variant."""
     variant = _variant(target.job, target.variant_key) if target.job is not None else None
-    return variant is not None and is_unstamped_main_head(target.job, variant, head)
+    if variant is None:
+        return _current(target, head)
+    return is_head_current(target.job, variant, head)
 
 
 async def read_or_bootstrap_draft(
@@ -675,7 +629,9 @@ async def read_or_bootstrap_draft(
         )
         head = await _insert_revision(db, target=target, document=document, parent=None)
         await db.commit()
-    return _out(head, can_undo=await can_undo(db, head), head_current=_current(target, head))
+    return _out(
+        head, can_undo=head.parent_draft_id is not None, head_current=_head_current(target, head)
+    )
 
 
 async def write_draft(
@@ -706,7 +662,7 @@ async def write_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    if not _current(target, head) and not _unstamped_main_head(target, head):
+    if not _current(target, head):
         raise RuntimeFailure(
             409,
             "draft_base_stale",
@@ -715,8 +671,7 @@ async def write_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    # The server alone records a restage (``editor_head.insert_restage_row``).
-    snapshot = {key: value for key, value in snapshot.items() if key != "restage"}
+    snapshot = dict(snapshot)
     for field in ("brief_binding", "brief_coverage", "prepared_collection_story"):
         authoritative = (head.snapshot_json or {}).get(field)
         if field in snapshot and snapshot[field] != authoritative:
@@ -753,7 +708,7 @@ async def write_draft(
     document = KriaDraftDocument.model_validate(snapshot)
     row = await _insert_revision(db, target=target, document=document, parent=head)
     await db.commit()
-    return _out(row, can_undo=True, head_current=_current(target, row))
+    return _out(row, can_undo=True, head_current=_head_current(target, row))
 
 
 POINTER_SYNC = "pointer_sync"
@@ -1064,8 +1019,7 @@ async def undo_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    parent_id, restamped_from = await _undo_target(db, head)
-    if parent_id is None:
+    if head.parent_draft_id is None:
         raise RuntimeFailure(
             409,
             "draft_undo_unavailable",
@@ -1074,7 +1028,11 @@ async def undo_draft(
             recovery="none",
             current_revision=int(target.thread.revision),
         )
-    parent = await _row(db, parent_id)
+    parent = (
+        await db.execute(
+            select(CreatorEditDraft).where(CreatorEditDraft.id == head.parent_draft_id)
+        )
+    ).scalar_one_or_none()
     if parent is None or parent.snapshot_json is None:
         raise RuntimeFailure(
             409,
@@ -1083,26 +1041,7 @@ async def undo_draft(
             phase="tool",
             recovery="refresh_replan",
         )
-    document = KriaDraftDocument.model_validate(parent.snapshot_json).model_copy(
-        update={"restage": None}
-    )
-    if (
-        restamped_from is not None
-        and isinstance(document.editor_payload, dict)
-        and (parent.base_generation_id, payload_base(parent))
-        == (restamped_from.base_generation_id, payload_base(restamped_from))
-    ):
-        # The restamps between the head and the restored draft only re-stamped the same
-        # document. A parent built on another generation than the row they stamped is a draft
-        # of older content: it comes back verbatim, as on ``main``, and stays not current.
-        document = document.model_copy(
-            update={
-                "editor_payload": {
-                    **document.editor_payload,
-                    "base_generation": target.generation_id or "",
-                }
-            }
-        )
+    document = KriaDraftDocument.model_validate(parent.snapshot_json)
     row = await _insert_revision(db, target=target, document=document, parent=head)
     approvals = list(
         (
@@ -1181,7 +1120,7 @@ async def undo_draft(
             "cancelled_approval_ids": [str(approval.id) for approval in approvals],
         },
     )
-    result = _out(row, can_undo=True, head_current=_current(target, row))
+    result = _out(row, can_undo=True, head_current=_head_current(target, row))
     owner_thread_id = thread.id
     await db.commit()
     successor_id = await _promote_queued_successor(db, thread_id=owner_thread_id)
