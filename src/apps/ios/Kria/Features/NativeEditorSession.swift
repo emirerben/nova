@@ -8621,7 +8621,7 @@ enum EditorOpenIntent { case warm, open }
             let reload = await reloadLatestKeepingLocalEdits(saveAttemptID: attemptID)
             guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
             switch reload {
-            case .reloaded:
+            case .reloaded, .replaced:
                 if !retrySections.isEmpty {
                     // Consent covered the previous generation's render. A retry
                     // is not a local lane edit and cannot overwrite a newer save.
@@ -8631,6 +8631,8 @@ enum EditorOpenIntent { case warm, open }
                 }
                 // The newest version may already contain everything the creator changed.
                 guard hasUnsavedChanges else { saveState = .saved; return }
+                // Resending now would drop the Undo step that restores what the latest version replaced.
+                if case .replaced = reload { saveState = .idle; return }
                 await saveOnce()
                 guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
                 if saveHitNewerVersion {
@@ -8902,7 +8904,8 @@ enum EditorOpenIntent { case warm, open }
     /// reloading forever; Retry clears it.
     private var previewConflictReloadGeneration: String?
 
-    private enum LatestReload { case reloaded, alreadyTried, superseded, failed(Error) }
+    /// `replaced`: the latest version won an overlap with the creator's edits, which Undo restores.
+    private enum LatestReload { case reloaded, replaced, alreadyTried, superseded, failed(Error) }
 
     /// Load the newest renderer-owned version and converge onto it: the creator's own edits that apply
     /// cleanly stay on top, the latest version wins any overlap. `fencingPreviewConflict` allows one reload
@@ -8957,11 +8960,11 @@ enum EditorOpenIntent { case warm, open }
                 stagedRevision = staged == nil ? nil : head.draftRevision
             }
             var latest = latestClean
-            for section in staged?.sections ?? [] { if let staged { copy(section, from: staged.document, into: &latest) } }
-            applyConverged(ConvergeTarget(base: cleanDocument, clean: latestClean, latest: latest, variant: variant,
+            if let staged { for section in staged.sections { copy(section, from: staged.document, into: &latest) } }
+            let replaced = applyConverged(ConvergeTarget(base: cleanDocument, clean: latestClean, latest: latest, variant: variant,
                 destination: (jobID, variantKey, itemID), forcePreview: fencingPreviewConflict,
                 stagedSections: staged?.sections ?? [], stagedRevision: stagedRevision))
-            return .reloaded
+            return replaced ? .replaced : .reloaded
         } catch {
             guard editorOperationIdentity == identity else { return .superseded }
             return .failed(error)
@@ -8986,7 +8989,9 @@ enum EditorOpenIntent { case warm, open }
 
     /// Always lands: the editor shows `target.latest` plus the creator's own edits that apply cleanly. The
     /// caller owns the staleness fence (`editorOperationIdentity` after its last await); this runs synchronously.
-    private func applyConverged(_ target: ConvergeTarget) {
+    /// True when the latest version replaced some of the creator's edits.
+    @discardableResult
+    private func applyConverged(_ target: ConvergeTarget) -> Bool {
         let local = creatorDocument
         let before = document
         let converged = NativeEditorMerge.converge(base: target.base, local: local, latest: target.latest,
@@ -9025,6 +9030,8 @@ enum EditorOpenIntent { case warm, open }
         }
         if target.isNewVersion { configureCapabilities(from: target.variant) }
         refreshRebasedSourcePreview(force: target.forcePreview)
+        // Edits the latest version replaced equal the new clean document; their flags belong to the old base.
+        if !sameBase { explicitlyDirtySections.removeAll() }
         refreshDirtyState()
         explicitlyDirtySections.formIntersection(changedSections)
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
@@ -9034,6 +9041,7 @@ enum EditorOpenIntent { case warm, open }
         if local != nil, converged.replacedCreatorEdits || (target.isNewVersion && converged.document != before) {
             showConvergeNotice(replaced: converged.replacedCreatorEdits, canUndo: pushedUndo)
         }
+        return converged.replacedCreatorEdits
     }
 
     private func showConvergeNotice(replaced: Bool, canUndo: Bool) {
@@ -10162,9 +10170,7 @@ enum EditorOpenIntent { case warm, open }
             let result = await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true)
             guard self.editorOperationIdentity == identity else { return }
             switch result {
-            case .reloaded:
-                return
-            case .superseded:
+            case .reloaded, .replaced, .superseded:
                 return
             case .alreadyTried:
                 self.failSourcePreview(error, reloadsLatestOnConflict: false)

@@ -704,7 +704,7 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(open.waitForExistence(timeout: 30), "the chat offers Open editor")
         open.tap()
 
-        let card = app.buttons["native-editor-merge-remote"]
+        let card = app.buttons["Use latest version"]
         let title = app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", "Text: SHORT LISBON TITLE")).firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 30), "the AI's shortened text is on the canvas")
