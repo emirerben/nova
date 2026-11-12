@@ -76,7 +76,16 @@ real writers (`tests/kria/test_editor_head_review_round2_postgres.py`).
 3. **`restage` is server-owned.** A client PUT that echoes a restamped snapshot carried the
    marker onto a creator row (undo then skipped the creator's edit; a new revision looked
    already seen). `write_draft` forces it to None.
-4. **Intent-review revert after an approved repair.** See the notes at the end of this file.
+4. **Intent-review repair after an approved render: not changed here, must be ticketed.** After
+   approval execution the head is the restage row, not the approved draft. Staging
+   (`intent_review_repair_flow.repair_preconditions`, `intent_review_repair.guard_intent_repair_head`)
+   requires `head.id == approved draft id` with equal revision and hash, so every repair downgrades
+   to `suggestion(head_moved)`; `revert_repair` has the same check and, were it reached, the undo it
+   calls is refused across the retire (`draft_undo_unavailable`), which it reports as
+   `worse_head_moved`. Making this work needs lineage-aware staging and a system-owned verbatim
+   revert; neither is done. `KRIA_INTENT_REVIEW_REPAIR_ENABLED` stays off until it is.
+   `tests/integration/test_intent_review_repair_postgres.py` and
+   `..._posting_postgres.py` (73 cases) pass on `main` and fail on this branch; neither is in the gate.
 5. **One `can_undo`.** `plan_snapshot` uses `drafts.can_undo`.
 6. **Rows `main` wrote for a variant with only `render_finished_at`** (column None, payload "").
    Each site accepts exactly what `main` accepted for that row shape.
