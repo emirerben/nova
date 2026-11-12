@@ -61,6 +61,27 @@ Default off and byte-identical off (guard: `tests/services/test_creation_text_as
 | Tool result and side-effect identity | `CreatorAgentExecution` |
 | Rendered media | existing `PlanItem` and `Job` |
 
+### One latest editable document
+
+The head of `CreatorEditDraft` for an (item, variant) always sits on the variant's
+current generation, so the iPhone editor loads one latest version. AI and manual edits
+both apply on top of it; the creator is never asked to resolve a conflict.
+
+- The one definition of "current" is `app/kria/editor_head.py` (`is_head_current`,
+  `is_head_on_baseline`, `restage_editor_head_sync/async`).
+- Restaged by the writers that move the generation: approval execution, phone publish,
+  speech-cut publish and manual Save. Healed on observation by draft GET, draft PUT, undo
+  and Save. A restage is a no-op when the head is already on the baseline.
+- A chat turn whose phone state is older than the variant is rebased, not refused.
+  `resolve_editor_base` starts from the head (healed in memory by the same function the
+  restage persists) or the committed variant, then lays on the lanes the creator changed
+  (the phone sends only those). The latest wins where it changed the same lane; timeline
+  lanes from an older generation are dropped. The turn proceeds; the planner snapshot and
+  the locked compile call the same resolver, so they agree.
+- Stranded heads from before the heal existed: `python -m app.cli.repair_editor_heads`
+  (dry run by default; `--apply`, `--list-stranded`). It needs owner approval before a
+  production run.
+
 Runtime-v1 threads keep their existing controller and projections. A thread never
 changes runtime owner because a flag changes during its lifetime.
 

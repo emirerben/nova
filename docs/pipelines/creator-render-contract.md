@@ -50,6 +50,30 @@ job fails closed. Historical jobs without the marker keep the legacy behavior
 for compatibility. Requirements are never reconstructed from generated output
 or reread from mutable chat during a retry.
 
+## One latest editable document
+
+For each (item, variant) there is one editor draft head, and it always sits on the
+variant's current generation. The iPhone editor loads that one version. AI and manual
+edits both apply on top of it, and the creator is never asked to resolve a conflict.
+
+- **The one predicate.** `app/kria/editor_head.py` defines "current" (`is_head_current`)
+  and "exactly on the baseline" (`is_head_on_baseline`). Everything else imports it.
+- **Who restages** (inserts a head revision on the new generation, same transaction as
+  the change): approval execution, phone publish, speech-cut publish, and manual Save.
+  A restage is a no-op when the head is already on the baseline, so a retried task adds
+  no row.
+- **Who heals** (restages on observation, because many code paths write a generation id):
+  draft GET, draft PUT, undo and Save. A head left on an older generation is moved
+  before the request is served; it is not a conflict.
+- **A chat turn with a stale phone state** builds on the latest. The phone sends only the
+  lanes the creator changed. The turn starts from the head (healed in memory) or the
+  committed variant, lays those lanes on top, and lets the latest win where it changed the
+  same lane. Timeline lanes from an older generation are dropped. The turn is never refused.
+- **Repair.** `python -m app.cli.repair_editor_heads --item <uuid> [--apply]` restages the
+  heads of one item, and `--list-stranded` lists heads that are off their baseline. It is a
+  dry run unless `--apply` is given. A production run needs owner approval; show the
+  dry-run output first.
+
 ## What is hard and what is not
 
 The core contract covers duration, audio, ordering, and exact text. Every
@@ -339,7 +363,7 @@ the last line, not the plan.
   current edit to change it in place" (`no_ready_variant` is a guarded miss), so the typed
   words never reached the planner. It now records the unguarded `no_render` miss and skips the
   extract-first rendered-edit path: the follow-up is a normal re-plan (`has_render=False`). An
-  in-flight (`render_in_flight`) or stale (`editor_state_stale`) target keeps its guarded reply.
+  in-flight (`render_in_flight`) target keeps its guarded reply.
   After the render-time block the `title_text` question is open (next bullet), so the reply
   is answered deterministically.
 * A runtime-v2 render failure is worded once: `reconcile_render_state` holds back the generic
