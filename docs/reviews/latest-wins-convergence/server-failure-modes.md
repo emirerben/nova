@@ -227,3 +227,67 @@ built and tested locally only; a production run needs the owner's approval.
     list query skips it too. Test: non-editor head.
 50. **`--list-stranded` on a job whose `variants` is not an array.** Must not error; the
     query guards with `jsonb_typeof`. Test: scalar `variants`.
+
+## Lane-level rebase
+
+Found by an independent review of the whole-content rebase (`editor_head.rebased_document`
+overlaid the head's content on the committed state, so the head's older copy won on every
+lane it carried). A head records no base, so nothing tells "the creator changed this lane"
+from "this lane was copied along". Fix: every head records `base_lanes` (a hash of each
+committed lane at the generation it was authored on) and a rebase is a three-way merge per
+lane (head, committed now, recorded base). The rows below are the review's sequences; each is
+a red-then-green test in `tests/kria/test_editor_head_lanes_postgres.py`.
+
+51. **Legacy dispatcher under a full-`sections` head.** A bootstrapped or phone-written head
+    stores every editor lane under `sections`. A dispatcher (swap song, retext, ...; about 35
+    of them, none restage) commits G1 with new music, `GET /draft` heals, and the old
+    `{**committed, **head sections}` stamps G0's music on G1 with `head_current=true`; the
+    next Save commits it and the swapped song is gone. Same in the stranded pinned-draft Save
+    heal and the repair CLI `--apply`. Rule: a lane the head did not change takes the
+    committed value. Test: music swap then heal.
+52. **Speech cut under a flat-lane chat head.** A chat draft stores its lanes at the top level
+    of the payload and `project_editor_draft` reads only those. The `contained=True` restage
+    kept every non-`sections` key, so the head kept its pre-cut `timeline_slots` over the cut.
+    Rule: a lane both sides changed takes the committed value; a lane only the head changed
+    (an untouched AI text edit) survives. Test: cut under a flat-lane head.
+53. **Legacy Save over an AI text lane.** After a manual Save, the AI's older text still
+    sat over the creator's saved text. Latest wins on a lane both changed. Test: Save over
+    AI text.
+54. **Stale `PUT /draft`.** A client read head H on G0 and PUTs after a dispatcher moved to G1;
+    the etag still matches, and the whole G0 body was stamped G1. The body is a head authored
+    against H: its dirty lanes are the ones that differ from what H recorded, and they are
+    three-way rebased onto the current committed state; a body that only re-asserts old
+    committed content changes nothing. `draft_stale` stays for a revision/etag mismatch.
+    Test: stale PUT cannot resurrect G0.
+55. **A restage is inferred from `changes == []`.** A manual Save or a speech-cut restage also
+    produces changed stamps and an empty diff, so an old pending approval / render retry /
+    intent-review post could run on top of a creator's Save (`prepare_editor_commit` of the
+    approved draft overwrites the Save). A restage now records `restage: {of, reason}`;
+    `draft_still_current` follows the lineage and accepts only the approval's own render and
+    a phone publish, and only when no link replaced a lane of the draft. Test: approval across
+    a manual Save refused; across its own render plus phone publish accepted.
+56. **Undo after a restage.** Undo rebuilt `rebased(parent)`, which equals the current head (a
+    visible no-op) or marks already-rendered changes as pending again while cancelling the
+    approvals. Undo skips restage rows; when the result equals the head's lanes it answers
+    `draft_undo_unavailable`, cancels nothing, and `can_undo` is false. Test: undo after a
+    restage.
+57. **Stale phone state against a `sections` head.** `_rebase_stale_state` looked only at
+    top-level keys, so for any head with `sections` the phone's old lanes always won, and the
+    creator's unsaved `timeline_slots` / `split_screen_sections` were dropped with no word.
+    Same accessor and rule; a dropped creator lane is named to the creator. Test: stale state
+    against a `sections` head.
+58. **Timeline GET and draft GET disagree.** A v2 variant whose pinned draft is not current
+    answered 200 with the committed state and no `draft`, while `GET /draft` served the healed
+    head. GET stays write-free and serves the pinned draft rebased in memory by the same
+    function. Test: timeline and draft agree, no row written.
+59. **`problem.recovery` is `none` for a real version mismatch.** Guided `GUIDED_REVISION_STALE`
+    is answered by reloading (the phone read every 409 that way before `problem` existed).
+    Test: recovery per code.
+60. **Repair CLI hides what `--apply` would do.** The dry run names the head and its stamps
+    only. It prints, per lane, kept from head / taken from committed / replaced, from the same
+    function. Test: dry-run lane report.
+61. **Rows written before this change record no base.** Their flat lanes are dirty by
+    construction (kept), lanes that exist only in a full `sections` head are taken from
+    committed, and only the approval-execution restage (the render contains the draft) takes
+    committed on every lane. A speech cut also names the timeline as rewritten by the writer.
+    Test: unrecorded head.
