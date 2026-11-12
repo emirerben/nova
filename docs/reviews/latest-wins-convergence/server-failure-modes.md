@@ -95,3 +95,43 @@ Found while wiring unit A2 (observable behaviour in the same test file):
 23. **Chat planner reads the head through the same predicate.** `fresh_editor_head_payload`
     is now job-aware and requires column and payload to agree, so a head that GET /draft has
     not yet healed is treated as no head by a chat turn (unit A7 closes this).
+
+## Writers
+
+Wiring of modes 1, 2, 3 and 17 into the three writers that advance a variant's
+generation: approval execution (`tasks/kria_runtime.py`), phone publish
+(`routes/device_render.py`), speech-cut publication (`tasks/generative_build.py`).
+Proof is `tests/kria/test_editor_head_writers_postgres.py`, driven through the real code
+paths on Postgres.
+
+24. **Approval claim retried after its own restage.** The claim commits `accepted`, then
+    a crash (or broker loss) before dispatch makes the reconciler call the claim again.
+    The claim requires the approved draft to be the head (`draft.is_head`). The restage
+    just demoted it, so the retry would cancel the approval as stale and the committed
+    render would never be dispatched. The retry must recognise a head that is the
+    approved draft's direct restaged child. Test: claim twice, then dispatch.
+25. **Approval restage adds rows on every retry.** Covered by 4 at module level; here the
+    whole task runs twice (claim, dispatch, then the task again after `dispatched`) and
+    the claim runs twice in the `accepted` window. Zero extra rows each time. Test: task
+    twice.
+26. **Approval that does not move the generation.** A title-only commit stages nothing
+    and keeps the generation; a speech-cut approval only writes its control at claim time
+    and moves the generation at publication. Restage must insert nothing in both.
+    Test: unchanged generation.
+27. **Phone publish with a head on the pre-publish generation.** The head must move to the
+    exact attempt id and keep its lanes (`contained=False`: same document, new id). A
+    publish on a variant with no editor head must create nothing. Test: publish.
+28. **Speech cut publication rewrites slots.** Laying the old head's `timeline_slots` back
+    over the cut would undo it; the head becomes the committed state (`contained=True`).
+    The publication transaction took only the Job row, so the Item row must be locked
+    first (Item before Job). Test: speech cut publication.
+29. **Pending approval and a restage.** A pending approval names the head it was staged on
+    and the generation (`target_generation_id`). Once the generation moves, the claim
+    already refuses it (`approval_target_stale`), and `decide_approval` refuses a demoted
+    head (`draft_stale`). A restage only demotes a head whose generation already moved,
+    so it invalidates nothing that was still valid.
+30. **NOT HANDLED HERE: other readers of `draft.is_head` on an approved draft.**
+    `kria/render_retry.py:138` (retry of a failed phone render) and
+    `services/intent_review_post.py:135` (`_repair_is_head`) require the approved draft to
+    still be the head. After the approval's restage they stop being true. Retry would
+    answer `render_retry_target_stale`. Needs a lineage-aware check in a follow-up unit.

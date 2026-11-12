@@ -51,6 +51,7 @@ def phone_job(monkeypatch, *, photo=False, narration=None, bed=None):
         user_id=uuid.uuid4(),
         status="awaiting_device",
         current_phase=None,
+        content_plan_item_id=None,
         assembly_plan={
             "guided_story_execution_plan": raw,
             PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],

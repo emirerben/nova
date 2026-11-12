@@ -46,6 +46,7 @@ from app.kria.device_render import (
     finished_durations,
     require_current_request,
 )
+from app.kria.editor_head import restage_editor_head
 from app.kria.render_assets import (
     LibraryRenderAsset,
     ProcessedAudioRenderAsset,
@@ -2266,6 +2267,19 @@ async def _complete_device_export(
 
     await record_finished_style_edit(db, user_id, job, body.identity.variant_id, status)
     await record_native_activity(db, job, body.identity.variant_id, kind="video_ready")
+    if job.content_plan_item_id is not None:
+        item = await db.get(PlanItem, job.content_plan_item_id)
+        if item is not None:
+            # Same document under a new generation id; `_owned_job` holds Item and Job.
+            await restage_editor_head(
+                db,
+                item=item,
+                job=job,
+                variant_key=body.identity.variant_id,
+                creator_id=user_id,
+                contained=False,
+                reason="phone_publish",
+            )
     await db.commit()
     if quality_warning is not None:
         # After the commit: the trace write opens its own connection to the Job row.

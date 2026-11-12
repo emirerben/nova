@@ -41225,11 +41225,17 @@ def _publish_speech_cut_rerender(
     """Token-winning publication after the full render and lane composition."""
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
+    from app.kria.editor_head import restage_editor_head_sync  # noqa: PLC0415
+    from app.models import PlanItem  # noqa: PLC0415
     from app.pipeline.speech_cut_state import cut_revision  # noqa: PLC0415
 
     journaled_poster_paths: list[str] = []
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        # Lock order is Item before Job: the restage below needs the plan item.
+        unlocked = db.get(Job, uuid.UUID(job_id))
+        item_id = getattr(unlocked, "content_plan_item_id", None)
+        item = db.get(PlanItem, item_id, with_for_update=True) if item_id is not None else None
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True, populate_existing=True)
         if job is None:
             return
         if _cancelled_job_write_rejected(job, operation="publish_speech_cut", db=db):
@@ -41412,6 +41418,18 @@ def _publish_speech_cut_rerender(
                 )
         job.assembly_plan = published_plan
         flag_modified(job, "assembly_plan")
+        if item is not None:
+            # The cut rewrote the timeline: the head becomes the committed cut, since
+            # laying an older head's slots back over it would undo the cut.
+            restage_editor_head_sync(
+                db,
+                item=item,
+                job=job,
+                variant_key=str(variant_id),
+                creator_id=job.user_id,
+                contained=True,
+                reason="speech_cut_publication",
+            )
         db.commit()
     # The successful publication removes rollback snapshots that may have kept
     # an old UUID poster live during rendering. Reconcile only after that state

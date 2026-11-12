@@ -70,6 +70,7 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.editor_head import restage_editor_head_sync
 from app.kria.editor_receipts import (
     bind_editor_receipts,
     receipt_lead,
@@ -6071,6 +6072,27 @@ def _withdraw_tap_of_cancelled_claim(
         withdraw_staged_tap_sync(db, record=footprint, item=item, thread=thread)
 
 
+def _restaged_by_own_claim(db, draft: CreatorEditDraft, execution: Any) -> bool:  # noqa: ANN001, ANN401
+    """An accepted execution being recovered, whose claim already restaged its draft.
+
+    The claim moves the head onto the generation it staged, which demotes the approved
+    draft. Redelivery before dispatch must still find the approval valid.
+    """
+    if execution.status != "accepted":
+        return False
+    return (
+        db.execute(
+            select(CreatorEditDraft.id).where(
+                CreatorEditDraft.item_id == draft.item_id,
+                CreatorEditDraft.variant_key == draft.variant_key,
+                CreatorEditDraft.is_head.is_(True),
+                CreatorEditDraft.parent_draft_id == draft.id,
+            )
+        ).first()
+        is not None
+    )
+
+
 def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
     """Consume exact consent into a durable accepted execution.
 
@@ -6176,7 +6198,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             and int(session.ownership_epoch) == int(approval.target_ownership_epoch)
             and approval.draft_id == draft.id
             and approval.draft_revision == draft.draft_revision
-            and draft.is_head
+            and (draft.is_head or _restaged_by_own_claim(db, draft, execution))
             and draft.snapshot_json is not None
             and execution.target_draft_id == draft.id
             and execution.target_draft_revision == draft.draft_revision
@@ -6712,6 +6734,19 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             bindings = dict(assembly.get("creator_brief_bindings") or {})
             bindings[target_generation_id] = document.brief_binding.model_dump(mode="json")
             current_job.assembly_plan = {**assembly, "creator_brief_bindings": bindings}
+
+        if document.kind == "editor" and current_job is not None and approval.target_variant_id:
+            # The render now holds the approved edits, so the head becomes the committed
+            # state on the generation staged above; Item and Job are locked since the top.
+            restage_editor_head_sync(
+                db,
+                item=item,
+                job=current_job,
+                variant_key=approval.target_variant_id,
+                creator_id=thread.creator_id,
+                contained=True,
+                reason="approval_execution",
+            )
 
         approval.status = "consumed"
         approval.consumed_at = approval.consumed_at or now
