@@ -315,3 +315,39 @@ async def test_list_stranded_survives_a_job_whose_variants_is_not_an_array(
         assert code == 0 and str(item_id) not in out
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_head_current_through_the_published_source_is_not_stranded_and_is_never_retired(
+    capsys, monkeypatch
+) -> None:
+    """A chat head on the generation a phone publish was made from is current, not stranded."""
+    from tests.kria.test_editor_head_writers_postgres import _publish_device_export
+
+    try:
+        user_id, thread_id, item_id, job_id = _seed()
+        await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
+        # The publish that restamps this head is the writer; here the head is made to sit on the
+        # source instead (a head the publish did not restage), which is current but not on the
+        # baseline.
+        monkeypatch.setattr("app.routes.device_render.restage_editor_head", _no_restage)
+        _attempt, publish = _publish_device_export(job_id, user_id, monkeypatch)
+        await publish()
+        head_before = _head(item_id)
+
+        _code, listed = _run(capsys, "--list-stranded", "--limit", "500")
+        assert str(item_id) not in listed, "a current head is not stranded"
+        _code, report = _run(capsys, "--item", str(item_id), "--variant", VARIANT)
+        assert "current (published source)" in report and "nothing to do" in report
+        capsys.readouterr()
+        code = cli.main(
+            ["--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire"]
+        )
+        assert code == 2 and "refused" in capsys.readouterr().err
+        assert _head(item_id)["id"] == head_before["id"], "no row was written"
+    finally:
+        await async_engine.dispose()
+
+
+async def _no_restage(*_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
+    return None

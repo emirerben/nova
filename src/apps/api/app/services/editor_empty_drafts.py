@@ -13,6 +13,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
+import structlog
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,9 +29,11 @@ from app.kria.drafts import (
     editor_variant_target,
     stage_editor_variant_draft,
 )
-from app.kria.editor_head import is_head_current, variant_baseline
+from app.kria.editor_head import is_head_current, is_unstamped_main_head, variant_baseline
 from app.models import CreationThread, CreatorEditDraft, Job, PlanItem
 from app.services.phone_editor import _StagedJob
+
+log = structlog.get_logger(__name__)
 
 _DIRECT_SECTIONS = (
     "editor_split_screen_origin",
@@ -148,13 +151,19 @@ async def _committed_in_place_of(
 
 
 async def attach_saved_editor_drafts(
-    db: AsyncSession, job: Job | None, *, committed_fallback: bool = False
+    db: AsyncSession,
+    job: Job | None,
+    *,
+    committed_fallback: bool = False,
+    requested_variant: str | None = None,
 ) -> None:
     """Load pinned snapshots once; never overwrite ORM variant JSON on a read.
 
     ``committed_fallback`` (the timeline reads) also serves a stranded pinned v2 draft as the
     variant's committed state, in ``job._stranded_editor_drafts``. An empty-state variant's
-    content exists only in its draft, so it never gets one: its 409 stays.
+    content exists only in its draft, so it never gets one: its 409 stays. A variant other than
+    ``requested_variant`` whose fallback cannot be built is skipped, as on ``main``, and logged:
+    one unrelated stranded draft must not fail the read.
     """
     if job is None:
         return
@@ -189,13 +198,27 @@ async def attach_saved_editor_drafts(
             or row.snapshot_json is None
         ):
             continue
-        if not is_head_current(job, variant, row):
+        current = is_head_current(job, variant, row)
+        if not current and not is_unstamped_main_head(job, variant, row):
             if committed_fallback and not is_empty_editor_variant(variant):
-                stranded = await _committed_in_place_of(db, job, row)
+                try:
+                    stranded = await _committed_in_place_of(db, job, row)
+                except Exception:
+                    if str(row.variant_key) == requested_variant:
+                        raise
+                    log.warning(
+                        "stranded_editor_draft_fallback_failed",
+                        job_id=str(job.id),
+                        variant_key=str(row.variant_key),
+                        exc_info=True,
+                    )
+                    stranded = None
                 if stranded is not None:
                     job._stranded_editor_drafts[str(row.variant_key)] = stranded
             continue
-        snapshots[str(row.variant_key)] = _out(row, can_undo=await can_undo(db, row))
+        snapshots[str(row.variant_key)] = _out(
+            row, can_undo=await can_undo(db, row), head_current=current
+        )
     job._saved_editor_drafts = snapshots
 
 

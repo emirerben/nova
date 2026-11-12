@@ -307,3 +307,120 @@ async def test_the_plan_feed_reports_the_same_can_undo_as_the_draft_after_an_app
         assert feed.draft is not None and feed.draft.can_undo is draft.can_undo
     finally:
         await async_engine.dispose()
+
+
+# --- 6. rows main wrote for a variant with only render_finished_at -------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_main_bootstrapped_head_of_a_finished_at_only_variant_keeps_mains_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The head ``main`` bootstraps for such a variant has column None and payload "".
+
+    main: the planner ignores it (payload "" is not the baseline), Draft PUT accepts it (column
+    None is the target's None) and the saved-draft attach accepts it (None equals the variant's
+    absent ``render_generation_id``). Each answer is unchanged here.
+    """
+    from app.kria.drafts import _variant as draft_variant
+    from app.services.editor_empty_drafts import attach_saved_editor_drafts
+    from app.services.kria_editor_ops import fresh_editor_head_payload
+
+    user_id, thread_id, item_id, job_id = _seed(_variant(None))
+    try:
+        async with AsyncSessionLocal() as db:
+            served = await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
+        with sync_session() as db:
+            row = db.get(CreatorEditDraft, served.draft_id)
+            snapshot = copy.deepcopy(row.snapshot_json)
+            snapshot["editor_payload"]["base_generation"] = ""
+            row.snapshot_json = snapshot
+            row.base_generation_id = None
+            job = db.get(Job, job_id, with_for_update=True)
+            plan = copy.deepcopy(job.assembly_plan)
+            plan["variants"][0].update(
+                editor_state_version=2, editor_draft={"draft_id": served.draft_id}
+            )
+            job.assembly_plan = plan
+            db.commit()
+
+        with sync_session() as db:
+            job, head = db.get(Job, job_id), db.get(CreatorEditDraft, served.draft_id)
+            variant = draft_variant(job, VARIANT)
+            assert fresh_editor_head_payload(head, variant, job) == {}, "planner: ignored"
+        async with AsyncSessionLocal() as db:
+            job = await db.get(Job, job_id)
+            await attach_saved_editor_drafts(db, job)
+            attached = job._saved_editor_drafts
+        assert VARIANT in attached, "attach: accepted"
+        async with AsyncSessionLocal() as db:
+            written = await write_draft(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                expected_revision=served.draft_revision,
+                expected_etag=served.etag,
+                snapshot=copy.deepcopy(served.snapshot) | {"changes": ["Phone edit"]},
+            )
+        assert written.draft_revision == served.draft_revision + 1, "PUT: accepted"
+    finally:
+        await async_engine.dispose()
+
+
+# --- 7. an unrelated stranded variant never fails the timeline read ------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_timeline_read_survives_another_variants_unbuildable_committed_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models import CreatorEditDraft as Draft
+    from tests.kria.test_editor_head_deploy_safety_postgres import _stranded_pinned
+
+    other = "song_text"
+    user_id, thread_id, item_id, job_id, staged = await _stranded_pinned(monkeypatch, empty=False)
+    try:
+        with sync_session() as db:
+            source = db.get(Draft, staged.draft_id)
+            twin = Draft(
+                creator_id=source.creator_id,
+                thread_id=source.thread_id,
+                item_id=source.item_id,
+                variant_key=other,
+                base_job_id=source.base_job_id,
+                base_generation_id=source.base_generation_id,
+                draft_revision=0,
+                snapshot_json=copy.deepcopy(source.snapshot_json),
+                snapshot_hash=source.snapshot_hash,
+                is_head=True,
+            )
+            db.add(twin)
+            db.flush()
+            job = db.get(Job, job_id, with_for_update=True)
+            plan = copy.deepcopy(job.assembly_plan)
+            second = copy.deepcopy(plan["variants"][0])
+            second.update(variant_id=other, editor_draft={"draft_id": str(twin.id)})
+            plan["variants"].append(second)
+            job.assembly_plan = plan
+            db.commit()
+
+        from app.services import editor_empty_drafts as module
+
+        real = module.committed_document
+
+        def broken_for_other(*, variant_key, **kwargs):  # noqa: ANN003, ANN202
+            if variant_key == other:
+                raise ValueError("cannot project this variant")
+            return real(variant_key=variant_key, **kwargs)
+
+        monkeypatch.setattr(module, "committed_document", broken_for_other)
+        base = f"/plan-items/{item_id}/variants"
+        async with _client_for(user_id) as client:
+            requested = await client.get(f"{base}/{VARIANT}/timeline")
+            assert requested.status_code == 200, "the other variant is skipped, as on main"
+            assert requested.json()["draft"] is not None
+            with pytest.raises(ValueError, match="cannot project"):
+                await client.get(f"{base}/{other}/timeline")  # its own failure is not hidden
+    finally:
+        _clear_user_override()
+        await async_engine.dispose()

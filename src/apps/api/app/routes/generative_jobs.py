@@ -14889,7 +14889,7 @@ async def get_variant_timeline(
     )
     from app.services.editor_empty_drafts import attach_saved_editor_drafts  # noqa: PLC0415
 
-    await attach_saved_editor_drafts(db, job, committed_fallback=True)
+    await attach_saved_editor_drafts(db, job, committed_fallback=True, requested_variant=variant_id)
     variant = _find_variant(job, variant_id)
     image_preview_paths = (
         await guided_timeline_image_preview_paths(db, job.content_plan_item_id)

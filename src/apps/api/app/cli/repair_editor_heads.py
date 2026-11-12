@@ -35,6 +35,7 @@ from app.database import sync_session
 from app.kria.drafts import KriaDraftDocument, committed_document
 from app.kria.editor_head import (
     insert_restage_row,
+    is_head_current,
     is_head_on_baseline,
     locked_head,
     payload_base,
@@ -46,14 +47,16 @@ from app.models import CreationThread, CreatorEditDraft, Job, PlanItem
 REASON = "repair_cli"
 DEFAULT_LIST_LIMIT = 50
 
-# Heads on an editor payload whose column or payload stamp is not the variant's baseline.
-# ``variants`` is guarded because an old or broken job may hold a non-array.
+# Heads on an editor payload that ``editor_head.is_head_current`` rejects: another job, or a column
+# or payload stamp that is neither the variant's baseline nor the generation its phone publish was
+# made from (``published_source_generation``). ``variants`` is guarded because an old or broken
+# job may hold a non-array.
 _STRANDED_SQL = text(
     """
     SELECT d.id, d.item_id, d.variant_key, d.base_job_id, j.id AS current_job,
            d.base_generation_id,
            d.snapshot_json->'editor_payload'->>'base_generation' AS payload_base,
-           COALESCE(NULLIF(v->>'render_generation_id', ''), v->>'render_finished_at') AS gen,
+           NULLIF(s.gen, '') AS gen,
            v->'editor_draft'->>'draft_id' AS pinned
     FROM creator_edit_drafts d
     JOIN plan_items i ON i.id = d.item_id
@@ -62,15 +65,27 @@ _STRANDED_SQL = text(
         CASE WHEN jsonb_typeof(j.assembly_plan->'variants') = 'array'
              THEN j.assembly_plan->'variants' ELSE '[]'::jsonb END
     ) v
+    CROSS JOIN LATERAL (
+        SELECT COALESCE(NULLIF(v->>'render_generation_id', ''), v->>'render_finished_at', '')
+                   AS gen,
+               CASE WHEN j.assembly_plan->'_device_render_v1'->d.variant_key->'status'->>'phase'
+                         = 'published'
+                     AND COALESCE(v->>'render_generation_id', '') <> ''
+                     AND j.assembly_plan->'_device_render_v1'->d.variant_key->>'published_attempt'
+                         = v->>'render_generation_id'
+                    THEN NULLIF(
+                        j.assembly_plan->'_device_render_v1'->d.variant_key->'status'
+                            ->>'base_generation', '')
+               END AS src
+    ) s
     WHERE d.is_head
       AND jsonb_typeof(d.snapshot_json->'editor_payload') = 'object'
       AND v->>'variant_id' = d.variant_key
-      AND (
-        d.base_job_id IS DISTINCT FROM j.id
-        OR COALESCE(d.base_generation_id, '') IS DISTINCT FROM
-           COALESCE(NULLIF(v->>'render_generation_id', ''), v->>'render_finished_at', '')
-        OR COALESCE(d.snapshot_json->'editor_payload'->>'base_generation', '') IS DISTINCT FROM
-           COALESCE(NULLIF(v->>'render_generation_id', ''), v->>'render_finished_at', '')
+      AND NOT (
+        d.base_job_id IS NOT DISTINCT FROM j.id
+        AND COALESCE(d.base_generation_id, '') IN (s.gen, COALESCE(s.src, s.gen))
+        AND COALESCE(d.snapshot_json->'editor_payload'->>'base_generation', '')
+            IN (s.gen, COALESCE(s.src, s.gen))
       )
     ORDER BY d.updated_at DESC
     LIMIT :limit
@@ -131,6 +146,7 @@ class HeadReport:
     pinned: str | None = None
     has_payload: bool = False
     on_baseline: bool = True
+    current: bool = False
     other_job: bool = False
     empty_state: bool = False
     flat_lanes: tuple[str, ...] = ()
@@ -140,7 +156,7 @@ class HeadReport:
         return (
             self.head_id is not None
             and self.has_payload
-            and not self.on_baseline
+            and not self.current
             and not self.empty_state
         )
 
@@ -183,6 +199,7 @@ def _report(db: Session, item: PlanItem, job: Job, variant: dict[str, Any]) -> H
         pinned=str(pinned) if pinned else None,
         has_payload=base is not None,
         on_baseline=is_head_on_baseline(job, variant, head),
+        current=is_head_current(job, variant, head),
         other_job=head.base_job_id != job.id,
         empty_state=variant.get("editor_state") == "empty",
         flat_lanes=tuple(flat_lane_names(payload)),
@@ -215,6 +232,8 @@ def _line(report: HeadReport) -> str:
         notes.append("no editor payload, not touched")
     if report.empty_state:
         notes.append("empty-state variant, not touched")
+    if report.current and not report.on_baseline:
+        notes.append("current (published source), not touched")
     suffix = f" ({'; '.join(notes)})" if notes else ""
     lines = [
         f"variant {report.variant_key} generation={report.generation or '-'}",
@@ -389,9 +408,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"variant {args.variant!r} not found on job {job.id}", file=sys.stderr)
             return 2
         if args.apply:
-            repaired = _print_item(
-                repair_item(db, args.item, args.variant, args.operation), args.operation
-            )
+            results = repair_item(db, args.item, args.variant, args.operation)
+            repaired = _print_item(results, args.operation)
+            if any(before.current and not before.on_baseline for before, _ in results):
+                db.rollback()
+                print(
+                    "refused: this head is current through the phone's published source; "
+                    "retiring it would drop edits that are still current",
+                    file=sys.stderr,
+                )
+                return 2
             db.commit()
             print(f"applied: {repaired} head(s) restaged" if repaired else "nothing to do")
         else:

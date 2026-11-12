@@ -28,6 +28,7 @@ from app.kria.editor_head import (
     MAX_RESTAGE_CHAIN,
     RESTAMP_REASONS,
     is_head_current,
+    is_unstamped_main_head,
     payload_base,
     restage_marker,
     variant_baseline,
@@ -654,6 +655,11 @@ def _current(target: DraftTarget, head: CreatorEditDraft) -> bool:
     return is_head_current(target.job, variant, head)
 
 
+def _unstamped_main_head(target: DraftTarget, head: CreatorEditDraft) -> bool:
+    variant = _variant(target.job, target.variant_key) if target.job is not None else None
+    return variant is not None and is_unstamped_main_head(target.job, variant, head)
+
+
 async def read_or_bootstrap_draft(
     db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
 ) -> DraftSnapshotOut:
@@ -700,7 +706,7 @@ async def write_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    if not _current(target, head):
+    if not _current(target, head) and not _unstamped_main_head(target, head):
         raise RuntimeFailure(
             409,
             "draft_base_stale",

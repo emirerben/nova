@@ -7079,7 +7079,7 @@ async def get_item_timeline(
         if variant and variant.get("resolved_archetype") == "guided_story"
         else {}
     )
-    await attach_saved_editor_drafts(db, job, committed_fallback=True)
+    await attach_saved_editor_drafts(db, job, committed_fallback=True, requested_variant=variant_id)
     return TimelineResponse(
         **dispatch_get_timeline(
             job,

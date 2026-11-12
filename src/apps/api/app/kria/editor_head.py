@@ -83,6 +83,21 @@ def is_head_current(job: Any, variant: dict[str, Any], head: CreatorEditDraft) -
     return base is None or base in bases
 
 
+def is_unstamped_main_head(job: Any, variant: dict[str, Any], head: CreatorEditDraft) -> bool:  # noqa: ANN401
+    """A head ``main`` wrote for a variant that has only ``render_finished_at``: column None.
+
+    ``main`` stamped such rows from ``render_generation_id`` alone, so the column is None and
+    the bootstrap payload is "". Its Draft PUT and saved-draft attach compared that column with
+    the variant's absent ``render_generation_id`` and accepted the row. The planner and the
+    ``head_current`` flag stay on ``is_head_current``, which ignores it, as ``main``'s did.
+    """
+    return (
+        head.base_job_id == job.id
+        and head.base_generation_id is None
+        and not variant.get("render_generation_id")
+    )
+
+
 def is_head_on_baseline(job: Any, variant: dict[str, Any], head: CreatorEditDraft) -> bool:  # noqa: ANN401
     """Stricter than ``is_head_current``: both stamps equal the baseline itself."""
     baseline = variant_baseline(variant)
