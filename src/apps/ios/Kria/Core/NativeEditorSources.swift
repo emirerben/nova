@@ -136,7 +136,7 @@ struct NativeEditorBaseSource: Sendable {
     }
 
     func hydrate(_ document: EditorDocument, duration: Double) throws -> EditorDocument {
-        guard duration.isFinite, duration > 0, document.revision.baseGeneration == generation else { throw APIError.conflict }
+        guard duration.isFinite, duration > 0, document.revision.baseGeneration == generation else { throw APIError.baselineConflict }
         guard document.editorState != "empty" else { return document }
         guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
         var result = document
@@ -835,7 +835,7 @@ actor NativeEditorSourceResolver {
     }
 
     func resolve(_ pool: NativeEditorSourcePool, generation: String, requiredIndices: Set<Int>? = nil) async throws -> [Int: ResolvedEditorSource] {
-        guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.conflict }
+        guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.baselineConflict }
         guard Set(pool.clips.map(\.clipIndex)).count == pool.clips.count else { throw APIError.invalidResponse }
         var result: [Int: ResolvedEditorSource] = [:]
         let required = requiredIndices ?? Set(pool.clips.map(\.clipIndex))

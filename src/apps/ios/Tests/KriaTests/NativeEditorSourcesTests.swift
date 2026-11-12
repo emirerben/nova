@@ -628,7 +628,7 @@ final class NativeEditorSourcesTests: XCTestCase {
         let error = NSError(domain: NSURLErrorDomain, code: -1, userInfo: [NSURLErrorFailingURLErrorKey: url])
         XCTAssertFalse(NativeEditorSession.sourcePreviewMessage(for: error).contains("token"))
         // KRI-935: a newer version is loaded for the creator; the copy never tells them to close and reopen.
-        let conflict = NativeEditorSession.sourcePreviewMessage(for: APIError.conflict)
+        let conflict = NativeEditorSession.sourcePreviewMessage(for: APIError.baselineConflict)
         XCTAssertFalse(conflict.localizedCaseInsensitiveContains("reopen"))
         XCTAssertTrue(conflict.contains("Retry"))
     }

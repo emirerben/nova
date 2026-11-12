@@ -530,7 +530,7 @@ enum EditorOpenIntent { case warm, open }
         guard let marker = variant["saved_user_song"]?.objectValue,
               let job, let variantKey, marker["job_id"]?.stringValue.flatMap(UUID.init(uuidString:)) == job,
               marker["variant_id"] == .string(variantKey), variant["variant_id"] == .string(variantKey),
-              let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue,
+              case let generation = variantBaseline(variant),
               !generation.isEmpty, marker["generation"] == .string(generation),
               case let .number(revision)? = marker["revision_number"], revision.isFinite,
               revision >= 1, revision.rounded() == revision,
@@ -2457,15 +2457,15 @@ enum EditorOpenIntent { case warm, open }
     /// baseline was built from. Documents cannot be compared directly: each
     /// fetch mints fresh placeholder asset ids for slots that lack one.
     private func variantUnchanged(_ variant: [String: JSONValue]?) -> Bool {
-        guard let generation = variant?["render_generation_id"]?.stringValue, !generation.isEmpty else { return false }
-        return generation == cleanDocument.revision.baseGeneration
+        let generation = variantBaseline(variant)
+        return !generation.isEmpty && generation == cleanDocument.revision.baseGeneration
     }
 
     /// The chat draft's staged lanes as a document, or nil when the draft is
     /// stale/absent/already applied (see `DraftSnapshot.stagedChatEdit`).
     private func stagedChatDocument(snapshot: DraftSnapshot, draft: EditorDraft, variant: [String: JSONValue]?) -> (document: EditorDocument, sections: Set<EditorSection>)? {
         let edit = snapshot.stagedChatEdit(over: Self.snapshotPreservingClipMetadata(draft), variant: variant, appliedRevision: appliedChatDraftRevision)
-        Self.stagingLog.debug("draft received rev=\(snapshot.draftRevision, privacy: .public) applied=\(self.appliedChatDraftRevision ?? -1, privacy: .public) gen=\(variant?["render_generation_id"]?.stringValue ?? "-", privacy: .public) staged=\(edit.map { $0.sections.map(\.rawValue).sorted().joined(separator: ",") } ?? "skipped", privacy: .public)")
+        Self.stagingLog.debug("draft received rev=\(snapshot.draftRevision, privacy: .public) applied=\(self.appliedChatDraftRevision ?? -1, privacy: .public) gen=\(variantBaseline(variant), privacy: .public) staged=\(edit.map { $0.sections.map(\.rawValue).sorted().joined(separator: ",") } ?? "skipped", privacy: .public)")
         guard let edit else { return nil }
         var value = EditorDocument(snapshot: edit.snapshot)
         value.revision.number = draft.revision
@@ -2562,8 +2562,7 @@ enum EditorOpenIntent { case warm, open }
                 snapshot = DraftSnapshot(
                     draftID: "job-\(targetJob.uuidString)", itemID: targetItem, variantKey: targetVariant,
                     draftRevision: 0, snapshotHash: "", etag: "", baseJobID: targetJob.uuidString,
-                    baseGenerationID: current["render_generation_id"]?.stringValue
-                        ?? current["render_finished_at"]?.stringValue ?? "",
+                    baseGenerationID: variantBaseline(current),
                     snapshot: [:], canUndo: false, createdAt: .now)
             } else {
                 snapshot = try await api.draft(threadID: threadID)
@@ -3311,13 +3310,13 @@ enum EditorOpenIntent { case warm, open }
                 guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
                       threadID == ticket.threadID, editorOperationIdentity == identity, !isSaving, activeSaveAttemptID == nil,
                       await settledForConverge(ticket, identity: identity) else { return }
-                let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
+                let generation = variantBaseline(variant)
                 let snapshot = DraftSnapshot(draftID: "latest-\(target.uuidString)", itemID: item, variantKey: variantID,
                     draftRevision: 0, snapshotHash: "", etag: "", baseJobID: target.uuidString,
                     baseGenerationID: generation, snapshot: [:], canUndo: false, createdAt: .now)
                 let draft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
                 var clean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
-                clean.revision.baseGeneration = generation ?? ""
+                clean.revision.baseGeneration = generation
                 latestJobGate.finish(ticket)
                 newerJobPrompt = nil
                 applyConverged(ConvergeTarget(base: cleanDocument, clean: clean, latest: clean, variant: variant,
@@ -3564,9 +3563,7 @@ enum EditorOpenIntent { case warm, open }
             }
             guard editorLoadEpoch == epoch else { return }
             let variant = resolved.variant
-            let generation = variant["render_generation_id"]?.stringValue
-                ?? variant["render_finished_at"]?.stringValue
-                ?? ""
+            let generation = variantBaseline(variant)
             let snapshot = DraftSnapshot(
                 draftID: "job-\(editorJobID.uuidString)",
                 itemID: resolvedPlanItemID,
@@ -3718,7 +3715,7 @@ enum EditorOpenIntent { case warm, open }
                 message = RequestFailureCause(error) == .connection
                     ? "Waiting for a connection. The editor opens on its own when you’re back online."
                     : "Kria is taking a moment. Trying again…"
-            case .readConflict where apiError != .contentPlanUnavailable && apiError?.conflictCode == nil:
+            case .readConflict where apiError != .contentPlanUnavailable && (apiError?.conflictCode == nil || apiError?.isBaselineConflict == true):
                 delays = loadRetryDelays; limit = 2
                 message = "Loading the latest cut…"
             default:
@@ -4097,8 +4094,10 @@ enum EditorOpenIntent { case warm, open }
 
     static func sourcePreviewMessage(for error: Error) -> String {
         switch error {
-        case APIError.conflict:
+        case let conflict as APIError where conflict.isBaselineConflict:
             return "This video changed while it was loading. Retry to load the newest version."
+        case APIError.conflict:
+            return "A source video or edit asset could not be loaded. Retry in a moment."
         case APIError.sessionExpired:
             return "Sign in again to load the source videos."
         case NativeEditorRenderError.missingSpeechCaptionTiming:
@@ -4170,15 +4169,14 @@ enum EditorOpenIntent { case warm, open }
                 // Older timeline responses omit the baseline. Re-read the owned
                 // variant before accepting its immutable source URLs.
                 let current = try await api.editorVariant(jobID: jobID, variantID: variantKey)
-                let currentGeneration = current["render_generation_id"]?.stringValue
-                    ?? current["render_finished_at"]?.stringValue ?? ""
-                guard !generation.isEmpty, currentGeneration == generation else { throw APIError.conflict }
+                let currentGeneration = variantBaseline(current)
+                guard !generation.isEmpty, currentGeneration == generation else { throw APIError.baselineConflict }
                 pool = NativeEditorSourcePool(clips: pool.clips, baseGeneration: generation, nativeAssets: pool.nativeAssets)
             }
             guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
             let resolver = sourceResolver ?? NativeEditorSourceResolver(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID), jobID: jobID)
             sourceResolver = resolver
-            guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.conflict }
+            guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.baselineConflict }
             originalsRecoveryPool = pool
             let sources: [Int: ResolvedEditorSource]
             var phoneTalkingIndices: [Int]?
@@ -8853,10 +8851,15 @@ enum EditorOpenIntent { case warm, open }
                 pendingRenderRetrySections = acknowledged
                 saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
-        } catch APIError.conflict {
+        } catch let error as APIError where error.isBaselineConflict {
             guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             // `save()` loads the newer version and sends this edit again.
             saveHitNewerVersion = true
+        } catch let error as APIError where error == .conflict {
+            // Any other 409/412 (`TIMELINE_STALE`, `editor_draft_unavailable`, ...) says nothing about a newer version,
+            // so there is nothing to reload: the creator's edits stay and Save stays available.
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            saveState = .failed(EditorSaveError.refusal(forConflictCode: error.conflictCode ?? error.conflictDetail).localizedDescription)
         } catch EditorSaveError.userSongUnavailable where submittedDocument.userSong?.removed == true {
             // The song is already gone on the server (an earlier removal reached it): that is what the
             // creator asked for. Fold the removal in locally and carry on with whatever else is pending.
@@ -8921,9 +8924,8 @@ enum EditorOpenIntent { case warm, open }
         do {
             let variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
             guard editorOperationIdentity == identity else { return .superseded }
-            let generation = variant["render_generation_id"]?.stringValue
-                ?? variant["render_finished_at"]?.stringValue
-                ?? document.revision.baseGeneration
+            let latestBaseline = variantBaseline(variant)
+            let generation = latestBaseline.isEmpty ? document.revision.baseGeneration : latestBaseline
             if fencingPreviewConflict {
                 guard previewConflictReloadGeneration != generation else { return .alreadyTried }
                 previewConflictReloadGeneration = generation
@@ -10152,7 +10154,7 @@ enum EditorOpenIntent { case warm, open }
     /// close and reopen the editor. Fenced to one reload per server generation.
     private func reloadLatestAfterPreviewConflict(_ error: Error) -> Bool {
         // A save whose render is still pending owns the next generation; its preview refresh follows it.
-        guard (error as? APIError) == .conflict, api != nil, let jobID, variantKey != nil,
+        guard (error as? APIError)?.isBaselineConflict == true, api != nil, let jobID, variantKey != nil,
               activeSaveAttemptID == nil, pendingPreviewGeneration == nil else { return false }
         sourcePreviewState = .preparing
         NativePreviewDiagnostics.record("source-preview-conflict-reload")
@@ -10631,7 +10633,7 @@ enum EditorOpenIntent { case warm, open }
         let serverOverlay = variant.flatMap { Self.serverSavedSongOverlay(for: $0, job: jobID, variantKey: songVariantKey ?? variantKey) }
         let overlay = serverOverlay ?? variant.flatMap { savedSongOverlay(for: $0, thread: threadID, job: jobID,
             item: itemID, variantKey: variantKey,
-            generation: $0["render_generation_id"]?.stringValue ?? $0["render_finished_at"]?.stringValue ?? "") }
+            generation: variantBaseline($0)) }
         previewVariant = variant ?? [:]
         acknowledgedUserSong = overlay
         if serverOverlay != nil || overlay == nil { savedSongProjectionLag = nil }
@@ -10812,7 +10814,7 @@ enum EditorOpenIntent { case warm, open }
                 // device retry affordance without doing a full reconcile on
                 // every poll tick. A reconcile skipped for unreadable
                 // capabilities is retried here too.
-                let variantGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
+                let variantGeneration = variantBaseline(variant)
                 let refreshDevice = self.deviceRenderKey != nil && (
                     self.deviceReconcilePending
                     || variant["render_status"]?.stringValue == "needs_attention"
@@ -10828,7 +10830,7 @@ enum EditorOpenIntent { case warm, open }
                 // for this generation can never end, so follow the newer one once it reads the same
                 // twice (the fresh reconcile above has had its chance to match the fence).
                 guard variant["render_status"]?.stringValue == "ready",
-                      let current = variant["render_generation_id"]?.stringValue, !current.isEmpty,
+                      case let current = variantBaseline(variant), !current.isEmpty,
                       current != generation, current != savedFrom else {
                     newerGeneration = nil; newerSightings = 0
                     continue
@@ -10867,8 +10869,8 @@ enum EditorOpenIntent { case warm, open }
     func applyPreviewVariant(_ variant: [String: JSONValue], generation: String) -> Bool {
         guard pendingPreviewGeneration == generation else { return false }
         if surfaceDeviceRenderFailure() { return true }
-        let currentGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
-        guard let currentGeneration else { return false }
+        let currentGeneration = variantBaseline(variant)
+        guard !currentGeneration.isEmpty else { return false }
         if currentGeneration != generation {
             guard let key = deviceRenderKey,
                   variant["render_status"]?.stringValue == "ready",
@@ -10936,8 +10938,7 @@ enum EditorOpenIntent { case warm, open }
         expectedDocumentGeneration: String? = nil,
         songWindowStartS: Double? = nil
     ) -> Bool {
-        guard let returnedGeneration = variant["render_generation_id"]?.stringValue
-                ?? variant["render_finished_at"]?.stringValue,
+        guard case let returnedGeneration = variantBaseline(variant), !returnedGeneration.isEmpty,
               returnedGeneration == generation,
               expectedDocumentGeneration == nil || document.revision.baseGeneration == expectedDocumentGeneration,
               itemID == expectedItemID,
@@ -11062,9 +11063,7 @@ enum EditorOpenIntent { case warm, open }
     @discardableResult
     func rebaseCleanDraft(from variant: [String: JSONValue]) -> Bool {
         guard !hasUnsavedChanges, let itemID, let variantKey else { return false }
-        let generation = variant["render_generation_id"]?.stringValue
-            ?? variant["render_finished_at"]?.stringValue
-            ?? ""
+        let generation = variantBaseline(variant)
         let snapshot = DraftSnapshot(
             draftID: "rendered-\(projectID.uuidString)",
             itemID: itemID,

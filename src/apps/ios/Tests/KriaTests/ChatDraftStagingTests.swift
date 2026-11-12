@@ -2230,4 +2230,63 @@ extension ChatDraftStagingTests {
         guard case let .previewFailed(message) = session.saveState else { return }
         XCTAssertFalse(message.contains("changed elsewhere"), message)
     }
+    // MARK: - One definition of the variant's current generation (B4)
+
+    /// A variant that never went through the editor has no `render_generation_id`; its baseline is `render_finished_at`.
+    private static func finishTimeOnlyVariant(_ finishedAt: String = "2026-09-10T10:00:00Z") -> [String: JSONValue] {
+        var value = variant()
+        value["render_generation_id"] = nil
+        value["render_finished_at"] = .string(finishedAt)
+        return value
+    }
+
+    private func stage(base: String, headCurrent: Bool?, variant: [String: JSONValue]) -> DraftSnapshot.StagedChatEdit? {
+        var head = Self.chatSnapshot(base: base, shape: .flatOnly)
+        head.headCurrent = headCurrent
+        let input = Self.bootstrapSnapshot().editorDraft(projectID: UUID(), authoritativeVariant: variant).serverSnapshot
+        return head.stagedChatEdit(over: input, variant: variant, appliedRevision: nil)
+    }
+
+    func testHeadBasedOnTheVariantsFinishTimeIsStaged() {
+        let finished = "2026-09-10T10:00:00Z"
+        XCTAssertNotNil(stage(base: finished, headCurrent: nil, variant: Self.finishTimeOnlyVariant(finished)),
+                        "the finish time is the baseline when there is no generation id")
+    }
+
+    func testHeadMarkedCurrentByTheServerIsAcceptedWhateverItsBase() {
+        XCTAssertNotNil(stage(base: "source-generation", headCurrent: true, variant: Self.variant(generation: "upload-attempt")),
+                        "a head the server certified is never dropped by a phone-side re-derivation")
+    }
+
+    func testHeadWithoutTheFlagOrMarkedStaleIsStillComparedAgainstTheBaseline() {
+        XCTAssertNil(stage(base: "old", headCurrent: nil, variant: Self.variant(generation: "new")), "older server, stale head")
+        XCTAssertNil(stage(base: "old", headCurrent: false, variant: Self.variant(generation: "new")), "server says not current")
+        XCTAssertNotNil(stage(base: "same", headCurrent: false, variant: Self.variant(generation: "same")),
+                        "not-current does not veto a head whose base matches the baseline")
+    }
+
+    func testDraftSnapshotDecodesTheServersHeadCurrentFields() throws {
+        func decode(_ extra: String) throws -> DraftSnapshot {
+            let json = """
+            {"draft_id":"d","item_id":"i","variant_key":"v","draft_revision":1,"snapshot_hash":"h","etag":"e",
+             "base_job_id":null,"base_generation_id":"g","snapshot":{},"can_undo":false,"created_at":"2026-09-10T10:00:00Z"\(extra)}
+            """
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(DraftSnapshot.self, from: Data(json.utf8))
+        }
+        let current = try decode(#","head_current":true,"base_generation":"g2""#)
+        XCTAssertEqual(current.headCurrent, true)
+        XCTAssertEqual(current.baseGeneration, "g2")
+        let older = try decode("")
+        XCTAssertNil(older.headCurrent, "an older server omits the field")
+        XCTAssertNil(older.baseGeneration)
+    }
+
+    func testVariantBaselineFollowsTheServersRule() {
+        XCTAssertEqual(variantBaseline(["render_generation_id": .string("g"), "render_finished_at": .string("t")]), "g")
+        XCTAssertEqual(variantBaseline(["render_generation_id": .string(""), "render_finished_at": .string("t")]), "t")
+        XCTAssertEqual(variantBaseline(["render_finished_at": .string("t")]), "t")
+        XCTAssertEqual(variantBaseline([:]), "")
+        XCTAssertEqual(variantBaseline(nil), "")
+    }
 }

@@ -760,7 +760,7 @@ final class NativeEditorSessionTests: XCTestCase {
         // returning the original song would represent a conflicting remote restoration.
         fake.authoritativeVariant?["user_song"] = nil
         fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-3",
             sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
             revisionNumber: 3, revisionHash: "h", expectedDuration: nil)
@@ -784,7 +784,7 @@ final class NativeEditorSessionTests: XCTestCase {
         // to the new generation's song authority.
         fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
         XCTAssertEqual(fake.authoritativeVariant?["user_song"], originalSongMetadata)
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         await session.save()
         let adopted = session.document
         XCTAssertEqual(adopted.revision.baseGeneration, "generation-2")
@@ -809,7 +809,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
         fake.authoritativeVariant?["editor_revision_number"] = .number(2)
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
             sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
             revisionNumber: 2, revisionHash: "saved", expectedDuration: nil,
@@ -7727,7 +7727,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 "render_generation_id": .string("g1"), "editor_capabilities": .object(["timeline": .bool(true)]),
                 "user_timeline": .object(["slots": .array([.object(["slot_id": .string(clipID.uuidString),
                     "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])],
-            commitError: .conflict
+            commitError: .baselineConflict
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)
@@ -7746,6 +7746,43 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.selectedClipID, selected)
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertTrue(session.canUndo)
+    }
+
+    /// Only `baseline_conflict` means a newer version exists. Any other 409 is an ordinary refused Save: no reload,
+    /// no resend, the creator's edit stays and Save stays available.
+    func testSaveRefusedWithANonBaselineConflictNeverReloadsOrResends() async {
+        for code in ["TIMELINE_STALE", "editor_draft_unavailable", "variant_initial_render_in_progress",
+                     "deletion_target_stale", "editor_source_catalog_invalid"] {
+            let threadID = UUID()
+            let clipID = UUID()
+            let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clipID.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])])]
+            let fake = EditorCommitSpy(
+                draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+                authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+                    "render_generation_id": .string("g1"), "editor_capabilities": .object(["timeline": .bool(true)]),
+                    "user_timeline": .object(["slots": .array([.object(["slot_id": .string(clipID.uuidString),
+                        "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])],
+                commitError: APIError.conflict(detail: ConflictDetail(code, code: code))
+            )
+            let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+            await session.load(api: fake, threadID: threadID)
+            let selected = try! XCTUnwrap(session.timelineClips.first?.id)
+            session.selectClip(selected)
+            session.trimSelected(edge: .trailing, to: 1.5)
+            let editedDocument = session.document
+            let variantReadsBeforeSave = fake.editorVariantCalls
+
+            await session.save()
+
+            XCTAssertEqual(fake.commitCount, 1, "\(code): sent once, never resent after a reload")
+            XCTAssertEqual(fake.editorVariantCalls, variantReadsBeforeSave, "\(code): nothing reloads")
+            guard case .failed(let message) = session.saveState else { return XCTFail("\(code): expected a Save failure, got \(session.saveState)") }
+            XCTAssertTrue(message.contains("Your edits are still here"), "\(code): \(message)")
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("changed"), "\(code): \(message)")
+            XCTAssertEqual(session.document, editedDocument, "\(code): the creator's edit is untouched")
+            XCTAssertTrue(session.hasUnsavedChanges, code)
+            XCTAssertNil(session.convergeNotice, code)
+        }
     }
 
     /// A remote interval change and local wording change merge before the one automatic resend.
@@ -7802,7 +7839,7 @@ final class NativeEditorSessionTests: XCTestCase {
 
         // Someone else saved g2; the server refuses this Save once as stale.
         fake.authoritativeVariant = latestVariant
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
         if queueLatestDuringConflict {
             fake.suspendNextEditorVariant = true
@@ -7896,7 +7933,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1",
                 snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
-        fake.sourcePoolError = .conflict
+        fake.sourcePoolError = .baselineConflict
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: threadID)
 
@@ -7932,7 +7969,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
             draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
             snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
-        fake.sourcePoolError = .conflict
+        fake.sourcePoolError = .baselineConflict
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: thread)
         let initialFailure = await waitUntil(timeout: .seconds(3)) { session.sourcePreviewState.isFailure }
@@ -7962,7 +7999,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: variant)
         fake.editorVariantScript = [.success(variant)]
         fake.editorVariantThrow = CancellationError()
-        fake.sourcePoolError = .conflict
+        fake.sourcePoolError = .baselineConflict
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: threadID)
         let stopped = await waitUntil(timeout: .seconds(5)) {

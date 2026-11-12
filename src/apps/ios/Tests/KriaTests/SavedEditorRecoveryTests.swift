@@ -246,7 +246,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
         newer["render_generation_id"] = .string("newer-generation")
         newer.removeValue(forKey: "editor_draft")
         fake.authoritativeVariant = newer
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         return (session, fake, newer)
     }
 
@@ -342,7 +342,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
         guard case .failed = session.saveState else { return XCTFail("reload failure is not a saved result") }
         XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
         fake.editorVariantError = nil
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         await session.retryRender()
         XCTAssertEqual(fake.commitCount, 2, "the explicit retry cannot automatically resubmit after reloading")
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
@@ -363,7 +363,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
             XCTAssertFalse(session.hasUnsavedChanges)
             guard case .failed = session.saveState else { return XCTFail("unknown outcome cannot claim success") }
             XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
-            fake.commitThrow = nil; fake.commitErrorQueue = [.conflict]
+            fake.commitThrow = nil; fake.commitErrorQueue = [.baselineConflict]
             await session.retryRender()
             XCTAssertEqual(fake.commitCount, 2)
             XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
@@ -418,7 +418,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
             XCTAssertFalse(session.isSaving)
             guard case .failed = session.saveState else { XCTFail("same-editor cancellation needs a terminal failure"); continue }
             XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
-            fake.editorVariantThrow = nil; fake.commitErrorQueue = [.conflict]
+            fake.editorVariantThrow = nil; fake.commitErrorQueue = [.baselineConflict]
             await session.retryRender()
             XCTAssertEqual(fake.commitCount, 2)
             if dirty {
@@ -679,7 +679,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
     func testDeferredConflictReloadCannotAdoptReplacementLifetime() async throws {
         let t = try thread()
         let old = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
-        old.sourcePoolError = .conflict
+        old.sourcePoolError = .baselineConflict
         let session = NativeEditorSession(project: t.summary)
         await session.load(api: old, threadID: threadID, variantID: "guided_story")
         let oldReads = old.editorVariantJobIDs.count
