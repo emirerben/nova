@@ -934,7 +934,10 @@ async def test_undo_all_with_render_restores_every_updated_section_and_plain_und
             plain, successor = await undo_draft(
                 db, thread_id=thread_id, creator_id=user_id, expected_revision=head["rev"]
             )
-        assert successor is None and plain.snapshot == parent["snap"]
+        # The parent predates generation-3, so undo lands it on the current generation.
+        restored_parent = copy.deepcopy(parent["snap"])
+        restored_parent["editor_payload"]["base_generation"] = "generation-3"
+        assert successor is None and plain.snapshot == restored_parent
         with sync_session() as db:
             turns_after = len(
                 db.execute(select(CreatorAgentTurn).where(CreatorAgentTurn.thread_id == thread_id))

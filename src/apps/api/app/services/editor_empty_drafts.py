@@ -24,8 +24,8 @@ from app.kria.drafts import (
     editor_variant_target,
     stage_editor_variant_draft,
 )
+from app.kria.editor_head import is_head_current
 from app.models import CreatorEditDraft, Job, PlanItem
-from app.services.device_render import published_source_generation
 from app.services.phone_editor import _StagedJob
 
 _DIRECT_SECTIONS = (
@@ -107,13 +107,6 @@ def _reference(variant: dict[str, Any]) -> uuid.UUID | None:
         return None
 
 
-def _same_saved_generation(job: Job, variant: dict[str, Any], generation: str | None) -> bool:
-    """A phone-published export is the same saved document as the generation it rendered."""
-    if generation == variant.get("render_generation_id"):
-        return True
-    return generation is not None and generation == published_source_generation(job, variant)
-
-
 async def attach_saved_editor_drafts(db: AsyncSession, job: Job | None) -> None:
     """Load pinned snapshots once; never overwrite ORM variant JSON on a read."""
     if job is None:
@@ -145,11 +138,13 @@ async def attach_saved_editor_drafts(db: AsyncSession, job: Job | None) -> None:
         if (
             variant is None
             or str(row.variant_key) != str(variant.get("variant_id"))
-            or not _same_saved_generation(job, variant, row.base_generation_id)
+            or not is_head_current(job, variant, row)
             or row.snapshot_json is None
         ):
             continue
-        snapshots[str(row.variant_key)] = _out(row, can_undo=row.parent_draft_id is not None)
+        snapshots[str(row.variant_key)] = _out(
+            row, can_undo=row.parent_draft_id is not None, head_current=True
+        )
     job._saved_editor_drafts = snapshots
 
 

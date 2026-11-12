@@ -74,3 +74,24 @@ get their end-to-end proof in the call-site units.
 17. **WIRING: speech cut changes the timeline.** The cut rewrites slots, so overlaying
     a head's old `timeline_slots` would undo it; unit A4 must restage with the lanes
     the cut did not touch.
+
+Found while wiring unit A2 (observable behaviour in the same test file):
+
+18. **Draft writers stamp `render_generation_id` only.** `_target` and
+    `editor_variant_target` stamped `None` on a variant that has only
+    `render_finished_at`, so its head was never on the baseline and would be restaged on
+    every read. Fixed at the source: both stamp `variant_render_baseline`. Test: finished-at only.
+19. **Variant that never finished a render.** Baseline is `""`; heads carry the empty
+    stamp and are current. A read must not insert a row. Test: never finished.
+20. **Heal before the If-Match check turns every stranded write into `draft_stale`.** The
+    precondition is checked against the head the client saw, then the head is moved, then
+    the write applies. Test: write onto stranded head; stale revision still `draft_stale`.
+21. **Undo restores a parent built on an older generation.** The restored body is rebased
+    (same-job lanes kept) so the new head is exactly current, instead of restaging a
+    second row after the undo row. Test: undo of a head on an old generation.
+22. **Job locked from a stale ORM copy.** The job lock must refresh the loaded job and the
+    baseline, or a generation committed between target load and lock is missed. Test:
+    lock re-reads.
+23. **Chat planner reads the head through the same predicate.** `fresh_editor_head_payload`
+    is now job-aware and requires column and payload to agree, so a head that GET /draft has
+    not yet healed is treated as no head by a chat turn (unit A7 closes this).

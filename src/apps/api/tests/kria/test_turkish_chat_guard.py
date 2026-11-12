@@ -249,7 +249,7 @@ async def test_undo_says_what_it_restored_in_turkish(
     monkeypatch.setattr(drafts, "_head", _head)
     monkeypatch.setattr(drafts, "_insert_revision", _insert)
     monkeypatch.setattr(drafts, "_owned_thread", _owned)
-    monkeypatch.setattr(drafts, "_out", lambda row, can_undo: row)
+    monkeypatch.setattr(drafts, "_out", lambda row, can_undo, **_kw: row)
     monkeypatch.setattr(drafts, "_promote_queued_successor", _successor)
     # pending approvals (none), the parent draft, the approvals to cancel (none).
     db = _AsyncDb(None, parent, None)

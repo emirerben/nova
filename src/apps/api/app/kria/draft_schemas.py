@@ -18,3 +18,7 @@ class DraftSnapshotOut(BaseModel):
     snapshot: dict[str, Any]
     can_undo: bool
     created_at: datetime
+    # Additive: old clients ignore them. ``base_generation`` is the generation the head's
+    # editor payload is built on after healing; ``head_current`` says it is the variant's.
+    head_current: bool = True
+    base_generation: str | None = None

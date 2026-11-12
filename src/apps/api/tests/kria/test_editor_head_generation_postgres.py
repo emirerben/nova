@@ -159,6 +159,23 @@ async def _stage_ai_edit(user_id, thread_id, text: str = "AI hook"):  # noqa: AN
         )
 
 
+async def _stage_ai_edit_over(user_id, thread_id, text: str):  # noqa: ANN001, ANN202
+    """A second chat edit on top of the current head."""
+    async with AsyncSessionLocal() as db:
+        head = await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
+    payload = copy.deepcopy(head.snapshot["editor_payload"])
+    payload["sections"]["text_elements"][0]["text"] = text
+    async with AsyncSessionLocal() as db:
+        return await write_draft(
+            db,
+            thread_id=thread_id,
+            creator_id=user_id,
+            expected_revision=head.draft_revision,
+            expected_etag=head.etag,
+            snapshot={**head.snapshot, "editor_payload": payload, "changes": ["Second edit"]},
+        )
+
+
 def _restage(  # noqa: ANN202
     item_id,  # noqa: ANN001
     job_id,  # noqa: ANN001
@@ -389,7 +406,7 @@ async def test_pinned_editor_draft_on_a_v2_variant_follows_the_restaged_head() -
 
 
 @pytest.mark.asyncio
-async def test_undo_after_a_restage_leaves_a_head_that_is_not_current_until_restaged() -> None:
+async def test_undo_after_a_restage_leaves_a_head_that_is_exactly_current() -> None:
     user_id, thread_id, item_id, job_id = _seed()
     try:
         await _stage_ai_edit(user_id, thread_id, "AI hook")
@@ -404,15 +421,34 @@ async def test_undo_after_a_restage_leaves_a_head_that_is_not_current_until_rest
 
         head = _head(item_id)
         assert head["id"] == uuid.UUID(undone.draft_id)
-        # undo stamps the current column base over the parent's old payload base.
-        assert head["col"] == "generation-2" and head["payload_base"] == "generation-1"
-        assert not _current(item_id, job_id)
-
-        _restage(item_id, job_id, user_id, contained=False, reason="undo")
-
-        healed = _head(item_id)
-        assert healed["col"] == healed["payload_base"] == "generation-2"
+        assert head["col"] == head["payload_base"] == "generation-2"
         assert _current(item_id, job_id)
+        assert undone.head_current is True and undone.base_generation == "generation-2"
+        assert _text(head) == "AI hook", (
+            "undo restores the parent's lanes on the current generation"
+        )
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_undo_of_a_head_on_an_old_generation_still_lands_current() -> None:
+    user_id, thread_id, item_id, job_id = _seed()
+    try:
+        await _stage_ai_edit(user_id, thread_id, "AI hook")
+        second = await _stage_ai_edit_over(user_id, thread_id, "Second hook")
+        _update_variant(job_id, render_generation_id="generation-2")
+
+        async with AsyncSessionLocal() as db:
+            undone, _ = await undo_draft(
+                db, thread_id=thread_id, creator_id=user_id, expected_revision=second.draft_revision
+            )
+
+        head = _head(item_id)
+        assert head["col"] == head["payload_base"] == "generation-2"
+        assert _current(item_id, job_id)
+        assert undone.head_current is True
+        assert _text(head) == "AI hook"
     finally:
         await async_engine.dispose()
 
@@ -448,18 +484,40 @@ async def test_a_head_is_current_only_when_column_and_payload_bases_both_are() -
 
 
 @pytest.mark.asyncio
-async def test_variant_without_a_generation_id_restages_onto_its_render_finished_at() -> None:
+async def test_variant_with_only_render_finished_at_is_stamped_and_restaged_on_it() -> None:
     user_id, thread_id, item_id, job_id = _seed(_variant(None))
     try:
         await _stage_ai_edit(user_id, thread_id, "AI hook")
-        assert _head(item_id)["col"] is None
+        head = _head(item_id)
+        assert head["col"] == head["payload_base"] == "2026-09-07T08:00:00Z"
+        assert _current(item_id, job_id)
 
+        _update_variant(job_id, render_finished_at="2026-09-07T09:00:00Z")
+        assert not _current(item_id, job_id)
         _restage(item_id, job_id, user_id, contained=False, reason="baseline")
 
         head = _head(item_id)
-        assert head["col"] == head["payload_base"] == "2026-09-07T08:00:00Z"
+        assert head["col"] == head["payload_base"] == "2026-09-07T09:00:00Z"
         assert _text(head) == "AI hook"
         assert _current(item_id, job_id)
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_variant_that_never_finished_a_render_has_a_current_head_and_no_heal_rows() -> None:
+    variant = _variant(None)
+    variant.pop("render_finished_at")
+    user_id, thread_id, item_id, job_id = _seed(variant)
+    try:
+        async with AsyncSessionLocal() as db:
+            first = await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
+        async with AsyncSessionLocal() as db:
+            again = await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
+        assert first.draft_id == again.draft_id
+        assert again.head_current is True and again.base_generation == ""
+        assert _current(item_id, job_id)
+        assert len(_rows(item_id)) == 1
     finally:
         await async_engine.dispose()
 
@@ -593,6 +651,132 @@ async def test_async_twin_restages_exactly_like_the_sync_function() -> None:
         assert head["col"] == head["payload_base"] == "generation-2"
         assert await run() is None
         assert len(_rows(item_id)) == 3
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reading_a_stranded_head_serves_a_current_head_with_the_ai_lanes_intact() -> None:
+    user_id, thread_id, item_id, job_id = _seed()
+    try:
+        staged = await _stage_ai_edit(user_id, thread_id, "AI hook")
+        assert staged.head_current is True
+        _update_variant(
+            job_id,
+            render_generation_id="generation-legacy",
+            text_elements=[{**HOOK, "text": "Dispatcher"}],
+        )
+        assert not _current(item_id, job_id)
+
+        async with AsyncSessionLocal() as db:
+            served = await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
+
+        assert served.head_current is True
+        assert served.base_generation == "generation-legacy"
+        assert served.base_generation_id == "generation-legacy"
+        assert served.snapshot["editor_payload"]["base_generation"] == "generation-legacy"
+        assert served.snapshot["editor_payload"]["sections"]["text_elements"][0]["text"] == (
+            "AI hook"
+        ), "the same-job head is the creator's newest intent and stays reachable"
+        assert served.snapshot["changes"] == ["Retitle the hook"]
+        assert _current(item_id, job_id)
+
+        rows_after_heal = _rows(item_id)
+        async with AsyncSessionLocal() as db:
+            again = await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
+        assert again.draft_id == served.draft_id
+        assert _rows(item_id) == rows_after_heal, "a healed head is read, not restaged again"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reading_a_head_published_from_its_generation_is_moved_to_the_exact_id() -> None:
+    user_id, thread_id, item_id, job_id = _seed(_variant("generation-2"))
+    try:
+        await _stage_ai_edit(user_id, thread_id, "AI hook")
+        _publish_from(job_id, source="generation-2", attempt="attempt-3")
+
+        async with AsyncSessionLocal() as db:
+            served = await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
+
+        assert served.base_generation == "attempt-3" and served.head_current is True
+        head = _head(item_id)
+        assert head["col"] == head["payload_base"] == "attempt-3"
+        assert _text(head) == "AI hook"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_writing_onto_a_stranded_head_succeeds_and_lands_current() -> None:
+    user_id, thread_id, item_id, job_id = _seed()
+    try:
+        staged = await _stage_ai_edit(user_id, thread_id, "AI hook")
+        _update_variant(job_id, render_generation_id="generation-2")
+
+        payload = copy.deepcopy(staged.snapshot["editor_payload"])
+        payload["sections"]["text_elements"][0]["text"] = "Creator hook"
+        async with AsyncSessionLocal() as db:
+            written = await write_draft(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                expected_revision=staged.draft_revision,
+                expected_etag=staged.etag,
+                snapshot={**staged.snapshot, "editor_payload": payload, "changes": ["Creator"]},
+            )
+
+        head = _head(item_id)
+        assert head["id"] == uuid.UUID(written.draft_id)
+        assert head["col"] == head["payload_base"] == "generation-2"
+        assert _text(head) == "Creator hook"
+        assert written.head_current is True and written.base_generation == "generation-2"
+        assert _current(item_id, job_id)
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_write_with_a_stale_revision_is_still_refused_as_draft_stale() -> None:
+    from app.kria.runtime import RuntimeFailure
+
+    user_id, thread_id, item_id, job_id = _seed()
+    try:
+        staged = await _stage_ai_edit(user_id, thread_id, "AI hook")
+        _update_variant(job_id, render_generation_id="generation-2")
+        async with AsyncSessionLocal() as db:
+            await read_or_bootstrap_draft(db, thread_id=thread_id, creator_id=user_id)
+        rows_before = _rows(item_id)
+
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RuntimeFailure) as raised:
+                await write_draft(
+                    db,
+                    thread_id=thread_id,
+                    creator_id=user_id,
+                    expected_revision=staged.draft_revision - 1,
+                    expected_etag=staged.etag,
+                    snapshot=staged.snapshot,
+                )
+        assert raised.value.code == "draft_stale"
+        assert _rows(item_id) == rows_before
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_locking_the_job_rereads_a_generation_committed_after_the_target_was_loaded() -> None:
+    from app.kria.drafts import _lock_job, _target
+
+    user_id, thread_id, item_id, job_id = _seed()
+    try:
+        async with AsyncSessionLocal() as db:
+            target = await _target(db, thread_id=thread_id, creator_id=user_id, lock_item=True)
+            assert target.generation_id == "generation-1"
+            _update_variant(job_id, render_generation_id="generation-2")
+            relocked = await _lock_job(db, target)
+            assert relocked.generation_id == "generation-2"
     finally:
         await async_engine.dispose()
 

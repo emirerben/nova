@@ -29,7 +29,7 @@ from app.models import CreatorEditDraft, Job, PlanItem
 log = structlog.get_logger(__name__)
 
 
-def _baseline(variant: dict[str, Any]) -> str:
+def variant_baseline(variant: dict[str, Any]) -> str:
     from app.routes.generative_jobs import variant_render_baseline  # noqa: PLC0415
 
     return variant_render_baseline(variant)
@@ -45,7 +45,9 @@ def current_bases(job: Any, variant: dict[str, Any]) -> frozenset[str]:  # noqa:
     from app.services.device_render import published_source_generation  # noqa: PLC0415
 
     return frozenset(
-        base for base in (_baseline(variant), published_source_generation(job, variant)) if base
+        base
+        for base in (variant_baseline(variant), published_source_generation(job, variant))
+        if base
     )
 
 
@@ -63,10 +65,29 @@ def is_head_current(job: Any, variant: dict[str, Any], head: CreatorEditDraft) -
     if head.base_job_id != job.id:
         return False
     bases = current_bases(job, variant)
+    if not variant_baseline(variant):
+        # A variant that never finished a render has nothing to be stale against; its
+        # drafts carry the empty stamp.
+        bases = bases | {""}
     if (head.base_generation_id or "") not in bases:
         return False
     payload_base = _payload_base(head)
     return payload_base is None or payload_base in bases
+
+
+def is_head_on_baseline(job: Any, variant: dict[str, Any], head: CreatorEditDraft) -> bool:  # noqa: ANN401
+    """Stricter than ``is_head_current``: both stamps equal the baseline itself.
+
+    A head current only through a phone publish still names the pre-publish generation;
+    it is moved to the exact id the first time anyone observes it.
+    """
+    baseline = variant_baseline(variant)
+    payload_base = _payload_base(head)
+    return (
+        head.base_job_id == job.id
+        and (head.base_generation_id or "") == baseline
+        and (payload_base is None or payload_base == baseline)
+    )
 
 
 def _locked_head(db: Session, item_id: uuid.UUID, variant_key: str) -> CreatorEditDraft | None:
@@ -145,11 +166,17 @@ def rebased_document(
     )
 
     variant = _variant(job, variant_key) or {}
-    baseline = _baseline(variant)
+    baseline = variant_baseline(variant)
     old = dict(head.snapshot_json or {})
     old_payload = old.get("editor_payload") or {}
     same_job = head.base_job_id == job.id
     keeps_head_lanes = same_job and (not contained or variant.get("editor_state") == "empty")
+
+    if keeps_head_lanes and "sections" not in old_payload:
+        # A chat draft stores its lanes flat and overlays them on the variant; attaching
+        # committed sections beside them would add a second, competing copy.
+        document = {**old, "editor_payload": {**old_payload, "base_generation": baseline}}
+        return KriaDraftDocument.model_validate(document)
 
     sections = bootstrap_editor_payload(job, variant_key, baseline)["sections"]
     if keeps_head_lanes:
@@ -188,15 +215,11 @@ def restage_editor_head_sync(
     variant = _variant(job, variant_key)
     if variant is None:
         return None
-    baseline = _baseline(variant)
+    baseline = variant_baseline(variant)
     head = _locked_head(db, item.id, variant_key)
     if head is None or _payload_base(head) is None:
         return None
-    if (
-        head.base_job_id == job.id
-        and (head.base_generation_id or "") == baseline
-        and _payload_base(head) == baseline
-    ):
+    if is_head_on_baseline(job, variant, head):
         _repoint_pinned_draft(job, variant_key, head.id)
         return None
 

@@ -11,7 +11,7 @@ import hashlib
 import json
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -24,6 +24,13 @@ from app.agents._schemas.text_element import resolve_narrated_storyboard_rows
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
 from app.kria.brief_binding import BriefBinding
+from app.kria.editor_head import (
+    is_head_current,
+    is_head_on_baseline,
+    rebased_document,
+    restage_editor_head,
+    variant_baseline,
+)
 from app.kria.runtime import (
     RuntimeFailure,
     _append_event,
@@ -322,7 +329,7 @@ async def _target(
                 current_revision=int(thread.revision),
             )
         variant_key = str(selected["variant_id"])
-        generation_id = str(selected.get("render_generation_id") or "") or None
+        generation_id = variant_baseline(selected) or None
     return DraftTarget(
         thread=thread,
         item=item,
@@ -400,7 +407,7 @@ async def editor_variant_target(
         item=item,
         job=job,
         variant_key=variant_key,
-        generation_id=str(variant.get("render_generation_id") or "") or None,
+        generation_id=variant_baseline(variant) or None,
     )
 
 
@@ -451,7 +458,7 @@ async def _insert_revision(
     return row
 
 
-def _out(row: CreatorEditDraft, *, can_undo: bool) -> DraftSnapshotOut:
+def _out(row: CreatorEditDraft, *, can_undo: bool, head_current: bool = True) -> DraftSnapshotOut:
     if row.snapshot_json is None:
         raise RuntimeFailure(
             410,
@@ -460,6 +467,12 @@ def _out(row: CreatorEditDraft, *, can_undo: bool) -> DraftSnapshotOut:
             phase="tool",
             recovery="refresh_replan",
         )
+    payload = row.snapshot_json.get("editor_payload")
+    base_generation = (
+        str(payload.get("base_generation") or "")
+        if isinstance(payload, dict)
+        else row.base_generation_id
+    )
     return DraftSnapshotOut(
         draft_id=str(row.id),
         item_id=str(row.item_id),
@@ -472,7 +485,64 @@ def _out(row: CreatorEditDraft, *, can_undo: bool) -> DraftSnapshotOut:
         snapshot=dict(row.snapshot_json),
         can_undo=can_undo,
         created_at=row.created_at,
+        head_current=head_current,
+        base_generation=base_generation,
     )
+
+
+async def _lock_job(db: AsyncSession, target: DraftTarget) -> DraftTarget:
+    """Lock the target's job (after the item, before any draft row) and re-read its baseline."""
+    if target.job is None:
+        return target
+    await db.execute(
+        select(Job)
+        .where(Job.id == target.job.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    variant = _variant(target.job, target.variant_key)
+    return replace(
+        target,
+        generation_id=(variant_baseline(variant) if variant is not None else "") or None,
+    )
+
+
+def _on_baseline(target: DraftTarget, head: CreatorEditDraft) -> bool:
+    """Both stamps of ``head`` equal the variant's baseline. A thread without a job has none."""
+    if target.job is None:
+        return True
+    variant = _variant(target.job, target.variant_key)
+    return variant is None or is_head_on_baseline(target.job, variant, head)
+
+
+def _current(target: DraftTarget, head: CreatorEditDraft) -> bool:
+    if target.job is None:
+        return True
+    variant = _variant(target.job, target.variant_key)
+    return variant is None or is_head_current(target.job, variant, head)
+
+
+async def _heal_head(
+    db: AsyncSession, target: DraftTarget, head: CreatorEditDraft, *, creator_id: uuid.UUID
+) -> CreatorEditDraft:
+    """Move an editor head onto the variant's baseline; the caller holds Item and Job.
+
+    Same-job heads keep their lanes (``contained=False``): the head is the creator's newest
+    unsaved intent, so replacing it with the committed state would hide it.
+    """
+    if target.job is None or _on_baseline(target, head):
+        return head
+    await restage_editor_head(
+        db,
+        item=target.item,
+        job=target.job,
+        variant_key=target.variant_key,
+        creator_id=creator_id,
+        contained=False,
+        reason="observe",
+    )
+    healed = await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=True)
+    return healed if healed is not None else head
 
 
 def _editor_snapshot(variant: dict[str, Any], generation_id: str | None) -> dict[str, Any]:
@@ -540,6 +610,11 @@ async def read_or_bootstrap_draft(
     db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
 ) -> DraftSnapshotOut:
     target = await _target(db, thread_id=thread_id, creator_id=creator_id, lock_item=True)
+    seen = await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=False)
+    # The job lock precedes every draft lock (Plan, Item, Job, ..., Draft), so take it
+    # before the head is locked for either a bootstrap or a heal.
+    if seen is None or not _on_baseline(target, seen):
+        target = await _lock_job(db, target)
     head = await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=True)
     if head is None:
         state = dict(target.thread.state or {})
@@ -556,17 +631,25 @@ async def read_or_bootstrap_draft(
         )
         head = await _insert_revision(db, target=target, document=document, parent=None)
         await db.commit()
-    return _out(head, can_undo=head.parent_draft_id is not None)
+    else:
+        healed = await _heal_head(db, target, head, creator_id=creator_id)
+        if healed is not head:
+            await db.commit()
+        head = healed
+    return _out(
+        head, can_undo=head.parent_draft_id is not None, head_current=_current(target, head)
+    )
 
 
-def _published_from(target: DraftTarget, generation: str | None) -> bool:
-    """The target's current video is the phone's published export of ``generation``."""
-    from app.services.device_render import published_source_generation  # noqa: PLC0415
-
-    if target.job is None or not generation:
-        return False
-    variant = _variant(target.job, target.variant_key)
-    return variant is not None and generation == published_source_generation(target.job, variant)
+def _on_target_generation(snapshot: dict[str, Any], target: DraftTarget) -> dict[str, Any]:
+    """An editor body written to the head is stamped with the generation it is written on."""
+    payload = snapshot.get("editor_payload")
+    if snapshot.get("kind") != "editor" or target.job is None or not isinstance(payload, dict):
+        return snapshot
+    return {
+        **snapshot,
+        "editor_payload": {**payload, "base_generation": target.generation_id or ""},
+    }
 
 
 async def write_draft(
@@ -579,6 +662,7 @@ async def write_draft(
     snapshot: dict[str, Any],
 ) -> DraftSnapshotOut:
     target = await _target(db, thread_id=thread_id, creator_id=creator_id, lock_item=True)
+    target = await _lock_job(db, target)
     head = await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=True)
     if head is None:
         raise RuntimeFailure(
@@ -597,19 +681,10 @@ async def write_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    if head.base_job_id != (target.job.id if target.job is not None else None) or (
-        head.base_generation_id != target.generation_id
-        and not _published_from(target, head.base_generation_id)
-    ):
-        raise RuntimeFailure(
-            409,
-            "draft_base_stale",
-            "The rendered video changed while this draft was open.",
-            phase="tool",
-            recovery="refresh_replan",
-            current_revision=int(target.thread.revision),
-        )
-    snapshot = dict(snapshot)
+    # The If-Match check above is the real precondition. A head left on an older generation
+    # is not a conflict: the editor always shows the one latest version, so move it first.
+    head = await _heal_head(db, target, head, creator_id=creator_id)
+    snapshot = _on_target_generation(dict(snapshot), target)
     for field in ("brief_binding", "brief_coverage", "prepared_collection_story"):
         authoritative = (head.snapshot_json or {}).get(field)
         if field in snapshot and snapshot[field] != authoritative:
@@ -646,7 +721,7 @@ async def write_draft(
     document = KriaDraftDocument.model_validate(snapshot)
     row = await _insert_revision(db, target=target, document=document, parent=head)
     await db.commit()
-    return _out(row, can_undo=True)
+    return _out(row, can_undo=True, head_current=_current(target, row))
 
 
 POINTER_SYNC = "pointer_sync"
@@ -900,6 +975,7 @@ async def undo_draft(
     expected_revision: int,
 ) -> tuple[DraftSnapshotOut, str | None]:
     target = await _target(db, thread_id=thread_id, creator_id=creator_id, lock_item=True)
+    target = await _lock_job(db, target)
     pointer = await _pointer_record_of(
         db,
         await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=False),
@@ -980,6 +1056,10 @@ async def undo_draft(
             recovery="refresh_replan",
         )
     document = KriaDraftDocument.model_validate(parent.snapshot_json)
+    if document.kind == "editor" and target.job is not None and not _on_baseline(target, parent):
+        # The parent predates a generation advance; restoring it verbatim would stamp the
+        # current generation over a payload built on an older one.
+        document = rebased_document(target.job, target.variant_key, parent, contained=False)
     row = await _insert_revision(db, target=target, document=document, parent=head)
     approvals = list(
         (
@@ -1058,7 +1138,7 @@ async def undo_draft(
             "cancelled_approval_ids": [str(approval.id) for approval in approvals],
         },
     )
-    result = _out(row, can_undo=True)
+    result = _out(row, can_undo=True, head_current=_current(target, row))
     owner_thread_id = thread.id
     await db.commit()
     successor_id = await _promote_queued_successor(db, thread_id=owner_thread_id)

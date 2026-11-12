@@ -29,6 +29,7 @@ from app.agents._schemas.text_element import (
 )
 from app.config import settings
 from app.kria.clip_tilt import ClipTilt
+from app.kria.editor_head import is_head_current
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
@@ -1958,17 +1959,13 @@ def _summary(op: dict[str, Any]) -> str:
     return name[:1].upper() + name[1:]
 
 
-def fresh_editor_head_payload(
-    head: Any, variant: dict[str, Any], job: Any = None
-) -> dict[str, Any]:
-    """The head draft's editor payload iff it was built on the variant's CURRENT render.
+def fresh_editor_head_payload(head: Any, variant: dict[str, Any], job: Any) -> dict[str, Any]:  # noqa: ANN401
+    """The head draft's editor payload iff the head is on the variant's CURRENT generation.
 
-    The session pointer and ``CreatorEditDraft.base_generation_id`` go stale after an
-    editor Save bumps ``render_generation_id``, so they cannot prove freshness. The
-    payload's own ``base_generation`` (stamped from ``variant_render_baseline``) can:
-    a mismatch means the draft predates a saved render and must not be overlaid on it.
-    Returns ``{}`` (build on the saved variant) when absent, non-editor, or stale.
-    With ``job``, a phone-published export of the payload's generation is current too.
+    "Current" is ``editor_head.is_head_current``: same job, and both the column and the
+    payload base name the render baseline (or the generation a phone publish was made
+    from). A stale head must not be overlaid on a newer render. Returns ``{}`` (build on
+    the saved variant) when absent, non-editor, or not current.
     """
     snapshot = getattr(head, "snapshot_json", None) if head is not None else None
     if not isinstance(snapshot, dict) or snapshot.get("kind") != "editor":
@@ -1976,12 +1973,8 @@ def fresh_editor_head_payload(
     payload = snapshot.get("editor_payload")
     if not isinstance(payload, dict) or not payload:
         return {}
-    base = str(payload.get("base_generation") or "")
-    if base != variant_render_baseline(variant):
-        from app.services.device_render import published_source_generation  # noqa: PLC0415
-
-        if job is None or not base or base != published_source_generation(job, variant):
-            return {}
+    if not is_head_current(job, variant, head):
+        return {}
     return payload
 
 

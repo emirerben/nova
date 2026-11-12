@@ -72,12 +72,17 @@ def _variant(generation: str = "G2") -> dict:
     }
 
 
-def _head(base_generation: str, column: str = "G1") -> SimpleNamespace:
+_JOB_ID = uuid.UUID(int=1)
+
+
+def _head(base_generation: str, column: str | None = None) -> SimpleNamespace:
+    """A head on ``_job``; its column base defaults to the payload base (both stamps agree)."""
     stale_bars = copy.deepcopy(_variant()["text_elements"])
     stale_bars[0].update(x_frac=0.9, y_frac=0.9, text="Stale title")
     stale_bars[1]["text"] = "Stale label"
     return SimpleNamespace(
-        base_generation_id=column,
+        base_job_id=_JOB_ID,
+        base_generation_id=base_generation if column is None else column,
         snapshot_json={
             "kind": "editor",
             "editor_payload": {"base_generation": base_generation, "text_elements": stale_bars},
@@ -87,7 +92,7 @@ def _head(base_generation: str, column: str = "G1") -> SimpleNamespace:
 
 def _job(variant: dict) -> SimpleNamespace:
     return SimpleNamespace(
-        id=uuid.uuid4(),
+        id=_JOB_ID,
         assembly_plan={"variants": [variant]},
         all_candidates={"clip_paths": ["users/u/0.mp4", "users/u/1.mp4"]},
     )
@@ -99,16 +104,18 @@ def _bars(variant: dict) -> dict:
 
 def test_stale_head_is_ignored_by_helper_and_projection() -> None:
     variant = _variant("G2")
-    assert fresh_editor_head_payload(_head("G1"), variant) == {}
-    assert fresh_editor_head_payload(None, variant) == {}
-    projected = project_editor_draft(variant, fresh_editor_head_payload(_head("G1"), variant))
+    assert fresh_editor_head_payload(_head("G1"), variant, _job(variant)) == {}
+    assert fresh_editor_head_payload(None, variant, _job(variant)) == {}
+    projected = project_editor_draft(
+        variant, fresh_editor_head_payload(_head("G1"), variant, _job(variant))
+    )
     assert _bars(projected)["title"]["x_frac"] == 0.2
     assert _bars(projected)["label"]["text"] == "Saved label"
 
 
 def test_fresh_head_is_honored() -> None:
     variant = _variant("G2")
-    payload = fresh_editor_head_payload(_head("G2"), variant)
+    payload = fresh_editor_head_payload(_head("G2"), variant, _job(variant))
     assert payload
     projected = project_editor_draft(variant, payload)
     assert _bars(projected)["title"]["x_frac"] == 0.9
@@ -118,7 +125,7 @@ def test_fresh_head_is_honored() -> None:
 def test_variant_without_generation_matches_empty_payload_baseline() -> None:
     variant = _variant("")
     variant.pop("render_generation_id")
-    assert fresh_editor_head_payload(_head(""), variant)
+    assert fresh_editor_head_payload(_head(""), variant, _job(variant))
 
 
 def test_runtime_compile_path_builds_on_saved_variant_when_head_stale(monkeypatch) -> None:
@@ -131,7 +138,7 @@ def test_runtime_compile_path_builds_on_saved_variant_when_head_stale(monkeypatc
     ops = [{"op": "set_total_duration", "target_s": 4, "strategy": "proportional"}]
 
     def run(head):  # noqa: ANN001, ANN202
-        prior = fresh_editor_head_payload(head, variant)
+        prior = fresh_editor_head_payload(head, variant, _job(variant))
         compiled = compile_editor_ops(job, project_editor_draft(variant, prior), ops)
         payload = compiled.payload.model_dump(mode="json", exclude_none=True)
         return payload, merge_editor_draft(prior, payload), prior
@@ -209,7 +216,7 @@ async def test_planner_ignores_stale_head_even_when_session_and_column_match(mon
 
 @pytest.mark.asyncio
 async def test_planner_honors_fresh_head(monkeypatch) -> None:
-    target = await _planner_snapshot(monkeypatch, _head("G2", column="G1"))
+    target = await _planner_snapshot(monkeypatch, _head("G2"))
     bars = await _bars_of(target)
     assert bars["title"]["x_frac"] == 0.9
     assert bars["label"]["text"] == "Stale label"
@@ -229,13 +236,17 @@ def test_multi_turn_chat_save_chat_does_not_revert_the_save(monkeypatch) -> None
         ).payload.model_dump(mode="json", exclude_none=True),
     )
     assert turn1["base_generation"] == "G1"
-    head = SimpleNamespace(snapshot_json={"kind": "editor", "editor_payload": turn1})
+    head = SimpleNamespace(
+        base_job_id=_JOB_ID,
+        base_generation_id="G1",
+        snapshot_json={"kind": "editor", "editor_payload": turn1},
+    )
     # Editor Save: generation bumps, creator moved the title and renamed the label.
     g2 = _variant("G2")
     g2["text_elements"][0].update(x_frac=0.55, y_frac=0.12, size_px=120)
     g2["text_elements"][1]["text"] = "Creator label"
     # Turn 2 builds on the saved variant, not the G1 head.
-    prior = fresh_editor_head_payload(head, g2)
+    prior = fresh_editor_head_payload(head, g2, _job(g2))
     assert prior == {}
     compiled = compile_editor_ops(
         _job(g2),
