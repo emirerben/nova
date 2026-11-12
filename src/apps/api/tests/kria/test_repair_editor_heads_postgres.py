@@ -17,21 +17,41 @@ from app.config import settings
 from app.database import engine as async_engine
 from app.database import sync_session
 from app.models import CreatorEditDraft, Job, PlanItem
-from tests.kria.test_editor_head_generation_postgres import (
+from tests.kria.test_editor_head_postgres import (
     VARIANT,
     _add_job,
     _chat_head,
-    _committed_sections,
-    _flat,
     _head,
+    _publish_device_export,
     _rows,
-    _sections,
     _seed,
-    _text,
-    _update_variant,
+    _set_variant,
     _variant,
 )
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
+
+
+def _sections(row: dict) -> dict:
+    return row["snap"]["editor_payload"]["sections"]
+
+
+def _text(row: dict) -> str:
+    return _sections(row)["text_elements"][0]["text"]
+
+
+def _flat(row: dict) -> dict:
+    payload = row["snap"]["editor_payload"]
+    return {key: payload[key] for key in cli.flat_lane_names(payload)}
+
+
+def _committed_sections(job_id) -> dict:  # noqa: ANN001
+    from app.kria.drafts import bootstrap_editor_payload
+
+    with sync_session() as db:
+        variant = db.get(Job, job_id).assembly_plan["variants"][0]
+        return bootstrap_editor_payload(
+            db.get(Job, job_id), VARIANT, variant["render_generation_id"]
+        )["sections"]
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +67,7 @@ async def _stranded(monkeypatch):  # noqa: ANN001, ANN202
     """An AI chat edit on generation-1, then a dispatcher moves the variant to generation-2."""
     user_id, thread_id, item_id, job_id = _seed()
     await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
-    _update_variant(job_id, render_generation_id="generation-2")
+    _set_variant(job_id, render_generation_id="generation-2")
     return user_id, thread_id, item_id, job_id
 
 
@@ -82,7 +102,7 @@ async def test_dry_run_reports_the_stranded_head_and_changes_nothing(capsys, mon
             "payload_base=generation-1",
             f"base_job_id={job_id}",
             "pinned=-",
-            "on_baseline=no",
+            "current=no",
             "flat lanes: mix, text_elements, timeline_slots",
             "retire: the head becomes the committed document: nothing pending, no flat lane kept",
             "keep-ai-lanes: stamped current; flat lanes kept: mix, text_elements, timeline_slots;"
@@ -123,9 +143,7 @@ async def test_apply_retire_makes_the_head_the_committed_document_and_a_second_r
     try:
         # Stranded by "approval rendered, then the phone published": the video holds the draft.
         _user, _thread, item_id, job_id = await _stranded(monkeypatch)
-        _update_variant(
-            job_id, text_elements=[{**_variant()["text_elements"][0], "text": "AI hook"}]
-        )
+        _set_variant(job_id, text_elements=[{**_variant()["text_elements"][0], "text": "AI hook"}])
         stranded = _head(item_id)
         args = ("--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire")
         code, out = _run(capsys, *args)
@@ -135,12 +153,11 @@ async def test_apply_retire_makes_the_head_the_committed_document_and_a_second_r
         assert head["col"] == head["payload_base"] == "generation-2"
         assert _flat(head) == {} and head["snap"]["changes"] == []
         assert _sections(head) == _committed_sections(job_id) and _text(head) == "AI hook"
-        assert head["snap"]["restage"]["reason"] == "repair_cli"
 
-        rows = len(_rows(item_id))
+        rows = _rows(item_id)
         code, out = _run(capsys, *args)
-        assert code == 0 and "nothing to do" in out
-        assert len(_rows(item_id)) == rows
+        assert code == 2 and "current" in out, "a second run finds the head current"
+        assert _rows(item_id) == rows
     finally:
         await async_engine.dispose()
 
@@ -170,10 +187,10 @@ async def test_apply_keep_ai_lanes_stamps_the_head_current_and_keeps_its_lanes(
         assert _sections(head) == _committed_sections(job_id)
         assert head["snap"]["changes"] == stranded["snap"]["changes"]
 
-        rows = len(_rows(item_id))
+        rows = _rows(item_id)
         code, out = _run(capsys, *args)
-        assert code == 0 and "nothing to do" in out
-        assert len(_rows(item_id)) == rows
+        assert code == 2 and "current" in out, "a second run finds the head current"
+        assert _rows(item_id) == rows
     finally:
         await async_engine.dispose()
 
@@ -184,7 +201,7 @@ async def test_apply_repoints_the_pinned_editor_draft(capsys, monkeypatch) -> No
         user_id, thread_id, item_id, job_id = _seed()
         await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
         staged = _head(item_id)
-        _update_variant(
+        _set_variant(
             job_id,
             editor_state_version=2,
             editor_draft={"draft_id": str(staged["id"])},
@@ -210,6 +227,18 @@ async def test_a_head_from_another_job_is_named_in_the_dry_run(capsys, monkeypat
         new_job_id = _add_job(item_id, user_id, _variant("generation-1", text="New job hook"))
         _code, out = _run(capsys, "--item", str(item_id))
         assert f"base_job_id={old_job_id}" in out and "other job" in out
+        rows = _rows(item_id)
+        _run(
+            capsys,
+            "--item",
+            str(item_id),
+            "--variant",
+            VARIANT,
+            "--apply",
+            "--operation",
+            "keep-ai-lanes",
+        )
+        assert _rows(item_id) == rows, "keep-ai-lanes refuses a head of another job"
         _run(
             capsys, "--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire"
         )
@@ -318,36 +347,25 @@ async def test_list_stranded_survives_a_job_whose_variants_is_not_an_array(
 
 
 @pytest.mark.asyncio
-async def test_a_head_current_through_the_published_source_is_not_stranded_and_is_never_retired(
-    capsys, monkeypatch
-) -> None:
-    """A chat head on the generation a phone publish was made from is current, not stranded."""
-    from tests.kria.test_editor_head_writers_postgres import _publish_device_export
-
+async def test_a_current_head_is_reported_current_and_refused(capsys, monkeypatch) -> None:
+    """A head on the baseline, or on the generation a phone publish was made from, is current."""
     try:
         user_id, thread_id, item_id, job_id = _seed()
         await _chat_head(monkeypatch, user_id, thread_id, "AI hook")
-        # The publish that restamps this head is the writer; here the head is made to sit on the
-        # source instead (a head the publish did not restage), which is current but not on the
-        # baseline.
-        monkeypatch.setattr("app.routes.device_render.restage_editor_head", _no_restage)
-        _attempt, publish = _publish_device_export(job_id, user_id, monkeypatch)
-        await publish()
-        head_before = _head(item_id)
+        args = ("--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire")
+        rows = _rows(item_id)
+        code, report = _run(capsys, "--item", str(item_id), "--variant", VARIANT)
+        assert code == 0 and "current, not touched" in report and "nothing to do" in report
+        capsys.readouterr()
+        assert cli.main(list(args)) == 2 and "refused" in capsys.readouterr().err
+        assert _rows(item_id) == rows
 
+        _attempt, publish = _publish_device_export(job_id, user_id, monkeypatch)
+        await publish()  # the variant now carries the attempt id; the head names its source
         _code, listed = _run(capsys, "--list-stranded", "--limit", "500")
         assert str(item_id) not in listed, "a current head is not stranded"
-        _code, report = _run(capsys, "--item", str(item_id), "--variant", VARIANT)
-        assert "current (published source)" in report and "nothing to do" in report
         capsys.readouterr()
-        code = cli.main(
-            ["--item", str(item_id), "--variant", VARIANT, "--apply", "--operation", "retire"]
-        )
-        assert code == 2 and "refused" in capsys.readouterr().err
-        assert _head(item_id)["id"] == head_before["id"], "no row was written"
+        assert cli.main(list(args)) == 2 and "refused" in capsys.readouterr().err
+        assert _rows(item_id) == rows, "no row was written"
     finally:
         await async_engine.dispose()
-
-
-async def _no_restage(*_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
-    return None
