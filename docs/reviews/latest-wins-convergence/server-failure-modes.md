@@ -204,3 +204,26 @@ on top of the latest version, and a turn is never refused because the phone's co
 37. **Planner and compile disagree.** Both call the one resolver, so the stale-state
     answer cannot differ between plan time and the locked compile. Test: existing
     one-resolver guard plus a real-Postgres turn.
+
+## Repair CLI (`app/cli/repair_editor_heads.py`)
+
+One-off tool for items whose head was stranded before the server healed on its own. It is
+built and tested locally only; a production run needs the owner's approval.
+
+38. **Dry-run writes.** The default must change nothing: no row added, no head demoted, the
+    variant's pinned `editor_draft` untouched. The session is read-only and never commits.
+    Test: row count and head id before and after.
+39. **Second `--apply` adds rows.** `restage_editor_head_sync` is a no-op once both stamps
+    equal the baseline, so a second run reports nothing to do and adds zero rows. Test:
+    apply twice.
+40. **Lock order.** Item, then Job, then the head (taken inside the restage). Test: apply
+    path locks in that order, one transaction per item.
+41. **Item without a current job, variants, or head.** Reported as nothing to do, exit 0;
+    an unknown item or variant key is an error, exit 2. Test: each.
+42. **Head from another job.** The restage re-bases it onto the current job as the
+    committed state (its slots do not exist on this timeline); the dry-run names it as
+    "other job" so the owner sees what will happen. Test: foreign head.
+43. **Head without an editor payload** (strategy or initial draft). Never touched; the
+    list query skips it too. Test: non-editor head.
+44. **`--list-stranded` on a job whose `variants` is not an array.** Must not error; the
+    query guards with `jsonb_typeof`. Test: scalar `variants`.
