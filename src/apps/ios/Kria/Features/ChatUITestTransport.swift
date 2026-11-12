@@ -121,7 +121,7 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     }
     private func finishLoading() {
         if PerfFixture.isFullProjectionRead(request) { Perf.mark("fixture.full.sent") }
-        if let perf = PerfFixture.respond(request) {
+        if let perf = ChatShortenFixture.respond(request) ?? PerfFixture.respond(request) {
             guard let url = request.url,
                   let response = HTTPURLResponse(url: url, statusCode: perf.status, httpVersion: nil, headerFields: perf.headers.merging(["Content-Type": "application/json"]) { first, _ in first }) else {
                 client?.urlProtocol(self, didFailWithError: URLError(.badURL))
@@ -2442,6 +2442,109 @@ extension CreationChatFixture {
             append("assistant_review", text: "Made it again from your new take.")
             save()
             return response(thread)
+        }
+        return nil
+    }
+}
+
+/// `-ui-testing-editor-chat-shorten`: an AI chat edit that shortens the cut and its title is staged on the phone as
+/// the server's draft head, based on generation `gen-1`. By the time the creator taps Save the server holds `gen-2`,
+/// which already contains the same edit with its durations quantized to a 0.5 s grid, so the first Save answers
+/// `baseline_conflict` like the real server. Seeded chats only (`KRIA_CHAT_SEED_THREADS` + `KRIA_EDITOR_FIXTURE=1`).
+enum ChatShortenFixture {
+    static let title = "SHORT LISBON TITLE"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var serverAdvanced = false
+
+    static var isEnabled: Bool { ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-chat-shorten") }
+
+    private static let sourceDurations = [4.6, 6.0, 4.6]
+    private static let aiDurations = [1.4, 1.2, 1.3]
+    private static let renderedDurations = [1.5, 1.0, 1.5]
+    private static let textID = "00000000-0000-4000-8000-000000000100"
+
+    private static func slots(_ durations: [Double]) -> [[String: Any]] {
+        durations.enumerated().map { index, duration in
+            ["slot_id": "s\(index)", "clip_index": index, "in_s": 0, "duration_s": duration,
+             "source_duration_s": sourceDurations[index], "removed": false]
+        }
+    }
+
+    private static func text(_ content: String, end: Double) -> [String: Any] {
+        ["id": textID, "text": content, "start_s": 0, "end_s": end, "x_frac": 0.5, "y_frac": 0.4,
+         "font_family": "Inter", "size_px": 72, "z": 1]
+    }
+
+    private static func variant(advanced: Bool) -> [String: Any] {
+        let durations = advanced ? renderedDurations : [2.0, 2.0, 2.0]
+        return [
+            "variant_id": "montage", "render_generation_id": advanced ? "gen-2" : "gen-1", "render_status": "ready",
+            "duration_s": durations.reduce(0, +), "output_url": PerfFixture.editorRenderURL, "resolved_archetype": "montage",
+            "editor_capabilities": ["timeline": true, "text_elements": true, "mix": false],
+            "user_timeline": ["slots": slots(durations)],
+            "text_elements": [advanced ? text(title, end: 4.0) : text("OLD LISBON TITLE", end: 6)],
+        ]
+    }
+
+    private static func draftHead(threadID: String) -> [String: Any] {
+        let lanes = slots(aiDurations)
+        let words = [text(title, end: aiDurations.reduce(0, +))]
+        return ["draft_id": "chat-shorten-\(threadID)", "item_id": threadID, "variant_key": "montage", "draft_revision": 1,
+                "snapshot_hash": "chat-shorten-1", "etag": "chat-shorten-1", "base_job_id": threadID, "base_generation_id": "gen-1",
+                "snapshot": ["kind": "editor", "editor_payload": [
+                    "editor_state_version": 2, "base_generation": "gen-1", "timeline_slots": lanes, "text_elements": words,
+                    "sections": ["timeline_slots": lanes, "text_elements": words],
+                ]],
+                "can_undo": false, "created_at": "2026-09-10T10:00:00Z"]
+    }
+
+    private static func json(_ object: Any, status: Int = 200) -> PerfFixture.Response {
+        PerfFixture.Response(status: status, data: (try? JSONSerialization.data(withJSONObject: object)) ?? Data())
+    }
+
+    private static func body(of request: URLRequest) -> [String: Any] {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                data.append(buffer, count: count)
+            }
+        }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+
+    static func respond(_ request: URLRequest) -> PerfFixture.Response? {
+        guard isEnabled, let path = request.url?.path else { return nil }
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count >= 3, PerfFixture.seededIndex(of: parts[1]) != nil else { return nil }
+        let method = request.httpMethod ?? "GET"
+        lock.lock(); defer { lock.unlock() }
+        if method == "GET", parts.count == 3, parts[0] == "generative-jobs", parts[2] == "status" {
+            return json(["variants": [variant(advanced: serverAdvanced)]])
+        }
+        if method == "GET", parts.count == 3, parts[0] == "creation-threads", parts[2] == "draft" {
+            return json(draftHead(threadID: parts[1]))
+        }
+        if method == "GET", parts.count == 5, parts[0] == "generative-jobs", parts[4] == "timeline" {
+            let clips: [[String: Any]] = PerfFixture.editorSourceFiles.indices.map { index in
+                ["clip_index": index, "native_source": [
+                    "media_id": "clip-\(index)", "source_url": "https://\(PerfSourceURLProtocol.host)/clip\(index).mp4",
+                    "original": NSNull(), "local_required": false,
+                ] as [String: Any]]
+            }
+            return json(["base_generation": serverAdvanced ? "gen-2" : "gen-1", "clips": clips, "slots": [], "native_assets": []])
+        }
+        if method == "POST", parts.count == 5, parts[0] == "plan-items", parts[4] == "editor-commit" {
+            // The server rendered the AI edit (`gen-2`) while the creator was reviewing it on `gen-1`.
+            let sentBase = body(of: request)["base_generation"] as? String
+            let current = serverAdvanced ? "gen-2" : "gen-1"
+            serverAdvanced = true
+            guard sentBase == "gen-2", current == "gen-2" else { return json(["detail": "baseline_conflict"], status: 409) }
+            return json(["ok": true, "generation": "gen-3", "sections": ["timeline": true, "text_elements": true],
+                         "revision_number": 4, "revision_hash": "fixture-hash", "expected_duration_s": 4.0])
         }
         return nil
     }

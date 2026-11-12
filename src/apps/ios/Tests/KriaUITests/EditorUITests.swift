@@ -687,4 +687,44 @@ final class EditorUITests: XCTestCase {
                                  "at most one variant revalidation")
         app.terminate()
     }
+
+    /// The editor always shows the single latest version. An AI chat edit that shortens the cut and its title is staged
+    /// on the phone; before the creator saves it, the server renders the same edit on a newer generation with its
+    /// durations quantized to a 0.5 s grid, so the first Save answers `baseline_conflict`. The creator is never asked
+    /// to resolve that: the editor opens the latest version and the shortened edit is saved.
+    func testChatShortenThenRenderOpensLatestAndSaves() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-editor-chat-shorten", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30), "the chat offers Open editor")
+        open.tap()
+
+        let card = app.buttons["native-editor-merge-remote"]
+        let title = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Text: SHORT LISBON TITLE")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 30), "the AI's shortened text is on the canvas")
+        XCTAssertFalse(card.exists, "opening the editor never asks the creator to resolve anything")
+
+        let save = app.buttons["native-editor-save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertEqual(save.label, "Save changes", "the staged AI edit is unsaved")
+        save.tap()
+
+        let banner = app.descendants(matching: .any)["native-editor-save-state"].firstMatch
+        let settled = NSPredicate(format: "exists == true AND label == %@", "Saved")
+        let outcome = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: save)], timeout: 20)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Chat shorten then render, after Save"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertFalse(card.exists, "a newer render of the same edit is adopted, not offered as a conflict")
+        XCTAssertEqual(outcome, .completed, "Save reaches the saved state; the control reads \(save.label), banner: \(banner.exists ? banner.label : "none")")
+        XCTAssertTrue(title.exists, "the shortened text is still shown on the latest version")
+        app.terminate()
+    }
 }
