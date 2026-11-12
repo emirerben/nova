@@ -214,6 +214,7 @@ from app.services.editor_empty_drafts import (
     attach_saved_editor_drafts,
     is_empty_editor_variant,
     prepare_empty_editor_sections,
+    replace_stranded_saved_draft,
     stage_empty_editor_commit,
     stage_initial_authored_baseline,
     stage_saved_draft_baseline,
@@ -7079,7 +7080,7 @@ async def get_item_timeline(
         if variant and variant.get("resolved_archetype") == "guided_story"
         else {}
     )
-    await attach_saved_editor_drafts(db, job, committed_fallback=True, requested_variant=variant_id)
+    await attach_saved_editor_drafts(db, job, committed_for=variant_id)
     return TimelineResponse(
         **dispatch_get_timeline(
             job,
@@ -8088,24 +8089,9 @@ async def _editor_commit_item(
         and locked_variant.get("editor_timeline_mode") == "authored"
     ):
         await attach_saved_editor_drafts(db, locked_job)
-        if variant_id not in locked_job._saved_editor_drafts:
-            # The pinned draft is not on the current generation, so main answered 409
-            # editor_draft_unavailable for good. Item then Job are locked: supersede it with
-            # the committed state (nothing old comes back, and the head, if another row, is
-            # not the saved draft) and attach that.
-            from app.kria.editor_head import restage_editor_head  # noqa: PLC0415
-
-            await restage_editor_head(
-                db,
-                item=item,
-                job=locked_job,
-                variant_key=variant_id,
-                creator_id=user.id,
-                operation="retire",
-                reason="editor_save",
-                retires_pinned=True,
-            )
-            locked_variant = _find_variant(locked_job, variant_id) or locked_variant
+        if variant_id not in locked_job._saved_editor_drafts and (
+            await replace_stranded_saved_draft(db, item=item, job=locked_job, variant_id=variant_id)
+        ):
             await attach_saved_editor_drafts(db, locked_job)
         draft_baseline = stage_saved_draft_baseline(locked_job, variant_id, body)
     elif needs_authored_deletion_baseline or durable_authored_save:
