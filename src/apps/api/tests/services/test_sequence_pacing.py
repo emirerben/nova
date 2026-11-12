@@ -35,8 +35,10 @@ def test_compression_uses_waterfill_and_expansion_restores_original_pacing():
         {"start_s": 1, "end_s": 4},
         {"start_s": 4, "end_s": 10},
     ]
-    compressed = retime_sequence(rows, 0, 1)
-    assert durations(compressed) == pytest.approx([0.25, 0.25, 0.5])
+    compressed = retime_sequence(rows, 0, 0.2)
+    assert durations(compressed) == pytest.approx(
+        [1 / 30, (0.2 - 1 / 30) / 3, (0.2 - 1 / 30) * 2 / 3], abs=1e-5
+    )
     expanded = retime_sequence(compressed, 5, 25)
     assert durations(expanded) == pytest.approx([2, 6, 12])
     assert expanded == retime_sequence(rows, 5, 25)
@@ -75,7 +77,7 @@ def test_frame_boundary_uses_shared_edges_and_exact_outer_bounds():
     result = retime_sequence(rows, start, end)
     assert result[0]["start_s"] == start
     assert result[-1]["end_s"] == end
-    assert min(durations(result)) >= 0.25 - 0.000002
+    assert min(durations(result)) >= 1 / 30 - 0.000002
     for left, right in zip(result, result[1:]):
         assert left["end_s"] == right["start_s"]
         assert left["end_s"] == round(left["end_s"], 6)
@@ -86,7 +88,7 @@ def test_too_short_refuses_without_mutating_input(policy):
     rows = rows_with_gaps()
     original = deepcopy(rows)
     with pytest.raises(ValueError, match="minimum.*gap"):
-        retime_sequence(rows, 0, 0.7, gap_policy=policy)
+        retime_sequence(rows, 0, 0.05, gap_policy=policy)
     assert rows == original
 
 
@@ -300,13 +302,18 @@ def test_exact_readability_floor_accepts_floating_point_roundoff():
         {"start_s": 0, "end_s": 1.7006262228267517},
         {"start_s": 2.072855666882655, "end_s": 2.4152123385122293},
     ]
-    result = retime_sequence(rows, 0, 0.5910995008979162)
+    from app.services.sequence_pacing import SequenceReadabilityError
+
+    with pytest.raises(SequenceReadabilityError) as refused:
+        retime_sequence(rows, 0, 0.05)
+    floor = refused.value.minimum_span_s
+    result = retime_sequence(rows, 0, floor)
     assert result[0]["start_s"] == 0
-    assert result[-1]["end_s"] == 0.5910995008979162
-    assert all(row["end_s"] - row["start_s"] >= 0.25 - 0.000002 for row in result)
+    assert result[-1]["end_s"] == floor
+    assert all(row["end_s"] - row["start_s"] >= 1 / 30 - 0.000002 for row in result)
     assert result[0]["end_s"] <= result[1]["start_s"]
     with pytest.raises(ValueError):
-        retime_sequence(rows, 0, 0.5910995008979162 - 0.00001)
+        retime_sequence(rows, 0, floor - 0.00001)
 
 
 def test_fixed_gap_repeated_resize_is_stable_at_serialized_precision():
@@ -323,3 +330,29 @@ def test_fixed_gap_repeated_resize_is_stable_at_serialized_precision():
         target = cursor * 2
         once = retime_sequence(rows, 0, target, gap_policy="fixed")
         assert retime_sequence(once, 0, target, gap_policy="fixed") == once
+
+
+def _paragraph(words=27, word_s=0.4, gap_s=0.05):
+    rows, cursor = [], 0.0
+    for index in range(words):
+        rows.append({"id": f"w{index}", "start_s": cursor, "end_s": cursor + word_s})
+        cursor += word_s + gap_s
+    return rows
+
+
+@pytest.mark.parametrize("span", [5.0, 2.0, 1.5])
+def test_a_paragraph_shrinks_to_whatever_the_video_can_show(span):
+    result = retime_sequence(_paragraph(), 0, span)
+    assert result[0]["start_s"] == 0
+    assert result[-1]["end_s"] == span
+    assert all(row["end_s"] - row["start_s"] >= 1 / 30 - 0.000002 for row in result)
+    assert all(left["end_s"] <= right["start_s"] for left, right in zip(result, result[1:]))
+
+
+def test_a_paragraph_that_cannot_give_each_word_a_frame_is_refused_with_the_true_minimum():
+    from app.services.sequence_pacing import SequenceReadabilityError
+
+    with pytest.raises(SequenceReadabilityError) as refused:
+        retime_sequence(_paragraph(), 0, 0.8)
+    assert 27 / 30 <= refused.value.minimum_span_s < 1.2
+    retime_sequence(_paragraph(), 0, refused.value.minimum_span_s + 0.001)

@@ -104,7 +104,7 @@ def sequence_read_floor_s(requirements: Iterable[Any] | None) -> float | None:
     approved counts; phrase asks and build-ups are paced in the composer's own pieces, and words
     research has yet to write have no length to plan for.
     """
-    from app.services.kria_editor_ops_text import _MIN_PIECE_S  # noqa: PLC0415
+    from app.services.sequence_pacing import MIN_TEXT_PIECE_S  # noqa: PLC0415
 
     words = [
         len((req.literal or "").split())
@@ -116,7 +116,7 @@ def sequence_read_floor_s(requirements: Iterable[Any] | None) -> float | None:
         and text_sequence_unit(req) == "word"
         and text_sequence_mode(req) != "cumulative"
     ]
-    return round(max(words) * _MIN_PIECE_S, 3) if words and max(words) > 1 else None
+    return round(max(words) * MIN_TEXT_PIECE_S, 3) if words and max(words) > 1 else None
 
 
 def _fits_literal(text: str) -> bool:

@@ -276,12 +276,12 @@ def _short_window_rows(words: list[str], *, video_s: float, window_s: float) -> 
     return compile_editor_ops(_job(variant), variant, parsed.ops).payload.text_elements
 
 
-def test_a_piece_holds_a_quarter_second_by_lengthening_the_window(monkeypatch) -> None:
+def test_a_piece_holds_a_frame_by_lengthening_the_window(monkeypatch) -> None:
     _flag(monkeypatch, True)
-    words = [f"w{i}" for i in range(12)]
+    words = [f"w{i}" for i in range(40)]
     rows = _short_window_rows(words, video_s=30.0, window_s=1.0)
     spans = [r["end_s"] - r["start_s"] for r in rows]
-    assert min(spans) >= 0.25 - 1e-6
+    assert min(spans) >= 1 / 30 - 1e-6
     assert rows[-1]["end_s"] > 1.0 and rows[-1]["end_s"] <= 30.0
     assert [r["text"] for r in rows] == words
 
@@ -291,7 +291,7 @@ def test_a_video_too_short_for_the_pieces_refuses_naming_the_seconds(monkeypatch
     from app.services.kria_editor_ops import KriaEditorOpError
 
     with pytest.raises(KriaEditorOpError, match=r"needs about \d+\.\d+s.*only leaves \d+\.\d+s"):
-        _short_window_rows([f"w{i}" for i in range(12)], video_s=2.0, window_s=1.0)
+        _short_window_rows([f"w{i}" for i in range(40)], video_s=1.2, window_s=1.0)
 
 
 def test_an_unreadable_video_length_declines_instead_of_stretching(monkeypatch) -> None:
@@ -299,21 +299,21 @@ def test_an_unreadable_video_length_declines_instead_of_stretching(monkeypatch) 
     from app.services.kria_editor_ops import KriaEditorOpError
 
     with pytest.raises(KriaEditorOpError, match=r"needs about \d+\.\d+s.*only leaves"):
-        _short_window_rows([f"w{i}" for i in range(12)], video_s=0.0, window_s=1.0)
+        _short_window_rows([f"w{i}" for i in range(40)], video_s=0.0, window_s=1.0)
 
 
 def test_the_stretch_stops_at_the_next_text_in_the_same_place(monkeypatch) -> None:
     _flag(monkeypatch, True)
     from app.services.kria_editor_ops import KriaEditorOpError
 
-    words = [f"w{i}" for i in range(12)]
+    words = [f"w{i}" for i in range(40)]
     text = " ".join(words)
     variant = _variant(text, end=1.0)
     variant["duration_s"] = 30.0
-    neighbour = dict(variant["text_elements"][0], id="next", text="later", start_s=1.5, end_s=4.0)
+    neighbour = dict(variant["text_elements"][0], id="next", text="later", start_s=1.2, end_s=4.0)
     variant["text_elements"].append(neighbour)
     parsed = _parse([_op(words)], snapshot=_snapshot(text))
-    with pytest.raises(KriaEditorOpError, match="only leaves 1.5s"):
+    with pytest.raises(KriaEditorOpError, match="only leaves 1.2s"):
         compile_editor_ops(_job(variant), variant, parsed.ops)
 
 

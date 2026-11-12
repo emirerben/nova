@@ -120,6 +120,7 @@ from app.services.length_policy import (
 )
 from app.services.order_mode import order_mode, seeded_permutation
 from app.services.phone_noise_reduction import engine_noise_reduction_available
+from app.services.sequence_pacing import MIN_TEXT_PIECE_S
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
 
@@ -15657,7 +15658,7 @@ def _check_sequence_timing(req: BriefRequirement, facts: PlanFacts) -> Requireme
         and 0 <= start < end <= total + 0.000002
         and abs(windows[0][0] - start) <= 0.000002
         and abs(windows[-1][1] - end) <= 0.000002
-        and all(right - left >= 0.25 - 0.000002 for left, right in windows)
+        and all(right - left >= MIN_TEXT_PIECE_S - 0.000002 for left, right in windows)
         and all(left[1] <= right[0] + 0.000002 for left, right in zip(windows, windows[1:]))
     )
     reason = (
