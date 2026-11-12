@@ -15,18 +15,18 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from app.kria.editor_head import (
-    current_bases,
-    is_head_current,
-    restage_editor_head,
-    restage_editor_head_sync,
-)
 from sqlalchemy import select
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
 from app.kria.drafts import read_or_bootstrap_draft, undo_draft, write_draft
+from app.kria.editor_head import (
+    current_bases,
+    is_head_current,
+    restage_editor_head,
+    restage_editor_head_sync,
+)
 from app.models import CreatorEditDraft, Job, PlanItem
 from app.services.device_render import DEVICE_RENDER_FIELD
 from app.services.editor_empty_drafts import attach_saved_editor_drafts
@@ -159,11 +159,19 @@ async def _stage_ai_edit(user_id, thread_id, text: str = "AI hook"):  # noqa: AN
         )
 
 
-def _restage(item_id, job_id, user_id, *, contained: bool, reason: str = "test"):  # noqa: ANN001, ANN202
+def _restage(  # noqa: ANN202
+    item_id,  # noqa: ANN001
+    job_id,  # noqa: ANN001
+    user_id,  # noqa: ANN001
+    *,
+    contained: bool,
+    reason: str = "test",
+    lock_parents: bool = True,
+):
     """Run it as the callers do: Item then Job locked first, head locked last by the module."""
     with sync_session() as db:
-        item = db.get(PlanItem, item_id, with_for_update=True)
-        job = db.get(Job, job_id, with_for_update=True)
+        item = db.get(PlanItem, item_id, with_for_update=lock_parents)
+        job = db.get(Job, job_id, with_for_update=lock_parents)
         row = restage_editor_head_sync(
             db,
             item=item,
@@ -521,7 +529,17 @@ async def test_restage_waits_for_a_concurrent_writer_and_rebases_the_writers_rev
         writer_task = asyncio.create_task(asyncio.to_thread(writer))
         await asyncio.to_thread(holding.wait, 20)
         restage_task = asyncio.create_task(
-            asyncio.to_thread(_restage, item_id, job_id, user_id, contained=False, reason="race")
+            asyncio.to_thread(
+                _restage,
+                item_id,
+                job_id,
+                user_id,
+                contained=False,
+                reason="race",
+                # The writer below locks only the head, so it would deadlock against a held
+                # Item/Job lock through its foreign keys. Real writers take Item first.
+                lock_parents=False,
+            )
         )
         await asyncio.sleep(0.6)
         assert not restage_task.done(), "the restage must wait on the head lock the writer holds"
