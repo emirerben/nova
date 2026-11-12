@@ -291,7 +291,10 @@ final class TalkSaveBenchTests: XCTestCase {
         let times = stride(from: 0.5, to: seconds - 0.5, by: (seconds - 1) / 6).map { $0 }
 
         // A warm-up export is not reported: first use of Metal pipelines, Vision models and the hardware encoder.
+        // Warmed up at the first arm's setting, so a one-arm run's memory peak does not inherit another depth's buffers.
+        TalkSaveTuning.apply(arms[0])
         _ = try await exportOnce(recipe, urls: urls, arm: "warmup", label: label, stats: stats, times: [])
+        TalkSaveTuning.apply("base")
 
         var all: [Run] = []
         for round in 0..<runs {
