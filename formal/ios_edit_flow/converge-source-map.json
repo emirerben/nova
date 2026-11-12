@@ -18,7 +18,7 @@
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:creatorDocument": "0cb91d1547c9b160",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:isQuietForConverge": "1fc28528925e44f0",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:editorOperationIdentity": "01209ba2cd6a108b",
-    "src/apps/ios/Kria/Features/NativeEditorSession.swift:reloadLatestKeepingLocalEdits": "c813b8bde00554c2",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift:reloadLatestKeepingLocalEdits": "345f1689b71c153b",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:settledForConverge": "bc2d2a15b9b6468e",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:undo": "1364246d2d9d3b57",
     "src/apps/ios/Kria/Core/NativeEditorMerge.swift:converge": "2b801c1f9d33a30d"
