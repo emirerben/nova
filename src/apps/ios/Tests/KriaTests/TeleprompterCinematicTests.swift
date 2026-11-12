@@ -34,7 +34,7 @@ import XCTest
         defaults.removePersistentDomain(forName: suiteName)
     }
 
-    func testSimulatorCannotRecordCinematicAndSaysWhy() {
+    func testSimulatorCannotRecordCinematicAndSaysWhy() throws {
         #if targetEnvironment(simulator)
         let availability = TeleprompterCinematic.availability()
         XCTAssertNotEqual(availability, .available, "The simulator has no camera that records Cinematic.")
