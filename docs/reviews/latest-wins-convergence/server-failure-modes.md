@@ -171,3 +171,36 @@ pending change the approved draft did not carry. Test: approve, execute, restage
 36. **Heal lock order.** The Save route already holds Item then Job; the restage takes the head
     last and fires no trace event. A Save that restaged and then fails validation rolls the
     restage back with the rest of the transaction.
+## Chat turn with a stale phone state
+
+A chat turn may carry the phone's unsaved editor state. The phone encodes only the lanes
+the creator changed (`changedSections`), so a lane present in `state.lanes` is a dirty
+lane and an absent lane is "same as saved". Product rule: AI and manual edits both apply
+on top of the latest version, and a turn is never refused because the phone's copy is old.
+
+31. **State built on an older generation.** `resolve_editor_base` raised
+    `EditorStateStaleError` and the planner turned it into the "Your video changed" miss, so
+    a turn after an approval render or a phone publish was refused. The turn must proceed
+    on the latest. Test: stale state with a head, with no head, and clean.
+32. **Stale dirty lane overwrites a newer edit.** Applying the whole stale state would
+    revert what the latest head already changed. A dirty lane applies only where the latest
+    did not change that lane: a lane present in the current head's own payload wins. Test:
+    overlapping text lane keeps the head's content, a disjoint lane keeps the creator's.
+33. **Stale timeline lane replayed onto a new timeline.** Slot ids and cut times belong to
+    the generation the phone saw. A dirty `timeline_slots` or `split_screen_sections` lane
+    from an older generation is never applied (latest wins). Test: stale timeline lane is
+    dropped.
+34. **Clean stale state.** No dirty lane means nothing of the creator's to carry; the turn
+    builds on the latest head, else the committed variant. Test: clean stale state.
+35. **Unhealed head seen as no head.** A head on an older generation of the same job (or
+    with disagreeing column and payload stamps) used to read as "no head", so the turn
+    silently dropped the chat's earlier unsaved edits. The turn builds on the head rebased
+    onto the current generation, in memory, by the same function restage persists, so the
+    planner snapshot and the draft compile agree and the planner stays read-only. A head
+    from another job is still never replayed. Test: head one generation behind; head from
+    another job.
+36. **Rebase fails.** A head whose rebase raises must not crash the turn; the turn builds
+    on the committed variant and logs. Test: unusable head.
+37. **Planner and compile disagree.** Both call the one resolver, so the stale-state
+    answer cannot differ between plan time and the locked compile. Test: existing
+    one-resolver guard plus a real-Postgres turn.
