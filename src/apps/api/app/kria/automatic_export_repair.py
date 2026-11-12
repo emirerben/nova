@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db_locks import acquire_locked_rows
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.device_render import DeviceRepairInstruction
-from app.kria.render_retry import _targets, _validate
+from app.kria.render_retry import _draft_current_async, _targets, _validate
 from app.kria.runtime import RuntimeFailure
 from app.models import (
     CreationThread,
@@ -87,6 +87,7 @@ async def _authority(db: AsyncSession, job: Job, variant_id: str):
                 creator_id=job.user_id,
                 source=source,
                 source_approval=rows.get(CreatorAgentApproval),
+                draft_current=await _draft_current_async(db, rows),
                 accepted=True,
                 automatic=True,
             )

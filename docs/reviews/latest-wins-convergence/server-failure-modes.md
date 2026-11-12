@@ -130,8 +130,44 @@ paths on Postgres.
     already refuses it (`approval_target_stale`), and `decide_approval` refuses a demoted
     head (`draft_stale`). A restage only demotes a head whose generation already moved,
     so it invalidates nothing that was still valid.
-30. **NOT HANDLED HERE: other readers of `draft.is_head` on an approved draft.**
+30. **Other readers of `draft.is_head` on an approved draft** (handled in "Lineage and heal" below).
     `kria/render_retry.py:138` (retry of a failed phone render) and
     `services/intent_review_post.py:135` (`_repair_is_head`) require the approved draft to
     still be the head. After the approval's restage they stop being true. Retry would
     answer `render_retry_target_stale`. Needs a lineage-aware check in a follow-up unit.
+
+## Lineage and heal
+
+30 (continued). `kria/render_retry.py` and `services/intent_review_post.py` asked "is the
+approved draft still the head" and the approval claim asked it with a one-off accepted-only
+exception. After the approval's restage the answer is no, so a retry of a failed phone render
+answered `render_retry_target_stale`. One helper, `editor_head.draft_still_current`, now answers
+for all three: the draft is the head, or the head descends from it through restages only (each
+link moved the generation, which no creator write does, because a write heals first) and adds no
+pending change the approved draft did not carry. Test: approve, execute, restage, retry accepted.
+
+## Save route and timeline
+
+31. **Save on a stranded pinned draft.** A v2 / empty variant's `editor_draft` names a head whose
+    generation moved. `attach_saved_editor_drafts` skips it, `saved_editor_draft` raises
+    `409 editor_draft_unavailable`, and the creator's Save dead-ends. Save already holds Item then
+    Job, so it restages (same-job lanes kept) before attaching. Test: stranded v2 Save.
+32. **v1 manual Save bumps the generation under a chat head.** `prepare_editor_commit` moves the
+    variant to a new generation and no draft row is written, so a staged head lags. Save restages
+    in the same transaction (`contained=True`: the Save is the committed state). Test: v1 Save.
+33. **Save 409/412 with prose or object detail.** The phone reads every 409 as "newer version".
+    `detail` stays byte-identical; a sibling `problem {code, recovery, current_base_generation}`
+    names the cause. `recovery` is `reload` only for `baseline_conflict`, so the other refusals
+    (cancelled video, initial render in progress, source catalog invalid, draft requires supported
+    client, deletion target stale, draft unavailable) are never answered by reloading. Test: every
+    409 the route can produce carries a stable code.
+34. **Timeline GET on a v2 variant whose pinned draft is not current.** It used to raise
+    `409 editor_draft_unavailable`. GET stays write-free, so it serves the committed variant state
+    (no `draft` key, `base_generation` = baseline). Test: timeline before any heal.
+35. **Timeline GET on an empty-state variant whose pinned draft is not current.** The committed
+    variant is the last non-empty render, not the saved empty state, so serving it would show the
+    deleted clips back. No write-free answer is correct; the 409 stays and the next
+    `GET /draft` or Save heals it. Not fixed here.
+36. **Heal lock order.** The Save route already holds Item then Job; the restage takes the head
+    last and fires no trace event. A Save that restaged and then fails validation rolls the
+    restage back with the rest of the transaction.

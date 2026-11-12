@@ -21,6 +21,7 @@ from app.db_locks import acquire_locked_rows, acquire_locked_rows_sync
 from app.kria.api_schemas import RenderRetryBody, RenderRetryOut
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.editor_head import draft_still_current
 from app.kria.runtime import RuntimeFailure, _append_event
 from app.models import (
     ContentPlan,
@@ -93,8 +94,25 @@ def _targets(source, session, item, approval_id=None):  # noqa: ANN001, ANN202
     }
 
 
+def _draft_current(db, rows) -> bool:  # noqa: ANN001
+    draft = rows.get(CreatorEditDraft)
+    return draft is not None and draft_still_current(db, draft)
+
+
+async def _draft_current_async(db: AsyncSession, rows) -> bool:  # noqa: ANN001
+    return await db.run_sync(lambda session: _draft_current(session, rows))
+
+
 def _validate(
-    rows, *, creator_id, source, source_approval, retry=None, accepted=False, automatic=False
+    rows,
+    *,
+    creator_id,
+    source,
+    source_approval,
+    draft_current,
+    retry=None,
+    accepted=False,
+    automatic=False,
 ):  # noqa: ANN001, ANN202
     if any(
         rows.get(cls) is None
@@ -135,7 +153,7 @@ def _validate(
         and draft.creator_id == creator_id
         and draft.thread_id == thread.id
         and draft.item_id == item.id
-        and draft.is_head
+        and draft_current
         and draft.snapshot_json is not None
         and source.target_draft_id == draft.id
         and source.target_draft_revision == draft.draft_revision
@@ -382,6 +400,7 @@ async def prepare_render_retry(
                 creator_id=creator_id,
                 source=source,
                 source_approval=source_approval,
+                draft_current=await _draft_current_async(db, rows),
                 retry=existing.result[RETRY_FIELD],
             )
             if not await conversation_revision_matches(db, thread, body.expected_thread_revision):
@@ -452,7 +471,11 @@ async def prepare_render_retry(
             replayed=True,
         )
     status = _validate(
-        rows, creator_id=creator_id, source=source, source_approval=rows.get(CreatorAgentApproval)
+        rows,
+        creator_id=creator_id,
+        source=source,
+        source_approval=rows.get(CreatorAgentApproval),
+        draft_current=await _draft_current_async(db, rows),
     )
     if not await conversation_revision_matches(db, thread, body.expected_thread_revision):
         raise _failure("thread_revision_stale", "The project changed. Refresh before retrying.")
@@ -670,6 +693,7 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
                     creator_id=approval.creator_id,
                     source=source,
                     source_approval=source_approval,
+                    draft_current=_draft_current(db, rows),
                     retry=retry,
                 )
                 if latest != turn.id:
@@ -739,6 +763,7 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
                     creator_id=approval.creator_id,
                     source=source,
                     source_approval=source_approval,
+                    draft_current=_draft_current(db, rows),
                     retry=retry,
                     accepted=True,
                 )

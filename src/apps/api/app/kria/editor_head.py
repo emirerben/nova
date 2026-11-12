@@ -28,6 +28,8 @@ from app.models import CreatorEditDraft, Job, PlanItem
 
 log = structlog.get_logger(__name__)
 
+_MAX_RESTAGE_CHAIN = 16
+
 
 def variant_baseline(variant: dict[str, Any]) -> str:
     from app.routes.generative_jobs import variant_render_baseline  # noqa: PLC0415
@@ -88,6 +90,49 @@ def is_head_on_baseline(job: Any, variant: dict[str, Any], head: CreatorEditDraf
         and (head.base_generation_id or "") == baseline
         and (payload_base is None or payload_base == baseline)
     )
+
+
+def _stamps(row: CreatorEditDraft) -> tuple[str, str | None]:
+    return (row.base_generation_id or "", _payload_base(row))
+
+
+def _pending_changes(row: CreatorEditDraft) -> tuple[Any, Any]:
+    snapshot = row.snapshot_json if isinstance(row.snapshot_json, dict) else {}
+    return (snapshot.get("changes") or [], snapshot.get("editor_text_diff") or [])
+
+
+def draft_still_current(db: Session, draft: CreatorEditDraft) -> bool:
+    """The creator has not moved past ``draft``: it is the head, or the head is its restage.
+
+    An approval render advances the generation and restages the head, which demotes the
+    approved draft without anyone having edited anything. A restage is told from a creator
+    write by what it changes: it always moves the generation stamps (a write heals the head
+    first, so its stamps equal its parent's), and it never adds a pending change the approved
+    draft did not carry (a contained restage clears them).
+    """
+    if draft.is_head:
+        return True
+    head = db.execute(
+        select(CreatorEditDraft).where(
+            CreatorEditDraft.item_id == draft.item_id,
+            CreatorEditDraft.variant_key == draft.variant_key,
+            CreatorEditDraft.is_head.is_(True),
+        )
+    ).scalar_one_or_none()
+    if head is None or head.base_job_id != draft.base_job_id:
+        return False
+    allowed = _pending_changes(draft)
+    link: CreatorEditDraft | None = head
+    for _ in range(_MAX_RESTAGE_CHAIN):
+        parent = db.get(CreatorEditDraft, link.parent_draft_id) if link.parent_draft_id else None
+        if parent is None or _stamps(link) == _stamps(parent):
+            return False
+        if _pending_changes(link) not in (allowed, ([], [])):
+            return False
+        if parent.id == draft.id:
+            return True
+        link = parent
+    return False
 
 
 def _locked_head(db: Session, item_id: uuid.UUID, variant_key: str) -> CreatorEditDraft | None:
