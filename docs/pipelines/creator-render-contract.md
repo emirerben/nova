@@ -52,34 +52,43 @@ or reread from mutable chat during a retry.
 
 ## One latest editable document
 
-For each (item, variant) there is one editor draft head, and it always sits on the
-variant's current generation. The iPhone editor loads that one version. AI and manual
-edits both apply on top of it, and the creator is never asked to resolve a conflict.
+For each (item, variant) there is one editor draft head, and it sits on the variant's
+current generation. The iPhone editor loads that one version and the phone converges onto
+it. The server never merges draft content: it has no reliable lane model, and the phone
+holds the real merge engine and the real base document.
 
 - **The one predicate.** `app/kria/editor_head.py` defines "current" (`is_head_current`)
   and "exactly on the baseline" (`is_head_on_baseline`). Everything else imports it.
-- **Who restages** (inserts a head revision on the new generation, same transaction as
-  the change): approval execution, phone publish, speech-cut publish, and manual Save.
-  A restage is a no-op when the head is already on the baseline, so a retried task adds
-  no row.
-- **Who heals** (restages on observation, because many code paths write a generation id):
-  draft GET, draft PUT, undo and Save. A head left on an older generation is moved
-  before the request is served; it is not a conflict.
-- **A rebase is per lane.** Each head records the committed lanes it was authored on
-  (`base_lanes`); moving it onto a newer generation keeps a lane only when the head changed it
-  and the committed state did not. When both changed it, the committed value wins and the lane
-  is listed in `replaced_lanes`. Heads written before `base_lanes` existed keep their flat
-  chat lanes. A restage records `restage: {of, reason}`, and only the approval's own render
-  and a phone publish keep an approval's draft current.
-- **A chat turn with a stale phone state** builds on the latest. The phone sends only the
-  lanes the creator changed. The turn starts from the head (healed in memory) or the
-  committed variant and lays those lanes on top by the same per-lane rule. Timeline lanes
-  from an older generation are dropped and the turn trace names every dropped creator lane.
-  The turn is never refused.
-- **Repair.** `python -m app.cli.repair_editor_heads --item <uuid> [--apply]` restages the
-  heads of one item, and `--list-stranded` lists heads that are off their baseline. It is a
-  dry run unless `--apply` is given. A production run needs owner approval; show the
-  dry-run output first.
+- **One operation per writer.** When a variant's generation moves, the writer that moved it
+  names how the head follows (`restage_editor_head_sync/async(operation=..., reason=...)`).
+  A head of another job is always retired. An empty-state variant keeps its draft-only
+  `sections` under every operation and only the stamps move.
+
+| Operation | Effect on the new head row | Used by |
+|---|---|---|
+| `restamp` | Content byte-identical; only the generation stamps move. | Phone publish |
+| `retire` | Head becomes the committed document: committed `sections`, no flat lane, no pending diff. | Approval execution, manual Save, a head of another job |
+| `drop_lanes` | Committed `sections`; the named flat lanes are removed, the others kept. | Speech-cut publish (the timeline lanes) |
+| `heal` | Committed `sections`; flat lanes kept, so an AI's unsaved edit stays reachable. A head with no flat lane becomes the committed document. | Heal-on-observe: an unknown writer moved the generation |
+
+- **Heal on observe** (a restage row with reason `observe`): draft GET, draft PUT, and the
+  repair CLI write it. Undo lands its restored row on the baseline by the same operation. A
+  chat turn and the timeline GET see the head healed in memory and write nothing.
+- **`PUT /draft` never merges.** A head off the baseline is healed first, then If-Match is
+  checked against the head as it now is: a heal makes the client's copy old, so the answer is
+  `draft_stale` (recovery refresh) and the phone re-reads and converges locally. A body whose
+  own `base_generation` is not current is `draft_stale` too, never restamped.
+- **Lineage.** A restage records `restage: {of, reason}`. `draft_still_current` (approval
+  claim, render retry, intent review) accepts only the approval's own render and a phone
+  publish, so an old approval never runs on top of a manual Save. Undo skips restage rows
+  and is unavailable (`draft_undo_unavailable`, `can_undo` false) when it would restore the
+  document the head already holds.
+- **Repair.** `python -m app.cli.repair_editor_heads --item <uuid> [--apply]
+  [--operation {heal,retire}]` moves the heads of one item (`heal` by default; use `retire`
+  when the committed video is known to contain the draft), and `--list-stranded` lists heads
+  that are off their baseline. It is a dry run unless `--apply` is given and prints each
+  head's flat lanes and what each operation would do. A production run needs owner approval;
+  show the dry-run output first.
 
 ## What is hard and what is not
 
@@ -370,7 +379,7 @@ the last line, not the plan.
   current edit to change it in place" (`no_ready_variant` is a guarded miss), so the typed
   words never reached the planner. It now records the unguarded `no_render` miss and skips the
   extract-first rendered-edit path: the follow-up is a normal re-plan (`has_render=False`). An
-  in-flight (`render_in_flight`) target keeps its guarded reply.
+  in-flight (`render_in_flight`) or stale (`editor_state_stale`) target keeps its guarded reply.
   After the render-time block the `title_text` question is open (next bullet), so the reply
   is answered deterministically.
 * A runtime-v2 render failure is worded once: `reconcile_render_state` holds back the generic
