@@ -186,6 +186,8 @@ enum EditorOpenIntent { case warm, open }
     @Published var hasUnsavedChanges = false
     @Published var saveState: NativeEditorSaveState = .idle
     @Published var splitScreenActionError: String?
+    /// "Top ends at 4.2s · aligned" while the end handle of a split clip is dragged; nil otherwise.
+    @Published var splitTrimHint: String?
     /// A non-blocking, self-dismissing note that the editor moved to the latest version.
     @Published private(set) var convergeNotice: String?
     private var convergeNoticeTask: Task<Void, Never>?
@@ -5381,19 +5383,42 @@ enum EditorOpenIntent { case warm, open }
             resized = KriaSourceWindowGeometry.resizedTrailing(window, by: translation * rate, rate: rate, sourceDuration: sourceDuration ?? end)
         }
         }
-        if let id = slot.splitSectionID, let section = next.splitScreenSections.first(where: { $0.id == id }) {
+        var splitHint: String?
+        if let id = slot.splitSectionID, let sectionIndex = next.splitScreenSections.firstIndex(where: { $0.id == id }) {
+            let section = next.splitScreenSections[sectionIndex]
             let offset = slot.splitOffsetS
             let peers = next.clips.filter { $0.id != slot.id && $0.splitSectionID == id && $0.splitPanelIndex == slot.splitPanelIndex }
             let previousEnd = peers.filter { $0.splitOffsetS < offset }.map { $0.splitOffsetS + ($0.durationS ?? 0) }.max() ?? 0
-            // A collapse section follows its longest member, so a trailing trim may grow it (the timeline cap still holds).
-            let nextStart = peers.filter { $0.splitOffsetS >= offset }.map(\.splitOffsetS).min() ?? (section.collapseEmptyPanels ? 1800 : section.durationS)
             switch active.edge {
             case .leading:
                 let delta = min(max((resized.start - sourceIn) / rate, previousEnd - offset), currentDuration - minimumClipDuration)
                 resized = .init(start: sourceIn + delta * rate, length: currentDuration - delta)
                 slot.raw["split_offset_s"] = .number(offset + delta)
             case .trailing:
-                resized.length = min(resized.length, nextStart - offset)
+                // The end may pass the section end: a collapse section follows its longest member, a fixed one grows
+                // to hold it and never shrinks. Later sections move through the section rebase below.
+                let end = offset + currentDuration
+                let nextStart = peers.filter { $0.splitOffsetS >= offset }.map(\.splitOffsetS).min() ?? .infinity
+                let total = NativeEditorInteraction.timelineProjection(slots: next.clips, carousel: nil, splitSections: next.splitScreenSections).totalDuration
+                let footage = isStillSlot(slot) || slot.raw["freeze_frame_s"]?.numberValue != nil ? .infinity
+                    : offset + KriaSourceWindowGeometry.resizedTrailing(window, by: 1800 * rate, rate: rate,
+                        sourceDuration: sourceDuration ?? KriaSourceWindowGeometry.sourceEnd(window, rate: rate)).length
+                let ends = next.clips.filter { !$0.removed && $0.splitSectionID == id && $0.splitPanelIndex != slot.splitPanelIndex }
+                    .compactMap { peer in peer.durationS.map { peer.splitOffsetS + $0 } } + (section.collapseEmptyPanels ? [] : [section.durationS])
+                var target = end + translation
+                var snap: Double?
+                if abs(translation) > 1e-9 {
+                    snap = ends.filter { abs($0 - target) < 0.25 }.min { abs($0 - target) < abs($1 - target) }
+                    target = snap ?? (target * 10).rounded() / 10
+                }
+                let room = min(nextStart < end ? end : nextStart, 1800 - (total - section.durationS))
+                let outOfFootage = target > footage + 1e-9 && footage <= room
+                target = max(min(target, footage, room), offset + minimumClipDuration)
+                let aligned = snap.map { abs($0 - target) < 1e-9 } ?? false
+                resized.length = target - offset
+                if !section.collapseEmptyPanels { next.splitScreenSections[sectionIndex].durationS = max(section.durationS, target) }
+                let panel = NativeSplitScreenRows.panelTitle(index: slot.splitPanelIndex ?? 0, count: section.panelCount)
+                splitHint = "\(panel) ends at \(String(format: "%.1f", target))s\(aligned ? " · aligned" : "")\(outOfFootage ? " · out of footage" : "")"
             }
         }
         // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
@@ -5414,6 +5439,7 @@ enum EditorOpenIntent { case warm, open }
         slot.durationBeats = nil; next.clips[index] = slot
         next.fitCollapseSectionDurations()
         guard next.splitScreenIsValid else { return }
+        if splitTrimHint != splitHint { splitTrimHint = splitHint }
         // A section that grew or shrank moves the canvas lanes behind it, exactly as setSplitScreenDuration does.
         if next.splitScreenSections != active.baseline.splitScreenSections { NativeSplitTimelineRebase.rebase(&next, from: active.baseline) }
         // Later clips ripple by construction (windows are a walk of the slot durations); the
@@ -5484,12 +5510,14 @@ enum EditorOpenIntent { case warm, open }
         } else { return }
         if recorded { saveHistory?.cancelLastCheckpoint(matching: baseline) }
         undoStack = undo; redoStack = redo; document = baseline
+        if splitTrimHint != nil { splitTrimHint = nil }
         refreshDirtyState(); refreshDuration(); flushDeferredSourcePreviewUpdate()
     }
 
     func endTrim(gestureID: NativeTimelineGestureID? = nil) {
         guard activeTrim?.gestureID == gestureID else { return }
         activeTrim = nil
+        if splitTrimHint != nil { splitTrimHint = nil }
         flushDeferredSourcePreviewUpdate()
     }
 
@@ -11213,7 +11241,35 @@ extension NativeEditorSession {
     }
 
     var canCreateSplitScreen: Bool {
-        canEditSplitScreen && selectedSplitScreenSectionID == nil && selection?.kind == .clip
+        guard canEditSplitScreen, let index = splitTargetSlotIndex, let duration = document.clips[index].durationS else { return false }
+        return duration >= minimumClipDuration
+    }
+
+    /// The ordinary clip "This clip" turns into a split: the one under the playhead, else the selected one.
+    private var splitTargetSlotIndex: Int? {
+        let projection = timelineProjection
+        let time = currentTime
+        if let window = projection.clipWindows.first(where: { window in
+            document.clips[window.sourceIndex].splitSectionID == nil && window.start <= time
+                && (time < window.end || (time <= window.end && window.end >= projection.totalDuration - 0.000001))
+        }) { return window.sourceIndex }
+        guard let selection, selection.kind == .clip, let index = clipSlotIndex(selection.id),
+              !document.clips[index].removed, document.clips[index].splitSectionID == nil else { return nil }
+        return index
+    }
+
+    /// Whole video when it can be split as a whole, else This clip.
+    var defaultSplitScope: NativeSplitScope { wholeVideoUnavailableReason == nil ? .wholeVideo : .selectedClip }
+
+    /// Nil exactly when `createSplitScreen(scope: .wholeVideo)` works.
+    var wholeVideoUnavailableReason: String? {
+        guard canEditSplitScreen else { return "Split screen isn’t available for this edit." }
+        guard document.splitScreenSections.isEmpty else { return "Remove the split to cover the whole video." }
+        let clips = document.clips.filter { !$0.removed }
+        guard clips.count >= 2 else { return "This edit has only one clip." }
+        guard clips.allSatisfy({ ($0.durationS ?? 0) >= minimumClipDuration }) else { return "Some clips are too short to split." }
+        let probe = EditorSplitScreenSection(id: "whole-video", durationS: 1800, panelCount: 2)
+        return wholeVideoDocument(into: probe) == nil ? "The whole video can’t be split." : nil
     }
 
     /// Collapse needs this build at protocol 47 or later and the server's say-so: the editor capability
@@ -11252,27 +11308,28 @@ extension NativeEditorSession {
         return measured.union(admitted).sorted().map { ($0, "Clip \($0 + 1)") }
     }
 
-    var canCreateWholeVideoSplit: Bool {
-        canEditSplitScreen && wholeVideoSplit(panelCount: 2) != nil
-    }
+    var canCreateWholeVideoSplit: Bool { wholeVideoUnavailableReason == nil }
 
     /// New panels start empty: the section shows its background there until footage is added.
     func createSplitScreen(panelCount: Int, scope: NativeSplitScope) {
         guard (2...3).contains(panelCount) else { return }
+        let id = UUID().uuidString
+        let collapse = canCollapseSplitPanels
         switch scope {
         case .selectedClip:
-            guard canCreateSplitScreen, let selection, let index = clipSlotIndex(selection.id),
-                  let duration = document.clips[index].durationS, duration >= minimumClipDuration else { return }
-            let id = UUID().uuidString
-            let collapse = canCollapseSplitPanels
+            guard canCreateSplitScreen, let index = splitTargetSlotIndex, let duration = document.clips[index].durationS else { return }
             transactDocument(section: .timeline) { value in
                 value.splitScreenSections.append(EditorSplitScreenSection(id: id, durationS: duration, panelCount: panelCount, collapseEmptyPanels: collapse))
                 value.clips[index] = Self.pinningSpeakerSubject(value.clips[index])
                 value.clips[index].setSplitMembership(sectionID: id, panelIndex: 0, offset: 0)
             }
+            if selectedSplitScreenSectionID != id, document.clips[index].splitSectionID == id {
+                select(.init(kind: .clip, id: clipID(for: document.clips[index].id).uuidString), seekToStart: false)
+            }
         case .wholeVideo:
-            guard canEditSplitScreen, let next = wholeVideoSplit(panelCount: panelCount),
-                  let id = next.splitScreenSections.first?.id else { return }
+            guard canCreateWholeVideoSplit,
+                  let next = wholeVideoDocument(into: EditorSplitScreenSection(id: id, durationS: 1800, panelCount: panelCount, collapseEmptyPanels: collapse))
+            else { return }
             // Every clip keeps its window, so timed lanes stay where they are. The unit rebase would instead
             // map each former clip onto the start of the one new section.
             transactDocument(sections: [.timeline], rebasesSplitLanes: false) { $0 = next }
@@ -11280,17 +11337,27 @@ extension NativeEditorSession {
         }
     }
 
-    /// Every ordinary clip becomes a top-panel clip at its current place in the video, transitions included.
-    private func wholeVideoSplit(panelCount: Int) -> EditorDocument? {
-        guard document.splitScreenSections.isEmpty else { return nil }
-        let windows = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil).baseClipWindows
+    /// Every ordinary clip joins the top panel of `section` at its current place in the video, transitions included;
+    /// clips already in `section` keep their panel and place. The section then lasts the whole video. Nil unless
+    /// that is a valid split, so no ordinary clip is ever left out.
+    private func wholeVideoDocument(into section: EditorSplitScreenSection) -> EditorDocument? {
+        let windows = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil, splitSections: document.splitScreenSections).baseClipWindows
         guard let origin = windows.first?.start else { return nil }
-        let id = UUID().uuidString
         var next = document
         var previous: EditorTimelineSlot?
         var end = 0.0
         for window in windows {
-            var slot = Self.pinningSpeakerSubject(next.clips[window.sourceIndex])
+            var slot = next.clips[window.sourceIndex]
+            if let id = slot.splitSectionID {
+                guard id == section.id else { return nil }
+                let start = window.start - slot.splitOffsetS - origin
+                next.clips[window.sourceIndex].raw["split_offset_s"] = .number(start + slot.splitOffsetS)
+                end = max(end, start + section.durationS)
+                // The clip after a section starts at the section end, so it never overlaps the section's clips.
+                previous = nil
+                continue
+            }
+            slot = Self.pinningSpeakerSubject(slot)
             guard let duration = slot.durationS else { return nil }
             var offset = window.start - origin
             if let previous, let length = previous.durationS {
@@ -11298,13 +11365,30 @@ extension NativeEditorSession {
                     : min(0.3, previous.transitionDurationS ?? 0.3, length * 0.3, duration * 0.3)
                 offset = max(offset, previous.splitOffsetS + length - (overlap >= 0.1 ? overlap : 0))
             }
-            slot.setSplitMembership(sectionID: id, panelIndex: 0, offset: offset)
+            slot.setSplitMembership(sectionID: section.id, panelIndex: 0, offset: offset)
             next.clips[window.sourceIndex] = slot
             end = max(end, window.end - origin, offset + duration)
             previous = slot
         }
-        next.splitScreenSections = [EditorSplitScreenSection(id: id, durationS: end, panelCount: panelCount, collapseEmptyPanels: canCollapseSplitPanels)]
+        var whole = section
+        whole.durationS = end
+        next.splitScreenSections = [whole]
+        next.fitCollapseSectionDurations()
         return next.splitScreenIsValid ? next : nil
+    }
+
+    func canExtendSplitToWholeVideo(sectionID: String) -> Bool { extendedSplitDocument(sectionID: sectionID) != nil }
+
+    /// One undo step. Every clip keeps its window, so timed lanes stay where they are.
+    func extendSplitToWholeVideo(sectionID: String) {
+        guard let next = extendedSplitDocument(sectionID: sectionID) else { return }
+        transactDocument(sections: [.timeline], rebasesSplitLanes: false) { $0 = next }
+    }
+
+    private func extendedSplitDocument(sectionID: String) -> EditorDocument? {
+        guard canEditSplitScreen, document.splitScreenSections.count == 1, let section = document.splitScreenSections.first,
+              section.id == sectionID, document.clips.contains(where: { !$0.removed && $0.splitSectionID == nil }) else { return nil }
+        return wholeVideoDocument(into: section)
     }
 
     private static func pinningSpeakerSubject(_ slot: EditorTimelineSlot) -> EditorTimelineSlot {
@@ -11477,6 +11561,51 @@ extension NativeEditorSession {
         select(.init(kind: .clip, id: clipID(for: slot.id).uuidString), seekToStart: false)
     }
 
+    /// True exactly when `addSplitPanelClip` has room: a gap under the playhead or time after the panel's last clip.
+    /// An add fits the free time; only a later trim of the clip's end lengthens the section.
+    func canAddToSplitPanel(sectionID: String, panel: Int) -> Bool {
+        canEditSplitScreen && splitPanelOpening(sectionID: sectionID, panel: panel) != nil
+    }
+
+    /// One undo step: the panel's clips repeat in order after its last one until the section ends, the last copy cut
+    /// short. Each copy is a new occurrence. Nothing happens to an empty or full panel.
+    func loopFillSplitPanel(sectionID: String, panel: Int) {
+        guard canEditSplitScreen, let section = document.splitScreenSections.first(where: { $0.id == sectionID }) else { return }
+        let pattern = document.splitPanelMembers(sectionID: sectionID, panel: panel)
+        guard var cursor = pattern.compactMap({ slot in slot.durationS.map { slot.splitOffsetS + $0 } }).max() else { return }
+        var copies: [EditorTimelineSlot] = []
+        while section.durationS - cursor >= minimumClipDuration, let source = pattern.dropFirst(copies.count % pattern.count).first,
+              let length = source.durationS {
+            var copy = Self.shortened(Self.pinningSpeakerSubject(source), to: min(length, section.durationS - cursor))
+            copy.id = UUID().uuidString; copy.parentSegmentID = nil
+            copy.raw["split_offset_s"] = .number(cursor)
+            cursor += copy.durationS ?? length
+            copies.append(copy)
+        }
+        guard !copies.isEmpty else { return }
+        transactDocument(section: .timeline) { value in
+            guard let last = value.clips.lastIndex(where: { $0.splitSectionID == sectionID }) else { return }
+            value.clips.insert(contentsOf: copies, at: last + 1)
+        }
+    }
+
+    /// The slot cut to its first `length` output seconds; its source window ends with it.
+    private static func shortened(_ slot: EditorTimelineSlot, to length: Double) -> EditorTimelineSlot {
+        guard length < (slot.durationS ?? length) - 0.000001 else { return slot }
+        if slot.raw["freeze_frame_s"]?.numberValue != nil {
+            return NativeClipSourceClock(slot: slot).sliced(from: 0, to: length).applying(to: slot)
+        }
+        var slot = slot
+        slot.durationS = length; slot.durationBeats = nil
+        if slot.raw["source_end_s"] != nil { slot.raw["source_end_s"] = .number(slot.inS + length * explicitPlaybackRate(slot)) }
+        return slot
+    }
+
+    private func isStillSlot(_ slot: EditorTimelineSlot) -> Bool {
+        (slot.raw["media_kind"]?.stringValue ?? slot.raw["kind"]?.stringValue) == "image"
+            || resolvedSources?[slot.clipIndex].map { isStill($0.url) } == true
+    }
+
     /// Adds an empty panel, or removes the bottom one while another panel still holds footage.
     func setSplitScreenPanelCount(_ count: Int) {
         guard canEditSplitScreen, (2...3).contains(count), let id = selectedSplitScreenSectionID,
@@ -11505,16 +11634,7 @@ extension NativeEditorSession {
             value.splitScreenSections[index].durationS = duration
             value.clips.removeAll { $0.splitSectionID == id && $0.splitOffsetS >= duration - minimumClipDuration + 0.000001 }
             for i in value.clips.indices where value.clips[i].splitSectionID == id {
-                let length = min(value.clips[i].durationS ?? duration, duration - value.clips[i].splitOffsetS)
-                guard length < (value.clips[i].durationS ?? length) - 0.000001 else { continue }
-                if value.clips[i].raw["freeze_frame_s"]?.numberValue != nil {
-                    value.clips[i] = NativeClipSourceClock(slot: value.clips[i]).sliced(from: 0, to: length).applying(to: value.clips[i])
-                    continue
-                }
-                value.clips[i].durationS = length; value.clips[i].durationBeats = nil
-                if value.clips[i].raw["source_end_s"] != nil {
-                    value.clips[i].raw["source_end_s"] = .number(value.clips[i].inS + length * Self.explicitPlaybackRate(value.clips[i]))
-                }
+                value.clips[i] = Self.shortened(value.clips[i], to: min(value.clips[i].durationS ?? duration, duration - value.clips[i].splitOffsetS))
             }
         }
     }
@@ -11531,22 +11651,32 @@ extension NativeEditorSession {
         let local = currentTime - found.clip.start
         let rate = effectiveSourceRate(slot: found.slot, clip: found.clip)
         transactDocument(section: .timeline) { value in
-            var left = value.clips[index], right = left
-            let duration = left.durationS ?? (found.clip.end - found.clip.start)
-            right.id = UUID().uuidString; right.parentSegmentID = left.id
-            left.durationS = local; right.durationS = duration - local
-            left.durationBeats = nil; right.durationBeats = nil
-            if left.raw["freeze_frame_s"]?.numberValue != nil {
-                let clock = NativeClipSourceClock(slot: value.clips[index])
-                left = clock.sliced(from: 0, to: local).applying(to: left)
-                right = clock.sliced(from: local, to: duration).applying(to: right)
-            } else { right.inS = left.inS + local * rate }
-            right.raw["source_start_locked"] = .bool(true)
-            if value.clips[index].raw["freeze_frame_s"]?.numberValue == nil, left.raw["source_end_s"] != nil { left.raw["source_end_s"] = .number(right.inS) }
-            left.transitionAfter = "cut"; left.transitionDurationS = nil
-            if right.splitSectionID != nil { right.raw["split_offset_s"] = .number(right.splitOffsetS + local) }
-            value.clips.replaceSubrange(index...index, with: [left, right])
+            let slot = value.clips[index]
+            let duration = slot.durationS ?? (found.clip.end - found.clip.start)
+            var right = Self.piece(of: slot, from: local, to: duration, length: duration, rate: rate)
+            right.id = UUID().uuidString; right.parentSegmentID = slot.id
+            value.clips.replaceSubrange(index...index, with: [Self.piece(of: slot, from: 0, to: local, length: duration, rate: rate), right])
         }
+    }
+
+    /// The part of `slot` (lasting `length`) from `a` to `b` output seconds after its start, on the same source clock and
+    /// at the same place in its panel. A part that starts late locks its source start; one that ends early cuts after it.
+    private static func piece(of slot: EditorTimelineSlot, from a: Double, to b: Double, length: Double, rate: Double) -> EditorTimelineSlot {
+        let late = a > 0.000001, early = b < length - 0.000001
+        guard late || early else { return slot }
+        var piece = slot
+        if slot.raw["freeze_frame_s"]?.numberValue != nil {
+            piece = NativeClipSourceClock(slot: slot).sliced(from: a, to: b).applying(to: slot)
+        } else {
+            piece.inS = slot.inS + a * rate
+            piece.durationS = b - a
+            if early, slot.raw["source_end_s"] != nil { piece.raw["source_end_s"] = .number(slot.inS + b * rate) }
+        }
+        piece.durationBeats = nil
+        if late { piece.raw["source_start_locked"] = .bool(true) }
+        if early { piece.transitionAfter = "cut"; piece.transitionDurationS = nil }
+        if slot.splitSectionID != nil { piece.raw["split_offset_s"] = .number(slot.splitOffsetS + a) }
+        return piece
     }
 
     func duplicateSelectedClip() {
@@ -11627,19 +11757,159 @@ extension NativeEditorSession {
         }
     }
 
-    func removeSelectedSplitScreen() {
-        guard canEditSplitScreen, let id = selectedSplitScreenSectionID, let selection,
-              let index = clipSlotIndex(selection.id), let panel = document.clips[index].splitPanelIndex else { return }
+    /// One undo step: the section becomes `keepPanel`'s clips in the order they play and the other panels go.
+    /// A panel with no footage cannot replace the section.
+    func removeSplitScreen(sectionID: String, keepPanel: Int) {
+        guard canEditSplitScreen, !document.splitPanelMembers(sectionID: sectionID, panel: keepPanel).isEmpty else { return }
         transactDocument(section: .timeline) { value in
-            guard let insertion = value.clips.firstIndex(where: { $0.splitSectionID == id }) else { return }
-            let kept = value.clips.filter { $0.splitSectionID == id && $0.splitPanelIndex == panel }
+            guard let insertion = value.clips.firstIndex(where: { $0.splitSectionID == sectionID }) else { return }
+            let kept = value.clips.filter { $0.splitSectionID == sectionID && $0.splitPanelIndex == keepPanel }
                 .sorted { $0.splitOffsetS < $1.splitOffsetS }.map { slot -> EditorTimelineSlot in
                     var result = slot; result.clearSplitMembership(); return result
                 }
-            value.clips.removeAll { $0.splitSectionID == id }
+            value.clips.removeAll { $0.splitSectionID == sectionID }
             value.clips.insert(contentsOf: kept, at: insertion)
-            value.splitScreenSections.removeAll { $0.id == id }
+            value.splitScreenSections.removeAll { $0.id == sectionID }
         }
+    }
+
+    /// Needs the playhead inside the section with at least half a second on each side.
+    func canMakeSplitFullScreen(sectionID: String, side: NativeSplitFullScreenSide) -> Bool {
+        splitFullScreenResult(sectionID: sectionID, side: side) != nil
+    }
+
+    /// One undo step. The section is cut at the playhead and one panel plays full screen on `side`: the selected
+    /// clip's panel, else the first panel with footage there. A gap in that panel is filled by the clip before it
+    /// (the first clip reaches back); where footage runs out only the empty time goes, and the lanes after it follow.
+    func makeSplitFullScreen(sectionID: String, side: NativeSplitFullScreenSide) {
+        guard let result = splitFullScreenResult(sectionID: sectionID, side: side) else { return }
+        transactDocument(sections: [.timeline], rebasesSplitLanes: false) { value in
+            value = result.document
+            NativeSplitTimelineRebase.removeTime(result.lost, from: &value)
+        }
+    }
+
+    private func splitFullScreenResult(sectionID: String, side: NativeSplitFullScreenSide)
+        -> (document: EditorDocument, lost: [(start: Double, end: Double)])? {
+        guard canEditSplitScreen, let context = splitContextAtPlayhead, context.sectionID == sectionID,
+              let first = document.clips.firstIndex(where: { !$0.removed && $0.splitSectionID == sectionID }),
+              let last = document.clips.lastIndex(where: { !$0.removed && $0.splitSectionID == sectionID }),
+              let window = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil, splitSections: document.splitScreenSections)
+                .baseClipWindows.first(where: { $0.sourceIndex == first }) else { return nil }
+        let duration = context.section.durationS
+        let cut = ((currentTime - context.sectionStart) * 1000).rounded() / 1000
+        guard cut >= 0.5 - 0.000001, duration - cut >= 0.5 - 0.000001 else { return nil }
+        let base = window.start - document.clips[first].splitOffsetS
+        let full = side == .fromPlayhead ? (start: cut, end: duration) : (start: 0.0, end: cut)
+        let kept = side == .fromPlayhead ? (start: 0.0, end: cut) : (start: cut, end: duration)
+        let block = document.clips[first...last]
+        func overlap(_ slot: EditorTimelineSlot, _ part: (start: Double, end: Double)) -> (start: Double, end: Double)? {
+            guard !slot.removed, slot.splitSectionID == sectionID, let length = slot.durationS else { return nil }
+            let start = max(slot.splitOffsetS, part.start), end = min(slot.splitOffsetS + length, part.end)
+            return end - start >= minimumClipDuration ? (start: start, end: end) : nil
+        }
+        let footage = Set(block.filter { overlap($0, full) != nil }.compactMap(\.splitPanelIndex))
+        let selected = selection.flatMap { $0.kind == .clip ? clipSlotIndex($0.id) : nil }
+            .flatMap { document.clips[$0].splitSectionID == sectionID ? document.clips[$0].splitPanelIndex : nil }
+        guard let panel = selected.flatMap({ footage.contains($0) ? $0 : nil }) ?? footage.min() else { return nil }
+
+        // Each clip splits at the cut. The part that plays first keeps the occurrence; a second part is a new one.
+        var sectionSlots: [EditorTimelineSlot] = []
+        var run: [(slot: EditorTimelineSlot, start: Double, end: Double, rate: Double)] = []
+        for slot in block {
+            guard let length = slot.durationS, !slot.removed, slot.splitSectionID == sectionID else { sectionSlots.append(slot); continue }
+            let rate = timelineClips.first(where: { $0.slotID == slot.id }).map { effectiveSourceRate(slot: slot, clip: $0) } ?? Self.explicitPlaybackRate(slot)
+            let candidates: [(span: (start: Double, end: Double)?, inSection: Bool)] = [
+                (overlap(slot, kept), true), (slot.splitPanelIndex == panel ? overlap(slot, full) : nil, false),
+            ]
+            let parts = candidates.compactMap { candidate in candidate.span.map { (start: $0.start, end: $0.end, inSection: candidate.inSection) } }
+                .sorted { $0.start < $1.start }
+            for (position, part) in parts.enumerated() {
+                var piece = Self.piece(of: slot, from: part.start - slot.splitOffsetS, to: part.end - slot.splitOffsetS, length: length, rate: rate)
+                if position > 0 { piece.id = UUID().uuidString; piece.parentSegmentID = slot.id }
+                if part.inSection {
+                    if side == .untilPlayhead { piece.raw["split_offset_s"] = .number(part.start - cut) }
+                    sectionSlots.append(piece)
+                } else {
+                    piece.clearSplitMembership()
+                    run.append((slot: piece, start: part.start, end: part.end, rate: rate))
+                }
+            }
+        }
+        guard sectionSlots.contains(where: { !$0.removed && $0.splitSectionID == sectionID }), !run.isEmpty else { return nil }
+        run.sort { $0.start < $1.start }
+
+        /// Lengthens run clip `index` by up to `amount` seconds of its own footage, at its end or its start.
+        func grow(_ index: Int, by amount: Double, atStart: Bool) -> Double {
+            let slot = run[index].slot, rate = run[index].rate
+            guard amount > 0.000001, slot.raw["freeze_frame_s"]?.numberValue == nil, let length = slot.durationS else { return 0 }
+            let still = isStillSlot(slot)
+            let sourceEnd = slot.raw["source_end_s"]?.numberValue ?? slot.inS + length * rate
+            let room: Double
+            if still { room = .infinity }
+            else if atStart { room = slot.inS / rate }
+            else if let total = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? resolvedSources?[slot.clipIndex]?.asset.duration {
+                room = max(0, total - sourceEnd) / rate
+            } else { room = 0 }
+            let grown = min(amount, room)
+            guard grown > 0.000001 else { return 0 }
+            var longer = slot
+            longer.durationS = length + grown; longer.durationBeats = nil
+            if atStart {
+                if !still { longer.inS = slot.inS - grown * rate; longer.raw["source_start_locked"] = .bool(true) }
+                run[index].start -= grown
+            } else {
+                if slot.raw["source_end_s"] != nil { longer.raw["source_end_s"] = .number(sourceEnd + grown * rate) }
+                run[index].end += grown
+            }
+            run[index].slot = longer
+            return grown
+        }
+        var lost: [(start: Double, end: Double)] = []
+        var covered = full.start
+        for index in run.indices {
+            let gap = run[index].start - covered
+            if gap > 0.000001 {
+                let forward = index > 0 ? grow(index - 1, by: gap, atStart: false) : 0
+                let backward = grow(index, by: gap - forward, atStart: true)
+                if gap - forward - backward > 0.000001 { lost.append((start: covered + forward, end: run[index].start)) }
+            }
+            covered = max(covered, run[index].end)
+        }
+        let tail = full.end - covered
+        if tail > 0.000001, let lastIndex = run.indices.last {
+            let forward = grow(lastIndex, by: tail, atStart: false)
+            if tail - forward > 0.000001 { lost.append((start: covered + forward, end: full.end)) }
+        }
+        // Full-screen clips crossfade by their transition's own length. An overlap they cannot replay becomes a cut.
+        for index in run.indices.dropFirst().reversed() where run[index - 1].end > run[index].start + 0.000001 {
+            let left = run[index - 1].slot, length = left.durationS ?? 0, shared = run[index - 1].end - run[index].start
+            let replayed = NativeEditorInteraction.transitionOverlap(left: left, leftDuration: length, rightDuration: run[index].slot.durationS ?? 0)
+            guard abs(replayed - shared) > 0.001 else { continue }
+            run[index - 1].slot = Self.piece(of: left, from: 0, to: length - shared, length: length, rate: run[index - 1].rate)
+            run[index - 1].end = run[index].start
+        }
+        // Where clips only touch, no transition ever played; keep it that way now that they are ordinary clips.
+        for index in run.indices where index == run.count - 1 || run[index].end <= run[index + 1].start + 0.000001 {
+            run[index].slot.transitionAfter = "cut"; run[index].slot.transitionDurationS = nil
+        }
+
+        var before = Array(document.clips[..<first])
+        if side == .untilPlayhead, let previous = before.lastIndex(where: { !$0.removed }),
+           before[previous].splitSectionID == nil, before[previous].transitionAfter != "cut" {
+            // It met the section with a cut; it meets the full-screen clips the same way.
+            before[previous].transitionAfter = "cut"; before[previous].transitionDurationS = nil
+        }
+        let runSlots = run.map(\.slot)
+        var next = document
+        next.clips = before + (side == .fromPlayhead ? sectionSlots + runSlots : runSlots + sectionSlots) + document.clips[(last + 1)...]
+        guard let sectionIndex = next.splitScreenSections.firstIndex(where: { $0.id == sectionID }) else { return nil }
+        next.splitScreenSections[sectionIndex].durationS = kept.end - kept.start
+        next.fitCollapseSectionDurations()
+        let remaining = next.splitScreenSections[sectionIndex].durationS
+        if kept.end - kept.start - remaining > 0.000001 { lost.append((start: kept.start + remaining, end: kept.end)) }
+        guard next.splitScreenIsValid else { return nil }
+        return (next, lost.map { (start: base + $0.start, end: base + $0.end) })
     }
 
 

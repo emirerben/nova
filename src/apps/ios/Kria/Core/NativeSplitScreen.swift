@@ -3,6 +3,9 @@ import Foundation
 
 enum NativeSplitScope: Equatable { case selectedClip, wholeVideo }
 
+/// Which side of the playhead leaves the split and plays full screen.
+enum NativeSplitFullScreenSide: Equatable { case fromPlayhead, untilPlayhead }
+
 /// Panel geometry in top-origin unit space: x 0, width 1, y and height as fractions of the canvas height.
 /// Heights follow the compiler and engine: the gutters come off first, the rest is shared by weight.
 struct NativeSplitPanelLayout {
@@ -217,11 +220,16 @@ extension EditorDocument {
         return splitScreenSections.isEmpty || NativeEditorInteraction.timelineProjection(slots: clips, carousel: nil, splitSections: splitScreenSections).totalDuration <= 1800
     }
 
+    /// A panel's live clips in the order they play.
+    func splitPanelMembers(sectionID: String, panel: Int) -> [EditorTimelineSlot] {
+        clips.filter { !$0.removed && $0.splitSectionID == sectionID && $0.splitPanelIndex == panel }.sorted { $0.splitOffsetS < $1.splitOffsetS }
+    }
+
     /// The free part of a panel a new clip goes into, in section seconds: the gap at `local` when `local` falls
     /// in one, else everything after the panel's last clip.
     func splitPanelOpening(sectionID: String, panel: Int, near local: Double?) -> (start: Double, end: Double)? {
         guard let section = splitScreenSections.first(where: { $0.id == sectionID }), (0..<section.panelCount).contains(panel) else { return nil }
-        let spans = clips.filter { !$0.removed && $0.splitSectionID == sectionID && $0.splitPanelIndex == panel }
+        let spans = splitPanelMembers(sectionID: sectionID, panel: panel)
             .map { (start: $0.splitOffsetS, end: $0.splitOffsetS + ($0.durationS ?? 0)) }
         if let local, local >= 0, local < section.durationS,
            !spans.contains(where: { $0.start <= local + 0.000001 && local < $0.end - 0.000001 }) {

@@ -1720,6 +1720,62 @@ struct NativeSplitScreenRows {
     }
 
     func row(slotID: String?) -> Int { slotID.flatMap { rowsBySlot[$0] } ?? 0 }
+
+    /// True for a clip that sits in a split panel, as opposed to an ordinary full-screen clip.
+    func isMember(slotID: String?) -> Bool { slotID.map { rowsBySlot[$0] != nil } ?? false }
+
+    func row(panel: Int, count: Int) -> Int? { titles.firstIndex(of: Self.panelTitle(index: panel, count: count)) }
+}
+
+/// Free time in one panel of a split: between its members, and after the last one up to the section end.
+struct NativeSplitGap: Identifiable, Equatable {
+    let sectionID: String
+    let panel: Int
+    let index: Int
+    let start: TimeInterval
+    let end: TimeInterval
+    let row: Int
+    let canAdd: Bool
+    var id: String { "\(sectionID)-\(panel)-\(index)" }
+}
+
+enum NativeSplitGaps {
+    static let minimumDuration: TimeInterval = 0.05
+
+    static func make(document: EditorDocument, clips: [EditorClip], rows: NativeSplitScreenRows,
+                     canAdd: (String, Int) -> Bool) -> [NativeSplitGap] {
+        guard !document.splitScreenSections.isEmpty else { return [] }
+        var windows: [String: (start: TimeInterval, end: TimeInterval)] = [:]
+        for clip in clips { if let id = clip.slotID { windows[id] = (clip.start, clip.end) } }
+        var gaps = [NativeSplitGap]()
+        for section in document.splitScreenSections {
+            let members = document.clips.compactMap { slot -> (panel: Int, start: TimeInterval, end: TimeInterval, offset: TimeInterval)? in
+                guard !slot.removed, slot.splitSectionID == section.id, let id = slot.id,
+                      let panel = slot.splitPanelIndex, let window = windows[id] else { return nil }
+                return (panel, window.start, window.end, slot.splitOffsetS)
+            }
+            guard let origin = members.map({ $0.start - $0.offset }).min() else { continue }
+            let sectionEnd = origin + section.durationS
+            for panel in 0..<section.panelCount {
+                guard let row = rows.row(panel: panel, count: section.panelCount) else { continue }
+                let addable = canAdd(section.id, panel)
+                var cursor = origin
+                var index = 0
+                func record(_ start: TimeInterval, _ end: TimeInterval) {
+                    guard end - start >= minimumDuration else { return }
+                    gaps.append(NativeSplitGap(sectionID: section.id, panel: panel, index: index, start: start, end: end,
+                                               row: row, canAdd: addable))
+                    index += 1
+                }
+                for member in members.filter({ $0.panel == panel }).sorted(by: { $0.start < $1.start }) {
+                    record(cursor, member.start)
+                    cursor = max(cursor, member.end)
+                }
+                record(cursor, sectionEnd)
+            }
+        }
+        return gaps
+    }
 }
 
 /// The playhead stays fixed in the viewport while every track moves beneath it.
@@ -1757,6 +1813,7 @@ struct NativeMiniStrip: View {
     @State private var lastBoundaryFeedbackAt = Date.distantPast
     @State private var cachedClips: [EditorClip] = []
     @State private var footageRows = NativeSplitScreenRows(document: EditorDocument())
+    @State private var splitGaps: [NativeSplitGap] = []
     @State private var didCacheItems = false
     @State private var isPresentingAddClip = false
     /// Non-nil only while an auto-scroll-eligible drag (timed-block move,
@@ -1783,6 +1840,9 @@ struct NativeMiniStrip: View {
     var onSelectText: () -> Void = {}
     /// KRI-589: the "+" menu's Drawing row; nil hides it (the variant does not open `drawings.add`).
     var onSelectDrawing: (() -> Void)?
+    /// A tap on the "+" of a gap in a split panel. The strip has already moved the playhead into the gap; the owner
+    /// opens the Split tool so its add flow targets that panel.
+    var onOpenSplitAdd: ((String, Int) -> Void)?
 
     private let minimumZoom: CGFloat = 0.5
     private let maximumZoom: CGFloat = 24
@@ -1801,7 +1861,8 @@ struct NativeMiniStrip: View {
         isCovered: Bool = false,
         onSelectVisual: @escaping () -> Void = {},
         onSelectText: @escaping () -> Void = {},
-        onSelectDrawing: (() -> Void)? = nil
+        onSelectDrawing: (() -> Void)? = nil,
+        onOpenSplitAdd: ((String, Int) -> Void)? = nil
     ) {
         self.session = session
         self.bottomClearance = bottomClearance
@@ -1809,6 +1870,7 @@ struct NativeMiniStrip: View {
         self.onSelectVisual = onSelectVisual
         self.onSelectText = onSelectText
         self.onSelectDrawing = onSelectDrawing
+        self.onOpenSplitAdd = onOpenSplitAdd
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -2297,6 +2359,18 @@ struct NativeMiniStrip: View {
                         .onEnded { _ in playheadStartTime = nil })
                     .accessibilityLabel("Playhead")
                     .accessibilityIdentifier("native-editor-playhead")
+                if let hint = session.splitTrimHint {
+                    Text(hint)
+                        .font(KriaFont.body(12).weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(KriaColor.ink, in: Capsule())
+                        .position(x: playheadX, y: 12)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("native-editor-timeline-trim-hint")
+                }
             }
             .clipped()
             // The timeline content itself owns the full hit shape, so a
@@ -2415,9 +2489,50 @@ struct NativeMiniStrip: View {
                         context.stroke(line, with: .color(.white.opacity(0.12)), lineWidth: 1)
                     }
                 }
+                for gap in splitGaps {
+                    let visible = gapFrame(gap, playheadX: playheadX).intersection(CGRect(origin: .zero, size: size))
+                    guard !visible.isNull, visible.width > 0 else { continue }
+                    var layer = context
+                    layer.clip(to: Path(roundedRect: visible, cornerRadius: 8))
+                    layer.fill(Path(visible), with: .color(KriaColor.zinc.opacity(0.12)))
+                    // Hatching is filled slanted bands, not strokes.
+                    let slant = visible.height * 0.6
+                    var x = (visible.minX / 9).rounded(.down) * 9 - slant
+                    while x < visible.maxX {
+                        var band = Path()
+                        band.move(to: CGPoint(x: x, y: visible.maxY))
+                        band.addLine(to: CGPoint(x: x + 3, y: visible.maxY))
+                        band.addLine(to: CGPoint(x: x + 3 + slant, y: visible.minY))
+                        band.addLine(to: CGPoint(x: x + slant, y: visible.minY))
+                        band.closeSubpath()
+                        layer.fill(band, with: .color(KriaColor.zinc.opacity(0.26)))
+                        x += 9
+                    }
+                }
             }
             .frame(height: filmstripContentHeight)
             .allowsHitTesting(false)
+
+            ForEach(visibleSplitGaps(playheadX: playheadX)) { gap in
+                let frame = gapFrame(gap, playheadX: playheadX)
+                let visible = frame.intersection(CGRect(x: 0, y: frame.minY, width: width, height: frame.height))
+                Color.clear
+                    .frame(width: visible.width, height: visible.height)
+                    .overlay {
+                        if gap.canAdd, visible.width >= 28 {
+                            Image(systemName: "plus")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(KriaColor.ink.opacity(0.55))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { openSplitGap(gap) }
+                    .position(x: visible.midX, y: visible.midY)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(gapLabel(gap))
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("native-editor-split-gap-\(gap.panel)-\(gap.index)")
+            }
 
             ForEach(visibleClips(playheadX: playheadX), id: \.element.id) { index, clip in
                 // Only the trailing edge auto-scrolls — a clip's timeline
@@ -2476,7 +2591,8 @@ struct NativeMiniStrip: View {
                         }
                     },
                     onTrailingDragXChange: { x in updateAutoScrollX(x) },
-                    panelTitle: footageRows.titles[footageRows.row(slotID: clip.slotID)]
+                    panelTitle: footageRows.titles[footageRows.row(slotID: clip.slotID)],
+                    showsEndHandle: footageRows.isMember(slotID: clip.slotID)
                 )
             }
             if clips.isEmpty {
@@ -2533,6 +2649,9 @@ struct NativeMiniStrip: View {
     private func refreshItems() {
         cachedClips = session.timelineClips
         footageRows = NativeSplitScreenRows(document: session.document)
+        splitGaps = NativeSplitGaps.make(document: session.document, clips: cachedClips, rows: footageRows) { sectionID, panel in
+            session.canAddToSplitPanel(sectionID: sectionID, panel: panel)
+        }
         cachedItems = makeItems()
         didCacheItems = true
         if session.isTimingGestureActive, !cachedRows.isEmpty {
@@ -2582,6 +2701,10 @@ struct NativeMiniStrip: View {
                 height: filmstripHeight
             )
             frames.append(hitFrame)
+        }
+        for gap in visibleSplitGaps(playheadX: playheadX) where gap.canAdd {
+            let frame = gapFrame(gap, playheadX: playheadX)
+            frames.append(CGRect(x: frame.minX, y: filmstripOriginY + frame.minY, width: frame.width, height: frame.height))
         }
 
         var rowOriginY = filmstripOriginY + filmstripContentHeight + rowGap
@@ -2944,6 +3067,36 @@ struct NativeMiniStrip: View {
             let frame = itemFrame(item, playheadX: playheadX)
             return frame.maxX >= 0 && frame.minX <= viewportWidth || item.selection == session.selection
         }
+    }
+
+    private func gapFrame(_ gap: NativeSplitGap, playheadX: CGFloat) -> CGRect {
+        CGRect(x: playheadX + CGFloat(gap.start - clock.currentTime) * pixelsPerSecond,
+               y: CGFloat(gap.row) * (filmstripHeight + rowGap),
+               width: CGFloat(gap.end - gap.start) * pixelsPerSecond, height: filmstripHeight)
+    }
+
+    private func visibleSplitGaps(playheadX: CGFloat) -> [NativeSplitGap] {
+        guard viewportWidth > 0 else { return splitGaps }
+        return splitGaps.filter { gap in
+            let frame = gapFrame(gap, playheadX: playheadX)
+            return frame.maxX >= 0 && frame.minX <= viewportWidth && frame.width > 0
+        }
+    }
+
+    private func gapLabel(_ gap: NativeSplitGap) -> String {
+        let count = session.document.splitScreenSections.first { $0.id == gap.sectionID }?.panelCount ?? 2
+        let title = NativeSplitScreenRows.panelTitle(index: gap.panel, count: count)
+        let length = String(format: "%.1f", gap.end - gap.start)
+        return "Free time in the \(title) panel, \(length) seconds"
+    }
+
+    /// Moves the playhead into the free time so the Split tool's add flow acts on this panel, then asks the owner to
+    /// open that tool. A gap inside a split cannot be selected as a clip, so the playhead is the only handle.
+    private func openSplitGap(_ gap: NativeSplitGap) {
+        guard gap.canAdd else { return }
+        session.pausePlayback()
+        seek(to: gap.start + min(0.01, (gap.end - gap.start) / 2))
+        onOpenSplitAdd?(gap.sectionID, gap.panel)
     }
 
     private func visibleClips(playheadX: CGFloat) -> [(offset: Int, element: EditorClip)] {
@@ -3380,6 +3533,9 @@ private struct NativeClipSurface: View {
     /// finger movement. See NativeMiniStrip's design note.
     var onTrailingDragXChange: ((CGFloat) -> Void)? = nil
     var panelTitle: String? = nil
+    /// A split member always carries its own end handle, so any panel can be shortened or extended without selecting
+    /// it first. Ordinary clips show handles only while selected.
+    var showsEndHandle = false
 
     private let minimumDuration: TimeInterval = 0.1
 
@@ -3467,6 +3623,24 @@ private struct NativeClipSurface: View {
                     onDragXChange: onTrailingDragXChange
                 )
                     .offset(x: max(0, frame.width - 44))
+            } else if showsEndHandle {
+                // A narrow block keeps its middle for selecting it; the handle sits at the right end of its touch surface.
+                let width = min(44, max(14, frame.width * 0.3))
+                NativeTrimHandle(
+                    edge: .trailing,
+                    height: frame.height,
+                    pixelsPerSecond: pixelsPerSecond,
+                    visualOffset: width / 2,
+                    touchWidth: width,
+                    tint: .white,
+                    identifier: "native-editor-split-end-\(index + 1)",
+                    label: "Trim panel end",
+                    onTrimStart: onTrimStart,
+                    onTrimChange: onTrimChange,
+                    onTrimEnd: onTrimEnd,
+                    onDragXChange: onTrailingDragXChange
+                )
+                    .offset(x: max(0, max(44, frame.width) - width))
             }
         }
         .frame(width: max(44, frame.width), height: frame.height)
@@ -3499,6 +3673,9 @@ private struct NativeTrimHandle: View {
     let pixelsPerSecond: CGFloat
     let visualOffset: CGFloat
     var touchWidth: CGFloat = 44
+    var tint: Color = KriaColor.sky
+    var identifier: String?
+    var label: String?
     let onTrimStart: (NativeTrimEdge, NativeTimelineGestureID) -> Bool
     let onTrimChange: (NativeTrimEdge, TimeInterval, NativeTimelineGestureID) -> Void
     let onTrimEnd: (NativeTimelineGestureID, Bool) -> Void
@@ -3515,7 +3692,7 @@ private struct NativeTrimHandle: View {
     var body: some View {
         ZStack {
             Capsule()
-                .fill(KriaColor.sky)
+                .fill(tint)
                 .frame(width: 12, height: min(56, max(44, height - 20)))
                 .offset(x: visualOffset)
         }
@@ -3566,8 +3743,8 @@ private struct NativeTrimHandle: View {
                 if let token = gestureID { gestureID = nil; onTrimEnd(token, false) }
                 rejected = false
             }
-            .accessibilityLabel(edge == .leading ? "Trim block start" : "Trim block end")
-            .accessibilityIdentifier(edge == .leading ? "native-editor-trim-leading" : "native-editor-trim-trailing")
+            .accessibilityLabel(label ?? (edge == .leading ? "Trim block start" : "Trim block end"))
+            .accessibilityIdentifier(identifier ?? (edge == .leading ? "native-editor-trim-leading" : "native-editor-trim-trailing"))
             .accessibilityHint("Drag to adjust the selected block")
             .accessibilityAdjustableAction { direction in
                 let token = NativeTimelineGestureID()

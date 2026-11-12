@@ -483,6 +483,7 @@ struct NativeEditorTimeline: View {
     var onSelectVisual: () -> Void = {}
     var onSelectText: () -> Void = {}
     var onSelectDrawing: (() -> Void)?
+    var onOpenSplitAdd: ((String, Int) -> Void)?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -514,7 +515,8 @@ struct NativeEditorTimeline: View {
             }
             NativeMiniStrip(
                 session: session, bottomClearance: bottomClearance, isCovered: isCovered,
-                onSelectVisual: onSelectVisual, onSelectText: onSelectText, onSelectDrawing: onSelectDrawing
+                onSelectVisual: onSelectVisual, onSelectText: onSelectText, onSelectDrawing: onSelectDrawing,
+                onOpenSplitAdd: onOpenSplitAdd
             )
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("native-editor-mini-strip")

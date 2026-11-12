@@ -168,6 +168,10 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         for _ in 0..<3 where !tool.isHittable { rail.swipeLeft() }
         XCTAssertTrue(tool.isHittable, "Split is the last tool on the rail")
         tool.tap()
+        // The default scope is Whole video; these journeys build a one-clip split.
+        let clipScope = app.buttons["native-editor-split-scope-clip"]
+        XCTAssertTrue(clipScope.waitForExistence(timeout: 10))
+        clipScope.tap()
         let card = app.buttons["native-editor-split-create-\(panels)"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         card.tap()
