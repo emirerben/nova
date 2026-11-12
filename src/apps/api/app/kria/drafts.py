@@ -28,6 +28,7 @@ from app.kria.editor_head import (
     MAX_RESTAGE_CHAIN,
     RESTAMP_REASONS,
     is_head_current,
+    payload_base,
     restage_marker,
     variant_baseline,
 )
@@ -613,26 +614,29 @@ async def _row(db: AsyncSession, draft_id: uuid.UUID | None) -> CreatorEditDraft
     ).scalar_one_or_none()
 
 
-async def _undo_target(db: AsyncSession, head: CreatorEditDraft) -> tuple[uuid.UUID | None, bool]:
-    """The draft Undo restores, and whether phone-publish restamps lie between it and the head.
+async def _undo_target(
+    db: AsyncSession, head: CreatorEditDraft
+) -> tuple[uuid.UUID | None, CreatorEditDraft | None]:
+    """The draft Undo restores, and the creator row it restores from when restamps lie between.
 
     Restage rows are the server moving the head, not creator edits, so Undo looks past them. An
     approval's render holds the edit, so Undo across one is unavailable (committed work is not
-    undone by draft undo): ``(None, False)``. A head with no restage row is ``main``'s case.
+    undone by draft undo): ``(None, None)``. A head with no restage row is ``main``'s case; the
+    second item is None there and for any other row without a restamp above it.
     """
     row: CreatorEditDraft | None = head
     restamped = False
     for _ in range(MAX_RESTAGE_CHAIN):
         marker = restage_marker(row)
         if marker is None:
-            return row.parent_draft_id, restamped
+            return row.parent_draft_id, row if restamped else None
         if marker.get("reason") not in RESTAMP_REASONS:
-            return None, False
+            return None, None
         restamped = True
         row = await _row(db, row.parent_draft_id)
         if row is None:
-            return None, False
-    return None, False
+            return None, None
+    return None, None
 
 
 async def can_undo(db: AsyncSession, head: CreatorEditDraft) -> bool:
@@ -705,7 +709,8 @@ async def write_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    snapshot = dict(snapshot)
+    # The server alone records a restage (``editor_head.insert_restage_row``).
+    snapshot = {key: value for key, value in snapshot.items() if key != "restage"}
     for field in ("brief_binding", "brief_coverage", "prepared_collection_story"):
         authoritative = (head.snapshot_json or {}).get(field)
         if field in snapshot and snapshot[field] != authoritative:
@@ -1053,7 +1058,7 @@ async def undo_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
-    parent_id, restamped = await _undo_target(db, head)
+    parent_id, restamped_from = await _undo_target(db, head)
     if parent_id is None:
         raise RuntimeFailure(
             409,
@@ -1075,8 +1080,15 @@ async def undo_draft(
     document = KriaDraftDocument.model_validate(parent.snapshot_json).model_copy(
         update={"restage": None}
     )
-    if restamped and isinstance(document.editor_payload, dict):
-        # The restamps between the head and the restored draft only re-stamped the same document.
+    if (
+        restamped_from is not None
+        and isinstance(document.editor_payload, dict)
+        and (parent.base_generation_id, payload_base(parent))
+        == (restamped_from.base_generation_id, payload_base(restamped_from))
+    ):
+        # The restamps between the head and the restored draft only re-stamped the same
+        # document. A parent built on another generation than the row they stamped is a draft
+        # of older content: it comes back verbatim, as on ``main``, and stays not current.
         document = document.model_copy(
             update={
                 "editor_payload": {

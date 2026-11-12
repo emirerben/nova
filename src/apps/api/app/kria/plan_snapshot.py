@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.kria import plan_blocks
-from app.kria.drafts import _head, _target, draft_etag
+from app.kria.drafts import _head, _target, can_undo, draft_etag
 from app.kria.plan_contract import (
     SCOPABLE_SECTIONS,
     SECTION_ORDER,
@@ -186,7 +186,7 @@ async def read_plan_snapshot(
                 draft_id=str(head.id),
                 draft_revision=int(head.draft_revision),
                 etag=draft_etag(head.snapshot_hash),
-                can_undo=head.parent_draft_id is not None,
+                can_undo=await can_undo(db, head),
             )
     job: Job | None = None
     if target is not None and target.job is not None and str(target.job.id) == job_id:

@@ -188,16 +188,27 @@ def _variant_of(job: Any, variant_key: str) -> dict[str, Any] | None:  # noqa: A
     return _variant(job, variant_key)
 
 
+def _pinned_id(variant: dict[str, Any] | None) -> str | None:
+    """The saved draft a v2 / empty-state variant pins, as written by its Save."""
+    if variant is None or not (
+        variant.get("editor_state") == "empty" or variant.get("editor_state_version") == 2
+    ):
+        return None
+    reference = variant.get("editor_draft")
+    pinned = reference.get("draft_id") if isinstance(reference, dict) else None
+    return str(pinned) if pinned else None
+
+
 def _repoint_pinned_draft(job: Job, variant_key: str, head_id: uuid.UUID) -> bool:
-    """Point a v2 / empty-state variant's ``editor_draft`` at ``head_id``. True when changed."""
+    """Point the variant's pinned ``editor_draft`` at ``head_id``. True when changed.
+
+    The caller has already established that the row it replaces is the pinned one: a chat or
+    phone draft that merely sits on the baseline is never the saved draft.
+    """
     assembly = job.assembly_plan or {}
     variant = _variant_of(job, variant_key)
-    if (
-        variant is None
-        or not (variant.get("editor_state") == "empty" or variant.get("editor_state_version") == 2)
-        or not isinstance(variant.get("editor_draft"), dict)
-        or variant["editor_draft"].get("draft_id") == str(head_id)
-    ):
+    pinned = _pinned_id(variant)
+    if pinned is None or pinned == str(head_id):
         return False
     # JSON columns are replaced, never mutated in place: an in-place edit is not persisted.
     assembly = copy.deepcopy(assembly)
@@ -224,8 +235,13 @@ def insert_restage_row(
     head: CreatorEditDraft,
     document: Any,  # noqa: ANN401
     reason: str,
+    retires_pinned: bool = False,
 ) -> CreatorEditDraft:
-    """Demote ``head`` and insert ``document`` as the new head on the variant's baseline."""
+    """Demote ``head`` and insert ``document`` as the new head on the variant's baseline.
+
+    The variant's pinned saved draft follows the new row only when it is the row replaced: the
+    head itself, or (``retires_pinned``) a stranded pinned row this document supersedes.
+    """
     from app.kria.drafts import canonical_snapshot  # noqa: PLC0415
 
     baseline = variant_baseline(_variant_of(job, variant_key) or {})
@@ -264,7 +280,8 @@ def insert_restage_row(
     )
     db.add(row)
     db.flush()
-    _repoint_pinned_draft(job, variant_key, row.id)
+    if retires_pinned or _pinned_id(_variant_of(job, variant_key)) == str(head.id):
+        _repoint_pinned_draft(job, variant_key, row.id)
     log.info(
         "editor_head_restaged",
         reason=reason,
@@ -286,12 +303,15 @@ def restage_editor_head_sync(
     creator_id: uuid.UUID,
     operation: HeadOperation,
     reason: str,
+    retires_pinned: bool = False,
 ) -> CreatorEditDraft | None:
     """Move the variant's editor head by ``operation``; None when there is nothing to do.
 
     Nothing to do: no editor head; the head already sits on the baseline (a retried Celery task
     lands here); ``retire`` of an empty-state variant (its content lives only in its draft); or
     ``restamp`` of a head that is not on the generation the phone's publish was made from.
+    ``retires_pinned`` (the Save path) supersedes a stranded pinned draft with the committed
+    document even when the head is a different row; the pin never follows any other row.
     The caller holds Item and Job and commits.
     """
     from app.kria.drafts import KriaDraftDocument, committed_document  # noqa: PLC0415
@@ -301,10 +321,11 @@ def restage_editor_head_sync(
     if variant is None:
         return None
     head = locked_head(db, item.id, variant_key)
-    if head is None or payload_base(head) is None:
+    if head is None:
         return None
-    if is_head_on_baseline(job, variant, head):
-        _repoint_pinned_draft(job, variant_key, head.id)
+    pinned = _pinned_id(variant)
+    stranded_pin = retires_pinned and operation == "retire" and pinned not in (None, str(head.id))
+    if not stranded_pin and (payload_base(head) is None or is_head_on_baseline(job, variant, head)):
         return None
     if operation == "restamp":
         source = published_source_generation(job, variant)
@@ -341,6 +362,7 @@ def restage_editor_head_sync(
         head=head,
         document=moved,
         reason=reason,
+        retires_pinned=retires_pinned,
     )
 
 
@@ -353,6 +375,7 @@ async def restage_editor_head(
     creator_id: uuid.UUID,
     operation: HeadOperation,
     reason: str,
+    retires_pinned: bool = False,
 ) -> CreatorEditDraft | None:
     """Async twin of :func:`restage_editor_head_sync`; the same code runs through ``run_sync``."""
 
@@ -365,6 +388,7 @@ async def restage_editor_head(
             creator_id=creator_id,
             operation=operation,
             reason=reason,
+            retires_pinned=retires_pinned,
         )
 
     return await db.run_sync(run)

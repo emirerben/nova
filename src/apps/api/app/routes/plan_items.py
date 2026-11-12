@@ -8090,8 +8090,9 @@ async def _editor_commit_item(
         await attach_saved_editor_drafts(db, locked_job)
         if variant_id not in locked_job._saved_editor_drafts:
             # The pinned draft is not on the current generation, so main answered 409
-            # editor_draft_unavailable for good. Item then Job are locked: retire it (the head
-            # becomes the committed state, nothing old comes back) and attach that.
+            # editor_draft_unavailable for good. Item then Job are locked: supersede it with
+            # the committed state (nothing old comes back, and the head, if another row, is
+            # not the saved draft) and attach that.
             from app.kria.editor_head import restage_editor_head  # noqa: PLC0415
 
             await restage_editor_head(
@@ -8102,6 +8103,7 @@ async def _editor_commit_item(
                 creator_id=user.id,
                 operation="retire",
                 reason="editor_save",
+                retires_pinned=True,
             )
             locked_variant = _find_variant(locked_job, variant_id) or locked_variant
             await attach_saved_editor_drafts(db, locked_job)
