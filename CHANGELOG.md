@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.171.0] - 2026-11-12
+
+### Changed
+- fix(ios): editor always shows the latest version; remove the conflict-choice state (KRI-1367) (#2276) <!-- release-pr: 2276 -->
+
 ## [0.88.170.0] - 2026-11-11
 
 ### Changed
