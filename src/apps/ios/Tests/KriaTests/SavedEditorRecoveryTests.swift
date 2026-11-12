@@ -246,7 +246,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
         newer["render_generation_id"] = .string("newer-generation")
         newer.removeValue(forKey: "editor_draft")
         fake.authoritativeVariant = newer
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         return (session, fake, newer)
     }
 
@@ -267,7 +267,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertEqual(fake.lastRequest?.timelineSlots?.first?.objectValue?["slot_id"], .string("second-clip"))
     }
 
-    func testRetryConflictKeepsConcurrentLocalEditsWithoutAutomaticallySubmittingThem() async throws {
+    func testRetryConflictShowsLatestAndUndoRestoresConcurrentLocalEditsWithoutSubmittingThem() async throws {
         let (session, fake, _) = try await conflictingRetryFixture(suspend: true)
         let retry = Task { await session.retryRender() }
         for _ in 0..<200 {
@@ -283,27 +283,26 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 1)
         fake.resumeCommit(); await retry.value
         XCTAssertEqual(fake.commitCount, 1)
-        XCTAssertEqual(session.document, before)
-        XCTAssertNotNil(session.mergeConflictMessage, "remote timing/order overlaps the concurrent local trim")
-        session.resolveMergeConflicts(keepingLocal: true)
-        XCTAssertNil(session.mergeConflictMessage)
-        XCTAssertEqual(fake.commitCount, 1, "choosing edits does not authorize another POST")
+        XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
+        XCTAssertEqual(session.document.clips.map(\.id), ["second-clip", "saved-clip"], "remote timing/order wins the overlap")
+        XCTAssertTrue(session.canUndo)
+        session.undo()
+        XCTAssertEqual(fake.commitCount, 1, "converging never authorizes another POST")
         XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
         XCTAssertEqual(session.document.clips.first?.durationS, 1.5)
         XCTAssertEqual(session.document.textElements.first?.text, "Concurrent local work")
         XCTAssertTrue(session.hasUnsavedChanges)
     }
 
-    func testRetryConflictPreservesDirtyTextUntilConnectedTimelineChoice() async throws {
+    func testRetryConflictRemoteTimelineWinsOverDirtyTextAndUndoRestoresIt() async throws {
         let (session, fake, _) = try await conflictingRetryFixture()
         session.updateTextContent(id: "saved-title", content: "My unsaved title")
         let before = session.document
         await session.retryRender()
         XCTAssertEqual(fake.commitCount, 1)
-        XCTAssertEqual(session.document, before)
-        XCTAssertNotNil(session.mergeConflictMessage, "reordering and trimming changes the text's connected timeline")
-        session.resolveMergeConflicts(keepingLocal: true)
-        XCTAssertNil(session.mergeConflictMessage)
+        XCTAssertEqual(session.document.clips.map(\.id), ["second-clip", "saved-clip"], "reordering and trimming is connected to the text's timeline")
+        XCTAssertTrue(session.canUndo)
+        session.undo()
         XCTAssertEqual(fake.commitCount, 1)
         XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
         XCTAssertEqual(session.document.snapshot(for: .timeline), before.snapshot(for: .timeline))
@@ -343,7 +342,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
         guard case .failed = session.saveState else { return XCTFail("reload failure is not a saved result") }
         XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
         fake.editorVariantError = nil
-        fake.commitErrorQueue = [.conflict]
+        fake.commitErrorQueue = [.baselineConflict]
         await session.retryRender()
         XCTAssertEqual(fake.commitCount, 2, "the explicit retry cannot automatically resubmit after reloading")
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
@@ -364,7 +363,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
             XCTAssertFalse(session.hasUnsavedChanges)
             guard case .failed = session.saveState else { return XCTFail("unknown outcome cannot claim success") }
             XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
-            fake.commitThrow = nil; fake.commitErrorQueue = [.conflict]
+            fake.commitThrow = nil; fake.commitErrorQueue = [.baselineConflict]
             await session.retryRender()
             XCTAssertEqual(fake.commitCount, 2)
             XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
@@ -419,14 +418,12 @@ final class SavedEditorRecoveryTests: XCTestCase {
             XCTAssertFalse(session.isSaving)
             guard case .failed = session.saveState else { XCTFail("same-editor cancellation needs a terminal failure"); continue }
             XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
-            fake.editorVariantThrow = nil; fake.commitErrorQueue = [.conflict]
+            fake.editorVariantThrow = nil; fake.commitErrorQueue = [.baselineConflict]
             await session.retryRender()
             XCTAssertEqual(fake.commitCount, 2)
             if dirty {
-                XCTAssertEqual(session.document, before)
-                XCTAssertNotNil(session.mergeConflictMessage)
-                session.resolveMergeConflicts(keepingLocal: true)
-                XCTAssertNil(session.mergeConflictMessage)
+                XCTAssertTrue(session.canUndo)
+                session.undo()
                 XCTAssertEqual(fake.commitCount, 2)
                 XCTAssertEqual(session.document.snapshot(for: .timeline), before.snapshot(for: .timeline))
                 XCTAssertEqual(session.document.snapshot(for: .text), before.snapshot(for: .text))
@@ -682,7 +679,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
     func testDeferredConflictReloadCannotAdoptReplacementLifetime() async throws {
         let t = try thread()
         let old = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
-        old.sourcePoolError = .conflict
+        old.sourcePoolError = .baselineConflict
         let session = NativeEditorSession(project: t.summary)
         await session.load(api: old, threadID: threadID, variantID: "guided_story")
         let oldReads = old.editorVariantJobIDs.count
@@ -789,8 +786,11 @@ final class SavedEditorRecoveryTests: XCTestCase {
                 old.resumeEditorVariant()
                 let handled = await open.value
                 XCTAssertTrue(handled, "false would authorize the view to discard edits with fallback load")
-                XCTAssertEqual(session.document, before)
-                XCTAssertTrue(session.hasUnsavedChanges)
+                let converges = outcome == "success" && !replacement
+                if !converges {
+                    XCTAssertEqual(session.document, before)
+                    XCTAssertTrue(session.hasUnsavedChanges)
+                }
                 if replacement {
                     XCTAssertNil(session.newerJobPrompt)
                     let fallback = await session.loadForEditorOpen(project: t.summary, libraryJobID: nil,
@@ -798,9 +798,13 @@ final class SavedEditorRecoveryTests: XCTestCase {
                     XCTAssertNil(fallback, "even a delayed caller must not load over a replacement")
                     XCTAssertEqual(session.document, before)
                 }
-                else if outcome == "success" {
+                else if converges {
                     XCTAssertNil(session.newerJobPrompt)
-                    XCTAssertNotNil(session.mergeConflictMessage, "deleting the second clip changes the edited text's connected timeline")
+                    XCTAssertEqual(session.document.revision.baseGeneration, "newer", "deleting the second clip is connected to the text, so the latest wins")
+                    session.undo()
+                    XCTAssertEqual(session.document.textElements.first?.text, "Keep my new edit", "the edit made during the read is not lost")
+                    XCTAssertTrue(session.hasUnsavedChanges)
+                    continue
                 }
                 session.undo()
                 XCTAssertFalse(session.hasUnsavedChanges)
@@ -848,23 +852,18 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
     }
 
-    func testGenuineTimelineSaveRequiresChoiceBeforeResubmittingAgainstNewGeneration() async throws {
+    func testGenuineTimelineSaveConflictShowsLatestAndUndoThenSaveSendsMyTrimOnTheNewGeneration() async throws {
         let (session, fake, _) = try await conflictingRetryFixture()
         session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }
-        let before = session.document
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
-        XCTAssertEqual(session.document, before)
-        XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertNotNil(session.mergeConflictMessage)
-        await session.save()
-        XCTAssertEqual(fake.commitCount, 1, "repeating Save cannot bypass the unresolved choice")
-        XCTAssertEqual(session.document, before)
-        session.resolveMergeConflicts(keepingLocal: true)
-        XCTAssertNil(session.mergeConflictMessage)
-        XCTAssertEqual(fake.commitCount, 1, "resolution itself must never submit")
-        XCTAssertEqual(session.document.snapshot(for: .timeline), before.snapshot(for: .timeline))
+        XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
+        XCTAssertEqual(session.document.clips.map(\.id), ["second-clip", "saved-clip"], "the latest version wins the overlap")
+        XCTAssertTrue(session.canUndo)
+        session.undo()
+        XCTAssertEqual(fake.commitCount, 1, "converging itself never submits")
+        XCTAssertEqual(session.document.clips.first?.durationS, 1.5)
         XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
         await session.save()
         XCTAssertEqual(fake.commitCount, 2)
@@ -881,7 +880,6 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertEqual(session.document.snapshot(for: .text), textBefore,
             "the independent trim must not change text timing, binding, or any other text field")
         await session.save()
-        XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(fake.commitCount, 2, "independent authoritative wording may merge and retry the original save")
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "newer-generation")
         XCTAssertEqual(fake.lastRequest?.timelineSlots?.last?.objectValue?["slot_id"], .string("second-clip"))
@@ -895,23 +893,22 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertEqual(session.document.textElements.first?.raw["segment_id"], .string("saved-clip"))
     }
 
-    func testTimelineSaveRequiresChoiceWhenTrimRetimesTheNewerWording() async throws {
+    func testTimelineSaveLatestWinsWhenTrimRetimesTheNewerWording() async throws {
         let (session, fake, _) = try await conflictingRetryFixture(independentWording: true)
         let textBefore = try XCTUnwrap(session.document.snapshot(for: .text))
         session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }
         XCTAssertNotEqual(session.document.snapshot(for: .text), textBefore)
         XCTAssertEqual(session.document.textElements.first?.endS, 1.5,
             "the title follows its explicitly bound first clip")
-        let beforeSave = session.document
         await session.save()
-        XCTAssertNotNil(session.mergeConflictMessage)
-        XCTAssertEqual(fake.commitCount, 1, "a connected timing and wording conflict cannot automatically resubmit")
+        XCTAssertEqual(fake.commitCount, 1, "a connected timing and wording overlap is not resubmitted automatically")
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
-        XCTAssertEqual(session.document, beforeSave)
-        XCTAssertTrue(session.hasUnsavedChanges)
-        await session.save()
-        XCTAssertEqual(fake.commitCount, 1, "repeating Save cannot bypass the unresolved choice")
-        XCTAssertEqual(session.document, beforeSave)
+        XCTAssertEqual(session.document.textElements.first?.text, "Newer independent wording")
+        XCTAssertEqual(session.document.textElements.first?.endS, 2)
+        XCTAssertTrue(session.canUndo)
+        session.undo()
+        XCTAssertEqual(session.document.textElements.first?.endS, 1.5)
+        XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
     }
 
     func testFailedProjectLoadsSavedLanesWithoutRenderAndReconcilesOwnDirtyEdits() async throws {
