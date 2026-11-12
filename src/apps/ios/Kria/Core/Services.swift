@@ -980,8 +980,7 @@ struct DraftSnapshot: Codable, Sendable {
     /// Additive server fields: the server re-bases the head onto the variant's current generation whenever it is
     /// read and says so here. Absent from an older server, which leaves freshness to the phone.
     var headCurrent: Bool? = nil
-    var baseGeneration: String? = nil
-    enum CodingKeys: String, CodingKey { case snapshot, etag; case draftID = "draft_id"; case itemID = "item_id"; case variantKey = "variant_key"; case draftRevision = "draft_revision"; case snapshotHash = "snapshot_hash"; case baseJobID = "base_job_id"; case baseGenerationID = "base_generation_id"; case canUndo = "can_undo"; case createdAt = "created_at"; case headCurrent = "head_current"; case baseGeneration = "base_generation" }
+    enum CodingKeys: String, CodingKey { case snapshot, etag; case draftID = "draft_id"; case itemID = "item_id"; case variantKey = "variant_key"; case draftRevision = "draft_revision"; case snapshotHash = "snapshot_hash"; case baseJobID = "base_job_id"; case baseGenerationID = "base_generation_id"; case canUndo = "can_undo"; case createdAt = "created_at"; case headCurrent = "head_current" }
 }
 
 /// A variant's current generation: `render_generation_id`, else `render_finished_at`, else "" (a variant that never
@@ -2077,7 +2076,7 @@ struct KriaAPI: KriaAPIClient {
             // and the problem envelope above keep precedence.
             let coded = Self.decodeCodedDetail(from: data)
             throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message ?? coded?.message, code: problem?.code ?? coded?.code,
-                recovery: problem?.recovery, currentBaseGeneration: problem?.currentBaseGeneration))
+                recovery: problem?.recovery))
         }
         guard (200..<300).contains(http.statusCode) else {
             if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
@@ -2237,11 +2236,10 @@ struct KriaAPI: KriaAPIClient {
     /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
     /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the
     /// legacy `{"detail": "..."}` string every other route still sends.
-    private static func decodeProblem(from data: Data) -> (code: String?, message: String?, recovery: String?, currentBaseGeneration: String?)? {
+    private static func decodeProblem(from data: Data) -> (code: String?, message: String?, recovery: String?)? {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let problem = body["problem"] as? [String: Any] else { return nil }
-        return (problem["code"] as? String, problem["message"] as? String, problem["recovery"] as? String,
-                problem["current_base_generation"] as? String)
+        return (problem["code"] as? String, problem["message"] as? String, problem["recovery"] as? String)
     }
     /// Decodes FastAPI's object detail (`{"detail": {"code", "message"}}`), e.g. the
     /// `provider_link_required` refusal from `auth/mobile/exchange`. Nil for the
@@ -2791,8 +2789,6 @@ enum APIError: Error, LocalizedError, Equatable {
             || detail.code == ConflictDetail.baselineConflictCode
             || detail.message == ConflictDetail.baselineConflictCode
     }
-    /// The generation the server says is current, from a baseline conflict's problem envelope.
-    var conflictCurrentBaseGeneration: String? { if case let .conflict(detail) = self { detail.currentBaseGeneration } else { nil } }
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
     /// The machine code for this conflict: the runtime-v2 `KriaProblem.code`
@@ -2854,15 +2850,13 @@ struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
     /// server sent one instead of the legacy `detail` string. See `decodeProblem`
     /// and `decodeCodedDetail`.
     let code: String?
-    /// The runtime-v2 problem's `recovery` (`reload` only for a baseline conflict) and `current_base_generation`.
+    /// The runtime-v2 problem's `recovery` (`reload` only for a baseline conflict).
     let recovery: String?
-    let currentBaseGeneration: String?
-    init(_ message: String?, code: String? = nil, recovery: String? = nil, currentBaseGeneration: String? = nil) {
+    init(_ message: String?, code: String? = nil, recovery: String? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
         self.code = code
         self.recovery = recovery
-        self.currentBaseGeneration = currentBaseGeneration
     }
     static func == (_: ConflictDetail, _: ConflictDetail) -> Bool { true }
     static let baselineConflictCode = "baseline_conflict"
@@ -3089,7 +3083,8 @@ extension DraftSnapshot {
         // A chat draft stamps `editor_state_version` too (the phone's state carries it), but its flat
         // lane keys mark it as edits over the variant, not a committed snapshot (KRI-1333).
         if let authoritativeVariant,
-           variantBaseline(authoritativeVariant) == (baseGenerationID ?? ""),
+           variantBaseline(authoritativeVariant) == (baseGenerationID ?? "")
+            || authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
            let payload = Self.object(snapshot["editor_payload"]), payload["editor_state_version"] == .number(2),
            !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }) {
             // A committed full snapshot owns authoring state. The variant is

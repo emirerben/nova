@@ -207,10 +207,19 @@ enum EditorOpenIntent { case warm, open }
         var remoteETag: String?
         var legacySnapshot: [String: JSONValue]?
     }
-    /// The creator's own unsaved edits. Nil when the editor is clean or holds only what an AI chat staged,
-    /// which the server already has and a newer version supersedes. Every converge passes this as `local`.
+    /// The unsaved edits a converge replays, and whose they are. The one place that decides provenance, so a
+    /// call site can neither pass the AI's staged lanes off as the creator's nor drop them.
+    private struct ReplayableEdits {
+        enum Owner { case creator, assistant }
+        let document: EditorDocument
+        let owner: Owner
+    }
+    private var replayableEdits: ReplayableEdits? {
+        hasUnsavedChanges ? ReplayableEdits(document: document, owner: hasOnlyChatStagedChanges ? .assistant : .creator) : nil
+    }
+    /// The creator's own unsaved edits: nil when the editor is clean or holds only what an AI chat staged.
     private var creatorDocument: EditorDocument? {
-        !hasUnsavedChanges || hasOnlyChatStagedChanges ? nil : document
+        replayableEdits.flatMap { $0.owner == .creator ? $0.document : nil }
     }
     /// A gesture or text entry owns the document; a converge waits for it to settle.
     private var isQuietForConverge: Bool { pendingText == nil && transactionBaseline == nil && !isTimingGestureActive }
@@ -2645,6 +2654,14 @@ enum EditorOpenIntent { case warm, open }
                     stagedSections: staged?.sections ?? [], stagedRevision: staged == nil ? nil : snapshot.draftRevision))
                 return
             }
+            if onlyChatStaged, sameTarget, staged == nil {
+                // A newer render with no fresh head under the AI's staged edit: replay that edit on it rather than
+                // dropping it, so an edit the chat reported as done never silently disappears.
+                if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
+                applyConverged(ConvergeTarget(base: cleanDocument, clean: nextDocument, latest: nextDocument, variant: variant,
+                    destination: (nextJobID, nextVariantKey, snapshot.itemID)))
+                return
+            }
             let selected = selection
             let time = currentTime
             draft = nextDraft
@@ -4393,9 +4410,9 @@ enum EditorOpenIntent { case warm, open }
             : ["awaiting_device", "syncing", "needs_attention"].contains(status.phase)
                 && status.baseGeneration == generation
         guard !generation.isEmpty, status.request.identity.jobID == jobID,
-              status.request.identity.variantID == variantID, matchesGeneration else {
-            throw APIError.conflict
-        }
+              status.request.identity.variantID == variantID else { throw APIError.conflict }
+        // The recipe belongs to another generation of this edit: a newer version exists, so the preview reloads.
+        guard matchesGeneration else { throw APIError.baselineConflict }
         return status.request
     }
 
@@ -8640,6 +8657,9 @@ enum EditorOpenIntent { case warm, open }
                 }
             case .superseded:
                 return
+            case .deferred:
+                saveState = .failed("Your edits are still here. Finish what you're editing, then save again.")
+                return
             case .alreadyTried, .failed:
                 let detail = if case .failed(let error) = reload { " \(error.localizedDescription)" } else { "" }
                 saveState = .failed("Your edits are still here, but the newest version couldn’t be loaded.\(detail)")
@@ -8908,7 +8928,11 @@ enum EditorOpenIntent { case warm, open }
     private var previewConflictReloadGeneration: String?
 
     /// `replaced`: the latest version won an overlap with the creator's edits, which Undo restores.
-    private enum LatestReload { case reloaded, replaced, alreadyTried, superseded, failed(Error) }
+    /// `deferred`: the creator stayed mid-gesture or mid-text-entry past the wait bound; nothing changed.
+    private enum LatestReload { case reloaded, replaced, alreadyTried, superseded, deferred, failed(Error) }
+    /// How long a converge waits for a gesture or text entry to finish. The reload holds `isSaving` meanwhile (that
+    /// only fences Save and sync, never editing), so the bound keeps that fence from outliving a long text entry.
+    private static let convergeQuietBound: Duration = .seconds(10)
 
     /// Load the newest renderer-owned version and converge onto it: the creator's own edits that apply
     /// cleanly stay on top, the latest version wins any overlap. `fencingPreviewConflict` allows one reload
@@ -8963,6 +8987,16 @@ enum EditorOpenIntent { case warm, open }
             }
             var latest = latestClean
             if let staged { for section in staged.sections { copy(section, from: staged.document, into: &latest) } }
+            // Editing stays open during the reads above; a gesture or text entry that began meanwhile owns the document.
+            let quietDeadline = ContinuousClock.now.advanced(by: Self.convergeQuietBound)
+            while !isQuietForConverge {
+                guard ContinuousClock.now < quietDeadline else {
+                    if fencingPreviewConflict { previewConflictReloadGeneration = nil }
+                    return .deferred
+                }
+                try await Task.sleep(for: .milliseconds(50))
+                guard editorOperationIdentity == identity else { return .superseded }
+            }
             let replaced = applyConverged(ConvergeTarget(base: cleanDocument, clean: latestClean, latest: latest, variant: variant,
                 destination: (jobID, variantKey, itemID), forcePreview: fencingPreviewConflict,
                 stagedSections: staged?.sections ?? [], stagedRevision: stagedRevision))
@@ -8994,14 +9028,34 @@ enum EditorOpenIntent { case warm, open }
     /// True when the latest version replaced some of the creator's edits.
     @discardableResult
     private func applyConverged(_ target: ConvergeTarget) -> Bool {
-        let local = creatorDocument
-        let before = document
-        let converged = NativeEditorMerge.converge(base: target.base, local: local, latest: target.latest,
-            baseSong: currentSongAuthority, latestSong: mergeRemoteSong(for: target))
-        let selected = selection
-        let retentionSequence = sourcePreviewSequence
         let sameDestination = jobID == target.destination.job && variantKey == target.destination.variant
             && itemID == target.destination.item
+        let replay = replayableEdits
+        // The AI's staged lanes are replayed on the latest unless the latest brings its own head (which supersedes
+        // them) or is another job or variant (lanes authored for this one). Whatever survives stays the AI's.
+        let replaysAssistant = replay?.owner == .assistant && target.stagedSections.isEmpty && sameDestination
+        let local: EditorDocument? = replay.flatMap { $0.owner == .creator || replaysAssistant ? $0.document : nil }
+        let before = document
+        let converged: NativeEditorMerge.Converged
+        if replaysAssistant {
+            // Lane by lane: a lane the latest changed is the latest's (it may be a render of this very edit), and a
+            // lane it left alone takes the AI's edit. No field-level merge, so nothing of the AI's half-survives.
+            var replayed = target.latest
+            for section in changedSections where chatStagedSections.contains(section) && lanesEqual(section, target.latest, target.base) {
+                copy(section, from: before, into: &replayed)
+            }
+            converged = NativeEditorMerge.Converged(document: replayed, undo: nil, replacedCreatorEdits: false)
+        } else {
+            // Lanes the creator left as the AI staged them are not the creator's to lose.
+            let assistantSections = chatStagedSections.filter { section in
+                chatStagedDocument.map { before.snapshot(for: section) == $0.snapshot(for: section) } ?? false
+            }
+            converged = NativeEditorMerge.converge(base: target.base, local: local, latest: target.latest,
+                baseSong: currentSongAuthority, latestSong: mergeRemoteSong(for: target), assistantSections: assistantSections)
+        }
+        let creatorReplayed = replay?.owner == .creator
+        let selected = selection
+        let retentionSequence = sourcePreviewSequence
         if sameDestination { retainAdmittedPreview() }
         defer {
             if sourcePreviewSequence == retentionSequence { retirePreviousPreview() }
@@ -9036,14 +9090,20 @@ enum EditorOpenIntent { case warm, open }
         if !sameBase { explicitlyDirtySections.removeAll() }
         refreshDirtyState()
         explicitlyDirtySections.formIntersection(changedSections)
+        if replaysAssistant {
+            // What survived on the latest is still only the AI's edit: unsaved, and Save sends it on the new base.
+            chatStagedDocument = changedSections.isEmpty ? nil : document
+            chatStagedSections = changedSections
+            chatStagedHasNoManualBase = !changedSections.isEmpty
+        }
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
         setAuthoritativeDuration(Self.number(target.variant?["duration_s"]))
         refreshDuration()
-        if local != nil, converged.replacedCreatorEdits || (target.isNewVersion && converged.document != before) {
+        if creatorReplayed, converged.replacedCreatorEdits || (target.isNewVersion && converged.document != before) {
             showConvergeNotice(replaced: converged.replacedCreatorEdits, canUndo: pushedUndo)
         }
-        return converged.replacedCreatorEdits
+        return creatorReplayed && converged.replacedCreatorEdits
     }
 
     private func showConvergeNotice(replaced: Bool, canUndo: Bool) {
@@ -10174,7 +10234,7 @@ enum EditorOpenIntent { case warm, open }
             switch result {
             case .reloaded, .replaced, .superseded:
                 return
-            case .alreadyTried:
+            case .alreadyTried, .deferred:
                 self.failSourcePreview(error, reloadsLatestOnConflict: false)
             case .failed(let failure):
                 self.failSourcePreview(failure, reloadsLatestOnConflict: false)

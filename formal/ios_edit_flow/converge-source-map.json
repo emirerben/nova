@@ -2,6 +2,7 @@
   "members": {
     "src/apps/ios/Kria/Features/NativeEditorSession.swift": [
       "applyConverged",
+      "replayableEdits",
       "creatorDocument",
       "isQuietForConverge",
       "editorOperationIdentity",
@@ -14,13 +15,14 @@
     ]
   },
   "hashes": {
-    "src/apps/ios/Kria/Features/NativeEditorSession.swift:applyConverged": "572ca51186262557",
-    "src/apps/ios/Kria/Features/NativeEditorSession.swift:creatorDocument": "0cb91d1547c9b160",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift:applyConverged": "0610ab989cfd7bf6",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift:replayableEdits": "3455b69b9275475e",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift:creatorDocument": "a43a3dfe7a723fa1",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:isQuietForConverge": "1fc28528925e44f0",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:editorOperationIdentity": "01209ba2cd6a108b",
-    "src/apps/ios/Kria/Features/NativeEditorSession.swift:reloadLatestKeepingLocalEdits": "345f1689b71c153b",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift:reloadLatestKeepingLocalEdits": "9ad721ec9015166c",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:settledForConverge": "bc2d2a15b9b6468e",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:undo": "1364246d2d9d3b57",
-    "src/apps/ios/Kria/Core/NativeEditorMerge.swift:converge": "2b801c1f9d33a30d"
+    "src/apps/ios/Kria/Core/NativeEditorMerge.swift:converge": "ff45019b78017119"
   }
 }

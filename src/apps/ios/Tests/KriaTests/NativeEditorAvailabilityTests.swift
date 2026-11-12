@@ -35,7 +35,6 @@ import XCTest
         XCTAssertEqual(bare?.isBaselineConflict, true, "the Save route's plain detail")
         let problem = await conflict(body: #"{"detail":"baseline_conflict","problem":{"code":"baseline_conflict","recovery":"reload","current_base_generation":"g9"}}"#)
         XCTAssertEqual(problem?.isBaselineConflict, true)
-        XCTAssertEqual(problem?.conflictCurrentBaseGeneration, "g9")
         let recovery = await conflict(status: 412, body: #"{"problem":{"code":"something_new","recovery":"reload"}}"#)
         XCTAssertEqual(recovery?.isBaselineConflict, true, "the server's own recovery instruction is honoured")
         XCTAssertTrue(APIError.baselineConflict.isBaselineConflict, "the client's own generation mismatch")

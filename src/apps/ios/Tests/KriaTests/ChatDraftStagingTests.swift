@@ -442,6 +442,29 @@ final class ChatDraftStagingTests: XCTestCase {
         try XCTUnwrap(JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(state)).objectValue)
     }
 
+    /// Which variant a committed snapshot belongs to: its generation id, else its finish time; an unstamped draft keeps
+    /// owning authoring state on a variant that carries no generation id.
+    func testCommittedSnapshotOwnsAuthoringStateOnlyForItsOwnVariantBaseline() {
+        func text(base: String?, variant: [String: JSONValue]) -> [String] {
+            let payload: [String: JSONValue] = [
+                "editor_state_version": .number(2),
+                "sections": .object(["text_elements": .array([.object(["id": .string("road"), "text": .string("Road trip"),
+                                                                       "start_s": .number(0), "end_s": .number(3)])])]),
+            ]
+            let snapshot = DraftSnapshot(draftID: "saved", itemID: "item", variantKey: "initial", draftRevision: 4,
+                snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: base,
+                snapshot: ["kind": .string("editor"), "editor_payload": .object(payload)], canUndo: true, createdAt: .now)
+            return EditorDocument(snapshot: snapshot.editorDraft(projectID: UUID(), authoritativeVariant: variant).serverSnapshot).textElements.map(\.text)
+        }
+        var finishedOnly = Self.variant()
+        finishedOnly["render_generation_id"] = nil
+        finishedOnly["render_finished_at"] = .string("2026-11-01T10:00:00Z")
+        XCTAssertEqual(text(base: "2026-11-01T10:00:00Z", variant: finishedOnly), ["Road trip"], "stamped with the finish time")
+        XCTAssertEqual(text(base: nil, variant: finishedOnly), ["Road trip"], "no base id on either side: unchanged")
+        XCTAssertEqual(text(base: "2026-10-01T10:00:00Z", variant: finishedOnly), ["hello"], "another render's snapshot")
+        XCTAssertEqual(text(base: nil, variant: Self.variant()), ["hello"], "a variant with a generation the draft never named")
+    }
+
     func testAChatHeadIsNotACommittedSnapshotSoTheCleanDocumentIsTheVariant() throws {
         let draft = Self.incidentHead().editorDraft(projectID: UUID(), authoritativeVariant: Self.variant())
         let clean = EditorDocument(snapshot: draft.serverSnapshot)
@@ -813,6 +836,35 @@ final class ChatDraftStagingTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
+    }
+
+    /// Failure mode 26: a newer AI draft replacing an earlier staged AI lane is not "your edits were replaced".
+    func testNewerAIDraftOverlappingAnEarlierStagedAILaneNeverClaimsTheCreatorsEditsWereReplaced() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.setMusicLevel(0.5)
+        fake.draftSnapshot = Self.chatSnapshot(revision: 3, textOnly: true, shape: .flatOnly)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        XCTAssertFalse(session.hasOnlyChatStagedChanges, "the creator's mix edit sits beside the AI's text lane")
+        XCTAssertNil(session.convergeNotice)
+        fake.draftSnapshot = Self.chatSnapshot(revision: 4, textOnly: true, shape: .flatOnly, effect: "pop")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.raw["effect"], .string("pop"), "the newer AI draft wins the AI lane")
+        XCTAssertEqual(session.document.mix["music_level"], .number(0.5), "the creator's own edit is untouched")
+        XCTAssertNil(session.convergeNotice, "nothing of the creator's was replaced")
+    }
+
+    /// Failure mode 23 on the sync path: a newer render with no fresh head under a chat-only editor.
+    func testNewerRenderWithoutAFreshHeadKeepsTheAIStagedEditOnTheNewVersion() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges, "still the AI's edit, still unsaved")
+        XCTAssertNil(session.convergeNotice)
+        XCTAssertFalse(session.canUndo)
     }
 
     private static func transitionDraft(revision: Int, base: String = "g1", transitions: [String: String], echo: String? = nil) -> DraftSnapshot {
@@ -2322,10 +2374,8 @@ extension ChatDraftStagingTests {
         }
         let current = try decode(#","head_current":true,"base_generation":"g2""#)
         XCTAssertEqual(current.headCurrent, true)
-        XCTAssertEqual(current.baseGeneration, "g2")
         let older = try decode("")
         XCTAssertNil(older.headCurrent, "an older server omits the field")
-        XCTAssertNil(older.baseGeneration)
     }
 
     func testVariantBaselineFollowsTheServersRule() {

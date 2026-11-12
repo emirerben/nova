@@ -2,11 +2,13 @@
 """Check Converge.tla: the editor always converges onto the latest version, with no choice state.
 
 Steps (all must pass):
-  1. spec    - TypeOK, NoChoiceState, ChatOnlyNeverReplayed, UndoOnLatestBase hold, and the
+  1. spec    - TypeOK, NoChoiceState, AIEditsNeverCreators, AIEditNeverSilentlyDropped,
+               UndoOnLatestBase hold, and the
                liveness rules ShowsLatest and SaveEventuallyEnabled hold under fair reads
-  2. control - five mutated copies of the spec each break the rule they are meant to break
-               (a pending-decision state, AI-staged edits passed as `local`, Undo restoring the
-               pre-converge document, no fair reads, no end to a gesture); a control that
+  2. control - six mutated copies of the spec each break the rule they are meant to break
+               (a pending-decision state, AI-staged edits passed as the creator's, an AI edit
+               dropped, Undo restoring the pre-converge document, no fair reads, no end to a
+               gesture); a control that
                does not fail means the rule proves nothing
   3. drift   - the Swift functions named in converge-source-map.json still hash to what the
                model was last read against
@@ -34,7 +36,7 @@ SOURCE_MAP = HERE / "converge-source-map.json"
 OUT = REPO / ".dev/formal-converge"
 
 CONSTANTS = {"MaxGen": "3", "MaxIdent": "2", "MaxInteract": "2"}
-SAFETY = ["TypeOK", "NoChoiceState", "ChatOnlyNeverReplayed", "UndoOnLatestBase"]
+SAFETY = ["TypeOK", "NoChoiceState", "AIEditsNeverCreators", "AIEditNeverSilentlyDropped", "UndoOnLatestBase"]
 LIVENESS = ["ShowsLatest", "SaveEventuallyEnabled"]
 
 
@@ -50,8 +52,8 @@ def pending_decision() -> list[tuple[str, str]]:
     creator's actions and has no way out."""
     edits = [
         (
-            'convIn |-> [prov |-> "none", local |-> "empty"] ]',
-            'convIn |-> [prov |-> "none", local |-> "empty"],\n        pending |-> FALSE ]',
+            "convIn |-> NoConv ]",
+            "convIn |-> NoConv,\n        pending |-> FALSE ]",
         ),
         ("\nConvergeTo(g, h, replaced) ==", "\nConvergeApplied(g, h, replaced) =="),
         (
@@ -74,13 +76,23 @@ def pending_decision() -> list[tuple[str, str]]:
 # name -> (rule it must break, kind, edits to Converge.tla)
 CONTROLS = {
     "pending-decision": ("NoChoiceState", "INVARIANT", pending_decision()),
-    "ai-edits-as-local": (
-        "ChatOnlyNeverReplayed",
+    "ai-edits-as-creators": (
+        "AIEditsNeverCreators",
         "INVARIANT",
         [
             (
-                'LocalOf(p) == IF p = "creator" THEN',
-                'LocalOf(p) == IF p # "none" THEN',
+                'OwnerOf(p, h) == IF p = "creator" THEN',
+                'OwnerOf(p, h) == IF p # "none" THEN',
+            )
+        ],
+    ),
+    "ai-edit-dropped": (
+        "AIEditNeverSilentlyDropped",
+        "INVARIANT",
+        [
+            (
+                'ELSE IF OwnerOf(s.prov, h) = "ai" /\\ ~replaced THEN "ai"',
+                'ELSE IF OwnerOf(s.prov, h) = "ai" /\\ ~replaced THEN "none"',
             )
         ],
     ),
@@ -89,8 +101,8 @@ CONTROLS = {
         "INVARIANT",
         [
             (
-                'IF replaced THEN [on |-> TRUE, gen |-> g, prov |-> "creator"]',
-                'IF replaced THEN [on |-> TRUE, gen |-> s.clean, prov |-> "creator"]',
+                'IF replaced /\\ OwnerOf(s.prov, h) = "creator" THEN [on |-> TRUE, gen |-> g, prov |-> "creator"]',
+                'IF replaced /\\ OwnerOf(s.prov, h) = "creator" THEN [on |-> TRUE, gen |-> s.clean, prov |-> "creator"]',
             )
         ],
     ),

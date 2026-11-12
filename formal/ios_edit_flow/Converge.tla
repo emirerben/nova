@@ -25,6 +25,7 @@ Provs == {"none", "ai", "creator"}
 
 NoUndo == [on |-> FALSE, gen |-> 1, prov |-> "none"]
 NoRead == [phase |-> "idle", ident |-> 1, clean |-> 1, gen |-> 1, head |-> FALSE]
+NoConv == [prov |-> "none", owner |-> "empty", head |-> FALSE, absorbed |-> FALSE, after |-> "none"]
 
 VARIABLE s
 Init ==
@@ -37,29 +38,38 @@ Init ==
         busy |-> FALSE,       \* a gesture, text entry or save owns the document
         interacts |-> 0,
         read |-> NoRead,      \* the one in-flight read of the latest version
-        convIn |-> [prov |-> "none", local |-> "empty"] ]  \* what the last converge was given
+        convIn |-> NoConv ]   \* what the last converge was given and what it did with it
 
-\* converge's `local` input: only the creator's own edits. An AI-staged draft is already on
-\* the server, so it is never replayed.
-LocalOf(p) == IF p = "creator" THEN "creator" ELSE "empty"
+\* converge's `local` input and whose it is. The AI's staged lanes are replayed on the latest as the
+\* AI's, never as the creator's; a fresh head on the latest supersedes them (`replayableEdits`).
+OwnerOf(p, h) == IF p = "creator" THEN "creator" ELSE IF p = "ai" /\ ~h THEN "ai" ELSE "empty"
 
 Stale == s.read.ident # s.ident \/ s.read.clean # s.clean
 
-\* The latest version can overlap the creator's edits only when it holds something new.
-ReplaceOptions(g, h) == IF LocalOf(s.prov) = "creator" /\ (g # s.clean \/ h) THEN BOOLEAN ELSE {FALSE}
+\* The latest version can overlap the replayed edits only when it holds something new. `replaced` is
+\* the creator's edits replaced by the latest, or (for the AI's lanes) every lane the AI touched
+\* already changed in the latest, e.g. it is a render of the same edit.
+ReplaceOptions(g, h) == IF OwnerOf(s.prov, h) # "empty" /\ (g # s.clean \/ h) THEN BOOLEAN ELSE {FALSE}
 
 ProvAfter(h, replaced) ==
-  IF LocalOf(s.prov) = "creator" /\ ~replaced THEN "creator" ELSE IF h THEN "ai" ELSE "none"
+  IF OwnerOf(s.prov, h) = "creator" /\ ~replaced THEN "creator"
+  ELSE IF h THEN "ai"
+  ELSE IF OwnerOf(s.prov, h) = "ai" /\ ~replaced THEN "ai"
+  ELSE "none"
 
-\* A replacement leaves one undo entry that restores the creator's edits on the new generation.
-\* Without one, an entry survives only when the generation did not change.
-UndoAfter(g, replaced) ==
-  IF replaced THEN [on |-> TRUE, gen |-> g, prov |-> "creator"]
+\* A replacement of the creator's edits leaves one undo entry that restores them on the new
+\* generation. The AI's lanes never leave an undo entry. Otherwise an entry survives only when the
+\* generation did not change.
+UndoAfter(g, h, replaced) ==
+  IF replaced /\ OwnerOf(s.prov, h) = "creator" THEN [on |-> TRUE, gen |-> g, prov |-> "creator"]
   ELSE IF g = s.clean THEN s.undo ELSE NoUndo
 
 ConvergeTo(g, h, replaced) ==
-  s' = [s EXCEPT !.clean = g, !.prov = ProvAfter(h, replaced), !.undo = UndoAfter(g, replaced),
-                 !.read = NoRead, !.convIn = [prov |-> s.prov, local |-> LocalOf(s.prov)]]
+  s' = [s EXCEPT !.clean = g, !.prov = ProvAfter(h, replaced), !.undo = UndoAfter(g, h, replaced),
+                 !.read = NoRead,
+                 !.convIn = [prov |-> s.prov, owner |-> OwnerOf(s.prov, h), head |-> h,
+                             absorbed |-> (replaced /\ OwnerOf(s.prov, h) = "ai"),
+                             after |-> ProvAfter(h, replaced)]]
 
 \* ---- creator and environment actions ----
 
@@ -96,6 +106,10 @@ ReadReturn ==
 
 DropStale == s.read.phase = "back" /\ Stale /\ s' = [s EXCEPT !.read = NoRead]
 
+\* A gesture or text entry outlasted the wait bound: nothing changes, the edits stay, and the next
+\* read tries again (`convergeQuietBound`, `.deferred`).
+GiveUp == s.read.phase = "back" /\ ~Stale /\ s.busy /\ s' = [s EXCEPT !.read = NoRead]
+
 \* Applying waits while a gesture or text entry owns the document.
 ConvergeApply ==
   /\ s.read.phase = "back" /\ ~Stale /\ ~s.busy
@@ -120,7 +134,7 @@ SaveRefused == SaveEnabled /\ s' = s
 
 Next ==
   \/ CreatorEdit \/ AIStage \/ ServerAdvance \/ SwitchEditor \/ BeginInteract \/ EndInteract \/ Undo
-  \/ ReadStart \/ ReadReturn \/ DropStale \/ ConvergeApply
+  \/ ReadStart \/ ReadReturn \/ DropStale \/ GiveUp \/ ConvergeApply
   \/ SaveOK \/ SaveConflict \/ SaveRefused
 
 \* Fair reads: a started read returns, applies once the creator is quiet, and restarts.
@@ -134,6 +148,7 @@ TypeOK ==
   /\ s.clean \in Gens /\ s.server \in Gens /\ s.clean <= s.server
   /\ s.prov \in Provs /\ s.head \in BOOLEAN /\ s.ident \in Idents /\ s.busy \in BOOLEAN
   /\ s.undo.on \in BOOLEAN /\ s.undo.gen \in Gens /\ s.undo.prov \in Provs
+  /\ s.convIn.owner \in {"empty", "ai", "creator"} /\ s.convIn.after \in Provs
   /\ s.read.phase \in {"idle", "flight", "back"}
   /\ s.interacts \in 0..MaxInteract
 
@@ -144,8 +159,14 @@ NoChoiceState ==
   \/ ENABLED (SaveOK \/ SaveConflict \/ SaveRefused)
   \/ ENABLED ReadStart
 
-\* Edits only the AI staged are never replayed through converge.
-ChatOnlyNeverReplayed == s.convIn.prov = "ai" => s.convIn.local = "empty"
+\* AI-staged lanes are never passed to converge as the creator's edits: they are replayed as the
+\* AI's (so no "your edits were replaced" notice and no creator Undo step) or superseded by a head.
+AIEditsNeverCreators == s.convIn.prov = "ai" => s.convIn.owner # "creator"
+
+\* An edit the chat reported as done never silently disappears: when the latest has no fresh head,
+\* the AI's lanes stay staged unless the latest already changed every lane they touched.
+AIEditNeverSilentlyDropped ==
+  (s.convIn.prov = "ai" /\ ~s.convIn.head) => (s.convIn.after = "ai" \/ s.convIn.absorbed)
 
 \* An undo entry always sits on the latest adopted generation.
 UndoOnLatestBase == s.undo.on => s.undo.gen = s.clean
