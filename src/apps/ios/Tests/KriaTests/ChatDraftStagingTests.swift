@@ -907,6 +907,52 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertFalse(session.isDirty(.text) || session.isDirty(.timeline), "draft based on g1 is stale after the commit")
     }
 
+    /// Failure mode 23: the AI's staged edit is replayed on a latest that does not contain it. It stays the AI's.
+    func testSaveConflictReplaysAnAIStagedEditOnALatestWithoutItAndKeepsItTheAIs() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot())
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        // Another device saved g2 (without the AI edit); the head on g1 can neither restage nor be applied again.
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        fake.commitErrorQueue = [.baselineConflict, .baselineConflict]
+        await session.save()
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.document.textElements.first?.text, "changed", "the AI edit is still shown")
+        XCTAssertEqual(session.document.clips.compactMap(\.id), ["s3", "s1"])
+        XCTAssertTrue(session.hasUnsavedChanges, "it is still unsaved, not reported as saved")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges, "and it is still the AI's, not the creator's")
+        XCTAssertNil(session.convergeNotice)
+        XCTAssertFalse(session.canUndo, "no creator undo step for the AI's edit")
+        XCTAssertNotEqual(session.saveState, .saved)
+    }
+
+    func testSaveConflictSendsTheReplayedAIEditOnTheNewBase() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot())
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        fake.commitErrorQueue = [.baselineConflict]
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 2)
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["text"]?.stringValue, "changed")
+        XCTAssertNotNil(fake.lastRequest?.timelineSlots)
+        XCTAssertNil(session.convergeNotice)
+    }
+
+    /// The latest is a (quantized) render of the same edit: it wins every overlap, nothing is left to save.
+    func testSaveConflictWhereTheLatestRenderedTheSameAIEditShowsTheLatestAndSaves() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot(textOnly: true))
+        var latest = Self.variant(generation: "g2")
+        guard case var .array(rows)? = latest["text_elements"], case var .object(row) = rows[0] else { return XCTFail("fixture") }
+        row["text"] = .string("changed (rendered)"); rows[0] = .object(row); latest["text_elements"] = .array(rows)
+        fake.authoritativeVariant = latest
+        fake.commitErrorQueue = [.baselineConflict]
+        await session.save()
+        XCTAssertEqual(session.document.textElements.first?.text, "changed (rendered)")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.saveState, .saved)
+        XCTAssertEqual(fake.commitCount, 1, "nothing of the AI's is left to send")
+        XCTAssertNil(session.convergeNotice)
+    }
+
     /// Real-thread shape (80ade387): a re-plan re-rendered as a NEW job.
     func testOpeningAfterAReplanTargetsTheNewJobAndDropsTheOldPlayback() async throws {
         let jobA = UUID(), jobB = UUID(), threadID = UUID()

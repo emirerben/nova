@@ -255,7 +255,10 @@ final class NativeEditorSessionTests: XCTestCase {
         )
         XCTAssertThrowsError(try NativeEditorSession.currentDeviceNarrationRequest(
             status, jobID: jobID, variantID: "variant", generation: "generation-2"
-        )) { XCTAssertEqual($0 as? APIError, .conflict) }
+        )) {
+            XCTAssertEqual($0 as? APIError, .conflict)
+            XCTAssertTrue(($0 as? APIError)?.isBaselineConflict == true, "a generation mismatch means a newer version: reload")
+        }
         XCTAssertThrowsError(try NativeEditorSession.currentDeviceNarrationRequest(
             status, jobID: UUID(), variantID: "variant", generation: "generation-1"
         )) { XCTAssertEqual($0 as? APIError, .conflict) }
@@ -275,7 +278,11 @@ final class NativeEditorSessionTests: XCTestCase {
                 jobID: jobID, variantID: "variant", generation: "saved-g2"), request)
             for (job, variant, generation) in [(UUID(), "variant", "saved-g2"), (jobID, "other", "saved-g2"), (jobID, "variant", "older-g1")] {
                 XCTAssertThrowsError(try NativeEditorSession.currentDeviceRecipeRequest(status,
-                    jobID: job, variantID: variant, generation: generation)) { XCTAssertEqual($0 as? APIError, .conflict) }
+                    jobID: job, variantID: variant, generation: generation)) {
+                    XCTAssertEqual($0 as? APIError, .conflict)
+                    // Only the generation mismatch is a newer version; another job or variant is not.
+                    XCTAssertEqual((($0 as? APIError)?.isBaselineConflict) == true, job == jobID && variant == "variant")
+                }
             }
             let legacy = DeviceRenderStatusResponse(phase: phase, request: request)
             XCTAssertThrowsError(try NativeEditorSession.currentDeviceRecipeRequest(legacy,
@@ -7792,6 +7799,56 @@ final class NativeEditorSessionTests: XCTestCase {
 
     func testSaveConflictOnSameTextLatestWinsAndUndoRestoresMyWording() async {
         await exerciseSaveConflictMerge(overlappingText: true)
+    }
+
+    /// Failure mode 25: a gesture that opens while the latest version is being read owns the document. The
+    /// converge waits for it, then lands on the newest version; no Undo step carries the old generation.
+    func testSaveConflictConvergeWaitsForAGestureOpenedDuringTheLatestRead() async throws {
+        let threadID = UUID()
+        let textID = UUID().uuidString
+        func text(_ value: String, end: Double = 2) -> JSONValue {
+            .array([.object(["id": .string(textID), "text": .string(value), "start_s": .number(0), "end_s": .number(end)])])
+        }
+        let snapshot: [String: JSONValue] = ["editor_payload": .object([
+            "base_generation": .string("g1"), "sections": .object(["text_elements": text("Original")])])]
+        let original: [String: JSONValue] = [
+            "render_generation_id": .string("g1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+            "editor_capabilities": .object(["text_elements": .bool(true)]), "text_elements": text("Original")]
+        var latest = original
+        latest["render_generation_id"] = .string("g2")
+        latest["text_elements"] = text("Original", end: 1.5)
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e",
+                baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: original)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        session.updateTextContent(id: textID, content: "My edit")
+        fake.authoritativeVariant = latest
+        // The resend is refused too, so the editor stays on the newest version for the assertions below.
+        fake.commitErrorQueue = [.baselineConflict, .baselineConflict]
+        fake.suspendNextEditorVariant = true
+        let saving = Task { await session.save() }
+        _ = await waitUntil { fake.editorVariantIsSuspended }
+        XCTAssertTrue(fake.editorVariantIsSuspended)
+
+        // The creator starts typing while the latest version is in flight.
+        session.beginTransaction()
+        session.updateTextContent(id: textID, content: "My edit, still typing")
+        fake.resumeEditorVariant()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(session.document.revision.baseGeneration, "g1", "nothing replaces the document under an open gesture")
+        XCTAssertEqual(session.document.textElements.first?.text, "My edit, still typing")
+
+        session.endTransaction()
+        await saving.value
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.document.textElements.first?.text, "My edit, still typing", "the finished gesture is kept")
+        XCTAssertEqual(session.document.textElements.first?.endS, 1.5, "on top of the latest version")
+        while session.canUndo {
+            session.undo()
+            XCTAssertEqual(session.document.revision.baseGeneration, "g2", "no Undo step carries the old generation")
+        }
     }
 
     func testLatestJobWaitsForWholeConflictSaveAttemptThenRechecksAutomatically() async {
