@@ -11902,7 +11902,9 @@ extension NativeEditorSession {
         }
         let runSlots = run.map(\.slot)
         var next = document
-        next.clips = before + (side == .fromPlayhead ? sectionSlots + runSlots : runSlots + sectionSlots) + document.clips[(last + 1)...]
+        let ordered: [EditorTimelineSlot] = side == .fromPlayhead ? sectionSlots + runSlots : runSlots + sectionSlots
+        let after: [EditorTimelineSlot] = Array(document.clips[(last + 1)...])
+        next.clips = before + ordered + after
         guard let sectionIndex = next.splitScreenSections.firstIndex(where: { $0.id == sectionID }) else { return nil }
         next.splitScreenSections[sectionIndex].durationS = kept.end - kept.start
         next.fitCollapseSectionDurations()
