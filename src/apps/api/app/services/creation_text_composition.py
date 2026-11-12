@@ -1435,7 +1435,7 @@ class _ServerTimedSequence:
 
 
 # The pace the composer prompt names ("about 0.45 s per word reads well"): the server paces the
-# approved words itself at it, never faster than a piece can be read (`_MIN_PIECE_S`).
+# approved words itself at it, never faster than a piece can be read (`MIN_TEXT_PIECE_S`).
 _READ_PIECE_S = 0.45
 
 
@@ -1485,10 +1485,10 @@ def _shared_span(owned: list[_ServerTimedSequence], total: float) -> tuple[float
     (`_check_research_layers`); each one's pieces share the span equally. Words that cannot be
     read one at a time inside the video are reported, never squeezed into flicker.
     """
-    from app.services.kria_editor_ops_text import _MIN_PIECE_S  # noqa: PLC0415
+    from app.services.sequence_pacing import MIN_TEXT_PIECE_S  # noqa: PLC0415
 
     longest = max(len(item.words) for item in owned)
-    needed = longest * _MIN_PIECE_S
+    needed = longest * MIN_TEXT_PIECE_S
     if needed > total + 1e-6:
         raise CreationTextCompositionError(
             f"Text composition is incomplete: showing {longest} words one at a time needs at "
