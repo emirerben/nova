@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.185.0] - 2026-11-13
+
+### Changed
+- feat(agents): one model registry and a safe non-Gemini Main Creator (KRI-1385) (#2290) <!-- release-pr: 2290 -->
+
 ## [0.88.184.0] - 2026-11-13
 
 ### Changed
