@@ -380,8 +380,32 @@ def test_moved_label_is_composed_persisted_and_recompiled_at_approval(monkeypatc
     assert compose_creation_text(restored, creator_request="again", copy_constraints=constraints)
 
 
-def test_composer_that_rewords_the_moved_label_still_fails_the_render(monkeypatch):
+def test_composer_that_rewords_the_moved_label_keeps_the_label_where_it_was(monkeypatch):
+    """KRI-1376: the broken move is dropped, never the creator's label (and never the video)."""
     plan = _montage_plan()
-    response, _, _ = _move_response(plan, text="Oblea de la casa (nueva)")
-    with pytest.raises(CreationTextCompositionError, match="changed confirmed copy"):
-        _compose(monkeypatch, plan, response)
+    original = compile_proposal_execution_plan(plan.snapshot)
+    response, label, _ = _move_response(plan, text="Oblea de la casa (nueva)")
+    monkeypatch.setattr(
+        EditCopilotAgent,
+        "run",
+        lambda self, input, ctx=None: self.parse(json.dumps(response), input),
+    )
+    drops = []
+    snapshot = compose_creation_text(
+        plan.snapshot,
+        creator_request=f"Move the {OBLEA} label to the clip where the plate comes to the camera.",
+        copy_constraints=snapshot_copy_constraints(plan.snapshot),
+        drops=drops,
+    )
+    rows = compile_proposal_execution_plan(snapshot)["text_elements"]
+    assert [r for r in rows if r["text"] == OBLEA] == [label]
+    assert "Oblea de la casa (nueva)" not in [r["text"] for r in rows]
+    assert rows == original["text_elements"]
+    assert [(d.reason, d.op) for d in drops] == [
+        ("copy_changed", "remove_texts"),
+        ("unasked_text", "add_text"),
+    ]
+    assert [d.note() for d in drops] == [
+        f"Kept “{OBLEA}” exactly as you wrote it and left out the change I couldn't make to it",
+        None,
+    ]

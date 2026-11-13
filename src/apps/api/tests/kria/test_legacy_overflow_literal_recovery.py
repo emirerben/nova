@@ -20,7 +20,6 @@ from app.kria.text_sequence import recover_overflowed_literals
 from app.pipeline.guided_story import compile_proposal_execution_plan
 from app.services.creation_text_composition import (
     CreationTextComposer,
-    CreationTextCompositionError,
     compose_creation_text,
 )
 from tests.kria.test_approved_long_sequence_copy import (
@@ -230,8 +229,17 @@ def test_the_legacy_brief_still_has_no_bar_for_the_paragraph(monkeypatch) -> Non
         return agent.parse(json.dumps(reply), input)
 
     monkeypatch.setattr(CreationTextComposer, "run", split_what_exists)
+    drops = []
 
-    with pytest.raises(CreationTextCompositionError, match="No text holds the English"):
-        compose_creation_text(
-            _plan(LEGACY).snapshot, creator_request="Try again", text_requirements=LEGACY.live()
-        )
+    # KRI-1376 (prod 3c312af4 / 4e8c925d): the video renders what exists and says what it could
+    # not do, instead of failing on the composer's unmet English.
+    composed = compose_creation_text(
+        _plan(LEGACY).snapshot,
+        creator_request="Try again",
+        text_requirements=LEGACY.live(),
+        drops=drops,
+    )
+    rows = compile_proposal_execution_plan(composed)["text_elements"]
+    assert _pieces(rows, ENGLISH) == []
+    assert [row["text"] for row in _pieces(rows, LOCAL)] == LOCAL.split()
+    assert [(drop.reason, drop.action) for drop in drops] == [("incomplete", "shrunk")]
