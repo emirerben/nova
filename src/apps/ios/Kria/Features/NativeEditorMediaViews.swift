@@ -1171,7 +1171,6 @@ struct NativeVideoPreview: View {
                     if case .failed(let message) = session.sourcePreviewState {
                         Text(message)
                             .font(KriaFont.body(11))
-                            .lineLimit(2)
                         if session.fallbackOffersRetry {
                             Button("Retry") { Task { await session.retryPreview() } }
                                 .accessibilityIdentifier("native-editor-retry-source-preview")

@@ -4104,7 +4104,7 @@ enum EditorOpenIntent { case warm, open }
         switch error {
         case NativeEditorRenderError.missingVideoTrack, NativeEditorRenderError.unsupportedLane,
              NativeEditorRenderError.missingFont, NativeEditorRenderError.tooManyTextLayers,
-             NativeEditorRenderError.missingSpeechCaptionTiming:
+             NativeEditorRenderError.missingSpeechCaptionTiming, RecipeError.invalidTimeline:
             return true
         default:
             return false
@@ -4127,6 +4127,8 @@ enum EditorOpenIntent { case warm, open }
             return "A required font is missing from this app build. Update the app and try again."
         case NativeEditorRenderError.missingVideoTrack:
             return "This edit’s video can’t be previewed on iPhone yet."
+        case RecipeError.invalidTimeline:
+            return "This change can’t be previewed. Undo it to get the preview back."
         case NativeEditorRenderError.tooManyTextLayers:
             return "This edit has more on-screen text than iPhone preview can show. Remove some text or captions to preview it."
         case NativeEditorPlaybackFailure.liveItem:
