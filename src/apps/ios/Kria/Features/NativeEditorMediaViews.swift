@@ -1811,6 +1811,7 @@ struct NativeMiniStrip: View {
     @State private var alignmentHaptic = UIImpactFeedbackGenerator(style: .medium)
     @State private var lastBoundaryFeedbackAt = Date.distantPast
     @State private var cachedClips: [EditorClip] = []
+    @State private var laneScrollOffset: CGFloat = 0
     @State private var footageRows = NativeSplitScreenRows(document: EditorDocument())
     @State private var splitGaps: [NativeSplitGap] = []
     @State private var didCacheItems = false
@@ -2000,8 +2001,15 @@ struct NativeMiniStrip: View {
                     .scrollBounceBehavior(.basedOnSize)
                     .accessibilityIdentifier("native-editor-lane-scroll")
                     .accessibilityHidden(isCovered)
+                    .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, offset in
+                        laneScrollOffset = offset
+                    }
                     .onChange(of: session.selectionRequest) { _, _ in
                         scrollSelectionClearOfIsland(proxy: proxy)
+                        scrollSelectedClipRowClearOfIsland(proxy: proxy, viewportHeight: viewport.size.height)
+                    }
+                    .onChange(of: bottomClearance) { _, _ in
+                        scrollSelectedClipRowClearOfIsland(proxy: proxy, viewportHeight: viewport.size.height)
                     }
                 }
             }
@@ -2609,7 +2617,18 @@ struct NativeMiniStrip: View {
             }
         }
         .frame(height: filmstripContentHeight)
+        .background(alignment: .top) {
+            VStack(spacing: rowGap) {
+                ForEach(footageRows.titles.indices, id: \.self) { row in
+                    Color.clear.frame(height: filmstripHeight).id(Self.footageRowScrollID(row))
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
+
+    private static func footageRowScrollID(_ row: Int) -> String { "FOOTAGE-\(row)" }
 
     /// KRI-166: the end of the editable content, before the branded outro
     /// tail. Never `session.duration` — a rendered MP4's `duration` may
@@ -2744,21 +2763,32 @@ struct NativeMiniStrip: View {
         }
     }
 
-    /// Text selection floats the context capsule over the timeline
-    /// (`showsContext` in `NativeEditorView`). The clips/filmstrip row is
-    /// always the topmost row (right after the ruler), so it's never at
-    /// realistic risk of landing under the bottom-anchored island the way a
-    /// lone "TEXT" row can on a short timeline — scoping this to text only
-    /// avoids nudging scroll position on every clip tap, which isn't needed
-    /// and unsettles scrub-position-sensitive interactions. Other selection
-    /// kinds route to a lane panel instead and never overlap this scroll
-    /// view either.
+    /// Text and split-panel clip selections float a context capsule over the timeline (`showsContext` in
+    /// `NativeEditorView`), which can cover the selected row on a short timeline. The topmost footage row never
+    /// needs this, so an ordinary clip tap leaves the scroll position alone (it would unsettle scrubbing).
     private func scrollSelectionClearOfIsland(proxy: ScrollViewProxy) {
         guard session.selection?.kind == .text,
               session.document.textElements.first(where: { $0.id == session.selection?.id })?.isCaption != true
         else { return }
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
             proxy.scrollTo("TEXT", anchor: UnitPoint(x: 0.5, y: 0.15))
+        }
+    }
+
+    /// Scrolls a split panel's footage row up only when the clip toolbar and tool island would cover it. Rows are
+    /// 44 pt under an 18 pt ruler, separated by `rowGap`. The topmost row is never covered, and a row that is
+    /// already clear is left alone: a scroll would carry the ruler away from the finger that is scrubbing it.
+    private func scrollSelectedClipRowClearOfIsland(proxy: ScrollViewProxy, viewportHeight: CGFloat) {
+        guard let id = session.selection?.id,
+              let clip = clips.first(where: { $0.id.uuidString == id }),
+              footageRows.isMember(slotID: clip.slotID)
+        else { return }
+        let row = footageRows.row(slotID: clip.slotID)
+        guard row > 0 else { return }
+        let rowBottom = 18 + rowGap + CGFloat(row) * (filmstripHeight + rowGap) + filmstripHeight
+        guard rowBottom > laneScrollOffset + viewportHeight - bottomClearance else { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            proxy.scrollTo(Self.footageRowScrollID(row), anchor: .bottom)
         }
     }
 

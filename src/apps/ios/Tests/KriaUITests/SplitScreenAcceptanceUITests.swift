@@ -220,13 +220,16 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
     private func selectClip(_ index: Int, in app: XCUIApplication) {
         let target = clip(index, in: app)
         let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        let lanes = app.scrollViews["native-editor-lane-scroll"]
         for _ in 0..<6 where !target.exists {
-            let ruler = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.03))
+            // The ruler scrolls out of the lane viewport when a lower row is lifted clear of the toolbar.
+            let revealY = max(timeline.frame.minY + timeline.frame.height * 0.03, lanes.frame.minY + 6)
+            let ruler = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: timeline.frame.minX + timeline.frame.width * 0.7, dy: revealY))
             ruler.press(forDuration: 0.05, thenDragTo: ruler.withOffset(
                 CGVector(dx: index == 1 ? 120 : -120, dy: 0)), withVelocity: 100, thenHoldForDuration: 0.2)
         }
         XCTAssertTrue(target.waitForExistence(timeout: 3), "Reveal the clip in the horizontal timeline before selecting it")
-        let lanes = app.scrollViews["native-editor-lane-scroll"]
         let toolbar = app.descendants(matching: .any)["native-editor-clip-context"].firstMatch
         let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
         let bottom = toolbar.exists ? toolbar.frame.minY : rail.frame.minY
