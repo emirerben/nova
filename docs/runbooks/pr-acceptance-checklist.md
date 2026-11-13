@@ -48,6 +48,15 @@ CI checks required declarations and mapped checks, while reviewers assess whethe
 the evidence supports the completion claim. Passing metadata checks alone proves
 neither action grounding nor a correct export.
 
+## Merging
+
+An agent merges only when every check on the PR's current head has passed or was
+skipped. `scripts/hooks/merge-guard.py` (a Claude Code `PreToolUse` hook in
+`.claude/settings.json`) blocks `gh pr merge` while any check is failed, cancelled
+or still running, and names the checks. `gh pr merge --auto` passes because GitHub
+then waits for the required checks. When `main` is red, the repair merges first.
+A person can merge past the guard by running the command themselves.
+
 ## After merge and authorized rollout
 
 - Confirm the final deployed revision (`fly releases --app nova-video`, image SHA
