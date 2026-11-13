@@ -866,12 +866,21 @@ private let reservationResponse = Data(#"[{"media_id":"clip-1","upload_url":"htt
         for transport in answered { transport.finish(200, reservationResponse) }
     }
 
+    /// The selection work each `select` started; nil for a choice that started nothing.
+    private(set) var started: [Task<Void, Never>?] = []
+
     @discardableResult
     func select(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, debounce: Duration = .zero, attached: Set<String> = [], contents: Data? = nil) throws -> URL {
         let file = FileManager.default.temporaryDirectory.appending(path: "pick-\(UUID().uuidString).mp4")
         try (contents ?? Data("clip \(identifier)".utf8)).write(to: file)
-        coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file }
+        started.append(coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file })
         return file
+    }
+
+    /// Waits for every selection started so far to finish: enqueued (reserved and recorded) or failed. Only for
+    /// reservations answered at once; a held one would keep its selection waiting.
+    func finishSelections() async {
+        for work in started { await work?.value }
     }
 
     func deselect(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil) async -> DeselectOutcome {
@@ -904,13 +913,20 @@ extension BackgroundUploadRetryTests {
         return condition()
     }
 
+    // Failure modes of the selection tests (KRI-1379): they polled for the selection's effects with a 5 s wall-clock
+    // deadline, and a runner that stalled the test process for longer (CI: a synchronous test in this class took 21 s)
+    // failed them with the work still pending; the negative checks slept 200 ms, which proves nothing about work that
+    // has not run yet. They now await the selection work itself: it always ends (enqueued, failed or cancelled), so a
+    // pass or a failure no longer depends on how fast the runner is, and "nothing more was sent" is checked after
+    // everything that was started has finished.
+
     func testChoosingAnAssetStartsUploadingBeforeTheUserTapsDone() async throws {
         let h = harness()
         try h.select("asset-1")
 
-        let started = await waitUntil { h.coordinator.records.count == 1 }
+        await h.finishSelections()
 
-        XCTAssertTrue(started)
+        XCTAssertEqual(h.coordinator.records.count, 1)
         XCTAssertEqual(h.coordinator.preselectedIdentifiers(projectID: h.projectID, role: .clip, attachedMediaIDs: []), ["asset-1"],
                        "reopening the picker shows it as already chosen while it uploads")
         XCTAssertEqual(h.coordinator.reservedCount(projectID: h.projectID, role: .clip), 0, "once recorded it counts through `records`, never twice")
@@ -920,11 +936,11 @@ extension BackgroundUploadRetryTests {
         let h = harness()
         try h.select("asset-1")
         try h.select("asset-1")   // e.g. the picker re-fires while the first is still being prepared
-        let started = await waitUntil { h.coordinator.records.count == 1 }
-        XCTAssertTrue(started)
+        await h.finishSelections()
+        XCTAssertEqual(h.coordinator.records.count, 1)
 
         try h.select("asset-1")   // and again once it is already on its way
-        try await Task.sleep(for: .milliseconds(200))
+        await h.finishSelections()
 
         XCTAssertEqual(h.received, 1, "one reservation, one upload")
         XCTAssertEqual(h.coordinator.records.count, 1)
@@ -937,12 +953,12 @@ extension BackgroundUploadRetryTests {
         let h = harness(key: key, projectID: projectID)
 
         try h.select("asset-1", attached: ["media-1"])   // media-1 is still attached: a genuine duplicate
-        try await Task.sleep(for: .milliseconds(200))
+        await h.finishSelections()
         XCTAssertEqual(h.received, 0, "a live duplicate must not upload")
 
         try h.select("asset-1", attached: [])            // media-1 was removed on the web: this is a fresh choice
-        let started = await waitUntil { h.received == 1 }
-        XCTAssertTrue(started, "a stale entry must never make an asset impossible to add again")
+        await h.finishSelections()
+        XCTAssertEqual(h.received, 1, "a stale entry must never make an asset impossible to add again")
     }
 
     func testUnchoosingDuringTheDebounceNeverReachesTheServer() async throws {
@@ -961,8 +977,8 @@ extension BackgroundUploadRetryTests {
     func testUnchoosingWhileUploadingCancelsItAndCleansUp() async throws {
         let h = harness()
         try h.select("asset-1")
-        let started = await waitUntil { h.coordinator.records.count == 1 }
-        XCTAssertTrue(started)
+        await h.finishSelections()
+        XCTAssertEqual(h.coordinator.records.count, 1)
         let uploadFile = try XCTUnwrap(h.coordinator.records.first).localFilePath
 
         let outcome = await h.deselect("asset-1")
@@ -1070,7 +1086,7 @@ extension BackgroundUploadRetryTests {
         let h = harness(key: key, projectID: projectID)
 
         try h.select("asset-1", attached: [])   // attached list has not caught up yet
-        try await Task.sleep(for: .milliseconds(200))
+        await h.finishSelections()
 
         XCTAssertEqual(h.received, 0, "a duplicate upload is exactly the bug this ticket is about")
     }
@@ -1218,8 +1234,9 @@ extension BackgroundUploadRetryTests {
 
     private struct Unreadable: Error {}
 
-    /// Chooses `identifier` with a `loadFile` that fails, counting how often Photos was asked for the file.
-    private func selectFailing(_ h: SelectionHarness, _ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, loads: LoadCounter) {
+    /// Chooses `identifier` with a `loadFile` that fails, counting how often Photos was asked for the file. Returns the
+    /// work the choice started (nil for a choice that is ignored), for the test to await.
+    private func selectFailing(_ h: SelectionHarness, _ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, loads: LoadCounter) -> Task<Void, Never>? {
         h.coordinator.select(.init(assetIdentifier: identifier, projectID: h.projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: []), debounce: .zero) {
             loads.count += 1
             throw Unreadable()
@@ -1233,13 +1250,11 @@ extension BackgroundUploadRetryTests {
     func testReSelectingAFailedAssetDoesNotRetryItOrStackAnotherError() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "bad", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 1 }
-        XCTAssertTrue(settled)
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertEqual(h.coordinator.failures.count, 1)
 
         for _ in 0..<8 {
-            selectFailing(h, "bad", loads: loads)   // what each later picker change does
-            try await Task.sleep(for: .milliseconds(30))
+            await selectFailing(h, "bad", loads: loads)?.value   // what each later picker change does
         }
 
         XCTAssertEqual(h.coordinator.failures.count, 1, "one line per failed clip, not one per tap")
@@ -1249,15 +1264,14 @@ extension BackgroundUploadRetryTests {
     func testEachFailedAssetKeepsExactlyOneLine() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "bad-1", loads: loads)
-        selectFailing(h, "bad-2", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 2 }
-        XCTAssertTrue(settled)
+        let first = selectFailing(h, "bad-1", loads: loads), second = selectFailing(h, "bad-2", loads: loads)
+        await first?.value
+        await second?.value
+        XCTAssertEqual(h.coordinator.failures.count, 2)
 
         for _ in 0..<5 {
-            selectFailing(h, "bad-1", loads: loads)
-            selectFailing(h, "bad-2", loads: loads)
-            try await Task.sleep(for: .milliseconds(30))
+            await selectFailing(h, "bad-1", loads: loads)?.value
+            await selectFailing(h, "bad-2", loads: loads)?.value
         }
 
         XCTAssertEqual(h.coordinator.failures.count, 2)
@@ -1269,15 +1283,13 @@ extension BackgroundUploadRetryTests {
     func testAFailureForTheSameAssetReplacesItsEarlierLine() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "bad", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 1 }
-        XCTAssertTrue(settled)
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertEqual(h.coordinator.failures.count, 1)
         let first = try XCTUnwrap(h.coordinator.failures.first)
 
         h.coordinator.dismissFailure(id: first.id)
-        selectFailing(h, "bad", loads: loads)
-        let retried = await waitUntil { loads.count == 2 && h.coordinator.failures.count == 1 }
-        XCTAssertTrue(retried, "dismissing makes it a real retry")
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertTrue(loads.count == 2 && h.coordinator.failures.count == 1, "dismissing makes it a real retry")
 
         XCTAssertNotEqual(h.coordinator.failures.first?.id, first.id, "a new attempt, a single line")
     }
@@ -1285,25 +1297,22 @@ extension BackgroundUploadRetryTests {
     func testUnTickingAFailedAssetClearsItsErrorAndTickingItAgainRetries() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "bad", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 1 }
-        XCTAssertTrue(settled)
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertEqual(h.coordinator.failures.count, 1)
 
         h.coordinator.pruneSelectionFailures(projectID: h.projectID, role: .clip, itemID: nil, chosen: [])
         XCTAssertTrue(h.coordinator.failures.isEmpty, "un-ticked: its error goes with it")
 
-        selectFailing(h, "bad", loads: loads)
-        let retried = await waitUntil { loads.count == 2 && h.coordinator.failures.count == 1 }
-        XCTAssertTrue(retried, "ticked again: a real retry")
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertTrue(loads.count == 2 && h.coordinator.failures.count == 1, "ticked again: a real retry")
     }
 
     func testPruningKeepsTickedAssetsAndOtherRolesAndProjects() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "still-ticked", loads: loads)
-        selectFailing(h, "as-visual", role: .visual, itemID: "item-1", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 2 }
-        XCTAssertTrue(settled)
+        await selectFailing(h, "still-ticked", loads: loads)?.value
+        await selectFailing(h, "as-visual", role: .visual, itemID: "item-1", loads: loads)?.value
+        XCTAssertEqual(h.coordinator.failures.count, 2)
         h.coordinator.reportFailure(projectID: UUID(), role: .clip, filename: "elsewhere.mov", message: "other project")
         h.coordinator.reportFailure(projectID: h.projectID, role: .clip, filename: "Selected item", message: "no asset key")
 

@@ -753,19 +753,23 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     ///
     /// The work lives here, not in the view, because `AttachmentSheet` applies `.id(role)` to the
     /// picker: switching Footage↔Visuals destroys the view and any `Task` it owned mid-upload.
-    func select(_ request: PhotoSelectionRequest, debounce: Duration = .milliseconds(500), loadFile: @escaping @MainActor () async throws -> URL) {
+    ///
+    /// Returns the work it started (through enqueue, or the failure it records), or nil when the choice
+    /// started nothing. The picker ignores it; a test awaits it instead of polling for its effects.
+    @discardableResult
+    func select(_ request: PhotoSelectionRequest, debounce: Duration = .milliseconds(500), loadFile: @escaping @MainActor () async throws -> URL) -> Task<Void, Never>? {
         let key = Self.selectionKey(request.projectID, request.role, request.itemID, request.assetIdentifier)
-        guard selectionTasks[key] == nil else { return }
+        guard selectionTasks[key] == nil else { return nil }
         // Already failed and still shown as failed: a picker re-diff must not redo the whole export,
         // transcode and upload for it (and stack another error line). Un-ticking or Dismiss clears this.
-        guard !failures.contains(where: { $0.selectionKey == key }) else { return }
+        guard !failures.contains(where: { $0.selectionKey == key }) else { return nil }
         if let existing = photoSelections[request.projectID.uuidString]?.entries[Self.ledgerKey(request.role, request.itemID, request.assetIdentifier)],
            existing.isLive(attachedMediaIDs: request.attachedMediaIDs) {
-            return
+            return nil
         }
         let recordID = UUID()
         claim(request, recordID: recordID)
-        selectionTasks[key] = Task { @MainActor [weak self] in
+        let work = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.selectionTasks[key] = nil }
             var loaded: URL?
@@ -792,7 +796,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                     // exported file is gone, and a re-pick is also what a failed key allows again).
                     if self.failures.contains(where: { $0.id == recordID && $0.cause == .uploadFailed }) {
                         self.intakeRetries[recordID] = { [weak self] in
-                            self?.select(request, debounce: .zero, loadFile: loadFile)
+                            _ = self?.select(request, debounce: .zero, loadFile: loadFile)
                         }
                     }
                 }
@@ -804,6 +808,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 }
             }
         }
+        selectionTasks[key] = work
+        return work
     }
 
     /// The user un-chose an asset. What that means depends on how far it got:
