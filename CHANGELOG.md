@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.192.0] - 2026-11-13
+
+### Changed
+- fix(agents): Main Creator prompt that gpt-6.1-sol reads as Gemini does (KRI-1384) (#2297) <!-- release-pr: 2297 -->
+
 ## [0.88.191.0] - 2026-11-13
 
 ### Changed
