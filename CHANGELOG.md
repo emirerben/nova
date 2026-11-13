@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.186.0] - 2026-11-13
+
+### Changed
+- chore(agents): keep agents out of the frozen web app (KRI-1398) (#2295) <!-- release-pr: 2295 -->
+
 ## [0.88.185.0] - 2026-11-13
 
 ### Changed
