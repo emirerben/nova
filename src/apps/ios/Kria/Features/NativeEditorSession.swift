@@ -11869,7 +11869,8 @@ extension NativeEditorSession {
             let room: Double
             if still { room = .infinity }
             else if atStart { room = slot.inS / rate }
-            else if let total = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? resolvedSources?[slot.clipIndex]?.asset.duration {
+            else if let total = [Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]),
+                                 resolvedSources?[slot.clipIndex]?.asset.duration].compactMap({ $0 }).min() {
                 room = max(0, total - sourceEnd) / rate
             } else { room = 0 }
             let grown = min(amount, room)
