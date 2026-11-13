@@ -25,6 +25,7 @@ struct NativeSplitPanel: View {
     @State private var skipped = Set<Int>()
     @State private var showsLayout = false
     @State private var confirmsRemove = false
+    @State private var pendingPanelCount: Int?
 
     init(session: NativeEditorSession, addRequest: Binding<NativeSplitAddRequest?>, onDone: @escaping () -> Void) {
         self.session = session
@@ -197,13 +198,35 @@ struct NativeSplitPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("Layout", selection: Binding(
                 get: { context.section.panelCount },
-                set: { session.setSplitScreenPanelCount($0) }
+                set: { count in
+                    if session.splitClipsRemoved(sectionID: sectionID, panelCount: count) > 0 {
+                        pendingPanelCount = count
+                    } else {
+                        session.setSplitScreenPanelCount(count)
+                    }
+                }
             )) {
                 Text("2 panels").tag(2)
                 Text("3 panels").tag(3)
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("native-editor-split-count")
+            .confirmationDialog("Remove footage?", isPresented: Binding(
+                get: { pendingPanelCount != nil }, set: { if !$0 { pendingPanelCount = nil } }
+            ), titleVisibility: .visible) {
+                Button("Remove footage", role: .destructive) {
+                    if let count = pendingPanelCount { session.setSplitScreenPanelCount(count) }
+                    pendingPanelCount = nil
+                }
+                .accessibilityIdentifier("native-editor-split-count-confirm")
+                Button("Cancel", role: .cancel) { pendingPanelCount = nil }
+                    .accessibilityIdentifier("native-editor-split-count-cancel")
+            } message: {
+                if let count = pendingPanelCount {
+                    let removed = session.splitClipsRemoved(sectionID: sectionID, panelCount: count)
+                    Text("Going to \(count) panels removes \(removed == 1 ? "1 clip" : "\(removed) clips") from the dropped panel. Undo brings \(removed == 1 ? "it" : "them") back.")
+                }
+            }
 
             if session.canCollapseSplitPanels || context.section.collapseEmptyPanels {
                 VStack(alignment: .leading, spacing: 6) {

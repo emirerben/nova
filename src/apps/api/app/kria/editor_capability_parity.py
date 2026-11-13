@@ -234,7 +234,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     "split_screen_queries": _g(
         "not_an_edit",
-        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen",
+        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved",
         reason="Read-only checks the Split panel uses to decide what to offer.",
     ),
     # ---------------------------------------------------------------- audio

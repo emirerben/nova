@@ -11646,10 +11646,28 @@ extension NativeEditorSession {
         transactDocument(section: .timeline) { value in
             value.splitScreenSections[sectionIndex].panelCount = count
             value.splitScreenSections[sectionIndex].panelWeights = Array(repeating: 1, count: count)
-            value.clips.removeAll { $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) >= count }
+            value.clips.removeAll { Self.panelCountDropsClip($0, sectionID: id, count: count) }
         }
         if let selection, clipSlotIndex(selection.id) == nil,
            let slot = document.clips.first(where: { $0.splitSectionID == id }) { select(.init(kind: .clip, id: clipID(for: slot.id).uuidString)) }
+    }
+
+    /// How many clips `setSplitScreenPanelCount` would delete, so the view can ask first. Zero means nothing is lost.
+    func splitClipsRemoved(sectionID: String, panelCount: Int) -> Int {
+        document.clips.filter { !$0.removed && Self.panelCountDropsClip($0, sectionID: sectionID, count: panelCount) }.count
+    }
+
+    /// How many clips `setSplitScreenDuration` would delete. A clip that is only shortened stays.
+    func splitClipsRemoved(sectionID: String, duration: Double) -> Int {
+        document.clips.filter { !$0.removed && durationDropsClip($0, sectionID: sectionID, duration: duration) }.count
+    }
+
+    private static func panelCountDropsClip(_ clip: EditorTimelineSlot, sectionID: String, count: Int) -> Bool {
+        clip.splitSectionID == sectionID && (clip.splitPanelIndex ?? 0) >= count
+    }
+
+    private func durationDropsClip(_ clip: EditorTimelineSlot, sectionID: String, duration: Double) -> Bool {
+        clip.splitSectionID == sectionID && clip.splitOffsetS >= duration - minimumClipDuration + 0.000001
     }
 
     func setSplitScreenDuration(_ duration: Double) {
@@ -11663,7 +11681,7 @@ extension NativeEditorSession {
         splitScreenActionError = nil
         transactDocument(section: .timeline) { value in
             value.splitScreenSections[index].durationS = duration
-            value.clips.removeAll { $0.splitSectionID == id && $0.splitOffsetS >= duration - minimumClipDuration + 0.000001 }
+            value.clips.removeAll { self.durationDropsClip($0, sectionID: id, duration: duration) }
             for i in value.clips.indices where value.clips[i].splitSectionID == id {
                 value.clips[i] = Self.shortened(value.clips[i], to: min(value.clips[i].durationS ?? duration, duration - value.clips[i].splitOffsetS))
             }

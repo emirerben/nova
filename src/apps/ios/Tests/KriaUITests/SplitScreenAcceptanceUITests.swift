@@ -106,6 +106,38 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         attach(app, name: "Bottom panel clip selected")
     }
 
+    func testDroppingAPanelThatHoldsFootageAsksFirstAndAddingOneDoesNot() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 2", in: app)
+        let layout = app.segmentedControls["native-editor-split-count"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 10))
+        layout.buttons["3 panels"].tap()
+        XCTAssertFalse(app.buttons["native-editor-split-count-confirm"].waitForExistence(timeout: 1.5), "Adding a panel loses nothing")
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+
+        layout.buttons["2 panels"].tap()
+        let confirm = app.buttons["native-editor-split-count-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Dropping a panel that holds footage must ask first")
+        attach(app, name: "Drop-panel confirmation")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.1)).tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(try panelCount(app), 3, "Dismissing keeps the panel and its footage")
+
+        layout.buttons["2 panels"].tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.firstMatch.tap()
+        XCTAssertEqual(try panelCount(app), 2)
+    }
+
+    private func panelCount(_ app: XCUIApplication) throws -> Int {
+        let authored = try sections(app)
+        let section = try XCTUnwrap((authored["split_screen_sections"] as? [[String: Any]])?.first)
+        return try XCTUnwrap(section["panel_weights"] as? [Double]).count
+    }
+
     private func checkGlobalBoundary(_ app: XCUIApplication, baseline: [String: Any]) throws {
         selectClip(3, in: app) // Serial full-screen clip starts at 4 seconds.
         let serial = clip(3, in: app)
