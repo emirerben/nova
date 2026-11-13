@@ -263,20 +263,16 @@ _guarded = _BASE._guarded
 
 
 def _prod_flags() -> contextlib.ExitStack:
-    """Every boolean flag production has on, and the device features it has verified."""
+    """The production settings snapshot (`tests/prod_flags.snapshot.json`), patched in."""
     from app.config import settings
 
     if str(API) not in sys.path:
         sys.path.insert(0, str(API))
-    from tests._prod_profile import PROD_TRUE_FLAGS, PROD_VERIFIED_FEATURES
+    from tests._prod_profile import prod_setting_overrides
 
     stack = contextlib.ExitStack()
-    for name in PROD_TRUE_FLAGS:
-        if hasattr(settings, name):
-            stack.enter_context(patch.object(settings, name, True))
-    stack.enter_context(
-        patch.object(settings, "phone_render_verified_features", list(PROD_VERIFIED_FEATURES))
-    )
+    for name, value in prod_setting_overrides().items():
+        stack.enter_context(patch.object(settings, name, value))
     stack.enter_context(patch.object(settings, "phone_render_user_ids", []))
     return stack
 

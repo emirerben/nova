@@ -89,6 +89,7 @@ Use `make local-render` for byte-equivalent output before merging a render-affec
 - Backend lint: `cd src/apps/api && ruff check . && ruff format --check .`
 - Frontend (only for an explicitly requested web change): `cd src/apps/web && npm run lint && npx tsc --noEmit && npm test`
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
+- Creation-bug fixes: `make kria-replay-job JOB=<prod job id>` replays the real footage and request under `tests/prod_flags.snapshot.json` with real models; the PR names the job id. Guard: `tests/test_prod_flags_snapshot.py`. `docs/runbooks/replay-from-job-id.md`.
 - Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain BLOCK (3rd fix PR needs a failure-mode list). Run before every PR.
 - Reliability (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; evidence and scratch-DB steps: `docs/runbooks/pr-acceptance-checklist.md`.
 

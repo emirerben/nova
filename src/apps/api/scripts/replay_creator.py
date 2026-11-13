@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import hashlib
 import json
 import mimetypes
@@ -67,6 +68,7 @@ class ReplayInputs:
     manifest_hash: str
     clip_analysis_cache: dict[str, dict[str, Any]]
     transcript_cache: dict[str, Any]
+    recorded_assignments: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
 
 
 def _canonical_json(value: Any) -> str:
@@ -198,6 +200,25 @@ def _extract_transcript_cache(job_debug: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+RECEIPT_FIELDS = ("upload_contract", "manifest_identity", "has_audio", "duration_s", "pool_source")
+
+
+def _extract_recorded_assignments(job_debug: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The upload receipts the approved plan recorded (iPhone proxies need them to plan).
+
+    The admin item debug summarizes clip assignments without their receipts; the job's
+    brief binding keeps the full rows.
+    """
+
+    plan = (job_debug.get("job") or {}).get("assembly_plan") or {}
+    snapshot = ((plan.get("creator_brief_binding") or {}).get("media_snapshot")) or {}
+    return {
+        str(row["media_id"]): {key: row[key] for key in RECEIPT_FIELDS if key in row}
+        for row in snapshot.get("clip_assignments") or []
+        if isinstance(row, dict) and row.get("media_id")
+    }
+
+
 def _normalise_clip_analysis(raw: dict[str, Any]) -> dict[str, Any]:
     analysis = dict(raw)
     detected_subject = analysis.get("detected_subject")
@@ -321,6 +342,7 @@ def load_inputs(
         manifest_hash=sha256_json(manifest),
         clip_analysis_cache=_extract_clip_analysis_cache(job_debug, sources),
         transcript_cache=_extract_transcript_cache(job_debug),
+        recorded_assignments=_extract_recorded_assignments(job_debug),
     )
 
 
@@ -412,8 +434,8 @@ def seed_replay_database(
     videos = [source for source in inputs.sources if source["kind"] == "video"]
     images = [source for source in inputs.sources if source["kind"] == "image"]
     audio = [source for source in inputs.sources if source["kind"] == "audio"]
-    if len(audio) != 1:
-        raise ReplaySafetyError("Replay requires exactly one voiceover source")
+    if len(audio) > 1:
+        raise ReplaySafetyError("Replay accepts at most one voiceover source")
 
     assignments: list[dict[str, Any]] = []
     imported: list[dict[str, Any]] = []
@@ -431,16 +453,21 @@ def seed_replay_database(
             "storage_generation": copied["generation"],
             "has_audio": None,
         }
+        assignment.update(inputs.recorded_assignments.get(source["id"], {}))
         if analysis is not None:
             assignment["analysis"] = analysis
         assignments.append(assignment)
         imported.append({"source_id": source["id"], "kind": source["kind"], **copied})
 
-    voiceover = audio[0]
-    voiceover_path = f"users/{user_id}/creation-threads/{thread_id}/{voiceover['id']}"
-    voiceover_copy = _copy_source(voiceover, voiceover_path, storage)
-    voiceover_duration = _probe_duration(Path(voiceover["local_path"]))
-    imported.append({"source_id": voiceover["id"], "kind": "audio", **voiceover_copy})
+    voiceover = audio[0] if audio else None
+    voiceover_path: str | None = None
+    voiceover_copy: dict[str, Any] = {}
+    voiceover_duration: float | None = None
+    if voiceover is not None:
+        voiceover_path = f"users/{user_id}/creation-threads/{thread_id}/{voiceover['id']}"
+        voiceover_copy = _copy_source(voiceover, voiceover_path, storage)
+        voiceover_duration = _probe_duration(Path(voiceover["local_path"]))
+        imported.append({"source_id": voiceover["id"], "kind": "audio", **voiceover_copy})
 
     asset_rows: list[dict[str, Any]] = []
     for source in images:
@@ -487,14 +514,15 @@ def seed_replay_database(
         }
         for assignment, source in zip(assignments, videos, strict=True)
     ]
-    media_projection.append(
-        {
-            "media_id": voiceover["id"],
-            "kind": "audio",
-            "filename": voiceover.get("source_filename") or voiceover["id"],
-            "content_type": _content_type(voiceover),
-        }
-    )
+    if voiceover is not None:
+        media_projection.append(
+            {
+                "media_id": voiceover["id"],
+                "kind": "audio",
+                "filename": voiceover.get("source_filename") or voiceover["id"],
+                "content_type": _content_type(voiceover),
+            }
+        )
 
     with sync_session() as db:
         persona_id = uuid.uuid5(user_id, "replay-persona")
@@ -534,9 +562,9 @@ def seed_replay_database(
             clip_gcs_paths=[assignment["gcs_path"] for assignment in assignments],
             clip_assignments=assignments,
             voiceover_gcs_path=voiceover_path,
-            voiceover_generation=voiceover_copy["generation"],
+            voiceover_generation=voiceover_copy.get("generation"),
             voiceover_duration_s=voiceover_duration,
-            audio_mode="voiceover",
+            **({"audio_mode": "voiceover"} if voiceover is not None else {}),
             theme=str(old_persona.get("theme") or "") or None,
             user_edited=True,
         )
@@ -682,24 +710,47 @@ async def run_creator_planning(
     item_id: uuid.UUID,
     seed_description: str,
     user_id: uuid.UUID,
+    timeout_s: float = 600.0,
+    poll_interval_s: float = 5.0,
 ) -> dict[str, Any]:
+    """Start the Main Creator session, then wait for the worker to produce a pending plan."""
+
+    from starlette.requests import Request
+
     from app.database import AsyncSessionLocal
     from app.models import User
-    from app.routes.creator_agent import StartBody, start_creator_session_controller
+    from app.routes.creator_agent import (
+        StartBody,
+        get_creator_session,
+        start_creator_session_controller,
+    )
 
     async with AsyncSessionLocal() as db:
         user = await db.get(User, user_id)
         if user is None:
             raise ReplaySafetyError("Seeded replay user disappeared before planning")
         started = await start_creator_session_controller(
-            None,
+            Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
             str(item_id),
             StartBody(message=seed_description, client_event_id=f"replay-plan-{uuid.uuid4().hex}"),
             user,
             db,
             allow_chat=True,
         )
-        return started.model_dump(mode="json")
+    plan = started.model_dump(mode="json")
+    deadline = time.monotonic() + timeout_s
+    while not plan.get("pending_plan"):
+        if plan.get("status") in {"failed", "cancelled"}:
+            raise ReplaySafetyError(f"Main Creator planning ended as {plan['status']}")
+        if time.monotonic() > deadline:
+            raise ReplaySafetyError(f"Timed out waiting for a Main Creator plan; last: {plan}")
+        await asyncio.sleep(min(max(poll_interval_s, 0.2), 30.0))
+        async with AsyncSessionLocal() as db:
+            user = await db.get(User, user_id)
+            polled = await get_creator_session(str(item_id), user, db)
+        if polled is not None:
+            plan = polled.model_dump(mode="json")
+    return plan
 
 
 async def confirm_creator_plan(
@@ -868,7 +919,22 @@ def wait_for_worker(
     raise ReplaySafetyError(f"Timed out waiting for proposal/worker; last state: {last}")
 
 
-def _configure_environment(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+def snapshot_environment(snapshot_path: Path) -> dict[str, str]:
+    """Environment variables that make ``Settings`` read the production snapshot values."""
+
+    entries = _read_json(snapshot_path).get("settings")
+    if not isinstance(entries, dict):
+        raise ReplaySafetyError(f"Not a production flag snapshot: {snapshot_path}")
+    return {
+        name.upper(): json.dumps(entry["value"])
+        if not isinstance(entry["value"], str)
+        else entry["value"]
+        for name, entry in entries.items()
+        if entry.get("source") != "default"
+    }
+
+
+def build_environment(args: argparse.Namespace, *, output_dir: Path) -> dict[str, str]:
     database_url = str(args.database_url or os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL)
     redis_url = str(args.redis_url or DEFAULT_REDIS_URL)
     source_root = Path(args.manifest).expanduser().resolve().parent
@@ -879,20 +945,19 @@ def _configure_environment(args: argparse.Namespace, *, output_dir: Path) -> dic
         destination_root=output_dir,
         source_root=source_root,
     )
-    redis_host, redis_database = _redis_target(redis_url)
-    if args.render and not args.enable_fidelity:
-        raise ReplaySafetyError("--render requires --enable-fidelity")
-    storage_root = output_dir / "storage"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.update(
+    _redis_target(redis_url)
+    prod_flags = getattr(args, "prod_flags", None)
+    if args.render and not args.enable_fidelity and prod_flags is None:
+        raise ReplaySafetyError("--render requires --enable-fidelity or --prod-flags")
+    environment: dict[str, str] = snapshot_environment(prod_flags) if prod_flags else {}
+    environment.update(
         {
             "DATABASE_URL": database_url,
             "STORAGE_PROVIDER": "local",
             "STORAGE_BUCKET": LOCAL_BUCKET,
             "E2E_FIXTURES": "true",
-            "LOCAL_STORAGE_ROOT": str(storage_root),
+            "LOCAL_STORAGE_ROOT": str(output_dir / "storage"),
             "LOCAL_STORAGE_BASE_URL": "http://127.0.0.1:8000/dev-qa/storage",
-            "CREATOR_PROMPT_FIDELITY_ENABLED": "true" if args.enable_fidelity else "false",
             "MAIN_CREATOR_AGENT_ENABLED": "true",
             "MAIN_CREATOR_AGENT_ROLLOUT_PERCENT": "100",
             "MAIN_CREATOR_AGENT_EXECUTION_ENABLED": "true",
@@ -904,19 +969,35 @@ def _configure_environment(args: argparse.Namespace, *, output_dir: Path) -> dic
             "REDIS_URL": redis_url,
         }
     )
+    if prod_flags is None:
+        environment["CREATOR_PROMPT_FIDELITY_ENABLED"] = "true" if args.enable_fidelity else "false"
+    return environment
+
+
+def _configure_environment(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    environment = build_environment(args, output_dir=output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.update(environment)
+    database_url = environment["DATABASE_URL"]
+    redis_host, redis_database = _redis_target(environment["REDIS_URL"])
     return {
         "database_url": database_url,
         "database_host": _database_target(database_url)[0],
         "database_name": _database_target(database_url)[1],
-        "redis_url": redis_url,
+        "redis_url": environment["REDIS_URL"],
         "redis_host": redis_host,
         "redis_database": redis_database,
         "storage_provider": "local",
         "storage_bucket": LOCAL_BUCKET,
         "e2e_fixtures": True,
-        "storage_root": str(storage_root),
+        "storage_root": environment["LOCAL_STORAGE_ROOT"],
         "destination_root": str(output_dir),
-        "creator_prompt_fidelity_enabled": bool(args.enable_fidelity),
+        "creator_prompt_fidelity_enabled": environment["CREATOR_PROMPT_FIDELITY_ENABLED"] == "true"
+        if "CREATOR_PROMPT_FIDELITY_ENABLED" in environment
+        else None,
+        "prod_flag_snapshot": str(prod_flags)
+        if (prod_flags := getattr(args, "prod_flags", None))
+        else None,
         "main_creator_agent_enabled": True,
         "main_creator_agent_rollout_percent": 100,
         "main_creator_agent_execution_enabled": True,
@@ -952,6 +1033,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-source-count-drift",
         action="store_true",
         help="allow a manifest other than the pinned 40-source input",
+    )
+    parser.add_argument(
+        "--prod-flags",
+        type=Path,
+        default=None,
+        help="flag snapshot (tests/prod_flags.snapshot.json); replaces --enable-fidelity",
     )
     parser.add_argument("--timeout-s", type=float, default=1800.0)
     parser.add_argument("--poll-interval-s", type=float, default=5.0)
@@ -1020,6 +1107,8 @@ def main(argv: list[str] | None = None) -> int:
                 item_id=ids["item_id"],
                 seed_description=inputs.seed_description,
                 user_id=ids["user_id"],
+                timeout_s=args.timeout_s,
+                poll_interval_s=args.poll_interval_s,
             )
         )
         receipt["planning"] = {
