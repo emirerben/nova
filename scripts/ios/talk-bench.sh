@@ -194,13 +194,16 @@ fi
 [[ -n "$DEVICE_ID" ]] || { echo "No paired, available iPhone found. Connect one, or pass --device-id <udid> (xcrun devicectl list devices)." >&2; exit 2; }
 mkdir -p "$RUN_ROOT"
 
+# A devicectl copy can hang for good when the phone drops its service connection; bound every one the script starts in a loop.
+bounded() { perl -e 'my $p = fork; if (!$p) { exec @ARGV or exit 127 } $SIG{ALRM} = sub { kill "TERM", $p; system("pkill", "-TERM", "-P", $p); exit 124 }; alarm 90; waitpid $p, 0; exit $? >> 8' "$@"; }
+
 poll_files() { # <dest>: keep every proxy and staged movie that shows up while the test runs
   local dest="$1" scratch directory
   mkdir -p "$dest/prewarm" "$dest/uploads"
   while :; do
     for directory in prewarm:Library/Caches/KriaTakePrewarm uploads:"Library/Application Support/KriaUploads"; do
       scratch="$(mktemp -d)"
-      xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
+      bounded xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
         --source "${directory#*:}" --destination "$scratch" >/dev/null 2>&1 || true
       find "$scratch" -type f -size +100k -exec cp -n {} "$dest/${directory%%:*}"/ \; 2>/dev/null || true
       rm -rf "$scratch"
@@ -209,17 +212,27 @@ poll_files() { # <dest>: keep every proxy and staged movie that shows up while t
 }
 
 pull_run() { # <run-dir>
-  local run_dir="$1" scratch
+  local run_dir="$1" scratch attempt
   scratch="$(mktemp -d)"
-  if xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
-      --source Documents/talk-bench --destination "$scratch" >"$run_dir/devicectl-pull.log" 2>&1; then
-    # devicectl may put the files in $scratch or in $scratch/talk-bench; flatten either way.
-    local source="$scratch"
-    [[ -d "$scratch/talk-bench" ]] && source="$scratch/talk-bench"
-    cp -R "$source"/. "$run_dir"/
-  else
-    echo "talk-bench: could not pull Documents/talk-bench ($(tail -1 "$run_dir/devicectl-pull.log"))" >&2
-  fi
+  for attempt in 1 2 3; do
+    if bounded xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
+        --source Documents/talk-bench --destination "$scratch" >"$run_dir/devicectl-pull.log" 2>&1; then
+      # devicectl may put the files in $scratch or in $scratch/talk-bench; flatten either way.
+      local source="$scratch"
+      [[ -d "$scratch/talk-bench" ]] && source="$scratch/talk-bench"
+      cp -R "$source"/. "$run_dir"/
+      rm -rf "$scratch"
+      return 0
+    fi
+    # A copy stalls at "Acquired usage assertion" while the phone has locked itself (it does, a minute or so after the test ends) and,
+    # rarely, when CoreDeviceService wedges after a long session (a per-user service launchd restarts on demand). The run's numbers
+    # stay in the app container until the next run starts, so wait for an unlocked phone and ask again.
+    echo "talk-bench: the pull stalled (attempt $attempt); waiting for an unlocked phone" >&2
+    wait_for_unlocked_device 600 || true
+    [[ "$attempt" -lt 2 ]] || pkill -f "CoreDeviceService.xpc" 2>/dev/null || true
+    sleep 3
+  done
+  echo "talk-bench: could not pull Documents/talk-bench ($(tail -1 "$run_dir/devicectl-pull.log"))" >&2
   rm -rf "$scratch"
 }
 
@@ -242,7 +255,7 @@ fi
 device_json() { # <devicectl device info subcommand> -> JSON path on stdout, empty when the call failed
   local out
   out="$(mktemp)"
-  if xcrun devicectl device info "$1" --device "$DEVICE_ID" --json-output "$out" >/dev/null 2>&1; then echo "$out"; else rm -f "$out"; fi
+  if bounded xcrun devicectl device info "$1" --device "$DEVICE_ID" --json-output "$out" >/dev/null 2>&1; then echo "$out"; else rm -f "$out"; fi
 }
 
 device_transport() {
@@ -270,7 +283,7 @@ wait_for_unlocked_device() {
     state="$(device_lock_state)"
     [[ "$state" != "locked" ]] && return 0
     if [[ "$announced" -eq 0 ]]; then echo "talk-bench: the phone is locked; unlock it (waiting up to $1 s)" >&2; announced=1; fi
-    xcrun devicectl device process launch --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    bounded xcrun devicectl device process launch --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
     [[ "$SECONDS" -lt "$deadline" ]] || return 1
     sleep 5
   done
@@ -285,12 +298,12 @@ competing_device_users() {
 # Prints nominal, fair, serious, critical, or unknown (no app installed yet, or the launch failed).
 probe_thermal() {
   local scratch state
-  xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing \
+  bounded xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing \
     --environment-variables '{"KRIA_TALK_BENCH":"1"}' "$BUNDLE_ID" >/dev/null 2>&1 || { echo unknown; return; }
   sleep 7
   scratch="$(mktemp -d)"
   state=unknown
-  if xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
+  if bounded xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
       --source Documents/talk-bench/summary.json --destination "$scratch/summary.json" >/dev/null 2>&1; then
     state="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["facts"].get("thermal.end","unknown"))' "$scratch/summary.json" 2>/dev/null || echo unknown)"
   fi
@@ -312,7 +325,7 @@ cool_down_device() {
 }
 
 uninstall_app() {
-  xcrun devicectl device uninstall app --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  bounded xcrun devicectl device uninstall app --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 }
 
 # Matches what the log says when the run never got as far as the test body.
@@ -365,7 +378,11 @@ for run in $(seq 1 "$RUNS"); do
         xcodebuild test-without-building -project "$IOS_ROOT/Kria.xcodeproj" -scheme "$SCHEME" -configuration Debug \
           -destination "platform=iOS,id=$DEVICE_ID" -derivedDataPath "$DERIVED_DATA" -enableCodeCoverage NO \
           -resultBundlePath "$run_dir/result.xcresult" -only-testing "$TEST_ID" >"$run_dir/xcodebuild.log" 2>&1 || exit_code=$?
-      if [[ -n "$poller" ]]; then kill "$poller" 2>/dev/null || true; wait "$poller" 2>/dev/null || true; fi
+      if [[ -n "$poller" ]]; then
+        kill "$poller" 2>/dev/null || true; wait "$poller" 2>/dev/null || true
+        # A copy the poller had started keeps the device's file service busy; the pull below would queue behind it and time out.
+        pkill -f "devicectl device copy" 2>/dev/null || true; sleep 2
+      fi
       [[ "$exit_code" -eq 0 ]] && break
       if infrastructure_failure "$run_dir/xcodebuild.log"; then
         infra_attempts=$((infra_attempts + 1))

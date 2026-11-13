@@ -11,7 +11,7 @@
 set -euo pipefail
 
 THIS="$(git rev-parse --show-toplevel)"
-BASELINE=""; DWELLS="0,5,20"; RUNS=3; SECONDS_PER_TAKE=30; AFTER=12; DEVICE_ID="${KRIA_DEVICE_ID:-}"; LABEL=""; SKIP_BUILD=0
+BASELINE=""; DWELLS="0,5,20"; RUNS=3; SECONDS_PER_TAKE=30; AFTER=12; DEVICE_ID="${KRIA_DEVICE_ID:-}"; LABEL=""; SKIP_BUILD=0; OFFSET=0; BUILDS="pr base"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --baseline) BASELINE="$2"; shift 2 ;;
@@ -22,6 +22,8 @@ while [[ $# -gt 0 ]]; do
     --device-id) DEVICE_ID="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
+    --run-offset) OFFSET="$2"; shift 2 ;;
+    --builds) BUILDS="${2//,/ }"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -41,10 +43,10 @@ fi
 
 for run in $(seq 1 "$RUNS"); do
   for dwell in "${DWELL_LIST[@]}"; do
-    for build in pr base; do
+    for build in $BUILDS; do
       tree="$THIS"; [[ "$build" == base ]] && tree="$BASELINE"
-      cell="$build-d$dwell-r$run"
-      echo "talk-usetake: $cell"
+      cell="$build-d$dwell-r$((run + OFFSET))"
+      echo "talk-usetake: $cell"  # --run-offset N continues an interrupted label as runs N+1...
       (cd "$tree" && bash scripts/ios/talk-bench.sh --skip-build --runs 1 --scenarios none-cin0 --seconds "$SECONDS_PER_TAKE" \
         --use-take --use-take-dwell "$dwell" --use-take-after "$AFTER" --poll-files --device-id "$DEVICE_ID" --label "ab-$LABEL-$cell" || true)
       rm -rf "$OUT/$cell"; mkdir -p "$OUT/$cell"
