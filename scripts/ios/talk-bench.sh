@@ -224,12 +224,11 @@ pull_run() { # <run-dir>
       rm -rf "$scratch"
       return 0
     fi
-    # A copy stalls at "Acquired usage assertion" while the phone has locked itself (it does, a minute or so after the test ends) and,
-    # rarely, when CoreDeviceService wedges after a long session (a per-user service launchd restarts on demand). The run's numbers
-    # stay in the app container until the next run starts, so wait for an unlocked phone and ask again.
+    # A copy stalls at "Acquired usage assertion" while the phone has locked itself (it does, a minute or so after the test ends). The
+    # run's numbers stay in the app container until the next run starts, so wait for an unlocked phone and ask again. A wedged
+    # CoreDeviceService is not restarted from here; if every attempt stalls, the message below says so and the person decides.
     echo "talk-bench: the pull stalled (attempt $attempt); waiting for an unlocked phone" >&2
     wait_for_unlocked_device 600 || true
-    [[ "$attempt" -lt 2 ]] || pkill -f "CoreDeviceService.xpc" 2>/dev/null || true
     sleep 3
   done
   echo "talk-bench: could not pull Documents/talk-bench ($(tail -1 "$run_dir/devicectl-pull.log"))" >&2
