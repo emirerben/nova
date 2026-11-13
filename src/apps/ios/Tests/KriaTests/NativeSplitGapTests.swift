@@ -1,4 +1,5 @@
 import XCTest
+import KriaMediaEngine
 @testable import Kria
 
 /// KRI-1335 split-flow gaps. Each test is written against a listed failure mode.
@@ -621,5 +622,96 @@ final class NativeSplitGapTests: XCTestCase {
         empty.removeSplitScreen(sectionID: "s", keepPanel: 2)
         XCTAssertEqual(empty.document, original, "An empty panel cannot replace the split")
         XCTAssertFalse(empty.canUndo)
+    }
+
+    // MARK: Cutting a photo
+
+    private static let photoRaw: [String: JSONValue] = ["media_kind": .string("image")]
+
+    @MainActor
+    func testCuttingAPhotoMakesTwoIndependentPhotosWithNoParentLink() throws {
+        let top = member(0, offset: 0, duration: 4)
+        let photo = member(1, offset: 0, duration: 4, clipIndex: 1, raw: Self.photoRaw)
+        let session = makeSession(document([top, photo], sections: [.init(id: "s", durationS: 4, panelCount: 2)]))
+        try select(session, photo)
+        session.currentTime = 2
+        XCTAssertTrue(session.canSplitSelectedClip)
+        session.splitSelectedClip()
+
+        let pieces = session.document.clips.filter { $0.splitPanelIndex == 1 }.sorted { $0.splitOffsetS < $1.splitOffsetS }
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces.map(\.parentSegmentID), [nil, nil], "The server refuses a parent link on a photo")
+        XCTAssertEqual(Set(pieces.compactMap(\.id)).count, 2)
+        XCTAssertEqual(pieces.map(\.splitOffsetS), [0, 2])
+    }
+
+    @MainActor
+    func testCuttingAVideoStillLinksTheSecondPieceToTheFirst() throws {
+        let top = member(0, offset: 0, duration: 4)
+        let video = member(1, offset: 0, duration: 4, clipIndex: 1)
+        let session = makeSession(document([top, video], sections: [.init(id: "s", durationS: 4, panelCount: 2)]))
+        try select(session, video)
+        session.currentTime = 2
+        session.splitSelectedClip()
+        let pieces = session.document.clips.filter { $0.splitPanelIndex == 1 }.sorted { $0.splitOffsetS < $1.splitOffsetS }
+        XCTAssertEqual(pieces.map(\.parentSegmentID), [nil, video.id])
+    }
+
+    @MainActor
+    func testFullScreenFromPlayheadOnAPhotoLinksNoParent() throws {
+        let top = member(0, offset: 0, duration: 6)
+        let photo = member(1, offset: 0, duration: 5, clipIndex: 1, raw: Self.photoRaw)
+        let session = makeSession(document([top, photo], sections: [.init(id: "s", durationS: 6, panelCount: 2)]))
+        try select(session, photo)
+        session.currentTime = 2.5
+        session.makeSplitFullScreen(sectionID: "s", side: .fromPlayhead)
+
+        let pieces = session.document.clips.filter { $0.clipIndex == 1 }
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces.map(\.parentSegmentID), [nil, nil])
+        XCTAssertEqual(Set(pieces.compactMap(\.id)).count, 2)
+    }
+
+    // MARK: Full screen and the real end of the footage
+
+    @MainActor
+    private func fullScreenCompileFailures(assetOffset: Double) throws -> [String] {
+        let lengths = [5.95, 8.95, 7.95]
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let sources = Dictionary(uniqueKeysWithValues: lengths.enumerated().map { index, length in
+            (index, ResolvedEditorSource(clipIndex: index, mediaID: "m\(index)",
+                asset: MediaAsset(id: "a\(index)", relativePath: "a\(index).mp4",
+                    fingerprint: .init(hex: String(repeating: "a", count: 64), byteCount: 100), duration: length + assetOffset),
+                url: URL(fileURLWithPath: "/fixture/a\(index).mp4")))
+        })
+        var failures: [String] = []
+        for selected in 0..<3 {
+            let members = lengths.enumerated().map { panel, length in
+                member(panel, offset: 0, duration: length, clipIndex: panel,
+                       raw: ["media_kind": .string("video"), "source_duration_s": .number(length + 0.05)])
+            }
+            var value = document(members, sections: [.init(id: "s", durationS: 8.95, panelCount: 3, collapseEmptyPanels: true)])
+            value.capabilities["split_collapse"] = .init(editable: true)
+            let session = makeSession(value)
+            session.setResolvedSourcesForTesting(sources)
+            try select(session, members[selected])
+            session.currentTime = 3
+            session.makeSplitFullScreen(sectionID: "s", side: .fromPlayhead)
+            guard session.document != value else { failures.append("panel \(selected): full screen refused"); continue }
+            guard session.document.splitScreenIsValid else { failures.append("panel \(selected): split invalid"); continue }
+            do { _ = try compiler.compile(document: session.document, clips: session.timelineClips, items: [], sources: sources) }
+            catch { failures.append("panel \(selected): \(error)") }
+        }
+        return failures
+    }
+
+    @MainActor
+    func testFullScreenFromPlayheadCompilesWhenTheStoredLengthMatchesTheFootage() throws {
+        XCTAssertEqual(try fullScreenCompileFailures(assetOffset: 0.05), [])
+    }
+
+    @MainActor
+    func testFullScreenFromPlayheadCompilesWhenTheFootageIsShorterThanTheStoredLength() throws {
+        XCTAssertEqual(try fullScreenCompileFailures(assetOffset: 0.03), [])
     }
 }

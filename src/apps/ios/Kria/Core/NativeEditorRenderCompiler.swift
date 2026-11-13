@@ -229,6 +229,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 && abs(outputDuration - authoredMovingDuration) < 0.000_001
                 && abs(sourceStart - (authoredSlot?.inS ?? sourceStart)) < 0.000_001
             if isAuthoredWindow, !freezes, let authoredSlot,
+               !(source.asset.duration == nil && NativeDownloadedMedia.isStillImage(source.url)),
                let available = source.asset.duration ?? clip.sourceDuration {
                 let authoredRate = explicitRate ?? 1
                 let requestedSpan = authoredMovingDuration * authoredRate
