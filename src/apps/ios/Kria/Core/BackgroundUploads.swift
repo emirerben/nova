@@ -1917,7 +1917,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let result: URL
             if let ready {
                 result = ready
-                Perf.count("talk.use.prewarmProxyUsed")
+                Perf.event("talk.use.prewarmProxyUsed")
+                #if DEBUG
+                TalkBench.shared.count("talk.use.prewarmProxyUsed", detail: "") // an event alone never reaches the bench summary
+                #endif
             } else {
                 result = try await Perf.measureAsync("talk.use.proxyTranscode") {
                     try await AVFoundationProxyGenerator(preset: .analysis).makeProxy(for: original, destination: proxy)
