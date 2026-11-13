@@ -9,8 +9,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import re
+import time
 import uuid
+from collections.abc import Callable
 
 import structlog
 from fastapi import HTTPException, status
@@ -24,6 +27,7 @@ from app.agents._runtime import (
     TerminalError,
 )
 from app.agents.edit_copilot import (
+    UNSUPPORTED_REJECTIONS,
     CopilotOutcome,
     EditCopilotAgent,
     EditCopilotInput,
@@ -161,7 +165,7 @@ def _reply_claims(output: EditCopilotOutput, reply: str, *, strict: bool = False
 
 # Rejection reasons whose `detail` is written for the creator (the unsupported branch
 # already shows them verbatim). Value/required-field details are parser jargon.
-_CREATOR_FACING_REJECTIONS = frozenset({"capability_unavailable", "stale_target"})
+_CREATOR_FACING_REJECTIONS = frozenset({"capability_unavailable", "stale_target", "compile_error"})
 
 
 def _check_claims(output: EditCopilotOutput, ops: list[dict], outcome: CopilotOutcome) -> list[str]:
@@ -250,7 +254,7 @@ def _honest_outcome(
     elif any(item.get("reason") == "stale_target" for item in reasons):
         outcome = "stale"
     elif output.intent == "reject" or any(
-        item.get("reason") in {"capability_unavailable", "unknown_operation"} for item in reasons
+        item.get("reason") in UNSUPPORTED_REJECTIONS for item in reasons
     ):
         outcome = "unsupported"
     elif any(item.get("reason") in {"missing_required", "invalid_value"} for item in reasons):
@@ -357,12 +361,64 @@ def _paid_request_id(body: CopilotTurnBody, *, job_id: uuid.UUID) -> str:
     return f"edit-copilot:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
 
+CompileCheck = Callable[[list[dict]], tuple[list[dict], list[tuple[dict, str]]]]
+
+
+async def _repaired(
+    agent: EditCopilotAgent,
+    agent_input: EditCopilotInput,
+    output: EditCopilotOutput,
+    run_context: Callable[[str], RunContext],
+    *,
+    deadline_monotonic: float | None,
+    timeout_override_s: float | None,
+) -> EditCopilotOutput:
+    """KRI-1387: re-ask for the rejected ops only and keep the rest.
+
+    At most two rounds (the agent stops offering a third), and only while one more copilot
+    call fits before the turn deadline. A stateless request has no turn budget, so it gets the
+    one round the old value retry had. A failed repair call keeps the honest partial result.
+    """
+    while (repair := output.repair) is not None:
+        if deadline_monotonic is None:
+            if repair.repair_round > 1:
+                break
+        elif deadline_monotonic - time.monotonic() < min(
+            agent.spec.timeout_s, timeout_override_s or math.inf
+        ):
+            log.info("edit_copilot.repair_skipped", repair_round=repair.repair_round)
+            break
+        try:
+            repaired = await asyncio.to_thread(
+                agent.run,
+                agent_input.model_copy(update={"repair": repair}),
+                ctx=run_context(f":repair:{repair.repair_round}"),
+            )
+        except TerminalError as exc:
+            log.warning(
+                "edit_copilot.repair_failed",
+                repair_round=repair.repair_round,
+                error=str(exc)[:300],
+            )
+            break
+        log.info(
+            "edit_copilot.repair_round",
+            repair_round=repair.repair_round,
+            asked=[item.op for item in repair.rejected],
+            ops=len(repaired.ops),
+            still_rejected=len(repaired.repair.rejected) if repaired.repair else 0,
+        )
+        output = repaired
+    return output
+
+
 async def run_copilot_turn(
     body: CopilotTurnBody,
     *,
     job_id: uuid.UUID,
     deadline_monotonic: float | None = None,
     timeout_override_s: float | None = 40.0,
+    compile_check: CompileCheck | None = None,
 ) -> CopilotTurnResponse:
     """Run one stateless edit-copilot turn.
 
@@ -370,6 +426,10 @@ async def run_copilot_turn(
     never written back to the variant, though it is included in agent_run.input_json
     like every Agent.run input. Returned ops are also untrusted; the editor's
     local applier and the existing Save/editor-commit path enforce again.
+
+    ``compile_check`` (callers that hold the variant the draft compiles against) runs the
+    editor compiler per op inside the turn, so a refused op is repaired or named instead of
+    failing the whole draft later.
     """
     if _snapshot_size_bytes(body.snapshot) > _MAX_SNAPSHOT_BYTES:
         raise HTTPException(
@@ -388,18 +448,24 @@ async def run_copilot_turn(
 
     from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
 
+    agent = configure_creator_agent(EditCopilotAgent(default_client()), "edit_copilot")
+    agent.compile_check = compile_check
+    request_id = _paid_request_id(body, job_id=job_id)
+
+    def run_context(suffix: str = "") -> RunContext:
+        # Each repair round is its own paid call, so it gets its own reservation key.
+        return RunContext(
+            job_id=str(job_id),
+            request_id=f"{request_id}{suffix}",
+            request_id_authoritative=bool(body.client_request_id),
+            deadline_monotonic=deadline_monotonic,
+            timeout_override_s=timeout_override_s,
+            thought_summary_callback=current_thought_publisher(),
+        )
+
     try:
         output: EditCopilotOutput = await asyncio.to_thread(
-            configure_creator_agent(EditCopilotAgent(default_client()), "edit_copilot").run,
-            agent_input,
-            ctx=RunContext(
-                job_id=str(job_id),
-                request_id=_paid_request_id(body, job_id=job_id),
-                request_id_authoritative=bool(body.client_request_id),
-                deadline_monotonic=deadline_monotonic,
-                timeout_override_s=timeout_override_s,
-                thought_summary_callback=current_thought_publisher(),
-            ),
+            agent.run, agent_input, ctx=run_context()
         )
     except AiBudgetExceededError:
         raise
@@ -411,6 +477,15 @@ async def run_copilot_turn(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="edit_copilot_failed",
         ) from exc
+
+    output = await _repaired(
+        agent,
+        agent_input,
+        output,
+        run_context,
+        deadline_monotonic=deadline_monotonic,
+        timeout_override_s=timeout_override_s,
+    )
 
     if output.research_request is not None:
         from app.services.researched_text import ResearchUnavailable, run_researched_revision
@@ -453,7 +528,10 @@ async def run_copilot_turn(
 
     # Ops ride only genuine edit turns: a disobedient model returning
     # intent="reject"/"describe"/"clarify" WITH ops must not have them applied
-    # while the reply text says nothing was done (adversarial review F5).
+    # while the reply text says nothing was done (adversarial review F5). A rejected op
+    # no longer makes the turn a question (KRI-1386), so the surviving ops of an edit
+    # apply; only a question the model itself asks (the prompt's contract: a question
+    # carries no ops) keeps them back.
     ops = [] if (output.needs_clarification or output.intent != "edit") else output.ops
     outcome, reply = _honest_outcome(
         output,

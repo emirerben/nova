@@ -132,6 +132,26 @@ commit or speech-cut validator while the exact Job is locked, records the new
 generation in the accepted execution, commits, and only then publishes. A lost
 broker acknowledgement becomes `outcome_unknown`; it is never blindly retried.
 
+### Partial apply and repair (KRI-1386, KRI-1387)
+
+A rejected op rejects only itself. The confidence gate reads the model's own
+confidence, so one bad value no longer turns a whole edit into a question. The
+planner binds `editor_compile_check` (`validate_ops_per_op` on a detached copy of
+the job and projected variant) to the copilot, so an op the compiler refuses is
+found inside the turn instead of failing the draft later. A bulk media op and
+`patch_text_appearance` stay atomic: when one fails, its siblings are held back.
+
+Every rejected op the model could fix goes back to it in one `## REPAIR` block
+(`repair_feedback`), with the open op families or the valid index range where
+those fix it. A limit inside an open family (a text that follows its narration
+timing) is named, not re-asked, because asking again only repeats it. The model
+answers with corrected ops tagged `"repairs": "r<n>"` or an unmet entry. Kept
+ops are never re-asked. `run_copilot_turn` runs at most
+two repair rounds and only while one more copilot call fits before the turn
+deadline (one round for a stateless request). Each round is its own `agent_run`
+with `repair` in `input_json`. A rejected op no round fixed is named in
+`unmet_requests`, so the reply and the phone receipts say it was not done.
+
 ## Conversation contract
 
 Every assistant turn has one value class: decision, question, action, progress,

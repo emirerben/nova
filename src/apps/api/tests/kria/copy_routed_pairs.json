@@ -77,6 +77,31 @@
    "sıra"
   ],
   [
+   "app/agents/edit_copilot.py",
+   "I couldn't apply it",
+   "uygulayamadım"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I couldn't {action}: {why}.",
+   "{action} mümkün olmadı: {why}."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "change {target}",
+   "{target} için değişiklik yapmak"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "other changes",
+   "diğer değişiklikler"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "{rest} other changes weren't applied.",
+   "{rest} değişiklik daha uygulanmadı."
+  ],
+  [
    "app/kria/brief_checks.py",
    " and ",
    " ve "

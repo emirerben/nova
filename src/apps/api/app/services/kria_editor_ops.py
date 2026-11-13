@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
+from types import SimpleNamespace
 from typing import Any, Literal, NamedTuple
 
 import structlog
@@ -3919,6 +3920,73 @@ def _before_lanes(
     return before
 
 
+def validate_ops_per_op(
+    job: Any,
+    variant: dict[str, Any],
+    ops: list[dict],
+    *,
+    pool_assets: Mapping[str, str] | None = None,
+) -> tuple[list[dict], list[tuple[dict, str]]]:
+    """Split a bundle into the ops the editor compiles and the ones it refuses, with why.
+
+    ``compile_editor_ops`` is all-or-nothing, so one refused op used to sink every sibling
+    after the copilot turn had ended (KRI-1387). The whole bundle is tried first. When it
+    fails, ops are added in order and each is kept only while the bundle so far compiles.
+    Indices resolve against the original snapshot, so dropping an op never moves what a later
+    op targets. A text-timing conflict asks the creator, so it passes through to the runtime,
+    and so does an over-long bundle, which the planner refuses as a whole.
+    """
+
+    def refusal(bundle: list[dict]) -> str | None:
+        try:
+            compile_editor_ops(
+                job, copy.deepcopy(variant), copy.deepcopy(bundle), pool_assets=pool_assets
+            )
+        except TextTimingConflict:
+            return None
+        except KriaEditorOpError as exc:
+            return str(exc).strip() or "the editor refused it"
+        return None
+
+    if not ops or len(coalesce_text_style_ops(ops)) > MAX_EDITOR_OPS or refusal(ops) is None:
+        return list(ops), []
+    kept: list[dict] = []
+    refused: list[tuple[dict, str]] = []
+    for op in ops:
+        error = refusal([*kept, op])
+        if error is None:
+            kept.append(op)
+        else:
+            refused.append((op, error))
+    return kept, refused
+
+
+def editor_compile_check(
+    job: Any,
+    variant: dict[str, Any],
+    *,
+    pool_assets: Mapping[str, str] | None = None,
+) -> Callable[[list[dict]], tuple[list[dict], list[tuple[dict, str]]]]:
+    """``validate_ops_per_op`` bound to a detached copy of the draft's job and variant.
+
+    The copilot parses in a worker thread after the caller's session rolled back, so the
+    check must never touch the ORM row.
+    """
+    from sqlalchemy import inspect as sa_inspect  # noqa: PLC0415
+    from sqlalchemy.exc import NoInspectionAvailable  # noqa: PLC0415
+
+    try:
+        columns = sa_inspect(job).mapper.column_attrs
+    except NoInspectionAvailable:
+        detached = copy.deepcopy(job)
+    else:
+        detached = SimpleNamespace(
+            **{column.key: copy.deepcopy(getattr(job, column.key)) for column in columns}
+        )
+    frozen, pool = copy.deepcopy(variant), dict(pool_assets or {})
+    return lambda ops: validate_ops_per_op(detached, frozen, ops, pool_assets=pool)
+
+
 def apply_text_lane_ops(
     text_rows: list[dict[str, Any]],
     slots: list[dict[str, Any]],
@@ -3986,5 +4054,7 @@ __all__ = [
     "clip_seen_by_media_id",
     "coalesce_text_style_ops",
     "compile_editor_ops",
+    "editor_compile_check",
     "register_handler",
+    "validate_ops_per_op",
 ]

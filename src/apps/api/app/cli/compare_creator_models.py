@@ -367,8 +367,6 @@ def _execute(
             eligibility_lost = False
 
             class Client:
-                supports_clarification_retry = True
-
                 def invoke(self, **kwargs):
                     nonlocal eligibility_lost
                     if live:

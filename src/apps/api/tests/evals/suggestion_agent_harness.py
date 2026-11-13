@@ -808,8 +808,6 @@ def run_thread(case: h.Case, client: Any, *, live: bool) -> ThreadRun:
 class _InvocationLog:
     """Forwards to the model client and keeps the last raw answer for the report."""
 
-    supports_clarification_retry = False
-
     def __init__(self, delegate: Any) -> None:
         self.delegate = delegate
         self.last_raw: str | None = None

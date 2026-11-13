@@ -4757,6 +4757,49 @@
         "Whole-clip first-draft acceptance belongs to KRI-1295"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1386-partial-apply-repair",
+      "tickets": [
+        "KRI-1386",
+        "KRI-1387",
+        "KRI-1384"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1386",
+      "symptom": "One invalid op in a chat edit dropped every valid sibling (the turn became a question or 'Nothing was changed'), and parser or compiler rejections never went back to the model to fix.",
+      "boundary": "parser",
+      "paths": [
+        "src/apps/api/app/agents/edit_copilot.py",
+        "src/apps/api/app/routes/_copilot.py",
+        "src/apps/api/app/services/kria_editor_ops.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_copilot_partial_apply_repair.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Recorded answers through the real copilot prompt and parser, editor_compile_check, run_copilot_turn and compile_editor_ops; only the provider transport is scripted. Mutants (confidence drop restored, no repair, no pre-compile, rejections not named, deadline ignored) each fail at least one case.",
+        "live_model": "Not run; no paid call was needed for this contract.",
+        "native_output": "Not applicable: the change is server-side op selection; the phone applies the same op vocabulary.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Three asks with one unfixable value: two apply, the third named",
+        "A top_left alignment mistake repaired so style and timing both apply",
+        "Stale index repaired with the valid range, or named after two rounds",
+        "A dropped sibling never shifts a later index",
+        "Atomic bulk and text-appearance bundles never apply in part",
+        "Compile-only refusal reaches the model and is repaired",
+        "No repair without time for one copilot call; a failed repair keeps the partial edit",
+        "Text-timing conflict passes through to the runtime question"
+      ],
+      "neighbours_gap": [
+        "Live-model repair quality (does the model fix what the block names) is unmeasured until the KRI-1389 baseline",
+        "The typed native wire cannot carry the repairs tag; untagged fixes match by op name only (KRI-1393)"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

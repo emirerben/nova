@@ -155,7 +155,12 @@ from app.models import (
 )
 from app.pipeline.best_parts import edit_cap_s
 from app.pipeline.pinned_text import pin_range_grounded
-from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
+from app.routes._copilot import (
+    CompileCheck,
+    CopilotTurnBody,
+    is_overlay_display_ask,
+    run_copilot_turn,
+)
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
@@ -248,6 +253,7 @@ from app.services.kria_editor_ops import (
     clip_seen_by_media_id,
     clip_visible_text_by_media_id,
     coalesce_text_style_ops,
+    editor_compile_check,
     editor_state_has_lanes,
     failed_editor_draft_basis,
     resolve_editor_base,
@@ -2155,6 +2161,9 @@ class _EditorTarget:
     # Set when the current job failed outright and the target is the earlier ready video
     # (``_last_ready_render``): {"job_id", "variant_id", "failed_job_id"}.
     last_ready: dict | None = None
+    # KRI-1387: the editor compiler bound to a detached copy of this job and projected
+    # variant, so the copilot turn finds refused ops before the draft compile does.
+    compile_check: CompileCheck | None = None
 
 
 async def _copilot_clip_context(
@@ -2718,6 +2727,8 @@ async def _load_editor_target(
         for row in rows
         if row.content
     ]
+    from app.services import generated_overlay_pool  # noqa: PLC0415
+
     return _EditorTarget(
         job_id=job.id,
         snapshot=snapshot,
@@ -2732,6 +2743,15 @@ async def _load_editor_target(
             }
             if last_ready is not None
             else None
+        ),
+        # Bound before the caller's rollback expires the job row; the same pool the
+        # draft compile places pictures from.
+        compile_check=editor_compile_check(
+            job,
+            variant,
+            pool_assets=generated_overlay_pool.paths_by_asset_id(
+                (clip_context or {}).get("generated_overlay_pool") or []
+            ),
         ),
     )
 
@@ -2822,6 +2842,7 @@ async def _plan_editor_revision(
             else None
         ),
         timeout_override_s=120.0,
+        compile_check=target.compile_check,
     )
     if (
         response.ops
@@ -6931,6 +6952,7 @@ async def _plan_scoped_turn(
                     client_contract_version=2,
                 ),
                 job_id=target.job_id,
+                compile_check=target.compile_check,
             )
             kept, dropped = plan_review.filter_ops_to_scope(
                 list(response.ops), model_snapshot, model_scope

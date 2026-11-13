@@ -34,6 +34,7 @@ from app.routes.generative_jobs import (
 from app.services.kria_editor_ops import (
     build_editor_snapshot,
     compile_editor_ops,
+    editor_compile_check,
 )
 from app.services.phone_speaker_background import (
     BACKGROUND_REFUSALS,
@@ -733,9 +734,13 @@ async def execute_copilot_edit(
             ).hexdigest(),
         ),
         job_id=job_id,
+        compile_check=editor_compile_check(job, variant),
     )
     rejections = list(getattr(response, "rejection_reasons", None) or []) if honest else []
     unmet = list(getattr(response, "unmet_requests", None) or []) if honest else []
+    if response.ops:
+        # A surviving bundle already names each op the parser dropped in unmet (KRI-1386).
+        rejections = []
     if response.outcome == "unsupported" and not (rejections or unmet):
         # Nothing concrete to report: fall through to the Main Creator (new plan).
         return None
