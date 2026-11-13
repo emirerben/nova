@@ -2558,12 +2558,26 @@ def _run_draft_attempt(
         from app.services.edit_proposals import _validated_scheduled_draft  # noqa: PLC0415
 
         snapshot = _validated_scheduled_draft(snapshot, current)
+        text_drops: list = []
         snapshot = compose_creation_text(
             snapshot,
             creator_request=brief.creator_request,
             ctx=RunContext(plan_item_id=item_id, request_id=f"creation-text:{attempt_id}"),
             copy_constraints=snapshot_copy_constraints(snapshot),
+            drops=text_drops,
         )
+        if text_drops:
+            from app.services.creation_text_degrade import text_drop_notes  # noqa: PLC0415
+
+            # KRI-1376: the approval card names what the text pass left out.
+            snapshot = snapshot.model_copy(
+                update={
+                    "adjustments": [
+                        message[:160]
+                        for message in [*snapshot.adjustments, *text_drop_notes(text_drops)]
+                    ][:6]
+                }
+            )
         # Composition can change text treatment after the earlier dry run. Check
         # the final program before offering it for approval, not on the worker.
         validate_proposal_compiles(snapshot)
