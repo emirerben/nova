@@ -235,6 +235,7 @@ def runtime_digest():
         "agents/_model_client.py",
         "agents/_text_providers.py",
         "agents/_creator_wire.py",
+        "agents/model_registry.py",
         "agents/main_creator.py",
         "agents/edit_copilot.py",
         "services/ai_cost_control.py",
