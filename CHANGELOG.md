@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.179.0] - 2026-11-13
+
+### Changed
+- test(ios): drag the transcript, not the keyboard bar, in the first-prompt chips scroll test (KRI-1379) (#2285) <!-- release-pr: 2285 -->
+
 ## [0.88.178.0] - 2026-11-13
 
 ### Changed
