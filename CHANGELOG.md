@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.196.0] - 2026-11-13
+
+### Fixed
+- fix(ios): split-screen editor photo extension, full screen, photo cut, preview error (KRI-1399) (#2299) <!-- release-pr: 2299 -->
+
 ## [0.88.195.0] - 2026-11-13
 
 ### Changed
