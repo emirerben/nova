@@ -16,7 +16,7 @@ DURATIONS = Path(__file__).with_name("ui-test-measured-durations.json")
 LEGACY_DURATIONS = Path(__file__).with_name("ui-test-durations.json")
 # Each extra native leg repeats ~7 minutes of setup and compilation, so a
 # selection splits only when one leg would run more than this much recorded UI
-# time. Nightly/manual full regression gets up to MAX_SHARDS legs; PRs use one Mac.
+# time. Nightly/manual full regression gets up to MAX_SHARDS legs; PRs up to PR_MAX_SHARDS.
 SHARD_TARGET_SECONDS = 15 * 60
 # Bound fan-out. ios.yml must define a matrix for every count up to this one;
 # ci.yml gives each PR shard its own `ui-<i>` leg next to the unit leg.
@@ -24,6 +24,11 @@ SHARD_TARGET_SECONDS = 15 * 60
 # nightly shards were cancelled at the 75-minute job limit every night (KRI-1379,
 # e.g. run 43009921809). Five legs are ~54 min of UI + ~9 min of setup each.
 MAX_SHARDS = 5
+# Pull requests keep the earlier cap: three Macs per PR already saturated the
+# account's five concurrent macOS runners (docs/runbooks/change-based-ci.md), so
+# a five-leg PR would queue behind itself and block main's release lane. Only
+# nightly/manual full regression may use MAX_SHARDS.
+PR_MAX_SHARDS = 3
 # A PR UI leg runs only its shard after a cached compile (~8-12 min of setup),
 # so it targets more recorded time per Mac than nightly. An editor PR's group
 # records 88.6 min (it ran 87 min on #2225): three legs of ~30 min finish in
@@ -401,12 +406,18 @@ def weights(tests, durations=None):
     return {test: float(durations.get(test, default)) for test in tests}
 
 
-def shard_count(value, root=ROOT, durations=None, target=SHARD_TARGET_SECONDS):
+def shard_count(
+    value,
+    root=ROOT,
+    durations=None,
+    target=SHARD_TARGET_SECONDS,
+    max_shards=MAX_SHARDS,
+):
     """Native legs for an executed selection: one per `target` seconds of
-    recorded UI time, at most MAX_SHARDS and never more legs than tests."""
+    recorded UI time, at most `max_shards` and never more legs than tests."""
     tests = expected_tests(value, root)
     estimate = sum(weights(tests, durations).values())
-    return max(1, min(MAX_SHARDS, len(tests), math.ceil(estimate / target)))
+    return max(1, min(max_shards, len(tests), math.ceil(estimate / target)))
 
 
 def shard_tests(tests, spec, durations=None, overhead=UNIT_OVERHEAD_SECONDS):

@@ -413,12 +413,25 @@ class GateTests(unittest.TestCase):
         # Macs, sized by the PR leg target and capped like nightly.
         editor = ci.ui_shards("pull_request", "smoke,editor")
         self.assertGreater(editor, 1)
-        self.assertLessEqual(editor, ci.ui_tests.MAX_SHARDS)
+        self.assertLessEqual(editor, ci.ui_tests.PR_MAX_SHARDS)
         self.assertEqual(
             editor,
             ci.ui_tests.shard_count(
-                "smoke,editor", target=ci.ui_tests.PR_SHARD_TARGET_SECONDS
+                "smoke,editor",
+                target=ci.ui_tests.PR_SHARD_TARGET_SECONDS,
+                max_shards=ci.ui_tests.PR_MAX_SHARDS,
             ),
+        )
+        # The creation group records ~158 min: uncapped it would take five legs
+        # (six Macs with the unit leg) and queue behind the account's five
+        # runners. PRs stay at three; nightly/manual may use more.
+        self.assertEqual(ci.ui_tests.PR_MAX_SHARDS, 3)
+        self.assertEqual(ci.ui_shards("pull_request", "smoke,creation"), 3)
+        self.assertEqual(
+            ci.native_legs(
+                [], "pull_request", ci.ui_shards("pull_request", "smoke,creation")
+            ),
+            ["unit", "ui-1", "ui-2", "ui-3"],
         )
         # An unusable selection keeps one leg; its UI step fails closed.
         with patch.object(ci.ui_tests, "shard_count", side_effect=ValueError):

@@ -4,11 +4,17 @@ name: iOS rerun abandoned
 # was not acquired by Runner of type hosted even after multiple attempts". The
 # job ends cancelled with no steps, its result is `abandoned`, and the iOS gate
 # fails although no test ran (runs 43011522119, 42646531192). Retry such a run
-# once. A job that started and was cancelled (e.g. a timeout) has steps and is
-# never retried, nor is a second attempt, so a real failure stays red.
+# once. Only the job that lost its runner (and the jobs that depend on it, such
+# as the aggregate) is re-run, never the whole run's failed jobs, so a real UI
+# test failure in a sibling shard stays red instead of getting a silent retry.
+# A job that started and was cancelled (e.g. a timeout) has steps and is never
+# retried, nor is a second attempt. If several jobs lost their runner at once,
+# only the first is re-run (a run in progress cannot take another job rerun);
+# re-run the rest by hand.
 #
-# Only iOS (ios.yml) is retried: its jobs share no artifacts, so --failed is
-# safe. A CI (ci.yml) PR run must be re-run whole by hand (fixture artifacts).
+# Only iOS (ios.yml) is retried: its jobs share no artifacts, so a single-job
+# rerun is safe. A CI (ci.yml) PR run must be re-run whole by hand (fixture
+# artifacts).
 on:
   workflow_run:
     workflows: [iOS]
@@ -36,8 +42,8 @@ jobs:
           for job in $jobs; do
             if gh api "repos/$REPO/check-runs/$job/annotations" --jq '.[].message' \
               | grep -q "was not acquired by Runner of type hosted"; then
-              echo "Job $job never got a hosted runner; re-running failed jobs of run $RUN_ID."
-              gh run rerun "$RUN_ID" --failed
+              echo "Job $job never got a hosted runner; re-running only that job (and its dependents) of run $RUN_ID."
+              gh api -X POST "repos/$REPO/actions/jobs/$job/rerun"
               exit 0
             fi
           done
