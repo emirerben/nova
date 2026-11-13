@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.183.0] - 2026-11-13
+
+### Changed
+- feat(kria): show the copilot spoken words, pauses and song beats (KRI-1391) (#2288) <!-- release-pr: 2288 -->
+
 ## [0.88.182.0] - 2026-11-13
 
 ### Changed
