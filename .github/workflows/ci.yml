@@ -1224,6 +1224,17 @@ jobs:
         run: |
           echo "image=${ImageVersion:?Hosted runner image version is required for SDK caches}" >> "$GITHUB_OUTPUT"
           echo "toolchain=$({ xcode-select -p; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      # Hash the tracked Xcode inputs with git, not hashFiles(): its `**` glob walks
+      # the whole src/apps/ios tree and was killed at its 120 s limit on starved
+      # runners ("couldn't finish within 120 seconds", KRI-1379). The index lookup is
+      # instant and names the same files (project.yml, Package.resolved, Package.swift).
+      - name: Hash Xcode cache inputs
+        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
+        id: xcode-inputs
+        run: |
+          git ls-files -z -- src/apps/ios/project.yml ':(glob)src/apps/ios/**/Package.resolved' ':(glob)src/apps/ios/**/Package.swift' > "$RUNNER_TEMP/xcode-inputs"
+          test -s "$RUNNER_TEMP/xcode-inputs" || { echo "No Xcode cache inputs found" >&2; exit 1; }
+          echo "hash=$(xargs -0 shasum -a 256 < "$RUNNER_TEMP/xcode-inputs" | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Restore Xcode build data
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         id: build-cache
@@ -1236,9 +1247,9 @@ jobs:
             src/apps/ios/.derived-data/ModuleCache.noindex
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
+          key: ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ steps.xcode-inputs.outputs.hash }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
+            ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ steps.xcode-inputs.outputs.hash }}-
       - name: Build iPhone app and run selected unit tests
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         env:

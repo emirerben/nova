@@ -59,7 +59,7 @@ class XcodeCacheTests(unittest.TestCase):
         def render(match):
             expression = match.group(1).strip()
             fixed = {"runner.os": "macOS", "runner.arch": "ARM64", "github.sha": "source-sha"}
-            if expression.startswith("hashFiles("):
+            if expression == "steps.xcode-inputs.outputs.hash":
                 return "project-hash"
             if expression.startswith("steps.xcode-cache.outputs."):
                 return values[expression.rsplit(".", 1)[1]]
@@ -312,7 +312,31 @@ class ThroughputTests(unittest.TestCase):
         self.assertFalse(ci.native_validation("push", {"ios"}, True))
         self.assertEqual(ci.selection_details("push", "", "")[2], "smoke")
         self.assertEqual(ci.ui_shards("push", "full"), 1)
-        self.assertEqual(ci.ui_shards("schedule", "full"), 3)
+        self.assertEqual(ci.ui_shards("schedule", "full"), 5)
+
+    def test_abandoned_runner_is_reported_as_infrastructure_and_still_fails(self):
+        # KRI-1379: macOS capacity left jobs with no runner ("abandoned"). That is
+        # not a test failure, but it must still fail the gate: no test ran.
+        needs = {
+            "changes": {
+                "result": "success",
+                "outputs": {
+                    "ios": "true",
+                    "ios_ui": "true",
+                    "ios_ui_groups": "smoke",
+                    "ios_ui_shards": "1",
+                },
+            },
+            "ios-tests": {"result": "abandoned"},
+        }
+        with self.assertRaises(ValueError) as caught:
+            ci.gate(needs, "ios", "ios-tests", event="push")
+        self.assertIn("expected success, got abandoned", str(caught.exception))
+        self.assertIn("never assigned a hosted runner", str(caught.exception))
+        needs["ios-tests"]["result"] = "cancelled"
+        with self.assertRaises(ValueError) as caught:
+            ci.gate(needs, "ios", "ios-tests", event="push")
+        self.assertNotIn("hosted runner", str(caught.exception))
 
     def test_main_smoke_is_accepted_only_for_one_push_lane(self):
         needs = {
