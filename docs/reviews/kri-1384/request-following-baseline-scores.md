@@ -4,21 +4,21 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 
 ## Headline
 
-- **Requirements met: 71%** (82/115; partial 7, unmet 26), over every recorded thread and the per-action set.
+- **Requirements met: 72%** (83/116; partial 7, unmet 26), over every recorded thread and the per-action set.
 - **Replies that overclaimed: 14** (a requirement was missed and the reply never said so: where the requirement names claim terms, the reply names one; otherwise the turn applied ops and the reply has no 'not done' marker. A turn that applied nothing claims nothing).
-- **Turn time: p50 10.9s, p95 37.7s** over 79 recorded copilot calls (wall time of the live model call, retries included; planner routing, queueing and render are not in it).
+- **Turn time: p50 10.2s, p95 28.2s** over 80 recorded copilot calls (wall time of the live model call, retries included; planner routing, queueing and render are not in it).
 
 | Set | Threads | Requirements | Met | Partial | Unmet | Met share | Overclaims |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Conversation threads | 31 | 77 | 52 | 7 | 18 | 68% | 13 |
-| Per-action set | 38 | 38 | 30 | 0 | 8 | 79% | 1 |
+| Per-action set | 39 | 39 | 31 | 0 | 8 | 79% | 1 |
 
-Threads measured from recordings: 69. Threads awaiting recordings (not in the KPI): 0.
+Threads measured from recordings: 70. Threads awaiting recordings (not in the KPI): 0.
 
 ## Provenance
 
 - Recorded model: gemini-3.1-pro-preview.
-- Prompt version of the recordings: 2026-11-11-v122.
+- Prompt version of the recordings: 2026-11-11-v122, 2026-11-13-v125.
 - Measured path: `EditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops` (`runner.replay_v1_copilot`). The planner's routing in front of the copilot and the repair retry behind it are not in this path, and nothing was rendered.
 - Snapshots are built by the real `build_editor_snapshot` over a synthetic phone (`render_destination: device`) variant, with the clip facts the chat path hands the copilot. Footage is synthetic (invented places only).
 
@@ -40,7 +40,7 @@ Threads measured from recordings: 69. Threads awaiting recordings (not in the KP
 | readability | 2 | 1 | 0 | 1 | 50% | 1 |
 | restructure | 3 | 1 | 0 | 2 | 33% | 0 |
 | style | 9 | 7 | 0 | 2 | 78% | 0 |
-| action_parity | 38 | 30 | 0 | 8 | 79% | 1 |
+| action_parity | 39 | 31 | 0 | 8 | 79% | 1 |
 
 ## Per-action set (one plain request per `agent_ops` parity group, phone snapshot)
 
@@ -54,22 +54,23 @@ Threads measured from recordings: 69. Threads awaiting recordings (not in the KP
 | action_captions | Change the second caption to say 'then we ran the whole harbour'. | reaches | ['edit_caption'] | met | parser accepted ['edit_caption'] |
 | action_carousel | Add a photo carousel in the middle of the video. | blocked at parse | no op | unmet | blocked on the phone (set_carousel_moment: I can't change that on this edit yet.); model emitted no op |
 | action_clip_add_remove | Remove the third clip. | reaches | ['remove_clip'] | met | parser accepted ['remove_clip'] |
+| action_clip_add_remove__visual_media | Remove the photo I added. | reaches | ['remove_visual_media'] | met | parser accepted ['remove_visual_media'] |
 | action_clip_audio | Mute the original sound. | reaches | ['set_mix'] | met | parser accepted ['set_mix'] |
 | action_clip_crop | Crop the second clip tighter on the left side. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
 | action_clip_duplicate | Duplicate the first clip. | reaches | ['duplicate_clip'] | met | parser accepted ['duplicate_clip'] |
-| action_clip_look_and_transition | Add a crossfade between the first and second clip. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
-| action_clip_look_and_transition__custom_effect | Add a glitch effect to the second clip. | blocked at parse | no op | unmet | blocked on the phone (apply_custom_effect: I can't change that on this edit yet.); model emitted no op |
-| action_clip_look_and_transition__look_preset | Give the whole video a golden hour look. | blocked at parse | no op | unmet | blocked on the phone (patch_slots: unsupported timeline field: look_preset); model emitted no op |
+| action_clip_look | Give the whole video a golden hour look. | blocked at parse | no op | unmet | blocked on the phone (patch_slots: unsupported timeline field: look_preset); model emitted no op |
+| action_clip_look__custom_effect | Add a glitch effect to the second clip. | blocked at parse | no op | unmet | blocked on the phone (apply_custom_effect: I can't change that on this edit yet.); model emitted no op |
 | action_clip_source_gain | Make the sound of the third clip louder. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
 | action_clip_source_replacement | Replace the second clip with the last one I uploaded. | reaches | ['replace_clip_source'] | met | parser accepted ['replace_clip_source'] |
 | action_clip_speed | Play the third clip at half speed. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
 | action_clip_tilt | Tilt the second clip ten degrees to the right. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
+| action_clip_transition | Add a crossfade between the first and second clip. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
 | action_clip_trim_and_move | Cut the first clip down to 2 seconds. | reaches | ['set_clip_duration'] | met | parser accepted ['set_clip_duration'] |
 | action_generated_overlay_approval | Put the picture you made on top from 2 to 4 seconds. | reaches | ['add_overlay'] | met | parser accepted ['add_overlay'] |
 | action_history | Undo that. | blocked at parse | no op | unmet | blocked on the phone (undo_last_edit: I can't change that on this edit yet.); model emitted no op |
 | action_media_overlays | Make the photo on top bigger. | reaches | ['patch_overlay'] | met | parser accepted ['patch_overlay'] |
 | action_music | Lower the music volume. | reaches | ['set_mix'] | met | parser accepted ['set_mix'] |
-| action_music__swap | Swap the music for something calmer. | blocked at parse | no op | unmet | blocked on the phone (swap_music: operation values are invalid); model emitted no op |
+| action_music_swap | Swap the music for something calmer. | blocked at parse | no op | unmet | blocked on the phone (swap_music: operation values are invalid); model emitted no op |
 | action_sound_effects | Add a whoosh at 2 seconds. | reaches | ['add_sfx'] | met | parser accepted ['add_sfx'] |
 | action_speaker_background | Put the beach photo behind me. | reaches | ['set_background'] | met | parser accepted ['set_background'] |
 | action_speaker_frame_by_hand | Move me to the small bottom left corner. | reaches | ['set_speaker_frame'] | met | parser accepted ['set_speaker_frame'] |

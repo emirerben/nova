@@ -1,16 +1,16 @@
 {
-  "fixture_id": "action_clip_look_and_transition__look_preset",
+  "fixture_id": "action_music_swap",
   "provenance": "authored",
   "footage": "harbor_run",
-  "description": "Parity group clip_look_and_transition: a plain request on a phone snapshot, expecting the op applied. Look presets are not offered on the phone today; expected to fail.",
+  "description": "Parity group music_swap: a plain request on a phone snapshot, expecting the op applied. The snapshot never lists swap candidates; expected to fail.",
   "turns": [
     {
       "turn_id": "t0",
-      "user_message": "Give the whole video a golden hour look.",
+      "user_message": "Swap the music for something calmer.",
       "engine": "v1_copilot",
       "copilot": {
         "agent_input": {
-          "utterance": "Give the whole video a golden hour look.",
+          "utterance": "Swap the music for something calmer.",
           "prior_turns": [],
           "variant_snapshot": {
             "allowed_op_families": [
@@ -500,14 +500,14 @@
             ],
             "music": {
               "swappable": false,
-              "removable": false,
-              "current_track_id": null,
+              "removable": true,
+              "current_track_id": "00000000-0000-0000-0000-000000000001",
               "current_track_title": null,
               "candidates": []
             },
             "mix": {
-              "music_level": null,
-              "original_level": null
+              "music_level": 0.6,
+              "original_level": 1.0
             },
             "render_destination": "device",
             "sfx": {
@@ -517,22 +517,22 @@
             "editor_ops_version": 2
           }
         },
-        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"Custom looks aren't available for this edit yet.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Give the whole video a golden hour look.\",\n      \"reason\": \"Look presets are not supported for this edit.\"\n    }\n  ],\n  \"claimed_ops\": []\n}",
+        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"I can't swap the music from chat right now because there are no alternative tracks available for this edit.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Swap the music for something calmer.\",\n      \"reason\": \"No alternative music tracks are available to choose from in this draft.\"\n    }\n  ],\n  \"claimed_ops\": []\n}",
         "prompt_version": "2026-11-11-v122",
         "model_actual": "gemini-3.1-pro-preview",
-        "recorded_at": "2026-11-13T08:18:25Z",
-        "latency_s": 15.18,
+        "recorded_at": "2026-11-13T08:20:12Z",
+        "latency_s": 17.2,
         "model_calls": 1,
-        "tokens_in": 28736,
-        "tokens_out": 134,
-        "tokens_thoughts": 1097,
+        "tokens_in": 28779,
+        "tokens_out": 147,
+        "tokens_thoughts": 1828,
         "test_run_id": "rf-baseline-20261113-b"
       }
     }
   ],
   "requirements": [
     {
-      "id": "clip_look_and_transition-op-applied",
+      "id": "music_swap-op-applied",
       "kind": "style",
       "scope": "global",
       "request_type": "action_parity",
@@ -540,17 +540,14 @@
       "params": {
         "ops": [
           {
-            "one_of": [
-              "set_look_preset",
-              "patch_slots"
-            ]
+            "op": "swap_music"
           }
         ],
         "stage": "parsed",
         "reference_compiles": false,
-        "blocked_reason": "patch_slots: unsupported timeline field: look_preset"
+        "blocked_reason": "swap_music: operation values are invalid"
       },
-      "source": "Give the whole video a golden hour look.",
+      "source": "Swap the music for something calmer.",
       "introduced_in_turn": 0,
       "claim_terms": []
     }
@@ -655,13 +652,8 @@
     "reply": "Done.",
     "applied_ops": [
       {
-        "op": "patch_slots",
-        "selector": {
-          "all": true
-        },
-        "patch": {
-          "look_preset": "golden_hour"
-        }
+        "op": "swap_music",
+        "track_id": "00000000-0000-0000-0000-000000000002"
       }
     ]
   },
@@ -675,16 +667,16 @@
       "transition"
     ],
     "parsed_ops": [],
-    "parse_outcome": "unsupported",
+    "parse_outcome": "failed",
     "parse_reasons": [
       {
-        "op": "patch_slots",
-        "reason": "capability_unavailable",
-        "detail": "unsupported timeline field: look_preset"
+        "op": "swap_music",
+        "reason": "invalid_value",
+        "detail": "operation values are invalid"
       }
     ]
   },
   "baseline": {
-    "clip_look_and_transition-op-applied": "unmet"
+    "music_swap-op-applied": "unmet"
   }
 }

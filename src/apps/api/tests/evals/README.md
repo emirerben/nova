@@ -241,11 +241,14 @@ python -m tests.evals.request_following.report --phase P0 \
   footage in attachment order (`initial_plan`). Re-running `author_fixtures.py` wipes recordings;
   re-record after it.
 - **Per-action set (KRI-1389).** `author_action_fixtures.py` writes one thread per `agent_ops`
-  group of `app/kria/editor_capability_parity.py` (plus the look, custom-effect and music-swap
-  actions that share a group): a plain request on a phone snapshot, expecting the op applied
-  (`op_applied`, `request_type: action_parity`). `--probe` prints, without writing, what the
-  real parser and compiler do with a reference op. A group they refuse (`reference_compiles:
-  false`) cannot be met by any model; that refusal is its baseline, not a bug in the thread.
+  group of `app/kria/editor_capability_parity.py`: a plain request on a phone snapshot, expecting
+  the op applied (`op_applied`, `request_type: action_parity`). `--probe` prints, without writing,
+  what the real parser and compiler do with a reference op; `--only=<fixture_id>` authors one
+  thread without touching the others' recordings. Groups KRI-1388 moved to `agent_unsupported`
+  (looks, custom effects, music swap, motion, camera, carousel, undo) keep their recorded thread
+  with `reference_compiles: false`: no model can meet it, so the request stays unmet and the
+  reply must say so. `PHONE_OP_PROBES` in the same file covers every other op the table claims;
+  `tests/kria/test_editor_capability_parity.py` runs both on a phone snapshot.
 - **Baseline pin.** `east_run.json` stores `baseline` statuses and `test_east_run_baseline_is_pinned`
   fails when a code change moves one. That is the intended signal: review the movement, then
   re-stamp with `runner.stamp_baseline`. The committed report

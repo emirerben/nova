@@ -1,16 +1,16 @@
 {
-  "fixture_id": "action_music__swap",
+  "fixture_id": "action_clip_look__custom_effect",
   "provenance": "authored",
   "footage": "harbor_run",
-  "description": "Parity group music: a plain request on a phone snapshot, expecting the op applied. The snapshot never lists swap candidates; expected to fail.",
+  "description": "Parity group clip_look: a plain request on a phone snapshot, expecting the op applied. Custom effects have no phone compile handler today; expected to fail.",
   "turns": [
     {
       "turn_id": "t0",
-      "user_message": "Swap the music for something calmer.",
+      "user_message": "Add a glitch effect to the second clip.",
       "engine": "v1_copilot",
       "copilot": {
         "agent_input": {
-          "utterance": "Swap the music for something calmer.",
+          "utterance": "Add a glitch effect to the second clip.",
           "prior_turns": [],
           "variant_snapshot": {
             "allowed_op_families": [
@@ -500,14 +500,14 @@
             ],
             "music": {
               "swappable": false,
-              "removable": true,
-              "current_track_id": "00000000-0000-0000-0000-000000000001",
+              "removable": false,
+              "current_track_id": null,
               "current_track_title": null,
               "candidates": []
             },
             "mix": {
-              "music_level": 0.6,
-              "original_level": 1.0
+              "music_level": null,
+              "original_level": null
             },
             "render_destination": "device",
             "sfx": {
@@ -517,22 +517,22 @@
             "editor_ops_version": 2
           }
         },
-        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"I can't swap the music from chat right now because there are no alternative tracks available for this edit.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Swap the music for something calmer.\",\n      \"reason\": \"No alternative music tracks are available to choose from in this draft.\"\n    }\n  ],\n  \"claimed_ops\": []\n}",
+        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"Custom looks aren't available for this edit yet.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Add a glitch effect to the second clip\",\n      \"reason\": \"Custom looks and effects aren't available for this edit.\"\n    }\n  ],\n  \"claimed_ops\": []\n}",
         "prompt_version": "2026-11-11-v122",
         "model_actual": "gemini-3.1-pro-preview",
-        "recorded_at": "2026-11-13T08:20:12Z",
-        "latency_s": 17.2,
+        "recorded_at": "2026-11-13T08:18:10Z",
+        "latency_s": 7.17,
         "model_calls": 1,
-        "tokens_in": 28779,
-        "tokens_out": 147,
-        "tokens_thoughts": 1828,
+        "tokens_in": 28736,
+        "tokens_out": 137,
+        "tokens_thoughts": 554,
         "test_run_id": "rf-baseline-20261113-b"
       }
     }
   ],
   "requirements": [
     {
-      "id": "music-op-applied",
+      "id": "clip_look-op-applied",
       "kind": "style",
       "scope": "global",
       "request_type": "action_parity",
@@ -540,14 +540,14 @@
       "params": {
         "ops": [
           {
-            "op": "swap_music"
+            "op": "apply_custom_effect"
           }
         ],
         "stage": "parsed",
         "reference_compiles": false,
-        "blocked_reason": "swap_music: operation values are invalid"
+        "blocked_reason": "apply_custom_effect: I can't change that on this edit yet."
       },
-      "source": "Swap the music for something calmer.",
+      "source": "Add a glitch effect to the second clip.",
       "introduced_in_turn": 0,
       "claim_terms": []
     }
@@ -652,8 +652,10 @@
     "reply": "Done.",
     "applied_ops": [
       {
-        "op": "swap_music",
-        "track_id": "00000000-0000-0000-0000-000000000002"
+        "op": "apply_custom_effect",
+        "effect": {
+          "name": "glitch"
+        }
       }
     ]
   },
@@ -667,16 +669,16 @@
       "transition"
     ],
     "parsed_ops": [],
-    "parse_outcome": "failed",
+    "parse_outcome": "unsupported",
     "parse_reasons": [
       {
-        "op": "swap_music",
-        "reason": "invalid_value",
-        "detail": "operation values are invalid"
+        "op": "apply_custom_effect",
+        "reason": "capability_unavailable",
+        "detail": "I can't change that on this edit yet."
       }
     ]
   },
   "baseline": {
-    "music-op-applied": "unmet"
+    "clip_look-op-applied": "unmet"
   }
 }

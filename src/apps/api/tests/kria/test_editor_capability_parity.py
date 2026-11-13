@@ -7,6 +7,17 @@ Added with 29 Ekim lane E (KRI-1039). Ways this can fail, and the assertion that
 * an ``agent_ops`` group names a field none of its ops accepts (the op exists, the edit does not);
 * an ``agent_unsupported`` / ``not_an_edit`` group has no written reason;
 * one function sits in two groups (the verdict would depend on dict order).
+
+KRI-1388 added the phone proof, because seven groups passed every check above and still could not
+run from iPhone chat. Ways that can fail, each an assertion below:
+* an op of an ``agent_ops`` group has no phone probe, so nothing proves it (the claim check);
+* the parser drops it on a phone snapshot: closed family, empty pool, missing state;
+* the compiler refuses it on the variant the snapshot came from: no handler, a lane the device
+  never has (a base video), a field the handler ignores;
+* a field the group names is never sent by a passing probe, so the op runs but the edit does not;
+* an ``agent_unsupported`` group starts compiling on a phone and the table understates it.
+Probes run under the production settings profile, with the capability map a phone advertises
+when the lane gate is open (``author_action_fixtures.PHONE_CAPS``).
 """
 
 from __future__ import annotations
@@ -25,6 +36,12 @@ from app.agents.edit_copilot import (
 from app.agents.editor_ops_v2.timeline import _PATCH_KEYS as _PATCH_SLOTS_KEYS
 from app.kria.editor_capability_parity import PARITY_GROUPS, grouped_actions
 from app.services.kria_editor_ops import COPILOT_EDITOR_CAPABILITIES
+from tests.evals.request_following.author_action_fixtures import (
+    PHONE_OP_PROBES,
+    SCENARIOS,
+    Scenario,
+    build,
+)
 
 # The fields inside an op's `patch` that the copilot parser keeps.
 _PATCH_FIELDS = {"set_caption_meta": _CAPTION_META_FIELDS, "patch_slots": _PATCH_SLOTS_KEYS}
@@ -133,3 +150,70 @@ def test_every_group_states_its_answer() -> None:
 
 def test_an_action_is_in_one_group_only() -> None:
     grouped_actions()  # raises on a duplicate
+
+
+PROBES: list[Scenario] = [*SCENARIOS, *PHONE_OP_PROBES]
+CLAIMS = sorted(
+    (name, op)
+    for name, group in PARITY_GROUPS.items()
+    if group.kind == "agent_ops"
+    for op in group.ops
+)
+
+
+def _probes(group: str, op: str) -> list[Scenario]:
+    return [p for p in PROBES if p.group == group and p.reference[0]["op"] == op]
+
+
+def _sends(op: dict, field: str) -> bool:
+    patch = op.get("patch")
+    return field in op or (isinstance(patch, dict) and field in patch)
+
+
+def test_every_probe_names_a_parity_group() -> None:
+    assert not sorted({p.group for p in PROBES} - set(PARITY_GROUPS))
+
+
+@pytest.mark.parametrize(("group", "op"), CLAIMS, ids=[f"{g}.{o}" for g, o in CLAIMS])
+def test_every_agent_op_runs_from_iphone_chat(group: str, op: str, prod_profile) -> None:
+    probes = _probes(group, op)
+    assert probes, (
+        f"{group} says the agent does {op} but no phone probe proves it: add one to "
+        "PHONE_OP_PROBES in tests/evals/request_following/author_action_fixtures.py"
+    )
+    fields = [
+        field
+        for field in PARITY_GROUPS[group].fields
+        if field in _OP_FIELDS.get(op, ()) or field in _PATCH_FIELDS.get(op, ())
+    ]
+    unsent = [f for f in fields if not any(_sends(p.reference[0], f) for p in probes)]
+    assert not unsent, f"{group}.{op}: no phone probe sends {unsent}"
+    for probe in probes:
+        built = build(probe)
+        verdict = built["probe"]
+        assert verdict["parsed_ops"] == [op] and not verdict["parse_reasons"], (
+            f"{group}.{op} is dropped by the parser on a phone snapshot "
+            f"(families {verdict['families']}): {verdict['parse_reasons']}"
+        )
+        kept = [f for f in fields if _sends(probe.reference[0], f) and _sends(built["ops"][0], f)]
+        sent = [f for f in fields if _sends(probe.reference[0], f)]
+        assert kept == sent, f"{group}.{op}: the parser dropped {sorted(set(sent) - set(kept))}"
+        assert verdict["compiles"] is True, (
+            f"{group}.{op} parses on a phone but does not compile: {verdict.get('compile_error')}"
+        )
+        compiled = built["compiled"]
+        assert compiled.before or not compiled.diff.empty(), f"{group}.{op} compiles to no change"
+
+
+UNSUPPORTED_PROBES = [
+    p for p in PROBES if p.group in PARITY_GROUPS and PARITY_GROUPS[p.group].kind != "agent_ops"
+]
+
+
+@pytest.mark.parametrize("probe", UNSUPPORTED_PROBES, ids=lambda p: p.fixture_id)
+def test_an_unsupported_group_is_refused_on_a_phone(probe: Scenario, prod_profile) -> None:
+    verdict = build(probe)["probe"]
+    assert not (verdict["parsed_ops"] and verdict.get("compiles") is True), (
+        f"{probe.reference[0]['op']} now runs from iPhone chat: move {probe.group} to agent_ops "
+        "in app/kria/editor_capability_parity.py"
+    )

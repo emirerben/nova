@@ -30,7 +30,8 @@ IDS = [p.stem for p in PATHS]
 
 def test_the_p6b_golden_set_is_present():
     """East Run + 30 legacy briefs, three executable v2 cassettes, and one thread per editor
-    parity group (plus the look, custom-effect and music-swap actions that share a group)."""
+    parity group the agent claims. Groups the phone cannot run (KRI-1388) keep their recorded
+    thread: the creator's request is still unmet, and the reply must say so."""
     fixtures = [load_fixture(p) for p in PATHS]
     assert [f.fixture_id for f in fixtures if f.provenance == "prod_capture"] == ["east_run"]
     briefs = [f for f in fixtures if not f.fixture_id.startswith("action_")]
@@ -39,8 +40,13 @@ def test_the_p6b_golden_set_is_present():
     actions = [f for f in fixtures if f.fixture_id.startswith("action_")]
     from app.kria.editor_capability_parity import PARITY_GROUPS
 
-    groups = {n for n, g in PARITY_GROUPS.items() if g.kind == "agent_ops"}
-    assert {f.fixture_id.removeprefix("action_").split("__")[0] for f in actions} == groups
+    group_of = {f.fixture_id: f.fixture_id.removeprefix("action_").split("__")[0] for f in actions}
+    assert set(group_of.values()) <= set(PARITY_GROUPS)
+    claimed = {n for n, g in PARITY_GROUPS.items() if g.kind == "agent_ops"}
+    assert claimed <= set(group_of.values())
+    for fixture in actions:
+        if group_of[fixture.fixture_id] not in claimed:
+            assert fixture.requirements[0].params["reference_compiles"] is False, fixture.fixture_id
     assert {f.footage for f in fixtures} == {
         "east_run",
         "food_day",
