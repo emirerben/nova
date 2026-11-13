@@ -22,6 +22,7 @@ import structlog
 
 from app.agents import editor_ops_v2
 from app.agents._model_client import default_client
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import ProviderOutcomeUnknownError, RunContext
 from app.agents._schemas.text_element import TextElement
 from app.agents.edit_copilot import (
@@ -43,6 +44,16 @@ log = structlog.get_logger()
 # A `text_sequence` in these scopes is the opening title (`unified_montage.brief_view` seeds
 # the bar from its literal); the composer splits that bar rather than adding a text.
 _SEQUENCE_TITLE_SCOPES = frozenset({"title", "global"})
+
+# The text-tool documentation and snapshot formatting come from the editor copilot's files.
+CREATION_TEXT_COMPOSER_PROMPT_SOURCES: tuple[str, ...] = (
+    "app/services/creation_text_composition.py",
+    "app/agents/edit_copilot.py",
+    "prompts/edit_copilot_ops/text.txt",
+)
+CREATION_TEXT_COMPOSER_PROMPT_VERSION = prompt_fingerprint(
+    "ct", CREATION_TEXT_COMPOSER_PROMPT_SOURCES
+)
 
 # Same flash model `main_creator` / `brief_extractor` already fall back to.
 _FAST_COMPOSER_MODEL = "gemini-3.6-flash"
@@ -160,7 +171,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v21-researched-copy",
+        prompt_version=CREATION_TEXT_COMPOSER_PROMPT_VERSION,
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )

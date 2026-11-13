@@ -13,10 +13,11 @@ public TikTok accounts and Kria's plan agents few-shot off at runtime:
 
 All three files are versioned in-repo and loaded via
 app/agents/persona_examples.py, mirroring the overlay_examples.json pattern.
-Because the loaded content becomes part of the consuming agents' prompts,
-bumping any JSON's `version` MUST go with a bump of the matching agent
-prompt_version (PERSONA_PROMPT_VERSION / CONTENT_PLAN_PROMPT_VERSION /
-IntroTextWriterAgent.spec.prompt_version) — enforced by the coupling guard test.
+Because the loaded content becomes part of the consuming agents' prompts, the
+persona and content-plan prompt versions are fingerprints that include these files
+(PERSONA_PROMPT_SOURCES / CONTENT_PLAN_PROMPT_SOURCES). IntroTextWriterAgent and
+OverlayFormatMatcherAgent are hand-numbered: bumping the matching JSON `version`
+MUST go with their prompt_version, enforced by the coupling guard test.
 
 These bodies are STYLE/strategy references, never content to reproduce verbatim.
 `text`/hook fields carry no @handles or brand names; the `source` field holds

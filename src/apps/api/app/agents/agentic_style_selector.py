@@ -20,11 +20,21 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
 from app.pipeline.style_sets import list_style_sets
 
 _DEFAULT_SET_ID = "default"
+
+# The candidate set lines come from assets/style_sets at run time, so they are not a source.
+AGENTIC_STYLE_SELECTOR_PROMPT_SOURCES: tuple[str, ...] = (
+    "app/agents/agentic_style_selector.py",
+    "prompts/select_agentic_style.txt",
+)
+AGENTIC_STYLE_SELECTOR_PROMPT_VERSION = prompt_fingerprint(
+    "as", AGENTIC_STYLE_SELECTOR_PROMPT_SOURCES
+)
 
 
 class StyleSetCandidate(BaseModel):
@@ -52,7 +62,7 @@ class AgenticStyleSelectorAgent(Agent[AgenticStyleSelectorInput, AgenticStyleSel
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.agentic_style_selector",
         prompt_id="select_agentic_style",
-        prompt_version="2026-05-25",
+        prompt_version=AGENTIC_STYLE_SELECTOR_PROMPT_VERSION,
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -103,5 +113,6 @@ class AgenticStyleSelectorAgent(Agent[AgenticStyleSelectorInput, AgenticStyleSel
             style_set_id=chosen,
             rationale=str(data.get("rationale", "") or "").strip(),
         )
+
 
 # (style-set selection decoupled into agentic_style_selector — see CHANGELOG 0.4.46.0)

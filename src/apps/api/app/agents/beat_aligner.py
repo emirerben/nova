@@ -18,7 +18,10 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec
+
+BEAT_ALIGNER_PROMPT_VERSION = prompt_fingerprint("ba", ("app/agents/beat_aligner.py",))
 
 
 class BeatAlignerInput(BaseModel):
@@ -44,7 +47,7 @@ class BeatAlignerAgent(Agent[BeatAlignerInput, BeatAlignerOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.audio.beat_aligner",
         prompt_id="_unused",
-        prompt_version="2026-05-09",
+        prompt_version=BEAT_ALIGNER_PROMPT_VERSION,
         model="rule_based",
     )
     Input = BeatAlignerInput
@@ -54,15 +57,16 @@ class BeatAlignerAgent(Agent[BeatAlignerInput, BeatAlignerOutput]):
         return ""
 
     def parse(
-        self, raw_text: str, input: BeatAlignerInput  # noqa: A002, ARG002
+        self,
+        raw_text: str,
+        input: BeatAlignerInput,  # noqa: A002, ARG002
     ) -> BeatAlignerOutput:
         raise NotImplementedError
 
     def compute(self, input: BeatAlignerInput) -> BeatAlignerOutput:  # noqa: A002
         # Beats inside the configured window (inclusive on both ends).
         window = sorted(
-            b for b in input.beat_timestamps_s
-            if input.best_start_s <= b <= input.best_end_s
+            b for b in input.beat_timestamps_s if input.best_start_s <= b <= input.best_end_s
         )
 
         n = input.slot_every_n_beats

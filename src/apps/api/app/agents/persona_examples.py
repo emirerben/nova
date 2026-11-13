@@ -4,9 +4,9 @@ Mirrors app/agents/overlay_examples.py exactly: JSON fixtures versioned in-repo
 (prompts/persona_archetypes.json, content_ideas.json, tiktok_success_factors.json),
 cached after first read, required (a missing/malformed file raises rather than
 silently steering off an empty bank). The weekly /research-tiktok agent grows
-these files; bumping any file's `version` requires bumping the matching agent
-prompt_version (PERSONA_PROMPT_VERSION / CONTENT_PLAN_PROMPT_VERSION /
-IntroTextWriterAgent.spec.prompt_version) — see the coupling guard test.
+these files. The persona and content-plan prompt versions are fingerprints of them;
+IntroTextWriterAgent.spec.prompt_version is still hand-numbered and must move with
+tiktok_success_factors.json (see the coupling guard test).
 
 The bank content is injected into the plan/intro prompts as DATA (style /
 strategy reference), never as instructions.
@@ -67,22 +67,6 @@ def load_success_factors() -> tuple[SuccessFactor, ...]:
             f"({_SUCCESS_FACTORS_PATH})"
         )
     return tuple(SuccessFactor(**f) for f in raw)
-
-
-def archetypes_version() -> str:
-    try:
-        with open(_ARCHETYPES_PATH, encoding="utf-8") as f:
-            return str(json.load(f).get("version", "unknown"))
-    except Exception:
-        return "unknown"
-
-
-def content_ideas_version() -> str:
-    try:
-        with open(_IDEAS_PATH, encoding="utf-8") as f:
-            return str(json.load(f).get("version", "unknown"))
-    except Exception:
-        return "unknown"
 
 
 def success_factors_version() -> str:

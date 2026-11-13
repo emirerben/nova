@@ -1,5 +1,15 @@
 # Frozen prompt-version history (Main Creator, brief extractor)
 
+KRI-1381 moved more agents onto the same fingerprint helper: persona (`pe-`), content plan
+(`cp-`), agentic style selector (`as-`), audio template (`at-`), beat aligner (`ba-`), the
+research copy, layers and review agents (`rc-`, `rl-`, `rr-`) and the creation text composer
+(`ct-`). Their old hand-numbered histories live in git. Still hand-numbered on purpose, because
+the value is part of a persisted cache key or digest: the TikTok analyzer
+(`TIKTOK_ANALYZER_PROMPT_VERSION`, in `_analysis_fingerprint`), the grounded research agent
+(story-idea digest), the Layer-2 text agents and Transcript (`template_cache.py`, template
+staleness), clip and media analyzers (`clip_cache.py`, `MediaAssetAnalysis` rows), the clip
+router, the edit director and lyrics (stored rows compared to the live version).
+
 Until 2026-11-06 both agents carried a hand-numbered `prompt_version` and a history comment
 above it. Every prompt PR edited that one line, its history and the tests that pinned it, so
 each merge conflicted with every other open prompt PR (31 of 64 conflicting merges in the
