@@ -36,6 +36,8 @@ Rules:
 - When done, `git worktree remove ../nova-<topic>` after the PR merges. List active worktrees with `git worktree list`.
 - `.claude/worktrees/agent-*` are auto-managed by the Agent tool (`isolation: "worktree"`) — leave those alone.
 - Skip the worktree only for read-only investigation or one-file config tweaks.
+- At most three concurrent sessions, each on a separate area; never two on one branch.
+- Client protocol numbers: run `scripts/bump-protocol.py <feature>` when rebasing, never hand-pick ([runbook](docs/runbooks/ios-development.md)).
 
 ## Stack
 - Frontend: Next.js (src/apps/web/) — **frozen**; only privacy/terms, landing, admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) are live. Archive tag: `web-archive-2026-11`.
