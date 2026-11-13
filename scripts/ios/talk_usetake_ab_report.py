@@ -19,8 +19,11 @@ def load(cell: Path):
     return json.loads(path.read_text())
 
 
-def total(summary, name):
-    return sum(row[1] for row in summary["intervals"].get(name, [])) if name in summary["intervals"] else None
+def first(summary, name):
+    """Duration of the first occurrence. A failed Use take puts the take back in Review, which prepares it again for the retry, so
+    later occurrences of talk.prewarm.* belong to the retry, not to the dwell."""
+    rows = summary["intervals"].get(name)
+    return rows[0][1] if rows else None
 
 
 def main(out: Path):
@@ -38,12 +41,12 @@ def main(out: Path):
     for (build, dwell), runs in sorted(cells.items(), key=lambda kv: (kv[0][1], kv[0][0])):
         row = [build, str(dwell), str(len(runs))]
         for name in INTERVALS:
-            values = [v for v in (total(s, name) for _, s in runs) if v is not None]
+            values = [v for v in (first(s, name) for _, s in runs) if v is not None]
             row.append("-" if not values else f"{statistics.median(values):.0f} ({min(values):.0f}-{max(values):.0f})")
         for name in COUNTERS:
             row.append(str(sum(len(s["counters"].get(name, [])) for _, s in runs)))
         print("| " + " | ".join(row) + " |")
-    print("\nCells are median ms (min-max) over runs. '-' = the build has no such signpost or it never fired.")
+    print("\nCells are median ms (min-max) over runs, first occurrence per run. '-' = the build has no such signpost or it never fired.")
 
 
 if __name__ == "__main__":
