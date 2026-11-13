@@ -2472,11 +2472,38 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the keyboard is open")
         keepScreenshot(app, "First-prompt chips at the end of the transcript, keyboard open")
 
-        let transcript = app.scrollViews["Conversation history"].exists ? app.scrollViews["Conversation history"] : app.scrollViews.firstMatch
-        for _ in 0..<6 where chip.exists && chip.isHittable { transcript.swipeDown() }
-        XCTAssertTrue(eventually { !(chip.exists && chip.isHittable) }, "scrolling the transcript up carries the chips off screen")
-        XCTAssertTrue(app.keyboards.firstMatch.exists || app.textFields["Message Kria"].exists)
+        // KRI-1379: drag the transcript itself. To XCUITest it is a labelled container, not a scroll view, so
+        // `app.scrollViews.firstMatch` was the keyboard's word-suggestion bar: a swipe there did nothing (the test
+        // failed) or accepted a word, and a typed word hides the starter chips (the test passed for that reason).
+        // The drag stays between the header and the composer: the transcript dismisses the keyboard interactively,
+        // so a drag that reached the keyboard would close it.
+        let transcript = app.otherElements["Conversation history"]
+        XCTAssertTrue(transcript.exists, "the transcript is on screen")
+        let pageTop = app.buttons["Open projects"].frame.maxY
+        let chips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "suggestion-chip-"))
+        func chipsAreOnThePage() -> Bool {
+            let pageBottom = composer.frame.minY
+            return chips.allElementsBoundByIndex.contains { $0.exists && $0.frame.maxY > pageTop && $0.frame.minY < pageBottom }
+        }
+        XCTAssertTrue(chipsAreOnThePage(), "the chips start on the page, above the composer")
+        var drags = 0
+        while drags < 6, chipsAreOnThePage() {
+            let origin = transcript.coordinate(withNormalizedOffset: .zero)
+            let x = transcript.frame.width / 2
+            let start = origin.withOffset(CGVector(dx: x, dy: pageTop + 24 - transcript.frame.minY))
+            let end = origin.withOffset(CGVector(dx: x, dy: composer.frame.minY - 16 - transcript.frame.minY))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            drags += 1
+        }
+        XCTAssertTrue(eventually { !chipsAreOnThePage() }, "scrolling the transcript up carries the chips off screen")
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the keyboard stays open")
         keepScreenshot(app, "Transcript scrolled up, chips gone, keyboard open")
+
+        // The chips were scrolled away, not removed: they still end the transcript.
+        let latest = app.buttons["chat-jump-to-latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "the reader has left the end of the transcript")
+        latest.tap()
+        XCTAssertTrue(eventually { chipsAreOnThePage() }, "the chips are back at the end of the transcript")
     }
 
     /// KRI-1260: the lead chip carries no "Recommended" tag, so at the default text size it is one line (a capsule, not a
