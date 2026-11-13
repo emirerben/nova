@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.191.0] - 2026-11-13
+
+### Changed
+- perf(ios): prepare a recorded take while it is reviewed so Use take is quicker (KRI-1184) (#2220) <!-- release-pr: 2220 -->
+
 ## [0.88.190.0] - 2026-11-13
 
 ### Changed
