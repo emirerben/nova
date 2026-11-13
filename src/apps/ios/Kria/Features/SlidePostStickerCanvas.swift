@@ -86,6 +86,8 @@ struct SlidePostStickerCanvas: View {
 
     @State private var loaded: [String: UIImage] = [:]
     @State private var mode = Mode.idle
+    /// A system-cancelled drag never reaches `onEnded`; this lets `onChange` drop the stuck move/handle mode.
+    @GestureState private var touchActive = false
     @State private var gestureKey = UUID().uuidString
     @State private var movedFar = false
     @State private var wasSelectedAtTouch = false
@@ -187,10 +189,19 @@ struct SlidePostStickerCanvas: View {
             .contentShape(SlidePostTextHitShape(rects: rects))
             .highPriorityGesture(touchGesture(images))
             .simultaneousGesture(pinchGesture)
+            .onChange(of: touchActive) { _, active in
+                guard !active else { return }
+                // Let a normal `onEnded` (which reads `mode` to resolve tap-to-deselect) run first.
+                Task { @MainActor in
+                    await Task.yield()
+                    if !touchActive, !mode.isIdle, !mode.isPinch { mode = .idle }
+                }
+            }
     }
 
     private func touchGesture(_ images: [String: UIImage]) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("slidepost-sticker-canvas"))
+            .updating($touchActive) { _, active, _ in active = true }
             .onChanged { value in
                 if mode.isIdle { begin(at: value.startLocation, images) }
                 dragChanged(value, images)

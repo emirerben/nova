@@ -1797,6 +1797,9 @@ struct NativeMiniStrip: View {
     @State private var panStartTime: TimeInterval?
     @State private var lastPanAt = Date.distantPast
     @State private var playheadStartTime: TimeInterval?
+    /// A system-cancelled drag never reaches `onEnded`; these let `onChange` clear the stale start times.
+    @GestureState private var panActive = false
+    @GestureState private var playheadActive = false
     @State private var cachedItems: [NativeEditorTimelineItem] = []
     @State private var cachedRows: [TrackRow] = []
     @State private var blockBoundaries: [TimeInterval] = []
@@ -1991,6 +1994,12 @@ struct NativeMiniStrip: View {
                                 .frame(width: laneLabelWidth, alignment: .leading)
                             timeline
                                 .simultaneousGesture(timelinePanGesture)
+                                .onChange(of: panActive) { _, active in
+                                    if !active, panStartTime != nil { lastPanAt = .now; panStartTime = nil }
+                                }
+                                .onChange(of: playheadActive) { _, active in
+                                    if !active { playheadStartTime = nil }
+                                }
                         }
                         .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - bottomClearance), alignment: .topLeading)
                         .contentShape(Rectangle())
@@ -2346,10 +2355,11 @@ struct NativeMiniStrip: View {
                     .position(x: playheadX, y: timelineHeight / 2)
                     .allowsHitTesting(false)
                 Color.clear
-                    .frame(width: 44, height: 24)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
-                    .position(x: playheadX, y: 12)
+                    .position(x: playheadX, y: 22)
                     .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                        .updating($playheadActive) { _, active, _ in active = true }
                         .onChanged { value in
                             let start = playheadStartTime ?? clock.currentTime
                             playheadStartTime = start
@@ -3196,6 +3206,7 @@ struct NativeMiniStrip: View {
 
     private var timelinePanGesture: some Gesture {
         DragGesture(minimumDistance: 10, coordinateSpace: .global)
+            .updating($panActive) { _, active, _ in active = true }
             .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height),
                       !session.isTimingGestureActive, clipReorder == nil, !isPinching, playheadStartTime == nil else { return }

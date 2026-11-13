@@ -65,6 +65,8 @@ private struct MomentOrderActiveCard: View {
     @State private var draggingKey: String?
     @State private var dragOffset: CGFloat = 0
     @State private var rowHeights: [String: CGFloat] = [:]
+    /// A system-cancelled drag never reaches `onEnded`; without this the row stays lifted.
+    @GestureState private var handleActive = false
 
     struct PickTarget: Identifiable { let key: String; var id: String { key } }
 
@@ -174,6 +176,7 @@ private struct MomentOrderActiveCard: View {
             .frame(width: 44, height: 44).contentShape(Rectangle())
             .highPriorityGesture(
                 DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                    .updating($handleActive) { _, active, _ in active = true }
                     .onChanged { value in
                         guard !isSending else { return }
                         draggingKey = key
@@ -184,6 +187,11 @@ private struct MomentOrderActiveCard: View {
                         settle(key, translation: value.translation.height)
                     }
             )
+            .onChange(of: handleActive) { _, active in
+                if !active, draggingKey == key {
+                    withAnimation(.easeOut(duration: 0.18)) { draggingKey = nil; dragOffset = 0 }
+                }
+            }
             .accessibilityElement()
             .accessibilityLabel(strings.reorder(words))
             .accessibilityAction(named: strings.moveUp(words)) { if !isSending { moveUp(key) } }

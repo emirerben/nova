@@ -67,6 +67,9 @@ private struct ObjectMarkActiveCard: View {
     @State private var rect = ObjectMarkActiveCard.initialRect
     @State private var dragStart: NormalizedSourceRect?
     @State private var resizeStart: NormalizedSourceRect?
+    /// A system-cancelled drag never reaches `onEnded`; these let `onChange` clear the stale start rects.
+    @GestureState private var moveActive = false
+    @GestureState private var resizeActive = false
     /// The server's reason is only true for the box that was sent: any change hides it.
     @State private var problemSeen = false
 
@@ -202,6 +205,7 @@ private struct ObjectMarkActiveCard: View {
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 2)
+                    .updating($moveActive) { _, active, _ in active = true }
                     .onChanged { value in
                         let start = dragStart ?? rect
                         dragStart = start
@@ -210,6 +214,7 @@ private struct ObjectMarkActiveCard: View {
                     }
                     .onEnded { _ in dragStart = nil }
             )
+            .onChange(of: moveActive) { _, active in if !active { dragStart = nil } }
             .accessibilityElement()
             .accessibilityLabel("The \(question.label)")
             .accessibilityValue(answer.box.map { String(format: "%.4f", $0) }.joined(separator: ","))
@@ -230,6 +235,7 @@ private struct ObjectMarkActiveCard: View {
             .offset(x: (leading ? box.minX : box.maxX) - 22, y: (top ? box.minY : box.maxY) - 22)
             .gesture(
                 DragGesture(minimumDistance: 1)
+                    .updating($resizeActive) { _, active, _ in active = true }
                     .onChanged { value in
                         let start = resizeStart ?? rect
                         resizeStart = start
@@ -239,6 +245,7 @@ private struct ObjectMarkActiveCard: View {
                     }
                     .onEnded { _ in resizeStart = nil }
             )
+            .onChange(of: resizeActive) { _, active in if !active { resizeStart = nil } }
             .accessibilityLabel("Resize the box")
             .accessibilityIdentifier(corner == .bottomTrailing ? "object-mark-resize" : "object-mark-resize-\(corner)")
     }
