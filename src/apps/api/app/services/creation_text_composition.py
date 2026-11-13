@@ -87,12 +87,13 @@ THAT bar, never add another text for it. When the brief also has a title text wi
 wording, or a second sequence, that title keeps the opening bar and each sequence's exact words
 sit in their own bar (on a clip, or the clip a clip-scoped sequence names): split the bar
 holding them.
-Give every piece at least 0.25 s: when the bar is
-shorter than 0.25 s per piece, first lengthen it with set_texts_timing (about 0.45 s per word
-reads well; never past total_duration_s). Preserve the combined wording and choose
-readable timing inside the requested clip. Apply timing and shared style operations BEFORE
-splitting the title. Selectors bind the original draft: after splitting, the original title id
-no longer exists, so never follow the split with a title/all-text selector containing that old id.
+Give every piece at least one video frame (1/30 s): when the bar is
+shorter than that per piece, first lengthen it with set_texts_timing (about 0.45 s per word is a
+comfortable default, never a requirement; never past total_duration_s). Preserve the combined
+wording and choose readable timing inside the requested clip. Apply timing and shared style
+operations BEFORE splitting the title. Selectors bind the original draft: after splitting, the
+original title id no longer exists, so never follow the split with a title/all-text selector
+containing that old id.
 Put per-word styles in the replacement's patch, or style the original before splitting.
 Use readable timing within the existing video and requested clip window; extend a short default
 title window before splitting when needed. Never leave an unintended static duplicate of a
@@ -159,7 +160,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v20-researched-copy",
+        prompt_version="v21-researched-copy",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )

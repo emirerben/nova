@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-11-v122",
+  "prompt_version": "2026-11-13-v123",
   "input": {
     "utterance": "make the end fade to black slower, 3 seconds",
     "prior_turns": [],

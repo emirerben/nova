@@ -409,3 +409,24 @@ def test_synthetic_label_links_preserve_creator_edited_provenance() -> None:
         "inferred": False,
         "edited": True,
     }
+
+
+def test_a_stated_length_over_word_sequences_is_never_refused_for_reading_speed() -> None:
+    """KRI-1370: prod thread 147eb928 answered "make it 8 seconds" with "they would flash by too
+    fast to read", repeating a stale server "10.5s" message from history. Reading speed is not the
+    model's call: the length is applied and both sequences share the new window."""
+    fixture = _fixture("word_sequence_exact_length_ignores_stale_reading_time")
+    result = run_eval(fixture)
+    assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
+    assert result.output is not None
+    output = result.output
+    assert output["needs_clarification"] is False
+    assert [op["op"] for op in output["ops"]] == [
+        "set_total_duration",
+        "retime_text_sequence",
+        "retime_text_sequence",
+    ]
+    assert output["ops"][0]["target_s"] == 8
+    assert all(op["fit_to_video"] and op["end_s"] == 8 for op in output["ops"][1:])
+    reply = output["reply"].lower()
+    assert not any(term in reply for term in ("flash", "too fast", "reading time", "10.5"))
