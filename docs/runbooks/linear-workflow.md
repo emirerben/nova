@@ -58,7 +58,7 @@ In Progress on start, In Review when the PR opens, Done when the PR merges into 
 
 ## Fix chains: the second-fix-PR rule
 
-Trigger: a KRI ticket's **second `fix` PR has merged** (counted by `fix`-prefixed commit subjects naming the ticket on `main`). `scripts/preship-check.sh` step 7 warns (never blocks) when the branch's ticket already has two or more.
+Trigger: a KRI ticket's **second `fix` PR has merged** (counted by `fix`-prefixed commit subjects naming the ticket on `main`). `scripts/preship-check.sh` step 8 warns (never blocks) when the branch's ticket already has two or more.
 
 Before a **third** fix PR on that ticket, write a failure-mode list in the ticket or the PR body. One line per way the feature can still fail, each either:
 
