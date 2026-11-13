@@ -11669,11 +11669,12 @@ extension NativeEditorSession {
               let found = sourceWindowSlot(for: selection) else { return }
         let local = currentTime - found.clip.start
         let rate = effectiveSourceRate(slot: found.slot, clip: found.clip)
+        let still = isStillSlot(document.clips[index])
         transactDocument(section: .timeline) { value in
             let slot = value.clips[index]
             let duration = slot.durationS ?? (found.clip.end - found.clip.start)
             var right = Self.piece(of: slot, from: local, to: duration, length: duration, rate: rate)
-            right.id = UUID().uuidString; right.parentSegmentID = slot.id
+            right.id = UUID().uuidString; right.parentSegmentID = still ? nil : slot.id
             value.clips.replaceSubrange(index...index, with: [Self.piece(of: slot, from: 0, to: local, length: duration, rate: rate), right])
         }
     }
@@ -11845,7 +11846,7 @@ extension NativeEditorSession {
                 .sorted { $0.start < $1.start }
             for (position, part) in parts.enumerated() {
                 var piece = Self.piece(of: slot, from: part.start - slot.splitOffsetS, to: part.end - slot.splitOffsetS, length: length, rate: rate)
-                if position > 0 { piece.id = UUID().uuidString; piece.parentSegmentID = slot.id }
+                if position > 0 { piece.id = UUID().uuidString; piece.parentSegmentID = isStillSlot(slot) ? nil : slot.id }
                 if part.inSection {
                     if side == .untilPlayhead { piece.raw["split_offset_s"] = .number(part.start - cut) }
                     sectionSlots.append(piece)
