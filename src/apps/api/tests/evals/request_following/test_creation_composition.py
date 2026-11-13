@@ -74,7 +74,7 @@ def sequence_response():
     }
 
 
-def compose(monkeypatch, plan, response=None):
+def compose(monkeypatch, plan, response=None, drops=None):
     from app.agents.edit_copilot import EditCopilotAgent
     from app.services.creation_text_composition import compose_creation_text
 
@@ -92,6 +92,7 @@ def compose(monkeypatch, plan, response=None):
             f"Title: {TITLE}. Show each word separately, fade in and out, "
             "then the next. Keep location labels."
         ),
+        drops=drops,
     )
     assert len(seen) == 1
     assert "each word separately" in seen[0].utterance
@@ -162,11 +163,18 @@ def test_changed_base_is_rejected_and_existing_program_is_not_replanned(monkeypa
         compile_proposal_execution_plan(changed)
 
 
-def test_partial_or_invalid_composition_is_not_silently_accepted(monkeypatch):
+def test_partial_composition_renders_what_it_could_and_says_so(monkeypatch):
+    """KRI-1376: never silently accepted, never the whole video failed either."""
     response = sequence_response()
     response["unmet_requests"] = [{"request": "sequence", "reason": "cannot"}]
-    with pytest.raises(ValueError, match="composition"):
-        compose(monkeypatch, base_plan(), response)
+    drops = []
+    snapshot = compose(monkeypatch, base_plan(), response, drops=drops)
+    words = compile_proposal_execution_plan(snapshot)["text_elements"]
+    assert [x["text"] for x in words if "::sequence-" in x["id"]] == TITLE.split()
+    assert [(drop.reason, drop.action) for drop in drops] == [("incomplete", "shrunk")]
+    assert drops[0].note() == (
+        "I couldn't do every part of your text request, so the video shows the parts I could"
+    )
 
 
 def test_disallowed_operations_cannot_change_source_timeline(monkeypatch):
@@ -176,8 +184,13 @@ def test_disallowed_operations_cannot_change_source_timeline(monkeypatch):
         "reply": "Trimmed",
         "ops": [{"op": "set_clip_duration", "clip_index": 0, "duration_s": 1}],
     }
-    with pytest.raises(ValueError, match="composition"):
-        compose(monkeypatch, base_plan(), response)
+    plan = base_plan()
+    before = compile_proposal_execution_plan(plan.snapshot)
+    drops = []
+    snapshot = compose(monkeypatch, plan, response, drops=drops)
+    assert compile_proposal_execution_plan(snapshot) == before
+    # The parser never lets the timeline op through, so nothing of the ask was done.
+    assert [(drop.reason, drop.action) for drop in drops] == [("incomplete", "shrunk")]
 
 
 def test_duplicate_hook_is_corrected_without_dropping_location_label(monkeypatch):
@@ -866,21 +879,29 @@ def test_bound_placeholder_copy_remains_protected_during_composition(monkeypatch
         "run",
         lambda self, input, ctx=None: self.parse(json.dumps(response), input),
     )
-    with pytest.raises(ValueError, match="changed confirmed copy"):
-        compose_creation_text(
-            plan.snapshot,
-            creator_request="Animate the hook word by word and keep location placeholders.",
-            copy_constraints=snapshot_copy_constraints(plan.snapshot),
-            text_requirements=[
-                BriefRequirement(
-                    id="r1",
-                    kind="text",
-                    scope="per_clip",
-                    description="Keep placeholders.",
-                    facts={"placeholder": True},
-                )
-            ],
-        )
+    before = compile_proposal_execution_plan(plan.snapshot)
+    drops = []
+    # KRI-1376: the placeholder rewrite is dropped; the hook still splits word by word.
+    snapshot = compose_creation_text(
+        plan.snapshot,
+        creator_request="Animate the hook word by word and keep location placeholders.",
+        copy_constraints=snapshot_copy_constraints(plan.snapshot),
+        text_requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="text",
+                scope="per_clip",
+                description="Keep placeholders.",
+                facts={"placeholder": True},
+            )
+        ],
+        drops=drops,
+    )
+    rows = compile_proposal_execution_plan(snapshot)["text_elements"]
+    labels = [r for r in before["text_elements"] if r["id"].startswith("clip-label-")]
+    assert labels and [r for r in rows if r["id"].startswith("clip-label-")] == labels
+    assert [r["text"] for r in rows if "::sequence-" in r["id"]] == TITLE.split()
+    assert [(drop.reason, drop.op) for drop in drops] == [("copy_changed", "rewrite_text")]
 
 
 def test_style_all_before_sequence_preserves_selector_fences(monkeypatch):
@@ -892,8 +913,12 @@ def test_style_all_before_sequence_preserves_selector_fences(monkeypatch):
         "patch": {"font_family": "Inter", "color": "#FFFFFF"},
     }
     response["ops"].append(style)
-    with pytest.raises(ValueError, match="Text changed"):
-        compose(monkeypatch, base_plan(), response)
+    drops = []
+    # KRI-1376: a style after the split cannot bind the title it names; it is the op dropped.
+    split = compose(monkeypatch, base_plan(), response, drops=drops)
+    rows = compile_proposal_execution_plan(split)["text_elements"]
+    assert [t["text"] for t in rows if "::sequence-" in t["id"]] == TITLE.split()
+    assert [(drop.reason, drop.op) for drop in drops] == [("replay_failed", "patch_text")]
     response["ops"].remove(style)
     response["ops"].insert(0, style)
     snapshot = compose(monkeypatch, base_plan(), response)

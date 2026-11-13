@@ -314,12 +314,16 @@ def test_initial_creation_research_replays_without_searching_again(monkeypatch, 
     )
     original = compile_proposal_execution_plan(plan.snapshot)
     if limited is True:
-        from app.services.creation_text_composition import CreationTextCompositionError
-
-        with pytest.raises(CreationTextCompositionError, match="artifact label"):
-            compose_creation_text(
-                plan.snapshot, creator_request="Please research online and explain this museum"
-            )
+        drops = []
+        # KRI-1376: the reviewed explanation renders; the note says part of the ask was not met.
+        edited = compose_creation_text(
+            plan.snapshot,
+            creator_request="Please research online and explain this museum",
+            drops=drops,
+        )
+        rows = compile_proposal_execution_plan(edited)["text_elements"]
+        assert rows[-1]["source_params"]["research"]["sources"]
+        assert [(drop.reason, drop.action) for drop in drops] == [("incomplete", "shrunk")]
         return
     edited = compose_creation_text(
         plan.snapshot, creator_request="Please research online and explain this museum"

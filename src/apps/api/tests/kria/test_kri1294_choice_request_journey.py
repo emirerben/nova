@@ -35,7 +35,6 @@ from app.models import CreationThread, CreationThreadEvent, CreatorAgentApproval
 from app.pipeline.guided_story import GuidedStoryExecutionPlan, compile_proposal_execution_plan
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.services.creation_text_composition import (
-    CreationTextCompositionError,
     compose_creation_text,
 )
 from app.services.phone_montage_preflight import preflight_montage_plan
@@ -357,15 +356,21 @@ async def test_q3_hold_choice_approval_composition_has_no_button_instruction(
                 indent=2,
             )
         )
-    # A genuine unmet text request must still fail, not be swallowed by the recovery fix.
+    # A genuine unmet text request is never swallowed: since KRI-1376 the approved video renders
+    # what the composer could do and the drop carries the note that says the rest could not.
     provider.unmet = True
-    with pytest.raises(CreationTextCompositionError):
-        compose_creation_text(
-            snapshot,
-            creator_request=claim.creator_request,
-            text_requirements=binding.brief.live(),
-            ctx=RunContext(extra={"skip_agent_run_persist": True}),
-        )
+    drops = []
+    unmet = compose_creation_text(
+        snapshot,
+        creator_request=claim.creator_request,
+        text_requirements=binding.brief.live(),
+        ctx=RunContext(extra={"skip_agent_run_persist": True}),
+        drops=drops,
+    )
+    assert [row["text"] for row in compile_proposal_execution_plan(unmet)["text_elements"]] == [
+        TEXT
+    ]
+    assert [(drop.reason, drop.action) for drop in drops] == [("incomplete", "shrunk")]
 
 
 @pytest.mark.parametrize("language,label", [("en", TAP), ("tr", "Bunlar olmadan hazırla")])

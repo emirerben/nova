@@ -782,6 +782,36 @@
    " ve {count} tane daha"
   ],
   [
+   "app/services/creation_text_degrade.py",
+   "I couldn't do every part of your text request, so the video shows the parts I could",
+   "Yazı isteğinin her kısmını yapamadım, videoda yapabildiğim kısımlar var"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "I couldn't size your texts exactly as you asked",
+   "Yazıları tam istediğin boyutlarda ayarlayamadım"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Kept {text} exactly as you wrote it and left out the change I couldn't make to it",
+   "{text} metnini yazdığın gibi bıraktım, ona yapamadığım değişikliği eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one explanation that didn't fit its part of the video",
+   "Videonun ilgili kısmına sığmayan bir açıklamayı eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one text change I couldn't make fit",
+   "Sığdıramadığım bir yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one text change for {text} because I couldn't make it fit",
+   "{text} için sığdıramadığım bir yazı değişikliğini eklemedim"
+  ],
+  [
    "app/services/finished_style_learning.py",
    "Exclude {font} from automatic {role} text selection.",
    "{head} için otomatik yazı tipi seçiminde {font} kullanılmasın."

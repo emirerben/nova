@@ -337,7 +337,8 @@ def test_shaping_cannot_write_its_own_text(provider) -> None:
         {"op": "add_text", "text": "Since 1066", "start_s": 0, "end_s": 2}
     ]
 
-    with pytest.raises(CreationTextCompositionError, match="only be shaped"):
+    # Without its added line the shaping split nothing, so the asked word sequences are not met.
+    with pytest.raises(CreationTextCompositionError, match="only be shaped|unrequested text"):
         _compose()
 
 
@@ -446,9 +447,21 @@ def _retime_then_split(local, english):
 def test_shaping_cannot_move_research_onto_unreviewed_footage(provider) -> None:
     provider.layers[0].end_s = provider.layers[1].end_s = 6
     provider.shape_ops = _retime_then_split
+    drops = []
 
-    with pytest.raises(CreationTextCompositionError, match="outside its reviewed 0.0-6.0 s"):
-        _compose()
+    # KRI-1376: the retimes are dropped; the reviewed words stay on their reviewed footage.
+    composed = compose_creation_text(
+        _plan().snapshot, creator_request=REQUEST, text_requirements=REQUIREMENTS, drops=drops
+    )
+    rows = compile_proposal_execution_plan(composed)["text_elements"]
+    for words in (LOCAL, ENGLISH):
+        pieces = _rows(rows, words)
+        assert [row["text"] for row in pieces] == words.split()
+        assert pieces[0]["start_s"] >= 0 and pieces[-1]["end_s"] <= 6 + 1 / 30
+    assert [(drop.reason, drop.op) for drop in drops] == [
+        ("layer_shape", "set_texts_timing"),
+        ("layer_shape", "set_texts_timing"),
+    ]
 
 
 def test_a_translation_shown_after_its_text_is_not_simultaneous(provider) -> None:
