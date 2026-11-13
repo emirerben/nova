@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.181.0] - 2026-11-13
+
+### Changed
+- test(ios): fix three flaky iPhone unit tests at the cause (KRI-1379) (#2287) <!-- release-pr: 2287 -->
+
 ## [0.88.180.0] - 2026-11-13
 
 ### Changed
