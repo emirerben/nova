@@ -2,8 +2,10 @@
 
 The per-word text floor was copied into five files and the prompts; a fix to the server copy left
 the refusal in place. Ways a limit can be copied again, and the assertion that catches each:
-* a Python module retypes the playback-rate bounds in a `Field(ge=, le=)` or a range compare
-  (`test_python_does_not_retype_the_playback_rate`);
+* a Python module retypes the playback-rate bounds in a `Field(ge=, le=)`, a range compare or a
+  `*_RATE = 0.25` constant (`test_python_does_not_retype_the_playback_rate`);
+* an editor-op, Save or split-screen module retypes the 0.1 s clip minimum or the 1/30 s frame
+  (`test_editor_modules_do_not_retype_the_clip_minimum_or_frame`);
 * a Swift file retypes a range or the minimum clip length instead of reading `EditorLimits` /
   `TextAnimationPhases.speedRange` (`test_swift_does_not_retype_editor_limits`);
 * a prompt types a number the prompt renderer already knows
@@ -27,6 +29,7 @@ IOS_ROOT = API_ROOT.parents[1] / "apps" / "ios"
 
 # Different limits that happen to share a value. A file here is exempt for the stated reason.
 _PYTHON_PLAYBACK_ALLOWED = {
+    "app/services/editor_limits.py": "the single source",
     "app/agents/editor_ops_v2/text.py": "text `size_scale`, a size multiplier",
     "app/kria/portable_text.py": "text motion speed, its own range",
     "app/agents/_schemas/text_element.py": "text motion speed, its own range",
@@ -36,7 +39,33 @@ _PYTHON_PLAYBACK_ALLOWED = {
     "app/pipeline/custom_effects.py": "custom effect `speed` parameter",
     "app/pipeline/text_motion_v2.py": "text motion speed, its own range",
 }
-_PYTHON_PLAYBACK = re.compile(r"\bge=0\.25\b|\b0\.25 <= \w+ <= 4\b|\b0\.25, 4(?:\.0)?\)")
+_PYTHON_PLAYBACK = re.compile(
+    r"\bge=0\.25\b|\b0\.25 <= \w+ <= 4\b|\b0\.25, 4(?:\.0)?\)"
+    r"|\b\w*(?:PLAYBACK_RATE|SPEED_RATE|(?:MIN|MAX)_RATE)\w*(?:: [^=]+)? = (?:0\.25|4(?:\.0)?)\s*$"
+)
+
+# Modules where an editor clip window is validated, saved or cut. A bare `0.1` / `1/30` here is a
+# copy of `EDITOR_MIN_CLIP_S` / `FRAME_S`. Planner and renderer modules elsewhere keep their own
+# floors for other reasons (export safety margins, transition overlaps, 30 fps renderer clocks)
+# and are listed in the PR as follow-ups, not exempted here.
+_EDITOR_MODULES = (
+    "app/agents/editor_ops_v2/split_screen.py",
+    "app/agents/editor_ops_v2/timeline.py",
+    "app/agents/_schemas/split_screen.py",
+    "app/kria/clip_source_clock.py",
+    "app/kria/split_screen.py",
+    "app/services/initial_split_screen.py",
+    "app/services/kria_editor_timeline.py",
+    "app/services/phone_voiceover_cut_editor.py",
+    "app/services/authored_editor.py",
+    "app/services/kria_editor_ops_text.py",
+)
+# A transition overlap floor is its own limit (0.1 s of dissolve), not a clip minimum.
+_EDITOR_LINE_EXEMPT = "overlap"
+_EDITOR_LITERALS = re.compile(
+    r"\bge=0\.1\b|[<>]=? ?0\.1\b(?![0-9])|\b0\.1 ?[<>]=? |max\(0\.1,|\belse 0\.1\b"
+    r"|(?:least|than) 0\.1\b|\b0\.1 seconds|\b1(?:\.0)? ?/ ?30(?:\.0)?\b|\* ?30\) ?/ ?30\b"
+)
 
 _SWIFT_ALLOWED = {
     "Kria/Core/NativeEditorRenderCompiler.swift": ('number("speed", "speed", 1, 0.25, 4)',),
@@ -46,7 +75,8 @@ _SWIFT_ALLOWED = {
 }
 _SWIFT_LIMIT_LITERALS = re.compile(
     r"0\.25\.\.\.[34]\b|\bmax\(rate, 0\.25\)|"
-    r"minimum(?:Clip)?Duration\b[^\n=]*=\s*0\.1\s*$|minimum: TimeInterval = 0\.1\b",
+    r"\bminimum\w*\b[^\n=]*=\s*0\.1\s*$|minimum: TimeInterval = 0\.1\b|"
+    r"\bmax\(0\.1, \w+\.end - \w+\.start\)|\(duration \* 30\)",
     re.M,
 )
 
@@ -76,6 +106,29 @@ def test_python_does_not_retype_the_playback_rate() -> None:
         "Import PLAYBACK_RATE_MIN / PLAYBACK_RATE_MAX from app.services.editor_limits:\n"
         + "\n".join(found)
     )
+
+
+def test_editor_modules_do_not_retype_the_clip_minimum_or_frame() -> None:
+    found = [
+        f"{rel}:{n}: {line.strip()}"
+        for rel in _EDITOR_MODULES
+        for n, line in enumerate((API_ROOT / rel).read_text(encoding="utf-8").splitlines(), 1)
+        if _EDITOR_LITERALS.search(line)
+        and _EDITOR_LINE_EXEMPT not in line
+        and not line.lstrip().startswith("#")
+    ]
+    assert not found, (
+        "Import EDITOR_MIN_CLIP_S / FRAME_S from app.services.editor_limits and compare with "
+        "below_editor_minimum (app.schemas.editor_window):\n" + "\n".join(found)
+    )
+
+
+def test_inline_prompts_render_the_frame_length() -> None:
+    from app.services import creation_text_composition
+
+    rendered = creation_text_composition._INSTRUCTIONS
+    assert "{{" not in rendered
+    assert f"(1/{editor_limits.MOTION_FPS} s)" in rendered
 
 
 def test_swift_does_not_retype_editor_limits() -> None:

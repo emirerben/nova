@@ -3255,7 +3255,7 @@ def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
         local = split_at - output_start
     else:
         local = split_at - output_start if split_at > duration else split_at
-    if local < 0.1 or local > duration - 0.1:
+    if local < EDITOR_MIN_CLIP_S or local > duration - EDITOR_MIN_CLIP_S:
         raise KriaEditorOpError("The split point is outside the clip")
     from uuid import uuid4
 

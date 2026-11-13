@@ -29,7 +29,7 @@ from typing import Any
 
 from app.kria.spoken_text_ask import SPOKEN_TEXT_ELEMENT_PREFIX
 from app.schemas.guided_edit_revision import MAX_GUIDED_EDITOR_TEXT_ELEMENTS
-from app.services.editor_limits import MIN_TEXT_PIECE_S, TEXT_PIECE_TOLERANCE_S
+from app.services.editor_limits import FRAME_S, MIN_TEXT_PIECE_S, TEXT_PIECE_TOLERANCE_S
 from app.services.kria_editor_ops import (
     _ALLOWED_FONTS,
     _CLIP_LABEL_BAR_PREFIX,
@@ -1043,7 +1043,7 @@ def _sequence_order(row: dict[str, Any], source: str) -> tuple[int, ...]:
     return tuple(int(part) for part in parts[1:])
 
 
-_TOGETHER_S = 1 / 30
+_TOGETHER_S = FRAME_S
 
 
 def _sequences_shown_together(

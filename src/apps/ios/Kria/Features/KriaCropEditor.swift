@@ -111,7 +111,7 @@ enum KriaCropGeometry {
 /// takes and returns a whole window, so a view can derive each frame of a drag from the window it began with.
 enum KriaSourceWindowGeometry {
     /// Shortest a slot may be (the session's `minimumClipDuration` and the server's `TIMELINE_INVALID_DURATION`).
-    static let minimumLength = 0.1
+    static let minimumLength = EditorLimits.minClipSeconds
     /// Slack the server allows past the end of the source.
     static let boundsTolerance = 0.05
 

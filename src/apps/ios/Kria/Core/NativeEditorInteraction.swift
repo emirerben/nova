@@ -458,7 +458,7 @@ enum NativeEditorInteraction {
     }
 
     private static func roundedFrame(_ value: TimeInterval) -> TimeInterval {
-        (value * 30).rounded(.toNearestOrEven) / 30
+        (value * Double(EditorLimits.outputFPS)).rounded(.toNearestOrEven) / Double(EditorLimits.outputFPS)
     }
 
     /// `source_end_s` opts a slot into the exact source-window contract. The
@@ -470,7 +470,7 @@ enum NativeEditorInteraction {
               rate.isFinite, rate > 0 else { return nil }
         let duration = (sourceEnd - sourceStart) / rate
         guard duration.isFinite else { return nil }
-        return renderedClock ? max(EditorLimits.minClipSeconds, duration) : max(EditorLimits.minClipSeconds, (duration * 30).rounded(.toNearestOrEven) / 30)
+        return renderedClock ? max(EditorLimits.minClipSeconds, duration) : max(EditorLimits.minClipSeconds, roundedFrame(duration))
     }
 
     private static func sourcePreservingOutputDuration(_ slot: EditorTimelineSlot) -> TimeInterval? {

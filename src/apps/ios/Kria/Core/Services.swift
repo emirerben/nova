@@ -2315,7 +2315,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     /// `Tests/Fixtures/editor_save_codes.json`, which the API's `test_editor_save_code_catalog`
     /// keeps equal to what the server can raise: a new server code fails CI until it is worded here.
     static let timelineCopy: [String: String] = {
-        let tooShort = "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here."
+        let tooShort = "A clip is shorter than the \(String(format: "%g", EditorLimits.minClipSeconds)) second minimum. Lengthen it a little and save again. Your edits are still here."
         let pastEnd = "A clip runs past the end of its footage. Shorten it or move its start earlier, then save again. Your edits are still here."
         let reopen = "A clip’s footage is no longer available to this edit. Reopen the editor to continue."
         let timeline = "This timeline couldn’t be saved. Undo your last change and try again. Your edits are still here."

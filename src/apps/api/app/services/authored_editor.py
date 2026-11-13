@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from app.kria.split_screen import is_blank_row
 from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
+from app.services.editor_limits import EDITOR_MIN_CLIP_S, FRAME_S, MOTION_FPS
 
 AUTHORED_TIMELINE_MODE = "authored"
 
@@ -354,12 +355,12 @@ def prepare_authored_editor_commit(
 log = structlog.get_logger(__name__)
 
 SOURCE_BOUNDS_TOLERANCE_S = 0.05
-_TIMELINE_FRAME_S = 1 / 30
+_TIMELINE_FRAME_S = FRAME_S
 
 
 def _canonical_output_duration(source_span: float, rate: float) -> float:
     """Return the authored output clock on the shared 30 fps timeline grid."""
-    return round((source_span / rate) * 30) / 30
+    return round((source_span / rate) * MOTION_FPS) / MOTION_FPS
 
 
 def _source_end_for_authored_slot(
@@ -639,7 +640,7 @@ def resolve_authored_phone_slots(
             if slot.slot_id
             and slot.slot_id.startswith("native-phone-talking-source")
             and slot.slot_id in known
-            else 0.1
+            else EDITOR_MIN_CLIP_S
         )
         if (
             not all(math.isfinite(value) for value in (slot.in_s, duration, rate))

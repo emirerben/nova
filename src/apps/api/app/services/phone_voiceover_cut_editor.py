@@ -29,7 +29,7 @@ from fastapi import HTTPException
 from app.config import settings
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_voiceover_cut import narrated_slot_window
-from app.schemas.editor_window import below_editor_minimum
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
 from app.services.editor_limits import PLAYBACK_RATE_MIN
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.services.phone_voiceover_timeline import (
@@ -141,6 +141,7 @@ def resolve_phone_voiceover_slots(job: Any, variant: dict, slots: list[Any]) -> 
             raise _error(422, "TIMELINE_INVALID_WINDOW", slot_id=slot.slot_id)
         if below_editor_minimum(duration):
             raise _error(422, "TIMELINE_INVALID_WINDOW", slot_id=slot.slot_id)
+        duration = snap_to_editor_minimum(duration)
         crop_allowed = "sourceCrop" in settings.phone_render_verified_features
         if (
             slot.look_preset not in (None, "none")

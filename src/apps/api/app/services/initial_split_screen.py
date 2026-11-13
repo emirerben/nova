@@ -9,6 +9,7 @@ from uuid import uuid4
 from app.agents._schemas.split_screen import InitialSplitScreen, SplitPanelClip
 from app.agents.edit_copilot import EditorOperationParseState, parse_editor_operation
 from app.kria.split_screen import layout_split_timeline
+from app.schemas.editor_window import below_editor_minimum
 from app.services import kria_editor_ops as editor
 
 
@@ -17,7 +18,7 @@ def _clip_widths(clips: list[SplitPanelClip], section: float) -> list[float]:
     fixed = sum(c.duration_s or 0.0 for c in clips)
     open_ended = sum(c.duration_s is None for c in clips)
     share = (section - fixed) / open_ended if open_ended else 0.0
-    if open_ended and share < 0.1:
+    if open_ended and below_editor_minimum(share):
         raise editor.KriaEditorOpError(
             "The panel's clips leave no time for the ones without a length"
         )
@@ -51,7 +52,7 @@ def apply_initial_split_screen(
         sum(clip.duration_s or 0.0 for clip in panel.sequence) for panel in request.panels
     )
     duration = request.duration_s or max(total, longest_explicit)
-    if duration < 0.1:
+    if below_editor_minimum(duration):
         raise editor.KriaEditorOpError("The split screen needs a positive duration")
     from app.kria.clip_source_clock import resize_source_window, set_source_start
 
@@ -68,7 +69,7 @@ def apply_initial_split_screen(
                 raise editor.KriaEditorOpError(
                     "A requested panel source is not in the approved media"
                 )
-            if duration - cursor < 0.1:
+            if below_editor_minimum(duration - cursor):
                 raise editor.KriaEditorOpError("The panel's clips run past the end of the section")
             row = editor.copy_source_occurrence(source)
             row["slot_id"] = str(uuid4())
@@ -105,7 +106,7 @@ def apply_initial_split_screen(
                 (left, min(right, start), before),
                 (max(left, end), right, after),
             ):
-                if high - low < 0.1:
+                if below_editor_minimum(high - low):
                     continue
                 from app.kria.clip_source_clock import slice_source_window
 

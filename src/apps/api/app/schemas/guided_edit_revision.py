@@ -145,7 +145,9 @@ class GuidedEditorSegment(BaseModel):
         if self.output_end_s is not None and self.output_end_s <= self.output_start_s:
             raise ValueError("segment output window must be ordered")
         if below_editor_minimum(self.duration_s, MIN_GUIDED_EDITOR_SEGMENT_S):
-            raise ValueError("segment duration is below the 0.1s editor floor")
+            raise ValueError(
+                f"segment duration is below the {MIN_GUIDED_EDITOR_SEGMENT_S:g}s editor floor"
+            )
         if self.transition_duration_s < 0.1:
             object.__setattr__(self, "transition_after", "cut")
             object.__setattr__(self, "transition_duration_s", 0.0)

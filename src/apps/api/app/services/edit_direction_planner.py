@@ -40,7 +40,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
     uses_quick_photo_long_video_timing,
 )
-from app.services.editor_limits import MOTION_FPS
+from app.services.editor_limits import FRAME_S, MOTION_FPS
 from app.services.proposal_planning import SemanticPlanningError, plan_edit_proposal
 from app.text_fold import loose_text
 
@@ -61,7 +61,7 @@ FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES = int(round(0.8 * 30))
 # (_allocate_beat_windows' `_round_frame` / floor-to-frame clipping) can
 # never re-derive a target the real per-beat windows can't reach after
 # rounding.
-_RENDER_FRAME_S = 1.0 / 30.0
+_RENDER_FRAME_S = FRAME_S
 _CAPACITY_EPSILON_S = 1e-6
 
 
