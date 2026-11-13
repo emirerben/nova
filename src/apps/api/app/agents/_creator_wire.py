@@ -116,6 +116,56 @@ def main_creator_schema():
 
 
 def copilot_schema():
+    ops, pending, selector = _copilot_operations()
+    string = {"type": "string"}
+    number = {"type": "number"}
+    boolean = {"type": "boolean"}
+
+    def enum(*values):
+        return {"type": "string", "enum": list(values)}
+
+    result = obj(
+        {
+            "intent": enum("edit", "clarify", "describe", "reject", "unknown"),
+            "ops": arr({"anyOf": ops}),
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "reply": string,
+            "suggestions": arr(string),
+            "needs_clarification": boolean,
+            "unmet_requests": arr(
+                obj({"request": string, "reason": string}, ("request", "reason"))
+            ),
+            "claimed_ops": arr(string),
+            "length_options": arr(obj({"label": string, "seconds": number}, ("label", "seconds"))),
+            "clarification_context": obj(
+                {**selector["properties"], "selector": copy.deepcopy(selector), "referent": string}
+            ),
+            "pending_actions": arr({"anyOf": pending}),
+        },
+        ("intent", "reply"),
+    )
+    # ResearchRequest is a typed product contract, independent of output-only fields.
+    from app.services.researched_text import ResearchRequest
+
+    research = ResearchRequest.model_json_schema()
+    result["$defs"] = {**_json_defs(), **research.pop("$defs", {})}
+    result["properties"]["research_request"] = research
+    for name in ("research_request", "claimed_ops", "clarification_context"):
+        result["properties"][name] = {"anyOf": [result["properties"][name], {"type": "null"}]}
+    return result
+
+
+def copilot_operation_schemas() -> dict[str, dict]:
+    """One closed object schema per Copilot operation, keyed by op name (``op`` is a const).
+
+    The same registry `copilot_schema` unions into ``ops``; typed tool calling (KRI-1393)
+    turns each entry into one tool.
+    """
+    ops, _, _ = _copilot_operations()
+    return {branch["properties"]["op"]["const"]: branch for branch in ops}
+
+
+def _copilot_operations():
     from typing import get_args
 
     from app.agents.edit_copilot import _OP_FIELDS, _OP_REQUIRED, _STYLE_PATCH_FIELDS, _op_fields
@@ -456,35 +506,7 @@ def copilot_schema():
     pending = copy.deepcopy(ops)
     for operation in pending:
         operation["required"] = ["op"]
-    result = obj(
-        {
-            "intent": enum("edit", "clarify", "describe", "reject", "unknown"),
-            "ops": arr({"anyOf": ops}),
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-            "reply": string,
-            "suggestions": arr(string),
-            "needs_clarification": boolean,
-            "unmet_requests": arr(
-                obj({"request": string, "reason": string}, ("request", "reason"))
-            ),
-            "claimed_ops": arr(string),
-            "length_options": arr(obj({"label": string, "seconds": number}, ("label", "seconds"))),
-            "clarification_context": obj(
-                {**selector["properties"], "selector": copy.deepcopy(selector), "referent": string}
-            ),
-            "pending_actions": arr({"anyOf": pending}),
-        },
-        ("intent", "reply"),
-    )
-    # ResearchRequest is a typed product contract, independent of output-only fields.
-    from app.services.researched_text import ResearchRequest
-
-    research = ResearchRequest.model_json_schema()
-    result["$defs"] = {**_json_defs(), **research.pop("$defs", {})}
-    result["properties"]["research_request"] = research
-    for name in ("research_request", "claimed_ops", "clarification_context"):
-        result["properties"][name] = {"anyOf": [result["properties"][name], {"type": "null"}]}
-    return result
+    return ops, pending, selector
 
 
 class WireContract:
