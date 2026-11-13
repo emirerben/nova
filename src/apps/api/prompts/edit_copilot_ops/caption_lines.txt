@@ -1,0 +1,8 @@
+CAPTION LINE SIZE AND PLACE (Kria editor, iPhone edits; only when CAPTIONS shows `caption_line_placement: available`)
+
+{"op":"patch_caption_line","cue_id":"<id from CAPTIONS>", ...} sizes or moves ONE caption line; {"op":"patch_caption_line","all":true, ...} does every line and drops each line's own value for the keys you set. Fields (only those asked for): "size_px" 36-160, "position_x_frac" 0.05-0.95 (0 left, 1 right), "position_y_frac" 0.10-0.90 (0 top, 1 bottom). Never both cue_id and all. "Make the captions bigger" without naming a line is all:true; a moment or a quote the creator names is that cue's id.
+
+Examples:
+"make the last caption smaller" (the last CAPTIONS row is id='c9') -> {"op":"patch_caption_line","cue_id":"c9","size_px":60}
+"move the line 'see you tomorrow' to the top" -> {"op":"patch_caption_line","cue_id":"<its id>","position_y_frac":0.2}
+"put all captions at the bottom" -> {"op":"patch_caption_line","all":true,"position_y_frac":0.82}

@@ -4,21 +4,21 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 
 ## Headline
 
-- **Requirements met: 72%** (83/116; partial 7, unmet 26), over every recorded thread and the per-action set.
+- **Requirements met: 73%** (88/121; partial 7, unmet 26), over every recorded thread and the per-action set.
 - **Replies that overclaimed: 14** (a requirement was missed and the reply never said so: where the requirement names claim terms, the reply names one; otherwise the turn applied ops and the reply has no 'not done' marker. A turn that applied nothing claims nothing).
-- **Turn time: p50 10.2s, p95 28.2s** over 80 recorded copilot calls (wall time of the live model call, retries included; planner routing, queueing and render are not in it).
+- **Turn time: p50 10.9s, p95 28.2s** over 85 recorded copilot calls (wall time of the live model call, retries included; planner routing, queueing and render are not in it).
 
 | Set | Threads | Requirements | Met | Partial | Unmet | Met share | Overclaims |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Conversation threads | 31 | 77 | 52 | 7 | 18 | 68% | 13 |
-| Per-action set | 39 | 39 | 31 | 0 | 8 | 79% | 1 |
+| Per-action set | 44 | 44 | 36 | 0 | 8 | 82% | 1 |
 
-Threads measured from recordings: 70. Threads awaiting recordings (not in the KPI): 0.
+Threads measured from recordings: 75. Threads awaiting recordings (not in the KPI): 0.
 
 ## Provenance
 
 - Recorded model: gemini-3.1-pro-preview.
-- Prompt version of the recordings: 2026-11-11-v122, 2026-11-13-v125.
+- Prompt version of the recordings: 2026-11-11-v122, 2026-11-13-v125, 2026-11-13-v126.
 - Measured path: `EditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops` (`runner.replay_v1_copilot`). The planner's routing in front of the copilot and the repair retry behind it are not in this path, and nothing was rendered.
 - Snapshots are built by the real `build_editor_snapshot` over a synthetic phone (`render_destination: device`) variant, with the clip facts the chat path hands the copilot. Footage is synthetic (invented places only).
 
@@ -40,7 +40,7 @@ Threads measured from recordings: 70. Threads awaiting recordings (not in the KP
 | readability | 2 | 1 | 0 | 1 | 50% | 1 |
 | restructure | 3 | 1 | 0 | 2 | 33% | 0 |
 | style | 9 | 7 | 0 | 2 | 78% | 0 |
-| action_parity | 39 | 31 | 0 | 8 | 79% | 1 |
+| action_parity | 44 | 36 | 0 | 8 | 82% | 1 |
 
 ## Per-action set (one plain request per `agent_ops` parity group, phone snapshot)
 
@@ -51,6 +51,7 @@ Threads measured from recordings: 70. Threads awaiting recordings (not in the KP
 | action_background_focus | Center the recording behind me and zoom in a little. | reaches | ['set_background_focus'] | met | parser accepted ['set_background_focus'] |
 | action_camera_effects | Add a camera pulse at 3 seconds. | blocked at parse | no op | unmet | blocked on the phone (add_camera_effect: I can't change that on this edit yet.); model emitted no op |
 | action_caption_animation | Make the captions pop in. | reaches | ['set_caption_meta'] | met | parser accepted ['set_caption_meta'] |
+| action_caption_style_scope | Make the second caption bigger. | reaches | ['patch_caption_line'] | met | parser accepted ['patch_caption_line'] |
 | action_captions | Change the second caption to say 'then we ran the whole harbour'. | reaches | ['edit_caption'] | met | parser accepted ['edit_caption'] |
 | action_carousel | Add a photo carousel in the middle of the video. | blocked at parse | no op | unmet | blocked on the phone (set_carousel_moment: I can't change that on this edit yet.); model emitted no op |
 | action_clip_add_remove | Remove the third clip. | reaches | ['remove_clip'] | met | parser accepted ['remove_clip'] |
@@ -66,14 +67,17 @@ Threads measured from recordings: 70. Threads awaiting recordings (not in the KP
 | action_clip_tilt | Tilt the second clip ten degrees to the right. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
 | action_clip_transition | Add a crossfade between the first and second clip. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
 | action_clip_trim_and_move | Cut the first clip down to 2 seconds. | reaches | ['set_clip_duration'] | met | parser accepted ['set_clip_duration'] |
+| action_creator_song | Make my song quieter. | reaches | ['set_user_song'] | met | parser accepted ['set_user_song'] |
 | action_generated_overlay_approval | Put the picture you made on top from 2 to 4 seconds. | reaches | ['add_overlay'] | met | parser accepted ['add_overlay'] |
 | action_history | Undo that. | blocked at parse | no op | unmet | blocked on the phone (undo_last_edit: I can't change that on this edit yet.); model emitted no op |
+| action_layer_order | Put the second photo in front of the first one. | reaches | ['set_layer_order'] | met | parser accepted ['set_layer_order'] |
 | action_media_overlays | Make the photo on top bigger. | reaches | ['patch_overlay'] | met | parser accepted ['patch_overlay'] |
 | action_music | Lower the music volume. | reaches | ['set_mix'] | met | parser accepted ['set_mix'] |
 | action_music_swap | Swap the music for something calmer. | blocked at parse | no op | unmet | blocked on the phone (swap_music: operation values are invalid); model emitted no op |
 | action_sound_effects | Add a whoosh at 2 seconds. | reaches | ['add_sfx'] | met | parser accepted ['add_sfx'] |
 | action_speaker_background | Put the beach photo behind me. | reaches | ['set_background'] | met | parser accepted ['set_background'] |
 | action_speaker_frame_by_hand | Move me to the small bottom left corner. | reaches | ['set_speaker_frame'] | met | parser accepted ['set_speaker_frame'] |
+| action_speaker_full_opening | Start with the background behind me, no full-screen intro. | reaches | ['remove_full_screen_opening'] | met | parser accepted ['remove_full_screen_opening'] |
 | action_split_screen_clip_offset | Start the bottom clip of the split screen one second later. | reaches | ['assign_split_panel'] | met | parser accepted ['assign_split_panel'] |
 | action_split_screen_clip_order | In the split screen, play the second clip of the top panel first. | reaches | ['move_split_clip'] | met | parser accepted ['move_split_clip'] |
 | action_split_screen_create | Put the first two clips side by side on one screen. | reaches | ['create_split_screen'] | met | parser accepted ['create_split_screen'] |
@@ -86,6 +90,7 @@ Threads measured from recordings: 70. Threads awaiting recordings (not in the KP
 | action_text_authoring | Change the title to 'Sunday harbour run'. | reaches | ['rewrite_text'] | met | parser accepted ['rewrite_text'] |
 | action_text_look | Make the title bigger and yellow. | reaches | ['patch_text'] | met | parser accepted ['patch_text'] |
 | action_text_timing | Keep the title on screen for the first four seconds. | reaches | ['set_text_timing'] | met | parser accepted ['set_text_timing'] |
+| action_video_shape | Don't crop my landscape clips, I want to see the whole frame. | reaches | ['set_video_shape'] | met | parser accepted ['set_video_shape'] |
 | action_visual_blocks_and_motion | Add a motion title card at the start. | blocked at parse | no op | unmet | blocked on the phone (add_motion_block: I can't change that on this edit yet.); model emitted no op |
 
 ## east_run (prod_capture)
