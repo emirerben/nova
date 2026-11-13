@@ -76,6 +76,18 @@
         "line": 623,
         "tr": "başlık"
       }
+    ],
+    "{count} clips": [
+      {
+        "file": "app/pipeline/phone_plan_degrade.py",
+        "line": 262,
+        "tr": "{count} klibi"
+      },
+      {
+        "file": "app/services/kria_editor_ops_diff.py",
+        "line": 777,
+        "tr": "{count} {noun_tr}"
+      }
     ]
   }
 }

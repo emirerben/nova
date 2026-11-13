@@ -23,7 +23,8 @@ Repairs (all deterministic, all noted):
                                                     a readable size or a size the creator chose
 
 A reject no repair fixes and that names one row the phone cannot draw (a look, a zoom, a
-transition after the last clip) degrades that row instead (``phone_plan_degrade``, KRI-1376).
+transition after the last clip, a text animation) degrades that row instead
+(``phone_plan_degrade``, KRI-1376).
 
 NOT repaired: a transition whose outgoing source is genuinely too short (a
 hole in the timeline). No plan-level edit can conjure footage; the reject keeps
@@ -63,8 +64,9 @@ _REPAIR_EFFECT = "fade-in"
 
 # At most one repair pass per reject kind, bounded so a stubborn plan cannot loop.
 _MAX_REPAIR_PASSES = 3
-# One bad row degraded per pass (`phone_plan_degrade`); more than this and the plan refuses.
-_MAX_DEGRADE_PASSES = 3
+# Degrades for at most this many distinct reject reasons (`phone_plan_degrade`), each row once
+# per reason: a look every clip carries degrades clip by clip, a fourth kind of reject refuses.
+_MAX_DEGRADE_REASONS = 3
 
 
 class PhoneProposalRejected(ValueError):
@@ -76,6 +78,8 @@ class RepairedCompile(NamedTuple):
     notes: list[str]
     # The plan actually compiled: the input object itself when nothing was repaired.
     plan: Any
+    # The rows degraded or shrunk; the worker records them once it keeps this compile.
+    recoveries: tuple[phone_plan_degrade.Recovery, ...] = ()
 
 
 def _repair_sequence_effects(plan) -> tuple[Any, list[str]]:  # noqa: ANN001
@@ -479,12 +483,15 @@ def _place_added_contract_text(plan, element):  # noqa: ANN001
     )
 
 
-def _shrunk_notes(before, after) -> list[str]:  # noqa: ANN001
+def _shrunk_notes(before, after, recoveries: list | None) -> list[str]:  # noqa: ANN001
     if after.size_px == before.size_px:
         return []
-    phone_plan_degrade.record_recovery(
-        reason="contract_text_fit", lane="text", item_id=after.id, action="shrunk"
-    )
+    if recoveries is not None:
+        recoveries.append(
+            phone_plan_degrade.Recovery(
+                reason="contract_text_fit", lane="text", item_id=after.id, action="shrunk"
+            )
+        )
     return [
         say(
             en="Made your text {text} smaller so it fits clearly next to the other text",
@@ -494,8 +501,12 @@ def _shrunk_notes(before, after) -> list[str]:  # noqa: ANN001
     ]
 
 
-def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tuple[Any, list[str]]:  # noqa: ANN001
+def repair_plan_for_contract(  # noqa: ANN001
+    plan, contract, *, frame_s: float = 1 / 30, recoveries: list | None = None
+) -> tuple[Any, list[str]]:
     """Put every confirmed exact text the plan lost back on screen; ``(plan, notes)``.
+
+    ``recoveries``, when given, gets one ``phone_plan_degrade.Recovery`` per text shrunk to fit.
 
     Slots, in the contract's own words: an ``opening`` text becomes the title (retexted,
     or added at 0 s); a ``closing`` text is added over the last seconds; a ``clip`` text
@@ -621,7 +632,7 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             )
             texts.append(_place_added_contract_text(current, element))
             notes.append(f"Added your text {_quoted(literal)} on screen")
-            notes.extend(_shrunk_notes(element, texts[-1]))
+            notes.extend(_shrunk_notes(element, texts[-1], recoveries))
         current = current.model_copy(update={"text_elements": texts})
     for done, element_id in enumerate(placed):
         index = next(i for i, e in enumerate(texts) if e.id == element_id)
@@ -631,7 +642,7 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
         texts[index] = _place_added_contract_text(
             current.model_copy(update={"text_elements": others}), before
         )
-        notes.extend(_shrunk_notes(before, texts[index]))
+        notes.extend(_shrunk_notes(before, texts[index], recoveries))
     current = current.model_copy(update={"text_elements": list(texts)})
     linked = _link_clip_texts(current, contract, frame_s)
     if not notes and linked is current:
@@ -682,20 +693,32 @@ def compile_phone_guided_repaired(  # noqa: ANN001
     go to ``compile_phone_guided_plan`` verbatim. A reject no repair fixes may degrade the
     one row it names (``phone_plan_degrade``). Raises the compile / validation error
     unchanged when neither helps, or when the passes run out.
+
+    Every pass either raises or tries a reject it has not tried before; repairs are capped
+    at ``_MAX_REPAIR_PASSES`` and degrades at ``_MAX_DEGRADE_REASONS`` reasons times the
+    plan's rows, so a stubborn plan always ends in its typed error.
     """
     allow_editor_media = bool(kwargs.get("allow_editor_media", False))
-    current, contract_notes = repair_plan_for_contract(plan, contract)
+    shrunk: list[phone_plan_degrade.Recovery] = []
+    current, contract_notes = repair_plan_for_contract(plan, contract, recoveries=shrunk)
     if contract_notes:
         log.info("phone_plan_contract_repaired", notes=contract_notes)
     notes: list[str] = list(contract_notes)
     attempted: set[str] = set()
-    degraded = 0
+    repairs = 0
+    degraded: list[phone_plan_degrade.Recovery] = []
     while True:
         try:
             # Looked up on the module at call time so a patched compiler is honoured.
             recipe = phone_guided_plan.compile_phone_guided_plan(current, bindings, **kwargs)
             validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
-            return RepairedCompile(recipe, notes, current)
+            degrade_notes = phone_plan_degrade.degrade_notes(degraded)
+            return RepairedCompile(
+                recipe,
+                [*notes, *(note for note in degrade_notes if note not in notes)],
+                current,
+                (*shrunk, *degraded),
+            )
         except (UnsupportedPhonePlan, ValueError) as exc:
             # Keyed on the reject's payload, not just its type: a second pass may
             # legitimately hit the same exception class for a different cause.
@@ -708,18 +731,26 @@ def compile_phone_guided_repaired(  # noqa: ANN001
                     sorted(getattr(exc, "effects", ())),
                 )
             )
-            if kind in attempted or len(attempted) >= _MAX_REPAIR_PASSES + _MAX_DEGRADE_PASSES:
+            if kind in attempted:
                 raise
             attempted.add(kind)
-            repaired, repair_notes = repair_plan_for_phone(current, exc)
-            if not repair_notes and degraded < _MAX_DEGRADE_PASSES:
-                repaired, repair_notes = phone_plan_degrade.degrade_plan_for_phone(current, exc)
-                degraded += bool(repair_notes)
-            if not repair_notes:
+            if repairs < _MAX_REPAIR_PASSES:
+                repaired, repair_notes = repair_plan_for_phone(current, exc)
+                if repair_notes:
+                    repairs += 1
+                    log.info("phone_plan_repaired", error=str(exc), notes=repair_notes)
+                    current = repaired
+                    notes.extend(note for note in repair_notes if note not in notes)
+                    continue
+            reasons = {recovery.reason for recovery in degraded}
+            if getattr(exc, "reason", None) not in reasons and len(reasons) >= _MAX_DEGRADE_REASONS:
                 raise
-            log.info("phone_plan_repaired", error=str(exc), notes=repair_notes)
+            repaired, recoveries = phone_plan_degrade.degrade_plan_for_phone(current, exc)
+            if not recoveries:
+                raise
+            log.info("phone_plan_degraded", error=str(exc), recoveries=recoveries)
             current = repaired
-            notes.extend(note for note in repair_notes if note not in notes)
+            degraded.extend(recoveries)
 
 
 def compile_phone_guided_with_repairs(plan, bindings, **kwargs: Any) -> tuple[Any, list[str]]:  # noqa: ANN001

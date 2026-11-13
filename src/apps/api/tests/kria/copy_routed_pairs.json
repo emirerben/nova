@@ -1985,6 +1985,111 @@
    "app/kria/brief_checks.py",
    "One stays on for {longest:.0f} s, but you asked for a change about every {cadence:g} s: it stays while you're still talking about it and nothing else can come up yet. Add more for faster changes.",
    "Biri {longest:.0f} sn ekranda kalıyor ama yaklaşık {cadence:g} saniyede bir değişmesini istedin: sen ondan bahsederken ekranda kalıyor ve henüz başka bir şey gösterilemiyor. Daha hızlı değişmesi için daha fazlasını ekle."
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Ended your video on a cut instead of a transition",
+   "Videonu geçiş yerine düz bir kesmeyle bitirdim"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed the text {text} with a simple fade-in: your iPhone can't play its animation yet",
+   "{text} yazısını basit bir belirmeyle gösterdim: iPhone'un animasyonunu henüz oynatamıyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed {count} texts with a simple fade-in: your iPhone can't play their animations yet",
+   "{count} yazıyı basit bir belirmeyle gösterdim: iPhone'un animasyonlarını henüz oynatamıyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed {which} without {lost}: your iPhone can't draw that yet",
+   "{which} {lost} olmadan gösterdim: iPhone'un bunu henüz çizemiyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "card layout",
+   "kart yerleşimi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "clip {n}",
+   "{n}. klibi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "clips {n}",
+   "{n}. klipleri"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "color adjustments",
+   "renk ayarları"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "crop",
+   "kırpma"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "freeze effect",
+   "donma efekti"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "its {parts}",
+   "{parts}"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "look",
+   "görünüm"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "photo {n}",
+   "{n}. fotoğrafı"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "photos {n}",
+   "{n}. fotoğrafları"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "speed change",
+   "hız değişikliği"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "their {parts}",
+   "{parts}"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "zoom",
+   "yakınlaştırma"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{count} clips",
+   "{count} klibi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{count} photos",
+   "{count} fotoğrafı"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{rest} and {last}",
+   "{rest} ve {last}"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Made your text {text} smaller so it fits clearly next to the other text",
+   "{text} yazını diğer yazıların yanına net sığsın diye küçülttüm"
   ]
  ],
  "retired": [

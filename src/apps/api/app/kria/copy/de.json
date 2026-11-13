@@ -2064,6 +2064,25 @@
     "“{title}”": "„{title}“",
     "“{title}” by {artist}": "„{title}“ von {artist}",
     "…and {n} more": "…und {n} weitere",
-    "…and {n} more done": "…und {n} weitere erledigt"
+    "…and {n} more done": "…und {n} weitere erledigt",
+    "Ended your video on a cut instead of a transition": "Dein Video endet mit einem harten Schnitt statt mit einem Übergang",
+    "Made your text {text} smaller so it fits clearly next to the other text": "Dein Text {text} ist jetzt kleiner, damit er gut lesbar neben den anderen Texten passt",
+    "Showed the text {text} with a simple fade-in: your iPhone can't play its animation yet": "Der Text {text} wird einfach eingeblendet: Dein iPhone kann seine Animation noch nicht abspielen",
+    "Showed {count} texts with a simple fade-in: your iPhone can't play their animations yet": "{count} Texte werden einfach eingeblendet: Dein iPhone kann ihre Animationen noch nicht abspielen",
+    "Showed {which} without {lost}: your iPhone can't draw that yet": "{which} ohne {lost} gezeigt: Dein iPhone kann das noch nicht darstellen",
+    "card layout": "Kartenlayout",
+    "clip {n}": "Clip {n}",
+    "clips {n}": "Clips {n}",
+    "color adjustments": "Farbanpassungen",
+    "crop": "Zuschnitt",
+    "freeze effect": "Standbild-Effekt",
+    "its {parts}": "{parts}",
+    "photo {n}": "Foto {n}",
+    "photos {n}": "Fotos {n}",
+    "speed change": "Tempoänderung",
+    "their {parts}": "{parts}",
+    "zoom": "Zoom",
+    "{count} photos": "{count} Fotos",
+    "{rest} and {last}": "{rest} und {last}"
   }
 }
