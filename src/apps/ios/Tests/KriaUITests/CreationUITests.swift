@@ -2472,10 +2472,26 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the keyboard is open")
         keepScreenshot(app, "First-prompt chips at the end of the transcript, keyboard open")
 
-        let transcript = app.scrollViews["Conversation history"].exists ? app.scrollViews["Conversation history"] : app.scrollViews.firstMatch
-        for _ in 0..<6 where chip.exists && chip.isHittable { transcript.swipeDown() }
-        XCTAssertTrue(eventually { !(chip.exists && chip.isHittable) }, "scrolling the transcript up carries the chips off screen")
-        XCTAssertTrue(app.keyboards.firstMatch.exists || app.textFields["Message Kria"].exists)
+        // The transcript is not a scroll view to XCUITest (it is a labelled container), and the first scroll view
+        // in the tree is the keyboard's suggestion bar. Drag the page itself, inside the strip the creator sees
+        // between the header and the composer, so the drag never reaches the keyboard and dismisses it.
+        let transcript = app.otherElements["Conversation history"].firstMatch
+        XCTAssertTrue(transcript.exists, "the transcript is on screen")
+        let headerBottom = app.buttons["Open projects"].frame.maxY
+        func chipsAreOnThePage() -> Bool {
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'suggestion-chip-'")).allElementsBoundByIndex
+                .contains { $0.frame.minY < composer.frame.minY && $0.frame.maxY > headerBottom }
+        }
+        XCTAssertTrue(chipsAreOnThePage(), "the chips start on the page, above the composer")
+        for _ in 0..<6 where chipsAreOnThePage() {
+            let origin = transcript.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: transcript.frame.width / 2, dy: headerBottom + 24 - transcript.frame.minY))
+            let end = origin.withOffset(CGVector(dx: transcript.frame.width / 2, dy: composer.frame.minY - 12 - transcript.frame.minY))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        XCTAssertTrue(eventually { !chipsAreOnThePage() }, "scrolling the transcript up carries the chips off the page")
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the keyboard stays open")
+        XCTAssertTrue(app.buttons["chat-jump-to-latest"].waitForExistence(timeout: 5), "the reader left the end of the transcript, where the chips are")
         keepScreenshot(app, "Transcript scrolled up, chips gone, keyboard open")
     }
 
