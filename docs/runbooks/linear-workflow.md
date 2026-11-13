@@ -58,7 +58,13 @@ In Progress on start, In Review when the PR opens, Done when the PR merges into 
 
 ## Fix chains: the second-fix-PR rule
 
-Trigger: a KRI ticket's **second `fix` PR has merged** (counted by `fix`-prefixed commit subjects naming the ticket on `main`). `scripts/preship-check.sh` step 8 warns (never blocks) when the branch's ticket already has two or more.
+Trigger: a KRI ticket's **second `fix` PR has merged**. `scripts/preship-check.sh` step 8 and the `Fix chain` CI check (`.github/workflows/fix-chain.yml`, both running `scripts/ci/fix-chain-check.py`) **block** a third `fix` PR on that ticket until the list below exists.
+
+How it counts:
+
+- Only merged PRs on `main` whose title starts with `fix` (`fix:`, `fix(scope):`, `hotfix`). `feat`, `test`, `chore`, `docs` and release-metadata PRs never count.
+- A fix is charged to the **first** KRI id in its squash subject. A subject with no id is charged to the first id in its PR title or head branch name (PR index from `gh`). A child fix that names its parent second does not count against the parent.
+- The PR being checked is a fix when its title starts with `fix` (locally: when a commit on the branch does, or `PR_TITLE=...` is set). The ticket comes from the PR title, else the branch name.
 
 Before a **third** fix PR on that ticket, write a failure-mode list in the ticket or the PR body. One line per way the feature can still fail, each either:
 
@@ -73,9 +79,19 @@ Failure modes for KRI-<n> (after fix #2)
 - <shape / input / state> -> <expected outcome> | uncovered - adding <test id>
 ```
 
+The gate accepts the block in the PR body, or in a `docs/` or `plans/` `.md` file changed by the PR. It needs the exact `Failure modes for KRI-<n>` heading for this ticket, at least two rows in the shape above, and no `<placeholder>` text left. The gate checks the shape, not whether the named test exists: reviewers read the rows.
+
+Not a repeat of the same fault (umbrella ticket, unrelated typo)? Put one line in the PR body:
+
+```
+[skip-fix-chain] <one-line reason, at least 20 characters and 4 distinct words>
+```
+
+The marker must be on its own line in the PR body (not a commit message), short or placeholder reasons are rejected, and CI prints the reason in the job summary with a warning so the reviewer sees it. Using it to dodge the list on a real repeat is the failure this rule exists to stop; the reviewer rejects it.
+
 Why: KRI-736 (editor Save) took five fix PRs in one day because each fix covered only the case that had just broken. A listed matrix, with new cases added as rows rather than new files, is the model (KRI-750). If the list cannot be written, the fix is not understood yet: stop and investigate before the third PR.
 
-Watch item: the next ticket that hits two fix PRs should show this list in its third PR; if it does not, the rule is not working and gets tightened.
+History: the list was a warning (KRI-751) and was written in 4 of 13 cases; KRI-1383 made it blocking.
 
 ## Weekly review (`/roadmap review`)
 
