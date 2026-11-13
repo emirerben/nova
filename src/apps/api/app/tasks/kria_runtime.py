@@ -127,6 +127,7 @@ from app.kria.route_disclosure import (
     with_route_declines,
 )
 from app.kria.select_asks import exclusion_facts, only_video_ask
+from app.kria.turn_outcome import classify_response_turn, stamp_outcome
 from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
@@ -186,6 +187,7 @@ from app.services.creation_thread_titles import (
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.creator_label_reply import LabelTextReply, label_text_reply
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
+from app.services.job_failure_reasons import DEFAULT_JOB_FAILURE_REASON, JOB_FAILURE_REASONS
 from app.services.kria_editor_ops import (
     EditorStateReplyError,
     EditorStateSpeechCutError,
@@ -784,6 +786,7 @@ def _complete_response_turn(
     pinned_refusal: dict[str, Any] | None = None,
     pinned_spend: dict[str, Any] | None = None,
 ) -> _Completion:
+    plan = classify_response_turn(plan, brief_coverage, pinned_refusal)
     if pinned_spend is not None:
         plan = plan.model_copy(
             update={"diagnostics": {**(plan.diagnostics or {}), "suggestion_pin": pinned_spend}}
@@ -5648,7 +5651,12 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
                     )
                 except TextTimingConflict as exc:
-                    planned = replace(planned, plan=_text_timing_conflict_plan(exc))
+                    planned = replace(
+                        planned,
+                        plan=stamp_outcome(
+                            _text_timing_conflict_plan(exc), "refused", "text_timing_conflict"
+                        ),
+                    )
                     completion = _complete_response_turn(
                         identifier,
                         lease_owner=lease_owner,
@@ -5663,11 +5671,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     log.info("kria_editor_state_refused", turn_id=turn_id, reply=exc.reply)
                     planned = replace(
                         planned,
-                        plan=KriaTurnPlan(
-                            mode="respond",
-                            turn_value="recovery",
-                            # KRI-520: the two constants are English; the planner maps them.
-                            response=localized_editor_state_reply(exc.reply),
+                        plan=stamp_outcome(
+                            KriaTurnPlan(
+                                mode="respond",
+                                turn_value="recovery",
+                                # KRI-520: the two constants are English; the planner maps them.
+                                response=localized_editor_state_reply(exc.reply),
+                            ),
+                            "refused",
+                            "editor_state_refused",
                         ),
                     )
                     completion = _complete_response_turn(
@@ -5701,6 +5713,10 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                             ),
                         ),
                     )
+                    planned = replace(
+                        planned,
+                        plan=stamp_outcome(planned.plan, "refused", "editor_op_unsupported"),
+                    )
                     completion = _complete_response_turn(
                         identifier,
                         lease_owner=lease_owner,
@@ -5728,6 +5744,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                                 ),
                             ),
                         ),
+                    )
+                    planned = replace(
+                        planned, plan=stamp_outcome(planned.plan, "refused", "request_too_long")
                     )
                     completion = _complete_response_turn(
                         identifier,
@@ -8744,110 +8763,12 @@ def _approved_generation_requirements_review(
     ]
 
 
-# KRI-520: Turkish copy for the Job failure sentences a render-failed event shows. The
-# English table lives in `content_plan_build.JOB_FAILURE_MESSAGES`; a test pins that every
-# code there has a Turkish line here, so the two cannot drift apart.
+# KRI-520: Turkish copy for the Job failure sentences a render-failed event shows. Both
+# languages come from `job_failure_reasons.JOB_FAILURE_REASONS`, so a code cannot have one only.
 _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
-    "creation_text_failed": (
-        "Onayladığın yazıyı koruyarak metni hazırlayamadım. "
-        "Taslağın ve çekimlerin kayıtlı. Bu videoyu yeniden oluşturmayı dene."
-    ),
-    "user_song_plan_declined": (
-        "Çekimlerini şarkınla hizalayamadım. Şarkı yüksek sesle çalarken çekim yap ya da "
-        "sözleri net söyleyerek eşlik et, sonra tekrar dene."
-    ),
-    "silent_audio_declined": (
-        "Videonda hiç ses yok, bu yüzden altyazı ekleyecek ya da kesecek bir şey bulamadım. "
-        "Tekrar çek ve mikrofonun kapalı olmadığından emin ol."
-    ),
-    "phone_plan_unsupported": (
-        "Bu düzenleme iPhone'unun henüz oluşturamadığı bir şey içeriyor. Farklı bir klip ya da "
-        "formatla yeni bir düzenleme başlat."
-    ),
-    "phone_capability_unavailable": (
-        "Bu düzenleme için gereken bir iPhone oluşturma özelliği şu anda kapalı. Düzenlemen ve "
-        "çekimlerin kayıtlı. Daha sonra tekrar dene ya da farklı bir stil iste."
-    ),
-    "ai_quota_exhausted": (
-        "Kria'nın yapay zekâ hizmeti şimdilik kullanım sınırına ulaştı, bu yüzden videon "
-        "oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Hemen tekrar denemek işe yaramaz; "
-        "daha sonra tekrar dene."
-    ),
-    "creation_text_timeout": (
-        "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden "
-        "uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Tekrar "
-        "dene; yine olursa daha az klip kullan ya da daha az yazı iste."
-    ),
-    "plan_ai_timeout": (
-        "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. "
-        "Düzenlemen ve çekimlerin kayıtlı. Birazdan tekrar dene."
-    ),
-    "phone_plan_failed": (
-        "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. "
-        "Düzenlemen ve çekimlerin kayıtlı. Tekrar dene ya da bir değişiklik iste."
-    ),
-    "prepared_execution_stale": (
-        "Onayladığın bir şey bu düzenleme oluşturulmadan önce değişti, bu yüzden videoyu "
-        "yapmadım. Kria'dan düzenlemeyi yeniden hazırlamasını iste."
-    ),
-    "prepared_execution_unsupported": (
-        "Bu düzenleme, onu oluşturan sürümden daha yeni bir Kria sürümüyle hazırlandı. "
-        "Kria'dan yeniden hazırlamasını iste."
-    ),
-    "originals_not_uploaded": (
-        "Kliplerinin yalnızca önizleme kopyaları yüklü (orijinaller iPhone'unda duruyor), bu "
-        "yüzden bu düzenleme iPhone'unda yapılmalı. Düzenlemen kayıtlı. Projeyi klipler olan "
-        "iPhone'da aç ve Kria'dan videoyu yeniden yapmasını iste."
-    ),
-    "processing_timeout": (
-        "İşlem zaman aşımına uğradı; kliplerin çok ağır (muhtemelen 4K/HDR). Daha az ya da "
-        "daha kısa klip dene."
-    ),
-    "speech_cleanup_failed": (
-        "Sesi temizleme tamamlanmadı. Tekrar dene ya da konuşma temizlemeyi kapat."
-    ),
-    "no_labeled_tracks": (
-        "Bu düzenleme için uygun müzik bulunamadı. Tekrar dene ya da müziği kendin seç."
-    ),
-    "matching_failed": "Çekimlerini müzikle eşleştirme tamamlanmadı. Tekrar dene.",
-    "auto_music_disabled": "Otomatik müzik eşleştirme şu anda kapalı. Daha sonra tekrar dene.",
-    "cloud_render_disabled": (
-        "Bu proje yalnızca sunucularımızda oluşturulabiliyor ve sunucuda oluşturma şu anda "
-        "kapalı, bu yüzden bu sürüm yapılmadı. Bu kliplerle iPhone'unda yeni bir düzenleme "
-        "başlatarak videoyu orada yap."
-    ),
-    "dispatch_publish_failed": "Video sıraya iletilemedi. Bir kez daha dene.",
-    "drive_import_failed": "Drive'dan içe aktarma tamamlanmadı. Tekrar dene.",
-    "drive_import_dispatch_failed": "Drive'dan içe aktarma tamamlanmadı. Tekrar dene.",
-    "upload_promotion_failed": "Yüklemen kaydedilemedi. Tekrar dene.",
-    "skia_disabled": (
-        "Bu düzenleme şu anda geçici olarak kapalı bir oluşturucuya ihtiyaç duyuyor. Daha "
-        "sonra tekrar dene."
-    ),
-    "cancelled_by_admin": "Bu video iptal edildi.",
-    "render_oom": (
-        "Video hazırlanırken bellek yetmedi; kliplerin çok ağır. Daha az ya da daha kısa klip dene."
-    ),
-    "ffmpeg_failed": "Videon birleştirilirken bir şeyler ters gitti. Tekrar dene.",
-    "gemini_analysis_failed": "Çekimlerinin analizi tamamlanmadı. Tekrar dene.",
-    "analysis_failed": "Çekimlerinin analizi tamamlanmadı. Tekrar dene.",
-    "copy_generation_failed": "Videonun paylaşım metnini yazma tamamlanmadı. Tekrar dene.",
-    "output_upload_failed": "Hazır videon kaydedilemedi. Tekrar dene.",
-    "user_clip_download_failed": "Kliplerinden biri indirilemedi. Yeniden ekle ve tekrar dene.",
-    "user_clip_unusable": (
-        "Kliplerinden biri kullanılamadı (bozuk ya da desteklenmiyor olabilir). Farklı bir "
-        "klip dene."
-    ),
-    "template_misconfigured": "Bu şablonda bir yapılandırma sorunu var. Farklı bir tane dene.",
-    "template_assets_missing": (
-        "Bu şablonun ihtiyaç duyduğu dosyalar eksik. Farklı bir tane dene."
-    ),
-    "artifact_eligibility_revoked": "Bu dışa aktarma artık kullanılamıyor.",
-    "eligibility_changed_during_export": "Dışa aktarma sırasında bir şey değişti. Tekrar dene.",
+    code: reason.tr for code, reason in JOB_FAILURE_REASONS.items()
 }
-_JOB_FAILURE_DEFAULT_TR = (
-    "Bir şeyler ters gitti ve bu video tamamlanmadı. Yönün ve çekimlerin hâlâ kayıtlı; tekrar dene."
-)
+_JOB_FAILURE_DEFAULT_TR = DEFAULT_JOB_FAILURE_REASON.tr
 
 
 # KRI-673: the failed card's headline, sent with the event so the client never has to

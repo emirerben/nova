@@ -141,6 +141,7 @@ from app.kria.strategy_policy import (
     transcript_labels_dropped_notice,
 )
 from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
+from app.kria.turn_outcome import refusal_diagnostics
 from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
@@ -4988,22 +4989,17 @@ async def _plan_creator_action(
                 )
         if isinstance(checked, RefusedStrategy):
             log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
-            return PlannedKriaTurn(
-                plan=KriaTurnPlan(
-                    mode="respond",
-                    turn_value="question",
-                    response=checked.question,
-                    # KRI-759: a "simpler version?" needs buttons, or a "yes" is only a new
-                    # message that replans into the same refusal.
-                    choice_question=(
-                        simpler_version_question(checked.fields)
-                        if checked.code == SIMPLER_VERSION_REASON
-                        and settings.kria_choice_questions_enabled
-                        else None
-                    ),
+            return _refused_turn(
+                manifest,
+                checked,
+                # KRI-759: a "simpler version?" needs buttons, or a "yes" is only a new
+                # message that replans into the same refusal.
+                choice_question=(
+                    simpler_version_question(checked.fields)
+                    if checked.code == SIMPLER_VERSION_REASON
+                    and settings.kria_choice_questions_enabled
+                    else None
                 ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
             )
         song_caption_text = "\n".join(
             text
@@ -5022,13 +5018,7 @@ async def _plan_creator_action(
             )
             if need_song is not None:
                 log.info("kria_strategy_refused", thread_id=str(thread_id), code=need_song.code)
-                return PlannedKriaTurn(
-                    plan=KriaTurnPlan(
-                        mode="respond", turn_value="question", response=need_song.question
-                    ),
-                    manifest_hash=manifest.manifest_hash,
-                    context_hash=manifest.context_hash,
-                )
+                return _refused_turn(manifest, need_song)
         policy_notices = checked.notices
         for omitted_field in checked.omitted_fields:
             value = getattr(action.strategy, omitted_field)
@@ -5069,13 +5059,7 @@ async def _plan_creator_action(
             # lip-sync edit needs (no hero shape, no source-audio plan) apply.
             kept = check_strategy_for_runtime_v2(manifest, gate.strategy)
             if isinstance(kept, RefusedStrategy):
-                return PlannedKriaTurn(
-                    plan=KriaTurnPlan(
-                        mode="respond", turn_value="question", response=kept.question
-                    ),
-                    manifest_hash=manifest.manifest_hash,
-                    context_hash=manifest.context_hash,
-                )
+                return _refused_turn(manifest, kept)
             extra = [n for n in kept.notices if n not in policy_notices]
             action = action.model_copy(
                 update={
@@ -5857,6 +5841,28 @@ def _request_recovery(
             "reason": reason,
             **({"cause": cause} if cause else {}),
         },
+    )
+
+
+def _refused_turn(
+    manifest: ResolvedCreatorManifest,
+    refused: RefusedStrategy,
+    *,
+    choice_question: Any = None,
+) -> PlannedKriaTurn:
+    """The reply for a strategy the server check refused, with its reason code recorded on the
+    turn (KRI-1382): a refusal completes as an ordinary assistant message, so without the code
+    the turn row says nothing about why nothing was made."""
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=refused.question,
+            choice_question=choice_question,
+            diagnostics=refusal_diagnostics(refused.code),
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
     )
 
 

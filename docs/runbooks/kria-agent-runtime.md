@@ -67,6 +67,29 @@ nudge it. The minute sweep (`reconcile_kria_turns`) is the fallback. A card that
 lands about a minute after the worker's terminal log line means the nudge was
 lost: search the logs for `kria_observe_nudge_failed`.
 
+## Creation health and refusal codes (KRI-1382)
+
+`GET /admin/kria/creation-health?days=N` (page: `/admin/creation-health`) returns, per UTC
+day, attempts, successes, success rate and the top failure reasons for chat turns and for
+render Jobs. The response carries `definitions`: what counts as an attempt (superseded and
+cancelled turns and cancelled jobs are not attempts, a creator's retry is a new attempt, a
+client resend or worker retry is not) and a success. Turns and renders are separate stages
+and are never added together. Logic: `app/services/creation_health.py`.
+
+A refusal ("I can't make this yet", a strategy the check refused, "I couldn't turn that into a
+plan") completes as an assistant message, so the turn row has no `error`. Its reason is on
+`plan_json.diagnostics.outcome` as `{"kind": refused|blocked|recovery, "code": ...}`
+(`app/kria/turn_outcome.py`). Every response-only turn ends in `_complete_response_turn`, which
+stamps a code from what the caller passed (`brief_coverage` stage and reason, a pinned refusal,
+a `recovery` plan). A reply path that stamps nothing shows as `unclassified_recovery`, never as
+a success. The code is deliberately not written to `turn.error`: a completed turn with an
+`error` is read as broken by `media_collection_stories`.
+
+The sentence a failed render shows lives once, in `app/services/job_failure_reasons.py`
+(`JOB_FAILURE_REASONS`, English and Turkish). `JOB_FAILURE_MESSAGES` and
+`_JOB_FAILURE_MESSAGES_TR` are projections of it, and the health page labels render reasons from
+it. Add a render failure code there, in both languages.
+
 ## Retry an approved edit (KRI-674)
 
 For a failed runtime-v2 native export, the iPhone sends
