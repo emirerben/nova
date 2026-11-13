@@ -768,11 +768,9 @@ struct NativeEditorView: View {
                             }
                         }
                         // KRI-253: the panel follows a drag past its smallest
-                        // size and springs back when the drag ends.
+                        // size and springs back when the drag ends (the spring lives in
+                        // NativeEditorPanelResizeDrag so it can continue at the release speed).
                         .offset(y: NativeEditorPanelDismissRule.offset(forPull: panelDismissPull))
-                        .animation(panelDismissPull == 0 && !shouldReduceMotion
-                                   ? .spring(response: 0.34, dampingFraction: 0.88) : nil,
-                                   value: panelDismissPull == 0)
                     }
                 }
                 .padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
