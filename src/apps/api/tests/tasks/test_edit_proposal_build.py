@@ -3936,12 +3936,15 @@ def test_semantic_planning_failure_keeps_its_retryability(monkeypatch) -> None:
 # --- KRI-286: phone destinations dry-run the phone compiler at planning time ---
 
 
-def _phone_draft(monkeypatch, validator, *, phone: bool, db: _Db | None = None):
+def _phone_draft(
+    monkeypatch, validator, *, phone: bool, db: _Db | None = None, request: str = ""
+):
     """Run one auto-approved draft with the phone dry-run stubbed to ``validator``."""
 
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()
     item = _prod_item(item_id, approval_mode="auto")
+    item.edit_proposal["brief"]["creator_request"] = request
     db = db or _Db(_Result(rows=[]))
 
     @contextmanager
@@ -4016,6 +4019,32 @@ def test_phone_dry_run_notes_follow_the_chat_language(monkeypatch) -> None:
 
     assert persisted.last_approved.snapshot.adjustments == [
         "1. klibi görünüm olmadan gösterdim: iPhone'un bunu henüz çizemiyor"
+    ]
+
+
+def test_a_text_ask_the_composer_could_not_finish_is_named_on_the_approval_card(
+    monkeypatch,
+) -> None:
+    """KRI-1376: the draft is offered with the part the text pass could not do, not failed."""
+    from app.agents.edit_copilot import EditCopilotOutput
+
+    monkeypatch.setattr(
+        "app.services.creation_text_composition.CreationTextComposer.run",
+        lambda *_a, **_kw: EditCopilotOutput(
+            intent="clarify",
+            confidence=0.4,
+            reply="Which text should go?",
+            needs_clarification=True,
+        ),
+    )
+
+    persisted = _phone_draft(
+        monkeypatch, lambda *_a: [], phone=True, request="Make it without these"
+    )
+
+    assert persisted.status == "approved"
+    assert persisted.last_approved.snapshot.adjustments == [
+        "I couldn't do every part of your text request, so the video shows the parts I could"
     ]
 
 

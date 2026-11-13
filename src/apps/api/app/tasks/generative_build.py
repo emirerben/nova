@@ -7555,10 +7555,13 @@ def _run_phone_unified_montage_job(
         if isinstance(all_candidates.get("brief"), dict)
         else ""
     )
+    # KRI-1376: what the text pass of the plan that renders left out, said with the video.
+    text_drops: list = []
 
     text_requirements = brief.live() if brief is not None else None
 
     def compose(candidate: Any) -> Any:
+        text_drops.clear()
         try:
             return compose_creation_text(
                 candidate.snapshot,
@@ -7568,6 +7571,7 @@ def _run_phone_unified_montage_job(
                 text_requirements=text_requirements,
                 # KRI-881: sourced wording the creator approved, replayed without a new search.
                 prepared_research=_approved_research(snapshot),
+                drops=text_drops,
             )
         except CreationTextClarification as asked:
             # KRI-1456: the composer asked the creator something. When the plan already draws
@@ -7645,6 +7649,22 @@ def _run_phone_unified_montage_job(
                 *record.get("repair_notes", []),
                 _text_shown_as_planned_note(),
             ]
+    if text_drops:
+        from app.services.creation_text_degrade import text_drop_notes  # noqa: PLC0415
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        for drop in text_drops:
+            record_pipeline_event(
+                "montage",
+                "requirement_recovery",
+                {**drop.event(), "stage": "compose", "generation_id": generation},
+            )
+        with _worker_reply_language(snapshot):
+            notes = text_drop_notes(text_drops)
+        record["repair_notes"] = [
+            *record.get("repair_notes", []),
+            *(note for note in notes if note not in record.get("repair_notes", [])),
+        ]
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
     # (byte-identical record) when nothing was collapsed.
     record.update(montage_record_fields(duplicate_aliases))
