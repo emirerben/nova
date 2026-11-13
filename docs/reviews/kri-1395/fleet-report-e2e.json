@@ -1,0 +1,622 @@
+{
+  "head_sha": "4de082201f1d54afd8def10372550fffd61dc8ca",
+  "command": "PYTHONPATH=. .venv/bin/python ../../../docs/reviews/kri-1395/scripts/fleet_report_e2e.py",
+  "checks": [
+    {
+      "check": "correction landed through the fake provider",
+      "ok": true,
+      "detail": [
+        {
+          "text": "fix the text",
+          "start_s": 0.0,
+          "end_s": 1.0
+        }
+      ]
+    },
+    {
+      "check": "a 503 degrades to the uncorrected cues, render not failed",
+      "ok": true,
+      "detail": [
+        {
+          "text": "fix teh text",
+          "start_s": 0.0,
+          "end_s": 1.0
+        }
+      ]
+    },
+    {
+      "check": "a 429 degrades to the uncorrected cues",
+      "ok": true,
+      "detail": [
+        {
+          "text": "fix teh text",
+          "start_s": 0.0,
+          "end_s": 1.0
+        }
+      ]
+    },
+    {
+      "check": "a refused reservation never reaches the provider and the render continues",
+      "ok": true,
+      "detail": {
+        "provider_requests": 0
+      }
+    },
+    {
+      "check": "one settled correction row at provider usage",
+      "ok": true,
+      "detail": [
+        {
+          "feature": "caption_correction",
+          "status": "settled",
+          "requested_model": "gpt-4o",
+          "resolved_model": "gpt-4o-2024-08-06",
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": 0.0045,
+          "attributed": true
+        }
+      ]
+    },
+    {
+      "check": "the 503 left unknown liability",
+      "ok": true,
+      "detail": [
+        {
+          "feature": "caption_correction",
+          "status": "settled",
+          "requested_model": "gpt-4o",
+          "resolved_model": "gpt-4o-2024-08-06",
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": 0.0045,
+          "attributed": true
+        },
+        {
+          "feature": "caption_correction",
+          "status": "unknown",
+          "requested_model": "gpt-4o",
+          "resolved_model": null,
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": null,
+          "attributed": true
+        },
+        {
+          "feature": "caption_correction",
+          "status": "released",
+          "requested_model": "gpt-4o",
+          "resolved_model": null,
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": null,
+          "attributed": true
+        },
+        {
+          "feature": "caption_translation",
+          "status": "settled",
+          "requested_model": "gpt-4o",
+          "resolved_model": "gpt-4o-2024-08-06",
+          "estimated_cost_usd": 0.02669,
+          "settled_cost_usd": 0.0045,
+          "attributed": true
+        },
+        {
+          "feature": "lyrics_whisper",
+          "status": "settled",
+          "requested_model": "whisper-1",
+          "resolved_model": "whisper-1",
+          "estimated_cost_usd": 0.0003,
+          "settled_cost_usd": 0.0125,
+          "attributed": false
+        }
+      ]
+    },
+    {
+      "check": "the 429 was released",
+      "ok": true,
+      "detail": [
+        {
+          "feature": "caption_correction",
+          "status": "settled",
+          "requested_model": "gpt-4o",
+          "resolved_model": "gpt-4o-2024-08-06",
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": 0.0045,
+          "attributed": true
+        },
+        {
+          "feature": "caption_correction",
+          "status": "unknown",
+          "requested_model": "gpt-4o",
+          "resolved_model": null,
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": null,
+          "attributed": true
+        },
+        {
+          "feature": "caption_correction",
+          "status": "released",
+          "requested_model": "gpt-4o",
+          "resolved_model": null,
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": null,
+          "attributed": true
+        },
+        {
+          "feature": "caption_translation",
+          "status": "settled",
+          "requested_model": "gpt-4o",
+          "resolved_model": "gpt-4o-2024-08-06",
+          "estimated_cost_usd": 0.02669,
+          "settled_cost_usd": 0.0045,
+          "attributed": true
+        },
+        {
+          "feature": "lyrics_whisper",
+          "status": "settled",
+          "requested_model": "whisper-1",
+          "resolved_model": "whisper-1",
+          "estimated_cost_usd": 0.0003,
+          "settled_cost_usd": 0.0125,
+          "attributed": false
+        }
+      ]
+    },
+    {
+      "check": "translation reserved and settled",
+      "ok": true,
+      "detail": [
+        {
+          "feature": "caption_correction",
+          "status": "settled",
+          "requested_model": "gpt-4o",
+          "resolved_model": "gpt-4o-2024-08-06",
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": 0.0045,
+          "attributed": true
+        },
+        {
+          "feature": "caption_correction",
+          "status": "unknown",
+          "requested_model": "gpt-4o",
+          "resolved_model": null,
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": null,
+          "attributed": true
+        },
+        {
+          "feature": "caption_correction",
+          "status": "released",
+          "requested_model": "gpt-4o",
+          "resolved_model": null,
+          "estimated_cost_usd": 0.042204,
+          "settled_cost_usd": null,
+          "attributed": true
+        },
+        {
+          "feature": "caption_translation",
+          "status": "settled",
+          "requested_model": "gpt-4o",
+          "resolved_model": "gpt-4o-2024-08-06",
+          "estimated_cost_usd": 0.02669,
+          "settled_cost_usd": 0.0045,
+          "attributed": true
+        },
+        {
+          "feature": "lyrics_whisper",
+          "status": "settled",
+          "requested_model": "whisper-1",
+          "resolved_model": "whisper-1",
+          "estimated_cost_usd": 0.0003,
+          "settled_cost_usd": 0.0125,
+          "attributed": false
+        }
+      ]
+    },
+    {
+      "check": "whisper booked 125 s at $0.006/min",
+      "ok": true,
+      "detail": [
+        {
+          "feature": "lyrics_whisper",
+          "status": "settled",
+          "requested_model": "whisper-1",
+          "resolved_model": "whisper-1",
+          "estimated_cost_usd": 0.0003,
+          "settled_cost_usd": 0.0125,
+          "attributed": false
+        }
+      ]
+    },
+    {
+      "check": "the report endpoint answers 200",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "check": "report ledger: correction 3 reservations, 1 settled, 1 released, 1 unknown",
+      "ok": true,
+      "detail": {
+        "provider": "openai",
+        "feature": "caption_correction",
+        "reservations": 3,
+        "settled": 1,
+        "released": 1,
+        "unknown": 1,
+        "settled_cost_usd": 0.0045,
+        "unsettled_estimate_usd": 0.042204
+      }
+    },
+    {
+      "check": "report ledger: whisper cost",
+      "ok": true,
+      "detail": {
+        "provider": "openai",
+        "feature": "lyrics_whisper",
+        "reservations": 1,
+        "settled": 1,
+        "released": 0,
+        "unknown": 0,
+        "settled_cost_usd": 0.0125,
+        "unsettled_estimate_usd": 0.0
+      }
+    },
+    {
+      "check": "report counts the owner-less run",
+      "ok": true,
+      "detail": {
+        "total": 1,
+        "by_agent": {
+          "e2e.unowned.be0ef662": 1
+        }
+      }
+    },
+    {
+      "check": "report agent row for the owner-less run",
+      "ok": true,
+      "detail": {
+        "agent_name": "e2e.unowned.be0ef662",
+        "model": "gemini-e2e",
+        "calls": 1,
+        "settled_cost_usd": 0.25,
+        "latency_p50_ms": 40.0,
+        "latency_p95_ms": 40.0,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 1
+        }
+      }
+    }
+  ],
+  "ledger_rows": [
+    {
+      "feature": "caption_correction",
+      "status": "settled",
+      "requested_model": "gpt-4o",
+      "resolved_model": "gpt-4o-2024-08-06",
+      "estimated_cost_usd": 0.042204,
+      "settled_cost_usd": 0.0045,
+      "attributed": true
+    },
+    {
+      "feature": "caption_correction",
+      "status": "unknown",
+      "requested_model": "gpt-4o",
+      "resolved_model": null,
+      "estimated_cost_usd": 0.042204,
+      "settled_cost_usd": null,
+      "attributed": true
+    },
+    {
+      "feature": "caption_correction",
+      "status": "released",
+      "requested_model": "gpt-4o",
+      "resolved_model": null,
+      "estimated_cost_usd": 0.042204,
+      "settled_cost_usd": null,
+      "attributed": true
+    },
+    {
+      "feature": "caption_translation",
+      "status": "settled",
+      "requested_model": "gpt-4o",
+      "resolved_model": "gpt-4o-2024-08-06",
+      "estimated_cost_usd": 0.02669,
+      "settled_cost_usd": 0.0045,
+      "attributed": true
+    },
+    {
+      "feature": "lyrics_whisper",
+      "status": "settled",
+      "requested_model": "whisper-1",
+      "resolved_model": "whisper-1",
+      "estimated_cost_usd": 0.0003,
+      "settled_cost_usd": 0.0125,
+      "attributed": false
+    }
+  ],
+  "report": {
+    "days": 14,
+    "environment": null,
+    "retention_days": 30,
+    "window_exceeds_retention": false,
+    "success_outcomes": [
+      "ok",
+      "ok_fallback"
+    ],
+    "agents": [
+      {
+        "agent_name": "nova.kria.intent_review",
+        "model": "gpt-6.1-sol",
+        "calls": 178,
+        "settled_cost_usd": 4.122796,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.0,
+        "failed_calls": 25,
+        "failed_share": 0.1404,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 153,
+          "terminal_schema": 10,
+          "terminal_transient": 15
+        }
+      },
+      {
+        "agent_name": "e2e.unowned.be0ef662",
+        "model": "gemini-e2e",
+        "calls": 1,
+        "settled_cost_usd": 0.25,
+        "latency_p50_ms": 40.0,
+        "latency_p95_ms": 40.0,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 1
+        }
+      },
+      {
+        "agent_name": "nova.creator.main",
+        "model": "gemini-3.1-pro-preview",
+        "calls": 266,
+        "settled_cost_usd": 0.00156,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 2.0,
+        "failed_calls": 2,
+        "failed_share": 0.0075,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 264,
+          "terminal_unknown": 2
+        }
+      },
+      {
+        "agent_name": "nova.audio.music_matcher",
+        "model": "gemini-2.5-flash",
+        "calls": 3,
+        "settled_cost_usd": 0.000159,
+        "latency_p50_ms": 2.0,
+        "latency_p95_ms": 3.8,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 3
+        }
+      },
+      {
+        "agent_name": "nova.chat.suggestion_agent",
+        "model": "gpt-6.1-sol",
+        "calls": 2846,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.0,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 2846
+        }
+      },
+      {
+        "agent_name": "nova.research.public_facts",
+        "model": "gemini-2.5-flash",
+        "calls": 69,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.0,
+        "failed_calls": 6,
+        "failed_share": 0.087,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 63,
+          "terminal_schema": 4,
+          "terminal_unknown": 2
+        }
+      },
+      {
+        "agent_name": "nova.research.caption_binding",
+        "model": "gemini-3.1-pro-preview",
+        "calls": 66,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 1.0,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 66
+        }
+      },
+      {
+        "agent_name": "nova.research.claim_review",
+        "model": "gemini-3.1-pro-preview",
+        "calls": 66,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.0,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 66
+        }
+      },
+      {
+        "agent_name": "nova.plan.clip_intent_planner",
+        "model": "gemini-2.5-flash",
+        "calls": 47,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.0,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 47
+        }
+      },
+      {
+        "agent_name": "nova.voiceover.script_writer",
+        "model": "gemini-2.5-flash",
+        "calls": 11,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.0,
+        "failed_calls": 2,
+        "failed_share": 0.1818,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 9,
+          "terminal_refusal": 1,
+          "terminal_unknown": 1
+        }
+      },
+      {
+        "agent_name": "nova.creator.brief_extractor",
+        "model": "gemini-3.6-flash",
+        "calls": 8,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.0,
+        "failed_calls": 4,
+        "failed_share": 0.5,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 4,
+          "terminal_provider_quota": 2,
+          "terminal_unknown": 2
+        }
+      },
+      {
+        "agent_name": "nova.plan.clip_request_resolver",
+        "model": "gemini-2.5-flash",
+        "calls": 6,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.7,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 6
+        }
+      },
+      {
+        "agent_name": "nova.compose.platform_copy",
+        "model": "gemini-2.5-flash",
+        "calls": 4,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.0,
+        "latency_p95_ms": 0.8,
+        "failed_calls": 3,
+        "failed_share": 0.75,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 1,
+          "terminal_unknown": 3
+        }
+      },
+      {
+        "agent_name": "nova.edit.copilot",
+        "model": "gemini-3.1-pro-preview",
+        "calls": 2,
+        "settled_cost_usd": 0.0,
+        "latency_p50_ms": 0.5,
+        "latency_p95_ms": 0.9,
+        "failed_calls": 0,
+        "failed_share": 0.0,
+        "fallback_calls": 0,
+        "fallback_share": 0.0,
+        "outcomes": {
+          "ok": 2
+        }
+      }
+    ],
+    "unowned_runs": {
+      "total": 1,
+      "by_agent": {
+        "e2e.unowned.be0ef662": 1
+      }
+    },
+    "chat_turns": {
+      "scope": "training-eligible creators only: receipts are written only for them",
+      "total": 0,
+      "applied": 0,
+      "clarification": 0,
+      "unsupported": 0,
+      "failed": 0,
+      "other": 0,
+      "by_proposal_outcome": {},
+      "by_model": []
+    },
+    "ledger": [
+      {
+        "provider": "openai",
+        "feature": "lyrics_whisper",
+        "reservations": 1,
+        "settled": 1,
+        "released": 0,
+        "unknown": 0,
+        "settled_cost_usd": 0.0125,
+        "unsettled_estimate_usd": 0.0
+      },
+      {
+        "provider": "openai",
+        "feature": "caption_correction",
+        "reservations": 3,
+        "settled": 1,
+        "released": 1,
+        "unknown": 1,
+        "settled_cost_usd": 0.0045,
+        "unsettled_estimate_usd": 0.042204
+      },
+      {
+        "provider": "openai",
+        "feature": "caption_translation",
+        "reservations": 1,
+        "settled": 1,
+        "released": 0,
+        "unknown": 0,
+        "settled_cost_usd": 0.0045,
+        "unsettled_estimate_usd": 0.0
+      }
+    ],
+    "ledger_settled_by_provider": {
+      "openai": 0.0215
+    }
+  }
+}
