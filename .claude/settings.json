@@ -1,4 +1,7 @@
 {
+  "permissions": {
+    "deny": ["Read(./src/apps/web/src/**)"]
+  },
   "hooks": {
     "SessionStart": [
       {
