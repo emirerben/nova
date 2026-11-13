@@ -64,10 +64,23 @@ jobs:
           (temp / "title.txt").write_text(pr["title"])
           (temp / "branch.txt").write_text(pr["head"]["ref"])
           PYTHON
-          if ! gh pr list --state merged --base main --limit 1000 \
-              --json number,title,headRefName > "$RUNNER_TEMP/index.json"; then
-            echo "::warning::Merged PR index unavailable; counting squash subjects only."
-            echo "[]" > "$RUNNER_TEMP/index.json"
+          # The step runs outside any git checkout, so gh must be told the repo.
+          limit=5000
+          fetched=0
+          for attempt in 1 2 3; do
+            if gh pr list --repo "$GITHUB_REPOSITORY" --state merged --base main --limit "$limit" \
+                --json number,title,headRefName > "$RUNNER_TEMP/index.json"; then
+              fetched=1
+              break
+            fi
+            sleep "${FIX_CHAIN_RETRY_SLEEP:-5}"
+          done
+          if [ "$fetched" != 1 ]; then
+            echo "::error::Could not fetch the merged-PR index; fix PRs without a KRI id in the squash title cannot be counted. Re-run the check."
+            exit 1
+          fi
+          if [ "$(python3 -c 'import json,os,sys; print(len(json.load(open(os.environ["RUNNER_TEMP"] + "/index.json"))))')" -ge "$limit" ]; then
+            echo "::warning::Merged-PR index reached its $limit-PR limit; older fix PRs may not be counted by branch or title."
           fi
           args=(--repo .fix-chain-diff --main-ref "$BASE_SHA" --head "$HEAD_SHA"
             --branch "$(cat "$RUNNER_TEMP/branch.txt")" --title "$(cat "$RUNNER_TEMP/title.txt")"

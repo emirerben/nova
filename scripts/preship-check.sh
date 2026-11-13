@@ -200,9 +200,11 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 PR_INDEX_FILE=""
 if command -v gh >/dev/null 2>&1; then
   PR_INDEX_FILE="$(mktemp)"
-  if ! gh pr list --state merged --base main --limit 1000 \
+  if ! gh pr list --state merged --base main --limit 5000 \
       --json number,title,headRefName > "$PR_INDEX_FILE" 2>/dev/null; then
     rm -f "$PR_INDEX_FILE"; PR_INDEX_FILE=""
+  elif [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$PR_INDEX_FILE")" -ge 5000 ]; then
+    warn "merged-PR index hit its 5000-PR limit - older fix PRs may not be counted"
   fi
 fi
 [ -n "$PR_INDEX_FILE" ] || warn "gh unavailable - fix PRs without a KRI id in the squash title are not counted locally (CI counts them)"

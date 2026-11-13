@@ -66,7 +66,7 @@ How it counts:
 - A fix is charged to the **first** KRI id in its squash subject. A subject with no id is charged to the first id in its PR title or head branch name (PR index from `gh`). A child fix that names its parent second does not count against the parent.
 - The PR being checked is a fix when its title starts with `fix` (locally: when a commit on the branch does, or `PR_TITLE=...` is set). The ticket comes from the PR title, else the branch name.
 
-Before a **third** fix PR on that ticket, write a failure-mode list in the ticket or the PR body. One line per way the feature can still fail, each either:
+Before a **third** fix PR on that ticket, write a failure-mode list in the PR body (or a changed `docs/` or `plans/` `.md` file); the ticket may keep a copy, but the gate does not read it. One line per way the feature can still fail, each either:
 
 - names the test that already covers it, or
 - is marked `uncovered - adding test X` (and X lands in the same PR).

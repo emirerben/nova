@@ -16,6 +16,10 @@ wrong:
 - skip marker: needs its own line and a real reason; inline or short or
   placeholder reasons do not pass
 - CRLF bodies from the GitHub web UI
+- an id glued to letters ("kri-29ekim", Turkish for 29 October) is not a ticket
+- the PR under check is gated on one ticket (title, else branch), the same one
+  it is charged to once merged: a child-titled fix on a parent-named branch is
+  gated by the child, not the parent's chain
 """
 
 import json
@@ -124,6 +128,26 @@ class FixChainTests(unittest.TestCase):
         self.main_commit("fix: a (KRI-123) (#401)")
         self.main_commit("fix: b (KRI-1234) (#402)")
         self.assertEqual(self.run_check(title="fix: c (KRI-12)")[0], 0)
+
+    def test_id_glued_to_letters_is_not_a_ticket(self):
+        self.main_commit("fix: a (#501)")
+        self.main_commit("fix: b (#502)")
+        index = [
+            {"number": 501, "title": "fix: a", "headRefName": "codex/kri-29ekim-live2-pr"},
+            {"number": 502, "title": "fix: b", "headRefName": "codex/kri-29ekim-live3-pr"},
+        ]
+        code, out = self.run_check(title="fix: c", branch="codex/kri-29ekim-live4", index=index)
+        self.assertEqual(code, 0, out)
+        self.assertIn("no KRI", out)
+        self.assertEqual(self.run_check(title="fix: c (KRI-29)", index=index)[0], 0)
+
+    def test_child_title_on_parent_branch_is_gated_by_the_child(self):
+        self.main_commit("fix: a (KRI-736) (#601)")
+        self.main_commit("fix: b (KRI-736) (#602)")
+        code, out = self.run_check(title="fix: child thing (KRI-9999)", branch="codex/kri-736-child")
+        self.assertEqual(code, 0, out)
+        self.assertIn("KRI-9999", out)
+        self.assertNotIn("KRI-736", out)
 
     def test_current_pr_excluded_from_its_own_count(self):
         self.two_fixes()

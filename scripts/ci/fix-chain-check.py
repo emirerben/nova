@@ -22,7 +22,7 @@ import sys
 
 THRESHOLD = 2
 SKIP_MARKER = "[skip-fix-chain]"
-TICKET_RE = re.compile(r"(?<![A-Za-z0-9])kri-(\d+)", re.IGNORECASE)
+TICKET_RE = re.compile(r"(?<![A-Za-z0-9])kri-(\d+)(?![A-Za-z0-9])", re.IGNORECASE)
 FIX_RE = re.compile(r"^\s*(?:hot)?fix(?:\(|:|!|\s|$)", re.IGNORECASE)
 PR_RE = re.compile(r"\(#(\d+)\)\s*$")
 HEADING_RE = re.compile(
@@ -180,10 +180,14 @@ def main(argv):
 
     subjects = [] if args.title else branch_fix_subjects(args.repo, args.main_ref, args.head)
     current_is_fix = is_fix(args.title) if args.title else any(is_fix(s) for s in subjects)
-    tickets = sorted(
-        {t for t in (first_ticket(args.title), first_ticket(args.branch)) if t}
-        or {t for t in (first_ticket(s) for s in subjects) if t}
+    # Same rule as prior_fixes: one ticket per PR, so a child fix is never gated
+    # by the parent it names second, and is later charged to the ticket it was gated on.
+    ticket = (
+        first_ticket(args.title)
+        or first_ticket(args.branch)
+        or next((t for t in (first_ticket(s) for s in subjects) if t), None)
     )
+    tickets = [ticket] if ticket else []
     if not tickets:
         print("fix-chain: no KRI-<n> in title or branch - skipped")
         return 0
@@ -215,11 +219,11 @@ def main(argv):
         status = 1
         print(f"fix-chain: BLOCKED - {label}.")
         print(f"  {problem}")
-        print(f"  Add to the PR body (or a changed docs/ or plans/ .md file):")
+        print("  Add to the PR body (or a changed docs/ or plans/ .md file):")
         print(f"    Failure modes for {ticket} (after fix #{count})")
         print("    - <shape / input / state> -> <expected outcome> | covered by <test id>")
         print("    - <shape / input / state> -> <expected outcome> | uncovered - adding <test id>")
-        print(f"  Or, if this is not a repeat of the same fault, add its own line:")
+        print("  Or, if this is not a repeat of the same fault, add its own line:")
         print(f"    {SKIP_MARKER} <one-line reason, at least {MIN_REASON_CHARS} characters>")
         print("  Rule: docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule")
     return status
