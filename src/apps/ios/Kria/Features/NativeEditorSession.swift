@@ -6416,6 +6416,20 @@ enum EditorOpenIntent { case warm, open }
         return false
     }
 
+    private func placedSourceRaw(_ placement: PendingEditorSourcePlacement, response: EditorSourceRegistrationResponse, duration: Double) -> [String: JSONValue] {
+        var raw = Self.placedSourceRaw(isPhoto: placement.target.sourceKind == .visual,
+                                       measured: sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05)
+        raw["editor_source_placement_id"] = .string(placement.id.uuidString)
+        return raw
+    }
+
+    /// A photo has no footage length to run out of, so it carries none; the compiler and the server both read that as unbounded.
+    private static func placedSourceRaw(isPhoto: Bool, measured: Double?) -> [String: JSONValue] {
+        var raw: [String: JSONValue] = ["media_kind": .string(isPhoto ? "image" : "video")]
+        if !isPhoto, let measured { raw["source_duration_s"] = .number(measured) }
+        return raw
+    }
+
     func placeEditorSource(_ placement: PendingEditorSourcePlacement, response: EditorSourceRegistrationResponse) async throws {
         guard editorImportsActive, mediaUploads?.containsEditorPlacement(placement.id) == true,
               response.status == "ready", document.revision.baseGeneration == placement.target.baseGeneration,
@@ -6470,10 +6484,7 @@ enum EditorOpenIntent { case warm, open }
             if let target = splitPanelPlacements[placement.id] {
                 guard let opening = document.splitPanelOpening(sectionID: target.sectionID, panel: target.panel, near: target.offset),
                       opening.end - opening.start >= minimumClipDuration else { throw APIError.conflict }
-                let slot = EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(duration, opening.end - opening.start), raw: [
-                    "source_duration_s": .number(sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05),
-                    "editor_source_placement_id": .string(placementID),
-                ])
+                let slot = EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(duration, opening.end - opening.start), raw: placedSourceRaw(placement, response: response, duration: duration))
                 transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: target.sectionID, panel: target.panel, offset: opening.start) }
                 guard document.clips.contains(where: { $0.id == placementID }) else { throw APIError.invalidResponse }
                 splitPanelPlacements[placement.id] = nil
@@ -6494,10 +6505,7 @@ enum EditorOpenIntent { case warm, open }
                 return
             }
             transactDocument(section: .timeline) {
-                $0.clips.append(EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(Self.addedClipDurationS, duration), raw: [
-                    "source_duration_s": .number(sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05),
-                    "editor_source_placement_id": .string(placementID),
-                ]))
+                $0.clips.append(EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(Self.addedClipDurationS, duration), raw: placedSourceRaw(placement, response: response, duration: duration)))
             }
             select(.init(kind: .clip, id: placementID))
             mediaUploads?.acknowledgeEditorPlacement(placement.id)
@@ -11563,10 +11571,9 @@ extension NativeEditorSession {
             return
         }
         splitScreenActionError = nil
-        var raw: [String: JSONValue] = ["media_kind": .string(traits.isPhoto ? "image" : "video")]
+        var raw = Self.placedSourceRaw(isPhoto: traits.isPhoto, measured: traits.measured)
         if let template = traits.template { for key in ["asset_id", "media_id"] { raw[key] = template.raw[key] } }
         if let source = resolvedSources?[clipIndex] { raw["media_id"] = .string(source.mediaID) }
-        if !traits.isPhoto, let measured = traits.measured { raw["source_duration_s"] = .number(measured) }
         let slot = EditorTimelineSlot(id: UUID().uuidString, clipIndex: clipIndex, inS: 0, durationS: length, raw: raw)
         transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: sectionID, panel: panel, offset: opening.start) }
         guard document.clips.contains(where: { $0.id == slot.id }) else { return }
