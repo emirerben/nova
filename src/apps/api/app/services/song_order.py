@@ -91,6 +91,12 @@ CLIP_SKIP_MESSAGE_TR = "Klip sorusunu boş bıraktım, o klipleri sen belirle."
 SONG_RANGE_ANSWER_MESSAGE_TR = "Şarkının hangi kısmını çektiğimi söyledim."
 
 
+# KRI-1294: the card's label is not a new instruction. Named omission consent is
+# folded from the choice payload and the server's card, never from an unresolved "these".
+SIMPLER_VERSION_ANSWER_MESSAGE = "I accepted the omissions listed on your simpler-version card."
+SIMPLER_VERSION_ANSWER_MESSAGE_TR = "Daha basit sürüm kartında belirtilen çıkarmaları onayladım."
+
+
 def _stand_in(language: str | None, *, en: str, tr: str, **values: object) -> str:
     """The neutral sentence in ``language``, or in the turn's bound language when None."""
     if language is None:
@@ -107,6 +113,17 @@ def model_text(payload: Any, content: Any, *, language: str | None = None) -> st
     """
 
     if isinstance(payload, Mapping):
+        choice = payload.get("choice_selection")
+        if (
+            isinstance(choice, Mapping)
+            and choice.get("question_id")
+            and choice.get("option_key") == "simpler_version"
+        ):
+            return _stand_in(
+                language,
+                en=SIMPLER_VERSION_ANSWER_MESSAGE,
+                tr=SIMPLER_VERSION_ANSWER_MESSAGE_TR,
+            )
         if isinstance(payload.get(SONG_ORDER_ANSWER_KEY), Mapping):
             return _stand_in(
                 language, en=SONG_ORDER_ANSWER_MESSAGE, tr=SONG_ORDER_ANSWER_MESSAGE_TR

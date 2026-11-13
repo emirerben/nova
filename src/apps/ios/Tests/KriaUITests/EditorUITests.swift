@@ -687,4 +687,110 @@ final class EditorUITests: XCTestCase {
                                  "at most one variant revalidation")
         app.terminate()
     }
+
+    /// The editor always shows the single latest version. An AI chat edit that shortens the cut and its title is staged
+    /// on the phone; before the creator saves it, the server renders the same edit on a newer generation with its
+    /// durations quantized to a 0.5 s grid, so the first Save answers `baseline_conflict`. The creator is never asked
+    /// to resolve that: the editor opens the latest version and the shortened edit is saved.
+    func testChatShortenThenRenderOpensLatestAndSaves() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-editor-chat-shorten", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30), "the chat offers Open editor")
+        open.tap()
+
+        let card = app.buttons["Use latest version"]
+        let title = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Text: SHORT LISBON TITLE")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 30), "the AI's shortened text is on the canvas")
+        XCTAssertFalse(card.exists, "opening the editor never asks the creator to resolve anything")
+
+        let save = app.buttons["native-editor-save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertEqual(save.label, "Save changes", "the staged AI edit is unsaved")
+        save.tap()
+
+        let banner = app.descendants(matching: .any)["native-editor-save-state"].firstMatch
+        let settled = NSPredicate(format: "exists == true AND label == %@", "Saved")
+        let outcome = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: save)], timeout: 20)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Chat shorten then render, after Save"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertFalse(card.exists, "a newer render of the same edit is adopted, not offered as a conflict")
+        XCTAssertEqual(outcome, .completed, "Save reaches the saved state; the control reads \(save.label), banner: \(banner.exists ? banner.label : "none")")
+        XCTAssertTrue(title.exists, "the shortened text is still shown on the latest version")
+        app.terminate()
+    }
+    private func launchChatShortenFixture(_ argument: String, counters: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", argument, "-perf-reset"]
+        var environment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        if counters { environment["KRIA_PERF_COUNTERS"] = "1" }
+        app.launchEnvironment = environment
+        app.launch()
+        return app
+    }
+
+    /// A variant that never went through the editor has only `render_finished_at`; that is its baseline, and the
+    /// AI's draft head is stamped with it. The editor must show the AI's edit, not drop it as stale.
+    func testDraftHeadBasedOnFinishedAtOpensTheAIEdit() {
+        let app = launchChatShortenFixture("-ui-testing-editor-chat-finished-at")
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30), "the chat offers Open editor")
+        open.tap()
+
+        let title = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Text: SHORT LISBON TITLE")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 30), "the AI's shortened text is on the canvas")
+        let save = app.buttons["native-editor-save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertEqual(save.label, "Save changes", "the staged AI edit is unsaved")
+        app.terminate()
+    }
+
+    /// A 409 that is not `baseline_conflict` says nothing about a newer version. The creator sees an ordinary save
+    /// failure, keeps every edit on screen, nothing reloads or resends, and Save stays available.
+    func testSaveRefusedWithTimelineStaleIsAnOrdinaryFailure() {
+        let app = launchChatShortenFixture("-ui-testing-editor-chat-stale-save", counters: true)
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30), "the chat offers Open editor")
+        open.tap()
+
+        let title = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Text: SHORT LISBON TITLE")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 30), "the AI's shortened text is on the canvas")
+        let save = app.buttons["native-editor-save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertEqual(save.label, "Save changes")
+        save.tap()
+
+        let banner = app.descendants(matching: .any)["native-editor-save-state"].firstMatch
+        XCTAssertTrue(banner.waitForExistence(timeout: 20), "the refused Save is reported; the Save control reads \(save.label)")
+        let failure = NSPredicate(format: "label CONTAINS %@", "Your edits are still here")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: failure, object: banner)], timeout: 10),
+                       .completed, "the failure uses the editor's rejected-save wording, got: \(banner.label)")
+        XCTAssertFalse(banner.label.contains("changed"), "a non-version conflict is not reported as a newer version: \(banner.label)")
+        XCTAssertFalse(app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Updated to the latest version")).firstMatch.exists,
+                       "no reload or converge notice")
+        XCTAssertTrue(title.exists, "the creator's edit is still on the canvas")
+        XCTAssertEqual(save.label, "Save changes", "Save stays available for a retry")
+        XCTAssertTrue(save.isEnabled)
+
+        let probe = app.staticTexts["perf-counters"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        let commits = probe.label.split(separator: "\n").filter { $0.hasPrefix("net POST /") && $0.contains("/editor-commit=") }
+        let sent = commits.compactMap { Int($0.split(separator: "=").last ?? "") }.reduce(0, +)
+        XCTAssertEqual(sent, 1, "the Save is sent once and never resent after a reload: \(commits)")
+        app.terminate()
+    }
 }

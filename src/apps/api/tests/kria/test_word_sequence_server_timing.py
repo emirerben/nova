@@ -171,7 +171,7 @@ def test_paired_sequences_the_composer_paces_alone_share_one_span(monkeypatch) -
     assert [r["text"] for r in english] == ENGLISH.split()
     assert local[0]["start_s"] == pytest.approx(english[0]["start_s"], abs=1 / 30)
     assert local[-1]["end_s"] == pytest.approx(english[-1]["end_s"], abs=1 / 30)
-    assert all(r["end_s"] - r["start_s"] >= 0.25 - 1e-3 for r in [*local, *english])
+    assert all(r["end_s"] - r["start_s"] >= 1 / 30 - 1e-3 for r in [*local, *english])
     assert compose_creation_text(composed, creator_request="same") == composed
 
 
@@ -190,10 +190,16 @@ def test_a_saved_server_timed_program_replays_without_the_composer(monkeypatch) 
     assert again == composed
 
 
-def test_words_that_cannot_fit_at_the_minimum_piece_time_fail_honestly(monkeypatch) -> None:
-    # 42 English words need at least 10.5 s at 0.25 s a piece; three short clips make 6 s.
-    with pytest.raises(CreationTextCompositionError, match="42 words one at a time needs at least"):
-        _compose(monkeypatch, _own_pace(), length_s=6, seconds=[2, 2, 2])
+def test_words_that_cannot_get_a_frame_each_fail_honestly() -> None:
+    from app.services.creation_text_composition import _ServerTimedSequence, _shared_span
+
+    words = ["word"] * 100
+    owned = [_ServerTimedSequence(bar_id="b", words=words, text=" ".join(words), position=None)]
+    with pytest.raises(
+        CreationTextCompositionError, match="100 words one at a time needs at least"
+    ):
+        _shared_span(owned, 3.0)
+    assert _shared_span(owned, 4.0) == (0.0, 4.0)
 
 
 def test_changed_approved_wording_is_still_rejected(monkeypatch) -> None:

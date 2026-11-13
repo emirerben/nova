@@ -41,6 +41,7 @@ from app.services.kria_editor_ops import (
     _slot_duration,
     is_caption_text_bar,
 )
+from app.services.sequence_pacing import MIN_TEXT_PIECE_S
 from app.text_fold import capitalize
 
 MAX_TEXT_CHARS = 500
@@ -722,7 +723,6 @@ _SEQUENCE_WEIGHT_PAD = 2
 _CUMULATIVE_BUILD_SHARE = 0.75
 # A piece on screen for less than this is a flicker, not a word. An op authored with `weight`
 # (the compose path) lengthens its window to honor it, up to the end of the video.
-_MIN_PIECE_S = 0.25
 # Window edges are rounded to the microsecond (`_sequence_edges`), so a piece sized to exactly
 # the floor can measure a microsecond short. Below the floor means short by more than that.
 _PIECE_TOLERANCE_S = 2e-6
@@ -837,11 +837,13 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     )
     if "weight" in op:
         smallest = min(w_end - w_start for w_start, w_end in windows)
-        if smallest < _MIN_PIECE_S - _PIECE_TOLERANCE_S:
+        if smallest < MIN_TEXT_PIECE_S - _PIECE_TOLERANCE_S:
             # Edges scale linearly with the window, so the end that gives every piece its
             # minimum is exact (rounded UP to the millisecond, so the re-rounded edges still
             # clear it); the video's length (and the next sibling text) is the ceiling.
-            wanted_end = start + math.ceil((end - start) * _MIN_PIECE_S / smallest * 1000) / 1000
+            wanted_end = (
+                start + math.ceil((end - start) * MIN_TEXT_PIECE_S / smallest * 1000) / 1000
+            )
             limit = _variant_total(state) or _number(state.variant.get("duration_s")) or 0.0
             if limit > 0.0:
                 # Never stretch into the next text that shares this one's role and place.
@@ -864,7 +866,7 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
             )
             if (
                 min(w_end - w_start for w_start, w_end in windows)
-                < _MIN_PIECE_S - _PIECE_TOLERANCE_S
+                < MIN_TEXT_PIECE_S - _PIECE_TOLERANCE_S
             ):
                 raise KriaEditorOpError(
                     f"Showing that text in {len(clean_segments)} pieces needs about "

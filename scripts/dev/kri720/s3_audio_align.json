@@ -1,45 +1,63 @@
 {
  "s3_clean": {
-  "words": 89,
+  "words": 84,
   "caption_words_not_paired_to_a_source_word": 0,
-  "clear_matches": 87,
-  "weak_or_silent": 2,
+  "clear_matches": 79,
+  "weak_or_silent": 5,
   "max_abs_lag_s": 0.0,
   "p95_abs_lag_s": 0.0,
   "over_0.1s": 0
  },
  "s3_clean_a_last": {
-  "words": 89,
+  "words": 84,
   "caption_words_not_paired_to_a_source_word": 0,
-  "clear_matches": 63,
-  "weak_or_silent": 26,
-  "max_abs_lag_s": 0.005,
-  "p95_abs_lag_s": 0.003,
+  "clear_matches": 79,
+  "weak_or_silent": 5,
+  "max_abs_lag_s": 0.0,
+  "p95_abs_lag_s": 0.0,
   "over_0.1s": 0
  },
  "single_clean": {
-  "words": 48,
+  "words": 43,
   "caption_words_not_paired_to_a_source_word": 0,
-  "clear_matches": 47,
+  "clear_matches": 42,
   "weak_or_silent": 1,
   "max_abs_lag_s": 0.0,
   "p95_abs_lag_s": 0.0,
   "over_0.1s": 0
  },
  "s3_uncut": {
-  "words": 94,
+  "words": 95,
   "caption_words_not_paired_to_a_source_word": 0,
-  "clear_matches": 92,
-  "weak_or_silent": 2,
-  "max_abs_lag_s": 0.58,
-  "p95_abs_lag_s": 0.479,
-  "over_0.1s": 57
+  "clear_matches": 90,
+  "weak_or_silent": 5,
+  "max_abs_lag_s": 0.0,
+  "p95_abs_lag_s": 0.0,
+  "over_0.1s": 0
+ },
+ "s3_named_line": {
+  "words": 78,
+  "caption_words_not_paired_to_a_source_word": 0,
+  "clear_matches": 73,
+  "weak_or_silent": 5,
+  "max_abs_lag_s": 0.0,
+  "p95_abs_lag_s": 0.0,
+  "over_0.1s": 0
+ },
+ "s3_named_line_tail": {
+  "words": 80,
+  "caption_words_not_paired_to_a_source_word": 0,
+  "clear_matches": 75,
+  "weak_or_silent": 5,
+  "max_abs_lag_s": 0.0,
+  "p95_abs_lag_s": 0.0,
+  "over_0.1s": 0
  },
  "control_a_last_captions_in_uncut_export": {
-  "words": 89,
+  "words": 84,
   "caption_words_not_paired_to_a_source_word": 0,
   "clear_matches": 0,
-  "weak_or_silent": 89,
+  "weak_or_silent": 84,
   "max_abs_lag_s": null,
   "p95_abs_lag_s": null,
   "over_0.1s": 0

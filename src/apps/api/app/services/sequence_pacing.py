@@ -4,7 +4,9 @@ from copy import deepcopy
 from math import fsum, isfinite
 from typing import Literal
 
-_MIN_DURATION_S = 0.25
+# A text piece may be as short as one output frame (30 fps): the least the video can show.
+# Every word-by-word floor imports this; do not restate it.
+MIN_TEXT_PIECE_S = 1 / 30
 
 
 class SequenceReadabilityError(ValueError):
@@ -35,7 +37,7 @@ def retime_sequence(
     """Return copied rows with new bounds and the last authored timing baseline.
 
     Positive gaps scale with the whole span by default. Word durations share the
-    remaining budget proportionally, with a 250 ms minimum for every word.
+    remaining budget proportionally, with a one-frame minimum for every word.
     Manual timing edits replace the whole baseline; our own projections retain it.
     """
     start = _number(start, "Sequence start")
@@ -123,7 +125,7 @@ def retime_sequence(
         allocated_gaps = [0.0] * len(rows)
     gap_budget = fsum(allocated_gaps)
     word_budget = span - gap_budget
-    minimum = len(rows) * _MIN_DURATION_S
+    minimum = len(rows) * MIN_TEXT_PIECE_S
     if word_budget < minimum - 1e-12:
         minimum_span = (
             minimum * (baseline_span / total_duration)
@@ -139,20 +141,20 @@ def retime_sequence(
         )
 
     word_budget = max(word_budget, minimum)
-    durations = [_MIN_DURATION_S] * len(rows)
+    durations = [MIN_TEXT_PIECE_S] * len(rows)
     active = list(range(len(rows)))
     remaining = word_budget
     while active:
         weight_sum = fsum(baseline[index][0] for index in active)
         shares = {index: remaining * (baseline[index][0] / weight_sum) for index in active}
-        clamped = [index for index in active if shares[index] < _MIN_DURATION_S]
+        clamped = [index for index in active if shares[index] < MIN_TEXT_PIECE_S]
         if not clamped:
             for index in active:
                 durations[index] = shares[index]
             break
         clamped_set = set(clamped)
         active = [index for index in active if index not in clamped_set]
-        remaining = word_budget - (len(rows) - len(active)) * _MIN_DURATION_S
+        remaining = word_budget - (len(rows) - len(active)) * MIN_TEXT_PIECE_S
 
     result = deepcopy(rows)
     cursor = start
@@ -168,7 +170,7 @@ def retime_sequence(
         params["sequence_timing"] = deepcopy(baseline[index][2])
 
     for index, row in enumerate(result):
-        if row["end_s"] - row["start_s"] < _MIN_DURATION_S - 0.000002 or (
+        if row["end_s"] - row["start_s"] < MIN_TEXT_PIECE_S - 0.000002 or (
             index and row["start_s"] < result[index - 1]["end_s"]
         ):
             raise ValueError(

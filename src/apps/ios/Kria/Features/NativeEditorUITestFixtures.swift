@@ -75,6 +75,9 @@ enum NativeEditorUITestFixtures {
         if arguments.contains("-ui-testing-editor-split-speaker") {
             return Fixture(shape: .speakerBackground, draft: splitSpeaker)
         }
+        if arguments.contains("-ui-testing-editor-split-multi") {
+            return Fixture(shape: .reorderClips, draft: splitScreenMulti)
+        }
         if arguments.contains("-ui-testing-editor-split-screen") {
             return Fixture(shape: .reorderClips, draft: splitScreenControls)
         }
@@ -782,6 +785,44 @@ enum NativeEditorUITestFixtures {
         catch { preconditionFailure("KRI-524 captured editor fixture is invalid: \(error)") }
     }()
 
+    /// Capabilities shared by every split fixture. `-ui-testing-editor-split-collapse` adds `split_collapse`, so new
+    /// sections shorten and lengthen with their longest panel; without it the section keeps the length it was given.
+    private static var splitCapabilities: JSONValue {
+        var capabilities: [String: JSONValue] = [
+            "timeline": .bool(true),
+            "split_screen": .object(["editable": .bool(true)]),
+            "original_audio": .object(["editable": .bool(true)]),
+            "clips": .object([
+                "audio": .object(["editable": .bool(true)]),
+                "source_crop": .object(["editable": .bool(true)]),
+                "playback_rate": .object(["editable": .bool(true)])
+            ])
+        ]
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-collapse") {
+            capabilities["split_collapse"] = .object(["editable": .bool(true)])
+        }
+        return .object(capabilities)
+    }
+
+    /// Four ordinary 3 s clips (12 s), each from a 20 s source: whole-video splits, extending a one-clip split to
+    /// the whole video, and cutting a split into full-screen halves all need more than two clips to be observable.
+    /// `-ui-testing-editor-split-short-source` shrinks every source to 3.6 s so a drag past the footage is reachable.
+    static let splitScreenMulti: EditorDraft = {
+        let source: Double = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-short-source") ? 3.6 : 20
+        // Ids 989...992 land on source indices 0...3, so the DEBUG source buttons read Clip 1...Clip 4.
+        let clips = [clip(989, start: 0, duration: 3, sourceDuration: source),
+                     clip(990, start: 3, duration: 3, sourceDuration: source),
+                     clip(991, start: 6, duration: 3, sourceDuration: source),
+                     clip(992, start: 9, duration: 3, sourceDuration: source)]
+        return draft(clips: clips, text: [], captions: false, music: false,
+                     sections: ["timeline_slots": slots(for: clips),
+                                "mix": .object(["original_level": .number(0.8), "music_level": .number(0.3)])], rootExtras: [
+                        "render_destination": .string("device"),
+                        "editor_timeline_mode": .string("authored"),
+                        "editor_capabilities": splitCapabilities
+                     ])
+    }()
+
     static let splitScreenControls: EditorDraft = {
         let clips = [clip(989, start: 0, duration: 4, sourceDuration: 20),
                      clip(990, start: 4, duration: 2, sourceDuration: 20)]
@@ -790,16 +831,7 @@ enum NativeEditorUITestFixtures {
                                 "mix": .object(["original_level": .number(0.8), "music_level": .number(0.3)])], rootExtras: [
                         "render_destination": .string("device"),
                         "editor_timeline_mode": .string("authored"),
-                        "editor_capabilities": .object([
-                            "timeline": .bool(true),
-                            "split_screen": .object(["editable": .bool(true)]),
-                            "original_audio": .object(["editable": .bool(true)]),
-                            "clips": .object([
-                                "audio": .object(["editable": .bool(true)]),
-                                "source_crop": .object(["editable": .bool(true)]),
-                                "playback_rate": .object(["editable": .bool(true)])
-                            ])
-                        ])
+                        "editor_capabilities": splitCapabilities
                      ])
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-global-layers") {
             let label = text(1299, content: "GLOBAL", x: 0.5, y: 0.2)

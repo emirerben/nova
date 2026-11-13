@@ -103,13 +103,17 @@ final class AttachmentFlowUITests: XCTestCase {
         XCTAssertTrue(narrated.waitForExistence(timeout: 10))
         if !narrated.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         narrated.tap()
-        // The footage stage's Upload opens Add media with the "Upload from" list over it; close the list to reach the steps.
-        let chooseVideos = app.buttons["choose-videos"]
-        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
-        chooseVideos.tap()
-        XCTAssertTrue(app.buttons["upload-source-photos"].waitForExistence(timeout: 5))
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
-        XCTAssertTrue(app.buttons["upload-source-photos"].waitForNonExistence(timeout: 5))
+        // With a clip attached the stage has no Upload row; the composer's + is the way in. Add voiceover opens
+        // Add media on the voiceover step, and one swipe back is the footage step.
+        let attach = app.buttons["chat-attach"]
+        XCTAssertTrue(attach.waitForExistence(timeout: 10))
+        attach.tap()
+        let voiceover = app.buttons["attach-voiceover"]
+        XCTAssertTrue(voiceover.waitForExistence(timeout: 5))
+        voiceover.tap()
+        let voiceoverStep = app.scrollViews["attachment-step-voiceover"]
+        XCTAssertTrue(voiceoverStep.waitForExistence(timeout: 10))
+        voiceoverStep.swipeRight()
         XCTAssertTrue(app.buttons["attachment-next"].waitForExistence(timeout: 5))
         return app
     }

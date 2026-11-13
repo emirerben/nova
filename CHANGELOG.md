@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.176.0] - 2026-11-13
+
+### Changed
+- feat(split-screen): close the gaps between the prototype and the app (KRI-1335) (#2280) <!-- release-pr: 2280 -->
+
+## [0.88.175.0] - 2026-11-12
+
+### Changed
+- fix(kria): let word-by-word text shrink to one frame per word (KRI-1370) (#2279) <!-- release-pr: 2279 -->
+
+## [0.88.174.0] - 2026-11-12
+
+### Fixed
+- test(ios): the Cinematic availability test compiles for a real device (#2275) <!-- release-pr: 2275 -->
+
+## [0.88.173.0] - 2026-11-12
+
+### Changed
+- fix(kria): server reports whether a draft is current, codes Save refusals, repairs stranded saved drafts (KRI-1367) (#2278) <!-- release-pr: 2278 -->
+
+## [0.88.172.0] - 2026-11-12
+
+### Fixed
+- perf(ios): overlap frames in the on-device Talking export, about 1.9x faster (KRI-1185) (#2277) <!-- release-pr: 2277 -->
+
+## [0.88.171.0] - 2026-11-12
+
+### Changed
+- fix(ios): editor always shows the latest version; remove the conflict-choice state (KRI-1367) (#2276) <!-- release-pr: 2276 -->
+
+## [0.88.170.0] - 2026-11-11
+
+### Changed
+- test(ios): attachment-flow UI tests match current behavior (KRI-1276) (#2216) <!-- release-pr: 2216 -->
+
+## [0.88.169.0] - 2026-11-11
+
+### Changed
+- fix(montage): keep one whole clip through approval (KRI-1295) (#2188) <!-- release-pr: 2188 -->
+
+## [0.88.168.0] - 2026-11-11
+
+### Changed
+- feat(kria): speech cleanup across several Talking takes — tight pauses, restarts, named lines, old builds (KRI-720) (#2255) <!-- release-pr: 2255 -->
+
+## [0.88.167.0] - 2026-11-11
+
+### Changed
+- fix(kria): keep simpler-choice labels out of render instructions (KRI-1294) (#2189) <!-- release-pr: 2189 -->
+
+## [0.88.166.0] - 2026-11-11
+
+### Changed
+- ci: reject release metadata edits before suite selection (#2132) <!-- release-pr: 2132 -->
+
+## [0.88.165.0] - 2026-11-11
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-11-08 (#2227) <!-- release-pr: 2227 -->
+
 ## [0.88.164.0] - 2026-11-11
 
 ### Changed

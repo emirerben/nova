@@ -168,8 +168,8 @@ def test_one_operation_retimes_every_word_without_replacement(monkeypatch, rever
 def test_retime_rejects_unreadable_window_and_keeps_input(monkeypatch):
     job, variant = sequence(monkeypatch)
     before = copy.deepcopy(variant)
-    with pytest.raises(ValueError, match="6.75"):
-        compile_editor_ops(job, variant, [retime(variant["text_elements"], 6)])
+    with pytest.raises(ValueError, match="0.9"):
+        compile_editor_ops(job, variant, [retime(variant["text_elements"], 0.5)])
     assert variant == before
 
 
@@ -310,15 +310,15 @@ def test_unreadable_sequence_returns_a_typed_minimum_instead_of_a_retry_loop(mon
 
     job, variant = sequence(monkeypatch)
     with pytest.raises(TextTimingConflict) as failure:
-        compile_editor_ops(job, variant, [retime(variant["text_elements"], 5)])
+        compile_editor_ops(job, variant, [retime(variant["text_elements"], 0.5)])
     assert failure.value.constraint == "readability"
-    assert failure.value.required_duration_s == pytest.approx(6.75)
+    assert failure.value.required_duration_s == pytest.approx(0.9)
     assert len(failure.value.conflicting_text_ids) == 27
     from app.tasks.kria_runtime import _text_timing_conflict_plan
 
     question = _text_timing_conflict_plan(failure.value)
     assert question.turn_value == "question"
-    assert "6.8" in question.response
+    assert "0.9" in question.response
     assert "longer video" in question.response
     assert "shorten the text" in question.response
     assert not question.intents

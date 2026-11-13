@@ -2023,6 +2023,8 @@ class Settings(BaseSettings):
         "creator consented to Speech cleanup and the take is a single iPhone-rendered clip, "
         "the render adds extra pause cuts so no kept pause is over about 0.3 s, writes a "
         "`tight_pauses` report on the variant, and the receipt states what was measured. "
+        "With TALKING_MULTI_TAKE_CLEANUP_ENABLED a Talking video of several takes gets the pass on "
+        "every take and every join whatever the ask says (KRI-720). "
         "Default off: no extra cuts and every receipt is byte-identical to before. "
         "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
         "and worker restart.",
@@ -2064,7 +2066,7 @@ class Settings(BaseSettings):
     keep_whole_take_plan_enabled: bool = Field(
         default=True,
         description="Case 2: a one-video-clip footage-owned montage whose brief has "
-        "`timing/global {keep_whole_take: true}` and no creator length plays that clip whole "
+        "a global `{keep_whole_take: true}` fact and no creator length plays that clip whole "
         "in the approval-time length plan (the worker plays the approved windows). Off: the "
         "plan keeps the analyser's best moment, as before.",
     )

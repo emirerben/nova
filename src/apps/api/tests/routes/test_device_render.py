@@ -1715,15 +1715,19 @@ async def reopen_saved_draft(job, base_generation_id):
     row = SimpleNamespace(
         id=draft_id,
         variant_key="guided_story",
+        base_job_id=job.id,
         base_generation_id=base_generation_id,
-        snapshot_json={"kind": "editor", "editor_payload": {"sections": {}}},
+        snapshot_json={
+            "kind": "editor",
+            "editor_payload": {"base_generation": base_generation_id or "", "sections": {}},
+        },
         parent_draft_id=None,
     )
     db = AsyncMock()
     db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row]))
     out = SimpleNamespace(draft_id=str(draft_id))
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr("app.services.editor_empty_drafts._out", lambda r, can_undo: out)
+        patch.setattr("app.services.editor_empty_drafts._out", lambda r, can_undo, **_kw: out)
         await attach_saved_editor_drafts(db, job)
     try:
         return saved_editor_draft(job, "guided_story")

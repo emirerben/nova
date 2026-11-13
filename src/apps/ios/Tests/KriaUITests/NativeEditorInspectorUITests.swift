@@ -30,7 +30,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
     }
 
     private func assertSplitPeers(_ before: SplitTimelineSnapshot, unchangedIn after: SplitTimelineSnapshot,
-                                 excluding edited: Set<String>, file: StaticString = #filePath, line: UInt = #line) throws {
+                                 excluding edited: Set<String>, sections expectedSections: [[String: Any]]? = nil,
+                                 file: StaticString = #filePath, line: UInt = #line) throws {
         for row in before.rows {
             let id = try XCTUnwrap(row["slot_id"] as? String, file: file, line: line)
             if !edited.contains(id) {
@@ -38,7 +39,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
                     "Panel edits must preserve every peer and serial neighbor field", file: file, line: line)
             }
         }
-        XCTAssertEqual(NSArray(array: after.sections), NSArray(array: before.sections), file: file, line: line)
+        XCTAssertEqual(NSArray(array: after.sections), NSArray(array: expectedSections ?? before.sections), file: file, line: line)
         XCTAssertEqual(NSDictionary(dictionary: after.mix), NSDictionary(dictionary: before.mix), file: file, line: line)
     }
 
@@ -56,6 +57,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         for _ in 0..<3 where !tool.isHittable { rail.swipeLeft() }
         XCTAssertTrue(tool.isHittable, "Split is the last tool on the rail")
         tool.tap()
+        // The default scope is Whole video; these journeys build a one-clip split.
+        let clipScope = app.buttons["native-editor-split-scope-clip"]
+        XCTAssertTrue(clipScope.waitForExistence(timeout: 10))
+        clipScope.tap()
         let card = app.buttons["native-editor-split-create-\(panels)"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         card.tap()
@@ -168,7 +173,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
     }
 
-    func testSplitPanelHandleExtensionClampsAtSectionAndMinimumWithoutMovingPeers() throws {
+    func testSplitPanelHandleExtensionGrowsSectionAndClampsAtMinimumWithoutMovingPeers() throws {
         let (app, original) = try launchTwoPanelAcceptance()
         let editedID = try XCTUnwrap(original.rows[0]["slot_id"] as? String)
         XCTAssertEqual(original.rows[0]["duration_s"] as? Double, 4)
@@ -194,21 +199,30 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(shortRow["in_s"] as? Double, original.rows[0]["in_s"] as? Double)
         try assertSplitPeers(original, unchangedIn: shortened, excluding: [editedID])
 
-        // Source has20s, but this panel can extend only to its4s section boundary.
+        // Source has 20 s and a fixed section grows with its longest member, so dragging past the 4 s section end extends.
         selectTimelineClip(1, in: app)
         XCTAssertTrue(trailing.isHittable)
         let extensionDistance = originalWidth
         XCTAssertLessThan(trailing.frame.midX + extensionDistance, app.frame.maxX - 12)
         dragHandle(trailing, by: extensionDistance)
         let extended = try splitSnapshot(app)
-        XCTAssertEqual(NSDictionary(dictionary: try extended.row(editedID)), NSDictionary(dictionary: original.rows[0]),
-            "Overshooting extension clamps exactly to the section while preserving every source/edit field")
-        try assertSplitPeers(original, unchangedIn: extended, excluding: [editedID])
+        let extendedRow = try extended.row(editedID)
+        let extendedDuration = try XCTUnwrap(extendedRow["duration_s"] as? Double)
+        XCTAssertGreaterThan(extendedDuration, 4.5, "Dragging past the section end grows the panel clip")
+        XCTAssertLessThanOrEqual(extendedDuration, 6.5)
+        XCTAssertEqual(try XCTUnwrap(extended.sections.first?["duration_s"] as? Double), extendedDuration, accuracy: 0.001,
+            "The fixed section grows to its longest member")
+        var expectedExtended = original.rows[0]
+        expectedExtended["duration_s"] = extendedRow["duration_s"]
+        XCTAssertEqual(NSDictionary(dictionary: extendedRow), NSDictionary(dictionary: expectedExtended),
+            "Extension changes only panel duration")
+        try assertSplitPeers(original, unchangedIn: extended, excluding: [editedID], sections: extended.sections)
 
         selectTimelineClip(1, in: app)
         XCTAssertTrue(trailing.isHittable)
-        XCTAssertGreaterThan(trailing.frame.midX - originalWidth * 1.1, app.frame.minX + 12)
-        dragHandle(trailing, by: -originalWidth * 1.1)
+        let extendedWidth = member.frame.width
+        XCTAssertGreaterThan(trailing.frame.midX - extendedWidth * 1.1, app.frame.minX + 12)
+        dragHandle(trailing, by: -extendedWidth * 1.1)
         let minimum = try splitSnapshot(app)
         let minimumRow = try minimum.row(editedID)
         XCTAssertEqual(try XCTUnwrap(minimumRow["duration_s"] as? Double), 0.1, accuracy: 0.001)
@@ -216,7 +230,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         expectedMinimum["duration_s"] = minimumRow["duration_s"]
         XCTAssertEqual(NSDictionary(dictionary: minimumRow), NSDictionary(dictionary: expectedMinimum),
             "Minimum clamp changes only panel duration")
-        try assertSplitPeers(original, unchangedIn: minimum, excluding: [editedID])
+        try assertSplitPeers(original, unchangedIn: minimum, excluding: [editedID], sections: extended.sections)
         for expected in [extended, shortened, original] {
             let undo = app.buttons["native-editor-undo"]
             XCTAssertTrue(undo.isEnabled)

@@ -977,7 +977,18 @@ struct DraftSnapshot: Codable, Sendable {
     let snapshot: [String: JSONValue]
     let canUndo: Bool
     let createdAt: Date
-    enum CodingKeys: String, CodingKey { case snapshot, etag; case draftID = "draft_id"; case itemID = "item_id"; case variantKey = "variant_key"; case draftRevision = "draft_revision"; case snapshotHash = "snapshot_hash"; case baseJobID = "base_job_id"; case baseGenerationID = "base_generation_id"; case canUndo = "can_undo"; case createdAt = "created_at" }
+    /// Additive server fields: the server re-bases the head onto the variant's current generation whenever it is
+    /// read and says so here. Absent from an older server, which leaves freshness to the phone.
+    var headCurrent: Bool? = nil
+    enum CodingKeys: String, CodingKey { case snapshot, etag; case draftID = "draft_id"; case itemID = "item_id"; case variantKey = "variant_key"; case draftRevision = "draft_revision"; case snapshotHash = "snapshot_hash"; case baseJobID = "base_job_id"; case baseGenerationID = "base_generation_id"; case canUndo = "can_undo"; case createdAt = "created_at"; case headCurrent = "head_current" }
+}
+
+/// A variant's current generation: `render_generation_id`, else `render_finished_at`, else "" (a variant that never
+/// finished a render has nothing to conflict with). The server's `variant_render_baseline`; every phone site that
+/// derives a generation from a variant dictionary goes through here so none can disagree with it or with the Save.
+func variantBaseline(_ variant: [String: JSONValue]?) -> String {
+    [variant?["render_generation_id"], variant?["render_finished_at"]]
+        .compactMap { $0?.stringValue }.first { !$0.isEmpty } ?? ""
 }
 
 struct OpenInEditorResponse: Codable, Sendable, Equatable {
@@ -1409,7 +1420,11 @@ enum KriaClientProtocolContract {
     /// light-leak or dip-to-black edges) and `end_fade`, and the `colorMoments` capability. The server serves such a
     /// recipe only to this protocol (`COLOR_MOMENTS_ENABLED` + `colorMoments` verified) and answers 426
     /// `client_update_required` (`color_moments`) to an older build.
-    static let version = 48
+    ///
+    /// 49 (KRI-720): cuts every take of a several-take Talking preview from the receipt's `phone_talking_multi_clip.speaker_removed`
+    /// rows. The server serves a build below 49 that receipt with no `speaker_media_ids`, so it previews the finished video
+    /// instead of later takes uncut.
+    static let version = 49
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1794,10 +1809,8 @@ struct KriaAPI: KriaAPIClient {
                 return variant
             }
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
-            // Same rule as the server's `variant_render_baseline`: a variant that never finished a
-            // render has "" as its baseline, which is a real value and not a conflict.
-            let generation = [variant["render_generation_id"], variant["render_finished_at"]]
-                .compactMap { $0?.stringValue }.first { !$0.isEmpty } ?? ""
+            // A variant that never finished a render has "" as its baseline, which is a real value and not a conflict.
+            let generation = variantBaseline(variant)
             if timeline["base_generation"] == .string(generation) {
                 variant["user_timeline"] = .object(timeline)
                 variant["editor_revision_number"] = timeline["revision_number"]
@@ -1808,7 +1821,7 @@ struct KriaAPI: KriaAPIClient {
             }
             if attempt < 2 { try await Task.sleep(for: .milliseconds(150 * (attempt + 1))) }
         }
-        throw APIError.conflict
+        throw APIError.baselineConflict
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
         try await Perf.measureAsync("talk.save.editorCommit") {
@@ -2062,7 +2075,8 @@ struct KriaAPI: KriaAPIClient {
             // `{"detail": {"code", "message"}}`. Read it last, so the string detail
             // and the problem envelope above keep precedence.
             let coded = Self.decodeCodedDetail(from: data)
-            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message ?? coded?.message, code: problem?.code ?? coded?.code))
+            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message ?? coded?.message, code: problem?.code ?? coded?.code,
+                recovery: problem?.recovery))
         }
         guard (200..<300).contains(http.statusCode) else {
             if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
@@ -2222,10 +2236,10 @@ struct KriaAPI: KriaAPIClient {
     /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
     /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the
     /// legacy `{"detail": "..."}` string every other route still sends.
-    private static func decodeProblem(from data: Data) -> (code: String?, message: String?)? {
+    private static func decodeProblem(from data: Data) -> (code: String?, message: String?, recovery: String?)? {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let problem = body["problem"] as? [String: Any] else { return nil }
-        return (problem["code"] as? String, problem["message"] as? String)
+        return (problem["code"] as? String, problem["message"] as? String, problem["recovery"] as? String)
     }
     /// Decodes FastAPI's object detail (`{"detail": {"code", "message"}}`), e.g. the
     /// `provider_link_required` refusal from `auth/mobile/exchange`. Nil for the
@@ -2279,6 +2293,13 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .rejected:
             "This save was rejected. Your edits are still here."
         }
+    }
+
+    /// The refusal for a 409/412 on Save that is not a version mismatch: the catalog's wording for its code, else the
+    /// generic rejected-save line. Both say the creator's edits are still there.
+    static func refusal(forConflictCode code: String?) -> EditorSaveError {
+        guard let code, Self.timelineCopy[code] != nil else { return .rejected }
+        return .timeline(code: code)
     }
 
     /// Specific, recoverable copy per timeline refusal. The set of codes is pinned by
@@ -2755,6 +2776,19 @@ enum APIError: Error, LocalizedError, Equatable {
     /// Detail-free conflict. Keeps `throw APIError.conflict`, `== .conflict`,
     /// and `catch APIError.conflict` working for every conflict, with or without a detail.
     static let conflict = APIError.conflict(detail: ConflictDetail(nil))
+    /// A generation mismatch the phone found itself (the preview's inputs or the variant moved past the loaded edit).
+    /// Carries the code explicitly so "reload" never depends on a conflict being detail-free.
+    static let baselineConflict = APIError.conflict(detail: ConflictDetail(
+        ConflictDetail.baselineConflictCode, code: ConflictDetail.baselineConflictCode, recovery: "reload"))
+    /// True only when a newer version exists: the server's `baseline_conflict` (as the plain `detail` or the problem
+    /// code) or its own `recovery: "reload"`, or the phone's own generation mismatch. Every other 409/412
+    /// (`TIMELINE_STALE`, `editor_draft_unavailable`, ...) is an ordinary refusal that a reload cannot fix.
+    var isBaselineConflict: Bool {
+        guard case let .conflict(detail) = self else { return false }
+        return detail.recovery == "reload"
+            || detail.code == ConflictDetail.baselineConflictCode
+            || detail.message == ConflictDetail.baselineConflictCode
+    }
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
     /// The machine code for this conflict: the runtime-v2 `KriaProblem.code`
@@ -2816,12 +2850,16 @@ struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
     /// server sent one instead of the legacy `detail` string. See `decodeProblem`
     /// and `decodeCodedDetail`.
     let code: String?
-    init(_ message: String?, code: String? = nil) {
+    /// The runtime-v2 problem's `recovery` (`reload` only for a baseline conflict).
+    let recovery: String?
+    init(_ message: String?, code: String? = nil, recovery: String? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
         self.code = code
+        self.recovery = recovery
     }
     static func == (_: ConflictDetail, _: ConflictDetail) -> Bool { true }
+    static let baselineConflictCode = "baseline_conflict"
     /// Diagnostics print errors with `String(describing:)`; keep server text out of them.
     var description: String { message == nil && code == nil ? "none" : "present" }
 }
@@ -3045,7 +3083,8 @@ extension DraftSnapshot {
         // A chat draft stamps `editor_state_version` too (the phone's state carries it), but its flat
         // lane keys mark it as edits over the variant, not a committed snapshot (KRI-1333).
         if let authoritativeVariant,
-           authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
+           variantBaseline(authoritativeVariant) == (baseGenerationID ?? "")
+            || authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
            let payload = Self.object(snapshot["editor_payload"]), payload["editor_state_version"] == .number(2),
            !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }) {
             // A committed full snapshot owns authoring state. The variant is
@@ -3177,8 +3216,7 @@ extension DraftSnapshot {
                     sections["split_screen_sections"] = .array([])
                 }
             }
-            let baseline = [authoritativeVariant["render_generation_id"]?.stringValue,
-                authoritativeVariant["render_finished_at"]?.stringValue, baseGenerationID,
+            let baseline = [variantBaseline(authoritativeVariant), baseGenerationID,
                 editorPayload["base_generation"]?.stringValue].compactMap { $0 }.first { !$0.isEmpty } ?? ""
             editorPayload["base_generation"] = .string(baseline)
             editorPayload["sections"] = .object(sections)
@@ -3295,14 +3333,19 @@ extension DraftSnapshot {
     /// onto `base`, the rendered-variant-authoritative snapshot. Chat edits are
     /// UNSAVED: nothing renders until the creator saves. Returns nil when the
     /// draft is not an editor head, is stale (its `base_generation` is not the
-    /// variant's current `render_generation_id` — a save/render happened since),
+    /// variant's current baseline — a save/render happened since; a head the server marked `head_current` is never stale),
     /// was already applied (`appliedRevision`), or changes nothing.
     func stagedChatEdit(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> StagedChatEdit? {
         guard let variant, snapshot["kind"]?.stringValue == "editor" else { return nil }
         if let appliedRevision, draftRevision <= appliedRevision { return nil }
-        guard let draftPayload = Self.object(snapshot["editor_payload"]),
-              let draftBase = draftPayload["base_generation"]?.stringValue, !draftBase.isEmpty,
-              draftBase == variant["render_generation_id"]?.stringValue else { return nil }
+        guard let draftPayload = Self.object(snapshot["editor_payload"]) else { return nil }
+        // The server re-bases the head whenever it is read, so `head_current == true` is its word that this head
+        // is the variant's. Re-deriving that here dropped heads the server had just certified. Without the flag
+        // (an older server) or with `false`, the head must name the variant's baseline itself.
+        if headCurrent != true {
+            guard let draftBase = draftPayload["base_generation"]?.stringValue, !draftBase.isEmpty,
+                  draftBase == variantBaseline(variant) else { return nil }
+        }
         // The flat keys are the complete compiled lane values; `sections` may be
         // absent (first chat edit on a non-editor head) or stale for a lane, so
         // the flat value wins and `sections` only fills lanes it does not carry.

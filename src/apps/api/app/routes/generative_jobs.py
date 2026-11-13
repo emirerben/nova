@@ -2965,6 +2965,13 @@ def _variants_for_response(job: Job) -> list[dict]:
 
         out.append(public_saved_editor_variant(job, v))
     result = project_public_assembly_plan(out)
+    # KRI-720: `result` is a deep copy. A build that cannot cut each take of a several-take
+    # edit gets the finished-video fallback instead of later takes previewed uncut.
+    from app.services.several_take_preview_gate import (  # noqa: PLC0415
+        hide_extra_take_cuts_from_old_builds,
+    )
+
+    hide_extra_take_cuts_from_old_builds(result)
     from app.services.saved_user_song import saved_user_song_for_variant
 
     for variant in result:
@@ -9045,7 +9052,8 @@ def dispatch_get_timeline(
     elif variant and variant.get("editor_state_version") == 2:
         from app.services.editor_empty_drafts import saved_editor_draft
 
-        draft = saved_editor_draft(job, variant_id)
+        # A stranded pinned draft is served as the committed state (read-only; Save replaces it).
+        draft = saved_editor_draft(job, variant_id, committed_fallback=True)
         sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
         if "timeline_slots" in sections:
             timeline["slots"] = copy.deepcopy(sections["timeline_slots"] or [])
@@ -14881,7 +14889,7 @@ async def get_variant_timeline(
     )
     from app.services.editor_empty_drafts import attach_saved_editor_drafts  # noqa: PLC0415
 
-    await attach_saved_editor_drafts(db, job)
+    await attach_saved_editor_drafts(db, job, committed_for=variant_id)
     variant = _find_variant(job, variant_id)
     image_preview_paths = (
         await guided_timeline_image_preview_paths(db, job.content_plan_item_id)

@@ -541,6 +541,18 @@
     },
     "DraftSnapshotOut": {
       "properties": {
+        "base_generation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Generation"
+        },
         "base_generation_id": {
           "anyOf": [
             {
@@ -586,6 +598,11 @@
         "etag": {
           "title": "Etag",
           "type": "string"
+        },
+        "head_current": {
+          "default": true,
+          "title": "Head Current",
+          "type": "boolean"
         },
         "item_id": {
           "title": "Item Id",

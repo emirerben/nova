@@ -48,6 +48,13 @@ public enum EngineSignpost {
                  start: DispatchTime.now().uptimeNanoseconds)
     }
 
+    /// Wall time of one stage of an export frame (`talk.stage.*`), for the Save benchmark. Costs a nil check unless `observer` is set.
+    @inline(__always)
+    static func stage(_ name: String, since start: UInt64, to end: UInt64? = nil) {
+        guard let observer else { return }
+        observer(name, Double((end ?? DispatchTime.now().uptimeNanoseconds) &- start) / 1_000_000, "")
+    }
+
     static func count(_ name: StaticString, _ detail: String = "") {
         signposter.emitEvent(name, "\(detail, privacy: .public)")
         observer?(String(describing: name), nil, detail)

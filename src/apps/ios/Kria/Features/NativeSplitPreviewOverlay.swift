@@ -9,16 +9,66 @@ struct NativeSplitPanelPick: Equatable {
     let selection: EditorSelection?
 }
 
+/// A ghost tapped in the preview asks the Split tool to open its picker aimed at one panel. `token` makes a repeat
+/// tap on the same panel a new request.
+struct NativeSplitAddRequest: Equatable {
+    let sectionID: String
+    let panel: Int
+    let token = UUID()
+}
+
+/// How the preview tells the editor a ghost was tapped (open the Split tool aimed at that panel). The editor sets it
+/// in the environment; without it the preview draws no ghosts, so a host that cannot open the tool shows no dead taps.
+struct NativeSplitGhostTap {
+    let open: (_ sectionID: String, _ panel: Int) -> Void
+}
+
+private struct NativeSplitGhostTapKey: EnvironmentKey {
+    nonisolated(unsafe) static let defaultValue: NativeSplitGhostTap? = nil
+}
+
+extension EnvironmentValues {
+    var nativeSplitGhostTap: NativeSplitGhostTap? {
+        get { self[NativeSplitGhostTapKey.self] }
+        set { self[NativeSplitGhostTapKey.self] = newValue }
+    }
+}
+
+/// What a panel holds at the playhead.
+enum NativeSplitPlayback {
+    enum PanelState { case playing, gap, empty }
+
+    /// `empty`: the panel has no footage at all. `gap`: it has footage, but none at the playhead (before, between or
+    /// after its clips). `playing`: a clip of it covers the playhead.
+    @MainActor static func state(session: NativeEditorSession, context: NativeSplitContext, panel: Int) -> PanelState {
+        let local = min(max(0, session.currentTime - context.sectionStart), context.section.durationS - 0.000001)
+        let members = session.document.clips.filter {
+            !$0.removed && $0.splitSectionID == context.sectionID && $0.splitPanelIndex == panel
+        }
+        guard !members.isEmpty else { return .empty }
+        let covers = members.contains { $0.splitOffsetS <= local && local < $0.splitOffsetS + ($0.durationS ?? 0) }
+        return covers ? .playing : .gap
+    }
+}
+
 /// Preview controls for the split section under the playhead. The preview is the control surface: a Sky tint on the
 /// selected panel, a white line between panels that drags to resize, and a round swap button on that line.
 /// Everything is laid out from the panels drawn at the playhead (`NativeSplitContext.activePanels`), so a collapse
 /// section's controls follow the picture when a panel ends.
-/// The tint and panel elements never take touches. Only the divider bands do, and this view sits above the canvas
+/// A panel with no footage, or a gap at the playhead, wears a ghost: a "+" on a Sky-tinted fill that opens the Split
+/// tool's picker aimed at that panel. A panel the layout draws gets the ghost across its own rect. A collapse section
+/// does not draw a panel that has no footage now, so its ghost sits in the rect the panel would have in the full
+/// layout when no panel is drawn at all, and otherwise as a compact pill stacked at the bottom edge, so the drawn
+/// panels' rects stay exact. The pill is an editing aid on the preview only (nothing of it reaches the export) and
+/// covers a small part of the bottom of the drawn footage. Only the ghost's own "+" block takes touches; the rest of its
+/// fill, the drawn panels and the tint never do.
+/// The tint and panel elements never take touches. Only the divider bands and the ghost blocks do, and this view sits above the canvas
 /// gesture surface so the canvas move gesture and its empty tap (fullscreen) never see a touch that starts on a band.
 struct NativeSplitPreviewOverlay: View {
     @ObservedObject var session: NativeEditorSession
     @Binding var pick: NativeSplitPanelPick?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.nativeSplitGhostTap) private var ghostTap
 
     static let canvasSpace = "native-split-preview-canvas"
 
@@ -54,6 +104,9 @@ struct NativeSplitPreviewOverlay: View {
                 .accessibilityAction { Self.choose(panel: index, context: context, session: session, pick: $pick) }
                 .accessibilityIdentifier("native-editor-split-panel-\(index)")
             }
+            if let ghostTap, session.canEditSplitScreen {
+                ghosts(context: context, shown: shown, rects: rects, size: size, open: ghostTap)
+            }
             if session.canEditSplitScreen {
                 ForEach(Array(ys.enumerated()), id: \.offset) { position, fraction in
                     NativeSplitDividerHandle(session: session, pick: $pick, section: section, sectionID: context.sectionID,
@@ -63,6 +116,33 @@ struct NativeSplitPreviewOverlay: View {
             }
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
+
+    /// Hard cut like the layout itself: a ghost appears and goes on the frame its panel's state changes.
+    @ViewBuilder private func ghosts(context: NativeSplitContext, shown: [Int], rects: [CGRect], size: CGSize,
+                                     open: NativeSplitGhostTap) -> some View {
+        let section = context.section
+        let states = (0..<section.panelCount).map { ($0, NativeSplitPlayback.state(session: session, context: context, panel: $0)) }
+        let wanted = states.filter { $0.1 != .playing && session.canAddToSplitPanel(sectionID: context.sectionID, panel: $0.0) }
+        let full = NativeSplitPanelLayout.panelRects(weights: section.panelWeights, gutter: section.gutter)
+        // Panels the layout does not draw while others are: pills at the bottom edge, last panel lowest.
+        let pills = wanted.filter { !shown.contains($0.0) }.map(\.0)
+        ForEach(wanted, id: \.0) { panel, state in
+            let title = NativeSplitScreenRows.panelTitle(index: panel, count: section.panelCount)
+            let text = state == .gap ? "Add footage" : "Add photo or video"
+            let tap = {
+                Self.choose(panel: panel, context: context, session: session, pick: $pick)
+                open.open(context.sectionID, panel)
+            }
+            if let position = shown.firstIndex(of: panel) {
+                NativeSplitGhost(panel: panel, title: title, text: text, style: .panel(Self.pixelRect(rects[position], in: size)), action: tap)
+            } else if shown.isEmpty, full.indices.contains(panel) {
+                NativeSplitGhost(panel: panel, title: title, text: text, style: .panel(Self.pixelRect(full[panel], in: size)), action: tap)
+            } else if let slot = pills.firstIndex(of: panel) {
+                NativeSplitGhost(panel: panel, title: title, text: text,
+                                 style: .pill(centerY: size.height - 8 - 22 - CGFloat(pills.count - 1 - slot) * 50, width: size.width), action: tap)
+            }
+        }
     }
 
     static func pixelRect(_ unit: CGRect, in size: CGSize) -> CGRect {
@@ -231,4 +311,74 @@ private struct NativeSplitDividerHandle: View {
             }
         }
     }
+}
+
+/// One ghost: the "+" circle and its words. `.panel` fills the panel's rect with a Sky tint and centres the block;
+/// `.pill` is a compact Sky capsule at a fixed height. Only the block takes touches (44pt minimum).
+private struct NativeSplitGhost: View {
+    enum Style { case panel(CGRect), pill(centerY: CGFloat, width: CGFloat) }
+
+    let panel: Int
+    let title: String
+    let text: String
+    let style: Style
+    let action: () -> Void
+
+    var body: some View {
+        switch style {
+        case .panel(let rect):
+            ZStack {
+                KriaColor.sky.opacity(0.3).allowsHitTesting(false)
+                button(stacked: rect.height >= 112)
+            }
+            .frame(width: rect.width, height: rect.height)
+            .offset(x: rect.minX, y: rect.minY)
+        case .pill(let centerY, let width):
+            button(stacked: false)
+                .background(KriaColor.sky, in: Capsule())
+                .position(x: width / 2, y: centerY)
+        }
+    }
+
+    /// The leaf sits in a container, as the divider's swap button does: the preview's own identifier lands on the
+    /// container and leaves the leaf's alone.
+    private func button(stacked: Bool) -> some View {
+        ZStack { leaf(stacked: stacked) }.accessibilityElement(children: .contain)
+    }
+
+    private func leaf(stacked: Bool) -> some View {
+        Group {
+            if stacked {
+                VStack(spacing: 8) { plus(44); label }
+            } else {
+                HStack(spacing: 8) { plus(style.isPill ? 30 : 36); label }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, stacked ? 8 : 4)
+        .frame(minWidth: 44, minHeight: 44)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default) { action() }
+        .accessibilityIdentifier("native-editor-split-ghost-\(panel)")
+    }
+
+    private var accessibilityText: String { "\(text), \(title) panel" }
+
+    private func plus(_ size: CGFloat) -> some View {
+        Circle().fill(.white).frame(width: size, height: size)
+            .shadow(color: KriaColor.ink.opacity(0.18), radius: 4, y: 2)
+            .overlay { Image(systemName: "plus").font(.system(size: size * 0.5, weight: .semibold)).foregroundStyle(KriaColor.ink) }
+    }
+
+    private var label: some View {
+        Text(text).kriaType(.caption).foregroundStyle(KriaColor.ink)
+            .lineLimit(1).minimumScaleFactor(0.85)
+    }
+}
+
+private extension NativeSplitGhost.Style {
+    var isPill: Bool { if case .pill = self { return true } else { return false } }
 }

@@ -3029,9 +3029,16 @@ final class CreationUITests: XCTestCase {
         var sawPartial = false
         let finished = eventually(timeout: 90) {
             if app.buttons["device-render-play"].exists { return true }
-            XCTAssertTrue(feed.exists, "the feed stays visible until an export exists")
-            // One query = one consistent snapshot; per-row reads race the advancing build.
-            let snapshot = (feed.value as? String ?? "").split(separator: ",").reduce(into: [String: String]()) { result, pair in
+            // One query reads the feed's existence and value together (per-row reads race the advancing build, and an
+            // `exists` followed by `value` races the hand-over). When the feed is gone, the finished build's player
+            // must be there: the app swaps the two in one step, only this test's queries are separate, so the player
+            // gets a short wait to appear. A feed gone with no export still fails.
+            guard let element = try? feed.snapshot() else {
+                let handedOver = app.buttons["device-render-play"].waitForExistence(timeout: 3)
+                XCTAssertTrue(handedOver, "the feed stays visible until an export exists")
+                return handedOver
+            }
+            let snapshot = (element.value as? String ?? "").split(separator: ",").reduce(into: [String: String]()) { result, pair in
                 let parts = pair.split(separator: "=")
                 if parts.count == 2 { result[String(parts[0])] = String(parts[1]) }
             }

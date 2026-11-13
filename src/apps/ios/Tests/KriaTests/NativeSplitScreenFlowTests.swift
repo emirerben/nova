@@ -40,6 +40,7 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         let session = makeSession(document)
         let selected = EditorSelection(kind: .clip, id: try XCTUnwrap(chosen.id))
         session.select(selected, seekToStart: false)
+        session.currentTime = 3
         session.createSplitScreen(panelCount: 3, scope: .selectedClip)
 
         let section = try XCTUnwrap(session.document.splitScreenSections.first)

@@ -154,6 +154,52 @@ enum NativeEditorMerge {
         return .resolved(decoded)
     }
 
+    struct Converged {
+        /// The version the editor shows: always valid, never a pending decision.
+        let document: EditorDocument
+        /// The creator's edits rebuilt on `latest` (so it carries the latest base generation). Nil when
+        /// there is nothing to restore or the rebuild does not resolve and validate.
+        let undo: EditorDocument?
+        /// True when a creator-changed lane was dropped in favour of `latest`.
+        let replacedCreatorEdits: Bool
+    }
+
+    /// Total: the latest version wins every overlap. `local` is nil when the editor is clean. Lanes in
+    /// `assistantSections` were staged from an AI draft: they replay like any other edit, but replacing them is
+    /// never reported as replacing the creator's edits.
+    static func converge(base: EditorDocument, local: EditorDocument?, latest: EditorDocument,
+                         baseSong: JSONValue?, latestSong: JSONValue?,
+                         assistantSections: Set<EditorSection> = []) -> Converged {
+        guard let local else { return Converged(document: latest, undo: nil, replacedCreatorEdits: false) }
+        func merged(_ preference: AuthoredJSONMerge.Preference?) -> EditorDocument? {
+            guard case .resolved(let value) = documents(base: base, local: local, remote: latest,
+                baseSong: baseSong, remoteSong: latestSong, preference: preference) else { return nil }
+            return value
+        }
+        let creatorSections = EditorSection.allCases.filter {
+            !assistantSections.contains($0) && local.snapshot(for: $0) != base.snapshot(for: $0)
+        }
+        let creatorChangedOther = local.editorState != base.editorState || local.deletions != base.deletions
+            || local.userSong != base.userSong
+        let creatorFirst = merged(.local)
+        let document: EditorDocument
+        var replaced = false
+        if let clean = merged(nil) {
+            document = clean
+        } else {
+            document = merged(.remote) ?? latest
+            // Only a lane the creator changed, where the overlap went to the latest, counts as replaced.
+            replaced = creatorFirst.map { first in
+                creatorSections.contains { first.snapshot(for: $0) != document.snapshot(for: $0) }
+                    || (creatorChangedOther && (first.editorState != document.editorState
+                        || first.deletions != document.deletions || first.userSong != document.userSong))
+            } ?? (!creatorSections.isEmpty || creatorChangedOther)
+        }
+        // Without an overlap the creator's edits already sit on `latest`; nothing separate to restore.
+        let undo = creatorFirst.flatMap { $0 == document ? nil : $0 }
+        return Converged(document: document, undo: undo, replacedCreatorEdits: replaced)
+    }
+
     private static func preservesExplicitValues(_ selected: JSONValue, in encoded: JSONValue) -> Bool {
         switch (selected, encoded) {
         case (.object(let a), .object(let b)):

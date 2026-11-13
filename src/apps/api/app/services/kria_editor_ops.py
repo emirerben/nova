@@ -29,6 +29,7 @@ from app.agents._schemas.text_element import (
 )
 from app.config import settings
 from app.kria.clip_tilt import ClipTilt
+from app.kria.editor_head import payload_current
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
@@ -1976,12 +1977,8 @@ def fresh_editor_head_payload(
     payload = snapshot.get("editor_payload")
     if not isinstance(payload, dict) or not payload:
         return {}
-    base = str(payload.get("base_generation") or "")
-    if base != variant_render_baseline(variant):
-        from app.services.device_render import published_source_generation  # noqa: PLC0415
-
-        if job is None or not base or base != published_source_generation(job, variant):
-            return {}
+    if not payload_current(job, variant, head):
+        return {}
     return payload
 
 

@@ -61,6 +61,30 @@ Default off and byte-identical off (guard: `tests/services/test_creation_text_as
 | Tool result and side-effect identity | `CreatorAgentExecution` |
 | Rendered media | existing `PlanItem` and `Job` |
 
+### One latest editable document
+
+A draft head is current only while its stamps match the variant's generation (or the generation a
+phone publish was made from; `app/kria/editor_head.py`, read-only). **The server never moves a
+head when the generation moves**: approval execution, phone publish, speech cut and every other
+writer leave the head rows as they are, and a head on an old generation is not current and every
+reader ignores it. The server never merges draft content. `GET /draft` adds `head_current` and
+`base_generation`; the phone converges on the latest and replays its own staged AI edit.
+On a variant that has only `render_finished_at`, a head stamped with that value (written by this
+branch, or by `main`'s plan-review undo) is current; `main`'s draft PUT refused such rows and
+this branch accepts them.
+
+- **The one server write** is at Save: a v2 variant whose pinned `editor_draft` is not current
+  (409 `editor_draft_unavailable` forever before) has the PINNED row replaced by the committed
+  document (`editor_empty_drafts.replace_stranded_saved_draft`; the pin moves from that row to
+  its replacement and nowhere else, and no head is touched). The timeline GET serves the same
+  document without writing. An empty-state variant keeps its 409.
+- Editor-commit 409/412 carry `problem {code, recovery, current_base_generation}` beside the
+  unchanged `detail`; `reload` only for `baseline_conflict`, `GUIDED_REVISION_STALE`,
+  `deletion_target_stale`.
+- Heads already left behind: `python -m app.cli.repair_editor_heads` is a dry run by default;
+  `--apply` needs `--variant` and `--operation {retire,keep-ai-lanes}`, refuses a current head,
+  and needs the owner's approval before a production run.
+
 Runtime-v1 threads keep their existing controller and projections. A thread never
 changes runtime owner because a flag changes during its lifetime.
 

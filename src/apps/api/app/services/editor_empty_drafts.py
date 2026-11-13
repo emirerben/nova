@@ -12,8 +12,9 @@ import uuid
 from dataclasses import replace
 from typing import Any
 
+import structlog
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.kria.api_schemas import DraftSnapshotOut
@@ -21,12 +22,20 @@ from app.kria.drafts import (
     KriaDraftDocument,
     _editor_snapshot,
     _out,
+    canonical_snapshot,
+    committed_document,
     editor_variant_target,
     stage_editor_variant_draft,
 )
-from app.models import CreatorEditDraft, Job, PlanItem
-from app.services.device_render import published_source_generation
+from app.kria.editor_head import (
+    column_accepted,
+    is_head_current,
+    variant_baseline,
+)
+from app.models import CreationThread, CreatorEditDraft, Job, PlanItem
 from app.services.phone_editor import _StagedJob
+
+log = structlog.get_logger()
 
 _DIRECT_SECTIONS = (
     "editor_split_screen_origin",
@@ -107,20 +116,77 @@ def _reference(variant: dict[str, Any]) -> uuid.UUID | None:
         return None
 
 
-def _same_saved_generation(job: Job, variant: dict[str, Any], generation: str | None) -> bool:
-    """A phone-published export is the same saved document as the generation it rendered."""
-    if generation == variant.get("render_generation_id"):
-        return True
-    return generation is not None and generation == published_source_generation(job, variant)
+def _attachable(job: Job, variant: dict[str, Any], row: CreatorEditDraft) -> bool:
+    """The pinned draft's column is on the variant's generation (the rule ``main`` applied)."""
+    return column_accepted(job, variant, row)
 
 
-async def attach_saved_editor_drafts(db: AsyncSession, job: Job | None) -> None:
-    """Load pinned snapshots once; never overwrite ORM variant JSON on a read."""
+def _committed_keeping_removed_clips(
+    row: CreatorEditDraft, *, state: dict[str, Any], item: PlanItem, job: Job, variant_key: str
+) -> KriaDraftDocument:
+    """``committed_document`` plus the pinned draft's removed clips.
+
+    A Save records a removed clip only in the pinned draft's ``timeline_slots`` (the variant's
+    timeline drops it), and the next Save's deletion baseline reads that list. Only clips the
+    committed timeline does not already hold come across, and only as removed.
+    """
+    document = committed_document(state=state, item=item, job=job, variant_key=variant_key)
+    sections = (document.editor_payload or {}).get("sections") or {}
+    committed = sections.get("timeline_slots")
+    if not isinstance(committed, list):
+        return document
+    pinned = ((row.snapshot_json or {}).get("editor_payload") or {}).get("sections") or {}
+    known = {slot.get("slot_id") for slot in committed if isinstance(slot, dict)}
+    sections["timeline_slots"] = committed + [
+        copy.deepcopy(slot)
+        for slot in pinned.get("timeline_slots") or []
+        if isinstance(slot, dict) and slot.get("removed") and slot.get("slot_id") not in known
+    ]
+    return document
+
+
+async def _committed_in_place_of(db: AsyncSession, job: Job, row: CreatorEditDraft) -> Any:  # noqa: ANN401
+    """A stranded pinned v2 draft, served as the variant's committed state. Writes nothing.
+
+    The row keeps its identity and ETag, so a write that echoes them is refused as stale and the
+    phone reloads; ``head_current`` is false because the saved draft is not the committed video.
+    """
+    thread = await db.get(CreationThread, row.thread_id)
+    item = await db.get(PlanItem, row.item_id)
+    document = _committed_keeping_removed_clips(
+        row,
+        state=dict(thread.state or {}) if thread is not None else {},
+        item=item,
+        job=job,
+        variant_key=str(row.variant_key),
+    )
+    snapshot, _hash = canonical_snapshot(document)
+    baseline = variant_baseline(_variant(job, str(row.variant_key)))
+    return _out(row, can_undo=row.parent_draft_id is not None, head_current=False).model_copy(
+        update={
+            "snapshot": snapshot,
+            "base_generation_id": baseline or None,
+            "base_generation": baseline,
+        }
+    )
+
+
+async def attach_saved_editor_drafts(
+    db: AsyncSession, job: Job | None, *, committed_for: str | None = None
+) -> None:
+    """Load pinned snapshots once; never overwrite ORM variant JSON on a read.
+
+    ``committed_for`` (the timeline reads) names the requested variant: when its pinned v2 draft
+    is not on the current generation it is served as the committed state in
+    ``job._stranded_editor_drafts`` instead of answering 409 forever. An empty-state variant's
+    content exists only in its draft, so it never gets one.
+    """
     if job is None:
         return
     # A repeated projection of this ORM instance must not retain an earlier
     # snapshot after its reference, ownership graph or generation changes.
     job._saved_editor_drafts = {}
+    job._stranded_editor_drafts = {}
     variants = [v for v in (job.assembly_plan or {}).get("variants") or [] if isinstance(v, dict)]
     references = {_reference(v): v for v in variants if _reference(v) is not None}
     if not references:
@@ -145,19 +211,111 @@ async def attach_saved_editor_drafts(db: AsyncSession, job: Job | None) -> None:
         if (
             variant is None
             or str(row.variant_key) != str(variant.get("variant_id"))
-            or not _same_saved_generation(job, variant, row.base_generation_id)
             or row.snapshot_json is None
         ):
             continue
-        snapshots[str(row.variant_key)] = _out(row, can_undo=row.parent_draft_id is not None)
+        if not _attachable(job, variant, row):
+            if str(row.variant_key) == committed_for and not is_empty_editor_variant(variant):
+                try:
+                    stranded = await _committed_in_place_of(db, job, row)
+                except Exception:  # noqa: BLE001 - an unbuildable fallback must stay main's 409
+                    log.exception(
+                        "editor_committed_fallback_failed",
+                        job_id=str(job.id),
+                        variant_id=str(row.variant_key),
+                    )
+                else:
+                    job._stranded_editor_drafts[str(row.variant_key)] = stranded
+            continue
+        snapshots[str(row.variant_key)] = _out(
+            row,
+            can_undo=row.parent_draft_id is not None,
+            head_current=is_head_current(job, variant, row),
+        )
     job._saved_editor_drafts = snapshots
 
 
-def saved_editor_draft(job: Job, variant_id: str) -> DraftSnapshotOut:
+def saved_editor_draft(
+    job: Job, variant_id: str, *, committed_fallback: bool = False
+) -> DraftSnapshotOut:
     draft = getattr(job, "_saved_editor_drafts", {}).get(variant_id)
+    if draft is None and committed_fallback:
+        draft = getattr(job, "_stranded_editor_drafts", {}).get(variant_id)
     if draft is None:
         raise HTTPException(409, detail="editor_draft_unavailable")
     return draft
+
+
+async def replace_stranded_saved_draft(
+    db: AsyncSession, *, item: PlanItem, job: Job, variant_id: str
+) -> bool:
+    """Save time only: replace a pinned v2 draft that is no longer current. True when replaced.
+
+    The caller holds Item, then Job. The pinned ROW is replaced by the committed document (what
+    a fresh read would create), stamped on the variant's generation, and the pin moves from that
+    row to its replacement; no other row is read for content or becomes the pin. The replacement
+    is not a head: the head, whichever row it is, is left alone and the Save that follows stages
+    its own.
+    """
+    variant = _variant(job, variant_id)
+    pinned = _reference(variant)
+    if pinned is None or is_empty_editor_variant(variant):
+        return False
+    row = (
+        await db.execute(
+            select(CreatorEditDraft)
+            .where(
+                CreatorEditDraft.id == pinned,
+                CreatorEditDraft.creator_id == job.user_id,
+                CreatorEditDraft.item_id == item.id,
+                CreatorEditDraft.variant_key == variant_id,
+                CreatorEditDraft.base_job_id == job.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if row is None or row.snapshot_json is None or _attachable(job, variant, row):
+        return False
+    thread = await db.get(CreationThread, row.thread_id)
+    snapshot, digest = canonical_snapshot(
+        _committed_keeping_removed_clips(
+            row,
+            state=dict(thread.state or {}) if thread is not None else {},
+            item=item,
+            job=job,
+            variant_key=variant_id,
+        )
+    )
+    revision = int(
+        (
+            await db.execute(
+                select(func.coalesce(func.max(CreatorEditDraft.draft_revision), -1)).where(
+                    CreatorEditDraft.item_id == item.id,
+                    CreatorEditDraft.variant_key == variant_id,
+                )
+            )
+        ).scalar_one()
+    )
+    replacement = CreatorEditDraft(
+        creator_id=row.creator_id,
+        thread_id=row.thread_id,
+        item_id=item.id,
+        variant_key=variant_id,
+        base_job_id=job.id,
+        base_generation_id=variant_baseline(variant) or None,
+        draft_revision=revision + 1,
+        parent_draft_id=row.id,
+        snapshot_json=snapshot,
+        snapshot_hash=digest,
+        is_head=False,
+    )
+    db.add(replacement)
+    await db.flush()
+    assembly = copy.deepcopy(job.assembly_plan)
+    target = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
+    target["editor_draft"] = {**target["editor_draft"], "draft_id": str(replacement.id)}
+    job.assembly_plan = assembly
+    return True
 
 
 def public_empty_editor_variant(job: Job, variant: dict[str, Any]) -> dict[str, Any]:

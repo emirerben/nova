@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.config import settings
 from app.pipeline.caption_language import crosscheck_detected_language, infer_language_from_text
 from app.pipeline.silence_cut import (
+    REASON_RETAKE,
     SILENCE_CUT_VERBATIM_PROMPT,
     CutPlan,
     Removal,
@@ -1249,6 +1250,110 @@ def _words_lost(
     return lost
 
 
+def _restart_neighbours(
+    removal: Removal,
+    words: Sequence[SpeechCleanupTimedWord],
+    retake_spans: Sequence[tuple[int, int]],
+) -> tuple[list[str], list[str], list[str]] | None:
+    """(before, after, inside) real-word keys to judge for a restart removal, or None.
+
+    A restart (a retake/slate span) abandons its own words by design, so those (word indices
+    in a retake span the removal reaches, plus filler tokens) are never judged as lost. What the
+    cut must NOT take is anything else: the real words just outside it (``before``/``after``,
+    within ``RELISTEN_JUDGE_S``) and any other real word stamped inside it (``inside``, e.g. one
+    a merge or snap swallowed past the span). Times come from the same (aligned) words the plan
+    was built from. Filler-only removals return None and are judged as before.
+    """
+
+    own = [
+        i
+        for i, w in enumerate(words)
+        if removal.start_s - 1e-6 <= (w.start_s + w.end_s) / 2 <= removal.end_s + 1e-6
+    ]
+    if not own:
+        return None
+    owned = set(own)
+    spans = [(first, last) for first, last in retake_spans if 0 <= first <= last < len(words)]
+    covers_span = any(all(i in owned for i in range(first, last + 1)) for first, last in spans)
+    if removal.reason != REASON_RETAKE and not covers_span:
+        return None
+    exempt = {
+        i
+        for first, last in spans
+        if owned & set(range(first, last + 1))
+        for i in range(first, last + 1)
+    }
+
+    def real_key(i: int) -> str:
+        return "" if is_filler_token(words[i].text) else _relisten_key(words[i].text)
+
+    inside = [k for i in own if i not in exempt and (k := real_key(i))]
+    before: list[str] = []
+    for i in range(min(own) - 1, -1, -1):
+        if (words[i].start_s + words[i].end_s) / 2 < removal.start_s - RELISTEN_JUDGE_S:
+            break
+        if key := real_key(i):
+            before.append(key)
+    after: list[str] = []
+    for i in range(max(own) + 1, len(words)):
+        if (words[i].start_s + words[i].end_s) / 2 > removal.end_s + RELISTEN_JUDGE_S:
+            break
+        if key := real_key(i):
+            after.append(key)
+    return before, after, inside
+
+
+def _neighbours_lost(
+    before: list[str],
+    after: list[str],
+    inside: list[str],
+    heard_after_cut: list[tuple[str, float]],
+    seam_s: float,
+) -> list[str]:
+    """Words with no close match heard after the cut.
+
+    Neighbours only match words heard on their own side of the seam (so a repeated "and"
+    inside the removed span cannot stand in for the redelivery "and" after it); ``inside``
+    words may match anywhere in the window. Each heard word answers at most ONE judged word
+    across all three groups, so one heard "again" cannot vouch for both the word before the
+    cut and a second "again" the cut swallowed. The pairing is a maximum matching, so a heard
+    word that fits both sides near the seam is never spent on the wrong group first.
+    """
+
+    heard = [(k, t) for k, t in heard_after_cut if not is_filler_token(k)]
+    judged = [
+        (key, on_side)
+        for keys, on_side in (
+            (before, lambda t: t <= seam_s + 0.3),
+            (after, lambda t: t >= seam_s - 0.3),
+            (inside, lambda t: True),
+        )
+        for key in keys
+    ]
+    fits = [
+        [
+            j
+            for j, (other, t) in enumerate(heard)
+            if on_side(t) and SequenceMatcher(a=key, b=other).ratio() >= RELISTEN_MATCH_RATIO
+        ]
+        for key, on_side in judged
+    ]
+    owner: dict[int, int] = {}  # heard index -> judged index
+
+    def claim(i: int, seen: set[int]) -> bool:
+        for j in fits[i]:
+            if j in seen:
+                continue
+            seen.add(j)
+            if j not in owner or claim(owner[j], seen):
+                owner[j] = i
+                return True
+        return False
+
+    matched = {i for i in range(len(judged)) if claim(i, set())}
+    return [key for i, (key, _side) in enumerate(judged) if i not in matched]
+
+
 def _relistened_plan(
     plan: CutPlan,
     words: Sequence[SpeechCleanupTimedWord],
@@ -1257,6 +1362,7 @@ def _relistened_plan(
     duration_s: float,
     language: str,
     transcribe: _TranscriptFn,
+    retake_spans: Sequence[tuple[int, int]] = (),
 ) -> tuple[CutPlan, dict[str, Any]]:
     """``plan`` without the filler cuts that take a real word with them.
 
@@ -1294,6 +1400,9 @@ def _relistened_plan(
             if not _optional_pass_unavailable(exc):
                 raise
             return removal, None  # unheard: keep the cut, as before this check
+        neighbours = _restart_neighbours(removal, words, retake_spans)
+        if neighbours is not None:
+            return removal, _neighbours_lost(*neighbours, after, removal.start_s - start)
         lo = removal.start_s - start - RELISTEN_JUDGE_S
         hi = removal.end_s - start + RELISTEN_JUDGE_S
         return removal, _words_lost(original, after, lo, hi)
@@ -1486,6 +1595,7 @@ def analyze_speech_cleanup(
             duration_s=analysis_input.duration_s,
             language=language,
             transcribe=transcribe,
+            retake_spans=(*analysis_input.retake_spans, *detected_retakes),
         )
     serializable_plan = _serializable_plan(plan)
     findings = _findings(plan)

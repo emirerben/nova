@@ -1282,7 +1282,7 @@
     {
       "id": "kri-775-phone-preflight",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri775_merope_m2_replay.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri775_preflight_runtime_postgres.py tests/kria/test_kri1024_flag_emoji_title.py tests/kria/test_kri1024_phone_text_glyphs_postgres.py",
+      "api_tests": "tests/kria/test_kri775_merope_m2_replay.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri775_preflight_runtime_postgres.py tests/kria/test_kri1024_flag_emoji_title.py tests/kria/test_kri1024_phone_text_glyphs_postgres.py tests/kria/test_kri1295_whole_montage.py tests/kria/test_kri1295_whole_montage_postgres.py",
       "paths": [
         "src/apps/api/app/services/phone_montage_preflight.py",
         "src/apps/api/app/tasks/generative_build.py",
@@ -1290,7 +1290,9 @@
         "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json",
         "src/apps/api/tests/fixtures/kri1024_plaza_m1_flag_title.json",
         "src/apps/api/tests/kria/test_kri1024_flag_emoji_title.py",
-        "src/apps/api/tests/kria/test_kri1024_phone_text_glyphs_postgres.py"
+        "src/apps/api/tests/kria/test_kri1024_phone_text_glyphs_postgres.py",
+        "src/apps/api/tests/kria/test_kri1295_whole_montage.py",
+        "src/apps/api/tests/kria/test_kri1295_whole_montage_postgres.py"
       ]
     },
     {
@@ -2256,6 +2258,8 @@
         "src/apps/api/app/pipeline/phone_authored_timeline.py",
         "src/apps/api/app/services/editor_empty_drafts.py",
         "src/apps/api/app/kria/drafts.py",
+        "src/apps/api/app/kria/draft_schemas.py",
+        "src/apps/api/app/kria/editor_head.py",
         "src/apps/api/app/routes/generative_jobs.py",
         "src/apps/ios/Kria/Core/NativeSpeechTimelineProjection.swift",
         "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
@@ -3648,6 +3652,24 @@
       ]
     },
     {
+      "id": "kri-720-multi-take-cleanup",
+      "needs_native": false,
+      "api_tests": "tests/services/test_multi_take_speech_cleanup.py tests/pipeline/test_speech_cleanup_restart_relisten.py tests/tasks/test_phone_multi_take_tight_pauses.py tests/tasks/test_phone_multi_take_named_line.py tests/tasks/test_phone_multi_take_named_line_photos.py tests/kria/test_multi_take_tight_pause_receipts.py tests/routes/test_old_build_several_take_preview.py tests/kria/test_s3_multi_take_cleanup_receipts.py tests/tasks/test_phone_multi_take_review_fixes.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri720_cigdem_take_a_words.json",
+        "src/apps/api/tests/fixtures/kri720_s3_take_observations.json",
+        "src/apps/api/tests/services/test_multi_take_speech_cleanup.py",
+        "src/apps/api/tests/pipeline/test_speech_cleanup_restart_relisten.py",
+        "src/apps/api/tests/tasks/test_phone_multi_take_tight_pauses.py",
+        "src/apps/api/tests/tasks/test_phone_multi_take_named_line.py",
+        "src/apps/api/tests/tasks/test_phone_multi_take_named_line_photos.py",
+        "src/apps/api/tests/kria/test_multi_take_tight_pause_receipts.py",
+        "src/apps/api/tests/routes/test_old_build_several_take_preview.py",
+        "src/apps/api/app/services/several_take_preview_gate.py",
+        "src/apps/api/tests/tasks/test_phone_multi_take_review_fixes.py"
+      ]
+    },
+    {
       "id": "kri-1350-colour-moments",
       "needs_native": true,
       "api_tests": "tests/kria/test_colour_moments.py tests/evals/test_edit_copilot_evals.py tests/kria/test_plan_review.py tests/routes/test_editor_save_code_catalog.py tests/routes/test_phone_talking_range_commit.py",
@@ -3714,6 +3736,17 @@
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1355_kein_titel_de.json",
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1360_change_request_keeps_restrictions_de.json",
         "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri1359_german_lineup_sheet.json"
+      ]
+    },
+    {
+      "id": "kri-1294-choice-request",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1294_choice_request_journey.py tests/kria/test_request_binding_journey.py tests/kria/test_kri694_picker_answer_language.py",
+      "paths": [
+        "src/apps/api/app/services/song_order.py",
+        "src/apps/api/app/kria/request_budget.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/kria/test_kri1294_choice_request_journey.py"
       ]
     }
   ]
