@@ -705,11 +705,6 @@ export default function KriaLifeLanding() {
           </div>
 
           <div ref={payoffRef} className={styles.heroPayoff}>
-            <div className={styles.heroActions}>
-              <Link href="/plan" className={styles.primaryAction}>
-                Create a video
-              </Link>
-            </div>
           </div>
 
           <Button

@@ -233,7 +233,7 @@ describe("KriaEditStory reduced motion", () => {
     expect(container.querySelectorAll('[data-feature-group="captions-effects"]')).toHaveLength(2);
   });
 
-  it("keeps the primary CTA in the story and legal links below it", () => {
+  it("keeps the legal links in the story without an editor CTA", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: jest.fn().mockReturnValue({
@@ -244,12 +244,10 @@ describe("KriaEditStory reduced motion", () => {
       }),
     });
 
-    render(<KriaEditStory mode="auto" />);
+    const { container } = render(<KriaEditStory mode="auto" />);
 
-    expect(screen.getByRole("link", { name: /create a video/i })).toHaveAttribute(
-      "href",
-      "/plan",
-    );
+    expect(screen.queryByRole("link", { name: /create a video/i })).not.toBeInTheDocument();
+    expect(container.querySelector('a[href^="/plan"]')).toBeNull();
     expect(screen.getByRole("link", { name: "Terms of Service" })).toHaveAttribute(
       "href",
       "/terms",
@@ -258,7 +256,7 @@ describe("KriaEditStory reduced motion", () => {
       "href",
       "/privacy",
     );
-    expect(screen.getByText(/by signing in, you agree to Kria's/i)).toBeInTheDocument();
+    expect(screen.getByText(/read kria's/i)).toBeInTheDocument();
     expect(screen.queryByText("Auto")).not.toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
   });

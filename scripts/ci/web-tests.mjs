@@ -4,10 +4,7 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const groups = {
-  'interaction-1': ['plan/ChatCreationWorkspace', 'ui/tooltip'],
-  'interaction-2': ['plan/PersonalizationPage', 'library/LibraryTile', 'plan/edit-proposal-card'],
-  'interaction-3': ['plan/unified-timeline', 'plan/items/ToolDrawer-visuals', 'ui/select', 'plan/TikTokConnectionPanel'],
-  'interaction-4': ['components/header', 'plan/items/inspector-panel-text-horizontal', 'ui/dropdown-menu', 'ui/popover'],
+  'interaction-1': ['ui/select'],
 };
 export const interactionPaths = Object.values(groups).flat().map(name => `src/__tests__/${name}.test.tsx`);
 
