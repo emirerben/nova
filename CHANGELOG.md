@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.194.0] - 2026-11-13
+
+### Changed
+- feat(dev): ci-triage skill that runs itself when CI goes red (#2296) <!-- release-pr: 2296 -->
+
 ## [0.88.193.0] - 2026-11-13
 
 ### Changed
