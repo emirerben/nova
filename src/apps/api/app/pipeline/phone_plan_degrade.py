@@ -2,30 +2,50 @@
 
 Every late phone gate runs repair -> degrade -> fail. `phone_plan_repair` repairs: it keeps
 the item and changes its look. This module degrades: when a typed reject names one row the
-phone cannot draw, that row loses the part it cannot draw, the creator is told, and the rest
-of the approved edit renders. Anything else (a reject that names no row, a row a degrade cannot
-help, a creator-confirmed item) keeps failing with the original typed error.
+phone cannot draw, that row loses the part it cannot draw, the creator is told exactly what it
+lost, and the rest of the approved edit renders. Anything else (a reject that names no row, a
+row a degrade cannot help, an animation the creator chose) keeps failing with the original
+typed error.
 
-A degrade here never touches timing, order, audio or text, so nothing the contract pins can
+A degrade never touches timing, order, audio or words, so nothing the contract pins can
 change: `verify_phone_recipe` and the pin-time check still run unchanged after it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any, NamedTuple
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, NamedTuple
 
 from app.kria.reply_language import say
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 
 _PLAIN_LOOKS = frozenset({"none", "golden_hour"})
+_TEXT_LANES = ("text_elements", "context_label_text_elements", "narration_label_text_elements")
+# More clip numbers than this in one note read as a count ("8 clips").
+_LISTED_NUMBERS = 4
 
 
-class _MomentDegrade(NamedTuple):
-    # The moment's changed fields, or None when no change makes this row drawable.
+class Recovery(NamedTuple):
+    """One row kept drawable by a degrade (``"dropped"``) or a contract text shrink.
+
+    The worker records it once it keeps the compile it came from (``record_recoveries``);
+    ``lost`` (keys of ``_LOST``) is what the row gave up, so its note says exactly that.
+    """
+
+    reason: str
+    lane: str | None
+    item_id: str | None
+    action: Literal["dropped", "shrunk"]
+    lost: tuple[str, ...] = ()
+    subject: Literal["clip", "photo", "text", "ending"] | None = None
+    number: int | None = None
+    label: str | None = None
+
+
+class _Degrade(NamedTuple):
+    rows: Literal["moment", "text"]
+    # The row's new field values, or None when no change makes this row drawable.
     patch: Callable[[Any], dict[str, Any] | None]
-    en: str
-    tr: str
 
 
 def _plain_video(moment) -> dict[str, Any] | None:  # noqa: ANN001
@@ -63,69 +83,227 @@ def _no_transition_after(_moment) -> dict[str, Any]:  # noqa: ANN001
     return {"transition_after": None}
 
 
-_DREW_PLAIN = (
-    "Showed clip {n} without a look your iPhone can't draw yet",
-    "{n}. klibi iPhone'unun henüz çizemediği bir görünüm olmadan gösterdim",
-)
-_NO_GRADE = (
-    "Left the color look off clip {n}: your iPhone can't grade it yet",
-    "{n}. klipteki renk görünümünü kaldırdım: iPhone'un bunu henüz uygulayamıyor",
-)
+def _plain_entrance(element) -> dict[str, Any] | None:  # noqa: ANN001
+    # The words stay; only a planner-picked animation gives way. One the creator chose refuses.
+    chosen = (element.source_params or {}).get("creator_style_fields") or ()
+    return None if "effect" in chosen else {"effect": "fade-in"}
 
-# Reject reason (`UnsupportedPhonePlan.reason`) -> how its one moment still renders.
-MOMENT_DEGRADES: dict[str, _MomentDegrade] = {
-    "moment_treatment": _MomentDegrade(_plain_video, *_DREW_PLAIN),
-    "photo_treatment": _MomentDegrade(_plain_photo, *_DREW_PLAIN),
-    "look_source": _MomentDegrade(_no_look, *_NO_GRADE),
-    "look_with_tilt": _MomentDegrade(_no_look, *_NO_GRADE),
-    "freeze_speed": _MomentDegrade(
-        _still_without_freeze,
-        "Kept photo {n} on screen without a freeze effect",
-        "{n}. fotoğrafı donma efekti olmadan ekranda tuttum",
-    ),
-    "final_transition": _MomentDegrade(
-        _no_transition_after,
-        "Ended your video on a cut instead of a transition",
-        "Videonu geçiş yerine düz bir kesmeyle bitirdim",
-    ),
+
+# Reject reason (`UnsupportedPhonePlan.reason`) -> how its one row still renders.
+DEGRADES: dict[str, _Degrade] = {
+    "moment_treatment": _Degrade("moment", _plain_video),
+    "photo_treatment": _Degrade("moment", _plain_photo),
+    "look_source": _Degrade("moment", _no_look),
+    "look_with_tilt": _Degrade("moment", _no_look),
+    "freeze_speed": _Degrade("moment", _still_without_freeze),
+    "final_transition": _Degrade("moment", _no_transition_after),
+    "text_effect": _Degrade("text", _plain_entrance),
+}
+
+# A changed field -> what the creator is told the row lost (note order).
+_LOST = {
+    "layout": "card",
+    "image_motion": "zoom",
+    "look_preset": "look",
+    "look_adjustments": "color",
+    "source_crop": "crop",
+    "playback_rate": "speed",
+    "freeze_hold_s": "freeze",
+    "transition_after": "transition",
+    "effect": "animation",
 }
 
 
-def degrade_plan_for_phone(plan, exc: Exception) -> tuple[Any, list[str]]:  # noqa: ANN001
-    """``(plan, notes)`` with the one row ``exc`` names made drawable; ``(plan, [])`` otherwise."""
-    if not isinstance(exc, UnsupportedPhonePlan) or exc.reason not in MOMENT_DEGRADES:
+def degrade_plan_for_phone(plan, exc: Exception) -> tuple[Any, list[Recovery]]:  # noqa: ANN001
+    """``(plan, [recovery])`` with the one row ``exc`` names made drawable; ``(plan, [])``
+    when the reject names no row this module can help."""
+    if not isinstance(exc, UnsupportedPhonePlan) or exc.item_id is None:
         return plan, []
-    position = next(
-        (i for i, m in enumerate(plan.story_timeline) if m.moment_id == exc.item_id), None
-    )
+    degrade = DEGRADES.get(exc.reason or "")
+    if degrade is None:
+        return plan, []
+    if degrade.rows == "text":
+        return _degrade_text(plan, exc, degrade)
+    return _degrade_moment(plan, exc, degrade)
+
+
+def _changed(row, patch: dict[str, Any] | None) -> dict[str, Any]:  # noqa: ANN001
+    return {key: value for key, value in (patch or {}).items() if getattr(row, key) != value}
+
+
+def _lost(patch: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(part for key, part in _LOST.items() if key in patch)
+
+
+def _degrade_moment(plan, exc: UnsupportedPhonePlan, degrade: _Degrade):  # noqa: ANN001, ANN202
+    timeline = list(plan.story_timeline)
+    position = next((i for i, m in enumerate(timeline) if m.moment_id == exc.item_id), None)
     if position is None:
         return plan, []
-    degrade = MOMENT_DEGRADES[exc.reason]
-    moment = plan.story_timeline[position]
-    patch = degrade.patch(moment)
-    if not patch or all(getattr(moment, key) == value for key, value in patch.items()):
+    moment = timeline[position]
+    patch = _changed(moment, degrade.patch(moment))
+    if not patch:
         return plan, []
-    timeline = list(plan.story_timeline)
     timeline[position] = moment.model_copy(update=patch)
-    record_recovery(reason=exc.reason, lane=exc.lane, item_id=exc.item_id, action="dropped")
-    note = say(en=degrade.en, tr=degrade.tr, n=position + 1)
-    return plan.model_copy(update={"story_timeline": timeline}), [note]
+    subject = (
+        "ending"
+        if exc.reason == "final_transition"
+        else "photo"
+        if moment.kind == "image"
+        else "clip"
+    )
+    recovery = Recovery(
+        reason=exc.reason or "",
+        lane=exc.lane,
+        item_id=exc.item_id,
+        action="dropped",
+        lost=_lost(patch),
+        subject=subject,
+        number=position + 1,
+    )
+    return plan.model_copy(update={"story_timeline": timeline}), [recovery]
 
 
-def record_recovery(
-    *, reason: str | None, lane: str | None, item_id: str | None, action: str
-) -> None:
-    """The admin trace of one degrade (``action``: ``"dropped"`` or ``"shrunk"``)."""
+def _degrade_text(plan, exc: UnsupportedPhonePlan, degrade: _Degrade):  # noqa: ANN001, ANN202
+    from app.pipeline.phone_plan_repair import _quoted  # noqa: PLC0415
+
+    for lane in _TEXT_LANES:
+        elements = list(getattr(plan, lane))
+        index = next((i for i, e in enumerate(elements) if e.id == exc.item_id), None)
+        if index is None:
+            continue
+        element = elements[index]
+        patch = _changed(element, degrade.patch(element))
+        if not patch:
+            return plan, []
+        elements[index] = element.model_copy(update=patch)
+        recovery = Recovery(
+            reason=exc.reason or "",
+            lane=exc.lane,
+            item_id=exc.item_id,
+            action="dropped",
+            lost=_lost(patch),
+            subject="text",
+            label=_quoted(element.text),
+        )
+        return plan.model_copy(update={lane: elements}), [recovery]
+    return plan, []
+
+
+def degrade_notes(recoveries: Sequence[Recovery]) -> list[str]:
+    """One note per kind of change, in the bound chat language.
+
+    A row degraded twice (a zoom, then a look) is one row that lost both; rows that lost the
+    same parts share a line, so a look every clip carried is one note, not one per clip.
+    """
+    lost_by_row: dict[tuple[str | None, int | None, str | None], tuple[str, ...]] = {}
+    for recovery in recoveries:
+        if recovery.action != "dropped":
+            continue
+        row = (recovery.subject, recovery.number, recovery.label)
+        lost = {*lost_by_row.get(row, ()), *recovery.lost}
+        lost_by_row[row] = tuple(part for part in _LOST.values() if part in lost)
+    groups: dict[tuple[str | None, tuple[str, ...]], list[tuple[int | None, str | None]]] = {}
+    for (subject, number, label), lost in lost_by_row.items():
+        groups.setdefault((subject, lost), []).append((number, label))
+    notes = []
+    for (subject, lost), rows in groups.items():
+        if subject == "ending":
+            notes.append(
+                say(
+                    en="Ended your video on a cut instead of a transition",
+                    tr="Videonu geçiş yerine düz bir kesmeyle bitirdim",
+                )
+            )
+        elif subject == "text":
+            notes.append(_text_note([label or "" for _number, label in rows]))
+        else:
+            numbers = sorted(number for number, _label in rows if number is not None)
+            parts = _and([_part(part) for part in lost])
+            owned = (
+                say(en="its {parts}", tr="{parts}", parts=parts)
+                if len(numbers) == 1
+                else say(en="their {parts}", tr="{parts}", parts=parts)
+            )
+            notes.append(
+                say(
+                    en="Showed {which} without {lost}: your iPhone can't draw that yet",
+                    tr="{which} {lost} olmadan gösterdim: iPhone'un bunu henüz çizemiyor",
+                    which=_which(subject, numbers),
+                    lost=owned,
+                )
+            )
+    return notes
+
+
+def _text_note(labels: Sequence[str]) -> str:
+    if len(labels) == 1:
+        return say(
+            en="Showed the text {text} with a simple fade-in: your iPhone can't play its "
+            "animation yet",
+            tr="{text} yazısını basit bir belirmeyle gösterdim: iPhone'un animasyonunu henüz "
+            "oynatamıyor",
+            text=labels[0],
+        )
+    return say(
+        en="Showed {count} texts with a simple fade-in: your iPhone can't play their "
+        "animations yet",
+        tr="{count} yazıyı basit bir belirmeyle gösterdim: iPhone'un animasyonlarını henüz "
+        "oynatamıyor",
+        count=len(labels),
+    )
+
+
+def _which(subject: str | None, numbers: Sequence[int]) -> str:
+    photo = subject == "photo"
+    if len(numbers) > _LISTED_NUMBERS:
+        if photo:
+            return say(en="{count} photos", tr="{count} fotoğrafı", count=len(numbers))
+        return say(en="{count} clips", tr="{count} klibi", count=len(numbers))
+    listed = _and([str(number) for number in numbers])
+    if len(numbers) == 1:
+        if photo:
+            return say(en="photo {n}", tr="{n}. fotoğrafı", n=listed)
+        return say(en="clip {n}", tr="{n}. klibi", n=listed)
+    if photo:
+        return say(en="photos {n}", tr="{n}. fotoğrafları", n=listed)
+    return say(en="clips {n}", tr="{n}. klipleri", n=listed)
+
+
+def _part(part: str) -> str:
+    words = {
+        "card": lambda: say(en="card layout", tr="kart yerleşimi"),
+        "zoom": lambda: say(en="zoom", tr="yakınlaştırma"),
+        "look": lambda: say(en="look", tr="görünüm"),
+        "color": lambda: say(en="color adjustments", tr="renk ayarları"),
+        "crop": lambda: say(en="crop", tr="kırpma"),
+        "speed": lambda: say(en="speed change", tr="hız değişikliği"),
+        "freeze": lambda: say(en="freeze effect", tr="donma efekti"),
+    }
+    return words[part]()
+
+
+def _and(items: Sequence[str]) -> str:
+    if len(items) < 2:
+        return "".join(items)
+    return say(
+        en="{rest} and {last}", tr="{rest} ve {last}", rest=", ".join(items[:-1]), last=items[-1]
+    )
+
+
+def record_recoveries(recoveries: Sequence[Recovery]) -> None:
+    """The admin trace of the degrades and shrinks the worker kept, one event each."""
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-    record_pipeline_event(
-        "phone_plan",
-        "requirement_recovery",
-        {
-            "decision": "render_with_notes",
-            "reason": reason,
-            "lane": lane,
-            "item_id": item_id,
-            "action": action,
-        },
-    )
+    for recovery in recoveries:
+        record_pipeline_event(
+            "phone_plan",
+            "requirement_recovery",
+            {
+                "decision": "render_with_notes",
+                "reason": recovery.reason,
+                "lane": recovery.lane,
+                "item_id": recovery.item_id,
+                "action": recovery.action,
+            },
+        )

@@ -4809,12 +4809,13 @@
       ],
       "status": "open_pr",
       "owner": "KRI-1376",
-      "symptom": "One row the phone cannot draw (an unsupported look or zoom on a clip, a transition after the last clip) refused the whole approved video as phone_plan_unsupported, and a confirmed text with no clear spot at its size asked for a choice instead of shrinking.",
+      "symptom": "One row the phone cannot draw (an unsupported look or zoom on a clip, a transition after the last clip, right-to-left words in a staggered slice) refused the whole approved video as phone_plan_unsupported, and a confirmed text with no clear spot at its size asked for a choice instead of shrinking.",
       "boundary": "compiler",
       "paths": [
         "src/apps/api/app/pipeline/phone_guided_plan.py",
         "src/apps/api/app/pipeline/phone_plan_degrade.py",
-        "src/apps/api/app/pipeline/phone_plan_repair.py"
+        "src/apps/api/app/pipeline/phone_plan_repair.py",
+        "src/apps/api/app/pipeline/portable_text_layout.py"
       ],
       "regression_tests": [
         "tests/tasks/test_phone_plan_degrade.py"
@@ -4822,20 +4823,25 @@
       "harness": "real_pipeline",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "One bad row per gate through the real worker task (_run_generative_job -> unified montage planner -> guided compiler -> pin-time contract check); with the degrade patched to identity the same row refuses as phone_plan_unsupported.",
-        "live_model": "Not run; the change is deterministic compile-time behaviour.",
+        "offline_replay": "One bad row per gate (look, zoom, last-clip transition, right-to-left staggered text) and a look on every clip, through the real worker task (_run_generative_job -> unified montage planner -> guided compiler -> pin-time contract check); with the degrade patched to identity every gate's row refuses as phone_plan_unsupported.",
+        "live_model": "Not run; the change is deterministic compile-time behaviour. replay_creator.py could not run on a prod job: admin.py --prod GET exposes no source bytes or signed URLs, and its --render needs a Celery worker on the shared Redis.",
         "native_output": "Not run; the degraded recipe passes verify_phone_recipe and the pilot check, no device export inspected.",
-        "production": "Not deployed. No prod phone_plan_unsupported job since 2026-10-08 came from these compile gates; every one was a contract refusal."
+        "production": "Not deployed. All 42 prod phone_plan_unsupported jobs from 2026-09-18 to 2026-11-10 (admin.py --prod GET jobs/<id>/debug) failed on a contract refusal, another lane or a gate main already repairs; none on a gate this change degrades."
       },
       "neighbours_covered": [
-        "Unsupported look, zoom on a video clip, transition after the last clip",
-        "More bad rows than degrade passes ends in the typed refusal, not phone_plan_failed",
+        "Unsupported look, zoom on a video clip, transition after the last clip, right-to-left words in a staggered slice",
+        "A look on every clip renders with one note and one requirement_recovery per clip",
+        "Three kinds of reject render; a fourth refuses with its own typed error",
+        "A row degraded twice (zoom, then golden hour on a landscape clip) gets one note naming both",
+        "Photo notes name what the photo lost: zoom, look, color adjustments, freeze, speed change, crop on a card",
+        "An animation the creator chose and a script face the build lacks still refuse, typed, with the same failure code",
         "A text size the creator chose never shrinks; the refusal stays a typed needs_choice",
-        "Turkish chat gets the note in Turkish"
+        "The compile records nothing; only the worker records the compile it keeps",
+        "Turkish chat gets the notes in Turkish"
       ],
       "neighbours_gap": [
         "Photo treatment and a freeze on a still are covered at the compile call only: the worker fixture has no Visuals photo",
-        "Narrated compile rejects are typed but never degraded: the title, pins and spoken rows are creator-confirmed",
+        "Narrated compile rejects are typed but never degraded: the title, pins and spoken rows are creator-confirmed and the title's entrance already falls back to a plain fade",
         "Subtitled, voiceover montage, speech montage, voiceover cut and caption gates are not swept"
       ],
       "red_control": "not_applicable"

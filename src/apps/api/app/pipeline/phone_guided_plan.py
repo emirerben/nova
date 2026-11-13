@@ -281,7 +281,7 @@ def compile_phone_guided_plan(
         _assign_label_lane_roles,
         _tag_guided_text_overlays,
     )
-    from app.pipeline.portable_text_layout import compile_text_overlay
+    from app.pipeline.portable_text_layout import UnsupportedPortableText, compile_text_overlay
     from app.pipeline.sequence_text_evidence import sequence_lineage
 
     for lane, capability in _UNSUPPORTED_PHONE_LANE_CAPABILITY.items():
@@ -980,9 +980,17 @@ def compile_phone_guided_plan(
         # recipe so the phone contract can compose them. Ordinary layers retain
         # their historical positional ids.
         compiled_layer_id = f"text-{source_id}" if lineage is not None else layer_id
-        layer, font = compile_text_overlay(
-            overlay, layer_id=compiled_layer_id, canvas=canvas, dissolve_seed=101 + index * 37
-        )
+        try:
+            layer, font = compile_text_overlay(
+                overlay, layer_id=compiled_layer_id, canvas=canvas, dissolve_seed=101 + index * 37
+            )
+        except UnsupportedPortableText as exc:
+            raise UnsupportedPhonePlan(
+                str(exc),
+                reason=exc.reason or "text_treatment",
+                lane="text",
+                item_id=source_id,
+            ) from exc
         if font is not None:
             manifest[font.id] = font
             assets[font.id] = MediaAsset(

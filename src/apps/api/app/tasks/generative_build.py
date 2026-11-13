@@ -4951,6 +4951,7 @@ def _run_phone_guided_job(
         UnsupportedPhonePlan,
         guided_sfx_requests,
     )
+    from app.pipeline.phone_plan_degrade import record_recoveries  # noqa: PLC0415
     from app.pipeline.phone_plan_repair import compile_phone_guided_repaired  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
@@ -5245,6 +5246,8 @@ def _run_phone_guided_job(
             toggle_receipt = toggle_record(toggle_lane, candidate, recipe, bindings)
             break
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
+    # Only the compile this render keeps: a refused candidate or the pre-card compile is not.
+    record_recoveries(compiled.recoveries)
     repair_notes = _phone_repair_notes(
         (
             stage_contract_revision(
@@ -5272,9 +5275,10 @@ def _run_phone_guided_job(
                 element.model_dump(mode="json", exclude_none=False)
                 for element in getattr(compiled.plan, field)
             ]
-        if compiled.plan.story_timeline != plan.story_timeline:
-            # KRI-1376: a degraded moment (a look the phone cannot draw) shows as rendered.
-            raw_plan["story_timeline"] = repaired_plan_payload["story_timeline"]
+        # KRI-1376: a degraded row (a look or animation the phone cannot draw) shows as rendered.
+        for field in ("story_timeline", "narration_label_text_elements"):
+            if getattr(compiled.plan, field) != getattr(plan, field):
+                raw_plan[field] = repaired_plan_payload[field]
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe

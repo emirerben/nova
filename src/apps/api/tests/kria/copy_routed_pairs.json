@@ -637,6 +637,111 @@
    "{shape} kurgusu için müzik gerekiyor; normal bir montaj yaptım."
   ],
   [
+   "app/pipeline/phone_plan_degrade.py",
+   "Ended your video on a cut instead of a transition",
+   "Videonu geçiş yerine düz bir kesmeyle bitirdim"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed the text {text} with a simple fade-in: your iPhone can't play its animation yet",
+   "{text} yazısını basit bir belirmeyle gösterdim: iPhone'un animasyonunu henüz oynatamıyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed {count} texts with a simple fade-in: your iPhone can't play their animations yet",
+   "{count} yazıyı basit bir belirmeyle gösterdim: iPhone'un animasyonlarını henüz oynatamıyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed {which} without {lost}: your iPhone can't draw that yet",
+   "{which} {lost} olmadan gösterdim: iPhone'un bunu henüz çizemiyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "card layout",
+   "kart yerleşimi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "clip {n}",
+   "{n}. klibi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "clips {n}",
+   "{n}. klipleri"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "color adjustments",
+   "renk ayarları"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "crop",
+   "kırpma"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "freeze effect",
+   "donma efekti"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "its {parts}",
+   "{parts}"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "look",
+   "görünüm"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "photo {n}",
+   "{n}. fotoğrafı"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "photos {n}",
+   "{n}. fotoğrafları"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "speed change",
+   "hız değişikliği"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "their {parts}",
+   "{parts}"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "zoom",
+   "yakınlaştırma"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{count} clips",
+   "{count} klibi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{count} photos",
+   "{count} fotoğrafı"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{rest} and {last}",
+   "{rest} ve {last}"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Made your text {text} smaller so it fits clearly next to the other text",
+   "{text} yazını diğer yazıların yanına net sığsın diye küçülttüm"
+  ],
+  [
    "app/routes/creation_threads.py",
    "Kria is rendering your video ({phase}). I’ll update this chat when it’s ready.",
    "Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım."
