@@ -1,0 +1,148 @@
+{
+  "fixtures": 19,
+  "ran": 19,
+  "passed": 10,
+  "failure_categories": {
+    "asked instead of proposing": 7,
+    "other": 2
+  },
+  "settled_usd": 0.8086,
+  "ledger": [
+    {
+      "test_run_id": "kri1384sp-sol-h2-b1",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "11",
+      "settled_usd": "0.4369",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-sol-h2-b2",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "9",
+      "settled_usd": "0.3717",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "barcelona_shot_labels",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_tr",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri129_caption_food_and_weather",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "remove_uploaded_visuals",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri815_script_request",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_en",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri127_open_vocabulary_dish_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri841_talking_ending_clip",
+      "passed": false,
+      "failure": "AssertionError: assert None == {'media_id': 'asset-41be0c88-27d0-4f1a-b6c3-0e9d8a7b6c11', 'keep_audio': True} + where None = <built-in method get of dict object at 0x1150c6080>('ending_clip') + where <built-in method get of dict object at 0",
+      "category": "other"
+    },
+    {
+      "fixture": "kri506_metadata_parse_unresolved",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri586_delegated_hook_first_turn",
+      "passed": false,
+      "failure": "AssertionError: assert 'A few second...my marathon 🏃' == 'Sunrise miles' - Sunrise miles + A few seconds from my marathon 🏃",
+      "category": "other"
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    }
+  ]
+}

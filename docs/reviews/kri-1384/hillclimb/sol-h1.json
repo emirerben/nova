@@ -1,0 +1,175 @@
+{
+  "fixtures": 24,
+  "ran": 24,
+  "passed": 24,
+  "failure_categories": {},
+  "settled_usd": 1.1873,
+  "ledger": [
+    {
+      "test_run_id": "kri1384sp-sol-h1-b1",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "12",
+      "settled_usd": "0.5833",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-sol-h1-b2",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "12",
+      "settled_usd": "0.6040",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_window_is_not_a_hold",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_tr_bir_saniye_boyunca",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_tr_dedigim_yerde",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_quoted_restart_cue_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_display_one_at_a_time",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_title_hold_with_video_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_start_over_from_scratch_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_correction_no_two_seconds",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_bastan_basla_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    }
+  ]
+}

@@ -92,11 +92,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # the values before it were ce15504f / 8a7a2c85 / 68edb943 / d29283f2.
 # Re-pinned for KRI-1355: the brief section teaches the typed no-title ask (`title: "off"`);
 # the values before it were b52730bb / 72041f99 / 3116efd4 / 7cc917df.
+# Re-pinned for KRI-1384 (a limit is not a reason to ask; the brief records every stated ask
+# whatever the action); the values before it were 62cb90f0 / 2c83102a / f2f80a6e / d0df791e.
 MAIN_PROMPT_SHA = {
-    "neither": "62cb90f09ed39561094307dcbe86fb5858d82957b0373a3ba5b14a1973912e00",
-    (True, True): "2c83102a5775194593119b0cd004a6593d9c9b3622815419da09aedf33c3f181",
-    (True, False): "f2f80a6e20025407fbe0a2dffb0176c7a534a42eac2faf3fea4de2649242bec8",
-    (False, True): "d0df791e74b22894ca12b7933e8f5c3d2144f9156b273939d998eb618efae5ed",
+    "neither": "06f5d356094bc5216ea42b83e8a0fa26df96d5c62fa3c9ba7015145c76abbbdd",
+    (True, True): "1d71c1929c74e25ad7d626eea8e2b94845f4fd7b80ca3e4dbb92d3ab58059b01",
+    (True, False): "071e27a17a16b106a71c7226add2d70b2e7b1480e89a4a9f8e4e18ef502ee6a0",
+    (False, True): "0891014344618af893dfa62deecec73bcca86cd1e13a34aa94190e471e92b5ab",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

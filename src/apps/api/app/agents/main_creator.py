@@ -907,6 +907,20 @@ plays and whether it plays straight through.
 """.strip("\n")
 
 
+_BRIEF_RECORD_ANCHOR = "never re-list a requirement that is already in the contract and unchanged."
+# KRI-1384: gpt-6.1-sol read the contract literally. On a first turn the contract is the
+# creator's own message, so every ask looked "already in the contract", and an `ask_user` turn
+# returned no requirements at all. The planner keeps a question turn's requirements. The brief
+# extractor has no `action` and strips this sentence.
+BRIEF_RECORD_SENTENCE = (
+    ' A requirement is in the contract only when the contract lists it under "Creative brief'
+    " vN\"; a contract that is only the creator's own words has nothing recorded yet, so record"
+    " every requirement those words state. Record them whatever `action` is: an `ask_user` turn"
+    " (about footage, a limit of this edit, or a hook) still returns every requirement the"
+    " message states, so the creator never repeats them; only a change or removal whose target"
+    " you would have to guess waits for the answer."
+)
+
 # KRI-188: Creative Brief extraction. Rendered into the `$brief_section` slot
 # (appended to the clip-intents line, so "" adds no bytes) ONLY when
 # `MainCreatorInput.brief_enabled` is true; flag off is byte-identical.
@@ -1295,7 +1309,7 @@ scratch", "forget my earlier instructions", "Baştan başla", "sıfırdan yap").
 withdraws every requirement in the contract, so record as an `add` each requirement the current
 message itself states, even one the contract already had. Otherwise set it to false.
 """.strip("\n")
-)
+).replace(_BRIEF_RECORD_ANCHOR, _BRIEF_RECORD_ANCHOR + BRIEF_RECORD_SENTENCE, 1)
 
 _BRIEF_INSERT_CLIP_SENTENCE = (
     " A clip the creator asks to play IN THE MIDDLE of the talk, with the talk PAUSED until the"

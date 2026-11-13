@@ -1022,13 +1022,15 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # keep-the-take-whole line also records speech_cleanup false), and for KRI-1292 (`hold_s`
     # for a text at a spoken word), and for KRI-1327 (`subject_outline`, a line around a person),
     # and for KRI-1355 (the typed no-title ask, `title: "off"`). The extractor prompt digests were
-    # re-frozen for KRI-1365 (shorter/faster asks and "revert to the old version" are edits).
+    # re-frozen for KRI-1365 (shorter/faster asks and "revert to the old version" are edits). The
+    # Main Creator digests were re-frozen for KRI-1384 (every stated ask is recorded whatever the
+    # action); the extractor strips that sentence, so its digests are unchanged.
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "c0151ced250653122f3510792a6ff85204f097703fd55f500e9bccedfafc3379"
+        "f8a8e0b7803194626019391a39bfefbf04ab1bfa8a40a75deafc68687ffbc8dc"
     )
     assert digest(brief_prompt_section(True)) == (
-        "a49e1033ccb62fb079006cc403e1a9e58e74b7aefd7d9e556deaddf5e9675948"
+        "eecce07934fa7de41b4bbe908526d6734af5b7ccfbdf20ff1abfebd265e8f51d"
     )
     assert digest(_narrow_brief_section(False)) == (
         "0cdcbd1c0a89df7ac461c85cdbb71abf10328c89a56cb912a4cd87d7c72e22fe"

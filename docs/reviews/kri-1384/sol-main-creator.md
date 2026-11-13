@@ -1,7 +1,9 @@
 # KRI-1385: a safe `MAIN_CREATOR_MODEL=gpt-6.1-sol` (and one model registry, KRI-1393 step 4)
 
-Status: implemented and offline verified; live model checked on the development ledger. The
-quality gate for a production flip is **not met** (see Live eval). Prod config is unchanged.
+Status: implemented and offline verified; live model checked on the development ledger. After
+the prompt work below, Sol passes 95 of 118 fixtures and Gemini passes 96. The quality gate for a
+production flip (Sol at or above Gemini) is **not met** in this sample (see Prompt work for Sol).
+Prod config is unchanged.
 
 ## What changed
 
@@ -79,10 +81,52 @@ Reading:
 - About half of Sol's failures also fail on live Gemini. Those fixtures pin wording or a recorded hook, or a choice the live production model no longer makes either.
 - The other half are Sol-specific. The clearest gap is requirement extraction: live Gemini fills `brief_updates` in 7 of the 8 such fixtures it ran, while Sol leaves them empty at both `medium` and `high`.
 - Raising Sol's effort recovered none of the 29, and made each call about twice as slow and about 30% more expensive.
-- The likely lever is the prompt (how the `brief_updates` contract is taught), not the effort setting. This is inferred, not tested here.
-- Gemini was not run on the 71 fixtures Sol passed, so these runs give no exact Gemini pass rate.
+- The likely lever is the prompt (how the `brief_updates` contract is taught), not the effort setting. Prompt work for Sol below tests this.
+- Gemini was not run on the 71 fixtures Sol passed, so these runs give no exact Gemini pass rate. Prompt work for Sol below measures it over all 118.
 
 Spend on the development ledger across all KRI-1384 runs: $9.73 settled, plus $0.39 held as unknown (two Sol reservations: the forced drop and the parity deadline). The largest single run was $1.72.
+
+### Prompt work for Sol
+
+All runs used a fresh development ledger (`nova_kri1384_solprompt_dev`, `AI_USAGE_ENVIRONMENT=development`, `live_eval`). Each batch was its own run, capped at $2. `scripts/run_live_batches.sh` runs the batches, `scripts/summarize_live_eval.py` scores them and `scripts/compare_runs.py` compares runs per fixture. The harness uses the default flags (for example `CLIP_INTENTS_ENABLED` off) unless a fixture sets `prod_profile`. Both models ran on the same harness.
+
+**The bar.** Live Gemini 3.1 Pro at `high`, the shipped default, passed 96 of 118 (81%). It made 124 calls for $8.98 settled (`live-eval-gemini-full.json`).
+
+| Measure | Sol `medium` before | Sol `medium` after | Gemini `high` |
+| --- | --- | --- | --- |
+| Fixtures passing | 71 / 118 (60%) | **95 / 118 (81%)** | **96 / 118 (81%)** |
+| EN/TR Main Creator pairs | 4 of 4 match, 8 of 8 intended | 4 of 4 match, 8 of 8 intended (`parity-sol-after.json`) | not run |
+| Mean settled cost per call | $0.039 | $0.036 | $0.072 |
+| p50 / p95 per call | 12.1 s / 23.4 s | 13.3 s / 22.0 s | 20.7 s / 49.7 s |
+
+From before to after, 26 fixtures went from fail to pass and 2 from pass to fail. Against Gemini, 90 pass on both, 17 fail on both, 6 pass only on Gemini and 5 pass only on Sol (`compare-sol-gemini.json`).
+
+**What was wrong.** A rerun of Sol's 47 failures with its answers captured failed 44 of them again, so the failures were systematic, not noise (`hillclimb/sol-diag.json`). It was not a schema problem. Main Creator sends OpenAI no JSON schema (it uses `json_object` and the prompt's envelope), and Sol returned `brief_updates`, `delegates_all_choices` and `starts_fresh` every time. The answers showed three behaviours:
+
+1. Sol read the brief contract literally. On a first turn the FULL CREATOR REQUEST CONTRACT is the creator's own message, because `render_brief_request` returns the message when nothing is recorded. The brief section says never to re-list a requirement already in the contract. So for "Add word by word captions to my video" Sol proposed karaoke captions and recorded no requirement. Whenever Sol asked a question, it also returned `brief_updates: []`, although the planner keeps a question turn's requirements.
+2. Sol asked instead of proposing whenever part of a request was unavailable or approximate, for example: "can't lock each labeled shot to 1.5 seconds or apply a warm grade. Would you accept…?"
+3. Sol asked for what the server finds itself: whether a clip has speech, which upload is which named shot, and the word the creator asked to be asked about later.
+
+**One hypothesis per run.** Each run had targets (Sol failed, Gemini passed) and controls (fixtures the change could break). Per-run results are in `hillclimb/`.
+
+| # | Change | Targets | Controls | Spend | Kept |
+| --- | --- | --- | --- | --- | --- |
+| H1 | Brief section (Main Creator only; the brief extractor strips it): a requirement is in the contract only when listed under "Creative brief vN", and every stated requirement is recorded whatever `action` is. | 0 / 18 → 18 / 18 | 6 / 6 | $1.19 | yes |
+| H2 | Base prompt rule: a limit is not a reason to ask. Propose the closest plan and say in `summary` what will differ. Still ask where a rule says to, for hook or title wording, and for a choice between two different edits. | 0 / 7 → 4 / 7 | 7 / 7 | $0.81 | yes |
+| H3 | Same rule: never ask for what the server finds itself (speech, which upload is which named shot, a word the creator wants asked later). | 0 / 3 → 1 / 3 | 6 / 6 | $0.45 | yes |
+
+**Gemini on the new prompt.** Gemini reran the 33 affected fixtures it had passed and passed 32 (`hillclimb/gem-regress.json`). The one failure, `kri789_one_take_start_end_lines_trim`, passed 3 of 3 reruns, so it reads as noise (`hillclimb/gem-kri789.json`). The other 85 fixtures were not rerun on Gemini, so Gemini's full rate on the new prompt is not measured.
+
+**Verdict.** Sol at `medium` passes 95 of 118, one fixture under Gemini's 96. By the stated bar (Sol at or above Gemini) the gate is **not met** in this sample, and readiness is not claimed. The one-fixture gap is inside the measured run-to-run noise: Gemini changed its verdict on 6 of 39 hard fixtures between two runs, and Sol on 3 of 47. A paired rerun of both models over all 118 would cost about $13. The 6 fixtures only Gemini passes:
+
+- `kri586_generate_after_choice` pins the hook text "Sunrise miles", recorded from Gemini.
+- `n2_voiceover_fullscreen_photo_sequence` pins the beat id `bathtub`. Sol named it `bathtub-photo`.
+- `kri1151_talking_cutaways_insert_open_show_when_mentioned` needs the word "muted". Sol wrote "muting your voice".
+- `kri422_per_shot_texts` asserts exactly 9 brief entries. Sol added a 10th, an `order` requirement for the numbered shot list.
+- `barcelona_shot_labels` left out `render_intent_evidence` in the final run. It passed both earlier runs on this prompt.
+- `sport_labels_bottom_right` dropped the per-clip sport label, which it kept in the baseline. This is one sample. It may be a regression from H2 and was not re-measured.
+
+Spend for this work: $21.17 settled, $0 held. The final Sol run hit the development ledger's 80% guard ($20 of the $25 monthly budget) after 83 fixtures. The 35 it refused ran as a second batch set on the same prompt, with the budget raised to $30 for that run (`kri1384sp-sol-finalc`).
 
 ### Thinking row on the local stack
 
@@ -110,7 +154,7 @@ Fly secret names were listed with `fly secrets list -a nova-video`. Values were 
 
 ## Rollout (KRI-1390, after merge and deploy; the lead runs it)
 
-Do not run this until the quality gate above is met. The mechanics are ready; the answers are not.
+Do not run this until the quality gate above is met. The mechanics are ready. After the prompt work, Sol is one fixture under Gemini (95 against 96 of 118), inside run-to-run noise. Whether that is enough, or a paired rerun comes first, is the lead's call.
 
 1. Before: record the planning-turn p95 from `/admin/kria/trace`. Confirm (operator-approved read) `AI_USAGE_ENVIRONMENT=production` and the `AI_COST_CONTROL_ENABLED` value. Make sure the smoke account has no active `internal_account_grants` row.
 2. Size the planning budget: `P` = expected Sol planning calls per month x $0.05 (p95 settled $0.052 per call here) plus headroom. Each in-flight call also holds about $0.23 until it settles.
@@ -142,7 +186,7 @@ The planning budget secrets can stay; with a Gemini Main Creator they meter noth
 
 ## Gaps
 
-- **Quality.** Sol at `medium` misses checks the Gemini-era fixtures expect (see Live eval). The fallback and metering make a flip safe to run, not good to run. Prompt work for Sol, or a measured effort change, comes before KRI-1390.
+- **Quality.** After the prompt work, Sol at `medium` passes 95 of 118 and Gemini at `high` passes 96 (see Prompt work for Sol). The bar is not met in this one sample. Gemini's full rate on the new prompt is not measured; it held 32 of 33 affected fixtures, and the one miss passed 3 of 3 reruns.
 - **Thinking row content.** The row fills, but Sol's `concise` summary is usually one heading. Not checked on the iOS simulator.
 - **Message route.** The thinking-row check bound the publisher directly. A full `POST /creation-threads/{id}/messages` turn with uploaded footage was not run locally.
 - **Local development.** Planning is always metered, so a local stack with `MAIN_CREATOR_MODEL=gpt-6.1-sol` needs the manual-QA envelope (`AI_MANUAL_QA_TEST_RUN_ID`, `AI_MANUAL_QA_MAX_COST_USD`, `AI_MANUAL_QA_RESERVATION_APPROVED`) or every Sol reservation is refused. The Gemini fallback then answers only when `AI_COST_CONTROL_ENABLED` is off. The same applies to an offline replay that runs a Sol-configured agent: it now tries a reservation first.

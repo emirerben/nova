@@ -1,0 +1,164 @@
+{
+  "pairs": [
+    {
+      "id": "mc_pacing",
+      "capability": "pacing",
+      "agent": "main_creator",
+      "expect": {
+        "action.kind": "propose_strategy",
+        "action.strategy.pacing": "relaxed"
+      },
+      "en": {
+        "message": "Make it slow and calm, no fast cuts. I want it to feel relaxed.",
+        "decision": {
+          "action.kind": "propose_strategy",
+          "action.strategy.pacing": "relaxed"
+        },
+        "model_used": "gpt-6.1-sol",
+        "cost_usd": 0.026178,
+        "prompt_drift": false,
+        "intended": true
+      },
+      "tr": {
+        "message": "yavaş ve sakin olsun, hızlı kesmeler istemiyorum. rahat bir his versin",
+        "decision": {
+          "action.kind": "propose_strategy",
+          "action.strategy.pacing": "relaxed"
+        },
+        "model_used": "gpt-6.1-sol",
+        "cost_usd": 0.026584,
+        "prompt_drift": false,
+        "intended": true
+      },
+      "status": "match",
+      "diff": {},
+      "both_missed_intent": false
+    },
+    {
+      "id": "mc_music_off",
+      "capability": "music_bed_on_off",
+      "agent": "main_creator",
+      "expect": {
+        "action.kind": "propose_strategy",
+        "action.strategy.audio_strategy": "original_audio"
+      },
+      "en": {
+        "message": "No music please, just keep the original sound of my clips.",
+        "decision": {
+          "action.kind": "propose_strategy",
+          "action.strategy.audio_strategy": "original_audio"
+        },
+        "model_used": "gpt-6.1-sol",
+        "cost_usd": 0.025892,
+        "prompt_drift": false,
+        "intended": true
+      },
+      "tr": {
+        "message": "Müzik koyma lütfen, kliplerin kendi sesi kalsın.",
+        "decision": {
+          "action.kind": "propose_strategy",
+          "action.strategy.audio_strategy": "original_audio"
+        },
+        "model_used": "gpt-6.1-sol",
+        "cost_usd": 0.02684,
+        "prompt_drift": false,
+        "intended": true
+      },
+      "status": "match",
+      "diff": {},
+      "both_missed_intent": false
+    },
+    {
+      "id": "mc_photo_timing",
+      "capability": "photo_timing",
+      "agent": "main_creator",
+      "expect": {
+        "action.kind": "propose_strategy",
+        "action.strategy.mixed_media_timing.image_hold": "very_fast",
+        "action.strategy.mixed_media_timing.video_hold": "longer"
+      },
+      "en": {
+        "message": "Photos should flash by really quickly, the videos can stay on screen longer.",
+        "decision": {
+          "action.kind": "propose_strategy",
+          "action.strategy.mixed_media_timing.image_hold": "very_fast",
+          "action.strategy.mixed_media_timing.video_hold": "longer"
+        },
+        "model_used": "gpt-6.1-sol",
+        "cost_usd": 0.0251,
+        "prompt_drift": false,
+        "intended": true
+      },
+      "tr": {
+        "message": "fotoğraflar çok hızlı geçsin, videolar ekranda daha uzun kalabilir",
+        "decision": {
+          "action.kind": "propose_strategy",
+          "action.strategy.mixed_media_timing.image_hold": "very_fast",
+          "action.strategy.mixed_media_timing.video_hold": "longer"
+        },
+        "model_used": "gpt-6.1-sol",
+        "cost_usd": 0.026852,
+        "prompt_drift": false,
+        "intended": true
+      },
+      "status": "match",
+      "diff": {},
+      "both_missed_intent": false
+    },
+    {
+      "id": "mc_named_sfx",
+      "capability": "named_sound_effect",
+      "agent": "main_creator",
+      "expect": {
+        "action.kind": "propose_strategy"
+      },
+      "en": {
+        "message": "Make a quick edit of the best sports moments. Add a buzzer sound effect every time someone misses.",
+        "decision": {
+          "action.kind": "propose_strategy",
+          "action.strategy.licensed_sfx.effect_id": "buzzer",
+          "action.strategy.licensed_sfx.semantics": "funny_moments"
+        },
+        "model_used": "gpt-6.1-sol",
+        "cost_usd": 0.027198,
+        "prompt_drift": false,
+        "intended": true
+      },
+      "tr": {
+        "message": "En iyi spor anlarından hızlı bir edit yap. Biri her ıskaladığında buzzer sesi ekle.",
+        "decision": {
+          "action.kind": "propose_strategy",
+          "action.strategy.licensed_sfx.effect_id": "buzzer",
+          "action.strategy.licensed_sfx.semantics": "funny_moments"
+        },
+        "model_used": "gpt-6.1-sol",
+        "cost_usd": 0.028412,
+        "prompt_drift": false,
+        "intended": true
+      },
+      "status": "match",
+      "diff": {},
+      "both_missed_intent": false
+    }
+  ],
+  "main_creator": {
+    "pairs": 4,
+    "match": 4,
+    "parity_pct": 100.0,
+    "en_intended_pct": 100.0,
+    "tr_intended_pct": 100.0
+  },
+  "ledger": {
+    "test_run_id": "kri1384sp-sol-parity",
+    "settled_usd": 0.213056,
+    "rows": [
+      {
+        "feature": "nova.creator.main",
+        "status": "settled",
+        "calls": 8,
+        "settled_usd": 0.213056,
+        "reserved_usd": 1.569672
+      }
+    ]
+  }
+}
