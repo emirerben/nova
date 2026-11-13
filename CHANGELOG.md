@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.182.0] - 2026-11-13
+
+### Changed
+- fix(kria): the edit copilot never refuses a stated length over word-by-word text (KRI-1373) (#2283) <!-- release-pr: 2283 -->
+
 ## [0.88.181.0] - 2026-11-13
 
 ### Changed
