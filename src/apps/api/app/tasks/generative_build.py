@@ -5114,16 +5114,17 @@ def _run_phone_guided_job(
     # The pinned contract lets the repair put back confirmed text the plan lost, which
     # the pin-time check below would otherwise refuse (KRI-129: the creator's words win).
     contract = _phone_pin_contract(snapshot)
-    compiled = compile_phone_guided_repaired(
-        plan,
-        bindings,
-        contract=contract,
-        visuals=visuals,
-        narration=narration_bed,
-        song=song_bed,
-        sound_effects=sound_effects,
-        landscape_fit="fit" if landscape_fit == "fit" else "fill",
-    )
+    with _worker_reply_language(snapshot):
+        compiled = compile_phone_guided_repaired(
+            plan,
+            bindings,
+            contract=contract,
+            visuals=visuals,
+            narration=narration_bed,
+            song=song_bed,
+            sound_effects=sound_effects,
+            landscape_fit="fit" if landscape_fit == "fit" else "fill",
+        )
     recipe, repair_notes = compiled.recipe, list(compiled.notes)
     # Exact-timed small cards: the first compile fixes where every clip really starts on
     # the output clock (transitions, refits); the cards are grounded against that and the
@@ -5142,18 +5143,19 @@ def _run_phone_guided_job(
         if timed_cards:
             visuals = _merge_visual_bindings(visuals, card_visuals)
             try:
-                compiled = compile_phone_guided_repaired(
-                    plan,
-                    bindings,
-                    contract=contract,
-                    visuals=visuals,
-                    narration=narration_bed,
-                    song=song_bed,
-                    sound_effects=sound_effects,
-                    landscape_fit="fit" if landscape_fit == "fit" else "fill",
-                    timed_cards=timed_cards,
-                    allow_editor_media=True,
-                )
+                with _worker_reply_language(snapshot):
+                    compiled = compile_phone_guided_repaired(
+                        plan,
+                        bindings,
+                        contract=contract,
+                        visuals=visuals,
+                        narration=narration_bed,
+                        song=song_bed,
+                        sound_effects=sound_effects,
+                        landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                        timed_cards=timed_cards,
+                        allow_editor_media=True,
+                    )
                 recipe, repair_notes = compiled.recipe, list(compiled.notes)
             except (UnsupportedPhonePlan, ValueError) as exc:
                 # The lane never costs the creator their video: render without it, say so.
@@ -5200,21 +5202,22 @@ def _run_phone_guided_job(
                 break
             try:
                 candidate_plan = GuidedStoryExecutionPlan.model_validate(candidate.raw_plan)
-                candidate_compiled = compile_phone_guided_repaired(
-                    candidate_plan,
-                    bindings,
-                    contract=contract,
-                    visuals=visuals,
-                    narration=narration_bed,
-                    song=song_bed,
-                    sound_effects=sound_effects,
-                    landscape_fit="fit" if landscape_fit == "fit" else "fill",
-                    **(
-                        {"timed_cards": timed_cards, "allow_editor_media": True}
-                        if timed_cards
-                        else {}
-                    ),
-                )
+                with _worker_reply_language(snapshot):
+                    candidate_compiled = compile_phone_guided_repaired(
+                        candidate_plan,
+                        bindings,
+                        contract=contract,
+                        visuals=visuals,
+                        narration=narration_bed,
+                        song=song_bed,
+                        sound_effects=sound_effects,
+                        landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                        **(
+                            {"timed_cards": timed_cards, "allow_editor_media": True}
+                            if timed_cards
+                            else {}
+                        ),
+                    )
                 validate_phone_pilot_recipe(
                     candidate_compiled.recipe, allow_editor_media=bool(timed_cards)
                 )
@@ -5269,6 +5272,9 @@ def _run_phone_guided_job(
                 element.model_dump(mode="json", exclude_none=False)
                 for element in getattr(compiled.plan, field)
             ]
+        if compiled.plan.story_timeline != plan.story_timeline:
+            # KRI-1376: a degraded moment (a look the phone cannot draw) shows as rendered.
+            raw_plan["story_timeline"] = repaired_plan_payload["story_timeline"]
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe

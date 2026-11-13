@@ -4800,6 +4800,45 @@
         "The typed native wire cannot carry the repairs tag; untagged fixes match by op name only (KRI-1393)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1376-phone-plan-degrade",
+      "tickets": [
+        "KRI-1376",
+        "KRI-1374"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1376",
+      "symptom": "One row the phone cannot draw (an unsupported look or zoom on a clip, a transition after the last clip) refused the whole approved video as phone_plan_unsupported, and a confirmed text with no clear spot at its size asked for a choice instead of shrinking.",
+      "boundary": "compiler",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_guided_plan.py",
+        "src/apps/api/app/pipeline/phone_plan_degrade.py",
+        "src/apps/api/app/pipeline/phone_plan_repair.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_phone_plan_degrade.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "One bad row per gate through the real worker task (_run_generative_job -> unified montage planner -> guided compiler -> pin-time contract check); with the degrade patched to identity the same row refuses as phone_plan_unsupported.",
+        "live_model": "Not run; the change is deterministic compile-time behaviour.",
+        "native_output": "Not run; the degraded recipe passes verify_phone_recipe and the pilot check, no device export inspected.",
+        "production": "Not deployed. No prod phone_plan_unsupported job since 2026-10-08 came from these compile gates; every one was a contract refusal."
+      },
+      "neighbours_covered": [
+        "Unsupported look, zoom on a video clip, transition after the last clip",
+        "More bad rows than degrade passes ends in the typed refusal, not phone_plan_failed",
+        "A text size the creator chose never shrinks; the refusal stays a typed needs_choice",
+        "Turkish chat gets the note in Turkish"
+      ],
+      "neighbours_gap": [
+        "Photo treatment and a freeze on a still are covered at the compile call only: the worker fixture has no Visuals photo",
+        "Narrated compile rejects are typed but never degraded: the title, pins and spoken rows are creator-confirmed",
+        "Subtitled, voiceover montage, speech montage, voiceover cut and caption gates are not swept"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

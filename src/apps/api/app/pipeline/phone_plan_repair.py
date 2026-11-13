@@ -19,6 +19,11 @@ Repairs (all deterministic, all noted):
   unqualified font / text effect                 -> qualified default font / ``fade-in``
   a text window past the end of the timeline     -> clamped onto the timeline
   confirmed on-screen text the plan lost         -> placed back (``repair_plan_for_contract``)
+  confirmed text with no clear spot at its size  -> shrunk until one is clear, never below
+                                                    a readable size or a size the creator chose
+
+A reject no repair fixes and that names one row the phone cannot draw (a look, a zoom, a
+transition after the last clip) degrades that row instead (``phone_plan_degrade``, KRI-1376).
 
 NOT repaired: a transition whose outgoing source is genuinely too short (a
 hole in the timeline). No plan-level edit can conjure footage; the reject keeps
@@ -35,7 +40,8 @@ from typing import Any, NamedTuple
 
 import structlog
 
-from app.pipeline import phone_guided_plan
+from app.kria.reply_language import say
+from app.pipeline import phone_guided_plan, phone_plan_degrade
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.services.phone_rollout import (
     PhoneCapabilityUnavailable,
@@ -57,6 +63,8 @@ _REPAIR_EFFECT = "fade-in"
 
 # At most one repair pass per reject kind, bounded so a stubborn plan cannot loop.
 _MAX_REPAIR_PASSES = 3
+# One bad row degraded per pass (`phone_plan_degrade`); more than this and the plan refuses.
+_MAX_DEGRADE_PASSES = 3
 
 
 class PhoneProposalRejected(ValueError):
@@ -389,8 +397,27 @@ def _new_text(plan, template, **updates: Any):  # noqa: ANN001
     )
 
 
+def _shrink_sizes(element) -> list[float | None]:  # noqa: ANN001
+    """The sizes a confirmed text may take to fit, largest first: its own, then smaller.
+
+    Never one the creator chose (``creator_style_fields``), never below the smallest size
+    the text style pass calls readable.
+    """
+    from app.pipeline.phone_text_style import _READABLE_FLOOR_PX  # noqa: PLC0415
+
+    size = element.size_px
+    chosen = "size_px" in ((element.source_params or {}).get("creator_style_fields") or ())
+    if size is None or chosen:
+        return [size]
+    return [size, *(float(px) for px in range(int(size) - 2, _READABLE_FLOOR_PX - 1, -2))]
+
+
 def _place_added_contract_text(plan, element):  # noqa: ANN001
-    """Reserve measured ink space without changing confirmed copy, style or time."""
+    """Reserve measured ink space without changing confirmed copy or time.
+
+    The text keeps its size when a clear spot exists; otherwise it shrinks (``_shrink_sizes``)
+    until one does. Only when no readable size fits is the creator asked to choose.
+    """
     from app.pipeline.canvas import canvas_for_orientation  # noqa: PLC0415
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
     from app.pipeline.phone_text_style import animation_box  # noqa: PLC0415
@@ -419,27 +446,30 @@ def _place_added_contract_text(plan, element):  # noqa: ANN001
         return animation_box(text.model_dump(mode="json"), bounds, canvas)
 
     element = element.model_copy(update={"position": "custom"})
-    box = ink(element)
-    obstacles = []
-    for other in _visible(plan):
-        if other.start_s >= element.end_s or other.end_s <= element.start_s:
-            continue
-        obstacle = ink(other)
-        if obstacle[0] < box[2] and box[0] < obstacle[2]:
-            obstacles.append(obstacle)
+    concurrent = [
+        ink(other)
+        for other in _visible(plan)
+        if other.start_s < element.end_s and other.end_s > element.start_s
+    ]
     origin = float(element.y_frac if element.y_frac is not None else _TITLE_Y)
     gap = 24 / canvas.height
-    candidates = [origin]
-    candidates += sorted(origin + other[3] + gap - box[1] for other in obstacles)
-    candidates += sorted((origin + other[1] - gap - box[3] for other in obstacles), reverse=True)
-    candidates += [origin + 0.05 - box[1], origin + 0.90 - box[3]]
-    for y in candidates:
-        top, bottom = box[1] + y - origin, box[3] + y - origin
-        if box[0] < 0 or box[2] > 1 or top < 0.05 or bottom > 0.90:
-            continue
-        if any(top < other[3] and other[1] < bottom for other in obstacles):
-            continue
-        return element.model_copy(update={"position": "custom", "y_frac": round(y, 6)})
+    for size in _shrink_sizes(element):
+        sized = element.model_copy(update={"size_px": size})
+        box = ink(sized)
+        obstacles = [other for other in concurrent if other[0] < box[2] and box[0] < other[2]]
+        candidates = [origin]
+        candidates += sorted(origin + other[3] + gap - box[1] for other in obstacles)
+        candidates += sorted(
+            (origin + other[1] - gap - box[3] for other in obstacles), reverse=True
+        )
+        candidates += [origin + 0.05 - box[1], origin + 0.90 - box[3]]
+        for y in candidates:
+            top, bottom = box[1] + y - origin, box[3] + y - origin
+            if box[0] < 0 or box[2] > 1 or top < 0.05 or bottom > 0.90:
+                continue
+            if any(top < other[3] and other[1] < bottom for other in obstacles):
+                continue
+            return sized.model_copy(update={"y_frac": round(y, 6)})
     raise CreatorRenderContractError(
         "Your confirmed text cannot fit clearly alongside the other text at this size.",
         decline_reason="needs_choice",
@@ -447,6 +477,21 @@ def _place_added_contract_text(plan, element):  # noqa: ANN001
         alternative="Choose a smaller text size or a separate time window.",
         missing_text=element.text,
     )
+
+
+def _shrunk_notes(before, after) -> list[str]:  # noqa: ANN001
+    if after.size_px == before.size_px:
+        return []
+    phone_plan_degrade.record_recovery(
+        reason="contract_text_fit", lane="text", item_id=after.id, action="shrunk"
+    )
+    return [
+        say(
+            en="Made your text {text} smaller so it fits clearly next to the other text",
+            tr="{text} yazını diğer yazıların yanına net sığsın diye küçülttüm",
+            text=_quoted(after.text),
+        )
+    ]
 
 
 def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tuple[Any, list[str]]:  # noqa: ANN001
@@ -576,14 +621,17 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             )
             texts.append(_place_added_contract_text(current, element))
             notes.append(f"Added your text {_quoted(literal)} on screen")
+            notes.extend(_shrunk_notes(element, texts[-1]))
         current = current.model_copy(update={"text_elements": texts})
     for done, element_id in enumerate(placed):
         index = next(i for i, e in enumerate(texts) if e.id == element_id)
         waiting = set(placed[done:])
         others = [e for e in texts if e.id not in waiting]
+        before = texts[index]
         texts[index] = _place_added_contract_text(
-            current.model_copy(update={"text_elements": others}), texts[index]
+            current.model_copy(update={"text_elements": others}), before
         )
+        notes.extend(_shrunk_notes(before, texts[index]))
     current = current.model_copy(update={"text_elements": list(texts)})
     linked = _link_clip_texts(current, contract, frame_s)
     if not notes and linked is current:
@@ -631,8 +679,9 @@ def compile_phone_guided_repaired(  # noqa: ANN001
 
     ``contract`` (the job's pinned ``CreatorRenderContract``, when it has one) first puts
     back any confirmed exact text the plan lost (``repair_plan_for_contract``). ``kwargs``
-    go to ``compile_phone_guided_plan`` verbatim. Raises the compile / validation error
-    unchanged when it is not repairable (or a repair did not help).
+    go to ``compile_phone_guided_plan`` verbatim. A reject no repair fixes may degrade the
+    one row it names (``phone_plan_degrade``). Raises the compile / validation error
+    unchanged when neither helps, or when the passes run out.
     """
     allow_editor_media = bool(kwargs.get("allow_editor_media", False))
     current, contract_notes = repair_plan_for_contract(plan, contract)
@@ -640,7 +689,8 @@ def compile_phone_guided_repaired(  # noqa: ANN001
         log.info("phone_plan_contract_repaired", notes=contract_notes)
     notes: list[str] = list(contract_notes)
     attempted: set[str] = set()
-    for _ in range(_MAX_REPAIR_PASSES + 1):
+    degraded = 0
+    while True:
         try:
             # Looked up on the module at call time so a patched compiler is honoured.
             recipe = phone_guided_plan.compile_phone_guided_plan(current, bindings, **kwargs)
@@ -653,20 +703,23 @@ def compile_phone_guided_repaired(  # noqa: ANN001
                 (
                     type(exc).__name__,
                     getattr(exc, "reason", None),
+                    getattr(exc, "item_id", None),
                     sorted(getattr(exc, "font_files", ())),
                     sorted(getattr(exc, "effects", ())),
                 )
             )
-            if kind in attempted:
+            if kind in attempted or len(attempted) >= _MAX_REPAIR_PASSES + _MAX_DEGRADE_PASSES:
                 raise
             attempted.add(kind)
             repaired, repair_notes = repair_plan_for_phone(current, exc)
+            if not repair_notes and degraded < _MAX_DEGRADE_PASSES:
+                repaired, repair_notes = phone_plan_degrade.degrade_plan_for_phone(current, exc)
+                degraded += bool(repair_notes)
             if not repair_notes:
                 raise
             log.info("phone_plan_repaired", error=str(exc), notes=repair_notes)
             current = repaired
             notes.extend(note for note in repair_notes if note not in notes)
-    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def compile_phone_guided_with_repairs(plan, bindings, **kwargs: Any) -> tuple[Any, list[str]]:  # noqa: ANN001
