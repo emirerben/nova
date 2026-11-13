@@ -493,12 +493,12 @@ struct NativeSplitMediaPicker: View {
                     identifier: { "native-editor-split-tab-" + $0.rawValue.lowercased() }
                 )
             }
+            if working {
+                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Adding…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
+            }
             switch tab {
             case .gallery: gallery
             case .saved: saved
-            }
-            if working {
-                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Adding…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
             }
             if let error = session.addClipError {
                 Text(error).kriaType(.caption).foregroundStyle(KriaColor.failureText)

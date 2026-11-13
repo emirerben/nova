@@ -6500,7 +6500,7 @@ enum EditorOpenIntent { case warm, open }
                 transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: target.sectionID, panel: target.panel, offset: opening.start) }
                 guard document.clips.contains(where: { $0.id == placementID }) else { throw APIError.invalidResponse }
                 splitPanelPlacements[placement.id] = nil
-                select(.init(kind: .clip, id: placementID), seekToStart: false)
+                select(.init(kind: .clip, id: placementID))
                 mediaUploads?.acknowledgeEditorPlacement(placement.id)
                 await sourcePreviewTask?.value
                 return
