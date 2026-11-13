@@ -12,12 +12,12 @@ BASELINE = (
     Path(__file__).resolve().parents[6]
     / "docs"
     / "reviews"
-    / "kri-185"
-    / "request-following-baseline.md"
+    / "kri-1384"
+    / "request-following-baseline-scores.md"
 )
 REGENERATE = (
     "cd src/apps/api && python -m tests.evals.request_following.report --phase baseline "
-    "--out ../../../docs/reviews/kri-185/request-following-baseline.md"
+    "--out ../../../docs/reviews/kri-1384/request-following-baseline-scores.md"
 )
 
 
@@ -32,7 +32,7 @@ def test_report_names_every_request_type_and_the_wrong_landmark_rate():
     assert "Wrong-landmark rate" in text
     assert "| harbor_run | 14% | 7 |" in text and "| trip | 25% | 4 |" in text
     assert "| sport | n/a | 0 |" in text
-    assert "Small-sample warning" in text
+    assert "Turn time: p50" in text and "Per-action set" in text
 
 
 def test_committed_baseline_report_matches_the_replay():

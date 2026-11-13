@@ -38,6 +38,8 @@ RequestType = Literal[
     "readability",
     "restructure",
     "style",
+    # One thread per editor-parity group: the op the creator's plain request needs was applied.
+    "action_parity",
 ]
 REQUEST_TYPES: tuple[str, ...] = get_args(RequestType)
 
@@ -205,6 +207,8 @@ class RecordedOutcome(_Strict):
     reply: str | None = None
     # The edit this outcome restructured (only meaningful for `restructure` requirements).
     plan_before: FinalPlan | None = None
+    # Ops the known-good outcome applied (only read by `op_applied` requirements).
+    applied_ops: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class LiveBudget(_Strict):
@@ -303,6 +307,9 @@ class RFFixture(_Strict):
     description: str = ""
     turns: list[Turn]
     requirements: list[Requirement]
+    # The edit the thread starts from when turn 0 is a chat turn (an authored brief the
+    # copilot answers over the footage in attachment order). Absent: the first turn builds it.
+    initial_plan: FinalPlan | None = None
     # Known-good outcome for the FINAL turn. Proves every requirement is satisfiable by the
     # checkers (a checker nobody can pass is a broken checker). Required for authored
     # fixtures, optional for prod captures.
@@ -310,6 +317,9 @@ class RFFixture(_Strict):
     # Baseline statuses recorded when the fixture was captured/authored; the regression pin.
     baseline: dict[str, ScoreStatus] = Field(default_factory=dict)
     live_budget: LiveBudget | None = None
+    # What the real parser and compiler do with the reference ops on the real variant. Authoring
+    # evidence for `op_applied` threads; the scorer reads `reference_compiles` from the requirement.
+    reference_probe: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> RFFixture:
@@ -345,6 +355,11 @@ class TurnResult(_Strict):
     expected_plan_after: FinalPlan | None = None
     expected_reply: str | None = None
     execution_proof: TurnExecutionProof | None = None
+    # Op payloads that survived the copilot parser (`parsed_ops`) and, of those, compiled in the
+    # harness (`applied_ops`). `op_applied` requirements read these, because a plan projection
+    # cannot show a mix level or a tilt.
+    parsed_ops: list[dict[str, Any]] = Field(default_factory=list)
+    applied_ops: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ThreadResult(_Strict):

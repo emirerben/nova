@@ -1,0 +1,681 @@
+{
+  "fixture_id": "action_history",
+  "provenance": "authored",
+  "footage": "harbor_run",
+  "description": "Parity group history: a plain request on a phone snapshot, expecting the op applied. Undo has no phone compile handler; expected to fail.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Undo that.",
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "Undo that.",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "allowed_op_families": [
+              "clip",
+              "music",
+              "sfx",
+              "text",
+              "title",
+              "transition"
+            ],
+            "base_generation": "gen-1",
+            "has_narrated_captions": false,
+            "max_duration_s": 240,
+            "remaining_duration_s": 217.0,
+            "slots": [
+              {
+                "key": "slot-1",
+                "slot_id": "slot-1",
+                "parent_segment_id": null,
+                "clip_index": 0,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 0.0,
+                "output_end_s": 3.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "H5",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-13T07:40:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Halden Hill, Brightwater",
+                    "provenance": "geocode"
+                  },
+                  {
+                    "kind": "landmark",
+                    "value": "Halden Watchtower",
+                    "provenance": "inferred"
+                  }
+                ],
+                "seen": {
+                  "text": "stone fort on the hill",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-2",
+                "slot_id": "slot-2",
+                "parent_segment_id": null,
+                "clip_index": 1,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 3.0,
+                "output_end_s": 6.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "H1",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-13T06:30:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Old Mill, Brightwater",
+                    "provenance": "geocode"
+                  },
+                  {
+                    "kind": "landmark",
+                    "value": "Old Mill Pier",
+                    "provenance": "inferred"
+                  }
+                ],
+                "seen": {
+                  "text": "wooden pier at dawn",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-3",
+                "slot_id": "slot-3",
+                "parent_segment_id": null,
+                "clip_index": 2,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 6.0,
+                "output_end_s": 9.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "H8",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-13T08:52:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Kestrel Point, Brightwater",
+                    "provenance": "geocode"
+                  },
+                  {
+                    "kind": "landmark",
+                    "value": "Kestrel Point Finish",
+                    "provenance": "inferred"
+                  }
+                ],
+                "seen": {
+                  "text": "finish arch at the point",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-4",
+                "slot_id": "slot-4",
+                "parent_segment_id": null,
+                "clip_index": 3,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 9.5,
+                "output_end_s": 13.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "H3",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-13T07:05:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Tern Bay, Brightwater",
+                    "provenance": "geocode"
+                  },
+                  {
+                    "kind": "landmark",
+                    "value": "Tern Lighthouse",
+                    "provenance": "inferred"
+                  }
+                ],
+                "seen": {
+                  "text": "lighthouse on the breakwater",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-5",
+                "slot_id": "slot-5",
+                "parent_segment_id": null,
+                "clip_index": 4,
+                "in_s": 0.0,
+                "duration_s": 2.0,
+                "duration_beats": null,
+                "source_duration_s": 2.0,
+                "output_start_s": 13.0,
+                "output_end_s": 15.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "H6",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-13T08:05:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Halden Hill, Brightwater",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "cliff path",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-6",
+                "slot_id": "slot-6",
+                "parent_segment_id": null,
+                "clip_index": 5,
+                "in_s": 0.0,
+                "duration_s": 2.5,
+                "duration_beats": null,
+                "source_duration_s": 2.5,
+                "output_start_s": 15.0,
+                "output_end_s": 17.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "H2",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-13T06:48:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Old Mill, Brightwater",
+                    "provenance": "geocode"
+                  },
+                  {
+                    "kind": "landmark",
+                    "value": "Saltwood Fish Market",
+                    "provenance": "inferred"
+                  }
+                ],
+                "seen": {
+                  "text": "fish stalls opening",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-7",
+                "slot_id": "slot-7",
+                "parent_segment_id": null,
+                "clip_index": 6,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 17.5,
+                "output_end_s": 20.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "H7",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-13T08:30:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Kestrel Cove, Brightwater",
+                    "provenance": "geocode"
+                  },
+                  {
+                    "kind": "landmark",
+                    "value": "Kestrel Beach",
+                    "provenance": "inferred"
+                  }
+                ],
+                "seen": {
+                  "text": "white beach cove",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-8",
+                "slot_id": "slot-8",
+                "parent_segment_id": null,
+                "clip_index": 7,
+                "in_s": 0.0,
+                "duration_s": 2.5,
+                "duration_beats": null,
+                "source_duration_s": 2.5,
+                "output_start_s": 20.5,
+                "output_end_s": 23.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "H4",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-13T07:12:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Tern Bay, Brightwater",
+                    "provenance": "geocode"
+                  },
+                  {
+                    "kind": "landmark",
+                    "value": "Tern Lighthouse",
+                    "provenance": "inferred"
+                  }
+                ],
+                "seen": {
+                  "text": "runner passing the lighthouse base",
+                  "provenance": "vision"
+                }
+              }
+            ],
+            "text_bars": [],
+            "total_duration_s": 23.0,
+            "label_facts": true,
+            "timeline_patch_capabilities": {
+              "duration_s": true,
+              "in_s": true,
+              "removed": true,
+              "transition_after": true,
+              "transition_duration_s": true,
+              "look_preset": false,
+              "playback_rate": true,
+              "source_crop": true,
+              "muted": true,
+              "source_audio_volume": true,
+              "tilt": true
+            },
+            "source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "H5",
+                "kind": "video",
+                "generation": "9f6d72b49b19",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "H1",
+                "kind": "video",
+                "generation": "ff7f9eef8f7a",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "H8",
+                "kind": "video",
+                "generation": "15f7a6d195b7",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "H3",
+                "kind": "video",
+                "generation": "b735c054aac8",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "H6",
+                "kind": "video",
+                "generation": "8fd0418f80b3",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "H2",
+                "kind": "video",
+                "generation": "3cdb346c956c",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "H7",
+                "kind": "video",
+                "generation": "7eb8e9d1bee8",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "H4",
+                "kind": "video",
+                "generation": "159a4e242554",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "replacement_source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "H5",
+                "kind": "video",
+                "generation": "9f6d72b49b19",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "H1",
+                "kind": "video",
+                "generation": "ff7f9eef8f7a",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "H8",
+                "kind": "video",
+                "generation": "15f7a6d195b7",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "H3",
+                "kind": "video",
+                "generation": "b735c054aac8",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "H6",
+                "kind": "video",
+                "generation": "8fd0418f80b3",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "H2",
+                "kind": "video",
+                "generation": "3cdb346c956c",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "H7",
+                "kind": "video",
+                "generation": "7eb8e9d1bee8",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "H4",
+                "kind": "video",
+                "generation": "159a4e242554",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "music": {
+              "swappable": false,
+              "removable": false,
+              "current_track_id": null,
+              "current_track_title": null,
+              "candidates": []
+            },
+            "mix": {
+              "music_level": null,
+              "original_level": null
+            },
+            "render_destination": "device",
+            "sfx": {
+              "placements": [],
+              "catalog": []
+            },
+            "editor_ops_version": 2
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"There is nothing to undo right now.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Undo that.\",\n      \"reason\": \"There are no recent edits available to undo right now.\"\n    }\n  ],\n  \"claimed_ops\": []\n}",
+        "prompt_version": "2026-11-11-v122",
+        "model_actual": "gemini-3.1-pro-preview",
+        "recorded_at": "2026-11-13T08:19:37Z",
+        "latency_s": 10.14,
+        "model_calls": 1,
+        "tokens_in": 28730,
+        "tokens_out": 127,
+        "tokens_thoughts": 749,
+        "test_run_id": "rf-baseline-20261113-b"
+      }
+    }
+  ],
+  "requirements": [
+    {
+      "id": "history-op-applied",
+      "kind": "style",
+      "scope": "global",
+      "request_type": "action_parity",
+      "checker": "op_applied",
+      "params": {
+        "ops": [
+          {
+            "op": "undo_last_edit"
+          }
+        ],
+        "stage": "parsed",
+        "reference_compiles": false,
+        "blocked_reason": "undo_last_edit: I can't change that on this edit yet."
+      },
+      "source": "Undo that.",
+      "introduced_in_turn": 0,
+      "claim_terms": []
+    }
+  ],
+  "initial_plan": {
+    "clips": [
+      {
+        "clip_id": "H5",
+        "start_s": 0.0,
+        "end_s": 3.0
+      },
+      {
+        "clip_id": "H1",
+        "start_s": 3.0,
+        "end_s": 6.0
+      },
+      {
+        "clip_id": "H8",
+        "start_s": 6.0,
+        "end_s": 9.5
+      },
+      {
+        "clip_id": "H3",
+        "start_s": 9.5,
+        "end_s": 13.0
+      },
+      {
+        "clip_id": "H6",
+        "start_s": 13.0,
+        "end_s": 15.0
+      },
+      {
+        "clip_id": "H2",
+        "start_s": 15.0,
+        "end_s": 17.5
+      },
+      {
+        "clip_id": "H7",
+        "start_s": 17.5,
+        "end_s": 20.5
+      },
+      {
+        "clip_id": "H4",
+        "start_s": 20.5,
+        "end_s": 23.0
+      }
+    ],
+    "texts": [],
+    "speech": [],
+    "total_duration_s": 23.0,
+    "timing_verified": true
+  },
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "H5",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "H1",
+          "start_s": 3.0,
+          "end_s": 6.0
+        },
+        {
+          "clip_id": "H8",
+          "start_s": 6.0,
+          "end_s": 9.5
+        },
+        {
+          "clip_id": "H3",
+          "start_s": 9.5,
+          "end_s": 13.0
+        },
+        {
+          "clip_id": "H6",
+          "start_s": 13.0,
+          "end_s": 15.0
+        },
+        {
+          "clip_id": "H2",
+          "start_s": 15.0,
+          "end_s": 17.5
+        },
+        {
+          "clip_id": "H7",
+          "start_s": 17.5,
+          "end_s": 20.5
+        },
+        {
+          "clip_id": "H4",
+          "start_s": 20.5,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [],
+      "speech": [],
+      "total_duration_s": 23.0,
+      "timing_verified": true
+    },
+    "reply": "Done.",
+    "applied_ops": [
+      {
+        "op": "undo_last_edit"
+      }
+    ]
+  },
+  "reference_probe": {
+    "families": [
+      "clip",
+      "music",
+      "sfx",
+      "text",
+      "title",
+      "transition"
+    ],
+    "parsed_ops": [],
+    "parse_outcome": "unsupported",
+    "parse_reasons": [
+      {
+        "op": "undo_last_edit",
+        "reason": "capability_unavailable",
+        "detail": "I can't change that on this edit yet."
+      }
+    ]
+  },
+  "baseline": {
+    "history-op-applied": "unmet"
+  }
+}

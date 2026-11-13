@@ -29,11 +29,18 @@ IDS = [p.stem for p in PATHS]
 
 
 def test_the_p6b_golden_set_is_present():
-    """East Run + 30 legacy briefs and three executable v2 cassettes."""
+    """East Run + 30 legacy briefs, three executable v2 cassettes, and one thread per editor
+    parity group (plus the look, custom-effect and music-swap actions that share a group)."""
     fixtures = [load_fixture(p) for p in PATHS]
     assert [f.fixture_id for f in fixtures if f.provenance == "prod_capture"] == ["east_run"]
-    assert len([f for f in fixtures if f.provenance == "authored"]) == 35
-    assert len(fixtures) == 36
+    briefs = [f for f in fixtures if not f.fixture_id.startswith("action_")]
+    assert len([f for f in briefs if f.provenance == "authored"]) == 35
+    assert len(briefs) == 36
+    actions = [f for f in fixtures if f.fixture_id.startswith("action_")]
+    from app.kria.editor_capability_parity import PARITY_GROUPS
+
+    groups = {n for n, g in PARITY_GROUPS.items() if g.kind == "agent_ops"}
+    assert {f.fixture_id.removeprefix("action_").split("__")[0] for f in actions} == groups
     assert {f.footage for f in fixtures} == {
         "east_run",
         "food_day",
@@ -45,7 +52,9 @@ def test_the_p6b_golden_set_is_present():
 
 
 def test_p6b_multi_turn_threads_are_a_meaningful_share():
-    authored = [load_fixture(p) for p in PATHS if p.stem != "east_run"]
+    authored = [
+        load_fixture(p) for p in PATHS if p.stem != "east_run" and not p.stem.startswith("action_")
+    ]
     assert sum(1 for f in authored if len(f.turns) > 1) >= 8
     assert max(len(f.turns) for f in authored) == 3
 
@@ -108,9 +117,15 @@ def test_fixture_carries_no_storage_paths_or_user_ids(path):
     assert "users/" not in text and "gcs_path" not in text and "@" not in text
 
 
+def _blocked(path) -> bool:
+    """A per-action thread whose reference op the real parser or compiler refuses on a phone."""
+    probe = load_fixture(path).reference_probe
+    return probe is not None and not (probe["parsed_ops"] and probe.get("compiles") is True)
+
+
 @pytest.mark.parametrize(
     "path",
-    [p for p in PATHS if p.stem != "east_run" and not p.stem.startswith("v2_")],
+    [p for p in PATHS if p.stem != "east_run" and not p.stem.startswith("v2_") and not _blocked(p)],
     ids=lambda p: p.stem,
 )
 def test_authored_reference_meets_every_requirement(path):
@@ -120,6 +135,17 @@ def test_authored_reference_meets_every_requirement(path):
     not_met = [(s.requirement_id, s.status, s.reason) for s in result.scores if s.status != "met"]
     assert not not_met, not_met
     assert not any(s.reply_overclaims for s in result.scores)
+
+
+@pytest.mark.parametrize("path", [p for p in PATHS if _blocked(p)], ids=lambda p: p.stem)
+def test_a_blocked_action_names_why_no_model_can_meet_it(path):
+    """The baseline for these groups is a refusal; the probe says where it happens."""
+    fixture = load_fixture(path)
+    probe = fixture.reference_probe
+    (requirement,) = fixture.requirements
+    assert requirement.params["reference_compiles"] is False
+    assert probe["parse_reasons"] or probe.get("compile_error")
+    assert not score_reference(fixture).scores[0].status == "met"
 
 
 @pytest.mark.parametrize(
@@ -163,9 +189,18 @@ def test_exact_title_fixture_keeps_unicode_intact():
     [p for p in PATHS if p.stem != "east_run" and not p.stem.startswith("v2_")],
     ids=lambda p: p.stem,
 )
-def test_authored_threads_are_reported_as_awaiting_recordings(path):
-    result = run_thread(load_fixture(path))
-    assert result.unrecorded and result.scores == []
+def test_a_thread_is_scored_only_once_every_turn_is_recorded(path):
+    fixture = load_fixture(path)
+    result = run_thread(fixture)
+    assert result.unrecorded == any(
+        t.turn_id
+        and t.engine == "recorded"
+        and t.recorded is None
+        or t.engine == "v1_copilot"
+        and "raw_text" not in t.copilot
+        for t in fixture.turns
+    )
+    assert bool(result.scores) == (not result.unrecorded)
 
 
 # ── East Run: the measured baseline ──────────────────────────────────────────
