@@ -48,9 +48,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # Green native runs on main took 31-54 minutes (median 42) in September
     # 2026 as one serial job. See KRI-168 in docs/runbooks/ios-development.md.
-    # Sharded regression legs get 90: ~54 min of recorded UI time plus ~9 min of
-    # setup, with headroom for slower-than-median runners.
-    timeout-minutes: ${{ matrix.shard && 90 || 75 }}
+    # Sharded regression legs get 120. First dispatch with five shards (run
+    # 43379789858): UI steps took 46-63+ min, about 20% over the recorded
+    # medians, and a cold build (new cache key) added 17-40 min before them;
+    # 90 cancelled shards 1 and 5. A warm leg needs about 9 min of setup.
+    timeout-minutes: ${{ matrix.shard && 120 || 75 }}
     permissions:
       contents: read
       actions: write
