@@ -39,6 +39,8 @@ from tests.tasks.test_phone_subtitled_narrated_dispatch import (
     _setup_subtitled,
 )
 
+pytestmark = pytest.mark.journey("kri-547-speaker-framing")
+
 R1 = "yatay videoyu dikey (9:16) formata getir ve yüzü hep kadrajda tut"
 _FIT_SCALE = 0.31640625
 

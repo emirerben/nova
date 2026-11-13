@@ -9,7 +9,8 @@
 #   4. list the [skip-*] CI markers relevant to this diff
 #   5. run the KRI-577 reliability gates mapped to the changed incident paths
 #   6. journey-mapping check: the same fail-closed mapping CI enforces, so an
-#      unmapped path is named here instead of discovered in CI (KRI-749)
+#      unmapped path is named here instead of discovered in CI (KRI-749),
+#      plus the journey/UI test registry drift check (make check-test-registries)
 #   7. request-to-output evidence: validate the same PR-body contract as CI,
 #      including staged, unstaged and untracked changes
 #   8. fix-chain gate: a 3rd fix PR on one KRI ticket is blocked without a
@@ -175,6 +176,15 @@ else
       echo "$UNCOMMITTED_UNMAPPED" | sed 's/^/         /'
     fi
   fi
+fi
+
+# Journey tests and UI test groups come from markers in the tests; the entries
+# kept by hand (source paths, evidence tests, UI class groups) must still exist.
+if OUT="$(python3 scripts/ci/journey_registry.py check 2>&1 && python3 scripts/ios/ui_tests.py check 2>&1)"; then
+  pass "journey and UI test registries match the tests"
+else
+  fail "test registries drifted (CI runs the same check):"
+  echo "$OUT" | sed 's/^/         /'
 fi
 
 # ── 7. Request-to-output evidence (KRI-577 / KRI-559) ───────────────────────

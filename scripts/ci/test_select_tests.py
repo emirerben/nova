@@ -17,6 +17,7 @@ SCRIPT = Path(__file__).resolve().with_name("select-tests.py")
 spec = importlib.util.spec_from_file_location("select_tests", SCRIPT)
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
+journey_registry = ci.journey_registry
 ALL = {"api", "ios", "ios_ui", "shared_motion"}
 
 
@@ -34,7 +35,11 @@ class ClassificationTests(unittest.TestCase):
             "contains(needs.changes.outputs.journey_ids, 'kri-215-learning-loop')",
             workflow,
         )
-        self.assertIn("pytest tests/incidents/test_request_following_loop.py", workflow)
+        self.assertIn("journey_registry.py step kri-215-learning-loop", workflow)
+        self.assertIn(
+            "tests/incidents/test_request_following_loop.py",
+            journey_registry.step_files("kri-215-learning-loop"),
+        )
 
     def test_manifest_native_routing_is_conservative_and_mixed_safe(self):
         self.assertFalse(ci.journey_native_for_ids(["kri-577-reliability-gates"]))

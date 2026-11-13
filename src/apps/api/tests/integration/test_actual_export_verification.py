@@ -26,7 +26,7 @@ from app.kria.recipes_v2 import EditRecipeV2
 from app.services import actual_export_verification as measured
 from app.services.actual_export_verification import _audio, _frame, verify_actual_export
 
-pytestmark = pytest.mark.timeout(120)
+pytestmark = [pytest.mark.timeout(120), pytest.mark.journey("kri-492-length-ownership")]
 
 FONT = next(
     (

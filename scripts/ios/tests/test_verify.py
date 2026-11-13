@@ -3,6 +3,7 @@
 Run: python3 -m unittest discover -s scripts/ios/tests -v
 """
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,11 @@ import subprocess
 import tempfile
 import unittest
 
+spec = importlib.util.spec_from_file_location(
+    "ui_tests", Path(__file__).resolve().parents[1] / "ui_tests.py"
+)
+ui = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ui)
 
 STUB = r"""#!/usr/bin/env python3
 import json, os, pathlib, signal, sys, time
@@ -57,8 +63,9 @@ elif name == 'xcrun':
     if args[:4] == ['xcresulttool', 'get', 'test-results', 'tests']:
         bundle = pathlib.Path(args[args.index('--path') + 1])
         test_args = json.loads((bundle / 'args.json').read_text())
-        manifest = json.loads((root / 'scripts/ios/ui-test-groups.json').read_text())
-        tests = sorted(set(t for values in manifest['groups'].values() for t in values))
+        sys.path.insert(0, str(root / 'scripts/ios'))
+        import ui_tests
+        tests = sorted(ui_tests.discovered())
         selected = [arg.removeprefix('-only-testing:') for arg in test_args if arg.startswith('-only-testing:')]
         if selected != ['KriaUITests']:
             tests = selected
@@ -224,8 +231,8 @@ class VerifyShellTests(unittest.TestCase):
             any(arg.startswith(("-only-testing:", "-skip-testing:")) for arg in build)
         )
         self.assertIn("-skip-testing:KriaUITests", unit)
-        ui = self.run_verify(suite="ui")
-        self.assertEqual(ui.returncode, 0, ui.stderr)
+        ran = self.run_verify(suite="ui")
+        self.assertEqual(ran.returncode, 0, ran.stderr)
         self.assertEqual(self.actions, ["test-without-building"])
         call = next(call for call in self.calls if call[-1] == "test-without-building")
         self.assertIn("-only-testing:KriaUITests", call)
@@ -244,7 +251,7 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
         result = self.run_verify(suite="ui", groups="smoke,creation")
         self.assertEqual(result.returncode, 0, result.stderr)
-        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
+        data = ui.manifest()
         expected = set(data["groups"]["smoke"] + data["groups"]["creation"])
         call = next(c for c in self.calls if c[-1] == "test-without-building")
         filters = [
@@ -260,7 +267,7 @@ class VerifyShellTests(unittest.TestCase):
         changed = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
         result = self.run_verify(suite="ui", groups=f"smoke,{changed}")
         self.assertEqual(result.returncode, 0, result.stderr)
-        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
+        data = ui.manifest()
         call = next(c for c in self.calls if c[-1] == "test-without-building")
         filters = [
             a.removeprefix("-only-testing:")

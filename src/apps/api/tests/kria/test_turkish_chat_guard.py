@@ -60,6 +60,8 @@ from tests.kria.turkish_chat_guard import (  # noqa: F401 - the fixture is used 
     turkish_chat_net_fixture,
 )
 
+pytestmark = pytest.mark.journey("kri-667-turkish-chat")
+
 API = Path(__file__).resolve().parents[2]
 APP = API / "app"
 

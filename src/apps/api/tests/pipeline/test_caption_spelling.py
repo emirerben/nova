@@ -15,6 +15,8 @@ from app.pipeline.caption_spelling import (
     respell_text,
 )
 
+pytestmark = pytest.mark.journey("kri-632-phone-captions")
+
 _T1_BRIEF = 'Karaoke altyazı, önemli kelimeler vurgulu; "community" ve "cringe" İngilizce yazılsın.'
 
 

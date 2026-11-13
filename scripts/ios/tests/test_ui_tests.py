@@ -74,8 +74,8 @@ class UISelectionTests(unittest.TestCase):
             ):
                 self.assertEqual(ui.weights({"new"}), {"new": 90})
 
-    def test_every_current_test_is_classified(self):
-        self.assertTrue(ui.inventory_matches())
+    def test_registry_follows_the_tests_and_every_test_is_in_one_group(self):
+        self.assertEqual(ui.check(), [])
         data = ui.manifest()
         features = [
             test
@@ -84,6 +84,7 @@ class UISelectionTests(unittest.TestCase):
         ]
         self.assertEqual(len(features), len(set(features)))
         self.assertEqual(set(features), ui.discovered())
+        self.assertEqual(data["unclassified"], [])
 
     def test_each_exact_mapping_selects_smoke_and_one_feature(self):
         for path, group in ui.manifest()["sources"].items():
@@ -193,30 +194,56 @@ class UISelectionTests(unittest.TestCase):
             with self.subTest(paths=paths):
                 self.assertEqual(ui.select_groups(paths)[0], "full")
 
-    def test_new_removed_and_renamed_tests_force_full(self):
+    def test_new_removed_and_renamed_tests_need_no_registry_edit(self):
+        # A method added, renamed or removed inside a classified class stays in
+        # that class's group; a brand-new class runs in every selection until it
+        # is classified, so no test is skipped for want of a registry line.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tests = root / "src/apps/ios/Tests/KriaUITests"
             shutil.copytree(ui.ROOT / "src/apps/ios/Tests/KriaUITests", tests)
             path = "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift"
             original = (root / path).read_text()
-            for source in (
-                original.replace(
-                    "    func testProject", "    func testRenamedProject", 1
+            for source, test in (
+                (
+                    original.replace(
+                        "    func testProject", "    func testRenamedProject", 1
+                    ),
+                    "KriaUITests/ProjectsUITests/testRenamedProjectActionsCanBeCancelledWithoutChangingProject",
                 ),
-                original.replace("    func testProject", "    func checkProject", 1),
-                original.replace(
-                    "final class ProjectsUITests: XCTestCase {",
-                    "final class ProjectsUITests: XCTestCase {\n    func testNewCase() {}",
+                (
+                    original.replace(
+                        "final class ProjectsUITests: XCTestCase {",
+                        "final class ProjectsUITests: XCTestCase {\n    func testNewCase() {}",
+                    ),
+                    "KriaUITests/ProjectsUITests/testNewCase",
                 ),
             ):
                 (root / path).write_text(source)
-                self.assertEqual(ui.select_groups([path], root)[0], "full")
+                value = ui.select_groups([path], root)[0]
+                self.assertEqual(value, "smoke,projects")
+                self.assertIn(test, ui.manifest(root)["groups"]["projects"])
             (root / path).write_text(original)
             (tests / "NewTests.swift").write_text(
                 "class NewTests: XCTestCase { func testNew() {} }"
             )
-            self.assertEqual(ui.select_groups([path], root)[0], "full")
+            data = ui.manifest(root)
+            self.assertEqual(data["unclassified"], ["NewTests"])
+            self.assertIn("KriaUITests/NewTests/testNew", data["groups"]["smoke"])
+            self.assertEqual(ui.select_groups([path], root)[0], "smoke,projects")
+            self.assertIn(
+                "KriaUITests/NewTests/testNew", ui.expected_tests("smoke,projects", root)
+            )
+
+    def test_stale_entries_are_reported_with_the_fix_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tests = root / "src/apps/ios/Tests/KriaUITests"
+            shutil.copytree(ui.ROOT / "src/apps/ios/Tests/KriaUITests", tests)
+            (tests / "ProjectsUITests.swift").unlink()
+            problems = ui.check(root)
+            self.assertTrue(any("ProjectsUITests" in problem for problem in problems))
+            self.assertIn("make sync-test-registries", problems[-1])
 
     def test_deleted_source_mapping_requires_full(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -237,13 +264,15 @@ class UISelectionTests(unittest.TestCase):
             self.assertEqual(ui.select_groups(["any"])[0], "full")
             with self.assertRaises(ValueError):
                 ui.expected_tests("smoke,editor")
-        data = ui.manifest()
-        data["groups"]["creation"] = []
+        data = json.loads(ui.MANIFEST.read_text())
+        data["overrides"]["SignInUITests/testGone"] = "creation"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.json"
             path.write_text(json.dumps(data))
-            with patch.object(ui, "MANIFEST", path), self.assertRaises(ValueError):
-                ui.expected_tests("smoke,creation")
+            with patch.object(ui, "MANIFEST", path):
+                self.assertEqual(ui.select_groups(["any"])[0], "full")
+                with self.assertRaises(ValueError):
+                    ui.expected_tests("smoke,creation")
 
     def test_focused_filters_preserve_smoke_and_deduplicate(self):
         data = ui.manifest()

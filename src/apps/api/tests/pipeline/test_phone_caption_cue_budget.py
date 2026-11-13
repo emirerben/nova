@@ -24,6 +24,8 @@ from app.pipeline.captions import PHONE_CUE_BUDGET, build_plain_cues
 from app.pipeline.phone_captions import caption_ink_box, compile_caption_layers
 from app.pipeline.transcribe import Word
 
+pytestmark = pytest.mark.journey("kri-632-phone-captions")
+
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "kri632_t1_talking_words.json"
 CANVAS = (1080, 1920)
 # `closing_title_placement.face_band` of the T1 job (top, bottom as canvas fractions).
