@@ -92,6 +92,24 @@ root (CI also runs these before the full gate):
 python3 -m unittest discover -s scripts/ios/tests -v
 ```
 
+## Client protocol number (KRI-1381)
+
+`KriaClientProtocolContract.version` (iOS) and the `*_PROTOCOL` constants in
+`src/apps/api/app/services/client_protocol.py` (server) carry the number. Never pick
+it by hand: two open PRs that each pick `max + 1` collide on merge. When you rebase
+onto main, run
+
+```bash
+python3 scripts/bump-protocol.py <feature-name> [--config-field <name>_min_client_protocol]
+```
+
+It sets the feature's number to one above everything on main and rewrites the iOS
+version, the server constant (added if new) and any named `config.py` default in one
+step. Re-run it after every rebase that brings in another protocol bump. Tests
+compare against `KriaClientProtocolContract.version` or the constant, never a
+literal; `tests/test_client_protocol_single_source.py` fails when one does. The
+per-version doc comment above `static let version` stays a hand edit.
+
 ## Phone export proof (KRI-139, KRI-470 PR-G)
 
 Recipe validation and file metadata do not prove what a creator hears or sees.
