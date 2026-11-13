@@ -327,6 +327,8 @@ struct AttachmentSheet: View {
                         replacementNotice: replacementNotice,
                         intake: { take, url in noteKept(await useCameraTake(take, url)) },
                         intakeState: { take in await cameraTakeState(take).map(noteKept) },
+                        intakeSignals: model.uploads.$records.map { _ in }
+                            .merge(with: model.uploads.$failures.map { _ in }).eraseToAnyPublisher(),
                         speakerBackgroundEnabled: speakerBackgroundAvailable,
                         backgroundIntake: useCameraBackground,
                         backgroundStatement: stateSpeakerBackground,

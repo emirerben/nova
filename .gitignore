@@ -121,3 +121,5 @@ brand/social/dist/**/*.mov
 # KRI-1192 caption-language evidence (renders, FLEURS audio, reports)
 .caption-verify/
 .ios-caption-verify/
+# Use take prewarm A/B runs (`scripts/ios/talk-usetake-ab.sh`)
+.talk-usetake/

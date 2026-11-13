@@ -8,6 +8,7 @@
 #   scripts/ios/talk-bench.sh --scenarios video-cin0,video-cin0-old   # A/B the live-preview levers (see below)
 #   scripts/ios/talk-bench.sh --dry-run                          # resolve the plan, touch no device and build nothing
 #   scripts/ios/talk-bench.sh --pull-only manual                 # report on a session you ran by hand (see below)
+#   scripts/ios/talk-bench.sh --use-take --use-take-dwell 20 --use-take-after 12 --poll-files   # dwell in Review, then Use take
 #   scripts/ios/talk-bench.sh --retries 2 --retry-failed-runs 2  # install/launch retries, and reruns of a failed measurement
 #
 # HOW IT MEASURES. The app (Debug, KRIA_TALK_BENCH=1) records every Perf signpost interval, count and sample, and the
@@ -21,6 +22,11 @@
 # `-old-<lever>[-<lever>...]` with lever one of fresh, input, async, video, decode (only those). The Debug app reads this as
 # KRIA_TALK_BENCH_LIVE_OLD and writes the resulting values to the `live.tuning` fact of the report. The scenarios are
 # interleaved, so `video-cin0,video-cin0-old` is one A/B under the same thermal drift. Needs a background (photo or video).
+#
+# USE TAKE DWELL. --use-take-dwell N waits N seconds in Review before tapping Use take (what the creator spends deciding; the take
+# prewarm works during it), --use-take-after N keeps the app open N seconds after the tap. --poll-files copies the prewarm proxy
+# (Library/Caches/KriaTakePrewarm) and the staged upload (Library/Application Support/KriaUploads) off the phone while the test
+# runs and keeps them in <run>/polled/, because the fixture's failed upload deletes the staged copy within seconds.
 #
 # WHAT THE SCRIPTED RUN CANNOT DO. "Use take" and editor Save need a signed-in session on a backend that accepts the
 # upload; the UI-test fixture does not. Their signposts are in the app and the recorder captures them, but the scripted run
@@ -68,6 +74,9 @@ REINSTALL=0
 TEST_RETRIES=0
 DRY_RUN=0
 USE_TAKE=0
+USE_TAKE_DWELL=0
+USE_TAKE_AFTER=45
+POLL_FILES=0
 PULL_ONLY=""
 
 usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
@@ -88,6 +97,9 @@ while [[ $# -gt 0 ]]; do
     --cooldown-max) COOLDOWN_MAX="$2"; shift 2 ;;
     --retry-failed-runs) TEST_RETRIES="$2"; shift 2 ;;
     --use-take) USE_TAKE=1; shift ;;
+    --use-take-dwell) USE_TAKE_DWELL="$2"; shift 2 ;;
+    --use-take-after) USE_TAKE_AFTER="$2"; shift 2 ;;
+    --poll-files) POLL_FILES=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --pull-only) PULL_ONLY="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
@@ -182,18 +194,44 @@ fi
 [[ -n "$DEVICE_ID" ]] || { echo "No paired, available iPhone found. Connect one, or pass --device-id <udid> (xcrun devicectl list devices)." >&2; exit 2; }
 mkdir -p "$RUN_ROOT"
 
+# A devicectl copy can hang for good when the phone drops its service connection; bound every one the script starts in a loop.
+bounded() { perl -e 'my $p = fork; if (!$p) { exec @ARGV or exit 127 } $SIG{ALRM} = sub { kill "TERM", $p; system("pkill", "-TERM", "-P", $p); exit 124 }; alarm 90; waitpid $p, 0; exit $? >> 8' "$@"; }
+
+poll_files() { # <dest>: keep every proxy and staged movie that shows up while the test runs
+  local dest="$1" scratch directory
+  mkdir -p "$dest/prewarm" "$dest/uploads"
+  while :; do
+    for directory in prewarm:Library/Caches/KriaTakePrewarm uploads:"Library/Application Support/KriaUploads"; do
+      scratch="$(mktemp -d)"
+      bounded xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
+        --source "${directory#*:}" --destination "$scratch" >/dev/null 2>&1 || true
+      find "$scratch" -type f -size +100k -exec cp -n {} "$dest/${directory%%:*}"/ \; 2>/dev/null || true
+      rm -rf "$scratch"
+    done
+  done
+}
+
 pull_run() { # <run-dir>
-  local run_dir="$1" scratch
+  local run_dir="$1" scratch attempt
   scratch="$(mktemp -d)"
-  if xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
-      --source Documents/talk-bench --destination "$scratch" >"$run_dir/devicectl-pull.log" 2>&1; then
-    # devicectl may put the files in $scratch or in $scratch/talk-bench; flatten either way.
-    local source="$scratch"
-    [[ -d "$scratch/talk-bench" ]] && source="$scratch/talk-bench"
-    cp -R "$source"/. "$run_dir"/
-  else
-    echo "talk-bench: could not pull Documents/talk-bench ($(tail -1 "$run_dir/devicectl-pull.log"))" >&2
-  fi
+  for attempt in 1 2 3; do
+    if bounded xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
+        --source Documents/talk-bench --destination "$scratch" >"$run_dir/devicectl-pull.log" 2>&1; then
+      # devicectl may put the files in $scratch or in $scratch/talk-bench; flatten either way.
+      local source="$scratch"
+      [[ -d "$scratch/talk-bench" ]] && source="$scratch/talk-bench"
+      cp -R "$source"/. "$run_dir"/
+      rm -rf "$scratch"
+      return 0
+    fi
+    # A copy stalls at "Acquired usage assertion" while the phone has locked itself (it does, a minute or so after the test ends). The
+    # run's numbers stay in the app container until the next run starts, so wait for an unlocked phone and ask again. A wedged
+    # CoreDeviceService is not restarted from here; if every attempt stalls, the message below says so and the person decides.
+    echo "talk-bench: the pull stalled (attempt $attempt); waiting for an unlocked phone" >&2
+    wait_for_unlocked_device 600 || true
+    sleep 3
+  done
+  echo "talk-bench: could not pull Documents/talk-bench ($(tail -1 "$run_dir/devicectl-pull.log"))" >&2
   rm -rf "$scratch"
 }
 
@@ -216,7 +254,7 @@ fi
 device_json() { # <devicectl device info subcommand> -> JSON path on stdout, empty when the call failed
   local out
   out="$(mktemp)"
-  if xcrun devicectl device info "$1" --device "$DEVICE_ID" --json-output "$out" >/dev/null 2>&1; then echo "$out"; else rm -f "$out"; fi
+  if bounded xcrun devicectl device info "$1" --device "$DEVICE_ID" --json-output "$out" >/dev/null 2>&1; then echo "$out"; else rm -f "$out"; fi
 }
 
 device_transport() {
@@ -244,7 +282,7 @@ wait_for_unlocked_device() {
     state="$(device_lock_state)"
     [[ "$state" != "locked" ]] && return 0
     if [[ "$announced" -eq 0 ]]; then echo "talk-bench: the phone is locked; unlock it (waiting up to $1 s)" >&2; announced=1; fi
-    xcrun devicectl device process launch --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    bounded xcrun devicectl device process launch --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
     [[ "$SECONDS" -lt "$deadline" ]] || return 1
     sleep 5
   done
@@ -259,12 +297,12 @@ competing_device_users() {
 # Prints nominal, fair, serious, critical, or unknown (no app installed yet, or the launch failed).
 probe_thermal() {
   local scratch state
-  xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing \
+  bounded xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing \
     --environment-variables '{"KRIA_TALK_BENCH":"1"}' "$BUNDLE_ID" >/dev/null 2>&1 || { echo unknown; return; }
   sleep 7
   scratch="$(mktemp -d)"
   state=unknown
-  if xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
+  if bounded xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
       --source Documents/talk-bench/summary.json --destination "$scratch/summary.json" >/dev/null 2>&1; then
     state="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["facts"].get("thermal.end","unknown"))' "$scratch/summary.json" 2>/dev/null || echo unknown)"
   fi
@@ -286,7 +324,7 @@ cool_down_device() {
 }
 
 uninstall_app() {
-  xcrun devicectl device uninstall app --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  bounded xcrun devicectl device uninstall app --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 }
 
 # Matches what the log says when the run never got as far as the test body.
@@ -330,12 +368,20 @@ for run in $(seq 1 "$RUNS"); do
       thermal_before="$(cool_down_device)"
       [[ "$REINSTALL" -eq 1 ]] && uninstall_app
       exit_code=0
+      poller=""
+      if [[ "$POLL_FILES" -eq 1 ]]; then poll_files "$run_dir/polled" & poller=$!; fi
       TEST_RUNNER_KRIA_TELEPROMPTER_HARDWARE_TEST=1 TEST_RUNNER_KRIA_TALK_BENCH=1 \
+      TEST_RUNNER_KRIA_TALK_USETAKE_DWELL="$USE_TAKE_DWELL" TEST_RUNNER_KRIA_TALK_USETAKE_AFTER="$USE_TAKE_AFTER" \
       TEST_RUNNER_KRIA_TALK_BENCH_BACKGROUND="$background" TEST_RUNNER_KRIA_TALK_BENCH_CINEMATIC="$cinematic" TEST_RUNNER_KRIA_TALK_BENCH_LIVE_OLD="$live_old" \
       TEST_RUNNER_KRIA_TALK_BENCH_SECONDS="$SECONDS_PER_TAKE" TEST_RUNNER_KRIA_TALK_BENCH_IDLE_SECONDS="$IDLE_SECONDS" TEST_RUNNER_KRIA_TALK_BENCH_REVIEW_TIMEOUT="$REVIEW_TIMEOUT" TEST_RUNNER_KRIA_TALK_BENCH_USE_TAKE="$USE_TAKE" \
         xcodebuild test-without-building -project "$IOS_ROOT/Kria.xcodeproj" -scheme "$SCHEME" -configuration Debug \
           -destination "platform=iOS,id=$DEVICE_ID" -derivedDataPath "$DERIVED_DATA" -enableCodeCoverage NO \
           -resultBundlePath "$run_dir/result.xcresult" -only-testing "$TEST_ID" >"$run_dir/xcodebuild.log" 2>&1 || exit_code=$?
+      if [[ -n "$poller" ]]; then
+        kill "$poller" 2>/dev/null || true; wait "$poller" 2>/dev/null || true
+        # A copy the poller had started keeps the device's file service busy; the pull below would queue behind it and time out.
+        pkill -f "devicectl device copy" 2>/dev/null || true; sleep 2
+      fi
       [[ "$exit_code" -eq 0 ]] && break
       if infrastructure_failure "$run_dir/xcodebuild.log"; then
         infra_attempts=$((infra_attempts + 1))

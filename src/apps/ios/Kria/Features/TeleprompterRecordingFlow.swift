@@ -1,4 +1,5 @@
 import AVFoundation
+import KriaMediaEngine
 import SwiftUI
 
 /// A queue receipt is different from a completed attachment. The screen keeps
@@ -49,7 +50,18 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     @Published var showsScriptSheet = false
     @Published var error: String?
     @Published var countdown = 3
-    @Published var selectedTake: TeleprompterTakeManifest? { didSet { reconcileBake() } }
+    @Published var selectedTake: TeleprompterTakeManifest? {
+        didSet {
+            reconcileBake()
+            // Hashing and transcoding start the moment a usable take is on screen, not when Use take is tapped. Only a
+            // change that decides whether the take should be prepared (another take, its status, its bake) starts
+            // them: a metadata write such as a Photos save finishing late must never bring back work that Retake,
+            // Discard or sign-out cancelled.
+            if let take = selectedTake, let old = oldValue, old.id == take.id, old.status == take.status,
+               old.cinematic == take.cinematic { return }
+            prewarm(selectedTake)
+        }
+    }
     @Published var pendingTake: TeleprompterTakeManifest?
     @Published var usingTake = false
     /// Use take was pressed before the take's Cinematic bake finished, and is waiting for it.
@@ -89,6 +101,9 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     private var loaded = false
     private var generation = UUID()
     private let photoSaver: PhotoLibrarySaving
+    private let prewarmer: SourcePrewarmer
+    /// The background hand-over a Use take started. It runs after the take is handed over, off the Use take spinner.
+    private var backgroundHandover: Task<Void, Never>?
     /// Photos copies the file during `performChanges`, so a take's movie must outlive its save.
     private var photoSaves: [UUID: Task<Bool, Never>] = [:]
     private let baker: any CinematicBaking
@@ -101,6 +116,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
          script: TeleprompterScript = TeleprompterScript(),
          viewRemovalGrace: Duration = .seconds(1),
          photoSaver: PhotoLibrarySaving = PhotoLibrarySaver(),
+         prewarmer: SourcePrewarmer = .shared,
          speakerBackgroundEnabled: Bool = false,
          makeLivePreview: @escaping () -> LiveBackgroundPreview = { LiveBackgroundPreview() },
          backgroundIntake: BackgroundIntake? = nil,
@@ -119,6 +135,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         self.script = script
         self.viewRemovalGrace = viewRemovalGrace
         self.photoSaver = photoSaver
+        self.prewarmer = prewarmer
         #if DEBUG
         let fixtureBaker: (any CinematicBaking)? = FixtureCinematicBaker.current
         #else
@@ -397,7 +414,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     /// Copies a picked file into the take store and makes it the project's background. Nothing is uploaded here.
     func chooseBackground(from url: URL, kind: SpeakerBackgroundKind) {
         // Not during a take: changing the capture graph under a running recording is not something we measured.
-        guard speakerBackgroundEnabled, !usingTake, !captureBusy else { return }
+        guard speakerBackgroundEnabled, !usingTake, !uploadingBackground, !captureBusy else { return }
         do {
             let reference = try store.importBackground(from: url, kind: kind)
             let choice = TeleprompterBackgroundChoice(reference: reference)
@@ -409,7 +426,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     }
 
     func clearBackground() {
-        guard let cleared = background, !usingTake, !captureBusy else { return }
+        guard let cleared = background, !usingTake, !uploadingBackground, !captureBusy else { return }
         // The server already knows this pick: it must hear about the clear too.
         if cleared.stated == true { try? store.markServerClearPending(eventID: "speaker-bg-clear-\(UUID().uuidString)") }
         background = nil; backgroundNote = nil
@@ -649,6 +666,15 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         }
     }
 
+    private func prewarm(_ take: TeleprompterTakeManifest?) {
+        // A silent take is never attached, and one already handed to intake owns its own work.
+        guard let take, take.status == .review, take.audioCheck?.verdict != .silent else { return }
+        // A Cinematic bake still owed replaces the movie: preparing the file now would hash and transcode one
+        // that is about to be swapped. The take is set again when the bake settles, and that prewarms the final file.
+        guard take.cinematic?.isSettled ?? true else { return }
+        prewarmer.start(key: take.id, source: store.fileURL(for: take))
+    }
+
     /// Everything still reading or replacing a take's movie: a Photos save, a bake.
     private func movieUsers(of id: UUID) -> [Task<Void, Never>] {
         var users: [Task<Void, Never>] = []
@@ -668,6 +694,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
 
     /// `store.remove(manifest:removingFile: true)`, with the movie removal deferred past a pending Photos save or bake.
     private func removeTake(_ take: TeleprompterTakeManifest) throws {
+        prewarmer.cancel(key: take.id)
         bakes.tasks[take.id]?.cancel()
         guard !movieUsers(of: take.id).isEmpty else { try store.remove(manifest: take, removingFile: true); return }
         try store.remove(manifest: take, removingFile: false)
@@ -692,6 +719,9 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             else if let take = selectedTake, take.status == .invalid {
                 try removeTake(take); pendingTake = nil
             }
+            // The kept (pending) take is not on screen while the next recording is made: its transcode must not hold the
+            // shared export slot or run beside the camera. It starts again when the take is shown (`prewarm`).
+            if let take = selectedTake, take.status == .review { prewarmer.cancel(key: take.id) }
             selectedTake = nil; error = nil; script.reset()
             await openCamera()
         } catch { self.error = "Couldn’t discard this candidate. Your previous take is still kept." }
@@ -739,11 +769,15 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             }
             let result = await Perf.measureAsync("talk.use.intake") { await intake(request, store.fileURL(for: take)) }
             apply(result)
-            // The take is handed over first and never waits on, or fails because of, its background.
+            // The take is handed over first and never waits on, or fails because of, its background: the background
+            // goes up after the spinner, so the creator is not held for a second file.
             if case .failed = result { return }
-            await Perf.measureAsync("talk.use.backgroundUpload") { await uploadBackgroundIfNeeded() }
+            backgroundHandover = Task { await Perf.measureAsync("talk.use.backgroundUpload") { await uploadBackgroundIfNeeded() } }
         } catch { self.error = "Your video is kept, but its details couldn’t be saved. Try again." }
     }
+
+    /// Resolves when the background hand-over a Use take started has finished.
+    func finishBackgroundHandover() async { await backgroundHandover?.value }
 
     func apply(_ result: TeleprompterIntakeResult) {
         guard var take = selectedTake else { return }

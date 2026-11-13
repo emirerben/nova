@@ -261,6 +261,8 @@ import XCTest
     ///   KRIA_TALK_BENCH_REVIEW_TIMEOUT = seconds to wait from Stop to Review (the bake runs in between), default 240
     ///   KRIA_TALK_BENCH_LIVE_OLD   = all | comma list of fresh, input, async, video: those live-preview levers run their old behaviour
     ///   KRIA_TALK_BENCH_USE_TAKE   = 1 also taps "Use take" (needs a backend that accepts the upload; the fixture does not)
+    ///   KRIA_TALK_USETAKE_DWELL    = seconds to stay in Review before tapping Use take, default 0 (the take prewarm works during it)
+    ///   KRIA_TALK_USETAKE_AFTER    = seconds to keep the app open after tapping Use take, default 45
     func testTalkBenchTake() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("The talk bench needs a physical iPhone.")
@@ -344,11 +346,13 @@ import XCTest
             XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: bakeTimeout), "The Cinematic look should finish baking within \(Int(bakeTimeout)) s.")
         }
         if environment["KRIA_TALK_BENCH_USE_TAKE"] == "1", useTake.isEnabled {
+            // The creator's time in Review: the take is hashed and transcoded in the background while it passes.
+            wait(seconds: TimeInterval(environment["KRIA_TALK_USETAKE_DWELL"] ?? "") ?? 0)
             useTake.tap()
             if cinematicWanted, useBeforeBake {
                 XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: bakeTimeout), "The Cinematic look should finish baking within \(Int(bakeTimeout)) s.")
             }
-            wait(seconds: 45)
+            wait(seconds: TimeInterval(environment["KRIA_TALK_USETAKE_AFTER"] ?? "") ?? 45)
         } else if cinematicWanted, useBeforeBake {
             XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: bakeTimeout), "The Cinematic look should finish baking within \(Int(bakeTimeout)) s.")
         }
