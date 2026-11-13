@@ -104,11 +104,31 @@ python3 scripts/bump-protocol.py <feature-name> [--config-field <name>_min_clien
 ```
 
 It sets the feature's number to one above everything on main and rewrites the iOS
-version, the server constant (added if new) and any named `config.py` default in one
-step. Re-run it after every rebase that brings in another protocol bump. Tests
-compare against `KriaClientProtocolContract.version` or the constant, never a
-literal; `tests/test_client_protocol_single_source.py` fails when one does. The
-per-version doc comment above `static let version` stays a hand edit.
+version, the server constant (added if new) and the `config.py` default of every
+named field in one step. A field called `<feature>_min_client_protocol` or
+`<feature>_client_protocol` is picked up without being named. Re-run it after every
+rebase that brings in another protocol bump; re-running is idempotent.
+
+The script stops, rather than leave a gate behind, when:
+
+- a config field still holds the feature's old number but is not named. Pass
+  `--config-field <name>` to move it with the feature, or `--leave-config-field <name>`
+  when it belongs to another feature.
+- the feature's constant is already on `origin/main`. Shipped builds depend on that
+  number; add a new constant for the new gate (`--force` only for one that has not
+  shipped).
+
+Tests compare against `KriaClientProtocolContract.version` or the constant, never a
+literal. `scripts/bump-protocol.py --check` (run by
+`tests/test_client_protocol_single_source.py`) fails on the current number in the
+`Client-Protocol` header forms, `set_client_protocol(N)`, `.default == N`,
+`minimum_client_protocol: N`, `(N, True)` parametrize rows, `XCTAssertEqual` against
+`KriaClientProtocolContract.version` and `appProtocol: N`. A floor such as
+`XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, N, ...)` is allowed.
+The guard reads tests only: app code that gates on a number must read the
+`client_protocol.py` constant (server) or the contract (iOS), as a literal there keeps
+its old value after a re-bump. The per-version doc comment above `static let version`
+stays a hand edit.
 
 ## Phone export proof (KRI-139, KRI-470 PR-G)
 
