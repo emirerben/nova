@@ -260,7 +260,11 @@ class NarratedPhoneStep(BaseModel):
 
 
 def _fit_step_window(
-    binding: PhoneSourceBinding, source_start_s: float, target_duration_s: float
+    binding: PhoneSourceBinding,
+    source_start_s: float,
+    target_duration_s: float,
+    *,
+    step_id: str | None = None,
 ) -> tuple[float, float, float]:
     """Reimplements `narrated_assembler._fit_clip_segment`'s pure decision.
 
@@ -280,13 +284,23 @@ def _fit_step_window(
         start = 0.0
         available = total
     if available <= _MIN_USABLE_S:
-        raise UnsupportedPhonePlan("narrated clip has no usable footage for its step")
+        raise UnsupportedPhonePlan(
+            "narrated clip has no usable footage for its step",
+            reason="step_footage",
+            lane="step",
+            item_id=step_id,
+        )
     if available >= target_duration_s:
         return start, target_duration_s, 1.0
     usable = max(_MIN_USABLE_S, available - _EOF_GUARD_S)
     rate = usable / target_duration_s
     if rate <= 0:
-        raise UnsupportedPhonePlan("narrated clip has no usable footage for its step")
+        raise UnsupportedPhonePlan(
+            "narrated clip has no usable footage for its step",
+            reason="step_footage",
+            lane="step",
+            item_id=step_id,
+        )
     return start, usable, rate
 
 
@@ -315,7 +329,9 @@ def _compile_caption_layers(
     except UnsupportedPhonePlan:
         raise
     except Exception as exc:  # noqa: BLE001 - untrusted cue content
-        raise UnsupportedPhonePlan(f"unable to compile captions: {exc}") from exc
+        raise UnsupportedPhonePlan(
+            f"unable to compile captions: {exc}", reason="captions_compile", lane="captions"
+        ) from exc
 
 
 def narrated_title_end_s(first_word_end_s: float | None) -> float:
@@ -577,7 +593,9 @@ def _compile_title_layers(
             for index, overlay in enumerate(overlays)
         ]
     except Exception as exc:  # noqa: BLE001 - untrusted title text
-        raise UnsupportedPhonePlan(f"unable to compile the title: {exc}") from exc
+        raise UnsupportedPhonePlan(
+            f"unable to compile the title: {exc}", reason="title_compile", lane="title"
+        ) from exc
 
 
 def with_pinned_text_layers(
@@ -662,7 +680,11 @@ def with_pinned_text_layers(
             for index, overlay in enumerate(overlays)
         ]
     except Exception as exc:  # noqa: BLE001 - untrusted pin text
-        raise UnsupportedPhonePlan(f"unable to compile the pinned text: {exc}") from exc
+        raise UnsupportedPhonePlan(
+            f"unable to compile the pinned text: {exc}",
+            reason="pinned_text_compile",
+            lane="pinned_text",
+        ) from exc
     # Append only: every existing layer keeps the font it was compiled with (an intro that uses
     # a cluster / staggered reveal needs fonts a rebuild from `layer.runs` would not find).
     manifest = list(recipe.asset_manifest.assets)
@@ -732,7 +754,9 @@ def replace_narrated_title(recipe: EditRecipeV2, elements: list[dict]) -> EditRe
 
     video = next((track for track in recipe.tracks if track.id == "narrated"), None)
     if video is None or not video.clips:
-        raise UnsupportedPhonePlan("pinned narrated recipe has no video track")
+        raise UnsupportedPhonePlan(
+            "pinned narrated recipe has no video track", reason="recipe_no_video", lane="recipe"
+        )
     duration = timeline_end_s(video.clips)
 
     kept: list[TextElement] = []
@@ -740,7 +764,9 @@ def replace_narrated_title(recipe: EditRecipeV2, elements: list[dict]) -> EditRe
         try:
             element = TextElement.model_validate(row)
         except Exception as exc:  # noqa: BLE001 - untrusted editor rows
-            raise UnsupportedPhonePlan(f"unable to read the title: {exc}") from exc
+            raise UnsupportedPhonePlan(
+                f"unable to read the title: {exc}", reason="title_read", lane="title"
+            ) from exc
         if element.removed:
             continue
         end_s = min(float(element.end_s), duration)
@@ -853,7 +879,9 @@ def replace_narrated_captions(
     """
     video = next((track for track in recipe.tracks if track.id == "narrated"), None)
     if video is None or not video.clips:
-        raise UnsupportedPhonePlan("pinned narrated recipe has no video track")
+        raise UnsupportedPhonePlan(
+            "pinned narrated recipe has no video track", reason="recipe_no_video", lane="recipe"
+        )
 
     layers: list[Any] = []
     if caption_cues:
@@ -996,14 +1024,26 @@ def compile_phone_narrated_plan(
     expected_start = 0.0
     for step in steps:
         if step.end_s <= step.start_s:
-            raise UnsupportedPhonePlan("narrated step has a non-positive duration")
+            raise UnsupportedPhonePlan(
+                "narrated step has a non-positive duration",
+                reason="step_timing",
+                lane="step",
+                item_id=step.step_id,
+            )
         if abs(step.start_s - expected_start) > TIMING_ROUNDING_TOLERANCE_S:
             raise UnsupportedPhonePlan(
-                "narrated steps must tile the narration timeline contiguously"
+                "narrated steps must tile the narration timeline contiguously",
+                reason="step_timing",
+                lane="step",
+                item_id=step.step_id,
             )
         expected_start = step.end_s
     if abs(expected_start - voiceover_duration_s) > TIMING_ROUNDING_TOLERANCE_S:
-        raise UnsupportedPhonePlan("narrated steps must cover the full voiceover duration")
+        raise UnsupportedPhonePlan(
+            "narrated steps must cover the full voiceover duration",
+            reason="step_timing",
+            lane="step",
+        )
 
     voice_mix = max(0.0, min(1.0, float(mix if mix is not None else 1.0)))
     footage_bed_gain = max(0.0, 1.0 - voice_mix)
@@ -1022,10 +1062,15 @@ def compile_phone_narrated_plan(
     for index, step in enumerate(steps):
         binding = bindings_by_media_id.get(step.media_id)
         if binding is None:
-            raise UnsupportedPhonePlan("narrated step has no phone source binding")
+            raise UnsupportedPhonePlan(
+                "narrated step has no phone source binding",
+                reason="step_unbound",
+                lane="step",
+                item_id=step.step_id,
+            )
         target_duration_s = step.end_s - step.start_s
         source_start, source_duration, rate = _fit_step_window(
-            binding, step.source_start_s, target_duration_s
+            binding, step.source_start_s, target_duration_s, step_id=step.step_id
         )
 
         original = binding.original
@@ -1070,12 +1115,20 @@ def compile_phone_narrated_plan(
     if voice_tail is not None:
         tail_binding = bindings_by_media_id.get(voice_tail.media_id)
         if tail_binding is None or tail_binding.render_asset().id not in assets:
-            raise UnsupportedPhonePlan("the clip that plays on after the voice isn't in the edit")
+            raise UnsupportedPhonePlan(
+                "the clip that plays on after the voice isn't in the edit",
+                reason="voice_tail_missing",
+                lane="voice_tail",
+            )
         if (
             voice_tail.source_start_s + voice_tail.duration_s
             > float(tail_binding.original.duration_s) + TIMING_ROUNDING_TOLERANCE_S
         ):
-            raise UnsupportedPhonePlan("the clip that plays on after the voice runs past its end")
+            raise UnsupportedPhonePlan(
+                "the clip that plays on after the voice runs past its end",
+                reason="voice_tail_window",
+                lane="voice_tail",
+            )
         clips.append(
             TimelineClip(
                 id=f"step-{len(steps)}-{steps[-1].step_id}-tail",
@@ -1325,7 +1378,9 @@ def replace_editor_media(
 
     video = next((track for track in recipe.tracks if track.id == video_track_id), None)
     if video is None or not video.clips:
-        raise UnsupportedPhonePlan("pinned voiceover recipe has no video track")
+        raise UnsupportedPhonePlan(
+            "pinned voiceover recipe has no video track", reason="recipe_no_video", lane="recipe"
+        )
 
     kept_tracks = [track for track in recipe.tracks if track.id != EDITOR_MEDIA_TRACK_ID]
     still_used = {clip.source_asset_id for track in kept_tracks for clip in track.clips} | (
@@ -1360,7 +1415,9 @@ def replace_editor_media(
                 manifest=manifest,
             )
         except UnsupportedEditorMedia as exc:
-            raise UnsupportedPhonePlan(str(exc), capability="visualBlocks") from exc
+            raise UnsupportedPhonePlan(
+                str(exc), capability="visualBlocks", reason="editor_media", lane="editor_media"
+            ) from exc
         if media_track.clips:
             tracks.append(media_track)
             required |= _EDITOR_MEDIA_CAPABILITIES
@@ -1410,9 +1467,15 @@ def replace_editor_lanes(
 
     video = next((track for track in recipe.tracks if track.id == video_track_id), None)
     if video is None or not video.clips:
-        raise UnsupportedPhonePlan("pinned voiceover recipe has no video track")
+        raise UnsupportedPhonePlan(
+            "pinned voiceover recipe has no video track", reason="recipe_no_video", lane="recipe"
+        )
     if lanes.ending_clip is not None:
-        raise UnsupportedPhonePlan("an ending clip isn't supported on phone Voiceover edits")
+        raise UnsupportedPhonePlan(
+            "an ending clip isn't supported on phone Voiceover edits",
+            reason="ending_clip",
+            lane="ending_clip",
+        )
 
     kept_tracks = [track for track in recipe.tracks if track.id not in _EDITOR_LANE_TRACK_IDS]
     still_used = {clip.source_asset_id for track in kept_tracks for clip in track.clips} | (
