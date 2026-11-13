@@ -99,19 +99,41 @@ def _bucket(explicit: str | None) -> str:
     return bucket
 
 
-def storage_copy(bucket: str, object_path: str, destination: Path) -> None:
-    """Read-only copy out of the bucket. The destination is always a local path."""
+def _owned_object_path(object_path: str, user_id: str) -> str:
+    """A bucket path the job's owner holds; anything else is refused before it is fetched."""
+
+    prefix = f"users/{user_id}/"
+    rest = object_path[len(prefix) :]
+    if (
+        not object_path.startswith(prefix)
+        or "\\" in object_path
+        or any(part in {"", ".", ".."} for part in rest.split("/"))
+    ):
+        raise ReplayJobError(
+            f"Refusing a storage path outside the job owner's prefix: {object_path}"
+        )
+    return object_path
+
+
+def storage_copy(
+    bucket: str, object_path: str, destination: Path, generation: str | None = None
+) -> None:
+    """Read-only copy out of the bucket. The destination is always a local path.
+
+    A recorded generation pins the exact bytes the production job analysed.
+    """
 
     if destination.is_file() and destination.stat().st_size > 0:
         return
     destination.parent.mkdir(parents=True, exist_ok=True)
+    pinned = f"#{generation}" if generation and str(generation).isdigit() else ""
     subprocess.run(
         [
             "gcloud",
             "storage",
             "cp",
             "--no-clobber",
-            f"gs://{bucket}/{object_path}",
+            f"gs://{bucket}/{object_path}{pinned}",
             str(destination),
         ],
         check=True,
@@ -146,8 +168,11 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _source(path: Path, *, source_id: str, kind: str, object_path: str) -> dict[str, Any]:
+def _source(
+    path: Path, *, source_id: str, kind: str, object_path: str, pool: bool = False
+) -> dict[str, Any]:
     return {
+        **({"pool": True} if pool else {}),
         "id": source_id,
         "kind": kind,
         "local_path": str(path),
@@ -178,6 +203,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
 
     sources: list[dict[str, Any]] = []
     seen: set[str] = set()
+    user_id = str(job["user_id"])
     for assignment in item_debug.get("clip_assignments") or []:
         media_id = str(assignment.get("media_id") or "")
         kind = str(assignment.get("kind") or "video")
@@ -186,21 +212,43 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
             continue
         seen.add(media_id)
         local = inputs_dir / "media" / media_id
-        storage_copy(bucket, object_path, local)
-        sources.append(_source(local, source_id=media_id, kind=kind, object_path=object_path))
-    pool_prefix = f"users/{job['user_id']}/plan/{item_id}/pool/"
-    pool_objects = storage_list(bucket, pool_prefix)
-    for asset in item_debug.get("pool_assets") or []:
-        if asset.get("kind") != "image" or asset.get("status") != "ready":
-            continue
-        match = next(
-            (o for o in pool_objects if o.removeprefix(pool_prefix).startswith(asset["id"])), None
+        storage_copy(
+            bucket,
+            _owned_object_path(object_path, user_id),
+            local,
+            assignment.get("generation"),
         )
-        if match is None:
-            raise ReplayJobError(f"Pool image {asset['id']} is not in {pool_prefix}")
-        local = inputs_dir / "media" / f"{asset['id']}-{Path(match).name}"
-        storage_copy(bucket, match, local)
-        sources.append(_source(local, source_id=str(asset["id"]), kind="image", object_path=match))
+        sources.append(_source(local, source_id=media_id, kind=kind, object_path=object_path))
+    pool_prefix = f"users/{user_id}/plan/{item_id}/pool/"
+    pool_objects: list[str] | None = None
+    for asset in item_debug.get("pool_assets") or []:
+        kind = str(asset.get("kind") or "")
+        if kind not in MEDIA_KINDS or asset.get("status") != "ready":
+            continue
+        object_path = asset.get("gcs_path")
+        generation = asset.get("gcs_generation")
+        if not object_path:
+            # A production API from before the item debug exposed pool paths: the item's own
+            # pool prefix is the only place to look, and library assets are not under it.
+            if pool_objects is None:
+                pool_objects = storage_list(bucket, pool_prefix)
+            object_path = next(
+                (o for o in pool_objects if o.removeprefix(pool_prefix).startswith(asset["id"])),
+                None,
+            )
+            if object_path is None:
+                raise ReplayJobError(
+                    f"Pool {kind} {asset['id']} has no storage path in the item debug and is "
+                    f"not under {pool_prefix}; it is a media-library asset and this production "
+                    "API predates the gcs_path field on /admin/plan-items/<id>/debug"
+                )
+        local = inputs_dir / "media" / f"{asset['id']}-{Path(object_path).name}"
+        storage_copy(bucket, _owned_object_path(object_path, user_id), local, generation)
+        sources.append(
+            _source(
+                local, source_id=str(asset["id"]), kind=kind, object_path=object_path, pool=True
+            )
+        )
     voiceover_path = item.get("voiceover_gcs_path")
     if voiceover_path:
         local = inputs_dir / "media" / Path(voiceover_path).name
@@ -212,6 +260,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         )
     if not sources:
         raise ReplayJobError("The plan item holds no footage in storage to replay")
+    coverage = _check_source_coverage(job, sources)
 
     manifest = {"job_id": job_id, "creator_request": creator_request, "sources": sources}
     for name, value in (
@@ -226,7 +275,41 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         "job": job,
         "item": item,
         "source_count": len(sources),
+        "source_coverage": coverage,
         "creator_request": creator_request,
+    }
+
+
+def _check_source_coverage(job: dict[str, Any], sources: list[dict[str, Any]]) -> dict[str, Any]:
+    """Refuse a replay that would run on different inputs than the production job.
+
+    The job's brief binding records the media it was approved against. Every visual and clip
+    in it must have a replayed source, and a creator song or voiceover the replay cannot
+    reproduce stops the run: a green replay on partial footage is stand-in evidence.
+    """
+
+    plan = job.get("assembly_plan") or {}
+    snapshot = ((plan.get("creator_brief_binding") or {}).get("media_snapshot")) or {}
+    visuals = [s for s in sources if s["kind"] in MEDIA_KINDS]
+    expected = len(snapshot.get("visuals") or []) + len(snapshot.get("clip_assignments") or [])
+    if len(visuals) < expected:
+        raise ReplayJobError(
+            f"The job was approved against {expected} visuals and clips but only "
+            f"{len(visuals)} are recoverable; refusing to replay on different footage"
+        )
+    if any(snapshot.get(key) for key in ("song_analysis", "song_alignment", "song_generation")):
+        raise ReplayJobError(
+            "The job used a creator song; replay_creator does not seed songs, so a replay "
+            "would not reproduce the production inputs"
+        )
+    if snapshot.get("voiceover") and not any(s["kind"] == "audio" for s in sources):
+        raise ReplayJobError("The job recorded a voiceover but the item holds none in storage")
+    return {
+        "expected_visuals_and_clips": expected,
+        "replayed_visuals_and_clips": len(visuals),
+        "pool_images": sum(1 for s in visuals if s.get("pool") and s["kind"] == "image"),
+        "pool_videos": sum(1 for s in visuals if s.get("pool") and s["kind"] == "video"),
+        "voiceover": any(s["kind"] == "audio" for s in sources),
     }
 
 
@@ -341,11 +424,25 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
         if out.get("field") in {"output_url", "video_path"} and not out.get("missing")
     ]
     error = (receipt.get("error") or {}).get("message")
+    device_plan = receipt.get("device_plan")
+    if videos:
+        outcome = "video_rendered"
+    elif device_plan and device_plan.get("complete"):
+        outcome = "device_plan_ready"
+    elif device_plan:
+        outcome = "device_plan_incomplete"
+        error = error or "The job reached awaiting_device without a pinned device request"
+    else:
+        outcome = "failed"
     return {
+        "outcome": outcome,
         "replayed_job_status": job.get("status"),
-        "failure_reason": job.get("failure_reason") or error,
+        "failure_reason": None
+        if outcome in {"video_rendered", "device_plan_ready"}
+        else job.get("failure_reason") or error,
         "error_detail": job.get("error_detail"),
         "video_paths": videos,
+        "device_plan": device_plan,
         "receipt": str(receipt_path),
     }
 
@@ -378,7 +475,8 @@ def main(argv: list[str] | None = None) -> int:
         info = collect_inputs(job_id, inputs_dir, _bucket(args.bucket))
         print(
             f"job {job_id}: status={info['job']['status']} "
-            f"reason={info['job'].get('failure_reason')} sources={info['source_count']}"
+            f"reason={info['job'].get('failure_reason')} sources={info['source_count']} "
+            f"coverage={json.dumps(info['source_coverage'])}"
         )
         if args.fetch_only:
             print(f"inputs: {inputs_dir}")
@@ -419,7 +517,8 @@ def main(argv: list[str] | None = None) -> int:
         result["replay_exit_code"] = completed.returncode
         result["source_job"] = {"id": job_id, "failure_reason": info["job"].get("failure_reason")}
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0 if result["video_paths"] and completed.returncode == 0 else 1
+        succeeded = result["outcome"] in {"video_rendered", "device_plan_ready"}
+        return 0 if succeeded and completed.returncode == 0 else 1
     except Exception as exc:  # noqa: BLE001 - a CLI driver reports any setup failure once
         print(f"replay failed before the render: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

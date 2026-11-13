@@ -32,3 +32,19 @@ and dropped the iPhone upload receipts the planner needs (the admin item debug o
 job's brief binding keeps them).
 
 Cost of the proof (settled `agent_run` costs across every attempt): about $0.46.
+
+## Second proof: the device-plan success path (job fba2c864)
+
+Command: `make kria-replay-job JOB=fba2c864-cdc1-4e35-ad74-740348f2781e` (2026-11-13 20:59 UTC,
+2 min 15 s, one 11 s clip, live Gemini models, well under $0.05).
+
+Source job (production, 2026-11-07 21:09 UTC): `processing_failed`, `creation_text_failed`.
+Replay result: `outcome: device_plan_ready`. The Main Creator plan was confirmed, the worker built
+and pinned the iPhone render plan (variant `guided_story`, 4.0 s, intro text "The prompt I run at
+the end of every Claude session") and the job sits `awaiting_device`, exit code 0. The plan is
+written to `<run dir>/device-plan.json`. Production failed this request; the replay did not, so the
+failure is not reproduced by this run (model output varies between runs).
+
+An earlier build of the driver hung on exactly this success: `awaiting_device` was not a
+terminal status, so it polled until the 1800 s timeout and printed a null status with a timeout
+reason. `awaiting_device` is now terminal and reported as `device_plan_ready`.
