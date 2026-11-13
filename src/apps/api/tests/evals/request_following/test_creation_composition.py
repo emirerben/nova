@@ -184,13 +184,10 @@ def test_disallowed_operations_cannot_change_source_timeline(monkeypatch):
         "reply": "Trimmed",
         "ops": [{"op": "set_clip_duration", "clip_index": 0, "duration_s": 1}],
     }
-    plan = base_plan()
-    before = compile_proposal_execution_plan(plan.snapshot)
-    drops = []
-    snapshot = compose(monkeypatch, plan, response, drops=drops)
-    assert compile_proposal_execution_plan(snapshot) == before
-    # The parser never lets the timeline op through, so nothing of the ask was done.
-    assert [(drop.reason, drop.action) for drop in drops] == [("incomplete", "shrunk")]
+    # The parser refuses the timeline op, the composer's only one: nothing of the text ask was
+    # done, so the pass fails as a whole instead of rendering as "done in part" (KRI-1376 review).
+    with pytest.raises(ValueError, match="composition"):
+        compose(monkeypatch, base_plan(), response)
 
 
 def test_duplicate_hook_is_corrected_without_dropping_location_label(monkeypatch):

@@ -13,6 +13,16 @@ Ways this could fail, written before the code (each is asserted below):
   4. the recipe no longer passes ``verify_phone_recipe`` (the contract check was weakened);
   5. with the degrade switched off the row does NOT fail (the case would prove nothing);
   6. a bad row only a confirmed item could fix still renders instead of failing.
+
+Review of #2314, written before the fixes:
+  7. a line her described text ask wanted (prod 3c312af4: "the same but for the English
+     translation at the bottom") is dropped as unasked and nothing says so;
+  8. after approval the note reaches only fields no client reads, so the finished-render
+     reply (the one place she reads it) does not say what was left out, or a later edit's
+     reply repeats it;
+  9. two rows bad the same way: every single drop still fails, so the video fails;
+ 10. a composer bundle rejected as a whole renders the planner's lane with a generic note;
+ 11. the stricter incomplete rule fails a pass where only an asked behavior was missing.
 """
 
 from __future__ import annotations
@@ -21,6 +31,7 @@ import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, get_args
 from unittest.mock import Mock
 
@@ -31,10 +42,11 @@ from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
 from app.kria.recipes import MediaCapability
+from app.kria.reply_language import reply_language_for
 from app.pipeline.phone_plan_repair import _quoted
 from app.schemas.editorial_plan import EditorialBeat, EditorialPlan
 from app.services import creation_text_composition as composition
-from app.services.creation_text_degrade import Degraded
+from app.services.creation_text_degrade import Degraded, finished_render_notes
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     REQUIREMENT_VERSION_FIELD,
@@ -43,12 +55,16 @@ from app.services.creator_render_contract import (
 )
 from app.services.device_render import device_status
 from app.tasks import generative_build as gb
+from app.tasks import kria_runtime
 from tests.kria import test_approved_long_sequence_copy as base
 from tests.tasks.test_unified_montage_dispatch import harness  # noqa: F401
 
 TITLE = "Morning run"
 GOOD = "Bebek sahili"
 FIRST_CLIP_END = 3.5
+THREAD = uuid.UUID("3c312af4-0000-4000-8000-000000001376")
+# Prod 3c312af4: the English line her described title ask wanted, which no new row may hold.
+ENGLISH = "November 10 is not just a day of mourning"
 
 
 def _brief(*extra: BriefRequirement) -> CreativeBrief:
@@ -156,6 +172,13 @@ class Gate:
     brief: CreativeBrief = field(default_factory=lambda: _brief(_EXPLAIN))
     unmet: tuple[dict, ...] = ()
     planner: Callable[[Any], None] | None = None
+    # The `requirement_recovery` reasons, in order; defaults to one drop named like the gate.
+    reasons: tuple[str, ...] | None = None
+    keeps_good: bool = True
+
+
+def _past_end(text: str) -> Callable[[dict], dict]:
+    return lambda snap: _add(text, 1.0, snap["total_duration_s"] + 5)
 
 
 GATES = [
@@ -194,6 +217,31 @@ GATES = [
                 id="style", kind="style", scope="title", description="Make the title yellow"
             )
         ),
+        keeps_good=False,
+    ),
+    Gate(
+        "unasked_text_she_described",
+        lambda snap: [_add(GOOD), _add(ENGLISH, 0.0, 3.0)],
+        note=f"Left out {_quoted(ENGLISH)} because I couldn't add it as its own line",
+        gone=ENGLISH,
+        kept=TITLE,
+        brief=_brief(
+            BriefRequirement(
+                id="r2",
+                kind="text_sequence",
+                scope="title",
+                description="the same but for the english translation at the bottom",
+            )
+        ),
+        reasons=("unasked_text", "unasked_text"),
+        keeps_good=False,
+    ),
+    Gate(
+        "replay_failed_twice",
+        lambda snap: [_add(GOOD), _past_end("Past the end")(snap), _past_end("Also past")(snap)],
+        note="Left out one text change for “Past the end” because I couldn't make it fit",
+        gone="Also past",
+        reasons=("replay_failed", "replay_failed"),
     ),
     Gate(
         "layer_shape",
@@ -204,12 +252,22 @@ GATES = [
             version=1,
             requirements=[_phrases("r1", MIDDLE, "middle"), _phrases("r2", BOTTOM, "bottom")],
         ),
+        keeps_good=False,
     ),
     Gate(
         "incomplete",
         lambda snap: [_add(GOOD)],
         note="I couldn't do every part of your text request, so the video shows the parts I could",
         unmet=({"request": "English word by word", "reason": "No text holds the English yet"},),
+    ),
+    Gate(
+        "incomplete_nothing_written",
+        lambda snap: [],
+        note="I couldn't do every part of your text request, so the video shows the parts I could",
+        kept=TITLE,
+        unmet=({"request": "make the title pop in", "reason": "No pop-in for a title"},),
+        reasons=("incomplete",),
+        keeps_good=False,
     ),
     Gate(
         "editorial_unmet",
@@ -237,9 +295,9 @@ def _answer(gate: Gate) -> Callable[..., Any]:
 def _job(harness, monkeypatch, gate: Gate):  # noqa: F811
     job, *_ = harness(brief=gate.brief)
     job.all_candidates["creator_request"] = "Title: Morning run. Say where each place is."
-    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
-        uuid.uuid4(), gate.brief
-    ).model_dump(mode="json")
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(THREAD, gate.brief).model_dump(
+        mode="json"
+    )
     contract = build_render_contract(
         job.all_candidates["creator_strategy"], generation_id="generation", brief=gate.brief
     )
@@ -305,7 +363,7 @@ def test_one_bad_row_is_left_out_and_the_video_renders(harness, monkeypatch, gat
         verify_phone_recipe(contract, recipe, source_audio={"source": True})
     drawn = _drawn(job)
     assert _squash(gate.kept) in drawn
-    assert _squash(GOOD) in drawn or gate.name in {"unasked_text", "layer_shape"}
+    assert _squash(GOOD) in drawn or not gate.keeps_good
     assert gate.gone is None or _squash(gate.gone) not in drawn
     variant = job.assembly_plan["variants"][0]
     # The editor recompiles from the persisted rows: the dropped row stays dropped there too.
@@ -317,13 +375,31 @@ def test_one_bad_row_is_left_out_and_the_video_renders(harness, monkeypatch, gat
         for _stage, event, data in events
         if event == "requirement_recovery" and data.get("lane") == "text"
     ]
-    assert [data["reason"] for data in recoveries] == [gate.name]
+    assert [data["reason"] for data in recoveries] == list(gate.reasons or (gate.name,))
+    reply = _finished_reply(job, variant)
     if gate.note is None:
         assert not any("Follow for more" in note for note in notes)
+        assert "Follow for more" not in reply
     else:
         assert gate.note in notes
         repaired = [data for _s, event, data in events if event == "phone_plan_repaired"]
         assert repaired and gate.note in repaired[-1]["notes"]
+        # The reply to the finished video is where she reads it (KRI-1261 hid the rest).
+        assert gate.note in reply
+        later = {**variant, "render_generation_id": "a-later-edit"}
+        assert finished_render_notes(job.assembly_plan, {"a-later-edit"}) == []
+        assert gate.note not in _finished_reply(job, later)
+
+
+def _finished_reply(job, variant: dict) -> str:
+    """The `assistant_review` text the creator reads when this render is ready."""
+    thread = SimpleNamespace(id=THREAD, creator_id=uuid.uuid4())
+    execution = SimpleNamespace(result={}, target_draft_id=None)
+    with reply_language_for("en"):
+        text, _receipts = kria_runtime._approved_generation_review(
+            None, thread, job, variant, execution, "The confirmed edit is ready."
+        )
+    return text
 
 
 @pytest.mark.parametrize("gate", GATES, ids=[gate.name for gate in GATES])
@@ -385,3 +461,22 @@ def test_a_degrade_that_would_leave_no_asked_text_fails(harness, monkeypatch):  
     gb._run_generative_job(str(job.id))
 
     assert failure.call_args.kwargs["failure_reason"] == "creation_text_failed"
+
+
+def test_a_composer_bundle_rejected_as_a_whole_still_fails(harness, monkeypatch):  # noqa: F811
+    """Failure mode 10: over the op limit the composer's whole answer is refused (no op is
+    left), so nothing of the text pass is one bad item and the video fails as before."""
+    gate = Gate(
+        "bundle",
+        lambda snap: [_add(f"Place {n}", 0.5, 1.5) for n in range(60)],
+        note=None,
+        unmet=({"request": "name each place", "reason": "Too many places"},),
+    )
+    job, _ = _job(harness, monkeypatch, gate)
+    failure = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", failure)
+
+    gb._run_generative_job(str(job.id))
+
+    assert failure.call_args.kwargs["failure_reason"] == "creation_text_failed"
+    assert job.assembly_plan.get("variants") is None

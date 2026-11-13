@@ -189,24 +189,27 @@ def test_composer_cannot_replace_approved_copy_or_accept_invalid_segments(
     plan, _, _ = approved_plan(context_caption=False, font_covers=None)
     before = compile_proposal_execution_plan(plan.snapshot)
     drops = []
-    # KRI-1376: the composer's op is dropped and the approved hook renders as approved.
-    composed = compose_creation_text(
-        plan.snapshot,
-        creator_request="Show each word separately",
-        copy_constraints={"guided-title": CASE["candidate"]},
-        ctx=CTX,
-        drops=drops,
-    )
-    rows = compile_proposal_execution_plan(composed)["text_elements"]
+
+    def run():
+        return compose_creation_text(
+            plan.snapshot,
+            creator_request="Show each word separately",
+            copy_constraints={"guided-title": CASE["candidate"]},
+            ctx=CTX,
+            drops=drops,
+        )
+
+    if response_key != "rewrite_response":
+        # The parser refuses the empty split, the composer's only op: nothing of the ask was
+        # done, so the pass fails as a whole (KRI-1376 review), as before.
+        with pytest.raises(CreationTextCompositionError):
+            run()
+        return
+    # KRI-1376: the rewrite reaches replay and is dropped; the approved hook renders as approved.
+    rows = compile_proposal_execution_plan(run())["text_elements"]
     assert rows == before["text_elements"]
     assert [row["text"] for row in rows if row["id"] == "guided-title"] == [CASE["candidate"]]
-    # The rewrite reaches replay and is dropped; the parser already discards the empty split,
-    # which leaves the request done only in part.
-    assert [(drop.action, drop.text) for drop in drops] == (
-        [("dropped", CASE["candidate"])]
-        if response_key == "rewrite_response"
-        else [("shrunk", None)]
-    )
+    assert [(drop.action, drop.text) for drop in drops] == [("dropped", CASE["candidate"])]
 
 
 def test_legitimate_sequence_preserves_copy_and_constraints_after_reload(monkeypatch):
