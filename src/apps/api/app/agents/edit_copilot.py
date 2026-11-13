@@ -122,7 +122,7 @@ log = structlog.get_logger()
 # only where the snapshot offers the `color_moments` family (flag + verified token + protocol 48),
 # or, with that gate closed, on an edit that still carries moments, marked REMOVAL ONLY (only
 # taking them off is accepted), so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-11-v122"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v123"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
