@@ -162,6 +162,72 @@ class JourneyRegistryTests(unittest.TestCase):
         self.tree.manifest.write_text(json.dumps(rows))
         self.assertTrue(any("no such test" in problem for problem in self.tree.check()))
 
+    def test_every_valid_spelling_of_a_marker_is_read_or_refused(self):
+        spellings = {
+            "annotated": 'import pytest\n\npytestmark: list = [pytest.mark.journey("alpha")]\n',
+            "bare_mark": 'from pytest import mark\n\npytestmark = mark.journey("alpha")\n',
+            "combined": 'import pytest\n\npytestmark = [pytest.mark.slow, pytest.mark.journey("alpha")]\n',
+        }
+        for name, text in spellings.items():
+            with self.subTest(name=name):
+                self.tree.write(f"{registry.API}/tests/kria/test_{name}.py", text + "\n\ndef test_it():\n    pass\n")
+                self.assertIn(
+                    f"tests/kria/test_{name}.py", registry.step_files("alpha", self.tree.root)
+                )
+        refused = {
+            "decorator": 'import pytest\n\n@pytest.mark.journey("alpha")\ndef test_it():\n    pass\n',
+            "class_attribute": 'import pytest\n\nclass TestIt:\n    pytestmark = pytest.mark.journey("alpha")\n',
+            "bare": 'import pytest\n\npytestmark = pytest.mark.journey\n',
+        }
+        for name, text in refused.items():
+            with self.subTest(name=name):
+                path = f"{registry.API}/tests/kria/test_refused_{name}.py"
+                self.tree.write(path, text)
+                self.assertTrue(
+                    any("module-level" in problem for problem in self.tree.check())
+                )
+                (self.tree.root / path).unlink()
+
+    def test_other_hand_lists_fail_check_on_a_rename_and_sync_follows_it(self):
+        self.tree.write("Makefile", "t:\n\tpytest tests/kria/test_listed.py::test_it\n")
+        self.tree.write("scripts/ci/test_selection.py", 'PATH = "src/apps/api/tests/kria/test_listed.py"\n')
+        self.tree.git("add", "-A")
+        self.tree.git("commit", "-qm", "lists")
+        self.assertEqual(self.tree.check(), [])
+        self.tree.git(
+            "mv",
+            f"{registry.API}/tests/kria/test_listed.py",
+            f"{registry.API}/tests/kria/test_listed_renamed.py",
+        )
+        problems = self.tree.check()
+        self.assertTrue(any("Makefile names" in problem for problem in problems))
+        stale = registry.check(self.tree.root, self.tree.manifest, base="HEAD")
+        self.assertTrue(any("test_selection.py still names" in p for p in stale))
+        registry.sync(self.tree.root, self.tree.manifest, base="HEAD")
+        self.assertEqual(registry.check(self.tree.root, self.tree.manifest, base="HEAD"), [])
+        self.assertIn("test_listed_renamed.py::test_it", (self.tree.root / "Makefile").read_text())
+        self.assertIn(
+            "src/apps/api/tests/kria/test_listed_renamed.py",
+            (self.tree.root / "scripts/ci/test_selection.py").read_text(),
+        )
+
+    def test_a_missing_hand_listed_test_node_is_reported(self):
+        self.tree.write("Makefile", "t:\n\tpytest tests/kria/test_listed.py::test_gone\n")
+        self.assertTrue(any("no such test" in problem for problem in self.tree.check()))
+
+    def test_manifest_xctests_must_name_real_swift_tests(self):
+        self.tree.write(
+            "src/apps/ios/Tests/KriaTests/AlphaTests.swift",
+            "final class AlphaTests: XCTestCase {\n    func testReal() {}\n}\n",
+        )
+        rows = json.loads(self.tree.manifest.read_text())
+        rows["journeys"][0]["xctests"] = ["KriaTests/AlphaTests/testReal"]
+        self.tree.manifest.write_text(json.dumps(rows))
+        self.assertEqual(self.tree.check(), [])
+        rows["journeys"][0]["xctests"] = ["KriaTests/AlphaTests/testRenamed"]
+        self.tree.manifest.write_text(json.dumps(rows))
+        self.assertTrue(any("names no test" in problem for problem in self.tree.check()))
+
 
 if __name__ == "__main__":
     unittest.main()

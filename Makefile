@@ -255,14 +255,17 @@ verify-editor-timeline:
 
 # Journey tests and iOS UI test groups are derived from markers in the tests.
 # `check` names every hand-kept entry that no longer matches the tree; `sync`
-# follows git renames into those entries (stage the rename first).
+# follows git renames of files, Swift classes and test methods into those
+# entries, the Makefile, scripts and workflows (stage a file rename first).
 check-test-registries:
 	$(PYTHON) scripts/ci/journey_registry.py check
 	$(PYTHON) scripts/ios/ui_tests.py check
 
 sync-test-registries:
-	$(PYTHON) scripts/ci/journey_registry.py sync
-	$(PYTHON) scripts/ios/ui_tests.py sync
+	@status=0; \
+	$(PYTHON) scripts/ios/ui_tests.py sync || status=1; \
+	$(PYTHON) scripts/ci/journey_registry.py sync || status=1; \
+	exit $$status
 
 api-install-dev:
 	@if [ ! -x "$(API_PYTHON)" ]; then \
