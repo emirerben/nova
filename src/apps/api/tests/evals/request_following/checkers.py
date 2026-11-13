@@ -194,10 +194,32 @@ def source_preserved(
     return "met", f"{len(entries)} source ranges preserved"
 
 
+def clip_source_start(
+    req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """Check where each named clip's source window now starts (a cut at a spoken word).
+
+    ``source_preserved`` also pins the source end, which the editor compiler does not report;
+    a trim only moves the start, so this asserts that alone.
+    """
+    expected = req.params.get("clips") or {}
+    if not isinstance(expected, dict) or not expected:
+        return "unmet", "no independent source starts supplied"
+    actual = {clip.clip_id: clip for clip in plan.clips}
+    bad: list[str] = []
+    for clip_id, wanted in expected.items():
+        clip = actual.get(str(clip_id))
+        if clip is None or clip.source_start_s is None:
+            bad.append(f"{clip_id}: no source start")
+        elif abs(clip.source_start_s - float(wanted)) > 1e-6:
+            bad.append(f"{clip_id}: starts at {clip.source_start_s}, wanted {wanted}")
+    return ("unmet", "; ".join(bad)) if bad else ("met", f"{len(expected)} source starts match")
+
+
 def text_geometry(
     req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
 ) -> CheckResult:
-    """Check compiled placement fields against fixture-owned expected geometry."""
+    """Check compiled placement and timing fields against fixture-owned expected values."""
     expected = req.params.get("texts") or {}
     if not isinstance(expected, dict) or not expected:
         return "unmet", "no independent text geometry supplied"
@@ -210,6 +232,9 @@ def text_geometry(
             continue
         for field in ("position", "alignment", "x_frac", "y_frac"):
             if field in wanted and getattr(text, field) != wanted[field]:
+                bad.append(f"{text_id}.{field}: {getattr(text, field)!r} != {wanted[field]!r}")
+        for field in ("start_s", "end_s"):
+            if field in wanted and abs(getattr(text, field) - float(wanted[field])) > 1e-6:
                 bad.append(f"{text_id}.{field}: {getattr(text, field)!r} != {wanted[field]!r}")
     return ("unmet", "; ".join(bad)) if bad else ("met", f"{len(expected)} text geometries match")
 
@@ -644,6 +669,7 @@ CHECKERS: dict[str, Checker] = {
     "title_exact": title_exact,
     "title_persistent": title_persistent,
     "source_preserved": source_preserved,
+    "clip_source_start": clip_source_start,
     "text_geometry": text_geometry,
     "text_contains": text_contains,
     "label_coverage": label_coverage,

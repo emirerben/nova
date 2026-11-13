@@ -1522,6 +1522,93 @@ def _approved_research_context(job: Any, variant: dict[str, Any]) -> dict[str, d
     return context
 
 
+# Same cap the web producer (snapshot.ts) and the prompt formatter apply.
+_BEAT_MARKS_MAX = 60
+
+
+def timeline_signature(job: Any, variant: dict[str, Any]) -> list[tuple[Any, ...]]:
+    """What a speech or beat mark depends on: every slot's source window and length.
+
+    Speech words and song beats are stamped against the saved render's timeline. A draft that
+    re-cut it (trim, split, reorder, remove, retime) no longer matches them.
+    """
+    rows = _variant_slots(variant, job)
+    if not rows:
+        from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+            phone_subtitled_research_slots,
+        )
+
+        rows = phone_subtitled_research_slots(job, variant)
+    return [
+        (
+            row.get("slot_id") or row.get("media_id") or row.get("clip_index"),
+            round(float(row.get("in_s") or 0.0), 3),
+            round(float(row.get("duration_s") or 0.0), 3),
+            round(float(row.get("playback_rate") or 1.0), 3),
+            bool(row.get("removed")),
+        )
+        for row in rows
+    ]
+
+
+def _stride_cap(marks: list[float], cap: int) -> list[float]:
+    """Even sampling that keeps the first and last mark, like snapshot.ts."""
+    if len(marks) <= cap:
+        return marks
+    last = len(marks) - 1
+    sampled: list[float] = []
+    for i in range(cap):
+        value = marks[round(i * last / (cap - 1))]
+        if not sampled or value != sampled[-1]:
+            sampled.append(value)
+    return sampled
+
+
+def _beat_marks(variant: dict[str, Any], duration_s: float, beats: Any) -> list[float]:
+    """The song's beats in assembled-timeline seconds, or ``[]`` when they cannot be placed.
+
+    The music bed plays from ``music_start_s`` at output 0 (the render's
+    ``audio_start_offset_s``), so a beat at song time ``b`` lands at ``b - start``. Without a
+    recorded start the offset is unknown and no mark is invented.
+    """
+    if not isinstance(beats, list) or not variant.get("music_track_id"):
+        return []
+    window = variant.get("music_window")
+    start = window.get("start_s") if isinstance(window, dict) else None
+    if start is None:
+        start = variant.get("music_start_s")
+    if isinstance(start, bool) or not isinstance(start, (int, float)) or not math.isfinite(start):
+        return []
+    marks: list[float] = []
+    for raw in sorted(b for b in beats if isinstance(b, (int, float)) and not isinstance(b, bool)):
+        if not math.isfinite(raw):
+            continue
+        at = round(float(raw) - float(start), 3)
+        if 0.0 <= at <= duration_s and (not marks or at > marks[-1]):
+            marks.append(at)
+    return _stride_cap(marks, _BEAT_MARKS_MAX)
+
+
+def _speech_snapshot(variant: dict[str, Any], duration_s: float) -> dict[str, Any] | None:
+    """Spoken words and the silences between them, in the shape snapshot.ts sends."""
+    from app.services.speech_map import build_speech_map  # noqa: PLC0415
+    from app.services.transcript_source import speech_words_for_variant  # noqa: PLC0415
+
+    source = speech_words_for_variant(variant)
+    if source is None:
+        return None
+    mapped = build_speech_map(source[0], duration_s if duration_s > 0 else None, source[1])
+    if mapped is None:
+        return None
+    return {
+        "source": mapped["source"],
+        "words": [{"text": w["w"], "start_s": w["s"], "end_s": w["e"]} for w in mapped["words"]],
+        "pauses": [
+            {"start_s": p["s"], "end_s": p["e"], "after": p["after"]} for p in mapped["pauses"]
+        ],
+    }
+
+
 def build_editor_snapshot(
     job: Any,
     variant: dict[str, Any],
@@ -1531,8 +1618,9 @@ def build_editor_snapshot(
     """Return the bounded, URL/path-free snapshot accepted by EditCopilot.
 
     ``clip_context`` (built by the async planner, which owns the DB read) carries
-    ``facts`` (``clip_facts_by_media_id``) and ``brief`` (the rendered Creative
-    Brief). Both are optional: with neither, the snapshot is what it always was
+    ``facts`` (``clip_facts_by_media_id``), ``brief`` (the rendered Creative
+    Brief), ``music_beats`` (``{"track_id", "beats"}``) and ``timeline_dirty``. All are
+    optional: with neither, the snapshot is what it always was
     plus the guided-slot fallback and the label-lane links. Pinned approved-media
     descriptions/OCR also support older callers without plan-item context.
     """
@@ -1888,6 +1976,19 @@ def build_editor_snapshot(
             for row in variant.get("speech_cut_candidates") or []
             if isinstance(row, dict) and row.get("status") == "pending"
         ]
+    if clip_context.get("timeline_dirty") is not True:
+        # KRI-1391: spoken words, pauses and song beats on the saved render's timeline. A
+        # re-cut draft drops them (the planner sets `timeline_dirty`), like snapshot.ts.
+        speech = _speech_snapshot(variant, duration)
+        if speech is not None:
+            snapshot["speech"] = speech
+        music_beats = clip_context.get("music_beats")
+        if isinstance(music_beats, dict) and str(music_beats.get("track_id")) == str(
+            variant.get("music_track_id")
+        ):
+            marks = _beat_marks(variant, duration, music_beats.get("beats"))
+            if marks:
+                snapshot["beat_marks"] = marks
     # KRI-219: server-built snapshots ONLY (the web drawer builds its own in
     # snapshot.ts and never carries this). Unlocks v2 ops + their prompt
     # fragments in EditCopilot; see app/agents/editor_ops_v2.

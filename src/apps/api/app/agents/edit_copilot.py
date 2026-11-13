@@ -2177,11 +2177,13 @@ def _format_snapshot(snapshot: dict) -> str:
         meta = captions.get("meta") if isinstance(captions.get("meta"), dict) else {}
         lines.append("\nCAPTIONS (cue_index values are authoritative for this turn):")
         if cues:
-            for cue in _component_rows(cues, 40, component_context_enabled):
+            for position, cue in enumerate(_component_rows(cues, 40, component_context_enabled)):
                 if not isinstance(cue, dict):
                     continue
+                # Server snapshots carry no `index` key; the list position IS the cue_index.
+                index = cue.get("index") if isinstance(cue.get("index"), int) else position
                 lines.append(
-                    f"{cue.get('index')}. id={_field(cue.get('id'), max_chars=80)!r} "
+                    f"{index}. id={_field(cue.get('id'), max_chars=80)!r} "
                     f"timing={_fmt_round3(_first_number(cue, ('start_s',)))}-"
                     f"{_fmt_round3(_first_number(cue, ('end_s',)))}s "
                     f"role={_field(cue.get('smart_role'), max_chars=20)!r} "
