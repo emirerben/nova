@@ -730,10 +730,13 @@ def _visual_media_rows(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]
 
 
 def _removable_visual_media(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]:
+    # A cloud edit re-burns over its clean base video. A device Save recompiles picture blocks
+    # into the phone recipe instead (KRI-1142), and the clamped capability opens visual_blocks
+    # only where it does, so a phone edit needs no base video (KRI-1388).
     if (
         _editor_capabilities(job, variant).get("visual_blocks") is not True
         or variant.get("text_mode") == "lyrics"
-        or not variant.get("base_video_path")
+        or not (variant.get("base_video_path") or variant.get("render_destination") == "device")
     ):
         return []
     rows = _visual_media_rows(job, variant)
@@ -1418,6 +1421,12 @@ def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
             "The matched song is added when the creator posts. It is not part of this "
             "render, so there is no music to make quieter, swap or remove here; the "
             "footage keeps its own sound."
+        )
+    elif variant.get("render_destination") == "device" and variant.get("music_track_id"):
+        # KRI-1388: the phone recipe re-plays only the song it was rendered with.
+        notes.append(
+            "This iPhone edit keeps the song it was made with; you cannot change it to a "
+            "different song from chat."
         )
     if variant.get("render_destination") == "device" and _is_guided_native(job, variant):
         notes.append("This edit has no control for the footage's own sound level.")

@@ -963,7 +963,10 @@ not refused, asked about or re-planned.
   `NativeEditorSession.swift` and the files extending it (`NativeEditorRetiming.swift`,
   `NativeTextEditing.swift`) to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
   `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when
-  an action has none.
+  an action has none. `test_every_agent_op_runs_from_iphone_chat` (KRI-1388) runs every op of every
+  `agent_ops` group through the real parser and compiler on a device snapshot, and
+  `test_an_unsupported_group_is_refused_on_a_phone` fails when an unsupported group starts to run.
+  Verdicts and evidence: `docs/reviews/kri-1384/parity-on-phone.md`.
 
 Default `false` (off until enabled). Flag off restores the earlier routing, cues, fast-path set and op shape
 (`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.

@@ -2,11 +2,13 @@
 
     cd src/apps/api && python -m tests.evals.request_following.author_action_fixtures [--probe]
 
-``app/kria/editor_capability_parity.py`` says which editor actions the agent has an op for. It
-checks names, never that the op works from an iPhone chat. Each thread here is a plain creator
-request for one group on a phone snapshot (``render_destination: "device"``), built by the real
-``build_editor_snapshot`` with the capability map the phone advertises when the lane's gate is
-open. It expects the op to be applied.
+``app/kria/editor_capability_parity.py`` says which editor actions the agent has an op for. Each
+thread here is a plain creator request for one group on a phone snapshot (``render_destination:
+"device"``), built by the real ``build_editor_snapshot`` with the capability map the phone
+advertises when the lane's gate is open. It expects the op to be applied. A group the phone
+cannot run (``agent_unsupported`` since KRI-1388) keeps its thread as the recorded refusal.
+``build`` is also the phone probe of ``tests/kria/test_editor_capability_parity.py``, which runs
+``SCENARIOS`` and ``PHONE_OP_PROBES`` (every other op the table claims).
 
 Three facts are frozen per thread, so replay needs no builder and no network:
 
@@ -19,7 +21,8 @@ The harness replay rebuilds a variant from the snapshot alone and cannot hold sp
 backgrounds or cards, so the model's op is judged by the real parser and the reference op by the
 real compiler, never by the harness compile.
 
-``--probe`` prints the verdict per thread without writing.
+``--probe`` prints the verdict per thread without writing. ``--only=<fixture_id>`` (repeatable)
+authors just those threads.
 """
 
 from __future__ import annotations
@@ -181,6 +184,41 @@ def _cards(variant: dict[str, Any]) -> None:
     ]
 
 
+def _placed_sfx(variant: dict[str, Any]) -> None:
+    variant["sound_effects"] = [{"id": "s1", "effect_id": "whoosh_01", "at_s": 1.0, "gain": 1.0}]
+
+
+def _cornered(variant: dict[str, Any]) -> None:
+    _talking(variant)
+    variant["speaker_background"]["speaker_frame"] = {
+        "width_fraction": 0.4,
+        "x_fraction": 0.75,
+        "y_fraction": 0.8,
+    }
+
+
+def _speaker_take(variant: dict[str, Any]) -> None:
+    _talking(variant)
+    variant["user_timeline"]["slots"][0]["speaker_subject"] = True
+
+
+def _one_unused(variant: dict[str, Any]) -> None:
+    variant["user_timeline"]["slots"].pop()
+
+
+def _picture_block(variant: dict[str, Any]) -> None:
+    variant["visual_blocks"] = [
+        {
+            "id": "photo-1",
+            "kind": "media",
+            "origin": "user",
+            "media_kind": "image",
+            "start_s": 1.0,
+            "end_s": 3.0,
+        }
+    ]
+
+
 SCENARIOS: list[Scenario] = [
     Scenario(
         "text_authoring",
@@ -230,21 +268,30 @@ SCENARIOS: list[Scenario] = [
         [{"op": "remove_clip", "slot_index": 2}],
     ),
     Scenario(
-        "clip_look_and_transition",
+        "clip_add_remove",
+        "Remove the photo I added.",
+        [{"op": "remove_visual_media"}],
+        [{"op": "remove_visual_media", "target_ids": ["photo-1"]}],
+        suffix="visual_media",
+        variant=_picture_block,
+        caps={"visual_blocks": True},
+        note="Phone edits gained this op in KRI-1388.",
+    ),
+    Scenario(
+        "clip_transition",
         "Add a crossfade between the first and second clip.",
         [{"one_of": ["set_transition", "patch_slots"]}],
         [{"op": "set_transition", "boundary_index": 0, "transition": "crossfade"}],
     ),
     Scenario(
-        "clip_look_and_transition",
+        "clip_look",
         "Give the whole video a golden hour look.",
         [{"one_of": ["set_look_preset", "patch_slots"]}],
         [{"op": "patch_slots", "selector": {"all": True}, "patch": {"look_preset": "golden_hour"}}],
-        suffix="look_preset",
         note="Look presets are not offered on the phone today; expected to fail.",
     ),
     Scenario(
-        "clip_look_and_transition",
+        "clip_look",
         "Add a glitch effect to the second clip.",
         [{"op": "apply_custom_effect"}],
         [{"op": "apply_custom_effect", "effect": {"name": "glitch"}}],
@@ -408,11 +455,10 @@ SCENARIOS: list[Scenario] = [
         variant=_music,
     ),
     Scenario(
-        "music",
+        "music_swap",
         "Swap the music for something calmer.",
         [{"op": "swap_music"}],
         [{"op": "swap_music", "track_id": "00000000-0000-0000-0000-000000000002"}],
-        suffix="swap",
         variant=_music,
         note="The snapshot never lists swap candidates; expected to fail.",
     ),
@@ -510,6 +556,190 @@ SCENARIOS: list[Scenario] = [
 ]
 
 
+_GEN_POOL = {"generated_overlay_pool": [{"id": "gen-1", "kind": "image", "subject": "harbour"}]}
+_GEN_ASSET = {"gen-1": f"{SOURCE_PREFIX}assets/gen-1.png"}
+_BACKGROUND = {"context": {"background_pool": BACKGROUND_POOL}, "patches": BACKGROUND_OPEN}
+_APPEARANCE = {"scope": "editable_text", "quantifier": "all", "category": "text"}
+
+
+def _probe(group: str, op: dict[str, Any], **kwargs: Any) -> Scenario:
+    return Scenario(group, "", [], [op], **kwargs)
+
+
+# The ops of an `agent_ops` group that SCENARIOS (one plain request per group) does not exercise,
+# each on the phone snapshot it needs. test_editor_capability_parity runs SCENARIOS and these: every
+# op and named field the parity table claims must survive the real parser and compiler here.
+PHONE_OP_PROBES: list[Scenario] = [
+    _probe("text_authoring", {"op": "add_text", "text": "Pier", "start_s": 3.0, "end_s": 5.0}),
+    _probe(
+        "text_authoring",
+        {"op": "rewrite_text", "selector": {"ids": ["title"]}, "text": "Sunday run"},
+        plan_texts=(TITLE,),
+    ),
+    _probe(
+        "text_authoring",
+        {"op": "edit_text", "bar_index": 0, "text": "Sunday run"},
+        plan_texts=(TITLE,),
+    ),
+    _probe("text_authoring", {"op": "remove_text", "bar_index": 0}, plan_texts=(TITLE,)),
+    _probe(
+        "text_authoring",
+        {"op": "remove_texts", "selector": {"ids": ["title"]}},
+        plan_texts=(TITLE,),
+    ),
+    _probe(
+        "text_look",
+        {"op": "patch_text", "selector": {"ids": ["title"]}, "patch": {"color": "#FFD60A"}},
+        plan_texts=(TITLE,),
+    ),
+    _probe(
+        "text_look",
+        {
+            "op": "patch_text_appearance",
+            "selector": _APPEARANCE,
+            "patch": {"font_family": "Montserrat"},
+            "text_appearance_version": 1,
+        },
+        plan_texts=(TITLE,),
+    ),
+    _probe(
+        "text_timing",
+        {"op": "set_texts_timing", "selector": {"group": "all"}, "start_s": 0.0, "end_s": 3.0},
+        plan_texts=(TITLE,),
+    ),
+    _probe(
+        "captions",
+        {"op": "replace_caption_text", "find": "pier", "replace": "jetty"},
+        variant=_cues,
+    ),
+    _probe("captions", {"op": "set_caption_meta", "patch": {"enabled": False}}, variant=_cues),
+    _probe(
+        "captions",
+        {"op": "set_caption_timing", "cue_index": 0, "start_s": 0.0, "end_s": 1.8},
+        variant=_cues,
+    ),
+    _probe(
+        "captions",
+        {"op": "set_caption_emphasis", "cue_index": 0, "emphasis": True},
+        variant=_cues,
+    ),
+    _probe("clip_trim_and_move", {"op": "set_clip_in", "slot_index": 1, "in_s": 0.5}),
+    _probe("clip_trim_and_move", {"op": "trim_clip_start", "slot_index": 1, "start_s": 0.5}),
+    _probe("clip_trim_and_move", {"op": "trim_output_start", "start_s": 0.5}),
+    _probe("clip_trim_and_move", {"op": "reorder_clip", "from_index": 2, "to_index": 0}),
+    _probe("clip_trim_and_move", {"op": "reorder_clips_by", "criterion": "capture_time"}),
+    _probe("clip_trim_and_move", {"op": "set_total_duration", "target_s": 12}),
+    _probe(
+        "clip_trim_and_move",
+        {"op": "patch_slots", "selector": {"slot_indexes": [0]}, "patch": {"duration_s": 2.0}},
+    ),
+    _probe(
+        "clip_add_remove",
+        {
+            "op": "add_unused_sources",
+            "selector": {"scope": "unused_sources", "media_kind": "all", "quantifier": "all"},
+        },
+        variant=_one_unused,
+    ),
+    _probe("clip_add_remove", {"op": "split_clip", "slot_index": 0, "at_s": 1.0}),
+    _probe(
+        "split_screen_layout",
+        {
+            "op": "update_split_screen",
+            "section_id": "duo",
+            "duration_s": 4.0,
+            "panel_count": 3,
+            "panel_weights": [2, 1, 1],
+            "background_color": "#111111",
+        },
+        variant=_split,
+        needs_split=True,
+    ),
+    _probe(
+        "split_screen_layout",
+        {"op": "update_split_screen", "section_id": "duo", "collapse_empty_panels": True},
+        variant=_split,
+        needs_split=True,
+        patches={"split_collapse_available": lambda *_: True},
+    ),
+    _probe(
+        "split_screen_remove",
+        {"op": "remove_split_screen", "section_id": "duo", "keep_panel": 0},
+        variant=_split,
+        needs_split=True,
+    ),
+    _probe(
+        "split_screen_whole_video",
+        {
+            "op": "assign_split_panel",
+            "slot_index": 2,
+            "section_id": "duo",
+            "panel_index": 0,
+            "offset_s": 3.0,
+        },
+        variant=_split_room_to_loop,
+        needs_split=True,
+    ),
+    _probe("music", {"op": "remove_music"}, variant=_music),
+    _probe(
+        "sound_effects",
+        {"op": "patch_sfx", "sfx_index": 0, "gain": 0.5},
+        variant=_placed_sfx,
+        context={"sfx_catalog": SFX_CATALOG},
+    ),
+    _probe(
+        "sound_effects",
+        {"op": "remove_sfx", "sfx_index": 0},
+        variant=_placed_sfx,
+        context={"sfx_catalog": SFX_CATALOG},
+    ),
+    _probe(
+        "media_overlays",
+        {"op": "add_overlay", "asset_id": "gen-1", "start_s": 2.0, "end_s": 4.0},
+        variant=_cards,
+        context=_GEN_POOL,
+        pool_assets=_GEN_ASSET,
+    ),
+    _probe("media_overlays", {"op": "remove_overlay", "overlay_index": 0}, variant=_cards),
+    _probe(
+        "media_overlays",
+        {"op": "set_overlay_display", "overlay_index": 0, "display_mode": "fullscreen"},
+        variant=_cards,
+    ),
+    _probe(
+        "speaker_background",
+        {"op": "set_background_color", "color": "#FFFFFF"},
+        variant=_talking,
+        **_BACKGROUND,
+    ),
+    _probe("speaker_background", {"op": "remove_background"}, variant=_talking, **_BACKGROUND),
+    _probe(
+        "speaker_background",
+        {"op": "set_background_sequence", "asset_ids": ["bg-1", "bg-2"]},
+        variant=_talking,
+        **_BACKGROUND,
+    ),
+    _probe(
+        "speaker_background",
+        {"op": "set_speaker_frame", "preset": "small_bottom_left"},
+        variant=_talking,
+        **_BACKGROUND,
+    ),
+    _probe("speaker_background", {"op": "clear_speaker_frame"}, variant=_cornered, **_BACKGROUND),
+    _probe(
+        "speaker_frame_by_hand",
+        {
+            "op": "set_speaker_frame",
+            "selector": {"slot_indexes": [0]},
+            "frame": {"width_fraction": 0.4, "x_fraction": 0.2, "y_fraction": 0.8},
+        },
+        variant=_speaker_take,
+        needs_split=True,
+        **_BACKGROUND,
+    ),
+]
+
+
 def _group_names() -> list[str]:
     from app.kria.editor_capability_parity import PARITY_GROUPS
 
@@ -565,16 +795,17 @@ def build(scenario: Scenario) -> dict[str, Any]:
             "parse_outcome": parsed.outcome,
             "parse_reasons": [dict(r) for r in parsed.rejection_reasons],
         }
+        compiled = None
         if parsed.ops:
             try:
-                editor.compile_editor_ops(
+                compiled = editor.compile_editor_ops(
                     job, variant, parsed.ops, pool_assets=scenario.pool_assets or None
                 )
                 probe["compiles"] = True
             except Exception as exc:  # noqa: BLE001 - the verdict is the message
                 probe["compiles"] = False
                 probe["compile_error"] = f"{type(exc).__name__}: {exc}"[:300]
-    return {"snapshot": snapshot, "probe": probe}
+    return {"snapshot": snapshot, "probe": probe, "ops": parsed.ops, "compiled": compiled}
 
 
 def fixture_for(scenario: Scenario, built: dict[str, Any]) -> dict[str, Any]:
@@ -667,11 +898,14 @@ def main(argv: list[str]) -> None:
     }.items():
         os.environ.setdefault(key, value)
     probe_only = "--probe" in argv
+    only = {a.removeprefix("--only=") for a in argv if a.startswith("--only=")}
     covered = {s.group for s in SCENARIOS}
     missing = [g for g in _group_names() if g not in covered]
     if missing:
         print("groups without a thread:", missing)
     for scenario in SCENARIOS:
+        if only and scenario.fixture_id not in only:
+            continue
         built = build(scenario)
         probe = built["probe"]
         print(

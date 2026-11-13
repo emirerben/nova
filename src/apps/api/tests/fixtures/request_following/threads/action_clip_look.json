@@ -1,16 +1,16 @@
 {
-  "fixture_id": "action_clip_look_and_transition",
+  "fixture_id": "action_clip_look",
   "provenance": "authored",
   "footage": "harbor_run",
-  "description": "Parity group clip_look_and_transition: a plain request on a phone snapshot, expecting the op applied.",
+  "description": "Parity group clip_look: a plain request on a phone snapshot, expecting the op applied. Look presets are not offered on the phone today; expected to fail.",
   "turns": [
     {
       "turn_id": "t0",
-      "user_message": "Add a crossfade between the first and second clip.",
+      "user_message": "Give the whole video a golden hour look.",
       "engine": "v1_copilot",
       "copilot": {
         "agent_input": {
-          "utterance": "Add a crossfade between the first and second clip.",
+          "utterance": "Give the whole video a golden hour look.",
           "prior_turns": [],
           "variant_snapshot": {
             "allowed_op_families": [
@@ -517,22 +517,22 @@
             "editor_ops_version": 2
           }
         },
-        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_slots\",\n      \"selector\": {\n        \"slot_indexes\": [\n          0\n        ]\n      },\n      \"patch\": {\n        \"transition_after\": \"crossfade\",\n        \"transition_duration_s\": 0.3\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Added a crossfade between the first and second clip.\",\n  \"suggestions\": [\n    \"Crossfade between all clips\",\n    \"Speed up the first clip\",\n    \"Add a title\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"patch_slots\"\n  ]\n}",
+        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"Custom looks aren't available for this edit yet.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Give the whole video a golden hour look.\",\n      \"reason\": \"Look presets are not supported for this edit.\"\n    }\n  ],\n  \"claimed_ops\": []\n}",
         "prompt_version": "2026-11-11-v122",
         "model_actual": "gemini-3.1-pro-preview",
-        "recorded_at": "2026-11-13T08:18:02Z",
-        "latency_s": 13.18,
+        "recorded_at": "2026-11-13T08:18:25Z",
+        "latency_s": 15.18,
         "model_calls": 1,
-        "tokens_in": 28738,
-        "tokens_out": 208,
-        "tokens_thoughts": 1474,
+        "tokens_in": 28736,
+        "tokens_out": 134,
+        "tokens_thoughts": 1097,
         "test_run_id": "rf-baseline-20261113-b"
       }
     }
   ],
   "requirements": [
     {
-      "id": "clip_look_and_transition-op-applied",
+      "id": "clip_look-op-applied",
       "kind": "style",
       "scope": "global",
       "request_type": "action_parity",
@@ -541,15 +541,16 @@
         "ops": [
           {
             "one_of": [
-              "set_transition",
+              "set_look_preset",
               "patch_slots"
             ]
           }
         ],
         "stage": "parsed",
-        "reference_compiles": true
+        "reference_compiles": false,
+        "blocked_reason": "patch_slots: unsupported timeline field: look_preset"
       },
-      "source": "Add a crossfade between the first and second clip.",
+      "source": "Give the whole video a golden hour look.",
       "introduced_in_turn": 0,
       "claim_terms": []
     }
@@ -654,9 +655,13 @@
     "reply": "Done.",
     "applied_ops": [
       {
-        "op": "set_transition",
-        "boundary_index": 0,
-        "transition": "crossfade"
+        "op": "patch_slots",
+        "selector": {
+          "all": true
+        },
+        "patch": {
+          "look_preset": "golden_hour"
+        }
       }
     ]
   },
@@ -669,14 +674,17 @@
       "title",
       "transition"
     ],
-    "parsed_ops": [
-      "set_transition"
-    ],
-    "parse_outcome": "proposed",
-    "parse_reasons": [],
-    "compiles": true
+    "parsed_ops": [],
+    "parse_outcome": "unsupported",
+    "parse_reasons": [
+      {
+        "op": "patch_slots",
+        "reason": "capability_unavailable",
+        "detail": "unsupported timeline field: look_preset"
+      }
+    ]
   },
   "baseline": {
-    "clip_look_and_transition-op-applied": "met"
+    "clip_look-op-applied": "unmet"
   }
 }

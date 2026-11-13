@@ -34,6 +34,8 @@ The 30 new briefs alone: 48 of 68 met (71%). East Run (KRI-185 prod capture, unc
 
 Seven of the eight are blocked at parse for any model (`reference_compiles: false`, with the parser's reason in `blocked_reason`). Their replies were refusals, so none counts as an overclaim.
 
+KRI-1388 moved those seven groups to `agent_unsupported` and renamed four threads (`action_clip_transition`, `action_clip_look`, `action_clip_look__custom_effect`, `action_music_swap`; same recordings, same statuses). It added one live-recorded thread, `action_clip_add_remove__visual_media` (met), so the regenerated scores file reads 31 of 39 per-action threads met. Verdicts and evidence: [parity-on-phone.md](parity-on-phone.md).
+
 ## What was measured, and what was not
 
 - **Path.** `EditCopilotAgent` (real prompt, real model) -> `_honest_outcome` -> `compile_editor_ops` (`runner.replay_v1_copilot`). Planner routing in front of the copilot and the repair retry behind it are not in it. Nothing was rendered. Turn time is the wall time of the live model call (retries included), not the 66 to 389 s chat turn: queueing, planner, DB, and render are outside it.

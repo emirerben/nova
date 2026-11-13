@@ -125,7 +125,9 @@ log = structlog.get_logger()
 # v124 (KRI-1387): a repair call appends "## REPAIR: OPERATIONS THAT WERE NOT APPLIED" (each
 # rejected op, why, and the open families or valid indices) and asks for corrected ops tagged
 # "repairs"; the first ask of a turn is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v124"
+# v125 (KRI-1388): with no HISTORY STATE (every iPhone chat) the copilot says it cannot undo or
+# replay from chat instead of claiming there is nothing to undo or repeat.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v125"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

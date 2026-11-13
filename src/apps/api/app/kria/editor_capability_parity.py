@@ -7,9 +7,9 @@ function of the phone editor session (``NativeEditorSession.swift`` and the file
 it: ``NativeEditorRetiming.swift``, ``NativeTextEditing.swift``) belongs to exactly one group,
 and a group is one of
 
-* ``agent_ops``: the edit reaches the agent through these ops (names checked against the copilot's
-  op set) and, when ``fields`` is set, through those fields of them (checked against what the
-  copilot's parser accepts), or
+* ``agent_ops``: the edit reaches the agent through these ops on an iPhone-rendered edit (names
+  checked against the copilot's op set) and, when ``fields`` is set, through those fields of
+  them (checked against what the copilot's parser accepts), or
 * ``agent_unsupported``: a person can, the agent cannot yet, with the reason written down, or
 * ``not_an_edit``: playback, selection, loading, saving and read-only queries.
 
@@ -19,6 +19,12 @@ op the copilot does not have or a field none of its ops accepts. Adding an edito
 therefore forces the question "can the agent do this?" in the same change. Name ``fields``
 whenever the op is broader than the action: an op name alone once claimed caption animation
 while ``set_caption_meta`` refused ``animation_phases``.
+
+Names are not enough either (KRI-1388): seven groups once passed every check above and still
+could not run from iPhone chat. The same test builds a device snapshot for every op of every
+``agent_ops`` group, runs the real parser and compiler on it, and fails when one is refused. An
+``agent_unsupported`` group with a phone probe must be refused there, so the table cannot
+understate either.
 """
 
 from __future__ import annotations
@@ -72,13 +78,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "setCaptionEnabled toggleCaptions setCaptionStyle setCaptionFont setCaptionColor "
         "setCaptionHighlightColor setCaptionSize setCaptionPositionY setCaptionShadowEnabled "
         "setCaptionStrokeWidth setCaptionAppearance",
+        # Not patch_text_appearance: the chat snapshot models text bars only, never caption
+        # targets (`_text_appearance_inventory`), so caption looks go through set_caption_meta.
         (
             "edit_caption",
             "replace_caption_text",
             "set_caption_meta",
             "set_caption_timing",
             "set_caption_emphasis",
-            "patch_text_appearance",
         ),
     ),
     # All captions only: one line's animation (`CaptionAnimationScope.line`) has no agent op.
@@ -119,11 +126,17 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "addLibraryVisual placeEditorSource removeVisualSelection splitSelectedClip",
         ("remove_clip", "add_unused_sources", "split_clip", "remove_visual_media"),
     ),
-    "clip_look_and_transition": _g(
-        "agent_ops",
-        "setClipLookPreset updateClipLook setClipLookAdjustments setClipTransition "
-        "setTransitionAcrossVideo",
-        ("set_look_preset", "set_transition", "apply_custom_effect"),
+    "clip_transition": _g(
+        "agent_ops", "setClipTransition setTransitionAcrossVideo", ("set_transition",)
+    ),
+    "clip_look": _g(
+        "agent_unsupported",
+        "setClipLookPreset updateClipLook setClipLookAdjustments",
+        reason="A phone-rendered edit cannot carry a clip look: its capability map closes "
+        "clips.looks (golden_hour compiles only on exact-canvas, unrotated sources) and the "
+        "editor refuses one on device (NativeEditorSession.canSetClipLook). Chat's FFmpeg "
+        "custom effects (apply_custom_effect) are cloud-only: the phone recipe has no field "
+        "for them (phone_authored_timeline refuses custom_effects).",
     ),
     "clip_speed": _g(
         "agent_ops",
@@ -227,9 +240,16 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     # ---------------------------------------------------------------- audio
     "music": _g(
         "agent_ops",
-        "setMusic removeMusic setMusicWindow setMusicLevel setMusicVolume setBackgroundMusic "
-        "setBackgroundMusicLevel",
-        ("swap_music", "remove_music", "set_mix"),
+        "removeMusic setMusicLevel setMusicVolume setBackgroundMusicLevel",
+        ("remove_music", "set_mix"),
+    ),
+    "music_swap": _g(
+        "agent_unsupported",
+        "setMusic setMusicWindow setBackgroundMusic",
+        reason="A phone-rendered edit keeps the song it was rendered with: the authored phone "
+        "compile only re-plays the pinned music asset, a guided phone plan refuses a music lane "
+        "(phone_guided_plan, musicBed) and the Talking and Voiceover Saves have no music "
+        "section. Chat can change the music level or remove it (set_mix, remove_music).",
     ),
     "creator_song": _g(
         "agent_unsupported",
@@ -258,16 +278,21 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         reason="Stacking order of overlapping layers has no agent op.",
     ),
     "visual_blocks_and_motion": _g(
-        "agent_ops",
+        "agent_unsupported",
         "addMotionComposition removeVisualBlock setVisualBlockDisplayMode "
         "setVisualBlockOverlayLayout setVisualBlockPreset setVisualBlockTiming "
         "setVisualBlockTransform setVisualEditorStyle setVisualTiming setMotionSceneTiming",
-        ("add_motion_block", "patch_motion_block", "remove_motion_block"),
+        reason="Motion scenes have no phone render lane: validate_phone_pilot_recipe refuses "
+        "them pending device parity and the authored phone compile refuses motion_scenes, so "
+        "the motion block ops are not in the phone's op families. Picture blocks are placed, "
+        "timed and styled by hand; chat only removes one (remove_visual_media, clip_add_remove).",
     ),
     "camera_effects": _g(
-        "agent_ops",
+        "agent_unsupported",
         "addCameraPulse setCameraEffectEasing setCameraEffectIntensity setCameraEffectTiming",
-        ("add_camera_effect", "patch_camera_effect", "remove_camera_effect"),
+        reason="The phone renderer refuses camera pulses pending device parity "
+        "(validate_phone_pilot_recipe, phone_authored_timeline) and a device edit closes "
+        "camera_effects. A cloud-rendered edit still takes add/patch/remove_camera_effect.",
     ),
     "drawing": _g(
         "agent_unsupported",
@@ -276,9 +301,11 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         reason="Freehand strokes are drawn by hand; the agent has no stroke authoring op.",
     ),
     "carousel": _g(
-        "agent_ops",
+        "agent_unsupported",
         "setCarouselPosition setCarouselMomentPosition removeCarouselMoment",
-        ("set_carousel_moment",),
+        reason="The phone cannot render a carousel moment: NativeEditorRenderCompiler throws "
+        "unsupportedLane(carousel), and the authored and Voiceover phone compiles refuse "
+        "carousel_moment. set_carousel_moment has no portable compile handler.",
     ),
     # The Talk-to-camera background (KRI-1117). The scanner counts only `func` declarations, so the
     # session's read helpers (`canEditSpeakerBackground`, `speakerBackground`,
@@ -327,7 +354,15 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "covers slide posts only.",
     ),
     # --------------------------------------------------------------- history
-    "history": _g("agent_ops", "undo redo", ("undo_last_edit", "repeat_last_edit")),
+    "history": _g(
+        "agent_unsupported",
+        "undo redo",
+        reason="Chat undo needs the pre-edit lanes of the last chat turn. Only a flagged "
+        "plan-review update stores them (plan_review_before, KRI-442, behind "
+        "LIVE_PLAN_REVIEW_ENABLED); an ordinary chat turn stores none and the snapshot carries "
+        "no history_state, so undo_last_edit cannot compile. repeat_last_edit replays the web "
+        "client's local op log, which iPhone chat does not have.",
+    ),
     # The creator's approval of a generated image stays native (the preview review). Chat places
     # one the creator already accepted: `overlays.asset_pool` lists only those, and a Save pins the
     # image before it accepts the card (`generated_overlay_pool`).
