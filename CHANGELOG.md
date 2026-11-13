@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.182.0] - 2026-11-13
+
+### Changed
+- fix(kria): the edit copilot never refuses a stated length over word-by-word text (KRI-1373) (#2283) <!-- release-pr: 2283 -->
+
+## [0.88.181.0] - 2026-11-13
+
+### Changed
+- test(ios): fix three flaky iPhone unit tests at the cause (KRI-1379) (#2287) <!-- release-pr: 2287 -->
+
+## [0.88.180.0] - 2026-11-13
+
+### Changed
+- ci(ios): nightly shard timeouts, hashFiles limit, abandoned-runner gate (KRI-1379) (#2284) <!-- release-pr: 2284 -->
+
+## [0.88.179.0] - 2026-11-13
+
+### Changed
+- test(ios): drag the transcript, not the keyboard bar, in the first-prompt chips scroll test (KRI-1379) (#2285) <!-- release-pr: 2285 -->
+
+## [0.88.178.0] - 2026-11-13
+
+### Changed
+- ci: run the API tests on iPhone changes (KRI-1371) (#2281) <!-- release-pr: 2281 -->
+
+## [0.88.177.0] - 2026-11-13
+
+### Changed
+- feat(agents): block agent merges unless every check is green (KRI-1372) (#2282) <!-- release-pr: 2282 -->
+
 ## [0.88.176.0] - 2026-11-13
 
 ### Changed

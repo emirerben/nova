@@ -13,10 +13,10 @@ Other specialized workflows and deployment triggers retain their existing rules.
 | Changed files | PR coverage |
 | --- | --- |
 | `src/apps/web/**` | No web suite; bundled public assets still select iOS coverage |
-| Native app, media engine, resources, UI tests, `scripts/ios/**`, iOS workflow | iOS build/unit and affected UI scenarios on PRs; full iOS coverage nightly and on manual dispatch; shell tests and mobile contracts |
-| Native unit tests/fixture or `Kria/Generated/**` only | iOS build, unit tests and mobile contracts; no PR UI execution |
+| Native app, media engine, resources, UI tests under `src/apps/ios/**` | API tests and API lint (API parity and fixture guards read these files), plus iOS build/unit and affected UI scenarios on PRs; full iOS coverage nightly and on manual dispatch; shell tests and mobile contracts |
+| `scripts/ios/**`, iOS workflow | iOS build/unit and affected UI scenarios on PRs; full iOS coverage nightly and on manual dispatch |
+| Native unit tests/fixture or `Kria/Generated/**` only | API tests and API lint, iOS build, unit tests and mobile contracts; no PR UI execution |
 | Web public fonts and type-posters bundled in Xcode | iOS build/unit on PRs; full iOS coverage nightly/manual |
-| `src/apps/ios/Kria/Core/NativeEditorDocument.swift`, `src/apps/ios/Kria/Core/SlidePost.swift` (Swift constants read by API drift guards) | API tests and API lint, plus iOS build/unit on PRs; full iOS coverage nightly/manual |
 | API internal implementation, prompts, tests | API tests and API lint |
 | API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | API and native build/unit contracts; fixture-driven UI tests are not selected |
 | Shared packages, assets, root dependencies/build config, selector, general CI workflows or unknown paths | All suites |

@@ -16,11 +16,14 @@ DURATIONS = Path(__file__).with_name("ui-test-measured-durations.json")
 LEGACY_DURATIONS = Path(__file__).with_name("ui-test-durations.json")
 # Each extra native leg repeats ~7 minutes of setup and compilation, so a
 # selection splits only when one leg would run more than this much recorded UI
-# time. Nightly/manual full regression gets three legs; PRs use one Mac.
+# time. Nightly/manual full regression gets up to MAX_SHARDS legs; PRs use one Mac.
 SHARD_TARGET_SECONDS = 15 * 60
 # Bound fan-out. ios.yml must define a matrix for every count up to this one;
 # ci.yml gives each PR shard its own `ui-<i>` leg next to the unit leg.
-MAX_SHARDS = 3
+# The full suite records ~261 min of UI time: three legs ran ~90 min each and the
+# nightly shards were cancelled at the 75-minute job limit every night (KRI-1379,
+# e.g. run 43009921809). Five legs are ~54 min of UI + ~9 min of setup each.
+MAX_SHARDS = 5
 # A PR UI leg runs only its shard after a cached compile (~8-12 min of setup),
 # so it targets more recorded time per Mac than nightly. An editor PR's group
 # records 88.6 min (it ran 87 min on #2225): three legs of ~30 min finish in

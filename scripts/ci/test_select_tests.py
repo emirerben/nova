@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import re
 import shlex
 from pathlib import Path
 import subprocess
@@ -59,7 +60,7 @@ class ClassificationTests(unittest.TestCase):
             "src/apps/web/src/app/page.tsx": set(),
             "src/apps/web/package.json": {"shared_motion"},
             "scripts/ci/web-tests.mjs": set(),
-            "src/apps/ios/project.yml": {"ios", "ios_ui"},
+            "src/apps/ios/project.yml": {"api", "ios", "ios_ui"},
             "scripts/ios/verify.sh": {"ios", "ios_ui"},
             ".github/workflows/ios.yml": {"ios", "ios_ui"},
             "src/apps/api/app/pipeline/reframe.py": {"api"},
@@ -100,27 +101,30 @@ class ClassificationTests(unittest.TestCase):
             "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json",
             "src/apps/ios/Tests/Fixtures/guided_label_rebase_vectors.json",
         ):
-            self.assertEqual(ci.affected(path), {"ios"})
+            self.assertEqual(ci.affected(path), {"api", "ios"})
         for path in (
             "src/apps/ios/Kria/Features/NativeEditorView.swift",
             "src/apps/ios/Tests/KriaUITests/KriaUITests.swift",
             "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Composition.swift",
-            "scripts/ios/cache-inputs.py",
+            "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
         ):
-            self.assertEqual(ci.affected(path), {"ios", "ios_ui"})
+            self.assertEqual(ci.affected(path), {"api", "ios", "ios_ui"})
         for path in (
+            "scripts/ios/cache-inputs.py",
             "src/apps/web/public/fonts/Inter-Regular.ttf",
             "src/apps/web/public/plan/type-posters/montage.mp4",
         ):
             self.assertEqual(ci.affected(path), {"ios", "ios_ui"})
 
-    def test_swift_server_mirrors_also_run_api_parity_tests(self):
-        for path in (
-            "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
-            "src/apps/ios/Kria/Core/SlidePost.swift",
-        ):
+    def test_every_ios_path_an_api_test_reads_selects_the_api_suite(self):
+        tests = SCRIPT.parents[2] / "src/apps/api/tests"
+        read = set()
+        for source in tests.rglob("*.py"):
+            read.update(re.findall(r"src/apps/ios/[\w./-]+\.\w+", source.read_text()))
+        self.assertIn("src/apps/ios/Kria/Core/SlidePost.swift", read)
+        for path in sorted(read):
             with self.subTest(path=path):
-                self.assertEqual(ci.affected(path), {"api", "ios", "ios_ui"})
+                self.assertIn("api", ci.affected(path))
 
     def test_xcode_bundled_web_resources_select_native_coverage(self):
         project = SCRIPT.parents[2] / "src/apps/ios/project.yml"
@@ -602,7 +606,7 @@ class GitDiffTests(unittest.TestCase):
         self.write(path, "changed unit assertions")
         head = self.commit()
         suites, _, groups = ci.selection_details("pull_request", self.base, head)
-        self.assertEqual(suites, {"ios"})
+        self.assertEqual(suites, {"api", "ios"})
         self.assertEqual(groups, "none")
         self.assertEqual(
             ci.journey_details("pull_request", self.base, head),
@@ -1364,7 +1368,7 @@ class GitDiffTests(unittest.TestCase):
         )
         self.assertEqual(
             output.read_text(),
-            "api=false\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
+            "api=true\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
             'journey_ids=\njourney_needs_native=false\nnative_legs=["unit"]\n'
             "journey_mapped=true\nios_render_evidence=false\n",

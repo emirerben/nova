@@ -5465,6 +5465,15 @@ enum EditorOpenIntent { case warm, open }
     }
 
     #if DEBUG
+    /// Test seam (KRI-1379): returns once the scrub stills already asked for are rendered and shown (or dropped for a
+    /// newer request, a new item or playback). A test awaits the work itself instead of racing a timer on a busy runner.
+    func finishScrubFramesForTesting() async {
+        while let task = scrubFrameTask {
+            await task.value
+            if scrubFrameTask == task { return }   // ended without clearing its handle (a newer generation owns the stills)
+        }
+    }
+
     /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
     func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
     func discardPlaybackForNewJobForTesting() { discardPlaybackForNewJob() }

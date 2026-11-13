@@ -1,0 +1,44 @@
+name: iOS rerun abandoned
+
+# KRI-1379: on macOS capacity shortages GitHub gives up on a job with "The job
+# was not acquired by Runner of type hosted even after multiple attempts". The
+# job ends cancelled with no steps, its result is `abandoned`, and the iOS gate
+# fails although no test ran (runs 43011522119, 42646531192). Retry such a run
+# once. A job that started and was cancelled (e.g. a timeout) has steps and is
+# never retried, nor is a second attempt, so a real failure stays red.
+#
+# Only iOS (ios.yml) is retried: its jobs share no artifacts, so --failed is
+# safe. A CI (ci.yml) PR run must be re-run whole by hand (fixture artifacts).
+on:
+  workflow_run:
+    workflows: [iOS]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+  contents: read
+
+jobs:
+  rerun:
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run when a hosted runner was never acquired
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
+            --jq '.jobs[] | select(.conclusion == "cancelled" and (.steps | length) == 0) | .id')
+          for job in $jobs; do
+            if gh api "repos/$REPO/check-runs/$job/annotations" --jq '.[].message' \
+              | grep -q "was not acquired by Runner of type hosted"; then
+              echo "Job $job never got a hosted runner; re-running failed jobs of run $RUN_ID."
+              gh run rerun "$RUN_ID" --failed
+              exit 0
+            fi
+          done
+          echo "No job lost its runner; leaving run $RUN_ID red."

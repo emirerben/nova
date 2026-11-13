@@ -17,7 +17,7 @@ SUITES = ("api", "ios", "ios_ui", "shared_motion")
 # contracts always run before selection; ChatWorkspace cases run in full units.
 ISOLATED_TEST_SUITES = {
     "scripts/ci/test_select_tests.py": frozenset(),
-    "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift": frozenset({"ios"}),
+    "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift": frozenset({"api", "ios"}),
 }
 SHARED_MOTION_PATHS = (
     "src/apps/api/app/pipeline/motion_scene.py",
@@ -297,16 +297,6 @@ def changed_ui_tests(base, head, paths):
     return focused
 
 
-# Swift files whose server-mirrored constants are parsed by the API drift guards
-# test_ios_text_row_look_parity.py and test_slide_post_font_parity.py, so a
-# Swift-only change to them runs the API suite too. Not an exhaustive list of
-# iOS paths that API tests read.
-SWIFT_SERVER_MIRRORS = (
-    "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
-    "src/apps/ios/Kria/Core/SlidePost.swift",
-)
-
-
 def affected(path):
     if path in ISOLATED_TEST_SUITES:
         return set(ISOLATED_TEST_SUITES[path])
@@ -318,8 +308,6 @@ def affected(path):
             if path.endswith("motion_scene.py")
             else {"shared_motion"}
         )
-    if path in SWIFT_SERVER_MIRRORS:
-        return {"api", "ios", "ios_ui"}
     # These web resources are also bundled by the native Xcode project.
     if path.startswith(
         (
@@ -337,7 +325,7 @@ def affected(path):
         "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json",
         "src/apps/ios/Tests/Fixtures/guided_label_rebase_vectors.json",
     ):
-        return {"ios"}
+        return {"api", "ios"}
     # Check runtime trees before documentation: prompts and fixtures can be .md.
     if path.startswith(("src/apps/web/", "scripts/ci/web-tests")):
         return set()
@@ -353,10 +341,12 @@ def affected(path):
         if matched and not journey_native_for_ids(matched):
             return {"api"}
         return {"api", "ios"}
-    if (
-        path.startswith(("src/apps/ios/", "scripts/ios/"))
-        or path == ".github/workflows/ios.yml"
-    ):
+    # API parity and fixture guards read Swift sources and iOS fixtures by path
+    # (tests/kria/test_editor_capability_parity.py, tests/incidents/loader.py),
+    # so a change under src/apps/ios/ runs the API suite too.
+    if path.startswith("src/apps/ios/"):
+        return {"api", "ios", "ios_ui"}
+    if path.startswith("scripts/ios/") or path == ".github/workflows/ios.yml":
         return {"ios", "ios_ui"}
     if path.startswith("src/apps/api/"):
         # Public contracts affect both clients; internal pipeline/tests only API.
@@ -590,9 +580,23 @@ def gate_journey(needs, event):
         expected = "success" if selected else "skipped"
         if needs[job].get("result") != expected:
             raise ValueError(
-                f"{job}: expected {expected}, got {needs[job].get('result')}"
+                unexpected_result(job, expected, needs[job].get("result"))
             )
     return "Selected portable and native journey dependencies passed."
+
+
+def unexpected_result(job, expected, result):
+    """Gate failure text. `abandoned` is GitHub's result for a job whose hosted
+    runner was never acquired ("The job was not acquired by Runner of type hosted
+    even after multiple attempts", macOS capacity): no step ran, so say so rather
+    than leave it looking like a test failure. The gate stays fail-closed."""
+    message = f"{job}: expected {expected}, got {result}"
+    if result == "abandoned":
+        message += (
+            "; GitHub never assigned a hosted runner to this job, so none of its "
+            "tests ran. Re-run the workflow (not a test failure)."
+        )
+    return message
 
 
 def gate(needs, suite, job, event="pull_request"):
@@ -649,7 +653,7 @@ def gate(needs, suite, job, event="pull_request"):
         execution_selected = execution_selected or peer == "true"
     expected = "success" if execution_selected else "skipped"
     if result != expected:
-        raise ValueError(f"{suite}: expected {expected}, got {result}")
+        raise ValueError(unexpected_result(suite, expected, result))
     if suite == "journey":
         ids = (
             outputs.get("journey_ids", "").split(",")

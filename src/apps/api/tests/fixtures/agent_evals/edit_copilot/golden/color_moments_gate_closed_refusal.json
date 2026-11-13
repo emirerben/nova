@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-11-v122",
+  "prompt_version": "2026-11-13-v123",
   "input": {
     "utterance": "make the history part black and white",
     "prior_turns": [],
