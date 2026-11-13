@@ -225,20 +225,33 @@ python -m tests.evals.request_following.report --phase P0 \
   turns; use the same paid-run guards as the rest of this directory. Running it live is optional
   (paid); use it when investigating a suspected regression.
 - **Provenance.** `east_run` is a read-only prod capture (KRI-185, regenerate with
-  `python -m tests.evals.request_following.capture_east_run`). The other 30 are authored briefs
+  `python -m tests.evals.request_following.capture_east_run`). The 30 briefs
   (`author_fixtures.py`, five synthetic footage sets incl. `harbor_run`, invented places only)
-  with a hand-built reference edit: they prove each checker can be passed and can fail, and
-  stay out of the KPI (`awaiting recording`) until their turns carry recorded outcomes. Nine
-  are multi-turn (up to three turns). P6b added briefs for the reversed-route receipt,
-  consecutive-label dedupe, brief-sourced title receipt, label-each-clip, one-label
-  correction and bulk "change all fonts". Some checkers read the reply (`reply_states`, a
-  receipt must say what the AI saw and did); those are event checkers, judged on the turn they
-  were asked. `--eval-mode live` on `report.py` needs the same paid-run guards as pytest live.
+  were authored with a hand-built reference edit that proves each checker can be passed and can
+  fail; KRI-1389 then recorded each against the live chat copilot (below), so they now carry
+  `copilot.raw_text` and count in the KPI. Nine are multi-turn (up to three turns). Some
+  checkers read the reply (`reply_states`, a receipt must say what the AI saw and did); those
+  are event checkers, judged on the turn they were asked. `--eval-mode live` on `report.py`
+  needs the same paid-run guards as pytest live.
+- **Recording (KRI-1389).** `record_live.py` asks the real copilot each unrecorded turn over a
+  phone snapshot built by the real `build_editor_snapshot` (`phone_snapshot.py`), stores the raw
+  text next to the exact input, latency and token counts, and re-pins the baseline. It prices
+  first (`--price-only`, no spend) and stops before the call that could cross `--max-cost-usd`,
+  so a run is resumable and a batch is its own `--test-run-id`. Authored briefs start from the
+  footage in attachment order (`initial_plan`). Re-running `author_fixtures.py` wipes recordings;
+  re-record after it.
+- **Per-action set (KRI-1389).** `author_action_fixtures.py` writes one thread per `agent_ops`
+  group of `app/kria/editor_capability_parity.py` (plus the look, custom-effect and music-swap
+  actions that share a group): a plain request on a phone snapshot, expecting the op applied
+  (`op_applied`, `request_type: action_parity`). `--probe` prints, without writing, what the
+  real parser and compiler do with a reference op. A group they refuse (`reference_compiles:
+  false`) cannot be met by any model; that refusal is its baseline, not a bug in the thread.
 - **Baseline pin.** `east_run.json` stores `baseline` statuses and `test_east_run_baseline_is_pinned`
   fails when a code change moves one. That is the intended signal: review the movement, then
   re-stamp with `runner.stamp_baseline`. The committed report
-  `docs/reviews/kri-185/request-following-baseline.md` is kept in sync by
-  `test_committed_baseline_report_matches_the_replay`.
+  `docs/reviews/kri-1384/request-following-baseline-scores.md` is kept in sync by
+  `test_committed_baseline_report_matches_the_replay`; the KRI-185 report is the historical
+  one-thread baseline.
 - **Wrong-landmark rate** (`scorer.wrong_landmark_rate`) is judged over clips that carry an
   `inferred` landmark fact and a ground-truth `true_landmark` (`harbor_run`, `trip`; the truth
   is on the clip record, never in `facts`). Pass `guesses={clip_id: name}` to score a live

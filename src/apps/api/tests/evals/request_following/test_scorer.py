@@ -51,7 +51,12 @@ def test_overclaim_needs_a_claim_term_a_non_met_status_and_no_disclaimer():
     assert reply_overclaims(req, "partial", lie)
     assert not reply_overclaims(req, "met", lie)
     assert not reply_overclaims(req, "unmet", None)
-    assert not reply_overclaims(_req("r", "select_include"), "unmet", lie)
+    # No claim terms: the general rule (a miss the reply never admits) applies, except to the
+    # checkers that read the reply itself.
+    assert reply_overclaims(_req("r", "select_include"), "unmet", lie)
+    assert not reply_overclaims(_req("r", "select_include"), "unmet", "I can't do that yet.")
+    assert not reply_overclaims(_req("r", "reply_states"), "unmet", lie)
+    assert not reply_overclaims(_req("r", "select_include"), "unmet", lie, acted=False)
 
 
 def test_a_not_done_marker_clears_the_overclaim():

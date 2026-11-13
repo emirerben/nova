@@ -606,6 +606,57 @@ def reply_states(
     return "unmet", f"reply omits: {', '.join(missing)}"
 
 
+def op_applied(
+    req: Requirement,
+    _plan: FinalPlan,
+    _f: Footage,
+    _p: FinalPlan | None,
+    ops: dict[str, list[dict]] | None,
+) -> CheckResult:
+    """The turn's bundle holds the op the creator's request needs, and it can be applied.
+
+    Params: ``ops`` is a list of ``{"op": name, "field"?: key}`` or ``{"one_of": [names]}``.
+    ``field`` must be a key of the op or of its ``patch``, so a ``patch_slots`` that only trims
+    does not pass for a tilt. ``stage`` picks the ops read: ``compiled`` (default, parsed and
+    compiled by the harness) or ``parsed`` (survived the real parser on the phone snapshot).
+    ``reference_compiles: false`` means the real compiler refuses the reference op for this
+    request on a phone, so a model that asks for it is still not applied.
+    """
+    ops = ops or {}
+    stage = str(req.params.get("stage", "compiled"))
+    applied = ops.get("parsed" if stage == "parsed" else "compiled", [])
+    if req.params.get("reference_compiles") is False:
+        return (
+            "unmet",
+            f"blocked on the phone ({req.params.get('blocked_reason', 'no reason recorded')}); "
+            f"model emitted {_names(applied)}",
+        )
+    wanted = req.params.get("ops") or []
+    missing = []
+    for spec in wanted:
+        names = spec.get("one_of") or [spec["op"]]
+        hits = [row for row in applied if row.get("op") in names]
+        field = spec.get("field")
+        if field is not None:
+            hits = [
+                row
+                for row in hits
+                if field in row or (isinstance(row.get("patch"), dict) and field in row["patch"])
+            ]
+        if not hits:
+            missing.append("|".join(names) + (f".{field}" if field else ""))
+    verb = "parser accepted" if stage == "parsed" else "applied"
+    if not missing:
+        return "met", f"{verb} {_names(applied)}"
+    if len(missing) < len(wanted):
+        return "partial", f"missing {missing}; {verb} {_names(applied)}"
+    return "unmet", f"missing {missing}; {verb} {_names(applied)}"
+
+
+def _names(rows: list[dict]) -> list[str] | str:
+    return [row.get("op") for row in rows] or "no op"
+
+
 def speech_excerpts(
     req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
 ) -> CheckResult:
@@ -698,10 +749,16 @@ ReplyChecker = Callable[
 ]
 REPLY_CHECKERS: dict[str, ReplyChecker] = {"reply_states": reply_states}
 
+# Checkers that read the ops the turn applied.
+OpsChecker = Callable[
+    [Requirement, FinalPlan, Footage, FinalPlan | None, dict[str, list[dict]] | None], CheckResult
+]
+OPS_CHECKERS: dict[str, OpsChecker] = {"op_applied": op_applied}
+
 # Requirements about something that must HAPPEN on the turn they are asked (compare with the
 # edit before it), not a property the finished edit must keep having.
 EVENT_CHECKERS = frozenset(
-    {"restructure_changed", "clips_unchanged", "label_single_change", "reply_states"}
+    {"restructure_changed", "clips_unchanged", "label_single_change", "reply_states", "op_applied"}
 )
 
 # Reply markers that say "this part was not done". Deliberately excludes "unchanged":
@@ -714,7 +771,7 @@ DISCLAIMER = re.compile(
 
 
 def known_checker_ids() -> frozenset[str]:
-    return frozenset(CHECKERS) | frozenset(REPLY_CHECKERS)
+    return frozenset(CHECKERS) | frozenset(REPLY_CHECKERS) | frozenset(OPS_CHECKERS)
 
 
 def run_checker(
@@ -723,9 +780,12 @@ def run_checker(
     footage: Footage,
     previous: FinalPlan | None = None,
     reply: str | None = None,
+    ops: dict[str, list[dict]] | None = None,
 ) -> CheckResult:
     if req.checker in REPLY_CHECKERS:
         return REPLY_CHECKERS[req.checker](req, plan, footage, previous, reply)
+    if req.checker in OPS_CHECKERS:
+        return OPS_CHECKERS[req.checker](req, plan, footage, previous, ops)
     try:
         checker = CHECKERS[req.checker]
     except KeyError as exc:
