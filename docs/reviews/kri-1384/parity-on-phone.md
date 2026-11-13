@@ -118,11 +118,9 @@ One call, `gemini-3.1-pro-preview`, prompt `2026-11-13-v125`, development ledger
 
 ## Open
 
-- **Chat undo.** Building it needs a restore record on every chat turn (today only scoped
-  plan-review turns write `plan_review_before`), `history_state` in the snapshot when the head
-  draft's record is current and no hand edit came after it, and an `undo_last_edit` compile that
-  restores those lanes over the head payload, with its own record so a second undo redoes. It
-  touches the runtime commit path and needs a DB-backed end-to-end check, so it is its own change.
+- **Chat undo.** Built in [chat-undo.md](chat-undo.md): every chat turn stores a sealed restore
+  record, the phone build at protocol 50 drops a staged lane a newer head puts back, and a second
+  undo is refused rather than redone.
 - **Receipts for background edits.** `EditorDiff` has no `speaker_background` lane, so every
   background op compiles to an empty diff. A pinned suggestion tap that only changes the
   background would be refused as "no change".

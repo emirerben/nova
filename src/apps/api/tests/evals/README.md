@@ -245,7 +245,7 @@ python -m tests.evals.request_following.report --phase P0 \
   the op applied (`op_applied`, `request_type: action_parity`). `--probe` prints, without writing,
   what the real parser and compiler do with a reference op; `--only=<fixture_id>` authors one
   thread without touching the others' recordings. Groups KRI-1388 moved to `agent_unsupported`
-  (looks, custom effects, music swap, motion, camera, carousel, undo) keep their recorded thread
+  (looks, custom effects, music swap, motion, camera, carousel) keep their recorded thread
   with `reference_compiles: false`: no model can meet it, so the request stays unmet and the
   reply must say so. `PHONE_OP_PROBES` in the same file covers every other op the table claims;
   `tests/kria/test_editor_capability_parity.py` runs both on a phone snapshot.

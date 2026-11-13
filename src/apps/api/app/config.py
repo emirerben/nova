@@ -1157,6 +1157,11 @@ class Settings(BaseSettings):
     # restart. Rollback: the flag false + restart, never a code revert.
     color_moments_enabled: bool = False
     color_moments_min_client_protocol: int = 48
+    # KRI-1384: chat "undo that" is offered only to app builds declaring
+    # `X-Kria-Client-Protocol` >= this. An older editor keeps a staged chat lane that a newer
+    # draft head puts back to the saved value, so its undo would say done and change nothing.
+    # Kill switch: `fly secrets set CHAT_UNDO_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
+    chat_undo_min_client_protocol: int = 50
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

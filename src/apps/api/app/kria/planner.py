@@ -2503,6 +2503,40 @@ answering_through_sequence: contextvars.ContextVar[int | None] = contextvars.Con
 _POST_UNDERSTANDING_RESERVE_S = 20.0
 
 
+async def _attach_chat_undo(
+    db: AsyncSession,
+    *,
+    head: CreatorEditDraft | None,
+    job: Job,
+    saved: dict,
+    resolved: Any,  # noqa: ANN401
+    editor_state: Any,  # noqa: ANN401
+) -> None:
+    """KRI-1384: offer "undo that" when the last chat turn can be put back exactly."""
+    from app.models import CreatorAgentExecution  # noqa: PLC0415
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.kria_editor_undo import attach, undo_point  # noqa: PLC0415
+
+    protocol = current_client_protocol()
+    source_id = getattr(head, "source_execution_id", None)
+    if source_id is None or protocol is None or protocol < settings.chat_undo_min_client_protocol:
+        return
+    execution = await db.get(CreatorAgentExecution, source_id)
+    attach(
+        resolved.projected,
+        undo_point(
+            head,
+            execution.result if execution is not None else None,
+            job=job,
+            variant=saved,
+            source=resolved.source,
+            prior=resolved.prior_payload,
+            client_state=editor_state,
+            client_protocol=protocol,
+        ),
+    )
+
+
 async def _load_editor_target(
     db: AsyncSession,
     *,
@@ -2677,6 +2711,9 @@ async def _load_editor_target(
         )
         return None
     saved_variant, variant = variant, resolved.projected
+    await _attach_chat_undo(
+        db, head=head, job=job, saved=saved_variant, resolved=resolved, editor_state=editor_state
+    )
     if resolved.fallback_reason:
         log.warning(
             "kria_editor_state_fallback",

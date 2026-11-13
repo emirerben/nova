@@ -2499,6 +2499,27 @@ enum EditorOpenIntent { case warm, open }
         scheduleSourcePreviewUpdate()
     }
 
+    /// KRI-1384: a newer chat head put these lanes back to the saved video (chat "undo that"). Each one
+    /// the chat staged and the creator has not touched since returns to the clean document; a lane the
+    /// creator edited after staging keeps their edit. The editor's Undo brings the chat edit back.
+    private func dropRestoredChatSections(_ restored: Set<EditorSection>, revision: Int) -> Bool {
+        guard var staged = chatStagedDocument else { return false }
+        let untouched = restored.intersection(chatStagedSections)
+            .filter { document.snapshot(for: $0) == staged.snapshot(for: $0) }
+        guard !untouched.isEmpty else { return false }
+        appendUndo(document); redoStack.removeAll()
+        for section in untouched {
+            copy(section, from: cleanDocument, into: &document)
+            copy(section, from: cleanDocument, into: &staged)
+        }
+        chatStagedDocument = staged
+        chatStagedSections.subtract(untouched)
+        appliedChatDraftRevision = revision
+        refreshDirtyState()
+        scheduleSourcePreviewUpdate()
+        return true
+    }
+
     /// Reconcile the same project after an agent turn. A response that arrives
     /// after a manual edit never replaces it: the newer version becomes the base
     /// and the creator's unsaved lanes are replayed on top (KRI-935).
@@ -2604,12 +2625,19 @@ enum EditorOpenIntent { case warm, open }
             // (never rendered); show it as unsaved edits instead of ignoring it.
             let staged = conversationRuntimeVersion == 2 && sameTarget
                 ? stagedChatDocument(snapshot: snapshot, draft: nextDraft, variant: variant) : nil
+            let restored = conversationRuntimeVersion == 2 && sameTarget
+                ? snapshot.restoredChatSections(over: Self.snapshotPreservingClipMetadata(nextDraft), variant: variant,
+                                                appliedRevision: appliedChatDraftRevision) : []
             guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
             guard transactionBaseline == nil, !isTimingGestureActive else { return }
             if sameTarget { refreshEditingPermissions(from: variant, document: nextDocument) }
+            if !restored.isEmpty, variantUnchanged(variant), pendingText == nil, !isSaving,
+               dropRestoredChatSections(restored, revision: snapshot.draftRevision), staged == nil {
+                return
+            }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
             if sameTarget, staged == nil, sourcePreviewState == .ready, let known = serverBaseline,
                cleanDocument == known.hydrated, nextDraft.etag == etag {
