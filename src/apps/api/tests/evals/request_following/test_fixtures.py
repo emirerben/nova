@@ -32,8 +32,8 @@ def test_the_p6b_golden_set_is_present():
     """East Run + 30 legacy briefs and three executable v2 cassettes."""
     fixtures = [load_fixture(p) for p in PATHS]
     assert [f.fixture_id for f in fixtures if f.provenance == "prod_capture"] == ["east_run"]
-    assert len([f for f in fixtures if f.provenance == "authored"]) == 33
-    assert len(fixtures) == 34
+    assert len([f for f in fixtures if f.provenance == "authored"]) == 35
+    assert len(fixtures) == 36
     assert {f.footage for f in fixtures} == {
         "east_run",
         "food_day",

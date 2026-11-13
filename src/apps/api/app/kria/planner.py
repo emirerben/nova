@@ -252,6 +252,7 @@ from app.services.kria_editor_ops import (
     failed_editor_draft_basis,
     resolve_editor_base,
     timeline_patch_capabilities,
+    timeline_signature,
     unknown_editor_render_query,
 )
 from app.services.music_genre import (
@@ -2164,8 +2165,13 @@ async def _copilot_clip_context(
     job: Job,
     variant: dict,
     item: PlanItem,
+    saved_variant: dict | None = None,
 ) -> dict:
     """KRI-191: the Creative Brief and per-clip facts the copilot may see.
+
+    ``saved_variant`` is the render the creator last saw; ``variant`` is that render with the
+    creator's unsaved edits applied. Speech and beat marks describe the saved timeline, so a
+    re-cut draft marks the context ``timeline_dirty`` and the snapshot omits them (KRI-1391).
 
     Context only ever ADDS to what the copilot knows, so any failure here
     (a bad stored fact, a brief read error) logs and degrades to no context
@@ -2214,6 +2220,27 @@ async def _copilot_clip_context(
     except Exception:  # noqa: BLE001 - fail closed: empty catalog => no add_sfx
         log.warning("kria_copilot_sfx_catalog_unavailable", thread_id=str(thread_id), exc_info=True)
     try:
+        if saved_variant is not None and timeline_signature(
+            job, saved_variant
+        ) != timeline_signature(job, variant):
+            context["timeline_dirty"] = True
+        elif variant.get("music_track_id") and (
+            saved_variant is None
+            or all(
+                saved_variant.get(key) == variant.get(key)
+                for key in ("music_track_id", "music_start_s", "music_window")
+            )
+        ):
+            # A draft that swapped the song or moved its window no longer matches the render.
+            beats = await _music_beats(db, str(variant["music_track_id"]))
+            if beats:
+                context["music_beats"] = {
+                    "track_id": str(variant["music_track_id"]),
+                    "beats": beats,
+                }
+    except Exception:  # noqa: BLE001 - fail closed: no beat marks, never a failed turn
+        log.warning("kria_copilot_beat_marks_unavailable", thread_id=str(thread_id), exc_info=True)
+    try:
         # KRI-1117: the photos and videos a Talking edit's background can be. No query while
         # the lane is closed for this variant, so every other turn reads exactly what it read.
         # KRI-1139: the same pool backs a tilt's media backdrop, so that edit reads it too.
@@ -2244,6 +2271,17 @@ async def _copilot_clip_context(
             exc_info=True,
         )
     return context
+
+
+async def _music_beats(db: AsyncSession, track_id: str) -> list[float]:
+    """The song's beat timestamps (song-clock seconds), or ``[]`` for an unknown track."""
+    from app.models import MusicTrack  # noqa: PLC0415
+
+    async with db.begin_nested():
+        beats = (
+            await db.execute(select(MusicTrack.beat_timestamps_s).where(MusicTrack.id == track_id))
+        ).scalar_one_or_none()
+    return list(beats) if isinstance(beats, list) else []
 
 
 async def _background_pool_rows(db: AsyncSession, item: PlanItem) -> list[dict]:
@@ -2629,7 +2667,7 @@ async def _load_editor_target(
             variant_baseline=variant_render_baseline(variant),
         )
         return None
-    variant = resolved.projected
+    saved_variant, variant = variant, resolved.projected
     if resolved.fallback_reason:
         log.warning(
             "kria_editor_state_fallback",
@@ -2638,7 +2676,13 @@ async def _load_editor_target(
             thread_id=str(thread_id),
         )
     clip_context = await _copilot_clip_context(
-        db, thread=thread, thread_id=thread_id, job=job, variant=variant, item=item
+        db,
+        thread=thread,
+        thread_id=thread_id,
+        job=job,
+        variant=variant,
+        item=item,
+        saved_variant=saved_variant,
     )
     snapshot = build_editor_snapshot(job, variant, clip_context=clip_context)
     if not snapshot["allowed_op_families"]:

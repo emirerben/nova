@@ -3749,6 +3749,20 @@
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/tests/kria/test_kri1294_choice_request_journey.py"
       ]
+    },
+    {
+      "id": "kri-1391-speech-beat-marks",
+      "needs_native": false,
+      "api_tests": "tests/evals/request_following/test_kri1391_marks.py tests/evals/request_following/test_fixtures.py tests/evals/request_following/test_checkers.py",
+      "paths": [
+        "src/apps/api/tests/evals/request_following/author_kri1391.py",
+        "src/apps/api/tests/evals/request_following/checkers.py",
+        "src/apps/api/tests/evals/request_following/test_fixtures.py",
+        "src/apps/api/tests/evals/request_following/test_kri1391_marks.py",
+        "src/apps/api/tests/evals/request_following/validation_manifest.md",
+        "src/apps/api/tests/fixtures/request_following/threads/v2_speech_cut_at_word.json",
+        "src/apps/api/tests/fixtures/request_following/threads/v2_title_on_first_beat.json"
+      ]
     }
   ]
 }

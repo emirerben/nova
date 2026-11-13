@@ -6,6 +6,8 @@ of the rows below proves a render, device export, or paid live-model outcome.
 | Journey | Executable evidence | Evidence level |
 |---|---|---|
 | Six distinct captions, then one correction only | `tests/evals/request_following/test_runner.py::test_v2_six_captions_then_one_correction_changes_only_the_target_label` | replay cassette through editor adapter/registry/compiler; in-memory compile only |
+| Cut the part where I say a phrase | `tests/evals/request_following/test_kri1391_marks.py` (`v2_speech_cut_at_word`) | cassette over a snapshot the real builder produced (spoken words from caption cues); compile-only |
+| Move the title to the first beat | `tests/evals/request_following/test_kri1391_marks.py` (`v2_title_on_first_beat`) | cassette over a snapshot the real builder produced (song beats shifted by `music_start_s`); compile-only |
 | Talking request on unsaved state | `tests/evals/request_following/test_runner.py::test_v2_unsupported_talking_and_slides_keep_unsaved_editor_state_and_reply_honestly` | replay cassette; verifies no-op and honest receipt only |
 | Slides request on unsaved state | `tests/evals/request_following/test_runner.py::test_v2_unsupported_talking_and_slides_keep_unsaved_editor_state_and_reply_honestly` | replay cassette; verifies no-op and honest receipt only |
 | Fifty clips interrupted/resumed and long request | `tests/services/test_clip_intent_planning_robustness.py::test_fifty_clip_long_prompt_over_cap_asks_one_focused_question`, `tests/services/test_clip_intent_planning_robustness.py::test_fifty_clip_long_prompt_within_cap_resolves_all` | focused planner tests |

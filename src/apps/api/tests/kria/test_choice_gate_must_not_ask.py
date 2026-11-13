@@ -1,6 +1,6 @@
 """KRI-476 (PR-C) must-not-ask gate: a clear request is never turned into a question.
 
-Every recorded creator thread the repo owns (the 34 `request_following` threads, the
+Every recorded creator thread the repo owns (the 36 `request_following` threads, the
 `kria_turns` brief fixtures, the 240-row `kria_format_matrix`) is run through the real
 clarification gate (`planner._gate_unresolved_choices`) with the strictest plausible
 reading of what the creator asked: every requirement of the thread in force at once, on
@@ -118,8 +118,8 @@ def _derive(fixture, footage) -> tuple[dict, CreativeBrief, list[dict]]:  # noqa
     return strategy, CreativeBrief(version=1, requirements=requirements), rows
 
 
-def test_the_thread_corpus_is_the_34_the_plan_names() -> None:
-    assert len(discover_fixture_paths()) == 34
+def test_the_thread_corpus_is_the_36_the_plan_names() -> None:
+    assert len(discover_fixture_paths()) == 36
 
 
 @pytest.mark.asyncio
