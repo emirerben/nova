@@ -159,6 +159,23 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         XCTAssertEqual(try panelCount(app), 2)
     }
 
+    func testAShortSelectedClipKeepsTwoFullSizeEndHandles() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 2", in: app)
+        app.buttons["native-editor-split-done"].tap()
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        XCTAssertTrue(clip(2, in: app).isSelected, "Filling a panel leaves it selected, so only the Top panel shows its unselected end handle")
+        timeline.pinch(withScale: 0.35, velocity: -1)
+        let end = app.descendants(matching: .any)["native-editor-split-end-1"].firstMatch
+        XCTAssertTrue(end.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(end.frame.width, 44, "An unselected end handle keeps a full 44 pt touch target")
+        XCTAssertGreaterThanOrEqual(end.frame.height, 44)
+        attach(app, name: "Zoomed-out panel end handles")
+    }
+
     private func panelCount(_ app: XCUIApplication) throws -> Int {
         let authored = try sections(app)
         let section = try XCTUnwrap((authored["split_screen_sections"] as? [[String: Any]])?.first)
