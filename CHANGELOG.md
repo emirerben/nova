@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.180.0] - 2026-11-13
+
+### Changed
+- ci(ios): nightly shard timeouts, hashFiles limit, abandoned-runner gate (KRI-1379) (#2284) <!-- release-pr: 2284 -->
+
 ## [0.88.179.0] - 2026-11-13
 
 ### Changed
