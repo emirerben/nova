@@ -1,0 +1,122 @@
+{
+  "fixture": "alternating_matches",
+  "agent_spec": {
+    "model": "gpt-6.1-sol",
+    "thinking_level": "medium",
+    "fallback_models": [
+      "gemini-3.1-pro-preview"
+    ]
+  },
+  "modes": {
+    "503": {
+      "how": "OPENAI_BASE_URL -> scripts/fake_openai.py port 18503 (HTTP 503)",
+      "fixture_passed": true,
+      "agent_run": {
+        "outcome": "ok_fallback",
+        "model": "gemini-3.1-pro-preview",
+        "fallback_used": "True",
+        "attempts": "4",
+        "latency_ms": "14496",
+        "settled_cost_usd": "0.034856"
+      },
+      "provider_fallback_lines": [],
+      "transient_retries": 2,
+      "ledger": [
+        {
+          "test_run_id": "kri1384-forced-503-20261113",
+          "provider": "google",
+          "model": "gemini-3.1-pro-preview",
+          "status": "settled",
+          "capability": "",
+          "calls": "1",
+          "settled_usd": "0.0349",
+          "held_usd": "0.0000"
+        },
+        {
+          "test_run_id": "kri1384-forced-503-20261113",
+          "provider": "openai",
+          "model": "gpt-6.1-sol",
+          "status": "released",
+          "capability": "planning",
+          "calls": "3",
+          "settled_usd": "0.0000",
+          "held_usd": "0.0000"
+        }
+      ]
+    },
+    "drop": {
+      "how": "OPENAI_BASE_URL -> scripts/fake_openai.py port 18504 (request read, connection closed, no response)",
+      "fixture_passed": true,
+      "agent_run": {
+        "outcome": "ok_fallback",
+        "model": "gemini-3.1-pro-preview",
+        "fallback_used": "True",
+        "attempts": "2",
+        "latency_ms": "13515",
+        "settled_cost_usd": "0.022817"
+      },
+      "provider_fallback_lines": [
+        "ProviderOutcomeUnknownError"
+      ],
+      "transient_retries": 0,
+      "ledger": [
+        {
+          "test_run_id": "kri1384-forced-drop-20261113",
+          "provider": "google",
+          "model": "gemini-3.1-pro-preview",
+          "status": "settled",
+          "capability": "",
+          "calls": "1",
+          "settled_usd": "0.0228",
+          "held_usd": "0.0000"
+        },
+        {
+          "test_run_id": "kri1384-forced-drop-20261113",
+          "provider": "openai",
+          "model": "gpt-6.1-sol",
+          "status": "unknown",
+          "capability": "planning",
+          "calls": "1",
+          "settled_usd": "0.0000",
+          "held_usd": "0.1925"
+        }
+      ]
+    },
+    "refused": {
+      "how": "OPENAI_BASE_URL -> 127.0.0.1:9 (connection refused)",
+      "fixture_passed": true,
+      "agent_run": {
+        "outcome": "ok_fallback",
+        "model": "gemini-3.1-pro-preview",
+        "fallback_used": "True",
+        "attempts": "4",
+        "latency_ms": "17099",
+        "settled_cost_usd": "0.020513"
+      },
+      "provider_fallback_lines": [],
+      "transient_retries": 2,
+      "ledger": [
+        {
+          "test_run_id": "kri1384-forced-refused-20261113",
+          "provider": "google",
+          "model": "gemini-3.1-pro-preview",
+          "status": "settled",
+          "capability": "",
+          "calls": "1",
+          "settled_usd": "0.0205",
+          "held_usd": "0.0000"
+        },
+        {
+          "test_run_id": "kri1384-forced-refused-20261113",
+          "provider": "openai",
+          "model": "gpt-6.1-sol",
+          "status": "released",
+          "capability": "planning",
+          "calls": "3",
+          "settled_usd": "0.0000",
+          "held_usd": "0.0000"
+        }
+      ]
+    }
+  }
+}

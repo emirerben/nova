@@ -1,0 +1,755 @@
+{
+  "fixtures": 118,
+  "ran": 118,
+  "passed": 71,
+  "failure_categories": {
+    "asked instead of proposing": 14,
+    "other": 10,
+    "requirement not extracted (brief_updates)": 15,
+    "text update missing": 4,
+    "reply wording (muted)": 4
+  },
+  "settled_usd": 4.394,
+  "ledger": [
+    {
+      "test_run_id": "kri1384-sol-mc-b1-20261113",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "42",
+      "settled_usd": "1.7238",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384-sol-mc-b2-20261113",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "42",
+      "settled_usd": "1.4234",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384-sol-mc-b3-20261113",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "38",
+      "settled_usd": "1.2468",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "alternating_matches",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "barcelona_shot_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "decoy_kri1038_en_highlight_when_i_say",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_recorded_voiceover_words",
+      "passed": false,
+      "failure": "assert 0 == 1 + where 0 = len([])",
+      "category": "other"
+    },
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_en_subtitles_quote_as_i_say",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_tr_dedigim_yerde",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "passed": false,
+      "failure": "AssertionError: [\"expected one text update 'PROVOLETA 🧀', found 0\"] assert not [\"expected one text update 'PROVOLETA 🧀', found 0\"]",
+      "category": "text update missing"
+    },
+    {
+      "fixture": "decoy_kri1292_text_window_is_not_a_hold",
+      "passed": false,
+      "failure": "AssertionError: [\"expected one text update 'PROVOLETA 🧀', found 0\"] assert not [\"expected one text update 'PROVOLETA 🧀', found 0\"]",
+      "category": "text update missing"
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: True'] + where ['no update records speech_cleanup: True'] = <function restart_brief_failures at 0x116156f00>((None or []), {'cut_restarts': False, 'speech_cleanup': True}) + whe",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1038_en_display_one_at_a_time",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_title_replace_legacy",
+      "passed": false,
+      "failure": "AssertionError: assert {'unit': 'wor...e': 'replace'} == {'unit': 'wor...agent_choice'} Omitting 1 identical items, use -vv to show Differing items: {'mode': 'replace'} != {'mode': 'agent_choice'} Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1038_t2_29ekim_followup_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_tr_baslik_tek_tek",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_tr_ekranda_yazsin_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_tr_kelime_kelime_goster_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_card_background_words",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_card_neutral_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_card_neutral_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_montage_create_a_lipsync",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_montage_neutral_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_en",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_tr",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1151_over_my_speech_stays_overlay",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_brief",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'I’ll show the talks full screen at their mentions, with their audio replacing your voice briefly. The stadium will ap...ke will keep advancing underneath. If a mention cannot be matched, that clip will be",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_show_when_mentioned",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_tr",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'İlgili konuşma klipleri tam ekran, kendi sesleriyle gösterilecek; o sırada senin sesin kapanacak ama kaydın altta ile...üler konuşma boyunca dağıtılacak. Önceki yanıtın aksine, bu düzen bu formatta yapıla",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_show_when_mentioned",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'I’ll show related talk clips full screen at matching mentions with their audio, muting your advancing take underneath...Unmatched clips will appear silently elsewhere. The edit will retain speech subtitle",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_tr",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'Konuşma kliplerini ilgili yerlerde tam ekran, kendi sesleriyle göstereceğiz; o sırada senin sesin duyulmayacak. Stady... sürecek. Sözlü eşleşme bulunmayan klipleri anlatıma dağıtacağız; bu klipler sessiz ",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1151_talking_insert_pause_form",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_bastan_basla_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: False'] + where ['no update records speech_cleanup: False'] = <function restart_brief_failures at 0x116156f00>((None or []), {'cut_restarts': False, 'speech_cleanup': False}) + ",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_n3_named_restart_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_quoted_restart_cue_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_start_over_from_scratch_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_start_over_with_a_clip_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri127_open_vocabulary_dish_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri127_speaks_to_camera_selection",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri129_caption_food_and_weather",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1292_text_hold_correction_no_two_seconds",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_t1_about_a_second",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_tr_bir_saniye_boyunca",
+      "passed": false,
+      "failure": "AssertionError: [\"expected one text update 'PROVOLETA 🧀', found 0\"] assert not [\"expected one text update 'PROVOLETA 🧀', found 0\"]",
+      "category": "text update missing"
+    },
+    {
+      "fixture": "kri156_transcript_labels",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri178_talking_reaction_beats",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri188_east_run_brief_updates",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri189_clip_facts_day_vlog",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri190_route_facts_and_order",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri244_descriptive_chronology",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri374_background_song",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri374_lipsync_intent",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri374_song_mentions_concert_not_lipsync",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri470_gate_a_v44",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_a",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_b_v44",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_b",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_c_dated",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_c_undated",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_d_v44",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_d",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_e_v44",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_e",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_approved_continuation",
+      "passed": false,
+      "failure": "AssertionError: creative copy metadata must survive MainCreator parsing assert None is not None",
+      "category": "other"
+    },
+    {
+      "fixture": "kri506_cancel",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_creator_supplied_multilingual",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_initial_generation",
+      "passed": false,
+      "failure": "AssertionError: assert 'unresolved' == 'candidate' - candidate + unresolved",
+      "category": "other"
+    },
+    {
+      "fixture": "kri506_metadata_parse_unresolved",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_revision_candidate",
+      "passed": false,
+      "failure": "AssertionError: assert 'Look a little closer.' == 'What happened after sunset?' - What happened after sunset? + Look a little closer.",
+      "category": "other"
+    },
+    {
+      "fixture": "kri519_voiceover_reaction_beats",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri523_pinned_corner_text",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri525_ranged_pinned_text",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri586_delegated_hook_first_turn",
+      "passed": false,
+      "failure": "AssertionError: assert 'A moment from my marathon' == 'Sunrise miles' - Sunrise miles + A moment from my marathon",
+      "category": "other"
+    },
+    {
+      "fixture": "kri586_generate_after_choice",
+      "passed": false,
+      "failure": "AssertionError: assert 'A few strides at sunrise' == 'Sunrise miles' - Sunrise miles + A few strides at sunrise",
+      "category": "other"
+    },
+    {
+      "fixture": "kri598_tigre_title_ok",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri598_tigre_use_all_clips",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri598_tigre_voiceover_cues",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "passed": false,
+      "failure": "AssertionError: [] assert 0 == 1 + where 0 = len([])",
+      "category": "other"
+    },
+    {
+      "fixture": "kri806_don_julio_kept_lines",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri815_script_request",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri840_fullscreen_reaction_beat",
+      "passed": false,
+      "failure": "KeyError: 'grill'",
+      "category": "other"
+    },
+    {
+      "fixture": "kri841_talking_ending_clip",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri849_dj_t1_unclear_answer_omit",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "long_montage_target_duration",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "madrid_pastel_title",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "montage_strategy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "n2_voiceover_fullscreen_photo_sequence",
+      "passed": false,
+      "failure": "StopIteration",
+      "category": "other"
+    },
+    {
+      "fixture": "native_mixed_media_timing_repaired",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "phone_original_audio_17_clips",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: True'] + where ['no update records speech_cleanup: True'] = <function restart_brief_failures at 0x115d403b0>((None or []), {'cut_restarts': False, 'speech_cleanup': True}) + whe",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "qendresa_title_hold_with_video_length",
+      "passed": false,
+      "failure": "AssertionError: ['video length read from the brief is None, expected 30', \"no text update with scope 'title' and literal 'MY WEEK'\"] assert not ['video length read from the brief is None, expected 30', \"no text update with scope 'title' and",
+      "category": "text update missing"
+    },
+    {
+      "fixture": "remove_uploaded_visuals",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "semantic_text_english",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "semantic_text_spanish",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "semantic_text_turkish",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_decline_earlier_turn",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_described_buzzer",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_different_effect",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_named_decline",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_not_too_much",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_why_dont_you_add",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sport_labels_bottom_right",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "video_reuse_default",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "video_reuse_followup",
+      "passed": true,
+      "failure": null,
+      "category": null
+    }
+  ]
+}
