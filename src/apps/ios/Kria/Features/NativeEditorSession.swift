@@ -5440,7 +5440,10 @@ enum EditorOpenIntent { case warm, open }
         }
         slot.durationBeats = nil; next.clips[index] = slot
         next.fitCollapseSectionDurations()
-        guard next.splitScreenIsValid else { return }
+        guard next.splitScreenIsValid else {
+            splitTrimHint = Self.refusedSplitTrimReason(next)
+            return
+        }
         if splitTrimHint != splitHint { splitTrimHint = splitHint }
         // A section that grew or shrank moves the canvas lanes behind it, exactly as setSplitScreenDuration does.
         if next.splitScreenSections != active.baseline.splitScreenSections { NativeSplitTimelineRebase.rebase(&next, from: active.baseline) }
@@ -5464,6 +5467,12 @@ enum EditorOpenIntent { case warm, open }
         activeTrim = active
         refreshDirtyState()
         refreshDuration()
+    }
+
+    private static func refusedSplitTrimReason(_ document: EditorDocument) -> String {
+        let total = NativeEditorInteraction.timelineProjection(
+            slots: document.clips, carousel: nil, splitSections: document.splitScreenSections).totalDuration
+        return total > 1800 ? "A video can't run longer than 30 minutes." : "That trim doesn't fit this split."
     }
 
     #if DEBUG
