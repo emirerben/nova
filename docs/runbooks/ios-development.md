@@ -943,8 +943,10 @@ diffs release inputs from the last uploaded commit, so an iOS change in a commit
 that was never released still ships with the next one.
 
 If TestFlight looks stuck, check `gh run list --workflow iOS --branch main`
-first. A `cancelled` build that ran for about 75 minutes hit `timeout-minutes`
-(the 2026-10-12 incident: a serial full UI suite outlasted the cap after #1567),
+first. A `cancelled` build that ran for about 75 minutes (unsharded legs) or 120
+minutes (sharded legs) hit `timeout-minutes` (the 2026-10-12 incident: a serial
+full UI suite outlasted the cap after #1567; KRI-1379: three nightly shards
+were cancelled at ~77 minutes before sharded legs got 120 and five shards),
 and the release can be started by hand with
 `gh workflow run testflight.yml --ref main -f head_sha=<main sha>`.
 
@@ -1071,11 +1073,12 @@ commit follows. A release no longer retains three Macs for a full regression.
 The complete UI suite runs at 03:23 UTC nightly and on manual iOS dispatch. Full
 fixture-backed native journeys run at 02:23 UTC nightly and on manual CI
 dispatch. Both are reportable regression checks and never dispatch TestFlight.
-PRs retain affected unit/UI/journey coverage across up to three Mac legs that
-compile from the shared cache (`unit`, `creation`, `screens`; see
-[change-based CI](change-based-ci.md)).
+PRs retain affected unit/UI/journey coverage across a `unit` leg plus at most
+three UI legs (`ui_tests.PR_MAX_SHARDS`) that compile from the shared cache; see
+[change-based CI](change-based-ci.md).
 
-Nightly/manual `ios-tests` uses three duration-balanced shards. Every leg
+Nightly/manual `ios-tests` uses up to five duration-balanced shards
+(`ui_tests.MAX_SHARDS`; each leg has a 120-minute limit). Every leg
 computes the same partition; its coverage check requires exactly that part, and
 the aggregate requires every leg to pass. Empty shards fail. Shard 1 executes
 the unit suite and saves the build cache. Its partition starts with a seven-minute

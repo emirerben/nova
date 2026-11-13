@@ -92,7 +92,9 @@ PR gets native render evidence. A PR's selected UI scenarios run on the
 `unit` leg when they fit one shard (`ui_tests.PR_SHARD_TARGET_SECONDS`, 35 min
 of recorded time). A longer selection, such as an editor PR's group (88.6
 recorded min; 87 min serially on #2225 after build and unit tests), gets one
-`ui-<i>` leg per duration-balanced shard, up to three, and the unit leg only
+`ui-<i>` leg per duration-balanced shard, up to three
+(`ui_tests.PR_MAX_SHARDS`; the larger creation group, ~158 recorded min, also
+stops at three, since nightly/manual alone may use `MAX_SHARDS` = 5), and the unit leg only
 builds and runs unit tests. Each UI leg verifies exactly its part of the
 partition, and the `journey` aggregate recomputes the shard count and leg list
 so a missing or extra leg fails. A changed UI test file selects the group that

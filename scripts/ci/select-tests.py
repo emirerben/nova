@@ -468,20 +468,20 @@ def ui_shards(event, groups):
     """UI legs for the executed selection.
 
     Main runs smoke on one Mac. PRs run `full` as smoke, so it stays on one leg;
-    a longer PR selection gets one leg per ui_tests.PR_SHARD_TARGET_SECONDS.
+    a longer PR selection gets one leg per ui_tests.PR_SHARD_TARGET_SECONDS, at
+    most ui_tests.PR_MAX_SHARDS.
     Nightly/manual shard the full suite in ios.yml.
     """
     if event == "push" or groups == "none":
         return 1
     if event == "pull_request" and groups == "full":
         return 1
-    target = (
-        ui_tests.PR_SHARD_TARGET_SECONDS
-        if event == "pull_request"
-        else ui_tests.SHARD_TARGET_SECONDS
-    )
+    if event == "pull_request":
+        target, cap = ui_tests.PR_SHARD_TARGET_SECONDS, ui_tests.PR_MAX_SHARDS
+    else:
+        target, cap = ui_tests.SHARD_TARGET_SECONDS, ui_tests.MAX_SHARDS
     try:
-        return ui_tests.shard_count(groups, target=target)
+        return ui_tests.shard_count(groups, target=target, max_shards=cap)
     except (OSError, ValueError, KeyError, TypeError):
         # The UI step fails closed on the same error; one leg reports it.
         return 1
