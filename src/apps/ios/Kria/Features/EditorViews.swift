@@ -193,9 +193,9 @@ struct ResultsView: View {
     let project: ProjectSummary
     let libraryJobID: UUID?
     @EnvironmentObject private var model: AppModel
-    @State private var showShare = false
     @State private var playbackURL: URL?
-    @State private var shareFileURL: URL?
+    /// The downloaded copy being shared. The file travels inside the sheet's item and is removed when the sheet goes.
+    @State private var shareFile: SharedVideoFile?
     @State private var player: AVPlayer?
     @State private var message: String?
     @State private var isRefreshingPlayback = false
@@ -256,8 +256,8 @@ struct ResultsView: View {
         }
         .padding(24)
         .task { await refreshPlayback(); await loadSongReference() }
-        .sheet(isPresented: $showShare, onDismiss: removeShareFile) {
-            if let shareFileURL { ShareSheetView(url: shareFileURL) }
+        .sheet(item: $shareFile) { file in
+            ShareSheetView(url: file.url).onDisappear { try? FileManager.default.removeItem(at: file.url) }
         }
         .fullScreenCover(isPresented: $showsEditor, onDismiss: {
             Task { await refreshPlayback(); await loadSongReference() }
@@ -303,9 +303,7 @@ struct ResultsView: View {
         isPreparingShare = true
         defer { isPreparingShare = false }
         do {
-            removeShareFile()
-            shareFileURL = try await downloadFreshVideo()
-            showShare = true
+            shareFile = SharedVideoFile(url: try await downloadFreshVideo())
         } catch { message = error.localizedDescription }
     }
 
@@ -321,12 +319,11 @@ struct ResultsView: View {
         playbackURL = result.playbackURL
         return result.fileURL
     }
+}
 
-    private func removeShareFile() {
-        guard let shareFileURL else { return }
-        try? FileManager.default.removeItem(at: shareFileURL)
-        self.shareFileURL = nil
-    }
+private struct SharedVideoFile: Identifiable {
+    let url: URL
+    var id: URL { url }
 }
 
 struct FinishedVideoDownloader {
