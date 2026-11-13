@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.178.0] - 2026-11-13
+
+### Changed
+- ci: run the API tests on iPhone changes (KRI-1371) (#2281) <!-- release-pr: 2281 -->
+
 ## [0.88.177.0] - 2026-11-13
 
 ### Changed
