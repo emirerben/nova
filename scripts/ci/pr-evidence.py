@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -145,37 +146,72 @@ def merge_base(repo, base, head):
     return ancestor
 
 
+PINNED_DIFF = (
+    "-c",
+    "core.quotePath=true",
+    "-c",
+    "diff.suppressBlankEmpty=false",
+    "diff",
+    "--no-renames",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--no-relative",
+    "--diff-algorithm=myers",
+    "--indent-heuristic",
+    "--inter-hunk-context=0",
+    "--binary",
+    "-U1",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+)
+
+
+def pinned_git(repo, *args, stdin=None):
+    """Run git with no user or system config so every machine hashes the same diff."""
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    env.update(
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_SYSTEM=os.devnull,
+        GIT_CONFIG_NOSYSTEM="1",
+    )
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            input=stdin,
+            capture_output=True,
+            check=True,
+            env=env,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", b"") or b""
+        raise ValueError(
+            "git failed while fingerprinting the PR patch"
+            + (f": {detail.decode(errors='replace').strip()}" if detail else "")
+        ) from error
+
+
 def patch_id(repo, ancestor, head):
     """Fingerprint of what the PR changes, independent of the commits carrying it.
 
-    -U0 drops context lines, so a rebase over unrelated neighbouring edits keeps
-    the id. --binary makes a changed video/image alter it. Diffing from the
-    merge-base keeps merge commits that only bring in the base branch out of it.
+    Two properties are chosen deliberately.
+    - --verbatim keeps whitespace, so re-indenting a line (which moves code in or
+      out of an if/for block in Python) changes the id. Plain --stable ignores it.
+    - -U1 keeps one line of context on each side of a hunk, so moving an added
+      line to a different place changes the id. -U0 hid that. The cost is that a
+      base edit directly adjacent to the PR's hunks also changes the id; the
+      failure is closed and the author recomputes with --patch-id.
+    Line numbers stay out of the hash, so a rebase over distant edits keeps it.
+    --binary makes a changed video/image alter it. Diffing from the merge-base keeps
+    merge commits that only bring in the base branch out of it. The diff settings
+    and an empty git config are pinned so a local diff.algorithm or color.ui cannot
+    produce an id CI would not.
     """
-    diff = git(
-        repo,
-        "diff",
-        "--no-renames",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--binary",
-        "-U0",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        ancestor,
-        head,
-        "--",
-    )
-    try:
-        result = subprocess.run(
-            ["git", "patch-id", "--stable"],
-            input=diff,
-            capture_output=True,
-            check=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise ValueError("git patch-id failed for the PR diff") from error
-    fields = result.stdout.split()
+    diff = pinned_git(repo, *PINNED_DIFF, ancestor, head, "--")
+    output = pinned_git(repo, "patch-id", "--verbatim", stdin=diff)
+    fields = output.split()
     require(
         len(fields) >= 1 and re.fullmatch(rb"[0-9a-f]{40}", fields[0]),
         "PR has no patch to fingerprint (empty diff against the base branch)",
@@ -341,7 +377,8 @@ def artifact(value, scope):
             if pinned_blob:
                 require(
                     is_ancestor(repo, sha, head),
-                    "artifact blob commit must be the PR head or one of its ancestors",
+                    "artifact blob commit must be the PR head or one of its ancestors; "
+                    "after a rebase use a repo-relative path",
                 )
                 path = pinned_blob[2]
                 require(

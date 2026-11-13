@@ -1,7 +1,8 @@
 name: PR evidence
 
 # Body edits recheck evidence without starting API/native suites again.
-# Make `PR evidence` required in branch protection after this workflow lands.
+# `PR evidence` must be a required status check in the main ruleset: it is the only
+# evidence gate. See docs/runbooks/request-to-output-standard.md.
 on:
   pull_request:
     branches: [main, dev]
@@ -107,11 +108,14 @@ jobs:
               or current.get("number") != int(os.environ["PR_NUMBER"])
               or current.get("head", {}).get("sha") != os.environ["HEAD_SHA"]
               or current.get("base", {}).get("ref") != original["base"]["ref"]
-              or not isinstance(current.get("body"), str)
+              or "body" not in current
+              or not isinstance(current["body"], (str, type(None)))
           ):
               raise SystemExit("Current PR evidence must belong to this PR, head and base branch")
           # Keep this run's immutable diff/base; refresh only the body as inert data.
-          original["body"] = current["body"]
+          # The API returns null for an empty description; the validator decides
+          # whether the changed paths need evidence at all.
+          original["body"] = current.get("body") or ""
           (Path(os.environ["RUNNER_TEMP"]) / "pr-evidence-event.json").write_text(json.dumps(event))
           PYTHON
       - name: Validate request-to-output evidence

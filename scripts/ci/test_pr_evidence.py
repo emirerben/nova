@@ -10,11 +10,13 @@ scope selection. PR text is data: commands in it must never run.
 
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPT = Path(__file__).with_name("pr-evidence.py").resolve()
 KINDS = (
@@ -213,7 +215,7 @@ class EvidenceCLITests(unittest.TestCase):
         self.commit()
         receipt = self.receipt()
         self.branch_pr()
-        lines[8] = "main edit inside the three-line context"
+        lines[8] = "main edit two lines clear of the PR hunk"
         lines[5] = "5"
         self.write("src/apps/api/app/kria/planner.py", "\n".join(lines))
         self.git("add", "-A")
@@ -222,6 +224,90 @@ class EvidenceCLITests(unittest.TestCase):
         self.git("checkout", "-q", "pr")
         self.git("rebase", "-q", new_base)
         self.evidence_passes(receipt, base=new_base, head=self.git("rev-parse", "HEAD"))
+
+    def commit_over_receipt(self, base, before, after):
+        """PR adds `before` over `base`, receipt recorded; a later commit makes it `after`."""
+        path = "src/apps/api/app/kria/planner.py"
+        self.write(path, base)
+        self.commit()
+        self.base = self.head
+        self.write(path, before)
+        self.commit()
+        receipt = self.receipt()
+        self.write(path, after)
+        self.commit()
+        self.assertFails(self.body(receipt), "patch_id does not match")
+
+    def test_reindenting_a_line_invalidates_evidence(self):
+        self.commit_over_receipt(
+            "def reserve(s):\n    if not s.control:\n        log()\n    return\n",
+            "def reserve(s):\n    if not s.control:\n        log()\n    raise Policy()\n    return\n",
+            "def reserve(s):\n    if not s.control:\n        log()\n        raise Policy()\n    return\n",
+        )
+
+    def test_moving_an_added_line_to_another_place_invalidates_evidence(self):
+        base = "def health():\n    log()\n    return ok\n\n\ndef startup():\n    boot()\n    return up\n"
+        self.commit_over_receipt(
+            base,
+            base.replace("    return ok", "    audit()\n    return ok"),
+            base.replace("    return up", "    audit()\n    return up"),
+        )
+
+    def test_git_diff_config_cannot_change_the_patch_id(self):
+        path = "src/apps/api/app/kria/planner.py"
+        before = "  x\n  x\na\n{\n  y\nend\n  x\nb\n{\n}\nend\na\n  y\na\n"
+        after = "  x\n  x\na\n{\n  y\nend\n  x\nb\n{\nend\n}\nend\na\na\n  y\nb\na\n"
+        self.write(path, before)
+        self.commit()
+        self.base = self.head
+        self.write(path, after)
+        self.commit()
+        expected = self.patch_id()
+        home = self.repo / ".git" / "fake-home"
+        home.mkdir()
+        (home / ".gitconfig").write_text("[diff]\n\talgorithm = histogram\n")
+        env = {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}
+        same_flags = [
+            "diff",
+            "--no-color",
+            "--indent-heuristic",
+            "--inter-hunk-context=0",
+            "--binary",
+            "-U1",
+            self.base,
+            self.head,
+        ]
+
+        def raw_id():
+            diff = subprocess.run(
+                ["git", "-C", str(self.repo), *same_flags],
+                env={**os.environ, **env},
+                capture_output=True,
+            ).stdout
+            return (
+                subprocess.run(
+                    ["git", "patch-id", "--verbatim"], input=diff, capture_output=True
+                )
+                .stdout.split()[0]
+                .decode()
+            )
+
+        self.assertNotEqual(
+            raw_id(), expected, "fixture no longer separates histogram from myers"
+        )
+        with mock.patch.dict("os.environ", env):
+            self.assertEqual(self.patch_id(), expected, "global git config leaked in")
+            for key, value in (
+                ("diff.algorithm", "histogram"),
+                ("diff.indentHeuristic", "false"),
+                ("diff.suppressBlankEmpty", "true"),
+                ("diff.context", "7"),
+                ("diff.interHunkContext", "9"),
+                ("color.ui", "always"),
+                ("diff.noprefix", "true"),
+            ):
+                self.git("config", key, value)
+            self.assertEqual(self.patch_id(), expected, "repo git config leaked in")
 
     def test_rebase_that_changes_the_patch_invalidates_evidence(self):
         receipt = self.receipt()
