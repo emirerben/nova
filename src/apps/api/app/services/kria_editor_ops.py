@@ -39,6 +39,7 @@ from app.routes.generative_jobs import (
     EditorCommitMix,
     EditorCommitRequest,
     EditorCommitSpeakerBackground,
+    EditorCommitUserSong,
     TimelineSlotEdit,
     _editor_capabilities,
     _guided_source_context,
@@ -70,6 +71,7 @@ _PORTABLE_FAMILIES = {
     "background_focus",
     "background_windows",
     "caption",
+    "caption_lines",
     "clip",
     "color_moments",
     "effect",
@@ -79,6 +81,8 @@ _PORTABLE_FAMILIES = {
     "text",
     "title",
     "transition",
+    "user_song",
+    "video_shape",
     "visual_media",
 }
 
@@ -179,6 +183,10 @@ _TEXT_STYLE_FIELDS = {
 # only some app builds keep (`edit_copilot._CAPTION_META_FIELD_GATES`) is offered
 # exactly where the editor would offer it.
 COPILOT_EDITOR_CAPABILITIES = ("caption_animation",)
+
+
+# caption_meta keys stored on the variant under another name than `caption_<key>`.
+_CAPTION_META_VARIANT_KEYS = {"appearance": "caption_editor_style"}
 
 
 def caption_default_phases(variant: dict[str, Any]) -> dict[str, Any] | None:
@@ -999,6 +1007,28 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
             families.append("background_focus")
     if color_moments_open(job, variant) or color_moments_removal_only(job, variant):
         families.append("color_moments")
+    if (
+        on_device
+        and "caption" in families
+        and caps.get("caption_style_scope") is True
+        and caps.get("caption_editor_style") is True
+    ):
+        from app.agents.editor_ops_v2.caption_lines import addressable_cue_ids  # noqa: PLC0415
+
+        # KRI-1394: one caption line's size and place, addressed by cue id.
+        if addressable_cue_ids(variant):
+            families.append("caption_lines")
+    from app.agents.editor_ops_v2.video_shape import video_shape_snapshot  # noqa: PLC0415
+
+    if video_shape_snapshot(variant, caps) is not None:
+        # KRI-1394: the finished video's shape, where the editor opens an axis on a phone edit.
+        families.append("video_shape")
+    if on_device and isinstance(caps.get("user_song"), dict):
+        from app.agents.editor_ops_v2.user_song import song_state  # noqa: PLC0415
+
+        # KRI-1394: the creator's own song, where the editor's Sounds tab offers it.
+        if song_state(job, variant) is not None:
+            families.append("user_song")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
@@ -1218,6 +1248,20 @@ def background_focus_open(job: Any, variant: dict[str, Any]) -> bool:
     return background_focus_supported(require_client=True)
 
 
+def background_full_opening_open(job: Any, variant: dict[str, Any]) -> bool:
+    """May chat take away the speaker's full-screen opening (Qendresa item 16, KRI-1394)?
+
+    The windows lane is open AND the full-opening gate holds (flag, ``speakerFrameWindows``
+    verified, app build: `speaker_full_opening_unavailable_reason`, the Save's own gate for a
+    changed ``full_screen_windows``), with the same worker-side client rule as the windows.
+    """
+    if not background_windows_open(job, variant):
+        return False
+    from app.services.phone_rollout import speaker_full_opening_unavailable_reason  # noqa: PLC0415
+
+    return speaker_full_opening_unavailable_reason() is None
+
+
 def background_color_reason(job: Any, variant: dict[str, Any]) -> str | None:
     """Why chat may not put a plain colour behind the speaker although the lane is open, in
     words for the creator; None when the colour gate holds (KRI-1173).
@@ -1348,6 +1392,11 @@ def _background_snapshot(
             for span in spans
             if isinstance(span, dict)
         ]
+        from app.agents.editor_ops_v2.background import is_opening  # noqa: PLC0415
+
+        if any(is_opening(span) for span in spans) and background_full_opening_open(job, variant):
+            # KRI-1394: present only while chat may take the opening away.
+            section["opening_removable"] = True
     return section
 
 
@@ -1401,21 +1450,22 @@ def derived_phone_background(job: Any, variant: dict[str, Any]) -> dict[str, Any
     return dict(document) if isinstance(document, dict) else None
 
 
-def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
+def _audio_notes(job: Any, variant: dict[str, Any], families: list[str]) -> list[str]:
     """Plain-language audio limits so the copilot answers honestly instead of
     redirecting to a control that does not exist for this edit."""
     notes: list[str] = []
     from app.services.user_song_projection import user_song_for_variant  # noqa: PLC0415
 
     if user_song_for_variant(job, variant, song_filename=None) is not None:
-        # The creator's own song (KRI-374) is part of the render. The editor's Sounds tab
-        # changes its volume, start point (not lip-sync) or removes it (KRI-428); this
-        # copilot has no operation for it, so point there instead of denying it exists.
-        notes.append(
-            "This edit plays the creator's own song. They can change its volume, start "
-            "point (not for lip-sync) or remove it in the editor's Sounds tab; you cannot "
-            "change it from chat."
-        )
+        # The creator's own song (KRI-374) is part of the render. Where chat offers
+        # set_user_song (KRI-1394) the YOUR SONG section says what it may change; elsewhere
+        # point to the editor's Sounds tab instead of denying the song exists.
+        if "user_song" not in families:
+            notes.append(
+                "This edit plays the creator's own song. They can change its volume, start "
+                "point (not for lip-sync) or remove it in the editor's Sounds tab; you cannot "
+                "change it from chat."
+            )
     elif variant.get("music_playback_mode") == "reference_only":
         notes.append(
             "The matched song is added when the creator posts. It is not part of this "
@@ -1850,6 +1900,10 @@ def build_editor_snapshot(
                 meta["style"] = saved.get("style", meta["style"])
             if meta["y_frac"] is None:
                 meta["y_frac"] = saved.get("y_frac")
+        if "caption_lines" in families:
+            from app.agents.editor_ops_v2.caption_lines import placement_snapshot  # noqa: PLC0415
+
+            snapshot["captions"]["line_placement"] = placement_snapshot(variant)
         advertised = {key: True for key in COPILOT_EDITOR_CAPABILITIES if caps.get(key) is True}
         if advertised:
             # Present only when ON, so every other snapshot stays byte-identical.
@@ -1900,7 +1954,7 @@ def build_editor_snapshot(
         bed = _background_bed(caps, variant, guided_native=_is_guided_native(job, variant))
         if bed is not None:
             snapshot["mix"]["background_music"] = bed
-    audio_notes = _audio_notes(job, variant)
+    audio_notes = _audio_notes(job, variant, families)
     if audio_notes:
         snapshot["audio_notes"] = audio_notes
     if "sfx" in snapshot["allowed_op_families"]:
@@ -1936,6 +1990,29 @@ def build_editor_snapshot(
             tilt=caps.get("media_overlay_tilt") is True,
             pool=clip_context.get("generated_overlay_pool"),
         )
+    if "video_shape" in families:
+        from app.agents.editor_ops_v2.video_shape import video_shape_snapshot  # noqa: PLC0415
+
+        snapshot["video_shape"] = video_shape_snapshot(variant, caps)
+    if "user_song" in snapshot["allowed_op_families"]:
+        from app.agents.editor_ops_v2.user_song import user_song_snapshot  # noqa: PLC0415
+
+        song = user_song_snapshot(job, variant, caps)
+        if song is not None:
+            snapshot["user_song"] = song
+    if "overlay" in families or "visual_media" in families:
+        from app.agents.editor_ops_v2.layer_order import layer_order_snapshot  # noqa: PLC0415
+
+        removable = _removable_visual_media(job, variant) if "visual_media" in families else []
+        layers = layer_order_snapshot(
+            [row for row in variant.get("media_overlays") or [] if isinstance(row, dict)]
+            if "overlay" in families
+            else None,
+            _visual_media_rows(job, variant) if removable else None,
+            {row["id"] for row in removable},
+        )
+        if layers is not None:
+            snapshot["layer_order"] = layers
     if "color_moments" in snapshot["allowed_op_families"]:
         snapshot["color_moments"] = _color_moments_snapshot(
             variant, removal_only=color_moments_removal_only(job, variant)
@@ -2271,6 +2348,13 @@ def project_editor_draft(
         derived = derived_phone_overlays(job, projected)
         if derived is not None:
             projected["media_overlays"] = derived
+    for key in ("orientation", "landscape_fit"):
+        if isinstance(payload.get(key), str):
+            projected[key] = payload[key]
+    if isinstance(payload.get("user_song"), dict):
+        from app.agents.editor_ops_v2.user_song import DRAFT_KEY  # noqa: PLC0415
+
+        projected[DRAFT_KEY] = copy.deepcopy(payload["user_song"])
     # KRI-1117: a Talking edit's background. An explicit key (even `None`: cleared) is the
     # draft's own; otherwise a never-Saved edit derives it from its pinned recipe.
     if "speaker_background" in payload:
@@ -2292,7 +2376,13 @@ def project_editor_draft(
     if payload.get("remove_music"):
         projected["music_track_id"] = None
     for key, value in (payload.get("caption_meta") or {}).items():
-        if key != "font_set":
+        if key == "appearance" and isinstance(value, dict):
+            # The Save merges the appearance key by key over the stored style.
+            projected["caption_editor_style"] = {
+                **(projected.get("caption_editor_style") or {}),
+                **value,
+            }
+        elif key != "font_set":
             projected["captions_enabled" if key == "enabled" else f"caption_{key}"] = value
         if key == "y_frac" and isinstance(value, (int, float)) and not isinstance(value, bool):
             from app.pipeline.phone_captions import caption_y_fields  # noqa: PLC0415
@@ -2486,6 +2576,17 @@ def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dic
     for key in ("caption_meta", "mix"):
         if previous.get(key) and current.get(key):
             merged[key] = {**previous[key], **current[key]}
+    song = current.get("user_song")
+    if isinstance(previous.get("user_song"), dict) and isinstance(song, dict):
+        # The Save's `removed` defaults to false: only a removal is an edit, never an un-removal.
+        merged["user_song"] = {
+            **previous["user_song"],
+            **{
+                key: value
+                for key, value in song.items()
+                if not (key == "removed" and value is False)
+            },
+        }
     if current.get("remove_music"):
         merged.pop("music_track_id", None)
     elif current.get("music_track_id"):
@@ -2760,6 +2861,10 @@ class _DraftState:
     # KRI-1350: the colour-moments lane `set_color_moments` built ({"moments", "end_fade"}).
     # Reaches the payload only when "color_moments" is in `changed`.
     color_moments: dict[str, Any] | None = None
+    # KRI-1394: the creator song's Save section (`EditorCommitUserSong` fields) this bundle set.
+    user_song: dict[str, Any] | None = None
+    # KRI-1394: the `orientation` / `landscape_fit` Save sections this bundle set.
+    video_shape: dict[str, Any] | None = None
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -3811,6 +3916,8 @@ def compile_editor_ops(
         camera_effects=state.camera_effects if "camera_effects" in changed else None,
         sound_effects=state.sound_effects if "sound_effects" in changed else None,
         media_overlays=state.media_overlays if "media_overlays" in changed else None,
+        user_song=EditorCommitUserSong(**state.user_song) if "user_song" in changed else None,
+        **(state.video_shape if "video_shape" in changed and state.video_shape else {}),
         **background_section,
     )
     text_diff: list[dict[str, Any]] = []
@@ -3881,7 +3988,7 @@ def _before_lanes(
                 else True,
             )
             if key == "enabled"
-            else variant.get(f"caption_{key}")
+            else variant.get(_CAPTION_META_VARIANT_KEYS.get(key, f"caption_{key}"))
             for key in state.caption_patch
             if key != "font_set"
         }
@@ -3907,6 +4014,23 @@ def _before_lanes(
         before["speaker_background"] = copy.deepcopy(background_current(state.job, variant))
     if "color_moments" in changed:
         before["color_moments"] = copy.deepcopy(variant.get("color_moments"))
+    if "video_shape" in changed:
+        from app.agents.editor_ops_v2.video_shape import current_shape  # noqa: PLC0415
+
+        before.update(
+            {
+                key: value
+                for key, value in current_shape(state.job, variant).items()
+                if key in (state.video_shape or {})
+            }
+        )
+    if "user_song" in changed:
+        from app.agents.editor_ops_v2.user_song import song_state  # noqa: PLC0415
+
+        song = song_state(state.job, variant) or {}
+        before["user_song"] = {
+            key: song[key] for key in ("volume", "window_start_s", "window_end_s") if key in song
+        }
     if "mix" in changed:
         mix: dict[str, Any] = {}
         if state.mix_level is not None and variant.get("mix") is not None:

@@ -3852,7 +3852,29 @@
         "src/apps/api/tests/fixtures/request_following/threads/vlog_default_title_disclosed.json",
         "src/apps/api/tests/fixtures/request_following/threads/vlog_exact_title_then_labels.json",
         "src/apps/api/tests/fixtures/request_following/threads/vlog_restructure.json",
-        "src/apps/api/tests/fixtures/request_following/threads/vlog_selection.json"
+        "src/apps/api/tests/fixtures/request_following/threads/vlog_selection.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_caption_style_scope.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_creator_song.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_layer_order.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_speaker_full_opening.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_video_shape.json"
+      ]
+    },
+    {
+      "id": "kri-1394-chat-editor-ops",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1394_chat_ops.py tests/kria/test_editor_capability_parity.py tests/agents/test_editor_ops_v2.py tests/evals/test_edit_copilot_evals.py",
+      "paths": [
+        "src/apps/api/app/agents/editor_ops_v2/user_song.py",
+        "src/apps/api/app/agents/editor_ops_v2/caption_lines.py",
+        "src/apps/api/app/agents/editor_ops_v2/layer_order.py",
+        "src/apps/api/app/agents/editor_ops_v2/video_shape.py",
+        "src/apps/api/prompts/edit_copilot_ops/user_song.txt",
+        "src/apps/api/prompts/edit_copilot_ops/caption_lines.txt",
+        "src/apps/api/prompts/edit_copilot_ops/layer_order.txt",
+        "src/apps/api/prompts/edit_copilot_ops/speaker_full_opening.txt",
+        "src/apps/api/prompts/edit_copilot_ops/video_shape.txt",
+        "src/apps/api/tests/kria/test_kri1394_chat_ops.py"
       ]
     }
   ]

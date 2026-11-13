@@ -127,7 +127,13 @@ log = structlog.get_logger()
 # "repairs"; the first ask of a turn is byte-identical.
 # v125 (KRI-1388): with no HISTORY STATE (every iPhone chat) the copilot says it cannot undo or
 # replay from chat instead of claiming there is nothing to undo or repeat.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v125"
+# v126 (KRI-1394): editor actions chat gained on iPhone edits, each taught in its own fragment and
+# printed only where the snapshot offers it, so every other prompt is byte-identical:
+# set_user_song (YOUR SONG, the creator's own song), patch_caption_line (one caption line's size
+# and place, `caption_line_placement`), set_layer_order (LAYER ORDER), remove_full_screen_opening
+# (BACKGROUND `full_screen_opening`) and set_video_shape (VIDEO SHAPE). An edit with a creator song
+# and the `user_song` family drops the AUDIO LIMITS line that said chat cannot change it.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v126"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2136,6 +2142,29 @@ def _format_snapshot(snapshot: dict) -> str:
         else:
             lines.append("(none)")
 
+    shape = snapshot.get("video_shape")
+    if isinstance(shape, dict):
+        axes = [
+            f"{key}={_field(shape.get(key), max_chars=20)} "
+            f"({'editable' if shape.get(f'{key}_editable') else 'not editable'})"
+            for key in ("orientation", "landscape_fit")
+        ]
+        lines.append("\nVIDEO SHAPE (change it with set_video_shape): " + "; ".join(axes))
+
+    layer_order = snapshot.get("layer_order")
+    if isinstance(layer_order, dict):
+        lines.append("\nLAYER ORDER (ids bottom to top; move one with set_layer_order):")
+        for name, label in (
+            ("cards", "cards on top of the video"),
+            ("pictures", "uploaded pictures"),
+        ):
+            ids = layer_order.get(name)
+            if isinstance(ids, list) and ids:
+                lines.append(
+                    f"{label}: "
+                    + ", ".join(repr(_field(value, max_chars=80)) for value in ids[:20])
+                )
+
     if isinstance(snapshot.get("color_moments"), dict):
         lane = snapshot["color_moments"]
         fade = _fmt_round3(lane.get("end_fade_s")) if lane.get("end_fade_s") else "none"
@@ -2187,6 +2216,23 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
             else:
                 lines.append("current: (none)")
+            if background.get("opening_removable") is True:
+                from app.agents.editor_ops_v2.background import is_opening  # noqa: PLC0415
+
+                opening = next(
+                    (
+                        span
+                        for span in background.get("full_screen_windows") or []
+                        if is_opening(span)
+                    ),
+                    {},
+                )
+                lines.append(
+                    "full_screen_opening: the speaker is full screen "
+                    f"{_fmt_round3(_first_number(opening, ('start_s',)))}-"
+                    f"{_fmt_round3(_first_number(opening, ('end_s',)))}s before the background "
+                    "(remove_full_screen_opening takes it away)"
+                )
             if background.get("color_available") is True:
                 lines.append("color: available (a plain colour can go behind the speaker)")
             elif background.get("color_available") is False:
@@ -2286,6 +2332,33 @@ def _format_snapshot(snapshot: dict) -> str:
             f"stroke={_fmt_round3(_first_number(meta, ('stroke_width',)))} "
             f"shadow={meta.get('shadow_enabled')!r}"
         )
+        placement = captions.get("line_placement")
+        if isinstance(placement, dict):
+            own = placement.get("lines") if isinstance(placement.get("lines"), dict) else {}
+            shared = {
+                key: _first_number(placement, (key,))
+                for key in ("size_px", "position_x_frac", "position_y_frac")
+            }
+            lines.append(
+                "caption_line_placement: available (patch_caption_line); every line: "
+                + " ".join(
+                    f"{key}={'default' if value is None else _fmt_round3(value)}"
+                    for key, value in shared.items()
+                )
+                + "; lines with their own: "
+                + (
+                    ", ".join(
+                        f"{_field(cue_id, max_chars=80)!r} "
+                        + " ".join(
+                            f"{key}={_fmt_round3(_safe_finite_float(value))}"
+                            for key, value in values.items()
+                        )
+                        for cue_id, values in list(own.items())[:20]
+                        if isinstance(values, dict)
+                    )
+                    or "(none)"
+                )
+            )
         capabilities = snapshot.get("editor_capabilities")
         if isinstance(capabilities, dict) and capabilities.get("caption_animation") is True:
             phases = meta.get("animation_phases")
@@ -2348,6 +2421,30 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
         else:
             lines.append("(none)")
+
+    song = snapshot.get("user_song")
+    if isinstance(song, dict):
+        lines.append("\nYOUR SONG (the creator's own song; change it with set_user_song):")
+        if song.get("removed"):
+            lines.append("removed in this draft (the camera's own sound plays)")
+        else:
+            least = _fmt_num(_first_number(song, ("min_window_s",)))
+            window = (
+                f"window: editable (keep at least {least}s)"
+                if song.get("window_editable")
+                else "window: locked (lip-sync)"
+                if song.get("mode") == "lipsync"
+                else "window: not editable"
+            )
+            lines.append(
+                f"mode={_field(song.get('mode'), max_chars=20)} "
+                f"length={_fmt_round3(_first_number(song, ('duration_s',)))}s "
+                f"plays {_fmt_round3(_first_number(song, ('window_start_s',)))}-"
+                f"{_fmt_round3(_first_number(song, ('window_end_s',)))}s of the song "
+                f"volume={_fmt_round3(_first_number(song, ('volume',)))} "
+                f"(volume {'editable' if song.get('volume_editable') else 'not editable'}); "
+                f"{window}; removable={song.get('removable') is True}"
+            )
 
     audio_notes = snapshot.get("audio_notes")
     if isinstance(audio_notes, list) and audio_notes:

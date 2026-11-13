@@ -1400,6 +1400,81 @@
    "app/tasks/kria_runtime.py",
    "Your video has no sound, so there's nothing to caption or cut. Record it again and check that nothing is covering the microphone.",
    "Videonda hiç ses yok, bu yüzden altyazı ekleyecek ya da kesecek bir şey bulamadım. Tekrar çek ve mikrofonun kapalı olmadığından emin ol."
+  ],
+  [
+   "app/agents/editor_ops_v2/background.py",
+   "Taking away the full-screen opening isn't available on this edit yet.",
+   "Tam ekran açılışı kaldırmak bu düzenlemede henüz yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/background.py",
+   "There is no full-screen opening of you to take away.",
+   "Kaldırılacak tam ekran bir açılışın yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/caption_lines.py",
+   "One caption line can't be sized or moved on its own from chat on this edit.",
+   "Bu düzenlemede tek bir altyazı satırını sohbetten ayrı boyutlandıramıyorum ya da taşıyamıyorum."
+  ],
+  [
+   "app/agents/editor_ops_v2/layer_order.py",
+   "A full-screen picture covers the video, so it has no place in front of or behind the pictures on top.",
+   "Tam ekran görsel videonun tamamını kaplar; üstteki görsellerin önünde ya da arkasında bir yeri yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/user_song.py",
+   "Lip-sync keeps the song where you filmed it.",
+   "Dudak senkronu şarkıyı çektiğin yerde tutar."
+  ],
+  [
+   "app/agents/editor_ops_v2/user_song.py",
+   "Your own song can't be changed from chat on this edit.",
+   "Bu düzenlemede kendi şarkını sohbetten değiştiremiyorum."
+  ],
+  [
+   "app/agents/editor_ops_v2/user_song.py",
+   "Your song is already taken off this edit.",
+   "Şarkın bu düzenlemeden zaten kaldırıldı."
+  ],
+  [
+   "app/agents/editor_ops_v2/video_shape.py",
+   "The video's shape can't be changed from chat on this edit.",
+   "Bu düzenlemede videonun biçimini sohbetten değiştiremiyorum."
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed how sideways clips fill the frame",
+   "Yan çekilmiş kliplerin kareyi doldurma biçimi değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the video's shape",
+   "Videonun biçimi değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the volume of your song",
+   "Şarkının ses düzeyi değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed where the captions sit",
+   "Altyazıların yeri değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed where your song plays",
+   "Şarkının çalan kısmı değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed which picture is on top",
+   "Hangi görselin üstte olduğu değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed your song",
+   "Şarkın kaldırıldı"
   ]
  ]
 }

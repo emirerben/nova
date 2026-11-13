@@ -42,6 +42,10 @@ LANES: tuple[str, ...] = (
     "background",
     "split_screen",
     "color_moments",
+    "user_song",
+    "caption_lines",
+    "layer_order",
+    "video_shape",
 )
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
 # prompts stay byte-identical (KRI-301).
@@ -60,6 +64,12 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     "background_focus": "speaker_background_focus.txt",
     # KRI-1350: colour moments, only while the colour-moments gate is open.
     "color_moments": "color_moments.txt",
+    # KRI-1394: the creator's own song, only on an edit that has one and the editor's capability.
+    "user_song": "user_song.txt",
+    # KRI-1394: one caption line's size and place, only where the editor offers the style scope.
+    "caption_lines": "caption_lines.txt",
+    # KRI-1394: portrait / landscape and bars / crop, only where the editor opens an axis.
+    "video_shape": "video_shape.txt",
 }
 # KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
@@ -80,6 +90,15 @@ OVERLAY_TILT_FRAGMENT = "overlay_tilt.txt"
 # and a protocol-33 build), so a closed gate leaves the slide prompt identical.
 SLIDE_TILT_ZOOM_FRAGMENT = "slide_tilt_zoom.txt"
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
+# Lanes whose `<lane>.txt` is appended only by `family_fragments` (never by `prompt_fragments`).
+_GATED_LANES = (
+    "split_screen",
+    "color_moments",
+    "user_song",
+    "caption_lines",
+    "layer_order",
+    "video_shape",
+)
 
 
 def read_fragment(name: str) -> str:
@@ -200,6 +219,13 @@ def family_fragments(snapshot: object) -> str:
         names.append(SLIDE_TILT_ZOOM_FRAGMENT)
     if snapshot.get("split_screen_available") is True:
         names.append("split_screen.txt")
+    background = snapshot.get("background")
+    if isinstance(background, dict) and background.get("opening_removable") is True:
+        # KRI-1394: only while the speaker has a full-screen opening chat may take away.
+        names.append("speaker_full_opening.txt")
+    if isinstance(snapshot.get("layer_order"), dict):
+        # KRI-1394: only while a stack of pictures can be reordered.
+        names.append("layer_order.txt")
     parts: list[str] = []
     for name in names:
         try:
@@ -219,9 +245,8 @@ def prompt_fragments(surface: str | None = None) -> str:
     names = [
         f"{lane}.txt"
         for lane in LANES
-        # These two lanes' fragments are family-gated (see `family_fragments`).
-        if lane not in ("split_screen", "color_moments")
-        and SURFACE_ONLY_LANES.get(lane) in (None, surface)
+        # These lanes' fragments are family-gated (see `family_fragments`).
+        if lane not in _GATED_LANES and SURFACE_ONLY_LANES.get(lane) in (None, surface)
     ]
     for spec in lane_specs():
         if spec.prompt_fragment and spec.prompt_fragment not in names:
