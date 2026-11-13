@@ -11537,10 +11537,12 @@ extension NativeEditorSession {
         return opening
     }
 
+    static let splitPanelFullMessage = "This panel is full. Shorten a clip in it to make room."
+
     func addSplitPanelClip(sectionID: String, panel: Int, fileURL: URL) async {
         guard canEditSplitScreen, !isAddingClip else { return }
         guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
-            splitScreenActionError = "This panel is full. Shorten a clip in it to make room."
+            splitScreenActionError = Self.splitPanelFullMessage
             return
         }
         splitScreenActionError = nil
@@ -11553,7 +11555,7 @@ extension NativeEditorSession {
     func addSplitPanelClip(sectionID: String, panel: Int, sourceClipIndex: Int) {
         guard canEditSplitScreen, splitScreenSourceChoices.contains(where: { $0.clipIndex == sourceClipIndex }) else { return }
         guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
-            splitScreenActionError = "This panel is full. Shorten a clip in it to make room."
+            splitScreenActionError = Self.splitPanelFullMessage
             return
         }
         let traits = sourceTraits(sourceClipIndex)
@@ -11579,7 +11581,7 @@ extension NativeEditorSession {
         let traits = sourceTraits(clipIndex)
         let length = min(traits.isPhoto ? Self.addedClipDurationS : traits.measured ?? 0, opening.end - opening.start)
         guard length >= minimumClipDuration else {
-            splitScreenActionError = traits.isPhoto ? "This panel is full. Shorten a clip in it to make room." : "This video is too short to add."
+            splitScreenActionError = traits.isPhoto ? Self.splitPanelFullMessage : "This video is too short to add."
             return
         }
         splitScreenActionError = nil

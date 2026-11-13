@@ -334,28 +334,37 @@ struct NativeSplitPanel: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                let canAdd = session.canAddToSplitPanel(sectionID: sectionID, panel: panel)
+                let canLoop = Self.hasRoomToLoop(session: session, context: context, panel: panel)
+                let reason = session.canEditSplitScreen ? NativeEditorSession.splitPanelFullMessage : nil
                 HStack(spacing: 8) {
                     actionRow("Add to " + title, icon: "plus", id: "native-editor-split-add-\(panel)",
-                              enabled: session.canAddToSplitPanel(sectionID: sectionID, panel: panel)) {
+                              enabled: canAdd, reason: reason) {
                         target = panel
                     }
                     actionRow("Loop to fill", icon: "repeat", id: "native-editor-split-loop-\(panel)",
-                              label: "Loop \(title) to fill", enabled: Self.hasRoomToLoop(session: session, context: context, panel: panel)) {
+                              label: "Loop \(title) to fill", enabled: canLoop, reason: reason) {
                         session.loopFillSplitPanel(sectionID: sectionID, panel: panel)
                     }
+                }
+                if let reason, !canAdd || !canLoop {
+                    Text(reason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("native-editor-split-full-reason-\(panel)")
                 }
             }
         }
     }
 
     private func actionRow(_ title: String, icon: String, id: String, label: String? = nil, enabled: Bool = true,
-                           action: @escaping () -> Void) -> some View {
+                           reason: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon).lineLimit(1).minimumScaleFactor(0.8)
         }
         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
         .disabled(!enabled)
         .accessibilityLabel(label ?? title)
+        .accessibilityHint(enabled ? "" : reason ?? "")
         .accessibilityIdentifier(id)
     }
 
@@ -411,7 +420,7 @@ private struct NativeSplitFillView: View {
                 Text(caption).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 Spacer()
                 if explicit {
-                    Button("Cancel", action: cancel)
+                    Button("Back", action: cancel)
                         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
                         .accessibilityIdentifier("native-editor-split-add-cancel")
                 } else if remaining > 1 {
