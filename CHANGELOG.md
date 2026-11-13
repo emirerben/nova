@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.190.0] - 2026-11-13
+
+### Changed
+- fix(ci): close merge-guard hook bypasses and fail closed (KRI-1396) (#2293) <!-- release-pr: 2293 -->
+
 ## [0.88.189.0] - 2026-11-13
 
 ### Changed
