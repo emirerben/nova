@@ -15344,6 +15344,7 @@ def _phone_talking_caption_text(
         detected_lang,
         model=settings.caption_correction_model,
         enabled=settings.subtitled_caption_correction_enabled,
+        job_id=job_id,
         trusted_aliases=None,
     )
     cues = resplit_cues_into_sentences(cues)
@@ -17371,6 +17372,7 @@ def _run_phone_narrated_job(
                     detected_lang,
                     model=settings.caption_correction_model,
                     enabled=settings.subtitled_caption_correction_enabled,
+                    job_id=job_id,
                     trusted_aliases=None,
                     # KRI-1361: names the project's own Visuals/footage spell.
                     spelling_hints=_narrated_caption_spelling_hints(
@@ -36892,6 +36894,7 @@ def _render_subtitled_variant(
                     detected_lang,
                     model=settings.caption_correction_model,
                     enabled=settings.subtitled_caption_correction_enabled,
+                    job_id=job_id,
                     trusted_aliases=trusted_caption_aliases,
                 )
             with _stage_timer("caption_preparation", counts={"cue_count": len(cues)}):
@@ -37070,6 +37073,7 @@ def _render_subtitled_variant(
                 detected_lang,
                 model=settings.caption_correction_model,
                 enabled=settings.subtitled_caption_correction_enabled,
+                job_id=job_id,
                 trusted_aliases=trusted_caption_aliases,
             )
             cues = resplit_cues_into_sentences(cues)
@@ -37180,6 +37184,7 @@ def _render_subtitled_variant(
                     detected_lang,
                     model=settings.caption_correction_model,
                     enabled=settings.subtitled_caption_correction_enabled,
+                    job_id=job_id,
                 )
         # One SENTENCE per caption: whisper emits no punctuation (14-word chunk cues);
         # the correction adds it — re-split so captions show one sentence at a time
@@ -39633,6 +39638,7 @@ def _run_retranscribe_subtitled(
             lang,
             model=settings.caption_correction_model,
             enabled=settings.subtitled_caption_correction_enabled,
+            job_id=job_id,
         )
         # One sentence per caption (same as the first render) — see _render_subtitled.
         cues = resplit_cues_into_sentences(cues)

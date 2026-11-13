@@ -19,9 +19,9 @@ Provider = Literal["google", "openai", "anthropic"]
 SOL = "gpt-6.1-sol"
 SONNET = "claude-sonnet-5-5"
 
-# Named here so no other module spells them. They are not token-priced through this table:
-# Whisper and the generated-media models settle a fixed or per-minute cost, and the caption
-# correction default is outside the ledger until KRI-1395.
+# Named here so no other module spells them. Whisper and the generated-media models settle a
+# fixed or per-minute cost instead of token rates; ``audio_minute_usd`` prices Whisper. The
+# caption correction and translation default is a registered token-priced text model.
 WHISPER = "whisper-1"
 CAPTION_CORRECTION = "gpt-4o"
 IMAGE_MODEL = "gpt-image-2.5-sunburst"
@@ -79,6 +79,11 @@ def _r(i: str, o: str, c: str) -> Rates:
     return Rates(Decimal(i), Decimal(o), Decimal(c))
 
 
+# USD per minute of audio, for models billed by duration. Not in ``_SPECS``: an entry there
+# would route Whisper to the text providers (``provider_of``), and it takes audio, not a prompt.
+# OpenAI's Whisper page, verified 2026-10-11.
+_AUDIO_MINUTE_USD = {WHISPER: Decimal("0.006")}
+
 _GOOGLE_CEILING = TokenPrice(_r("4.00", "18.00", "0.40"))
 _GEMINI3_EFFORTS = ("minimal", "low", "medium", "high")
 _GEMINI3_LADDER = ("high", "medium", "low")
@@ -95,7 +100,11 @@ def _gemini(name: str, price: TokenPrice, *, tools: bool = True) -> ModelSpec:
 
 # Gemini rates: the official Developer API paid tier, 2026-09-04 (3.6-3.8 Flash are
 # promotional through 2026-12-31). OpenAI and Anthropic rates: the providers' price pages,
-# 2026-11-02. A change here needs a new ``ai_cost_control.PRICE_VERSION``.
+# 2026-11-02. gpt-4o ($2.50 / $10.00 / $1.25 cached per million tokens) is the published list
+# rate, added 2026-11-13 and still to be confirmed against the price page; reservations for
+# it carry ``openai_metering.PRICE_VERSION``, so the intent-review preregistration that pins
+# ``ai_cost_control.PRICE_VERSION`` stays valid. A change to a rate already here needs a new
+# ``ai_cost_control.PRICE_VERSION``.
 _SPECS = (
     ModelSpec(
         SOL,
@@ -114,6 +123,15 @@ _SPECS = (
         TokenPrice(_r("2", "10", ".10"), cache_write_surcharge=(Decimal(".5"), Decimal("2"))),
         supports_media=False,
         supports_tools=True,
+    ),
+    ModelSpec(
+        CAPTION_CORRECTION,
+        "openai",
+        (),
+        (),
+        TokenPrice(_r("2.50", "10.00", "1.25")),
+        supports_media=False,
+        supports_tools=False,
     ),
     _gemini3(
         "gemini-3.1-pro",
@@ -178,6 +196,12 @@ def exact_spec(name: str) -> ModelSpec | None:
     """The entry registered under exactly this name (a configured non-Google model)."""
 
     return next((spec for spec in _SPECS if spec.name == name), None)
+
+
+def audio_minute_usd(name: str) -> Decimal | None:
+    """USD per audio minute for a duration-priced model (Whisper), or None."""
+
+    return _AUDIO_MINUTE_USD.get((name or "").strip().lower())
 
 
 def provider_of(name: str | None) -> Provider | None:

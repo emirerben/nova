@@ -39,6 +39,7 @@ from app.pipeline.caption_language import (
     caption_language_verdict,
     language_name,
 )
+from app.services.openai_metering import CAPTION_TRANSLATION_FEATURE, metered_chat_completion
 
 log = structlog.get_logger()
 
@@ -146,12 +147,17 @@ def _llm_translate_lines(
     target_language: str,
     glossary: list[str],
     model: str,
+    job_id: str | None = None,
 ) -> list[str]:
     """One structured model call. The answer is still untrusted: the caller validates it."""
     import openai  # noqa: PLC0415
 
     client = openai.OpenAI(api_key=settings.openai_api_key, max_retries=_MAX_RETRIES)
-    response = client.chat.completions.create(
+    response = metered_chat_completion(
+        client,
+        feature=CAPTION_TRANSLATION_FEATURE,
+        job_id=job_id,
+        attempts=1 + _MAX_RETRIES,
         model=model,
         temperature=0,
         response_format={"type": "json_object"},
@@ -384,6 +390,7 @@ def _ensure_caption_language(
             target_language=language_name(wanted),
             glossary=terms,
             model=chosen_model,
+            job_id=job_id,
         )
     except Exception as exc:  # noqa: BLE001 - fail open: keep the spoken-language words
         return fail("translation_failed", error=type(exc).__name__, message=str(exc)[:200])

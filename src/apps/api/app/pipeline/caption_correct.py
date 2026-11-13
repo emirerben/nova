@@ -23,6 +23,7 @@ from app.agents.model_registry import CAPTION_CORRECTION
 from app.config import settings
 from app.pipeline.caption_language import LANGUAGE_NAMES
 from app.pipeline.caption_spelling import _merge_words, _split_word
+from app.services.openai_metering import CAPTION_CORRECTION_FEATURE, metered_chat_completion
 from app.text_fold import fold_case
 
 log = structlog.get_logger()
@@ -167,13 +168,17 @@ def _llm_propose_substitutions(
     *,
     trusted_aliases: list[str],
     model: str,
+    job_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """One structured model call. The returned data is still fully untrusted."""
 
     import openai  # noqa: PLC0415
 
     client = openai.OpenAI(api_key=settings.openai_api_key)
-    response = client.chat.completions.create(
+    response = metered_chat_completion(
+        client,
+        feature=CAPTION_CORRECTION_FEATURE,
+        job_id=job_id,
         model=model,
         temperature=0,
         response_format={"type": "json_object"},
@@ -205,6 +210,7 @@ def _llm_correct_lines(
     *,
     model: str,
     spelling_hints: Sequence[str] = (),
+    job_id: str | None = None,
 ) -> list[str]:
     """Pre-v2 correction contract retained only for non-Smart/v1 byte stability.
 
@@ -220,7 +226,10 @@ def _llm_correct_lines(
         system += _LEGACY_HINTS_SENTENCE
         user["spelling_hints"] = list(spelling_hints)
     client = openai.OpenAI(api_key=settings.openai_api_key)
-    response = client.chat.completions.create(
+    response = metered_chat_completion(
+        client,
+        feature=CAPTION_CORRECTION_FEATURE,
+        job_id=job_id,
         model=model,
         temperature=0,
         response_format={"type": "json_object"},
@@ -712,6 +721,7 @@ def _legacy_correct_caption_cues(
     *,
     model: str,
     spelling_hints: SpellingHints | Sequence[str] = (),
+    job_id: str | None = None,
 ) -> list[dict[str, Any]]:
     texts = [str(cue.get("text", "")) for cue in cues]
     hint_set = _coerce_spelling_hints(spelling_hints)
@@ -720,7 +730,11 @@ def _legacy_correct_caption_cues(
     try:
         # Passed only when present, so a call without hints stays exactly as before.
         corrected = _llm_correct_lines(
-            texts, language, model=model, **({"spelling_hints": hints} if hints else {})
+            texts,
+            language,
+            model=model,
+            **({"spelling_hints": hints} if hints else {}),
+            **({"job_id": job_id} if job_id else {}),
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("caption_correction_failed", error=str(exc)[:200], language=language)
@@ -844,6 +858,7 @@ def correct_caption_cues(
     enabled: bool = True,
     trusted_aliases: list[str] | None = None,
     spelling_hints: SpellingHints | Sequence[str] = (),
+    job_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Apply only model-proposed substitutions that pass deterministic alignment.
 
@@ -860,7 +875,7 @@ def correct_caption_cues(
     model = (model or "").strip() or settings.caption_correction_model or CAPTION_CORRECTION
     if trusted_aliases is None:
         return _legacy_correct_caption_cues(
-            cues, language, model=model, spelling_hints=spelling_hints
+            cues, language, model=model, spelling_hints=spelling_hints, job_id=job_id
         )
     aliases = [alias for raw in trusted_aliases if (alias := _safe_display_name(str(raw)))]
     if not aliases:
@@ -874,6 +889,7 @@ def correct_caption_cues(
             language,
             trusted_aliases=aliases,
             model=model,
+            job_id=job_id,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("caption_correction_failed", error=type(exc).__name__, language=language)

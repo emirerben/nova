@@ -786,8 +786,8 @@ def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
     Returns a dict {deleted, cutoff, batches} for observability.
 
     Template- and track-scoped agent_run rows back their dedicated debug
-    views and are bounded by parent count. Job- and creator-session-scoped
-    rows grow with usage, so both use the configured retention window.
+    views and are bounded by parent count. Job-, creator-session- and unowned
+    rows grow with usage, so all use the configured retention window.
     Expired creator sessions are deleted after the same window; their events,
     execution receipts, and remaining session agent runs cascade with them.
 
@@ -814,7 +814,8 @@ def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
                     DELETE FROM agent_run
                      WHERE id IN (
                        SELECT id FROM agent_run
-                        WHERE (job_id IS NOT NULL OR creator_agent_session_id IS NOT NULL)
+                        WHERE (job_id IS NOT NULL OR creator_agent_session_id IS NOT NULL
+                               OR owner_label IS NOT NULL)
                           AND created_at < :cutoff
                         LIMIT :batch
                      )

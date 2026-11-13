@@ -2415,6 +2415,9 @@ class AgentRun(Base):
         ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
         nullable=True,
     )
+    # A run with no owner row above (eval harness, background call) keeps its raw
+    # ``RunContext.job_id`` (or "unowned") here, so the fleet report still counts it.
+    owner_label: Mapped[str | None] = mapped_column(Text, nullable=True)
     segment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
     agent_name: Mapped[str] = mapped_column(Text, nullable=False)
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2455,9 +2458,10 @@ class AgentRun(Base):
         CheckConstraint(
             "(job_id IS NOT NULL) OR (template_id IS NOT NULL) "
             "OR (music_track_id IS NOT NULL) OR (creator_agent_session_id IS NOT NULL) "
-            "OR (plan_item_id IS NOT NULL)",
+            "OR (plan_item_id IS NOT NULL) OR (owner_label IS NOT NULL)",
             name="ck_agent_run_has_owner",
         ),
+        Index("idx_agent_run_created_at", "created_at"),
         Index("idx_agent_run_job_id_created", "job_id", "created_at"),
         Index("idx_agent_run_plan_item_id_created", "plan_item_id", "created_at"),
         Index("idx_agent_run_agent_name", "agent_name"),
@@ -2547,6 +2551,7 @@ class AiCostReservation(Base):
             "estimated_cost_usd >= 0 AND (settled_cost_usd IS NULL OR settled_cost_usd >= 0)",
             name="ck_ai_cost_reservations_costs_nonnegative",
         ),
+        Index("idx_ai_cost_reservations_created_at", "created_at"),
         Index("idx_ai_cost_reservations_budget", "environment", "period_start", "status"),
         Index("idx_ai_cost_reservations_purpose", "usage_purpose", "period_start", "status"),
         Index("idx_ai_cost_reservations_creator_day", "creator_id", "feature", "created_at"),
