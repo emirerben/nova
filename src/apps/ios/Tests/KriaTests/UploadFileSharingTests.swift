@@ -105,6 +105,28 @@ func fileIdentity(_ url: URL) -> UInt64? {
         XCTAssertEqual(try String(contentsOf: again, encoding: .utf8), "a recorded take", "discarding the take leaves the staged name for crash recovery")
     }
 
+    /// A hardlink is refused across volumes (EXDEV), which one test volume cannot produce, so the refusal is injected: the take
+    /// is still staged, as a real copy with its own identity (the prewarm then simply misses and the upload does the work).
+    func testStagingFallsBackToACopyWhenTheLinkIsRefused() throws {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "KriaTestTakes", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        cleanup.append(support)
+        let take = support.appending(path: "take-\(UUID().uuidString).mov")
+        try Data("a recorded take".utf8).write(to: take)
+        var refusals = 0
+
+        let staged = try BackgroundUploadCoordinator.stageIntoRecoveryDirectory(take) { _, _ in
+            refusals += 1
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSUnderlyingErrorKey: POSIXError(.EXDEV)])
+        }
+        cleanup.append(staged)
+
+        XCTAssertEqual(refusals, 1)
+        XCTAssertNotEqual(fileIdentity(staged), fileIdentity(take), "a copy, not a link")
+        XCTAssertEqual(try String(contentsOf: staged, encoding: .utf8), "a recorded take")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: take.path), "the take is untouched")
+    }
+
     // MARK: upload file (copy 4)
 
     func testUploadFileSharesBytesWithAnAppOwnedSource() throws {

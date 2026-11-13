@@ -2048,13 +2048,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// reviewed it (`SourcePrewarmer`) be recognised here: both names are one inode, so they have one `FileIdentity`.
     /// The take keeps its own name, so Retake and Discard still delete it without touching the staged one, and the
     /// staged one is only ever deleted.
-    static func stageIntoRecoveryDirectory(_ source: URL) throws -> URL {
+    static func stageIntoRecoveryDirectory(_ source: URL, link: (URL, URL) throws -> Void = { try FileManager.default.linkItem(at: $0, to: $1) }) throws -> URL {
         let destination = try recoveryDestination(for: source)
         if isInTemporaryDirectory(source) {
             // A failed rename (e.g. tmp on another volume) is not an error, only a missed saving.
             if (try? FileManager.default.moveItem(at: source, to: destination)) != nil { return destination }
         }
-        if isAppOwned(source), (try? FileManager.default.linkItem(at: source, to: destination)) != nil { return destination }
+        if isAppOwned(source), (try? link(source, destination)) != nil { return destination }
         return try copy(source, to: destination)
     }
 
