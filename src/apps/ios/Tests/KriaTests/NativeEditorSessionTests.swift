@@ -2809,6 +2809,30 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    func testAddedSplitPanelPhotoMovesThePlayheadOntoTheNewBlock() async throws {
+        let (session, uploads, footageTarget) = try await Self.devicePlacementSession()
+        let lead = EditorTimelineSlot(id: "lead", clipIndex: 0, inS: 0, durationS: 3, raw: ["source_duration_s": .number(4)])
+        var member = EditorTimelineSlot(id: "anchor", clipIndex: 0, inS: 0, durationS: 2, raw: ["source_duration_s": .number(4)])
+        member.setSplitMembership(sectionID: "s", panelIndex: 0, offset: 0)
+        var document = EditorDocument(clips: [lead, member], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.revision.baseGeneration = footageTarget.baseGeneration
+        document.splitScreenSections = [.init(id: "s", durationS: 9, panelCount: 2)]
+        session.replaceDocumentForTesting(document)
+        let target = EditorSourceRegistrationTarget(itemID: footageTarget.itemID, variantID: footageTarget.variantID,
+            clientImportID: UUID(), baseGeneration: footageTarget.baseGeneration, guidedRevisionNumber: 7, sourceKind: .visual)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil)
+        uploads.beginEditorPlacement(placement)
+        session.useMediaUploads(uploads)
+        session.stageSplitPanelPlacementForTesting(placement.id, sectionID: "s", panel: 1, offset: 0)
+        session.currentTime = 0
+        let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "photo",
+            sourceIndex: 4, source: nil, error: nil, reasonCode: nil, retryable: false)
+        try await session.placeEditorSource(placement, response: response)
+        let block = try XCTUnwrap(session.timelineClips.first { $0.slotID == placement.id.uuidString })
+        XCTAssertEqual(block.start, 3, accuracy: 1e-9, "The new block sits in the section, after the lead clip")
+        XCTAssertEqual(session.currentTime, block.start, accuracy: 1e-9, "The playhead lands on the block so the creator sees it")
+    }
+
     func testInvalidTimelineIsAPermanentFailureThatTellsTheCreatorToUndo() {
         let error = RecipeError.invalidTimeline
         XCTAssertEqual(NativeEditorSession.sourcePreviewMessage(for: error), "This change can’t be previewed. Undo it to get the preview back.")
