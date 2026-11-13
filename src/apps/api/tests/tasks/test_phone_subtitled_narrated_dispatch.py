@@ -52,6 +52,11 @@ from tests.pipeline.test_phone_voiceover_montage_plan import _binding
 from tests.tasks.test_generative_build import _Meta
 from tests.tasks.test_generative_build_silence_cut import DURATION, SILENCES, _cut_words
 
+pytestmark = [
+    pytest.mark.journey("kri-590-voiceover-cues"),
+    pytest.mark.journey("kri-719-talking-multi-clip"),
+]
+
 
 def _job_and_session(monkeypatch, *, assembly_plan: dict, all_candidates: dict):
     job = SimpleNamespace(

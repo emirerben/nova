@@ -32,6 +32,8 @@ from app.kria.brief_checks import check_requirement, plan_facts_from_phone_varia
 from app.kria.reply_language import bind_reply_language, release_reply_language
 from app.tasks import kria_runtime
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 GENERATION = "d9ff5ff3a2184bfda7719201a4767d7c"
 DEFAULT = "Your voiceover edit is ready."
 

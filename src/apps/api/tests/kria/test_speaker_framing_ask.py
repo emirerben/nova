@@ -11,6 +11,8 @@ from app.kria.speaker_framing_ask import (
     requirement_asks_vertical_framing,
 )
 
+pytestmark = pytest.mark.journey("kri-547-speaker-framing")
+
 # The prod brief (thread 9b625eec, 2026-10-08): r1 is the framing ask.
 KADIKOY_R1 = "yatay videoyu dikey (9:16) formata getir ve yüzü hep kadrajda tut"
 

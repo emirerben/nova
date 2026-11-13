@@ -87,20 +87,45 @@ def validate_execution(value):
     return value
 
 
-def manifest():
+def manifest(root=ROOT):
+    """Groups derived from the UI test sources, plus the hand-kept inputs.
+
+    The file holds only what source cannot say: each XCTestCase class's feature
+    group (`classes`), the few tests that differ from it (`overrides`), the
+    smoke subset, and which app sources map to a group. A test method added,
+    renamed or removed inside a classified class needs no edit. A class absent
+    from `classes` is not silently skipped: its tests join smoke, which every
+    selection runs, until `make sync-test-registries` reports it to classify.
+    """
     data = json.loads(MANIFEST.read_text())
-    if set(data["groups"]) != {"smoke", "creation", "projects", "editor"}:
+    classes, overrides = data["classes"], data["overrides"]
+    inventory = discovered(root)
+    names = {test.removeprefix("KriaUITests/") for test in inventory}
+    if (
+        not set(classes.values()) <= set(FEATURES)
+        or not set(overrides.values()) <= set(FEATURES)
+        or not set(overrides) <= names
+        or not set(data["smoke"]) <= inventory
+        or len(data["smoke"]) != len(set(data["smoke"]))
+    ):
         raise ValueError("Invalid UI group manifest")
-    for group, tests in data["groups"].items():
-        if (
-            not tests
-            or len(tests) != len(set(tests))
-            or any(not re.fullmatch(r"KriaUITests/\w+/test\w+", test) for test in tests)
-        ):
-            raise ValueError(f"Empty or invalid UI group: {group}")
-    if not set(data["sources"].values()) <= {"creation", "projects", "editor"}:
+    if not set(data["sources"].values()) <= set(FEATURES):
         raise ValueError("Invalid source mapping")
-    return data
+    groups = {group: [] for group in FEATURES}
+    unclassified = []
+    for test in sorted(inventory):
+        name = test.removeprefix("KriaUITests/")
+        group = overrides.get(name) or classes.get(name.split("/")[0])
+        (groups[group] if group else unclassified).append(test)
+    for group, tests in groups.items():
+        if not tests:
+            raise ValueError(f"Empty or invalid UI group: {group}")
+    groups["smoke"] = sorted(data["smoke"]) + unclassified
+    return {
+        "groups": groups,
+        "sources": data["sources"],
+        "unclassified": sorted({test.split("/")[1] for test in unclassified}),
+    }
 
 
 def discovered(root=ROOT):
@@ -120,15 +145,114 @@ def discovered(root=ROOT):
     return tests
 
 
+def stale_entries(root=ROOT):
+    """Hand-kept entries that name a class, test or source that no longer exists."""
+    data = json.loads(MANIFEST.read_text())
+    inventory = discovered(root)
+    names = {test.removeprefix("KriaUITests/") for test in inventory}
+    classes = {name.split("/")[0] for name in names}
+    return {
+        "classes": sorted(set(data["classes"]) - classes),
+        "overrides": sorted(set(data["overrides"]) - names),
+        "smoke": sorted(set(data["smoke"]) - inventory),
+        "sources": sorted(path for path in data["sources"] if not (root / path).is_file()),
+    }
+
+
+def check(root=ROOT):
+    """Problems that would make UI selection wrong or fall back to full, each with its fix."""
+    problems = []
+    try:
+        manifest(root)
+        stale = stale_entries(root)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return [f"UI registry unreadable: {error}"]
+    for kind, names in stale.items():
+        for name in names:
+            problems.append(f"ui-test-groups.json {kind} entry {name!r} no longer exists")
+    if problems:
+        problems.append(
+            "Fix: run `make sync-test-registries` to follow renamed UI test files; "
+            "delete an entry whose test was removed"
+        )
+    return problems
+
+
+def unclassified(root=ROOT):
+    return manifest(root)["unclassified"]
+
+
 def inventory_matches(root=ROOT):
-    data = manifest()
-    classified = set().union(*(set(v) for v in data["groups"].values()))
-    feature_tests = set().union(
-        *(set(data["groups"][g]) for g in ("creation", "projects", "editor"))
-    )
-    return (
-        classified == discovered(root) and set(data["groups"]["smoke"]) <= feature_tests
-    )
+    """Whether the registry still describes this tree well enough to select from."""
+    try:
+        manifest(root)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return True
+
+
+def git_renames(base, root=ROOT):
+    raw = subprocess.run(
+        ["git", "diff", "-M", "--name-status", "-z", base],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().split("\0")
+    renames, index = {}, 0
+    while index < len(raw) and raw[index]:
+        if raw[index].startswith("R"):
+            renames[raw[index + 1]] = raw[index + 2]
+            index += 3
+        else:
+            index += 2
+    return renames
+
+
+def sync(root=ROOT, base=None):
+    """Follow git renames into the hand-kept entries; return what changed."""
+    if base is None:
+        base = subprocess.run(
+            ["git", "merge-base", "HEAD", "origin/main"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    data = json.loads(MANIFEST.read_text())
+    changed = []
+    for old, new in sorted(git_renames(base, root).items()):
+        if old in data["sources"] and new not in data["sources"]:
+            data["sources"][new] = data["sources"].pop(old)
+            changed.append(f"{old} -> {new}")
+        if not (old.startswith(UI_TEST_ROOT) and new.startswith(UI_TEST_ROOT)):
+            continue
+        before = subprocess.run(
+            ["git", "show", f"{base}:{old}"], cwd=root, capture_output=True, text=True
+        ).stdout
+        before_classes = re.findall(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b", before)
+        after_classes = re.findall(
+            r"\bclass\s+(\w+)\s*:\s*XCTestCase\b", (root / new).read_text()
+        )
+        if (
+            len(before_classes) == len(after_classes) == 1
+            and before_classes != after_classes
+            and before_classes[0] in data["classes"]
+        ):
+            old_class, new_class = before_classes[0], after_classes[0]
+            data["classes"][new_class] = data["classes"].pop(old_class)
+            for table in ("overrides",):
+                data[table] = {
+                    (new_class + key[len(old_class) :] if key.startswith(old_class + "/") else key): value
+                    for key, value in data[table].items()
+                }
+            data["smoke"] = [
+                test.replace(f"KriaUITests/{old_class}/", f"KriaUITests/{new_class}/")
+                for test in data["smoke"]
+            ]
+            changed.append(f"class {old_class} -> {new_class}")
+    data["classes"] = dict(sorted(data["classes"].items()))
+    MANIFEST.write_text(json.dumps(data, indent=2) + "\n")
+    return changed
 
 
 def changed_tests(source, lines):
@@ -202,9 +326,7 @@ def select_groups(paths, root=ROOT, focused=None):
     diff touched (see changed_tests); such a file selects only those tests.
     """
     try:
-        if not inventory_matches(root):
-            return "full", "UI inventory changed or contains unclassified tests."
-        data = manifest()
+        data = manifest(root)
         sources = data["sources"]
         inventory = discovered(root)
         if not paths:
@@ -246,9 +368,7 @@ def expected_tests(value, root=ROOT):
         raise ValueError("UI execution cannot select none")
     if value == "full":
         return discovered(root)
-    if not inventory_matches(root):
-        raise ValueError("UI inventory changed; run full coverage")
-    data = manifest()
+    data = manifest(root)
     group, tests = parse_selection(value)
     selected = {f"KriaUITests/{test}" for test in tests}
     unknown = selected - discovered(root)
@@ -537,6 +657,20 @@ def load_report(bundle):
 
 
 def main():
+    if sys.argv[1:2] in (["check"], ["sync"]):
+        problems = []
+        if sys.argv[1] == "sync":
+            print("\n".join(sync()) or "UI registry already follows git renames")
+        problems = check()
+        for name in unclassified() if not problems else ():
+            print(
+                f"UI test class {name} is not in ui-test-groups.json classes: its tests "
+                "run in every selection until you add it with a creation, projects or "
+                "editor group"
+            )
+        for problem in problems:
+            print(f"ui registry: {problem}", file=sys.stderr)
+        raise SystemExit(1 if problems else 0)
     command, value = sys.argv[1:3]
     expected = expected_tests(value)
     # Long selections (main's full suite, an editor PR's group) split across

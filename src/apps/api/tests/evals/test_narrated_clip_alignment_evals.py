@@ -8,6 +8,8 @@ import pytest
 
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
 
+pytestmark = pytest.mark.journey("kri-590-voiceover-cues")
+
 AGENT_DIR = "narrated_clip_alignment"
 AGENT_NAME = "nova.compose.narrated_clip_alignment"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)

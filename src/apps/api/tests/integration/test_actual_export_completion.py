@@ -36,7 +36,8 @@ from tests.routes.test_device_render import (  # noqa: F401
     scalar,
 )
 
-pytestmark = pytest.mark.timeout(240)  # two real candidate decodes plus codec fixture creation
+# timeout covers two real candidate decodes plus codec fixture creation
+pytestmark = [pytest.mark.timeout(240), pytest.mark.journey("kri-492-length-ownership")]
 
 
 @pytest.mark.parametrize("options", [{}, {"order": ("b", "a")}, {"title": False}, {"gain": 2}])

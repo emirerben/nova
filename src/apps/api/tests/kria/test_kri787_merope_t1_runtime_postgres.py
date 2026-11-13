@@ -75,6 +75,11 @@ from tests.kria.test_kri787_merope_t1_replay import (
 )
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 
+pytestmark = [
+    pytest.mark.journey("kri-551-consented-retakes", step="kri-551-original-named-cut"),
+    pytest.mark.journey("kri-787-merope-t1-replay"),
+]
+
 _db_name = make_url(settings.database_url).database or ""
 if not _db_name.endswith("_test"):
     pytest.skip(f"refusing to write to non-test database {_db_name!r}", allow_module_level=True)

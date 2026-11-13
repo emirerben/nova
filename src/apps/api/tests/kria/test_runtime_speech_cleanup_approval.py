@@ -30,6 +30,8 @@ from app.kria.runtime import (
 )
 from app.models import SpeechCleanupAnalysis
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 
 def _body(**overrides: object) -> ApprovalDecisionBody:
     defaults: dict[str, object] = dict(

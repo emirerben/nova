@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.journey("kri-798-render-worker-restart")
+
 
 class _SyncThread:
     """Stand-in for threading.Thread that runs its target immediately,

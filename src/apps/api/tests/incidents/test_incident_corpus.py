@@ -44,6 +44,8 @@ from tests.incidents import harness, loader
 from tests.incidents.models import IncidentRecord, Observation, OutputFacts, Scope
 from tests.incidents.synthetic import ffmpeg_argv, suffix
 
+pytestmark = pytest.mark.journey("kri-789-take-trim-not-order")
+
 RECORDS = loader.load_records()
 
 

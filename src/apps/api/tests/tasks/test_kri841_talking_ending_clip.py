@@ -88,6 +88,8 @@ from tests.tasks.test_phone_subtitled_narrated_dispatch import (
     _setup_talking_multi,
 )
 
+pytestmark = pytest.mark.journey("kri-841-talking-ending-clip")
+
 # --------------------------------------------------------------------------- kit data
 
 

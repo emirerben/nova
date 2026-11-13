@@ -29,6 +29,8 @@ from app.services.speech_cleanup_preflight import (
 )
 from tests._silent_pcm import silent_pcm
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 DURATION_S = 10.0
 MIXED_GAP_ISLANDS = ((5.778866, 6.209660), (7.406100, 7.977846))
 INCIDENT_WORDS = [

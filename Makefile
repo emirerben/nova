@@ -4,7 +4,8 @@
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
-        workspace-pull workspace-push workspace-status
+        workspace-pull workspace-push workspace-status \
+        check-test-registries sync-test-registries
 
 PYTHON ?= python3
 API_DIR := src/apps/api
@@ -251,6 +252,17 @@ verify-editor-timeline:
 		tests/tasks/test_carousel_timed_lane_projection.py)
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
+
+# Journey tests and iOS UI test groups are derived from markers in the tests.
+# `check` names every hand-kept entry that no longer matches the tree; `sync`
+# follows git renames into those entries (stage the rename first).
+check-test-registries:
+	$(PYTHON) scripts/ci/journey_registry.py check
+	$(PYTHON) scripts/ios/ui_tests.py check
+
+sync-test-registries:
+	$(PYTHON) scripts/ci/journey_registry.py sync
+	$(PYTHON) scripts/ios/ui_tests.py sync
 
 api-install-dev:
 	@if [ ! -x "$(API_PYTHON)" ]; then \

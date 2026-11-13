@@ -403,13 +403,13 @@ jobs:
           set -o pipefail
           mkdir -p ../../../test-results/kri-384-library
           python3 - <<'PY' | tee ../../../test-results/kri-384-library/tests.log
-          import json
           import subprocess
+          import sys
           from pathlib import Path
           from xml.etree import ElementTree
-          manifest = json.loads(Path("../../../scripts/ci/journey-manifest.json").read_text())
-          journey = next(item for item in manifest["journeys"] if item["id"] == "kri-384-library-ingest")
-          tests = journey["api_tests"].split()
+          sys.path.insert(0, "../../../scripts/ci")
+          import journey_registry
+          tests = journey_registry.api_tests("kri-384-library-ingest")
           if not tests or any(not name.startswith("tests/") or not Path(name).is_file() for name in tests):
               raise SystemExit("Library journey has missing test inputs")
           command = ["python3", "-m", "pytest", *tests, "-s", "--junitxml=../../../test-results/kri-384-library/junit.xml"]
@@ -481,12 +481,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
         run: |
-          python3 -m pytest tests/services/test_length_policy_state.py \
-            tests/services/test_creator_render_contract.py \
-            tests/services/test_cloud_render_contract.py \
-            tests/integration/test_actual_export_verification.py \
-            tests/integration/test_actual_export_completion.py \
-            tests/routes/test_actual_export_publication.py -q
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-492-length-ownership)"
+          python3 -m pytest $tests -q
           python3 ../../../scripts/ci/replay-creator-contracts.py \
             --snapshot ../../../scripts/ci/fixtures/kri492-creator-contracts.json \
             --candidate-sha "$KRIA_JOURNEY_HEAD_SHA" --export-outcomes \
@@ -513,13 +509,15 @@ jobs:
         working-directory: src/apps/api
         run: |
           set -o pipefail
-          python3 -m pytest tests/agents/test_thinking_budget.py -q | tee ../../../test-results/kri-559/thought-api-tests.log
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-557-thinking)"
+          python3 -m pytest $tests -q | tee ../../../test-results/kri-559/thought-api-tests.log
       - name: Verify slide-post binding and save validation
         if: contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
         working-directory: src/apps/api
         run: |
           set -o pipefail
-          python3 -m pytest tests/routes/test_slide_post_native_routes.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step slide-post-binding-recovery)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/slide-post-binding-api-tests.log
       - name: Verify original generation receipts and saved-song recovery
         if: contains(needs.changes.outputs.journey_ids, 'saved-song-render-recovery') || contains(needs.changes.outputs.journey_ids, 'slide-post-generation-receipt-recovery')
@@ -538,7 +536,7 @@ jobs:
           # This is the disposable PostgreSQL service for this CI job, not rollout.
           python3 -m alembic upgrade head
           recovery_ids="$(python3 -c 'import os; print(",".join(sorted(set(os.environ["JOURNEY_IDS"].split(",")) & {"saved-song-render-recovery", "slide-post-generation-receipt-recovery"})))')"
-          tests="$(python3 -c 'import json,sys; m=json.load(open("../../../scripts/ci/journey-manifest.json")); ids=set(sys.argv[1].split(",")); print(" ".join(j["api_tests"] for j in m["journeys"] if j["id"] in ids))' "$recovery_ids")"
+          tests="$(python3 ../../../scripts/ci/journey_registry.py tests "$recovery_ids")"
           test -n "$recovery_ids" && test -n "$tests"
           python3 -m pytest $tests -q --junitxml=../../../test-results/kri-559/recovery-api-cases.xml \
             | tee ../../../test-results/kri-559/recovery-api-cases.log
@@ -549,8 +547,8 @@ jobs:
         working-directory: src/apps/api
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_song_order_placements.py \
-            tests/routes/test_phone_song_editor_commit.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-561-song-order)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/song-order-api-tests.log
       - name: Run the KRI-577 reliability gates for the changed incident paths
         if: contains(needs.changes.outputs.journey_ids, 'kri-577-reliability-gates')
@@ -570,10 +568,8 @@ jobs:
         run: |
           set -o pipefail
           python -m alembic upgrade head
-          python -m pytest tests/services/test_fly_machines.py \
-            tests/tasks/test_render_worker_lifecycle.py \
-            tests/tasks/test_render_worker_activity_sql.py \
-            tests/test_render_worker_wake.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-798-render-worker-restart)"
+          python -m pytest $tests -q \
             | tee ../../../test-results/kri-559/kri-798-render-worker-restart.log
       - name: Verify original named-cut receipts before native allocation
         if: contains(needs.changes.outputs.journey_ids, 'kri-551-consented-retakes')
@@ -587,7 +583,8 @@ jobs:
         run: |
           set -o pipefail
           python -m alembic upgrade head
-          python -m pytest tests/kria/test_kri787_merope_t1_runtime_postgres.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-551-original-named-cut)"
+          python -m pytest $tests -q \
             --junitxml=../../../test-results/kri-559/retake-original-case.xml
           python - <<'PY'
           from xml.etree import ElementTree
@@ -600,9 +597,8 @@ jobs:
         working-directory: src/apps/api
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_phone_captions.py \
-            tests/pipeline/test_phone_caption_watermark_fixture.py \
-            tests/kria/test_portable_text_layout.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-548-caption-watermark)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/caption-watermark-api-tests.log
       - name: Verify the drawing wire and compile contract on the server
         if: contains(needs.changes.outputs.journey_ids, 'kri-589-drawing')
@@ -613,23 +609,16 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/agents/test_drawing_schema.py \
-            tests/kria/test_drawing_compile.py \
-            tests/routes/test_slide_post_drawing_routes.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-589-drawing)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/drawing-api-tests.log
       - name: Verify speaker face-fill decision, compile and device fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
         working-directory: src/apps/api
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_kri547_face_fill_device_fixture.py \
-            tests/pipeline/test_phone_speaker_framing.py \
-            tests/pipeline/test_phone_subtitled_plan.py \
-            tests/pipeline/test_phone_subtitled_title.py \
-            tests/pipeline/test_render_geometry.py \
-            tests/kria/test_speaker_framing_ask.py \
-            tests/kria/test_brief_speaker_framing.py \
-            tests/tasks/test_phone_subtitled_speaker_framing_worker.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-547-speaker-framing)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/speaker-framing-api-tests.log
       - name: Verify hook-copy decision contract and replay fixtures
         if: contains(needs.changes.outputs.journey_ids, 'kri-586-hook-copy')
@@ -640,11 +629,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/agents/test_main_creator_agent.py \
-            tests/agents/test_main_creator_user_song.py \
-            tests/agents/test_runtime.py \
-            tests/kria/test_creative_copy_planner.py \
-            tests/evals/test_main_creator_evals.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-586-hook-copy)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/hook-copy-api-tests.log
       - name: Verify spoken voiceover cues follow the narration and replay fixtures
         if: contains(needs.changes.outputs.journey_ids, 'kri-590-voiceover-cues')
@@ -655,11 +641,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/agents/test_narrated_clip_alignment.py \
-            tests/evals/test_narrated_clip_alignment_evals.py \
-            tests/kria/test_brief_checks_narrated_alignment.py \
-            tests/kria/test_kri520_block_recovery.py \
-            tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-590-voiceover-cues)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/voiceover-cues-api-tests.log
       - name: Verify voiceover planner contract and replay fixtures
         if: contains(needs.changes.outputs.journey_ids, 'kri-598-voiceover-planner')
@@ -670,10 +653,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_kri598_voiceover_planner.py \
-            tests/kria/test_voiceover_downgrade_losses.py \
-            tests/evals/test_clip_intent_planner_evals.py \
-            tests/evals/test_main_creator_evals.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-598-voiceover-planner)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/voiceover-planner-api-tests.log
       - name: Verify generated-overlay planning through the grounded planner and route
         if: contains(needs.changes.outputs.journey_ids, 'native-generated-overlay-review')
@@ -684,8 +665,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/services/test_overlay_generation.py \
-            tests/routes/test_generated_media.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step native-generated-overlay-review)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/generated-overlay-api-tests.log
       - name: Verify a voiceover edit keeps every clip through the planner and dispatch
         if: contains(needs.changes.outputs.journey_ids, 'kri-593-voiceover-clips')
@@ -696,7 +677,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_kri593_voiceover_keeps_every_clip.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-593-voiceover-clips)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/voiceover-clips-api-tests.log
       - name: Verify a silent talking take is refused instead of cut to seconds
         if: contains(needs.changes.outputs.journey_ids, 'kri-653-silent-take')
@@ -707,10 +689,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_silence_cut_no_speech.py \
-            tests/services/test_audio_presence.py \
-            tests/services/test_transcript_quality.py \
-            tests/tasks/test_silent_audio_gate.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-653-silent-take)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/silent-take-api-tests.log
       - name: Verify clip records keep the spoken words in the spoken language
         if: contains(needs.changes.outputs.journey_ids, 'kri-808-clip-speech-language')
@@ -721,10 +701,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/tasks/test_kri808_clip_speech_language.py \
-            tests/tasks/test_kria_speech_segments.py \
-            tests/services/test_transcript_quality.py \
-            tests/services/test_phone_speech_montage_job.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-808-clip-speech-language)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/clip-speech-language-api-tests.log
       - name: Verify a montage drops the clips the creator ruled out by length
         if: contains(needs.changes.outputs.journey_ids, 'kri-623-ruled-out-clips')
@@ -735,7 +713,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_kri623_ruled_out_clips.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-623-ruled-out-clips)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/ruled-out-clips-api-tests.log
       - name: Verify a dictated shot label stays on its clip across turns and asks with the clip picker
         if: contains(needs.changes.outputs.journey_ids, 'kri-766-label-bound')
@@ -746,8 +725,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_kri766_label_stays_bound.py \
-            tests/evals/test_clip_request_resolver_evals.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-766-label-bound)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/label-bound-api-tests.log
       - name: Verify a camera-sound montage follows what the clips say
         if: contains(needs.changes.outputs.journey_ids, 'kri-585-spoken-order')
@@ -758,7 +737,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-585-spoken-order)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/spoken-order-api-tests.log
       - name: Verify moment picks skip covered-lens, ground and blur stretches
         if: contains(needs.changes.outputs.journey_ids, 'kri-625-moment-quality')
@@ -769,7 +749,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_best_parts.py tests/pipeline/test_clip_meta_dormant_readers.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-625-moment-quality)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/moment-quality-api-tests.log
       - name: Verify Turkish chat asks, claims and exclusions read structured fields, not English words
         if: contains(needs.changes.outputs.journey_ids, 'kri-667-turkish-chat')
@@ -780,7 +761,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-667-turkish-chat)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/turkish-chat-api-tests.log
       - name: Verify text Bend survives the phone recipe, the editor ops and the old-client gate
         if: contains(needs.changes.outputs.journey_ids, 'kri-646-text-bend')
@@ -791,7 +773,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_text_bend.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-646-text-bend)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/text-bend-api-tests.log
       - name: Verify the Plaza de Mayo title is drawn once and keeps the creator's curve
         if: contains(needs.changes.outputs.journey_ids, 'kri-1029-1030-plaza-title')
@@ -802,7 +785,7 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          tests="$(python3 -c 'import json; m = json.load(open("../../../scripts/ci/journey-manifest.json")); print(next(j for j in m["journeys"] if j["id"] == "kri-1029-1030-plaza-title")["api_tests"])')"
+          tests="$(python3 ../../../scripts/ci/journey_registry.py tests kri-1029-1030-plaza-title)"
           python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/plaza-title-api-tests.log
       - name: Verify a phone Talking edit starts and ends at the lines the creator quotes
@@ -814,9 +797,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_phone_opening_cut.py \
-            tests/pipeline/test_phone_take_window.py \
-            tests/kria/test_kri837_one_word_end_line.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-628-opening-cut)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/opening-cut-api-tests.log
       - name: Verify caption correction keeps spoken order and word timing
         if: contains(needs.changes.outputs.journey_ids, 'kri-708-caption-correction')
@@ -827,7 +809,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_caption_correct.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-708-caption-correction)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/caption-correction-api-tests.log
       - name: Verify a phone Talking edit shows the creator's text on the word they say
         if: contains(needs.changes.outputs.journey_ids, 'kri-707-talking-spoken-text')
@@ -838,8 +821,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/tasks/test_kri707_talking_spoken_text.py \
-            tests/tasks/test_kri791_spoken_text_trigger.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-707-talking-spoken-text)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/talking-spoken-text-api-tests.log
       - name: Verify a phone Talking edit plays its talking clips back to back with footage on top
         if: contains(needs.changes.outputs.journey_ids, 'kri-719-talking-multi-clip')
@@ -850,7 +833,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_phone_talking_cutaways.py tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-719-talking-multi-clip)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/talking-multi-clip-api-tests.log
       - name: Verify a phone Talking edit ends on the requested video with its own sound
         if: contains(needs.changes.outputs.journey_ids, 'kri-841-talking-ending-clip')
@@ -861,11 +845,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/tasks/test_kri841_talking_ending_clip.py \
-            tests/kria/test_kri841_ending_clip_ask.py \
-            tests/pipeline/test_phone_subtitled_plan.py \
-            tests/services/test_phone_subtitled_editor.py \
-            tests/routes/test_admin_plan_item_phone_lanes.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-841-talking-ending-clip)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/talking-ending-clip-api-tests.log
       - name: Verify a re-sent copy of a message is answered, not planned, and labels are cut at words
         if: contains(needs.changes.outputs.journey_ids, 'kri-552-duplicate-resend')
@@ -876,9 +857,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_text_trim.py \
-            tests/kria/test_kri552_duplicate_send_postgres.py \
-            tests/agents/test_clip_intent_planner.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-552-duplicate-resend)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/duplicate-resend-api-tests.log
       - name: Verify the Merope T1 Talking chat still replays to prod's refusal (KRI-787)
         if: contains(needs.changes.outputs.journey_ids, 'kri-787-merope-t1-replay')
@@ -889,8 +869,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_kri787_merope_t1_replay.py \
-            tests/kria/test_kri787_merope_t1_runtime_postgres.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-787-merope-t1-replay)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/merope-t1-replay-api-tests.log
       - name: Verify a montage clip named by a spoken line is cut on that line
         if: contains(needs.changes.outputs.journey_ids, 'kri-681-named-line-windows')
@@ -901,7 +881,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-681-named-line-windows)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/named-line-windows-api-tests.log
       - name: Verify a clip text the creator took back is neither planned nor locked as copy
         if: contains(needs.changes.outputs.journey_ids, 'kri-1124-withdrawn-labels')
@@ -912,7 +893,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_kri1124_withdrawn_labels_replay.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-1124-withdrawn-labels)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/withdrawn-labels-api-tests.log
       - name: Verify a montage line the creator wants heard whole is held whole, never a pop-in
         if: contains(needs.changes.outputs.journey_ids, 'kri-760-whole-line-ask')
@@ -923,7 +905,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/kria/test_whole_line_routing.py tests/tasks/test_whole_line_ask_montage.py tests/tasks/test_keep_line_audible_montage.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-760-whole-line-ask)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/whole-line-ask-api-tests.log
       - name: Verify the creator's approved order answer reaches the render contract
         if: contains(needs.changes.outputs.journey_ids, 'kri-788-order-answer-dispatch')
@@ -934,7 +917,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/tasks/test_kri788_order_answer_dispatch.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-788-order-answer-dispatch)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/order-answer-dispatch-api-tests.log
       - name: Verify quoted start/end lines in one take are a trim, never a clip-order question
         if: contains(needs.changes.outputs.journey_ids, 'kri-789-take-trim-not-order')
@@ -945,8 +929,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/incidents/test_incident_corpus.py tests/agents/test_kri789_take_trim_brief.py \
-            tests/evals/test_main_creator_evals.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-789-take-trim-not-order)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/take-trim-not-order-api-tests.log
       - name: Verify phone Talking captions stay short and keep the creator's spelling
         if: contains(needs.changes.outputs.journey_ids, 'kri-632-phone-captions')
@@ -957,7 +941,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_phone_caption_cue_budget.py tests/pipeline/test_caption_spelling.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-632-phone-captions)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/phone-captions-api-tests.log
       - name: Verify phone text rules and generate the typography export kit
         if: contains(needs.changes.outputs.journey_ids, 'kri-648-phone-text')
@@ -966,8 +951,8 @@ jobs:
           STORAGE_BUCKET: replay
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
-          python3 -m pytest src/apps/api/tests/pipeline/test_phone_text_style.py \
-            src/apps/api/tests/evals/test_phone_typography_evals.py -q
+          tests="$(python3 scripts/ci/journey_registry.py step kri-648-phone-text --repo-relative)"
+          python3 -m pytest $tests -q
           python3 - <<'PY'
           import importlib.util
           from pathlib import Path
@@ -991,10 +976,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           mkdir -p ../../../test-results/kri-559/kri-669
-          python3 -m pytest tests/kria/test_gameday_text_hierarchy.py \
-            tests/routes/test_native_timeline_sources.py \
-            tests/routes/test_editor_sources.py \
-            tests/routes/test_device_render.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-669-gameday)"
+          python3 -m pytest $tests -q \
             --junitxml=../../../test-results/kri-559/kri-669/api-tests.xml
       - name: Verify reviewed session-to-regression learning loop
         if: contains(needs.changes.outputs.journey_ids, 'kri-215-learning-loop')
@@ -1006,7 +989,8 @@ jobs:
           GEMINI_API_KEY: test
         run: |
           mkdir -p ../../../test-results/kri-559/kri-215
-          python3 -m pytest tests/incidents/test_request_following_loop.py tests/incidents/test_request_following_private_review.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-215-learning-loop)"
+          python3 -m pytest $tests -q \
             --junitxml=../../../test-results/kri-559/kri-215/api-tests.xml
       - name: Verify retake-aware speech cleanup and consent recovery
         if: contains(needs.changes.outputs.journey_ids, 'kri-551-consented-retakes')
@@ -1017,15 +1001,8 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          python3 -m pytest tests/agents/test_retake_detector.py \
-            tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py \
-            tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py \
-            tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py \
-            tests/kria/test_runtime_speech_cleanup_approval.py \
-            tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py \
-            tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py \
-            tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py \
-            tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py -q \
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-551-consented-retakes)"
+          python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/consented-retakes-api-tests.log
       # Without this, a diff selecting only kri-689 seals an empty bundle.
       - name: Verify clip-speed asks, review and phone speed safety
@@ -1037,7 +1014,7 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          tests="$(python3 -c 'import json; m = json.load(open("../../../scripts/ci/journey-manifest.json")); print(next(j for j in m["journeys"] if j["id"] == "kri-689-clip-speed")["api_tests"])')"
+          tests="$(python3 ../../../scripts/ci/journey_registry.py tests kri-689-clip-speed)"
           python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/clip-speed-api-tests.log
       # Without this, a diff selecting only kri-729 seals an empty bundle.
@@ -1050,7 +1027,7 @@ jobs:
           DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           set -o pipefail
-          tests="$(python3 -c 'import json; m = json.load(open("../../../scripts/ci/journey-manifest.json")); print(next(j for j in m["journeys"] if j["id"] == "kri-729-camera-roll-recommendations")["api_tests"])')"
+          tests="$(python3 ../../../scripts/ci/journey_registry.py tests kri-729-camera-roll-recommendations)"
           python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/camera-roll-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt

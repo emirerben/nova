@@ -7,6 +7,8 @@ import pytest
 from app.agents._runtime import SchemaError
 from app.agents.clip_intent_planner import ClipIntentPlannerAgent, ClipIntentPlannerInput
 
+pytestmark = pytest.mark.journey("kri-552-duplicate-resend")
+
 
 def _agent() -> ClipIntentPlannerAgent:
     return ClipIntentPlannerAgent(None)  # type: ignore[arg-type]

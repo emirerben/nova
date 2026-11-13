@@ -65,6 +65,8 @@ from app.services.spoken_quotes import (
 from tests.pipeline.test_unified_montage import clip
 from tests.tasks.test_selected_clip_dispatch import _verify
 
+pytestmark = pytest.mark.journey("kri-681-named-line-windows")
+
 DARK_A, DARK_B, INDOOR, OUTDOOR = "c0", "c1", "c2", "c3"
 DURATIONS = {DARK_A: 5.0, DARK_B: 7.0, INDOOR: 70.0, OUTDOOR: 67.0}
 QUOTE = "Huzuru bulduk burada"

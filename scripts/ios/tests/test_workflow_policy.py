@@ -185,7 +185,7 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         manifest = json.loads(
             (WORKFLOW.parents[2] / "scripts/ios/ui-test-groups.json").read_text()
         )
-        smoke = manifest["groups"]["smoke"]
+        smoke = manifest["smoke"]
         self.assertIn(
             "KriaUITests/CreationUITests/"
             "testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",

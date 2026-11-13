@@ -11,6 +11,8 @@ from app.services.length_policy_state import (
     stamp_length_policy,
 )
 
+pytestmark = pytest.mark.journey("kri-492-length-ownership")
+
 STRATEGY = {"edit_format": "montage", "audio_strategy": "licensed_music"}
 
 

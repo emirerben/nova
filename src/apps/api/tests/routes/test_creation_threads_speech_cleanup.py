@@ -23,6 +23,8 @@ from app.services.active_narration_source import (
 from app.services.speech_cleanup_preflight import public_projection
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 
 def _request() -> Request:
     return Request(

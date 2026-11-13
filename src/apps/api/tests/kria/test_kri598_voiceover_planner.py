@@ -83,6 +83,8 @@ from app.tasks import content_plan_build, generative_build
 # on "kırkayak"), shared so both incidents judge the same requirements.
 from tests.kria.test_voiceover_downgrade_losses import PHOTO_ASK, TIGRE_BRIEF
 
+pytestmark = pytest.mark.journey("kri-598-voiceover-planner")
+
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri598_tigre_voiceover_turns.json"
 CASE: dict[str, Any] = json.loads(FIXTURE.read_text())
 OWN = [m["media_id"] for m in CASE["media"] if m["kind"] == "video"]

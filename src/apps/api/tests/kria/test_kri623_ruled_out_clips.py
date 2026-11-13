@@ -60,6 +60,8 @@ from app.services.creator_render_contract import build_render_contract
 from app.tasks import content_plan_build
 from tests.tasks.test_selected_clip_dispatch import _verify
 
+pytestmark = pytest.mark.journey("kri-623-ruled-out-clips")
+
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri623_tigre_m2_montage_turn.json"
 CASE: dict[str, Any] = json.loads(FIXTURE.read_text())
 MANIFEST = CASE["main_creator_input"]["capability_manifest"]

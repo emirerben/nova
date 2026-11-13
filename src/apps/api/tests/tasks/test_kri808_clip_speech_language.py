@@ -36,6 +36,8 @@ from app.services.clip_understanding import clip_record
 from app.services.speech_segments import ground_excerpt
 from app.tasks import kria_clip_understanding as task
 
+pytestmark = pytest.mark.journey("kri-808-clip-speech-language")
+
 FIXTURE = json.loads(
     (Path(__file__).parents[1] / "fixtures" / "kri808_don_julio_clip_speech.json").read_text()
 )

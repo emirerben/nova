@@ -22,6 +22,8 @@ from app.kria.brief_checks import (
 )
 from app.kria.reply_language import bind_reply_language, release_reply_language
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 _CUES = [{"text": "I ran my first marathon", "start_s": 0.0, "end_s": 1.8}]
 
 

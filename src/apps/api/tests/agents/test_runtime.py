@@ -36,6 +36,8 @@ from tests.agents.conftest import (
     safety_response,
 )
 
+pytestmark = pytest.mark.journey("kri-586-hook-copy")
+
 # ── Happy paths ───────────────────────────────────────────────────────────────
 
 

@@ -9,6 +9,8 @@ import pytest
 
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
 
+pytestmark = pytest.mark.journey("kri-598-voiceover-planner")
+
 AGENT_DIR = "clip_intent_planner"
 AGENT_NAME = "nova.plan.clip_intent_planner"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)

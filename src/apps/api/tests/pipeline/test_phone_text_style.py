@@ -10,6 +10,8 @@ import pytest
 from app.pipeline.phone_text_style import resolve_phone_text_style
 from app.schemas.phone_text_style import TextStyleRule
 
+pytestmark = pytest.mark.journey("kri-648-phone-text")
+
 
 def title(text="A slow morning in Lisbon"):
     return dict(

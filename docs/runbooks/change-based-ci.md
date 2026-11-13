@@ -117,6 +117,22 @@ pass. Full iOS regression runs at 03:23 UTC nightly or on manual dispatch; full
 native journeys run at 02:23 UTC nightly or on manual CI dispatch. Neither
 regression path dispatches TestFlight.
 
+Test registries are derived, not listed (KRI-1380). A journey API test declares
+`pytestmark = pytest.mark.journey("<journey-id>")` (add `step="<name>"` when one
+journey has several `ci.yml` steps). `ci.yml` steps call
+`scripts/ci/journey_registry.py step <name>` instead of listing test paths, and
+`journey-manifest.json` rows gain the marked files as `api_tests` at load time
+(`journey_registry.journeys()`), so a new or renamed test needs no registry
+edit. Trigger `paths`, evidence tests without a marker and `xctests` stay in the
+manifest. `make check-test-registries` (also a `scripts/ci` unit test and
+`preship-check.sh`) fails on a manifest path or test that does not exist, a
+marker whose step `ci.yml` never runs, a step with no marked test, an unknown
+journey id and a hand-listed test path in `ci.yml`; its last line names the fix.
+After `git mv`, `make sync-test-registries` rewrites the renamed entries. Not
+derived yet: the manifest's `paths`, `xctests` and Swift unit test names, and
+`ui-test-durations.json` / `ui-test-measured-durations.json` (an unrecorded test
+weighs the median; refresh with `scripts/ios/refresh-ui-durations.py`).
+
 The stable `journey` job now aggregates `journey-mapping`, `journey-offline`,
 the database-backed `journey-library` (Linux), and every `journey-native` leg
 (Mac). Linux jobs install FFmpeg and friends through
