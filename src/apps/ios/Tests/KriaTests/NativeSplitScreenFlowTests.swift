@@ -303,4 +303,30 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         session.setSplitScreenPanelCount(2)
         XCTAssertEqual(session.document, bottomOnly, "Dropping the panel would delete the section's only clip")
     }
+
+    @MainActor
+    func testLayoutAndLengthChangesReportTheClipsTheyWouldDelete() throws {
+        let top = member(0, offset: 0, duration: 4), middle = member(1, offset: 0, duration: 4)
+        let bottomA = member(2, offset: 0, duration: 1), bottomB = member(2, offset: 2.5, duration: 1.5)
+        let removed: EditorTimelineSlot = {
+            var slot = member(2, offset: 0, duration: 4)
+            slot.removed = true
+            return slot
+        }()
+        var document = EditorDocument(clips: [top, middle, bottomA, bottomB, removed], capabilities: Self.editable)
+        document.splitScreenSections = [.init(id: "s", durationS: 4, panelCount: 3)]
+        let session = makeSession(document)
+
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", panelCount: 2), 2, "Both bottom clips go; a removed one is not counted")
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", panelCount: 3), 0)
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", duration: 4), 0)
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", duration: 2), 1, "Only the clip starting after the new end goes; one that is merely shortened stays")
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", duration: 1.5), 1)
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "missing", panelCount: 2), 0)
+
+        session.select(.init(kind: .clip, id: try XCTUnwrap(top.id)), seekToStart: false)
+        let before = session.document.clips.filter { !$0.removed }.count
+        session.setSplitScreenDuration(2)
+        XCTAssertEqual(before - session.document.clips.filter { !$0.removed }.count, 1, "The query matches what the setter deletes")
+    }
 }
