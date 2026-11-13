@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.197.0] - 2026-11-13
+
+### Changed
+- feat(kria): chat edits the creator's song, one caption line, layer order, the full-screen opening and the video shape on iPhone (KRI-1394) (#2311) <!-- release-pr: 2311 -->
+
 ## [0.88.196.0] - 2026-11-13
 
 ### Fixed
