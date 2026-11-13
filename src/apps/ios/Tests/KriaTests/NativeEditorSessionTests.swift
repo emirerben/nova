@@ -2765,8 +2765,48 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.clips.count, before + 1)
         XCTAssertEqual(inserted.durationS, 3)
         XCTAssertEqual(inserted.raw["editor_source_placement_id"], .string(placement.id.uuidString))
+        XCTAssertNil(inserted.raw["source_duration_s"], "A photo has no footage length to run out of")
+        XCTAssertEqual(inserted.raw["media_kind"], .string("image"))
         session.undo(); XCTAssertEqual(session.document.clips.count, before)
         session.redo(); XCTAssertEqual(session.document.clips.count, before + 1)
+    }
+
+    func testAdmittedSplitPanelPhotoIsAnImageWithoutFootageLengthAndCompilesWhenExtended() async throws {
+        let (session, uploads, footageTarget) = try await Self.devicePlacementSession()
+        var member = EditorTimelineSlot(id: "anchor", clipIndex: 0, inS: 0, durationS: 2, raw: ["source_duration_s": .number(4)])
+        member.setSplitMembership(sectionID: "s", panelIndex: 0, offset: 0)
+        var document = EditorDocument(clips: [member], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.revision.baseGeneration = footageTarget.baseGeneration
+        document.splitScreenSections = [.init(id: "s", durationS: 9, panelCount: 2)]
+        session.replaceDocumentForTesting(document)
+        let target = EditorSourceRegistrationTarget(itemID: footageTarget.itemID, variantID: footageTarget.variantID,
+            clientImportID: UUID(), baseGeneration: footageTarget.baseGeneration, guidedRevisionNumber: 7, sourceKind: .visual)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil)
+        uploads.beginEditorPlacement(placement)
+        session.useMediaUploads(uploads)
+        session.stageSplitPanelPlacementForTesting(placement.id, sectionID: "s", panel: 1, offset: 0)
+        let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "photo",
+            sourceIndex: 4, source: nil, error: nil, reasonCode: nil, retryable: false)
+        try await session.placeEditorSource(placement, response: response)
+        var photo = try XCTUnwrap(session.document.clips.first { $0.id == placement.id.uuidString })
+        XCTAssertNil(photo.raw["source_duration_s"])
+        XCTAssertEqual(photo.raw["media_kind"], .string("image"))
+
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let still = ResolvedEditorSource(clipIndex: 4, mediaID: "photo",
+            asset: MediaAsset(id: "photo", relativePath: "photo.png", fingerprint: .init(hex: String(repeating: "b", count: 64), byteCount: 10), duration: nil),
+            url: URL(fileURLWithPath: "/fixture/photo.png"))
+        let footage = ResolvedEditorSource(clipIndex: 0, mediaID: "footage",
+            asset: MediaAsset(id: "footage", relativePath: "footage.mp4", fingerprint: .init(hex: String(repeating: "a", count: 64), byteCount: 100), duration: 4),
+            url: URL(fileURLWithPath: "/fixture/footage.mp4"))
+        for length in [6.0, 9.0] {
+            photo.durationS = length
+            var extended = session.document
+            extended.clips = extended.clips.map { $0.id == photo.id ? photo : $0 }
+            session.replaceDocumentForTesting(extended)
+            XCTAssertNoThrow(try compiler.compile(document: extended, clips: session.timelineClips, items: [], sources: [0: footage, 4: still]),
+                             "A photo extended to \(length) s must compile")
+        }
     }
 
     func testAdmittedFootageUsesShorterOriginalWithEOFMarginAndDeduplicatesReadyCallback() async throws {
