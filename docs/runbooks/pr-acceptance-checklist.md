@@ -53,9 +53,13 @@ neither action grounding nor a correct export.
 An agent merges only when every check on the PR's current head has passed or was
 skipped. `scripts/hooks/merge-guard.py` (a Claude Code `PreToolUse` hook in
 `.claude/settings.json`) blocks `gh pr merge` while any check is failed, cancelled
-or still running, and names the checks. `gh pr merge --auto` passes because GitHub
-then waits for the required checks. When `main` is red, the repair merges first.
-A person can merge past the guard by running the command themselves.
+or still running, and names the checks. It also sees wrapped forms (`bash -c`,
+`$(...)`, `(...)`, `eval`, shell heredocs, `gh api .../pulls/N/merge`) and blocks on
+any internal error. `gh pr merge --auto` passes the guard, but GitHub merges at
+once when the required checks are already green, even if other checks are red or
+still running; wait for every check before using it. When `main` is red, the
+repair merges first. A person can merge past the guard by running the command
+themselves. Test: `cd scripts/ci && python3 -m pytest test_merge_guard.py`.
 
 ## After merge and authorized rollout
 
