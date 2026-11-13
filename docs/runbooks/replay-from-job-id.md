@@ -16,8 +16,11 @@ make kria-replay-job JOB=<production job id>
 
 1. `python scripts/admin.py --prod GET /admin/jobs/<id>/debug` and
    `GET /admin/plan-items/<item>/debug` (GET only), plus `gcloud storage cp gs://<bucket>/...`
-   to copy the item's clips, pool images and voiceover to `/private/tmp/nova-replay-job/<id>/inputs`.
-   The bucket comes from `STORAGE_BUCKET` in the repo-root `.env` or `--bucket`. Nothing is
+   to copy the item's clips, pool images, pool videos and voiceover to
+   `/private/tmp/nova-replay-job/<id>/inputs`. Pool assets come from the `gcs_path` and
+   `gcs_generation` fields the item debug exposes (library assets live outside the item's pool
+   prefix); a production API that predates those fields only yields assets under the item's pool
+   prefix. Paths outside the job owner's `users/<id>/` prefix are refused. The bucket comes from `STORAGE_BUCKET` in the repo-root `.env` or `--bucket`. Nothing is
    ever written to production.
 2. Writes the source manifest and debug files `scripts/replay_creator.py` reads. The creator
    request is `all_candidates.creator_request` on the job.
@@ -25,9 +28,15 @@ make kria-replay-job JOB=<production job id>
    Celery worker on Redis database 14 under a private `NOVA_CELERY_QUEUE_NAMESPACE`
    (`replay-<job>-<time>`; it never consumes the shared dev queues), and runs
    `replay_creator.py --render --prod-flags tests/prod_flags.snapshot.json`.
-4. Prints the replayed job status, the failure reason and error detail if any, and the local
-   path of each rendered output (`<run dir>/storage/<object path>`), plus the receipt path.
-   Exit code 0 only when a video exists.
+4. Prints an `outcome`: `video_rendered` (local path of each output, `<run dir>/storage/<object
+   path>`), `device_plan_ready` (an iPhone job: the worker built and pinned the device render
+   plan and the job sits `awaiting_device`; the plan is in `<run dir>/device-plan.json`; this is
+   the success state of every phone-first job), `device_plan_incomplete` or `failed` (status,
+   failure reason and error detail). Exit code 0 for the first two only.
+
+The run is refused before any model call when the replayed footage would differ from the
+production job's: fewer visuals and clips than the job's brief binding recorded, a creator song
+(`replay_creator.py` does not seed songs), or a voiceover the item no longer holds.
 
 Costs real model calls (clip analysis, Main Creator, text agents). Check the receipt and the
 worker log (`<run dir>/worker.log`) for the agent runs.
@@ -48,7 +57,10 @@ worker log (`<run dir>/worker.log`) for the agent runs.
 `src/apps/api/tests/prod_flags.snapshot.json` holds the effective production value of every
 boolean `Settings` field, every `*_user_ids` allowlist, every `*_rollout_percent` and
 `phone_render_verified_features`. `tests/_prod_profile.py` (the `prod_profile` fixture),
-`scripts/kria/score_route.py` and `replay_job.py` read it; nothing keeps a hand copy.
+`scripts/kria/score_route.py` and `replay_job.py` read it. Older score and iOS E2E scripts
+(`scripts/kria/score_29_ekim.py`, `scripts/ios/kri-1009-talking-title.py`,
+`scripts/ios/qendresa-caption-shape-e2e.py`) still carry their own hand-copied lists; they are
+not production-faithful.
 `scripts/prod_flag_snapshot.py` writes it. Each entry carries its evidence:
 
 | Source | Meaning |
@@ -88,8 +100,9 @@ flag the snapshot has not seen, so a new flag cannot silently run at its default
   storage (iPhone creations upload analysis proxies, not the originals) and the creator request
   recorded on the job. It does not replay the chat turns before the request.
 * A device-render job (`native_device_only`) ends in a server-side plan, not an MP4. The replay
-  reproduces failures that happen while that plan is built; for those the output is the replayed
-  job's status and reason, not a video.
+  reproduces everything up to and including that plan (`device_plan_ready` on success, the
+  failure reason when the plan cannot be built). What the phone then renders is not replayed;
+  use the iOS gates for that.
 * Model output varies between runs; a different result on the same input is data, not a flake.
   State both outcomes in the PR.
 

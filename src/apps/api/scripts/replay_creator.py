@@ -41,8 +41,11 @@ DEFAULT_OUTPUT_ROOT = Path("/private/tmp/nova-creator-fidelity-runs")
 EXPECTED_SOURCE_COUNT = 40
 EXPECTED_VISUAL_COUNT = 39
 LOCAL_BUCKET = "creator-fidelity-local"
+# `awaiting_device` is the success state of an iPhone job: the worker pinned the device render
+# plan and the phone renders it, so a replay has no video to wait for.
 TERMINAL_JOB_STATUSES = frozenset(
     {
+        "awaiting_device",
         "done",
         "failed",
         "processing_failed",
@@ -236,7 +239,11 @@ def _extract_clip_analysis_cache(
         return {}
     selected = (all_candidates.get("creator_strategy") or {}).get("selected_media_ids") or []
     selected_ids = [str(value) for value in selected]
-    source_ids = {str(source.get("id")) for source in sources if source.get("kind") == "video"}
+    source_ids = {
+        str(source.get("id"))
+        for source in sources
+        if source.get("kind") == "video" and not source.get("pool")
+    }
     result: dict[str, dict[str, Any]] = {}
     for raw in cache["clip_metas"]:
         if not isinstance(raw, dict):
@@ -431,8 +438,14 @@ def seed_replay_database(
         (inputs.item_debug.get("item") or {}) if isinstance(inputs.item_debug, dict) else {}
     )
     source_debug = _source_debug_map(inputs.item_debug)
-    videos = [source for source in inputs.sources if source["kind"] == "video"]
-    images = [source for source in inputs.sources if source["kind"] == "image"]
+    videos = [
+        source for source in inputs.sources if source["kind"] == "video" and not source.get("pool")
+    ]
+    pool_sources = [
+        source
+        for source in inputs.sources
+        if source["kind"] == "image" or (source["kind"] == "video" and source.get("pool"))
+    ]
     audio = [source for source in inputs.sources if source["kind"] == "audio"]
     if len(audio) > 1:
         raise ReplaySafetyError("Replay accepts at most one voiceover source")
@@ -470,7 +483,7 @@ def seed_replay_database(
         imported.append({"source_id": voiceover["id"], "kind": "audio", **voiceover_copy})
 
     asset_rows: list[dict[str, Any]] = []
-    for source in images:
+    for source in pool_sources:
         asset_id = uuid.uuid5(user_id, f"replay-pool-asset:{source['id']}")
         filename = str(source.get("source_filename") or Path(source["local_path"]).name)
         safe_filename = _safe_filename(filename, field="source filename")
@@ -488,6 +501,9 @@ def seed_replay_database(
                 if isinstance(source.get("analysis"), dict)
                 else {},
                 "filename": filename,
+                "duration_s": _probe_duration(Path(source["local_path"]))
+                if source["kind"] == "video"
+                else None,
             }
         )
         imported.append({"source_id": source["id"], "kind": source["kind"], **copied})
@@ -595,7 +611,8 @@ def seed_replay_database(
                     plan_item_id=item_id,
                     user_id=user_id,
                     gcs_path=row["object_path"],
-                    kind="image",
+                    kind=row["source"]["kind"],
+                    duration_s=row["duration_s"],
                     source_filename=row["filename"],
                     upload_content_type=row["copy"]["content_type"],
                     upload_size_bytes=row["copy"]["size"],
@@ -919,6 +936,36 @@ def wait_for_worker(
     raise ReplaySafetyError(f"Timed out waiting for proposal/worker; last state: {last}")
 
 
+def device_plan_receipt(job: dict[str, Any] | None, output_dir: Path) -> dict[str, Any] | None:
+    """The pinned iPhone render plan of a job that ended `awaiting_device`, else None."""
+
+    if not job or job.get("status") != "awaiting_device":
+        return None
+    from app.services.device_render import DEVICE_RENDER_FIELD
+
+    assembly_plan = job.get("assembly_plan") if isinstance(job.get("assembly_plan"), dict) else {}
+    variants = [v for v in assembly_plan.get("variants") or [] if isinstance(v, dict)]
+    records = assembly_plan.get(DEVICE_RENDER_FIELD)
+    records = records if isinstance(records, dict) else {}
+    variant_ids = [str(v.get("variant_id")) for v in variants]
+    path = output_dir / "device-plan.json"
+    path.write_text(
+        json.dumps(
+            {"job_id": job.get("id"), "variants": variants, "device_render": records},
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "path": str(path),
+        "variant_ids": variant_ids,
+        "pinned_variant_ids": sorted(records),
+        "complete": bool(variant_ids) and all(vid in records for vid in variant_ids),
+    }
+
+
 def snapshot_environment(snapshot_path: Path) -> dict[str, str]:
     """Environment variables that make ``Settings`` read the production snapshot values."""
 
@@ -1147,6 +1194,7 @@ def main(argv: list[str] | None = None) -> int:
             receipt["worker"] = worker_state
             receipt["job"] = worker_state.get("job")
             receipt["outputs"] = worker_state.get("outputs", [])
+            receipt["device_plan"] = device_plan_receipt(worker_state.get("job"), output_dir)
         receipt["finished_at"] = datetime.now(UTC).isoformat()
         _write_receipt(receipt_path, receipt)
         print(json.dumps({"receipt": str(receipt_path), "mode": receipt["mode"], "status": "ok"}))

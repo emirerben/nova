@@ -135,6 +135,9 @@ class PoolAssetPayload(BaseModel):
     source_filename: str | None
     analysis_attempt_count: int
     created_at: datetime
+    gcs_path: str
+    gcs_generation: str | None
+    library_asset_id: str | None
 
 
 class ItemJobPayload(BaseModel):
@@ -563,6 +566,9 @@ async def get_plan_item_debug(
                 source_filename=a.source_filename,
                 analysis_attempt_count=a.analysis_attempt_count,
                 created_at=a.created_at,
+                gcs_path=a.gcs_path,
+                gcs_generation=a.gcs_generation,
+                library_asset_id=str(a.library_asset_id) if a.library_asset_id else None,
             )
             for a in assets
         ],
