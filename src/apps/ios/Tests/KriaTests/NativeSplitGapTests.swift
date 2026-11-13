@@ -1,4 +1,5 @@
 import XCTest
+import KriaMediaEngine
 @testable import Kria
 
 /// KRI-1335 split-flow gaps. Each test is written against a listed failure mode.
@@ -669,5 +670,48 @@ final class NativeSplitGapTests: XCTestCase {
         XCTAssertEqual(pieces.count, 2)
         XCTAssertEqual(pieces.map(\.parentSegmentID), [nil, nil])
         XCTAssertEqual(Set(pieces.compactMap(\.id)).count, 2)
+    }
+
+    // MARK: Full screen and the real end of the footage
+
+    @MainActor
+    private func fullScreenCompileFailures(assetOffset: Double) throws -> [String] {
+        let lengths = [5.95, 8.95, 7.95]
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let sources = Dictionary(uniqueKeysWithValues: lengths.enumerated().map { index, length in
+            (index, ResolvedEditorSource(clipIndex: index, mediaID: "m\(index)",
+                asset: MediaAsset(id: "a\(index)", relativePath: "a\(index).mp4",
+                    fingerprint: .init(hex: String(repeating: "a", count: 64), byteCount: 100), duration: length + assetOffset),
+                url: URL(fileURLWithPath: "/fixture/a\(index).mp4")))
+        })
+        var failures: [String] = []
+        for selected in 0..<3 {
+            let members = lengths.enumerated().map { panel, length in
+                member(panel, offset: 0, duration: length, clipIndex: panel,
+                       raw: ["media_kind": .string("video"), "source_duration_s": .number(length + 0.05)])
+            }
+            var value = document(members, sections: [.init(id: "s", durationS: 8.95, panelCount: 3, collapseEmptyPanels: true)])
+            value.capabilities["split_collapse"] = .init(editable: true)
+            let session = makeSession(value)
+            session.setResolvedSourcesForTesting(sources)
+            try select(session, members[selected])
+            session.currentTime = 3
+            session.makeSplitFullScreen(sectionID: "s", side: .fromPlayhead)
+            guard session.document != value else { failures.append("panel \(selected): full screen refused"); continue }
+            guard session.document.splitScreenIsValid else { failures.append("panel \(selected): split invalid"); continue }
+            do { _ = try compiler.compile(document: session.document, clips: session.timelineClips, items: [], sources: sources) }
+            catch { failures.append("panel \(selected): \(error)") }
+        }
+        return failures
+    }
+
+    @MainActor
+    func testFullScreenFromPlayheadCompilesWhenTheStoredLengthMatchesTheFootage() throws {
+        XCTAssertEqual(try fullScreenCompileFailures(assetOffset: 0.05), [])
+    }
+
+    @MainActor
+    func testFullScreenFromPlayheadCompilesWhenTheFootageIsShorterThanTheStoredLength() throws {
+        XCTAssertEqual(try fullScreenCompileFailures(assetOffset: 0.03), [])
     }
 }

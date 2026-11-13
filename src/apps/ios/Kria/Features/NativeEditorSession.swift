@@ -5476,6 +5476,7 @@ enum EditorOpenIntent { case warm, open }
 
     /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
     func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
+    func setResolvedSourcesForTesting(_ value: [Int: ResolvedEditorSource]) { resolvedSources = value }
     func stageSplitPanelPlacementForTesting(_ id: UUID, sectionID: String, panel: Int, offset: Double) {
         splitPanelPlacements[id] = (sectionID, panel, offset)
     }
