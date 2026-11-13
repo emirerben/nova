@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.184.0] - 2026-11-13
+
+### Changed
+- fix(ci): cap PR UI shards at three, rerun only the abandoned job (KRI-1379) (#2292) <!-- release-pr: 2292 -->
+
 ## [0.88.183.0] - 2026-11-13
 
 ### Changed
