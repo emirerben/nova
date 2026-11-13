@@ -1158,7 +1158,7 @@ struct EditorDocument: Equatable, Sendable {
 }
 
 private enum NativeEditorMotionCodec {
-    static let fps = 30.0
+    static let fps = Double(EditorLimits.outputFPS)
 }
 
 private extension EditorSection {

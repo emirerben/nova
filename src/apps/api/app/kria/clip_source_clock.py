@@ -6,6 +6,8 @@ import copy
 import math
 from dataclasses import dataclass
 
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
+
 
 @dataclass(frozen=True)
 class SourceWindow:
@@ -66,8 +68,10 @@ def slice_source_window(row: dict, start: float, end: float) -> dict:
 
 
 def retime_source_window(row: dict, rate: float) -> dict:
-    if not math.isfinite(rate) or not 0.25 <= rate <= 4:
-        raise ValueError("Playback rate must be between 0.25 and 4")
+    if not math.isfinite(rate) or not PLAYBACK_RATE_MIN <= rate <= PLAYBACK_RATE_MAX:
+        raise ValueError(
+            f"Playback rate must be between {PLAYBACK_RATE_MIN:g} and {PLAYBACK_RATE_MAX:g}"
+        )
     clock = source_window(row)
     result = copy.deepcopy(row)
     result.update(

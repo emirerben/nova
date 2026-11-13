@@ -37,6 +37,7 @@ from app.kria.text_sequence import is_text_sequence
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.research import PreparedResearch
 from app.schemas.text_composition import ResearchLayerShape, TextCompositionProgram
+from app.services.editor_limits import FRAME_S
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
 log = structlog.get_logger()
@@ -1504,7 +1505,7 @@ def _shared_span(owned: list[_ServerTimedSequence], total: float) -> tuple[float
     (`_check_research_layers`); each one's pieces share the span equally. Words that cannot be
     read one at a time inside the video are reported, never squeezed into flicker.
     """
-    from app.services.sequence_pacing import MIN_TEXT_PIECE_S  # noqa: PLC0415
+    from app.services.editor_limits import MIN_TEXT_PIECE_S  # noqa: PLC0415
 
     longest = max(len(item.words) for item in owned)
     needed = longest * MIN_TEXT_PIECE_S
@@ -1841,7 +1842,7 @@ def _layer_name(shape: ResearchLayerShape, *, lead: bool = True) -> str:
     return f"The approved{where} text" if lead else f"the approved{where} text"
 
 
-_FRAME_S = 1 / 30
+_FRAME_S = FRAME_S
 
 
 def _compose_creation_text(

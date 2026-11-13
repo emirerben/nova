@@ -35,6 +35,7 @@ from app.schemas.editorial_plan import EditorialPlan
 from app.schemas.text_composition import TextCompositionProgram
 from app.schemas.text_style_intent import LabelPosition, TitleAnimation
 from app.schemas.user_song import SongCaptionTrack, UserSongPlan
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
 MIN_PROPOSAL_DURATION_S = 3
@@ -1884,7 +1885,10 @@ class FastMontageCut(BaseModel):
     # second, the native 0.25-4x range). The output is the source window divided by the rate.
     # Omitted when unset so every stored snapshot keeps its exact dump.
     playback_rate: float | None = Field(
-        default=None, ge=0.25, le=4.0, exclude_if=lambda value: value is None
+        default=None,
+        ge=PLAYBACK_RATE_MIN,
+        le=PLAYBACK_RATE_MAX,
+        exclude_if=lambda value: value is None,
     )
 
     @model_validator(mode="after")
