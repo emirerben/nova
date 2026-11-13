@@ -37,15 +37,20 @@ jobs:
     #
     # Nightly and manual regressions use the duration-balanced shards: the full
     # suite run serially outlasts timeout-minutes (build+unit ~19 min, UI >56).
+    # The full suite records ~261 min of UI time, so it takes five shards
+    # (ui_tests.MAX_SHARDS): at three, every shard needed ~90 min and was
+    # cancelled at the 75-minute limit (KRI-1379, run 43009921809).
     # Each regression leg builds from the warm cache; shard 1 runs unit tests
     # and saves the cache. Main's one-leg smoke lane owns TestFlight dispatch.
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
+      matrix: ${{ fromJSON(needs.changes.outputs.ios_ui_shards == '5' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/5"},{"lane":"native","runner":"macos-15","shard":"2/5"},{"lane":"native","runner":"macos-15","shard":"3/5"},{"lane":"native","runner":"macos-15","shard":"4/5"},{"lane":"native","runner":"macos-15","shard":"5/5"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '4' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/4"},{"lane":"native","runner":"macos-15","shard":"2/4"},{"lane":"native","runner":"macos-15","shard":"3/4"},{"lane":"native","runner":"macos-15","shard":"4/4"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
     runs-on: ${{ matrix.runner }}
     # Green native runs on main took 31-54 minutes (median 42) in September
     # 2026 as one serial job. See KRI-168 in docs/runbooks/ios-development.md.
-    timeout-minutes: 75
+    # Sharded regression legs get 90: ~54 min of recorded UI time plus ~9 min of
+    # setup, with headroom for slower-than-median runners.
+    timeout-minutes: ${{ matrix.shard && 90 || 75 }}
     permissions:
       contents: read
       actions: write
@@ -98,6 +103,17 @@ jobs:
         run: |
           echo "image=${ImageVersion:?Hosted runner image version is required for SDK caches}" >> "$GITHUB_OUTPUT"
           echo "toolchain=$({ xcode-select -p; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      # Hash the tracked Xcode inputs with git, not hashFiles(): its `**` glob walks
+      # the whole src/apps/ios tree and was killed at its 120 s limit on starved
+      # runners ("couldn't finish within 120 seconds", KRI-1379). The index lookup is
+      # instant and names the same files (project.yml, Package.resolved, Package.swift).
+      - name: Hash Xcode cache inputs
+        if: matrix.lane == 'native'
+        id: xcode-inputs
+        run: |
+          git ls-files -z -- src/apps/ios/project.yml ':(glob)src/apps/ios/**/Package.resolved' ':(glob)src/apps/ios/**/Package.swift' > "$RUNNER_TEMP/xcode-inputs"
+          test -s "$RUNNER_TEMP/xcode-inputs" || { echo "No Xcode cache inputs found" >&2; exit 1; }
+          echo "hash=$(xargs -0 shasum -a 256 < "$RUNNER_TEMP/xcode-inputs" | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Restore Xcode build data
         if: matrix.lane == 'native'
         id: build-cache
@@ -110,9 +126,9 @@ jobs:
             src/apps/ios/.derived-data/ModuleCache.noindex
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
+          key: ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ steps.xcode-inputs.outputs.hash }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
+            ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ steps.xcode-inputs.outputs.hash }}-
       - name: Report Xcode cache reuse
         if: matrix.lane == 'native'
         env:

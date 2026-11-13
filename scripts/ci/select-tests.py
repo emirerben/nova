@@ -580,9 +580,23 @@ def gate_journey(needs, event):
         expected = "success" if selected else "skipped"
         if needs[job].get("result") != expected:
             raise ValueError(
-                f"{job}: expected {expected}, got {needs[job].get('result')}"
+                unexpected_result(job, expected, needs[job].get("result"))
             )
     return "Selected portable and native journey dependencies passed."
+
+
+def unexpected_result(job, expected, result):
+    """Gate failure text. `abandoned` is GitHub's result for a job whose hosted
+    runner was never acquired ("The job was not acquired by Runner of type hosted
+    even after multiple attempts", macOS capacity): no step ran, so say so rather
+    than leave it looking like a test failure. The gate stays fail-closed."""
+    message = f"{job}: expected {expected}, got {result}"
+    if result == "abandoned":
+        message += (
+            "; GitHub never assigned a hosted runner to this job, so none of its "
+            "tests ran. Re-run the workflow (not a test failure)."
+        )
+    return message
 
 
 def gate(needs, suite, job, event="pull_request"):
@@ -639,7 +653,7 @@ def gate(needs, suite, job, event="pull_request"):
         execution_selected = execution_selected or peer == "true"
     expected = "success" if execution_selected else "skipped"
     if result != expected:
-        raise ValueError(f"{suite}: expected {expected}, got {result}")
+        raise ValueError(unexpected_result(suite, expected, result))
     if suite == "journey":
         ids = (
             outputs.get("journey_ids", "").split(",")
