@@ -38,6 +38,7 @@ from app.agents._schemas.creator_policy import (
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.agents._skills import load_skill
 from app.agents._writing_context import turkish_audience_instruction
+from app.agents.model_registry import provider_of
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
 from app.kria.brief import LONG_REQUEST_MAX_UPDATES, BriefUpdate, parse_brief_updates
@@ -1439,9 +1440,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         prompt_id="main_creator",
         prompt_version=MAIN_CREATOR_PROMPT_VERSION,
         model=settings.main_creator_model,
+        # A plan is idempotent, so a model at another provider may answer after an outage, a
+        # spend cap or an unknown outcome at the first (KRI-1385).
         fallback_models=("gemini-3.6-flash",)
-        if settings.main_creator_model.startswith("gemini")
-        else (),
+        if provider_of(settings.main_creator_model) == "google"
+        else ("gemini-3.1-pro-preview",),
         # KRI-118 item 4: bumped from 2 -> 3 alongside `schema_retry_limit`
         # below -- `_run_on_model`'s loop bounds EVERY retry path (transient/
         # refusal/schema) by `max_attempts`, so a `schema_retry_limit` above

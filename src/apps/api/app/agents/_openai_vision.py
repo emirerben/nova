@@ -13,11 +13,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.agents._runtime import TerminalError
+from app.agents._runtime import ProviderOutcomeUnknownError, TerminalError
 from app.agents._text_providers import _translate
+from app.agents.model_registry import SOL
 from app.config import settings
 
-VISION_MODEL = "gpt-6.1-sol"
+VISION_MODEL = SOL
 MAX_IMAGES = 6
 MAX_IMAGE_BYTES = 128 * 1024
 MAX_OUTPUT_TOKENS = 2_500
@@ -142,4 +143,8 @@ class OpenAIVisionClient:
                 model_used=getattr(response, "model", None),
             )
         except Exception as exc:
+            if isinstance(getattr(exc, "status_code", None), int) and exc.status_code >= 500:
+                # KRI-1171: a paid review is never retried, so a provider 5xx is held as an
+                # unknown liability here, unlike a planning call that may fall back.
+                raise ProviderOutcomeUnknownError("vision provider outcome unknown") from exc
             raise _translate(exc) from exc

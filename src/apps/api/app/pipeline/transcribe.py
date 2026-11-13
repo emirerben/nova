@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from app.agents.model_registry import WHISPER
 from app.config import settings
 
 if TYPE_CHECKING:
@@ -277,9 +278,7 @@ def transcribe_whisper_cached(
     # Library facts reuse this cache while isolating creator and analyzer changes.
     # Legacy callers retain their existing cache identity and request shape.
     if run_context is not None:
-        model_key = (
-            "whisper-1" if settings.whisper_backend == "openai-api" else settings.whisper_model
-        )
+        model_key = WHISPER if settings.whisper_backend == "openai-api" else settings.whisper_model
         scope = hashlib.sha256(
             f"{run_context.creator_id}:{settings.whisper_backend}:{model_key}".encode()
         ).hexdigest()
@@ -604,14 +603,14 @@ def _transcribe_openai(
             ledger.PaidCallRequest(
                 idempotency_key=ledger.logical_call_id(
                     feature="media_library_transcription",
-                    model="whisper-1",
+                    model=WHISPER,
                     prompt=f"{language or 'auto'}:{verbatim_prompt or ''}",
                     ctx=run_context,
                     attempt=0,
                     media_identity=_sha256_file(audio_path),
                 ),
                 feature="media_library_transcription",
-                model="whisper-1",
+                model=WHISPER,
                 estimated_cost_usd=cost_usd,
                 ctx=run_context,
                 provider="openai",
@@ -639,7 +638,7 @@ def _transcribe_openai(
         ledger.mark_paid_call_started(receipt)
         try:
             response = client.audio.transcriptions.create(
-                model="whisper-1",
+                model=WHISPER,
                 file=f,
                 response_format="verbose_json",
                 timestamp_granularities=["word"],
@@ -658,7 +657,7 @@ def _transcribe_openai(
         ledger.settle_paid_call_cost(
             receipt,
             cost_usd=cost_usd,
-            resolved_model="whisper-1",
+            resolved_model=WHISPER,
             provider_request_id=getattr(response, "_request_id", None),
             usage_json={
                 "duration_s": duration_s,

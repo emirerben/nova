@@ -171,9 +171,10 @@ def test_every_kind_flag_is_a_real_setting_that_defaults_off():
 
 
 def test_the_suggester_model_default_is_a_model_the_text_client_accepts():
-    from app.agents._text_providers import TEXT_MODELS
+    from app.agents.model_registry import exact_spec
 
-    assert Settings.model_fields["kria_suggester_model"].default in TEXT_MODELS
+    spec = exact_spec(Settings.model_fields["kria_suggester_model"].default)
+    assert spec is not None and spec.provider == "openai"
 
 
 def test_a_kind_that_reads_signals_needs_the_signals_flag():

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 import structlog
 
+from app.agents.model_registry import WHISPER
 from app.config import settings
 from app.services.audio_preprocess import (
     AudioPreprocessError,
@@ -168,7 +169,7 @@ def transcribe_for_lyrics(
         try:
             with open(upload_path, "rb") as f:
                 kwargs: dict = {
-                    "model": "whisper-1",
+                    "model": WHISPER,
                     "file": f,
                     "response_format": "verbose_json",
                     "timestamp_granularities": ["word"],

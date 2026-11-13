@@ -12,9 +12,10 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.agents.model_registry import SOL, SONNET, model_spec, provider_of
 from app.services.request_following_cases import digest
 
-MODELS = ("gemini-3.1-pro-preview", "claude-sonnet-5-5", "gpt-6.1-sol")
+MODELS = ("gemini-3.1-pro-preview", SONNET, SOL)
 AGENTS = ("main_creator", "edit_copilot")
 JSON_GUARD_VERSION = "json-guard-v1"
 JSON_GUARD = """\n\nOUTPUT TRANSPORT json-guard-v1:
@@ -55,6 +56,7 @@ def schema_audit(schema: dict, model: str) -> dict:
     blockers instead of dropping fields or silently switching output modes.
     """
     blockers, unions, optional = [], 0, 0
+    provider = provider_of(model)
 
     def walk(node, path="$"):
         nonlocal unions, optional
@@ -68,17 +70,17 @@ def schema_audit(schema: dict, model: str) -> dict:
                     blockers.append(f"{path}:open_object")
                 missing = set(props) - set(node.get("required", []))
                 optional += len(missing)
-                if model == "gpt-6.1-sol" and missing:
+                if provider == "openai" and missing:
                     blockers.append(f"{path}:optional_properties:{len(missing)}")
             if "anyOf" in node or "oneOf" in node:
                 unions += 1
-            if model == "gpt-6.1-sol" and "oneOf" in node:
+            if provider == "openai" and "oneOf" in node:
                 blockers.append(f"{path}:oneOf_requires_explicit_projection")
             for key, value in node.items():
                 walk(value, f"{path}/{key}")
 
     walk(schema)
-    if model == "claude-sonnet-5-5":
+    if provider == "anthropic":
         definitions = schema.get("$defs", {})
 
         def references(node):
@@ -124,17 +126,12 @@ def schema_audit(schema: dict, model: str) -> dict:
 def build_agent(name, arm: Arm, client):
     if arm.model not in MODELS or arm.output_mode not in ("json", "native", "json_guarded"):
         raise ValueError("unsupported model or output mode")
-    if arm.output_mode == "native" and arm.model == "claude-sonnet-5-5":
+    if arm.output_mode == "native" and provider_of(arm.model) == "anthropic":
         raise ValueError(
             "Sonnet rejected the full Main Creator/Copilot compiled grammar; "
             "select an explicit JSON profile until a capability-scoped schema is verified"
         )
-    from app.agents._text_providers import TEXT_EFFORTS
-
-    efforts = (
-        ("low", "medium", "high") if arm.model.startswith("gemini") else TEXT_EFFORTS[arm.model]
-    )
-    if arm.effort not in efforts:
+    if arm.effort not in model_spec(arm.model).efforts:
         raise ValueError("unsupported effort")
     agent = agent_class(name)(client)
     schema = None
@@ -190,7 +187,7 @@ def build_agent(name, arm: Arm, client):
 
         agent = NativeAgent(client)
         agent.spec = replace(agent.spec, prompt_version=agent.spec.prompt_version + "+" + VERSION)
-        if arm.model.startswith("claude"):
+        if provider_of(arm.model) == "anthropic":
             agent.spec = replace(
                 agent.spec,
                 prompt_version=agent.spec.prompt_version + "+" + ANTHROPIC_PROJECTION_VERSION,

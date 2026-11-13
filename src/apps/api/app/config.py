@@ -729,6 +729,11 @@ class Settings(BaseSettings):
     ai_openai_image_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_openai_narration_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_anthropic_evaluation_budget_usd: float = Field(default=0, ge=0, le=1000)
+    # The `planning` capability: Main Creator and copilot calls on OpenAI/Anthropic. Always
+    # metered, inside the provider monthly budget. 0 rejects every reserve, and the Main
+    # Creator then answers on its Gemini fallback.
+    ai_openai_planning_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_anthropic_planning_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_usage_environment: Literal["production", "development", "lab", "test"] = "development"
     # Optional operator-approved envelope for a local development manual-QA
     # session. It fills attribution for background Celery work that cannot
@@ -1535,7 +1540,7 @@ class Settings(BaseSettings):
     kria_suggestion_duplicates_enabled: bool = False
     kria_suggestion_generated_overlay_enabled: bool = False
     # The suggestion agent (OpenAI Responses, strict json_schema). A model outside
-    # `agents/_text_providers.TEXT_MODELS` is refused at call time, not here.
+    # `agents/model_registry.py` is refused at call time, not here.
     kria_suggester_model: str = "gpt-6.1-sol"
     # Per-run spend ceiling, and the credit sub-budget (0 = no spend allowed) for the
     # `suggestions` capability in ai_cost_control.py. A budget stop falls back to template cards.

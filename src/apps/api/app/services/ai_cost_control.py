@@ -28,6 +28,7 @@ from app.agents._runtime import (
     ProviderOutcomeUnknownError,
     RunContext,
 )
+from app.agents.model_registry import TokenPrice, model_spec, provider_of
 from app.config import settings
 
 log = structlog.get_logger()
@@ -53,10 +54,6 @@ _SUGGESTER_FEATURE = "nova.chat.suggestion_agent"
 # KRI-1171: ledger feature name of the paid intent review.
 _INTENT_REVIEW_FEATURE = "intent_review"
 _CANARY_PURPOSES = frozenset({"release_canary", "internal_canary"})
-
-# Standard paid-tier USD per one million tokens, verified against the official
-# Gemini Developer API pricing page updated 2026-09-04. Unknown models use the
-# highest known text rate so a newly configured alias cannot under-reserve.
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,53 +106,11 @@ def _next_day(now: datetime) -> datetime:
     return datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1)
 
 
-def _price_for(
-    model: str,
-    *,
-    prompt_tokens: int,
-) -> tuple[Decimal, Decimal, Decimal]:
-    """Return text/non-audio input, output, and cached-input rates."""
-
-    if model == "gpt-6.1-sol":
-        return (
-            (Decimal("4"), Decimal("15"), Decimal(".20"))
-            if prompt_tokens > 272_000
-            else (Decimal("2"), Decimal("10"), Decimal(".10"))
-        )
-    if model == "claude-sonnet-5-5":
-        return (Decimal("2"), Decimal("10"), Decimal(".10"))
-    if not model.startswith("gemini"):
+def _price_for(model: str) -> TokenPrice:
+    spec = model_spec(model)
+    if spec is None:
         raise AiCostControlPolicyError(scope="pricing:model", reason="unpriced_model")
-    lowered = model.lower()
-    long_context = prompt_tokens > 200_000
-    if lowered.startswith("gemini-3.1-pro"):
-        return (
-            (Decimal("4.00"), Decimal("18.00"), Decimal("0.40"))
-            if long_context
-            else (Decimal("2.00"), Decimal("12.00"), Decimal("0.20"))
-        )
-    if lowered.startswith(("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash")):
-        # Promotional Standard rates through 2026-12-31. The dated price
-        # version makes the required January update visible in reconciliation.
-        return (Decimal("0.75"), Decimal("3.75"), Decimal("0.075"))
-    if lowered.startswith("gemini-3.5-flash"):
-        return (Decimal("1.50"), Decimal("9.00"), Decimal("0.15"))
-    if lowered.startswith("gemini-3-flash"):
-        return (Decimal("0.50"), Decimal("3.00"), Decimal("0.05"))
-    if lowered.startswith("gemini-2.5-pro"):
-        return (
-            (Decimal("2.50"), Decimal("15.00"), Decimal("0.25"))
-            if long_context
-            else (Decimal("1.25"), Decimal("10.00"), Decimal("0.125"))
-        )
-    if lowered.startswith("gemini-2.5-flash-lite"):
-        return (Decimal("0.10"), Decimal("0.40"), Decimal("0.01"))
-    if lowered.startswith("gemini-2.5-flash"):
-        return (Decimal("0.30"), Decimal("2.50"), Decimal("0.03"))
-    if lowered.startswith("gemini-omni-flash"):
-        # Text output. Video output gets its modality surcharge below.
-        return (Decimal("1.50"), Decimal("9.00"), Decimal("1.50"))
-    return (Decimal("4.00"), Decimal("18.00"), Decimal("0.40"))
+    return spec.price
 
 
 def _modality_tokens(details: dict[str, Any] | None, key: str, modality: str) -> int:
@@ -185,10 +140,8 @@ def _modality_tokens(details: dict[str, Any] | None, key: str, modality: str) ->
 def calculate_cost_usd(model: str, usage: UsageMeter) -> float:
     """Calculate settled cost without double-counting cached prompt tokens."""
 
-    input_rate, output_rate, cached_rate = _price_for(
-        model,
-        prompt_tokens=max(0, usage.tokens_in),
-    )
+    price = _price_for(model)
+    input_rate, output_rate, cached_rate = price.rates(max(0, usage.tokens_in))
     cached = max(0, usage.tokens_cached)
     uncached_in = max(0, usage.tokens_in - cached) + max(0, usage.tokens_tool)
     billable_out = max(0, usage.tokens_out) + max(0, usage.tokens_thoughts)
@@ -197,43 +150,35 @@ def calculate_cost_usd(model: str, usage: UsageMeter) -> float:
         + Decimal(cached) * cached_rate
         + Decimal(billable_out) * output_rate
     )
-    if model == "claude-sonnet-5-5":
+    if price.cache_write_surcharge is not None:
+        five_minute, one_hour = price.cache_write_surcharge
         writes = max(0, int(usage.token_details.get("cache_creation_input_tokens", 0)))
         hour = min(
             writes, max(0, int(usage.token_details.get("cache_creation_1h_input_tokens", 0)))
         )
-        cost += Decimal(writes - hour) * Decimal(".5") + Decimal(hour) * Decimal("2")
-
-    lowered = model.lower()
-    if lowered.startswith(("gemini-2.5-flash", "gemini-2.5-flash-lite")):
-        # Audio prompt/cache tokens have a distinct rate on the 2.5 Flash
-        # family. Prompt details include cached tokens, so remove the cached
-        # audio subset before applying the uncached surcharge.
+        cost += Decimal(writes - hour) * five_minute + Decimal(hour) * one_hour
+    if price.audio_input is not None:
+        # Prompt details include cached tokens, so remove the cached audio subset before
+        # applying the uncached surcharge.
+        audio_input_rate, audio_cache_rate = price.audio_input
         prompt_audio = _modality_tokens(usage.token_details, "prompt_tokens_details", "AUDIO")
         cached_audio = min(
             prompt_audio,
             _modality_tokens(usage.token_details, "cache_tokens_details", "AUDIO"),
         )
         uncached_audio = max(0, prompt_audio - cached_audio)
-        if lowered.startswith("gemini-2.5-flash-lite"):
-            audio_input_rate = Decimal("0.30")
-            audio_cache_rate = Decimal("0.03")
-        else:
-            audio_input_rate = Decimal("1.00")
-            audio_cache_rate = Decimal("0.10")
         cost += Decimal(uncached_audio) * (audio_input_rate - input_rate)
         cost += Decimal(cached_audio) * (audio_cache_rate - cached_rate)
-    if lowered.startswith("gemini-omni-flash"):
+    if price.video_output is not None:
         video_output = min(
             max(0, usage.tokens_out),
             _modality_tokens(usage.token_details, "candidates_tokens_details", "VIDEO"),
         )
-        cost += Decimal(video_output) * (Decimal("17.50") - output_rate)
+        cost += Decimal(video_output) * (price.video_output - output_rate)
 
     cost /= Decimal(1_000_000)
-    if lowered.startswith("gemini-2.5"):
-        # Conservatively charge the paid tier even when an account has free quota.
-        cost += Decimal("0.035") * max(
+    if price.grounded_search_usd is not None:
+        cost += price.grounded_search_usd * max(
             0, int((usage.token_details or {}).get("grounded_search_requests", 0))
         )
     return float(cost.quantize(Decimal("0.000001")))
@@ -329,9 +274,7 @@ def estimate_call_cost_usd(
 
 
 def _is_openai_model(model: str) -> bool:
-    from app.agents._text_providers import paid_provider  # noqa: PLC0415
-
-    return paid_provider(model) == "openai"
+    return provider_of(model) == "openai"
 
 
 def effective_max_output_tokens(max_output_tokens: int | None) -> int:
@@ -672,9 +615,16 @@ _GENERATED_CAPABILITIES = {
     "generated_narration": "narration",
 }
 _FEATURE_CAPABILITIES = {"intent_review": "intent_review", _SUGGESTER_FEATURE: "suggestions"}
+# Ledger feature names (``AgentSpec.name``) of the chat planners. Their OpenAI/Anthropic calls
+# spend the `planning` capability; on Gemini they keep the environment cap only.
+_PLANNING_FEATURES = frozenset({"nova.creator.main", "nova.edit.copilot"})
+_CAPABILITIES = frozenset(
+    {"image", "narration", "evaluation", "intent_review", "suggestions", "planning"}
+)
+_OPENAI_ONLY_CAPABILITIES = frozenset({"image", "narration", "intent_review", "suggestions"})
 # Capabilities whose reservations are enforced even while AI_COST_CONTROL_ENABLED is off, so a
-# missing ledger never becomes unmetered spend. Their provider is always OpenAI.
-_ALWAYS_ENFORCED_CAPABILITIES = frozenset({"image", "narration", "intent_review", "suggestions"})
+# missing ledger never becomes unmetered spend.
+_ALWAYS_ENFORCED_CAPABILITIES = _OPENAI_ONLY_CAPABILITIES | {"planning"}
 _CREDIT_PROVIDERS = frozenset({"openai", "anthropic"})
 
 
@@ -682,22 +632,23 @@ def _credit_capability(request: PaidCallRequest) -> str | None:
     inferred = _GENERATED_CAPABILITIES.get(request.feature) or _FEATURE_CAPABILITIES.get(
         request.feature
     )
+    credit_model = (
+        request.provider in _CREDIT_PROVIDERS and provider_of(request.model) == request.provider
+    )
+    if inferred is None and credit_model and request.feature in _PLANNING_FEATURES:
+        inferred = "planning"
     if (
         inferred is None
+        and credit_model
         and (request.ctx.usage_purpose or "").strip().lower() in _TEST_PURPOSES
-        and (request.provider, request.model)
-        in {("openai", "gpt-6.1-sol"), ("anthropic", "claude-sonnet-5-5")}
     ):
         inferred = "evaluation"
     capability = request.capability or inferred
     if capability is not None and (
-        capability not in {"image", "narration", "evaluation", "intent_review", "suggestions"}
+        capability not in _CAPABILITIES
         or (inferred is not None and capability != inferred)
         or request.provider not in _CREDIT_PROVIDERS
-        or (
-            capability in {"image", "narration", "intent_review", "suggestions"}
-            and request.provider != "openai"
-        )
+        or (capability in _OPENAI_ONLY_CAPABILITIES and request.provider != "openai")
     ):
         raise AiCostControlPolicyError(scope="credit:capability", reason="invalid_capability")
     if capability in {"image", "narration"}:
@@ -731,6 +682,8 @@ def _lock_credit_provider(
 def _credit_spend(
     conn: Any, *, provider: str, capability: str | None, period_start: datetime
 ) -> Decimal:
+    # Every reservation stores the capability `_credit_capability` gave it, and settlement keeps
+    # it, so the ledger never re-derives a capability from feature or model names.
     value = conn.execute(
         text("""
             SELECT COALESCE(SUM(CASE
@@ -740,23 +693,9 @@ def _credit_spend(
                 ELSE 0 END), 0)
             FROM ai_cost_reservations
             WHERE provider = :provider AND period_start = :period_start
-              AND (:capability IS NULL OR
-                   CASE WHEN feature IN ('generated_image', 'generated_image_edit') THEN 'image'
-                        WHEN feature = 'generated_narration' THEN 'narration'
-                        WHEN feature = 'intent_review' THEN 'intent_review'
-                        WHEN feature = :suggester_feature THEN 'suggestions'
-                        WHEN usage_purpose IN ('live_eval', 'provider_smoke') AND
-                             ((provider = 'openai' AND requested_model = 'gpt-6.1-sol') OR
-                              (provider = 'anthropic' AND requested_model = 'claude-sonnet-5-5'))
-                        THEN 'evaluation'
-                        ELSE usage_json->>'_budget_capability' END = :capability)
+              AND (:capability IS NULL OR usage_json->>'_budget_capability' = :capability)
         """),
-        {
-            "provider": provider,
-            "period_start": period_start,
-            "capability": capability,
-            "suggester_feature": _SUGGESTER_FEATURE,
-        },
+        {"provider": provider, "period_start": period_start, "capability": capability},
     ).scalar_one()
     return Decimal(str(value))
 
