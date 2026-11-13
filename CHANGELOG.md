@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.187.0] - 2026-11-13
+
+### Changed
+- feat(kria): apply a chat edit's valid ops and repair the rejected ones (KRI-1386, KRI-1387) (#2291) <!-- release-pr: 2291 -->
+
 ## [0.88.186.0] - 2026-11-13
 
 ### Changed
