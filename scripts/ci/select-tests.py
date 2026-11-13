@@ -346,6 +346,10 @@ def affected(path):
     # so a change under src/apps/ios/ runs the API suite too.
     if path.startswith("src/apps/ios/"):
         return {"api", "ios", "ios_ui"}
+    # tests/evals/request_following/test_creation_composition.py executes this
+    # script to check the committed iOS fixture, so the API suite must run too.
+    if path == "scripts/ios/kri-524-creation-e2e.py":
+        return {"api", "ios", "ios_ui"}
     if path.startswith("scripts/ios/") or path == ".github/workflows/ios.yml":
         return {"ios", "ios_ui"}
     if path.startswith("src/apps/api/"):

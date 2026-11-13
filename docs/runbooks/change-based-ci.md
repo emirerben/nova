@@ -14,7 +14,7 @@ Other specialized workflows and deployment triggers retain their existing rules.
 | --- | --- |
 | `src/apps/web/**` | No web suite; bundled public assets still select iOS coverage |
 | Native app, media engine, resources, UI tests under `src/apps/ios/**` | API tests and API lint (API parity and fixture guards read these files), plus iOS build/unit and affected UI scenarios on PRs; full iOS coverage nightly and on manual dispatch; shell tests and mobile contracts |
-| `scripts/ios/**`, iOS workflow | iOS build/unit and affected UI scenarios on PRs; full iOS coverage nightly and on manual dispatch |
+| `scripts/ios/**`, iOS workflow | iOS build/unit and affected UI scenarios on PRs; full iOS coverage nightly and on manual dispatch; shell tests and mobile contracts. `scripts/ios/kri-524-creation-e2e.py` also runs the API tests (an API test executes it) |
 | Native unit tests/fixture or `Kria/Generated/**` only | API tests and API lint, iOS build, unit tests and mobile contracts; no PR UI execution |
 | Web public fonts and type-posters bundled in Xcode | iOS build/unit on PRs; full iOS coverage nightly/manual |
 | API internal implementation, prompts, tests | API tests and API lint |

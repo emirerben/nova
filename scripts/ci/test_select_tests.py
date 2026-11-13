@@ -1,5 +1,6 @@
 """Exercise classification, real git diffs, and required-check failure behavior."""
 
+import ast
 import importlib.util
 import json
 import os
@@ -115,14 +116,54 @@ class ClassificationTests(unittest.TestCase):
             "src/apps/web/public/plan/type-posters/montage.mp4",
         ):
             self.assertEqual(ci.affected(path), {"ios", "ios_ui"})
+        self.assertEqual(
+            ci.affected("scripts/ios/kri-524-creation-e2e.py"),
+            {"api", "ios", "ios_ui"},
+        )
+
+    @staticmethod
+    def _ios_paths_built_with_path_joins(source):
+        """Repo paths an API test builds as `base / "apps" / "ios" / ...`."""
+        found = set()
+        tree = ast.parse(source.read_text())
+        inner = {
+            id(node.left)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+        }
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
+                continue
+            if id(node) in inner:
+                continue  # only the outermost join of a chain
+            parts, cursor = [], node
+            while isinstance(cursor, ast.BinOp) and isinstance(cursor.op, ast.Div):
+                if isinstance(cursor.right, ast.Constant) and isinstance(
+                    cursor.right.value, str
+                ):
+                    parts.insert(0, cursor.right.value)
+                cursor = cursor.left
+            segments = [seg for part in parts for seg in part.split("/") if seg]
+            if "ios" not in segments:
+                continue
+            at = segments.index("ios")
+            root = "scripts" if at and segments[at - 1] == "scripts" else "src/apps"
+            rest = segments[at + 1 :] or ["probe"]
+            found.add("/".join([root, "ios", *rest]))
+        return found
 
     def test_every_ios_path_an_api_test_reads_selects_the_api_suite(self):
         tests = SCRIPT.parents[2] / "src/apps/api/tests"
-        read = set()
+        read, joined = set(), set()
         for source in tests.rglob("*.py"):
             read.update(re.findall(r"src/apps/ios/[\w./-]+\.\w+", source.read_text()))
+            joined.update(self._ios_paths_built_with_path_joins(source))
         self.assertIn("src/apps/ios/Kria/Core/SlidePost.swift", read)
-        for path in sorted(read):
+        # Path joins the literal regex cannot see (KRI-1397).
+        self.assertIn("src/apps/ios/Kria/Features", joined)
+        self.assertIn("src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json", joined)
+        self.assertIn("scripts/ios/kri-524-creation-e2e.py", joined)
+        for path in sorted(read | joined):
             with self.subTest(path=path):
                 self.assertIn("api", ci.affected(path))
 
