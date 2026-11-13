@@ -2809,6 +2809,12 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    func testInvalidTimelineIsAPermanentFailureThatTellsTheCreatorToUndo() {
+        let error = RecipeError.invalidTimeline
+        XCTAssertEqual(NativeEditorSession.sourcePreviewMessage(for: error), "This change can’t be previewed. Undo it to get the preview back.")
+        XCTAssertTrue(NativeEditorSession.isPermanentSourcePreviewFailure(error), "Retry rebuilds the same document and fails the same way")
+    }
+
     func testLegacyDraftPhotoWithFakeFootageLengthStillCompilesWhenExtended() throws {
         let photo = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
         try UIGraphicsImageRenderer(size: CGSize(width: 32, height: 48)).image { context in
