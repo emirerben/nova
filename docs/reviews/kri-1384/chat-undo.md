@@ -50,13 +50,30 @@ head lock at commit):
    lane and row the undo would restore still holds what the chat wrote. Other rows and lanes may
    differ; the undo keeps them.
 
-Which turns seal, measured by compiling each phone probe of the parity table and sealing its record
-over a clean editor: text (add, edit, remove, timing, style), captions (text, timing, emphasis,
-meta), the timeline (trim, duration, in point, reorder, split, remove, duplicate, transitions, tilt,
-crop, speed, source gain, replace), sound effects, picture cards, mix and music, the speaker
-background and camera effects all seal. `set_title`, `remove_visual_media` and the
-caption-animation `set_caption_meta` do not (the record has no exact pre-turn value for them), so
-chat refuses to undo those turns.
+Which turns seal is pinned by `src/apps/api/tests/kria/test_chat_undo_seal_table.py`. It compiles
+every phone probe of the parity guard (88 probes; the 7 in groups a phone cannot run are skipped)
+and seals each record over a clean editor the way `kria_runtime` does.
+
+These seal: text (add, edit, remove, timing, style), captions (text, timing, emphasis, meta), the
+timeline (trim, duration, in point, reorder, split, remove, duplicate, transitions, tilt, crop,
+speed, source gain, replace), split screens, sound effects, picture cards (including their layer
+order), mix and music, the speaker background, its frame and focus, and removing the full-screen
+opening (`remove_full_screen_opening`).
+
+These do not, so chat refuses to undo the turn:
+
+| Turn | Why the record cannot put it back exactly |
+| --- | --- |
+| `set_title` | The title lane has no exact pre-turn value in the record. |
+| `remove_visual_media` | The removed picture block does not come back as it was. |
+| `set_caption_meta` (caption animation) | The animation phases are not restored exactly. |
+| `patch_caption_line` | The record restores `caption_meta` by value and cannot delete a key, so the line's `appearance.line_overrides` entry (or the all-lines size and position) stays after the replay. |
+| `set_user_song` | The replayed song lane gains `removed: false`, and the editor it projects differs from the pre-turn one. |
+| `set_layer_order` on a picture block | `visual_blocks` rows come back schema-normalized (version, timing mode, transitions), not equal to the pre-turn rows. On a picture card (`media_overlays`) it seals. |
+| `set_video_shape` | No plan-review section covers `orientation` or `landscape_fit`, so the record is empty for them. |
+
+The last four arrived with KRI-1394 (#2311). Each is a gap in the restore record, not in the undo
+rule. Undoing them needs the record to cover the lane exactly.
 
 An undo turn stores no record, so a second "undo" is refused rather than chained or toggled.
 `repeat_last_edit` stays unsupported (the `redo` parity group): it replays the web client's op log.
@@ -78,7 +95,7 @@ Postgres, real planner, parser, compiler and drafts; only the model is scripted)
 | F7 | Re-plan onto a new job | `[replanned]` |
 | F8 | Repeat offered without a handler | `history_state` carries no `last_turn_summary` (asserted in the first test) |
 | F9 | Something lands between planning and commit | forced-op half of the F1 test: refused under the lock, nothing written |
-| F10 | A lane the record cannot restore exactly | `seal` requires an exact replay (every lane the turn changed) |
+| F10 | A lane the record cannot restore exactly | `seal` requires an exact replay (every lane the turn changed); `test_chat_undo_seal_table.py` pins which turns seal |
 | F11 | Old app build | `[old_build]`, `[web]` |
 | F12 | The phone drops a lane the creator touched | `testANewerChatHeadThatPutsALaneBackLeavesALaneTheCreatorEditedSinceAlone` |
 | F13 | The phone re-encodes an untouched staged lane | `testAnUntouchedStagedChatLaneIsSentBackAsTheHeadWroteIt` |
@@ -94,9 +111,10 @@ Postgres, real planner, parser, compiler and drafts; only the model is scripted)
   liked it before.") on `gemini-3.1-pro-preview`, prompt `2026-11-13-v125`, development ledger,
   test run `rf-kri1384-undo-20261113-a`, `--max-cost-usd 2 --approve-reservation`. Priced at
   $0.32 expected ($0.47 reservation each); settled $0.1261. The model emitted `undo_last_edit` on
-  both and the parser kept it. Per-action set: 33/40 met (was 31/39).
-- The prompt is unchanged. With `can_undo_last_turn=True` the v125 rules already emit the op; with
-  no history state they already refuse plainly.
+  both and the parser kept it. Per-action set, rebased on #2311: 38/45 met (main has 36/44).
+- This change does not edit the prompt. With `can_undo_last_turn=True` the v125 rules already emit
+  the op; with no history state they already refuse plainly. Main's v126 (#2311) adds the five new
+  op sections and leaves the history rules as they were.
 
 ## Open
 

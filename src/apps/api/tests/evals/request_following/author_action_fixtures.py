@@ -1027,7 +1027,14 @@ def build(scenario: Scenario) -> dict[str, Any]:
             except Exception as exc:  # noqa: BLE001 - the verdict is the message
                 probe["compiles"] = False
                 probe["compile_error"] = f"{type(exc).__name__}: {exc}"[:300]
-    return {"snapshot": snapshot, "probe": probe, "ops": parsed.ops, "compiled": compiled}
+    return {
+        "snapshot": snapshot,
+        "probe": probe,
+        "ops": parsed.ops,
+        "compiled": compiled,
+        "job": job,
+        "variant": variant,
+    }
 
 
 def fixture_for(scenario: Scenario, built: dict[str, Any]) -> dict[str, Any]:
