@@ -106,6 +106,33 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         attach(app, name: "Bottom panel clip selected")
     }
 
+    func testDisabledPanelActionsSayWhyAndTheFillExitIsCalledBack() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 3, in: app)
+        app.buttons["native-editor-split-skip"].tap()
+        fillEmptyPanel("Bottom", withFootage: "Clip 2", in: app)
+        let fill = app.buttons["native-editor-split-fill-1"]
+        XCTAssertTrue(fill.waitForExistence(timeout: 10))
+        fill.tap()
+        let back = app.buttons["native-editor-split-add-cancel"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        XCTAssertEqual(back.label, "Back", "The fill exit must not read like a second Done")
+        attach(app, name: "Fill mode: Back beside Done")
+        back.tap()
+        fillEmptyPanel("Middle", withFootage: "Clip 2", in: app)
+
+        let top = app.buttons["native-editor-split-add-0"]
+        XCTAssertTrue(top.waitForExistence(timeout: 10))
+        XCTAssertFalse(top.isEnabled, "The Top panel already holds the whole section")
+        let reason = app.staticTexts["native-editor-split-full-reason-0"]
+        XCTAssertTrue(reason.waitForExistence(timeout: 5), "A disabled Add and Loop must say why on screen")
+        XCTAssertEqual(reason.label, "This panel is full. Shorten a clip in it to make room.")
+        XCTAssertFalse(app.buttons["native-editor-split-loop-0"].isEnabled)
+        attach(app, name: "Full panel with its reason")
+    }
+
     func testDroppingAPanelThatHoldsFootageAsksFirstAndAddingOneDoesNot() throws {
         let app = launch(reset: true)
         XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
