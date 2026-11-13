@@ -15,6 +15,7 @@ from app.agents._schemas.brief_extractor import (
 )
 from app.agents.main_creator import (
     _BRIEF_PROMPT_SECTION,
+    BRIEF_RECORD_SENTENCE,
     CHANGED_REQUEST_SECTION,
     with_full_opening_brief,
     with_insert_clip_brief,
@@ -45,7 +46,8 @@ BRIEF_EXTRACTOR_PROMPT_SOURCES = (
 )
 BRIEF_EXTRACTOR_PROMPT_VERSION = prompt_fingerprint("be", BRIEF_EXTRACTOR_PROMPT_SOURCES)
 _NARROW_BRIEF_SECTION = (
-    _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
+    _BRIEF_PROMPT_SECTION.replace(BRIEF_RECORD_SENTENCE, "")
+    .replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
     .replace(
         "Use that context when proposing `action`, but emit\nno `brief_updates` for it.",

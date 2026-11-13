@@ -11,17 +11,6 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 
 out, db, prefix, *reports = sys.argv[1:]
-cases = []
-for report in reports:
-    for case in ET.parse(report).iter("testcase"):
-        name = re.search(r"\[(.*)\]", case.get("name")).group(1)
-        failure = case.find("failure")
-        error = case.find("error")
-        problem = failure if failure is not None else error
-        message = (
-            " ".join((problem.get("message") or "").split())[:240] if problem is not None else None
-        )
-        cases.append({"fixture": name, "passed": problem is None, "failure": message})
 
 
 def category(message):
@@ -40,8 +29,23 @@ def category(message):
     return "other"
 
 
-for case in cases:
-    case["category"] = category(case["failure"])
+# A later report's result replaces a fixture the ledger refused in an earlier one.
+by_fixture = {}
+for report in reports:
+    for case in ET.parse(report).iter("testcase"):
+        name = re.search(r"\[(.*)\]", case.get("name")).group(1)
+        failure = case.find("failure")
+        error = case.find("error")
+        problem = failure if failure is not None else error
+        message = (
+            " ".join((problem.get("message") or "").split())[:240] if problem is not None else None
+        )
+        row = {"fixture": name, "passed": problem is None, "failure": message}
+        row["category"] = category(message)
+        earlier = by_fixture.get(name)
+        if earlier is None or earlier["category"] == "not run (ledger cap reached)":
+            by_fixture[name] = row
+cases = list(by_fixture.values())
 query = f"""
 SELECT test_run_id, provider, requested_model, status,
        coalesce(usage_json->>'_budget_capability', '') AS capability, count(*),

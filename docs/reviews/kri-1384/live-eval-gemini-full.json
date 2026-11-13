@@ -1,0 +1,803 @@
+{
+  "fixtures": 118,
+  "ran": 118,
+  "passed": 96,
+  "failure_categories": {
+    "other": 13,
+    "reply wording (muted)": 4,
+    "asked instead of proposing": 5
+  },
+  "settled_usd": 8.9759,
+  "ledger": [
+    {
+      "test_run_id": "kri1384sp-gem-ctl-b1",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "15",
+      "settled_usd": "1.0703",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-ctl-b2",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "15",
+      "settled_usd": "1.0283",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-ctl-b3",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "18",
+      "settled_usd": "1.2750",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-ctl-b4",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "16",
+      "settled_usd": "1.1926",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-ctl-b5",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "16",
+      "settled_usd": "1.1579",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-ctl-b6",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "16",
+      "settled_usd": "1.0990",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-ctl-b7",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "14",
+      "settled_usd": "1.0578",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-ctl-b8",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "14",
+      "settled_usd": "1.0950",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "alternating_matches",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_tr_dedigim_yerde",
+      "passed": false,
+      "failure": "assert 0 == 1 + where 0 = len([])",
+      "category": "other"
+    },
+    {
+      "fixture": "kri1038_t2_29ekim_followup_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_montage_neutral_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_tr",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'Ana videonuzu temel alıp bahsettiğiniz yerlere diğer klipleri tam ekran yerleştireceğim. Konuşma klipleri tam ekran ç... o sırada sizin sesiniz kısılacak. Stadyum klibi ise sessiz olarak gösterilecek ve k",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1189_start_over_from_scratch_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_t1_about_a_second",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_a",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_e",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri519_voiceover_reaction_beats",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "madrid_pastel_title",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_title_hold_with_video_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_named_decline",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "barcelona_shot_labels",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_tr_baslik_tek_tek",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_en",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1151_talking_insert_pause_form",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_start_over_with_a_clip_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_tr_bir_saniye_boyunca",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri244_descriptive_chronology",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_a_v44",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_e_v44",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri523_pinned_corner_text",
+      "passed": false,
+      "failure": "AssertionError: assert [{'text': 'Fr...: 'top_left'}] == [{'text': 'Fr...: 'top_left'}] At index 0 diff: {'text': 'Free to do in Lisbon', 'corner': 'bottom_left', 'heading_level': 1, 'stack_id': 'lisbon_title'} != {'text': 'Free to do in Li",
+      "category": "other"
+    },
+    {
+      "fixture": "kri806_don_julio_kept_lines",
+      "passed": false,
+      "failure": "AssertionError: assert [] == ['analysis-pr...11F44B35.mp4'] Right contains 2 more items, first extra item: 'analysis-proxy-ios-D0BD8AF7-0904-4AE2-B585-5BE68623369E.mp4' Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "montage_strategy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "remove_uploaded_visuals",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_not_too_much",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_highlight_when_i_say",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_window_is_not_a_hold",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_tr_ekranda_yazsin_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_tr",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1189_bastan_basla_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri129_caption_food_and_weather",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_b",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_approved_continuation",
+      "passed": false,
+      "failure": "AssertionError: creative copy metadata must survive MainCreator parsing assert None is not None",
+      "category": "other"
+    },
+    {
+      "fixture": "kri525_ranged_pinned_text",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri815_script_request",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "n2_voiceover_fullscreen_photo_sequence",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "semantic_text_english",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_why_dont_you_add",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_recorded_voiceover_words",
+      "passed": false,
+      "failure": "assert 0 == 1 + where 0 = len([])",
+      "category": "other"
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_tr_kelime_kelime_goster_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_over_my_speech_stays_overlay",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri156_transcript_labels",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_b_v44",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_cancel",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri586_delegated_hook_first_turn",
+      "passed": false,
+      "failure": "AssertionError: assert 'Race day sunrise' == 'Sunrise miles' - Sunrise miles + Race day sunrise",
+      "category": "other"
+    },
+    {
+      "fixture": "kri840_fullscreen_reaction_beat",
+      "passed": false,
+      "failure": "KeyError: 'grill'",
+      "category": "other"
+    },
+    {
+      "fixture": "native_mixed_media_timing_repaired",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "semantic_text_spanish",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sport_labels_bottom_right",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_card_background_words",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_brief",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'I will show the talks full screen with their own sound, muting your voice underneath, and the stadium full screen while keeping your voice. They will appear when you mention them, or spread out if no matc",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri178_talking_reaction_beats",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri374_background_song",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_c_dated",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_creator_supplied_multilingual",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri586_generate_after_choice",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri841_talking_ending_clip",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "phone_original_audio_17_clips",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "semantic_text_turkish",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "video_reuse_default",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_subtitles_quote_as_i_say",
+      "passed": false,
+      "failure": "assert 0 == 1 + where 0 = len([])",
+      "category": "other"
+    },
+    {
+      "fixture": "kri1038_en_display_one_at_a_time",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_card_neutral_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_show_when_mentioned",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_n3_named_restart_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri127_open_vocabulary_dish_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri188_east_run_brief_updates",
+      "passed": false,
+      "failure": "AssertionError: assert [['text', 'pe...t', 'global']] == [['text', 'ti...r', 'global']] At index 0 diff: ['text', 'per_clip'] != ['text', 'title'] Left contains one more item: ['select', 'global'] Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "kri374_lipsync_intent",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_c_undated",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_initial_generation",
+      "passed": false,
+      "failure": "AssertionError: assert 'Watch this' == 'One day, one city' - One day, one city + Watch this",
+      "category": "other"
+    },
+    {
+      "fixture": "kri598_tigre_title_ok",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_decline_earlier_turn",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "video_reuse_followup",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_title_replace_legacy",
+      "passed": false,
+      "failure": "AssertionError: assert {'unit': 'wor...e': 'replace'} == {'unit': 'wor...agent_choice'} Omitting 1 identical items, use -vv to show Differing items: {'mode': 'replace'} != {'mode': 'agent_choice'} Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "kri1093_card_neutral_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_tr",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'Ana konuşmanızın üzerine, bahsettiğiniz anlarda diğer videolar tam ekran eklenecek. Konuşma klipleri kendi sesleriyle...a sizin sesiniz duyulmayacak. Stadyum klibi ise sessiz eklenecek ve üzerine sizin an",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1189_quoted_restart_cue_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri127_speaks_to_camera_selection",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri189_clip_facts_day_vlog",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri374_song_mentions_concert_not_lipsync",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_d",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_metadata_parse_unresolved",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri598_tigre_use_all_clips",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri849_dj_t1_unclear_answer_omit",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_described_buzzer",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1093_montage_create_a_lipsync",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_show_when_mentioned",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'I will use your main take as the spine. When you mention the other talks, those clips will appear full screen and pla...oice underneath. When you mention the stadium, it will appear full screen but stay s",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_correction_no_two_seconds",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri190_route_facts_and_order",
+      "passed": false,
+      "failure": "AssertionError: assert [['order', 'g..., 'per_clip']] == [['text', 'pe...g', 'global']] At index 0 diff: ['order', 'global'] != ['text', 'per_clip'] Right contains one more item: ['timing', 'global'] Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri470_gate_d_v44",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_revision_candidate",
+      "passed": false,
+      "failure": "AssertionError: assert 'Secrets of the city' == 'What happened after sunset?' - What happened after sunset? + Secrets of the city",
+      "category": "other"
+    },
+    {
+      "fixture": "kri598_tigre_voiceover_cues",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "long_montage_target_duration",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "sfx_different_effect",
+      "passed": true,
+      "failure": null,
+      "category": null
+    }
+  ]
+}

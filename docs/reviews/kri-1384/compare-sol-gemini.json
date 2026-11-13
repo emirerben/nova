@@ -1,0 +1,260 @@
+{
+  "fixtures": 118,
+  "passed": {
+    "baseline": 71,
+    "candidate": 95,
+    "control": 96
+  },
+  "baseline_to_candidate": {
+    "pass->pass": 69,
+    "fail->fail": 21,
+    "fail->pass": 26,
+    "pass->fail": 2
+  },
+  "candidate_vs_control": {
+    "pass/pass": 90,
+    "fail/pass": 6,
+    "pass/fail": 5,
+    "fail/fail": 17
+  },
+  "differing": [
+    {
+      "fixture": "barcelona_shot_labels",
+      "baseline": "fail",
+      "candidate": "fail",
+      "control": "pass",
+      "candidate_failure": "KeyError: 'render_intent_evidence'"
+    },
+    {
+      "fixture": "decoy_kri1038_en_recorded_voiceover_words",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "fail",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_subtitles_quote_as_i_say",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "fail",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "decoy_kri1038_tr_dedigim_yerde",
+      "baseline": "pass",
+      "candidate": "pass",
+      "control": "fail",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_window_is_not_a_hold",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_brief",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "fail",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_show_when_mentioned",
+      "baseline": "pass",
+      "candidate": "fail",
+      "control": "pass",
+      "candidate_failure": "AssertionError: assert ('muted' in 'Talk clips will appear full screen after their mentions with their own sound, muting your voice underneath. Stadium f...e. Your take will continue without pausing. Clips without a matching mention will be"
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri1292_text_hold_tr_bir_saniye_boyunca",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "baseline": "fail",
+      "candidate": "fail",
+      "control": "pass",
+      "candidate_failure": "AssertionError: assert 10 == (6 + 3) + where 10 = len([BriefUpdate(operation='add', target_requirement_id=None, expected_version=None, kind='text', scope='title', literal='...clip', literal='Fuel for round two', description='The coffee cup "
+    },
+    {
+      "fixture": "kri523_pinned_corner_text",
+      "baseline": "pass",
+      "candidate": "pass",
+      "control": "fail",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri586_generate_after_choice",
+      "baseline": "fail",
+      "candidate": "fail",
+      "control": "pass",
+      "candidate_failure": "AssertionError: assert 'Take five seconds' == 'Sunrise miles' - Sunrise miles + Take five seconds"
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "n2_voiceover_fullscreen_photo_sequence",
+      "baseline": "fail",
+      "candidate": "fail",
+      "control": "pass",
+      "candidate_failure": "StopIteration"
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "qendresa_title_hold_with_video_length",
+      "baseline": "fail",
+      "candidate": "pass",
+      "control": "pass",
+      "candidate_failure": null
+    },
+    {
+      "fixture": "sport_labels_bottom_right",
+      "baseline": "pass",
+      "candidate": "fail",
+      "control": "pass",
+      "candidate_failure": "AssertionError: [FAIL] structural=1 failures: ['explicit per-clip label request was dropped'] assert False + where False = EvalResult(fixture_id='main_creator/sport_labels_bottom_right', agent='nova.creator.main', prompt_version='2026-09-03"
+    }
+  ]
+}

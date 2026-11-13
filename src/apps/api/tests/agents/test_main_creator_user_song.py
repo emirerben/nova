@@ -110,11 +110,14 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # brief-on hashes re-pinned (before: 9fc58bb0… / 891266d1…); brief-off unchanged.
 # KRI-1355: the brief section teaches the typed no-title ask (`facts.title == "off"`): the two
 # brief-on hashes re-pinned (before: ae8b21b4… / 3b5a507b…); brief-off unchanged.
+# KRI-1384: the base prompt says a limit is not a reason to ask, and the brief section records
+# every stated ask whatever the action: all four re-pinned (before: 5ac96e9a… / 42a19e30… /
+# 4ad9471f… / 68d42cab…).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "5ac96e9a1909de36430a3641ab104edafae4a20af1fa9bf8f30f20d25705ec77",
-    (True, False): "42a19e30cae3fadac2dd65318b2af49ca4a5d70332e17f714aa5875af6433914",
-    (False, True): "4ad9471f016b045c48ca1c328d4334a7c69179c221770d5c17416b09e98c0631",
-    (False, False): "68d42cab5cc0d03ccf3cf164d19bccba9193f01a9409d802acc0454b4adce777",
+    (True, True): "1dd7c57f45df173ef0f7f308b96e15ede80e0c75ac2207d65ef24d9b3b69748d",
+    (True, False): "67797ad5d4390601c8802c280fe68759ecdd697c64d2093aede2f1a7c4c063d1",
+    (False, True): "389e08425a857e387cd4670a010c9f6498e36bb4a4a6917db5beaf109cc8e1c7",
+    (False, False): "05f0b6f7a774d08fa47fe57ebc60baaab793b0cda14625cfbdef91d03bac09c2",
 }
 
 
