@@ -59,10 +59,15 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
     from app.pipeline.guided_story import compile_execution_plan  # noqa: PLC0415
     from app.services import clip_facts  # noqa: PLC0415
     from app.services import creation_text_composition as composition  # noqa: PLC0415
-    from app.services.creation_text_degrade import Degraded  # noqa: PLC0415
+    from app.services.creation_text_degrade import (  # noqa: PLC0415
+        Degraded,
+        finished_render_notes,
+        text_drop_notes,
+    )
     from app.services.device_render import device_status  # noqa: PLC0415
     from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
     from app.tasks import generative_build as gb  # noqa: PLC0415
+    from app.tasks.kria_runtime import _plan_record_generations  # noqa: PLC0415
 
     source = capture["job"]
     assembly = copy.deepcopy(source["assembly_plan"])
@@ -82,6 +87,13 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
     )
     failures: list[dict] = []
     events: list[tuple[str, str, dict]] = []
+    text_drops: list = []
+    compose = composition.compose_creation_text
+
+    def composed(*args, drops=None, **kwargs):
+        result = compose(*args, drops=drops, **kwargs)
+        text_drops[:] = list(drops or [])
+        return result
 
     @contextmanager
     def session():
@@ -118,6 +130,7 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
             "app.services.pipeline_trace.record_pipeline_event",
             lambda stage, event, data=None: events.append((stage, event, data or {})),
         ),
+        mock.patch.object(composition, "compose_creation_text", composed),
     ]
     if not degrade:
         patches += [
@@ -144,7 +157,14 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
         "degrade": degrade,
         "status": job.status,
         "failure": failures[-1] if failures else None,
+        "text_drops": [drop.record() for drop in text_drops],
+        "text_pass_notes": text_drop_notes(text_drops),
         "phone_repair_notes": variant.get("phone_repair_notes") or [],
+        "finished_reply_notes": (
+            finished_render_notes(job.assembly_plan, _plan_record_generations(job, variant))
+            if variant
+            else []
+        ),
         "text_recoveries": [
             data
             for _stage, event, data in events
