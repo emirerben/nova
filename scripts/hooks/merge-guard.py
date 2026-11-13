@@ -98,7 +98,8 @@ def main():
             print(
                 f"merge-guard: PR {pr} is not green on its current head, so it was not merged.\n  "
                 + "\n  ".join(bad)
-                + "\nWait for running checks. Fix a failure, or rerun the whole run if it was cancelled."
+                + "\nRun the ci-triage skill now (no need to ask): it separates flakes from real failures and gives the local repro."
+                "\nWait for running checks. Fix a failure, or rerun the whole run if it was cancelled."
                 " If main is red, merge the repair first. Do not retry this merge until every check passes;"
                 " tell the user what is red. Only the user can merge past this, by running the command themselves.",
                 file=sys.stderr,

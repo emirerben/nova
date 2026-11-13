@@ -4,7 +4,8 @@
       {
         "matcher": "startup|resume",
         "hooks": [
-          { "type": "command", "command": "bash scripts/session-check.sh" }
+          { "type": "command", "command": "bash scripts/session-check.sh" },
+          { "type": "command", "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/ci-triage-nudge.py\"; [ -f \"$f\" ] || exit 0; exec python3 \"$f\" --session-start", "timeout": 20 }
         ]
       }
     ],
@@ -21,6 +22,12 @@
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           { "type": "command", "command": "bash scripts/hooks/format-on-save.sh" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/ci-triage-nudge.py\"; [ -f \"$f\" ] || exit 0; exec python3 \"$f\"", "timeout": 15 }
         ]
       }
     ],
