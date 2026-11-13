@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.177.0] - 2026-11-13
+
+### Changed
+- feat(agents): block agent merges unless every check is green (KRI-1372) (#2282) <!-- release-pr: 2282 -->
+
 ## [0.88.176.0] - 2026-11-13
 
 ### Changed
