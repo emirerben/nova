@@ -173,6 +173,7 @@ def copilot_schema():
         "fit_to_video",
         "preserve_text",
         "muted",
+        "remove",
     }
     numbers = {
         "at_s",
@@ -212,6 +213,11 @@ def copilot_schema():
         "amount",
         "cadence_s",
         "end_fade_s",
+        "volume",
+        "window_start_s",
+        "window_end_s",
+        "position_x_frac",
+        "position_y_frac",
     }
     list_strings = {"target_ids", "segments", "slide_ids", "asset_ids"}
     map_fields = {
@@ -265,6 +271,7 @@ def copilot_schema():
             "revision_number",
             "hold_frames",
             "text_appearance_version",
+            "z",
         }:
             return integer
         if name in numbers:
@@ -309,6 +316,7 @@ def copilot_schema():
             "caption",
             "clip_id",
             "criterion",
+            "cue_id",
             "direction",
             "display_mode",
             "easing",
@@ -319,6 +327,8 @@ def copilot_schema():
             "fit",
             "kind",
             "label_from",
+            "landscape_fit",
+            "layer",
             "layout",
             "look_preset",
             "media_kind",
