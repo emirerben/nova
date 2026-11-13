@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.188.0] - 2026-11-13
+
+### Changed
+- test(kria): request-following baseline recorded on the live copilot (KRI-1389) (#2289) <!-- release-pr: 2289 -->
+
 ## [0.88.187.0] - 2026-11-13
 
 ### Changed
