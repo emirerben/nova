@@ -2809,6 +2809,25 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    func testLegacyDraftPhotoWithFakeFootageLengthStillCompilesWhenExtended() throws {
+        let photo = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+        try UIGraphicsImageRenderer(size: CGSize(width: 32, height: 48)).image { context in
+            UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 32, height: 48))
+        }.pngData()!.write(to: photo)
+        defer { try? FileManager.default.removeItem(at: photo) }
+        var slot = EditorTimelineSlot(id: "legacy-photo", clipIndex: 4, inS: 0, durationS: 6, raw: ["source_duration_s": .number(3.05)])
+        slot.setSplitMembership(sectionID: "s", panelIndex: 0, offset: 0)
+        var document = EditorDocument(clips: [slot], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.splitScreenSections = [.init(id: "s", durationS: 6, panelCount: 2)]
+        let session = NativeEditorSession()
+        session.replaceDocumentForTesting(document)
+        let still = ResolvedEditorSource(clipIndex: 4, mediaID: "photo",
+            asset: MediaAsset(id: "photo", relativePath: "photo.png", fingerprint: .init(hex: String(repeating: "b", count: 64), byteCount: 10), duration: nil),
+            url: photo)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        XCTAssertNoThrow(try compiler.compile(document: document, clips: session.timelineClips, items: [], sources: [4: still]))
+    }
+
     func testAdmittedFootageUsesShorterOriginalWithEOFMarginAndDeduplicatesReadyCallback() async throws {
         let (session, uploads, target) = try await Self.devicePlacementSession()
         let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 1)
