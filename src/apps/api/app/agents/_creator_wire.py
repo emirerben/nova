@@ -116,7 +116,7 @@ def main_creator_schema():
 
 
 def copilot_schema():
-    ops, pending, selector = _copilot_operations()
+    ops, pending, selector, _ = _copilot_operations()
     string = {"type": "string"}
     number = {"type": "number"}
     boolean = {"type": "boolean"}
@@ -161,8 +161,14 @@ def copilot_operation_schemas() -> dict[str, dict]:
     The same registry `copilot_schema` unions into ``ops``; typed tool calling (KRI-1393)
     turns each entry into one tool.
     """
-    ops, _, _ = _copilot_operations()
+    ops, _, _, _ = _copilot_operations()
     return {branch["properties"]["op"]["const"]: branch for branch in ops}
+
+
+def copilot_field_schemas(names) -> dict[str, dict]:
+    """The wire type of each named Copilot field (raises on an unregistered name)."""
+    _, _, _, field = _copilot_operations()
+    return {name: field(name) for name in names}
 
 
 def _copilot_operations():
@@ -224,6 +230,7 @@ def _copilot_operations():
         "preserve_text",
         "muted",
         "remove",
+        "removed",
     }
     numbers = {
         "at_s",
@@ -278,6 +285,7 @@ def _copilot_operations():
         "animation_phases",
         "target_identities",
         "focus",
+        "source_crop",
     }
 
     def field(name):
@@ -403,6 +411,7 @@ def _copilot_operations():
             "transition_in",
             "transition_out",
             "font_family",
+            "font",
             "color",
             "highlight_color",
             "alignment",
@@ -506,7 +515,7 @@ def _copilot_operations():
     pending = copy.deepcopy(ops)
     for operation in pending:
         operation["required"] = ["op"]
-    return ops, pending, selector
+    return ops, pending, selector, field
 
 
 class WireContract:

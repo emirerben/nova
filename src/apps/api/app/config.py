@@ -701,7 +701,10 @@ class Settings(BaseSettings):
     main_creator_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_copilot_model: str = "gemini-3.1-pro-preview"
     edit_copilot_thinking_level: str = "high"
-    edit_copilot_output_mode: Literal["json", "native", "json_guarded"] = "json"
+    # "tools" (KRI-1393): one typed tool per open editor operation, rules in a cached system
+    # block, rejected ops repaired through tool results. Needs a model whose registry entry
+    # `supports_tools`. Read at agent construction.
+    edit_copilot_output_mode: Literal["json", "native", "json_guarded", "tools"] = "json"
     edit_director_model: str = "gemini-3.1-pro-preview"
     # Eval-only comparison model. It is never contacted by the production
     # Director endpoint, whose explicit review is capped at one paid request.

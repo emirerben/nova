@@ -297,6 +297,60 @@ def _with_media_ids(slots: list[Any], snapshot: dict[str, Any]) -> list[Any]:
     return rows
 
 
+# What a turn shows when the copilot call itself failed (the chat route answers 502).
+_FAILED_TURN_REPLY = "I couldn't finish that edit. Nothing changed."
+
+
+class _AnswerSequence:
+    """Replays one recorded answer per model call, in order (first answer, then repair rounds)."""
+
+    def __init__(self, answers: list[str]):
+        self.answers = answers
+        self.calls = 0
+
+    def invoke(self, **_: Any):
+        from app.agents._runtime import ModelInvocation, TerminalError
+
+        if self.calls >= len(self.answers):
+            raise TerminalError("no recorded answer for this round")
+        self.calls += 1
+        return ModelInvocation(raw_text=self.answers[self.calls - 1])
+
+
+def replay_tools_copilot(turn_id: str, payload: dict[str, Any]) -> Any:
+    """A typed tool-call recording (KRI-1393) through the tools agent and the chat route's repair
+    loop: the first answer, then one recorded answer per repair round. None: the call failed."""
+    if payload.get("error"):
+        return None
+    import asyncio
+    import time
+
+    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+    from app.routes._copilot import _repaired
+    from app.services.creator_model_comparison import tools_agent
+
+    from ..runners.eval_runner import build_eval_run_context
+
+    client = _AnswerSequence([str(payload["raw_text"]), *payload.get("repairs", [])])
+    agent = tools_agent(EditCopilotAgent(client))
+    agent_input = EditCopilotInput.model_validate(payload["agent_input"])
+
+    def context(suffix: str = ""):
+        return build_eval_run_context(f"request-following:{turn_id}{suffix}", is_live=False)
+
+    output = agent.run(agent_input, ctx=context())
+    return asyncio.run(
+        _repaired(
+            agent,
+            agent_input,
+            output,
+            context,
+            deadline_monotonic=time.monotonic() + 3600,
+            timeout_override_s=None,
+        )
+    )
+
+
 def replay_v1_copilot(
     turn: Turn, plan_before: FinalPlan, *, mode: Mode = "replay"
 ) -> tuple[FinalPlan, str, list[str], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -311,16 +365,21 @@ def replay_v1_copilot(
 
     payload = turn.copilot or {}
     agent_input = payload["agent_input"]
-    if mode == "live":
-        from app.agents._model_client import default_client
-
-        client = default_client()
+    if payload.get("output_mode") == "tools":
+        output = replay_tools_copilot(turn.turn_id, payload)
+        if output is None:
+            return plan_before, _FAILED_TURN_REPLY, ["copilot failed: " + payload["error"]], [], []
     else:
-        client = CassetteModelClient(str(payload["raw_text"]))
-    output = EditCopilotAgent(client).run(
-        agent_input,
-        ctx=build_eval_run_context(f"request-following:{turn.turn_id}", is_live=mode == "live"),
-    )
+        if mode == "live":
+            from app.agents._model_client import default_client
+
+            client = default_client()
+        else:
+            client = CassetteModelClient(str(payload["raw_text"]))
+        output = EditCopilotAgent(client).run(
+            agent_input,
+            ctx=build_eval_run_context(f"request-following:{turn.turn_id}", is_live=mode == "live"),
+        )
 
     # The same gate run_copilot_turn applies before it derives the honest outcome.
     ops = [] if (output.needs_clarification or output.intent != "edit") else output.ops
