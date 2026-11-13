@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.189.0] - 2026-11-13
+
+### Changed
+- ci: select the API suite for the creation-fixture script and catch Path joins (KRI-1397) (#2294) <!-- release-pr: 2294 -->
+
 ## [0.88.188.0] - 2026-11-13
 
 ### Changed
