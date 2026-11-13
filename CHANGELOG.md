@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.195.0] - 2026-11-13
+
+### Changed
+- test(kria): prove editor parity on a phone snapshot (KRI-1388) (#2300) <!-- release-pr: 2300 -->
+
 ## [0.88.194.0] - 2026-11-13
 
 ### Changed
