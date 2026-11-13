@@ -85,6 +85,27 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         XCTAssertFalse(reopened.buttons["native-editor-save"].isEnabled)
     }
 
+    func testBottomPanelClipStaysClearOfTheClipToolbarWhenSelected() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 3, in: app)
+        fillEmptyPanel("Middle", withFootage: "Clip 2", in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+        app.buttons["native-editor-split-done"].tap()
+        attach(app, name: "Rail at rest")
+
+        let bottom = clip(3, in: app)
+        XCTAssertTrue(bottom.waitForExistence(timeout: 10))
+        let toolbar = app.descendants(matching: .any)["native-editor-clip-context"].firstMatch
+        XCTAssertTrue(toolbar.waitForExistence(timeout: 5), "Closing the panel leaves the new bottom clip selected")
+        XCTAssertTrue(bottom.isSelected)
+        let settled = NSPredicate { _, _ in bottom.frame.maxY <= toolbar.frame.minY }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: nil)], timeout: 5), .completed,
+                       "The selected bottom-panel clip must scroll clear of the clip toolbar")
+        attach(app, name: "Bottom panel clip selected")
+    }
+
     private func checkGlobalBoundary(_ app: XCUIApplication, baseline: [String: Any]) throws {
         selectClip(3, in: app) // Serial full-screen clip starts at 4 seconds.
         let serial = clip(3, in: app)
