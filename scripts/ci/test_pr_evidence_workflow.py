@@ -3,8 +3,10 @@
 Written before wiring: a body edit must recheck without rerunning native CI;
 candidate code must never execute in the independent evidence job; body text
 must stay in the event file; missing baseline policy must fail that job; the
-existing required lint check must cover code pushes; local checks must include
-uncommitted files and reject missing evidence for affected changes.
+required lint check must not repeat the evidence check (one gate, one verdict);
+a body edit must queue behind a running check for the same head, while a push
+must still supersede it; local checks must include uncommitted files and reject
+missing evidence for affected changes.
 """
 
 import json
@@ -92,7 +94,7 @@ class EvidenceWorkflowTests(unittest.TestCase):
             )
 
     def evidence_workflows(self):
-        return [self.workflow(), (ROOT / ".github/workflows/ci.yml").read_text()]
+        return [self.workflow()]
 
     def test_current_body_replaces_stale_event_without_changing_immutable_base(self):
         for workflow in self.evidence_workflows():
@@ -128,6 +130,10 @@ class EvidenceWorkflowTests(unittest.TestCase):
         self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review]", workflow)
         self.assertIn("branches: [main, dev]", workflow)
         self.assertIn("name: PR evidence", workflow)
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event.action == 'synchronize' }}", workflow
+        )
+        self.assertNotIn("cancel-in-progress: true", workflow)
         self.assertIn("contents: read", workflow)
         self.assertNotIn("pull_request_target", workflow)
         self.assertNotIn("secrets.", workflow)
@@ -249,15 +255,15 @@ class EvidenceWorkflowTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse((repo / "executed").exists())
 
-    def test_existing_required_lint_gate_also_checks_evidence(self):
+    def test_required_lint_gate_does_not_repeat_the_evidence_check(self):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         lint = ci.split("  lint:\n", 1)[1].split("  test-api:\n", 1)[0]
         self.assertIn("needs: [changes, lint-suites]", lint)
         self.assertIn("scripts/ci/select-tests.py gate lint lint-suites", lint)
-        self.assertIn("Validate request-to-output evidence", lint)
-        self.assertIn("if: github.event_name == 'pull_request'", lint)
-        self.assertIn('--event "$RUNNER_TEMP/pr-evidence-event.json"', lint)
-        self.assertIn("initial policy bootstrap", lint)
+        for fragment in ("evidence", "pr-evidence", "gh api", "pull-requests"):
+            self.assertNotIn(fragment, lint.replace("PR request evidence is checked only by pr-evidence.yml.", ""))
+        self.assertNotIn("evidence", ci.split("  test-api:\n", 1)[0].replace(
+            "PR request evidence is checked only by pr-evidence.yml.", ""))
 
     def test_preship_accepts_body_files_and_checks_working_changes(self):
         preship = (ROOT / "scripts/preship-check.sh").read_text()

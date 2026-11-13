@@ -66,14 +66,26 @@ CI can enforce required fields and mapped checks, but cannot turn an unchecked
 claim into inspected output.
 
 Use the PR template's single fenced `request-evidence` JSON record. It binds the
-claim (`local_fix` or `request_fulfillment`) to `head_sha`, records the original
+claim (`local_fix` or `request_fulfillment`) to the PR's `patch_id`, records the original
 request, observable outcome, root cause and independent expectation sources, and
 declares incident replay, wrong-content control, recovery, fulfillment, export
 fidelity and rollout checks. Each check is `passed`, `pending` or `not_applicable`;
 unverified work needs a reason and tracked gap owner (`owner_issue`), while excluded
 work needs a concrete explanation of why it does not apply.
-The validator in `scripts/ci/pr-evidence.py` checks these declarations and revision
+The validator in `scripts/ci/pr-evidence.py` checks these declarations and the patch
 binding; it does not execute commands from the PR body or certify semantic output.
+
+`patch_id` is `git patch-id --stable` of the PR's diff from the merge-base, with zero
+context lines and binary content included. Print it with
+`python3 scripts/ci/pr-evidence.py --patch-id --base origin/main --head HEAD` after
+the last code commit. A rebase, amend, squash or merge of `main` that leaves the patch
+unchanged keeps the receipt valid, so editing the body or rebasing never forces a
+re-record. Any change to the diff (code, fixtures, or an evidence artifact), a receipt
+copied from another PR, or an artifact commit that is not an ancestor of the head fails.
+A pinned GitHub blob URL must name an ancestor of the head whose file content matches
+the head; a `commit/` URL must be one of the PR's own commits, so after a rebase use a
+repo-relative path or an Actions run URL. Receipts that still carry `head_sha` are
+accepted only for the exact current head until open PRs have moved to `patch_id`.
 
 Save the PR body locally and run:
 
@@ -124,8 +136,8 @@ rollout has occurred.
 ## Record format and activation
 
 The template's `schema_version: 1` record names the KRI issue, original request,
-`request_provenance`, observable `expected_outcome`, `root_cause` and exact
-`head_sha`. Use `claim: local_fix` when the overall request still has gaps. A
+`request_provenance`, observable `expected_outcome`, `root_cause` and the
+`patch_id`. Use `claim: local_fix` when the overall request still has gaps. A
 `request_fulfillment` claim also needs `request_artifact` and passed incident,
 wrong-content, recovery, fulfillment and export checks. Its fulfillment and export
 evidence must include inspected native/renderer output or production.
