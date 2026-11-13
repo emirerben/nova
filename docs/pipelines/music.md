@@ -85,7 +85,7 @@ server-side only (never exposed to browser).
 
 `slot_count` returned by `/music-tracks` tells the frontend exactly how many clips to
 collect; `POST /music-jobs` validates clip count matches before enqueuing.
-`_validate_clip_count` is public (no underscore) so `admin_music.py`'s test-job/rerender
+`validate_clip_count` is public (no underscore) so `admin_music.py`'s test-job/rerender
 endpoints can reuse it across modules.
 
 ## Beat-sync guards
