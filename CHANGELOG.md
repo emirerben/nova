@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.193.0] - 2026-11-13
+
+### Changed
+- feat(agents): fleet report, owner-less agent runs, metered OpenAI calls (KRI-1395) (#2298) <!-- release-pr: 2298 -->
+
 ## [0.88.192.0] - 2026-11-13
 
 ### Changed
