@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from app.agents.model_registry import WHISPER
+from app.agents.model_registry import WHISPER, audio_minute_usd
 from app.config import settings
 
 if TYPE_CHECKING:
@@ -596,9 +596,9 @@ def _transcribe_openai(
     if run_context is not None:
         with wave.open(audio_path, "rb") as audio:
             duration_s = audio.getnframes() / audio.getframerate()
-        # Official Whisper pricing: $0.006/minute, verified 2026-10-11.
-        # https://developers.openai.com/api/docs/models/whisper-1
-        cost_usd = duration_s * 0.006 / 60
+        # Per-minute price lives in the model registry (OpenAI's Whisper page).
+        usd_per_minute = float(audio_minute_usd(WHISPER) or 0)
+        cost_usd = duration_s * usd_per_minute / 60
         receipt = ledger.reserve_paid_call(
             ledger.PaidCallRequest(
                 idempotency_key=ledger.logical_call_id(
@@ -661,7 +661,7 @@ def _transcribe_openai(
             provider_request_id=getattr(response, "_request_id", None),
             usage_json={
                 "duration_s": duration_s,
-                "usd_per_minute": 0.006,
+                "usd_per_minute": usd_per_minute,
                 "price_source": "https://developers.openai.com/api/docs/models/whisper-1",
             },
         )

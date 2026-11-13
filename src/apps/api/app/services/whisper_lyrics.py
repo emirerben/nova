@@ -23,8 +23,10 @@ from dataclasses import dataclass
 
 import structlog
 
-from app.agents.model_registry import WHISPER
+from app.agents._runtime import RunContext
+from app.agents.model_registry import WHISPER, audio_minute_usd
 from app.config import settings
+from app.services import ai_cost_control as ledger
 from app.services.audio_preprocess import (
     AudioPreprocessError,
     compress_to_mono_64k,
@@ -44,6 +46,13 @@ _MAX_FILE_BYTES = 25 * 1024 * 1024
 # truncated. We cap at 800 chars to stay safely under that limit while still
 # giving Whisper a strong vocabulary hint for the first verse / chorus.
 _MAX_PROMPT_CHARS = 800
+
+
+# A track whose length cannot be probed reserves this much audio: the 25 MB upload ceiling at
+# the mono 64 kbps floor is about 52 minutes.
+_UNKNOWN_DURATION_S = 3_300.0
+# The client's default SDK retries; the reservation covers one call per allowed attempt.
+_SDK_ATTEMPTS = 3
 
 
 class WhisperLyricsError(Exception):
@@ -111,11 +120,72 @@ def _shrink_for_whisper(audio_path: str, dest_dir: str) -> tuple[str, list[str]]
     return current, stages
 
 
+def _metered_transcription(
+    client,
+    upload_path: str,
+    *,
+    prompt: str,
+    language: str | None,
+    ctx: RunContext,
+):
+    """One Whisper request through the cost ledger, priced per audio minute."""
+    from app.services.audio_download import probe_duration  # noqa: PLC0415
+    from app.services.openai_metering import LYRICS_WHISPER_FEATURE, run_metered  # noqa: PLC0415
+
+    per_minute = audio_minute_usd(WHISPER)
+    if per_minute is None:
+        raise WhisperLyricsError(f"{WHISPER} has no registered per-minute price")
+    probed_s = probe_duration(upload_path)
+    reserved_s = probed_s if probed_s and probed_s > 0 else _UNKNOWN_DURATION_S
+
+    def call():
+        with open(upload_path, "rb") as f:
+            kwargs: dict = {
+                "model": WHISPER,
+                "file": f,
+                "response_format": "verbose_json",
+                "timestamp_granularities": ["word"],
+            }
+            if prompt:
+                kwargs["prompt"] = prompt
+            if language:
+                kwargs["language"] = language
+            return client.audio.transcriptions.create(**kwargs)
+
+    def settle(receipt, response) -> None:
+        reported = getattr(response, "duration", None)
+        from_provider = isinstance(reported, (int, float)) and reported > 0
+        billed_s = float(reported) if from_provider else reserved_s
+        ledger.settle_paid_call_cost(
+            receipt,
+            cost_usd=billed_s / 60 * float(per_minute),
+            resolved_model=WHISPER,
+            provider_request_id=getattr(response, "_request_id", None),
+            usage_json={
+                "duration_s": billed_s,
+                "duration_source": "provider" if from_provider else "probe_or_ceiling",
+                "usd_per_minute": float(per_minute),
+            },
+        )
+
+    return run_metered(
+        feature=LYRICS_WHISPER_FEATURE,
+        model=WHISPER,
+        estimate_usd=lambda: reserved_s / 60 * float(per_minute),
+        attempts=_SDK_ATTEMPTS,
+        ctx=ctx,
+        identity=f"{os.path.getsize(upload_path)}:{language or ''}:{prompt}",
+        operation=call,
+        settle=settle,
+    )
+
+
 def transcribe_for_lyrics(
     audio_path: str,
     *,
     prompt: str = "",
     language: str | None = None,
+    ctx: RunContext | None = None,
 ) -> WhisperLyricsResult:
     """Transcribe a music audio file via OpenAI Whisper, with word timings.
 
@@ -167,18 +237,13 @@ def transcribe_for_lyrics(
         )
 
         try:
-            with open(upload_path, "rb") as f:
-                kwargs: dict = {
-                    "model": WHISPER,
-                    "file": f,
-                    "response_format": "verbose_json",
-                    "timestamp_granularities": ["word"],
-                }
-                if trimmed_prompt:
-                    kwargs["prompt"] = trimmed_prompt
-                if language:
-                    kwargs["language"] = language
-                response = client.audio.transcriptions.create(**kwargs)
+            response = _metered_transcription(
+                client,
+                upload_path,
+                prompt=trimmed_prompt,
+                language=language,
+                ctx=ctx or RunContext(),
+            )
         except Exception as exc:
             raise WhisperLyricsError(f"whisper API call failed: {exc}") from exc
 

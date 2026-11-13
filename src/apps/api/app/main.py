@@ -22,6 +22,7 @@ from app.db_locks import transient_sqlstate
 from app.limiter import limiter
 from app.routes import (
     admin,
+    admin_agents,
     admin_build_tasks,
     admin_creation_threads,
     admin_creator_memory,
@@ -390,6 +391,7 @@ app.include_router(
 app.include_router(
     admin_request_following.report_router, prefix="/request-following-report", tags=["reports"]
 )
+app.include_router(admin_agents.router, prefix="/admin/agents", tags=["admin-agents"])
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_kria.router, prefix="/admin/kria", tags=["admin-kria"])
 app.include_router(
