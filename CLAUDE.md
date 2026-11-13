@@ -38,7 +38,7 @@ Rules:
 - Skip the worktree only for read-only investigation or one-file config tweaks.
 
 ## Stack
-- Frontend: Next.js (src/apps/web/) — TypeScript, React
+- Frontend: Next.js (src/apps/web/) — **frozen**; only privacy/terms, landing, admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) are live. Archive tag: `web-archive-2026-11`.
 - Native: SwiftUI + AVFoundation (src/apps/ios/) — iOS 18, XcodeGen
 - Backend: Python FastAPI + Celery (src/apps/api/) — video processing pipeline
 - Queue: Redis (job queue for async processing)
@@ -46,26 +46,19 @@ Rules:
 - DB: PostgreSQL (job metadata, user state)
 
 ## Key paths
+- `src/apps/web/src/` — frozen web app; Claude Code denies reads there (`.claude/settings.json`). Don't search or open it unless the user explicitly asks for web/admin work.
 - `DESIGN.md` — design-system source of truth (tokens, loading rules, anti-slop, a11y); design reviews calibrate against it.
-- `src/apps/web/` — Next.js frontend (upload UI, progress tracker, result viewer)
-- `src/apps/web/src/app/admin/templates/[id]/components/` — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
-- `src/apps/web/src/app/admin/music/` — admin music management; `/admin/music/[id]` Config + Test tabs
-- `src/apps/web/src/lib/music-api.ts` — typed API client for music routes
 - `src/apps/api/` — FastAPI/Celery; music routes live in `routes/{admin_music,music,music_jobs}.py` (`_validate_clip_count` stays public for admin reuse).
 - `src/apps/api/app/routes/generative_jobs.py` — generative-edit submission + status + swap-song/retext; re-signs ready variant URLs on read (`_variants_for_response`)
 - `src/apps/api/app/routes/admin_generative.py` — `/admin/generative` dashboard list
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery task (see `docs/pipelines/generative.md`)
 - `src/apps/api/app/pipeline/generative_overlays.py` — agent-authored intro overlay injector
-- `src/apps/web/src/app/generative/` — redirects to /plan (v0.45; siblings = shared editor modules); `admin/generative/` — admin dashboard
-- `src/apps/web/src/app/plan/` — canonical chat-first creation workspace; `/plan/new` redirects there, while `/plan/items/*` retains item/editor contracts
-- `src/apps/web/src/app/create/` — redirects to `/plan`; persisted job/editor contracts live in `routes/{me,manual_drafts}.py` (`plans/017-qendresa-creation-flow.md`).
 - `src/apps/api/app/kria/` — runtime-v2 contracts, policy, drafts, and replay; HTTP/task entrypoints are `routes/kria_runtime.py` and `tasks/kria_runtime.py` ([architecture](docs/pipelines/kria-agent-runtime.md); [runbook](docs/runbooks/kria-agent-runtime.md)).
 - `src/apps/ios/` — native client + `KriaMediaEngine`; setup and boundaries: `docs/runbooks/ios-development.md`.
 - `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
 - `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
 - `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
 - `src/apps/api/app/services/seed_provenance.py` — links generated items to honoured idea seeds via `match_specs_to_seeds` and `PlanItem.source_idea_seed_id`.
-- `.../plan/_components/ui/SeedProvenanceBadge.tsx` — "From your idea" lime badge on the item page
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
 - `plans/` — implementation plans (`plans/README.md` has status; 001–023)
@@ -94,9 +87,7 @@ Use `make local-render` for byte-equivalent output before merging a render-affec
 ## Quality checks
 - Backend tests: `cd src/apps/api && pytest` (asyncio mode auto; tests live in `src/apps/api/tests/`)
 - Backend lint: `cd src/apps/api && ruff check . && ruff format --check .`
-- Frontend lint: `cd src/apps/web && npm run lint`
-- Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
-- Frontend tests: `cd src/apps/web && npm test` (Jest)
+- Frontend (only for an explicitly requested web change): `cd src/apps/web && npm run lint && npx tsc --noEmit && npm test`
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
 - Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain WARN. Run before every PR.
 - Reliability (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; evidence and scratch-DB steps: `docs/runbooks/pr-acceptance-checklist.md`.
