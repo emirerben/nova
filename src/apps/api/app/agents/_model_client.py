@@ -1,8 +1,9 @@
 """Model client implementations.
 
 `ModelDispatcher` is the public facade: agents are constructed with one and call
-`.invoke(model=...)`; the dispatcher routes to the right provider by model-name
-prefix. `gemini-*` → `GeminiClient`, `whisper-1` → `WhisperClient`.
+`.invoke(model=...)`; the dispatcher routes by the model's registered provider
+(`model_registry`): Google → `GeminiClient`, OpenAI/Anthropic → `_text_providers`, and
+Whisper → `WhisperClient`.
 
 Each provider client is responsible for:
   - translating runtime args into the SDK call shape
@@ -37,6 +38,7 @@ from app.agents._runtime import (
     TerminalError,
     TransientError,
 )
+from app.agents.model_registry import WHISPER, provider_of
 from app.config import settings
 
 log = structlog.get_logger()
@@ -551,7 +553,7 @@ class WhisperClient(ModelClient):
 
 
 class ModelDispatcher(ModelClient):
-    """Routes to provider client by model-name prefix. The single client agents hold."""
+    """Routes to provider client by registered provider. The single client agents hold."""
 
     def __init__(
         self,
@@ -583,8 +585,9 @@ class ModelDispatcher(ModelClient):
         thought_summary_callback: Callable[[str], None] | None = None,
         response_schema: dict[str, Any] | None = None,
     ) -> ModelInvocation:
-        if model in ("gpt-6.1-sol", "claude-sonnet-5-5"):
-            client = self._openai if model == "gpt-6.1-sol" else self._anthropic
+        provider = provider_of(model)
+        if provider in ("openai", "anthropic"):
+            client = self._openai if provider == "openai" else self._anthropic
             return client.invoke(
                 model=model,
                 prompt=prompt,
@@ -596,8 +599,9 @@ class ModelDispatcher(ModelClient):
                 thinking_level=thinking_level,
                 timeout_s=timeout_s,
                 response_schema=response_schema,
+                thought_summary_callback=thought_summary_callback,
             )
-        if model.startswith("gemini"):
+        if provider == "google":
             return self._gemini.invoke(
                 model=model,
                 prompt=prompt,
@@ -611,7 +615,7 @@ class ModelDispatcher(ModelClient):
                 thought_summary_callback=thought_summary_callback,
                 **({"response_schema": response_schema} if response_schema is not None else {}),
             )
-        if model == "whisper-1":
+        if model == WHISPER:
             return self._whisper.invoke(
                 model=model,
                 prompt=prompt,

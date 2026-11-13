@@ -1,0 +1,98 @@
+{
+  "setup": "local API (uvicorn app.main:app from this branch) on nova_kri1384_dev, THOUGHT_SUMMARIES_ENABLED=true, MAIN_CREATOR_MODEL=gpt-6.1-sol, fixture kri178_talking_reaction_beats, scripts/thinking_row.py",
+  "summary_mode_probe": {
+    "note": "reasoning.summary on Sol, Main Creator calls, count of reasoning summary parts returned",
+    "auto": {
+      "calls": 2,
+      "with_summary": 0
+    },
+    "detailed": {
+      "calls": 2,
+      "with_summary": 0
+    },
+    "concise": {
+      "calls": 2,
+      "with_summary": 2
+    }
+  },
+  "runs": [
+    {
+      "model": "gpt-6.1-sol",
+      "fallback_models": [
+        "gemini-3.1-pro-preview"
+      ],
+      "thinking_level": "medium",
+      "action_kind": "propose_strategy",
+      "elapsed_s": 20.4,
+      "thread_id": "42a69fa1-1e2a-4d1c-bad0-32fb69015d2c",
+      "client_request_id": "kri1384-thinking-20981abc",
+      "get_status": 200,
+      "summaries": [
+        {
+          "status": "completed",
+          "started_at": "2026-11-13T08:35:07.026394Z",
+          "completed_at": "2026-11-13T08:35:27.250558Z",
+          "chars": 55,
+          "text": "**Organizing multimedia elements and ranking criteria**"
+        }
+      ],
+      "history_count": 1
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "fallback_models": [
+        "gemini-3.1-pro-preview"
+      ],
+      "thinking_level": "medium",
+      "action_kind": "propose_strategy",
+      "elapsed_s": 20.9,
+      "thread_id": "e65ea9d9-7ce4-4668-a4be-02c00cc6370d",
+      "client_request_id": "kri1384-thinking-f0d86556",
+      "get_status": 200,
+      "summaries": [
+        {
+          "status": "completed",
+          "started_at": "2026-11-13T08:35:36.432584Z",
+          "completed_at": "2026-11-13T08:35:57.194906Z",
+          "chars": 38,
+          "text": "**Organizing audio and photo content**"
+        }
+      ],
+      "history_count": 1
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "fallback_models": [
+        "gemini-3.1-pro-preview"
+      ],
+      "thinking_level": "medium",
+      "action_kind": "propose_strategy",
+      "elapsed_s": 42.0,
+      "thread_id": "5f32b2f7-0858-429e-9e34-f2f0a0f0ea88",
+      "client_request_id": "kri1384-thinking-b02261d0",
+      "get_status": 200,
+      "summaries": [
+        {
+          "status": "completed",
+          "started_at": "2026-11-13T08:36:23.584321Z",
+          "completed_at": "2026-11-13T08:36:41.438624Z",
+          "chars": 33,
+          "text": "**Finalizing selection criteria**"
+        }
+      ],
+      "history_count": 1
+    }
+  ],
+  "ledger": [
+    {
+      "test_run_id": "kri1384-thinking-row-20261113",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "11",
+      "settled_usd": "0.2386",
+      "held_usd": "0.0000"
+    }
+  ]
+}

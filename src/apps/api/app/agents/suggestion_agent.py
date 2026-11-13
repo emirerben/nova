@@ -47,6 +47,7 @@ from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError, TerminalError
 from app.agents._skills import load_skill
+from app.agents.model_registry import SOL
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 from app.services.suggestion_chips import PROMPT_VERSION
@@ -123,7 +124,7 @@ class SuggestionAgent(Agent[SuggestionAgentInput, SuggestionAgentOutput]):
         name="nova.chat.suggestion_agent",
         prompt_id="suggestion_agent",
         prompt_version=PROMPT_VERSION,
-        model="gpt-6.1-sol",
+        model=SOL,
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.01,
         thinking_level=REASONING_EFFORT,

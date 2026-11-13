@@ -265,3 +265,71 @@ def test_text_evaluation_cannot_omit_capability_to_escape_cap(
     with pytest.raises(AiBudgetExceededError) as caught:
         reserve_paid_call(request)
     assert caught.value.scope == f"provider:{provider}:capability:evaluation"
+
+
+# KRI-1385: the `planning` capability (Main Creator and copilot on OpenAI/Anthropic).
+# Ways it can fail, written before the tests:
+# 1. A Sol planning call goes unmetered while AI_COST_CONTROL_ENABLED is off.
+# 2. A zero planning budget still admits Sol planning.
+# 3. A live-eval planning run spends, or is capped by, the evaluation capability.
+# 4. A Gemini planning call is pushed into a credit capability and rejected.
+# 5. Settlement drops the capability, so settled planning spend leaves the planning sum.
+
+
+def planning(credit, suffix, *, provider="openai", model="gpt-6.1-sol", estimate=0.06):
+    return replace(
+        _request(
+            credit,
+            suffix,
+            estimate=estimate,
+            feature="nova.creator.main",
+            run_id=f"{credit}:{suffix}",
+        ),
+        provider=provider,
+        model=model,
+    )
+
+
+def _stored_capability(receipt):
+    with sync_engine.connect() as conn:
+        return conn.execute(
+            text("SELECT usage_json->>'_budget_capability' FROM ai_cost_reservations WHERE id=:id"),
+            {"id": receipt.id},
+        ).scalar_one()
+
+
+def test_sol_planning_is_metered_and_capped_with_the_global_switch_off(credit, monkeypatch):
+    monkeypatch.setattr(settings, "ai_cost_control_enabled", False)
+    monkeypatch.setattr(settings, "ai_openai_planning_budget_usd", 0.0)
+    with pytest.raises(AiBudgetExceededError) as caught:
+        reserve_paid_call(planning(credit, "unfunded"))
+    assert caught.value.scope == "provider:openai:capability:planning"
+
+    monkeypatch.setattr(settings, "ai_openai_planning_budget_usd", 10.0)
+    receipt = reserve_paid_call(planning(credit, "funded"))
+    assert receipt is not None and _stored_capability(receipt) == "planning"
+
+
+def test_settled_planning_spends_planning_not_evaluation(credit, monkeypatch):
+    monkeypatch.setattr(settings, "ai_openai_planning_budget_usd", 0.1)
+    monkeypatch.setattr(settings, "ai_openai_evaluation_budget_usd", 0.06)
+    receipt = reserve_paid_call(planning(credit, "first"))
+    mark_paid_call_started(receipt)
+    settle_paid_call_cost(receipt, cost_usd=0.05, resolved_model="gpt-6.1-sol")
+    assert _stored_capability(receipt) == "planning"
+
+    with pytest.raises(AiBudgetExceededError) as caught:
+        reserve_paid_call(planning(credit, "second"))
+    assert caught.value.scope == "provider:openai:capability:planning"
+    evaluation = replace(
+        planning(credit, "evaluation"), feature="any_text_eval", capability="evaluation"
+    )
+    assert reserve_paid_call(evaluation) is not None
+
+
+def test_gemini_planning_keeps_no_credit_capability(credit, monkeypatch):
+    monkeypatch.setattr(settings, "ai_openai_planning_budget_usd", 0.0)
+    receipt = reserve_paid_call(
+        planning(credit, "gemini", provider="google", model="gemini-3.1-pro-preview")
+    )
+    assert receipt is not None and _stored_capability(receipt) is None

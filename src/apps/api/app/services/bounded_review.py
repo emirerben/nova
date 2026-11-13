@@ -15,7 +15,7 @@ from app.agents._runtime import (
     TerminalError,
     TransientError,
 )
-from app.agents._text_providers import TEXT_MODELS
+from app.agents.model_registry import SOL, exact_spec
 from app.config import settings
 from app.services import ai_cost_control as costs
 
@@ -60,7 +60,7 @@ def invoke_bounded_review(
     feature: str,
     prompt_version: str,
     run_context: RunContext,
-    model: str = "gpt-6.1-sol",
+    model: str = SOL,
     client=None,
 ) -> BoundedReviewResponse:
     if not (
@@ -70,7 +70,8 @@ def invoke_bounded_review(
         and settings.ai_cost_control_enabled
     ):
         return _failed("reviewer_disabled")
-    if model not in TEXT_MODELS:
+    spec = exact_spec(model)
+    if spec is None or spec.provider == "google":
         return _failed("unsupported_model")
     if not (
         run_context.reservation_approved is True
@@ -117,7 +118,7 @@ def invoke_bounded_review(
                 model=model,
                 estimated_cost_usd=estimate,
                 ctx=ctx,
-                provider=TEXT_MODELS[model],
+                provider=spec.provider,
                 capability="evaluation",
             )
         )

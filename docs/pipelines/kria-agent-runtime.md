@@ -1090,6 +1090,26 @@ one turn (each fenced under its own reservation; the planner is a pure call with
 Check `agent_deadline_degraded` / `agent_deadline_fallback` log lines and `deadline_degraded` on
 `agent_run` events after rollout before tuning `degraded_timeout_s` / `deadline_ladder_reserve_s`.
 
+## A non-Gemini Main Creator (KRI-1385)
+
+Model facts (provider, reasoning efforts, degrade ladder, token price, media and tool support) live
+in one table, `app/agents/model_registry.py`. Dispatch, preflight, the ledger price, the comparison
+harness and the ladder above read it; `tests/agents/test_model_registry_sentinel.py` fails if any
+other module spells a non-Gemini model name. The ladder is the model's `effort_ladder`: a deadline
+steps one rung down once per model (Gemini 3 `high` -> `medium`, Sol `medium` -> `low`), and a
+truncation or a post-deadline fallback runs on the lightest rung.
+
+With `MAIN_CREATOR_MODEL=gpt-6.1-sol` the spec's fallback is `gemini-3.1-pro-preview`. When the next
+model is at another provider, any provider or ledger failure moves the turn to it: an outage (a
+5xx or a connection that never opened is a `TransientError`, released and retried within
+`max_attempts` first), an unknown outcome (held as `unknown` in the ledger, never repeated at that
+provider), a 4xx, a spent `planning` budget, or an attribution refusal. A schema or refusal failure
+still ends the turn. The fallback starts only with at least 10 s of turn budget left, and runs at a
+level its own vocabulary takes (Sol `xhigh` becomes Gemini `high`). Sol's calls spend the `planning`
+capability (`AI_OPENAI_PLANNING_BUDGET_USD`), metered even while `AI_COST_CONTROL_ENABLED` is off.
+The thinking row streams Sol's `concise` reasoning summary (and Anthropic's `summarized` thinking)
+into the same `ThoughtSummaryPublisher`. Evidence and rollout: `docs/reviews/kri-1384/sol-main-creator.md`.
+
 A compact per-clip evidence tier for large clip sets was tried and removed: it saved 9 to 13 percent of
 input tokens on a synthetic 27-clip prompt, input size is not the latency lever (thinking and answer
 tokens are), and no plan-quality eval covers thinner evidence. Prove the ladder with the `lane_c`

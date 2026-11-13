@@ -32,6 +32,7 @@ from typing import Any, Literal
 
 import structlog
 
+from app.agents.model_registry import CAPTION_CORRECTION
 from app.config import settings
 from app.pipeline.caption_language import (
     SUPPORTED_CAPTION_LANGUAGES,
@@ -371,7 +372,7 @@ def _ensure_caption_language(
         (model or "").strip()
         or (settings.caption_translation_model or "").strip()
         or (settings.caption_correction_model or "").strip()
-        or "gpt-4o"
+        or CAPTION_CORRECTION
     )
     sources = [lines[index] for index in targets]
     # The text's language is named only when the whole text was read as one language.

@@ -18,11 +18,12 @@ from pathlib import Path
 import structlog
 
 from app.agents._runtime import RunContext
+from app.agents.model_registry import SONNET
 from app.config import settings
 
 log = structlog.get_logger()
 
-JUDGE_MODEL = "claude-sonnet-5-5"
+JUDGE_MODEL = SONNET
 JUDGE_MAX_TOKENS = 800
 DEFAULT_PASS_THRESHOLD = 3.5
 

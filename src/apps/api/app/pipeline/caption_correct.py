@@ -19,6 +19,7 @@ from typing import Any, NamedTuple
 
 import structlog
 
+from app.agents.model_registry import CAPTION_CORRECTION
 from app.config import settings
 from app.pipeline.caption_language import LANGUAGE_NAMES
 from app.pipeline.caption_spelling import _merge_words, _split_word
@@ -856,7 +857,7 @@ def correct_caption_cues(
     texts = [str(cue.get("text") or "") for cue in cues]
     if not any(text.strip() for text in texts):
         return cues
-    model = (model or "").strip() or settings.caption_correction_model or "gpt-4o"
+    model = (model or "").strip() or settings.caption_correction_model or CAPTION_CORRECTION
     if trusted_aliases is None:
         return _legacy_correct_caption_cues(
             cues, language, model=model, spelling_hints=spelling_hints
