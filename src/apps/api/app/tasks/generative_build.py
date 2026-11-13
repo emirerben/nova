@@ -7506,9 +7506,15 @@ def _run_phone_unified_montage_job(
         with _worker_reply_language(snapshot):
             record["repair_notes"] = [fallback_note(plan.direction_fallback, str(requested))]
     if text_drops:
-        from app.services.creation_text_degrade import text_drop_notes  # noqa: PLC0415
+        from app.services.creation_text_degrade import (  # noqa: PLC0415
+            TEXT_DROPS_FIELD,
+            text_drop_notes,
+            text_drops_record,
+        )
         from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
+        # The finished-render review says them again, in the chat's language (KRI-1376).
+        record[TEXT_DROPS_FIELD] = text_drops_record(generation, text_drops)
         for drop in text_drops:
             record_pipeline_event(
                 "montage",

@@ -803,6 +803,11 @@
   ],
   [
    "app/services/creation_text_degrade.py",
+   "Left out one line I couldn't add to your text",
+   "Yazına ekleyemediğim bir satırı çıkardım"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
    "Left out one text change I couldn't make fit",
    "Sığdıramadığım bir yazı değişikliğini eklemedim"
   ],
@@ -810,6 +815,11 @@
    "app/services/creation_text_degrade.py",
    "Left out one text change for {text} because I couldn't make it fit",
    "{text} için sığdıramadığım bir yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out {text} because I couldn't add it as its own line",
+   "{text} metnini ayrı bir satır olarak ekleyemediğim için çıkardım"
   ],
   [
    "app/services/finished_style_learning.py",

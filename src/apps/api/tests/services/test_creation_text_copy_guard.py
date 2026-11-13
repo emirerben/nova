@@ -26,6 +26,7 @@ from app.services.creation_text_composition import (
     compose_creation_text,
     snapshot_copy_constraints,
 )
+from app.services.creation_text_degrade import text_drop_notes
 from app.services.kria_editor_ops import apply_text_lane_ops
 
 # Captured from prod job d4f1b2d8-7d67-41dc-80a9-acbdd6fee474 (`GET jobs/<id>/debug`, the
@@ -401,11 +402,47 @@ def test_composer_that_rewords_the_moved_label_keeps_the_label_where_it_was(monk
     assert [r for r in rows if r["text"] == OBLEA] == [label]
     assert "Oblea de la casa (nueva)" not in [r["text"] for r in rows]
     assert rows == original["text_elements"]
+    # The reworded copy was part of the same move: one change, one note.
     assert [(d.reason, d.op) for d in drops] == [
         ("copy_changed", "remove_texts"),
-        ("unasked_text", "add_text"),
+        ("copy_changed", "add_text"),
     ]
-    assert [d.note() for d in drops] == [
-        f"Kept “{OBLEA}” exactly as you wrote it and left out the change I couldn't make to it",
-        None,
+    assert text_drop_notes(drops) == [
+        f"Kept “{OBLEA}” exactly as you wrote it and left out the change I couldn't make to it"
     ]
+
+
+def test_a_separate_line_that_mentions_the_moved_label_is_kept(monkeypatch):
+    """Verifier probe (KRI-1376 review): the broken move goes, the line she asked for stays.
+
+    Only a rewording of the label stands in for it; a line that merely repeats its words
+    ("Caro brought us the oblea de la casa") is its own ask and must render.
+    """
+    plan = _montage_plan()
+    response, label, target = _move_response(plan, text="Oblea de la casa (nueva)")
+    asked = "Caro brought us the oblea de la casa"
+    response["ops"].append(
+        {
+            "op": "add_text",
+            "text": asked,
+            "start_s": target["output_start_s"],
+            "end_s": target["output_end_s"],
+            "position": "bottom",
+        }
+    )
+    monkeypatch.setattr(
+        EditCopilotAgent,
+        "run",
+        lambda self, input, ctx=None: self.parse(json.dumps(response), input),
+    )
+    drops = []
+    snapshot = compose_creation_text(
+        plan.snapshot,
+        creator_request=f"Move the {OBLEA} label, and add a line saying {asked}",
+        copy_constraints=snapshot_copy_constraints(plan.snapshot),
+        drops=drops,
+    )
+    texts = [r["text"] for r in compile_proposal_execution_plan(snapshot)["text_elements"]]
+    assert asked in texts
+    assert OBLEA in texts and "Oblea de la casa (nueva)" not in texts
+    assert asked not in [d.text for d in drops]

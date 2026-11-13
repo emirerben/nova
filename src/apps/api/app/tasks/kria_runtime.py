@@ -8531,11 +8531,19 @@ def _approved_generation_review(
     """The finished render's reply, plus what its speech cleanup cut and left (KRI-551).
 
     The cleanup note is read from the variant's own cut record, so it survives a lost brief
-    binding (the requirement receipts then cannot say a retake was not cut).
+    binding (the requirement receipts then cannot say a retake was not cut). What the text
+    pass left out after approval (KRI-1376) goes with the left-out lines: this reply is the
+    only place the creator reads it.
     """
     text, receipts = _approved_generation_requirements_review(
         db, thread, job, variant, execution, default_text
     )
+    from app.services.creation_text_degrade import finished_render_notes  # noqa: PLC0415
+
+    text_notes = finished_render_notes(
+        job.assembly_plan or {}, _plan_record_generations(job, variant)
+    )
+    text = _with_left_out(text, "\n".join(text_notes))
     contract = (job.assembly_plan or {}).get("speech_cleanup_contract")
     note = speech_cleanup_review_note(
         variant,

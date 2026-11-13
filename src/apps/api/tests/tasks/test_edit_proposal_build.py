@@ -3986,10 +3986,19 @@ def test_phone_dry_run_repair_notes_reach_the_proposal_adjustments(monkeypatch) 
     assert persisted.planner_fallback is None
 
 
+_TEXT_PASS_NOTE = (
+    "I couldn't do every part of your text request, so the video shows the parts I could"
+)
+
+
+@pytest.mark.parametrize("earlier", [0, 6], ids=["empty_card", "full_card"])
 def test_a_text_ask_the_composer_could_not_finish_is_named_on_the_approval_card(
-    monkeypatch,
+    monkeypatch, earlier
 ) -> None:
-    """KRI-1376: the draft is offered with the part the text pass could not do, not failed."""
+    """KRI-1376: the draft is offered with the part the text pass could not do, not failed.
+
+    A card already holding its six lines still names it: the older lines give way.
+    """
     from app.agents.edit_copilot import EditCopilotOutput
 
     monkeypatch.setattr(
@@ -4001,15 +4010,15 @@ def test_a_text_ask_the_composer_could_not_finish_is_named_on_the_approval_card(
             needs_clarification=True,
         ),
     )
+    phone_notes = [f"Phone repair {n}" for n in range(earlier)]
 
     persisted = _phone_draft(
-        monkeypatch, lambda *_a: [], phone=True, request="Make it without these"
+        monkeypatch, lambda *_a: phone_notes, phone=True, request="Make it without these"
     )
 
     assert persisted.status == "approved"
-    assert persisted.last_approved.snapshot.adjustments == [
-        "I couldn't do every part of your text request, so the video shows the parts I could"
-    ]
+    adjustments = persisted.last_approved.snapshot.adjustments
+    assert adjustments == [*phone_notes[:5], _TEXT_PASS_NOTE] if earlier else [_TEXT_PASS_NOTE]
 
 
 def test_phone_dry_run_reject_takes_the_deterministic_fallback(monkeypatch) -> None:

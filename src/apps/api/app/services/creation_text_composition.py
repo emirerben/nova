@@ -2274,9 +2274,27 @@ def _compose_creation_text(
         return program, replay_text_composition(plan, program)
 
     degraded = degrade_text_ops(
-        composer_ops, program_for, lane=model_texts, protected=literal_ops(text_requirements)
+        composer_ops,
+        program_for,
+        lane=model_texts,
+        protected=literal_ops(text_requirements),
+        text_asked=_may_own_added_text(text_requirements),
     )
     program, composed = degraded.result
+    if (
+        unmet is not None
+        and not degraded.ops
+        and (
+            output.rejection_reasons
+            or (
+                text_requirements is not None and not _meets_a_text_ask(composed, text_requirements)
+            )
+        )
+    ):
+        # Nothing the composer wrote renders, and it refused its whole answer or none of her
+        # text asks is on screen: the pass failed as a whole, not in one part. Without a brief
+        # (the draft's dry run) only a refused answer is known to be whole.
+        raise unmet
     drops.extend(degraded.drops)
     drops.extend(_check_editorial_text(snapshot, composed))
     if text_requirements:
@@ -2318,6 +2336,57 @@ def _compose_creation_text(
     if not program.operations and not constraints:
         return snapshot, drops
     return snapshot.model_copy(update={"text_composition": program}), drops
+
+
+def _text_asks(requirements: Sequence[BriefRequirement] | None) -> list[BriefRequirement]:
+    return [
+        req
+        for req in requirements or ()
+        if req.live and (req.kind == "text" or is_text_sequence(req))
+    ]
+
+
+def _may_own_added_text(requirements: Sequence[BriefRequirement] | None) -> bool:
+    """Whether an added line the gates call unasked may still be one the creator asked for.
+
+    Only a text ask that describes its words ("the same but for the English translation",
+    prod 3c312af4) can own a line it does not spell; a line holding a literal is never dropped
+    (``literal_ops``). Unknown asks (no brief) count as asked, so a drop is said, not hidden.
+    """
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    return requirements is None or any(
+        not fold_text(req.literal or "") for req in _text_asks(requirements)
+    )
+
+
+def _meets_a_text_ask(plan: dict, requirements: Sequence[BriefRequirement] | None) -> bool:
+    """Whether her own words for one live text ask are on screen: a row reading her literal, or
+    her sequence shown piece by piece (``text_sequence_shown``). A described ask has no words to
+    find and is never counted.
+    """
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    asks = [req for req in _text_asks(requirements) if fold_text(req.literal or "")]
+    if not asks:
+        return False
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        plan_facts_from_editor_payload,
+        text_sequence_shown,
+    )
+
+    facts = plan_facts_from_editor_payload(plan)
+    shown = {
+        fold_text(str(row.get("text") or ""))
+        for row in plan.get("text_elements") or []
+        if not row.get("removed") and not is_caption_text_bar(row)
+    }
+    return any(
+        text_sequence_shown(req, facts)
+        if is_text_sequence(req)
+        else fold_text(req.literal or "") in shown
+        for req in asks
+    )
 
 
 def _shows_asked_text(plan: dict, requirements: Sequence[BriefRequirement] | None) -> bool:

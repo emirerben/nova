@@ -2549,8 +2549,9 @@ def _run_draft_attempt(
                 }
             )
         # Same composition lane for guided proposals, before they are offered for
-        # approval. Fail visibly on incomplete text behavior; never use the base
-        # proposal as a silent fallback after the composition step failed.
+        # approval. A gate that names one bad item leaves it out and the card says so
+        # (KRI-1376); any other rejection fails the draft. Never use the base proposal
+        # as a silent fallback after the composition step failed.
         from app.services.creation_text_composition import (  # noqa: PLC0415
             compose_creation_text,
             snapshot_copy_constraints,
@@ -2569,13 +2570,15 @@ def _run_draft_attempt(
         if text_drops:
             from app.services.creation_text_degrade import text_drop_notes  # noqa: PLC0415
 
-            # KRI-1376: the approval card names what the text pass left out.
+            # KRI-1376: the approval card names what the text pass left out. Its lines keep
+            # their room under the card's cap; older lines give way, never these.
+            notes = text_drop_notes(text_drops)[:6]
+            earlier = [message for message in snapshot.adjustments if message not in notes]
             snapshot = snapshot.model_copy(
                 update={
                     "adjustments": [
-                        message[:160]
-                        for message in [*snapshot.adjustments, *text_drop_notes(text_drops)]
-                    ][:6]
+                        message[:160] for message in [*earlier[: 6 - len(notes)], *notes]
+                    ]
                 }
             )
         # Composition can change text treatment after the earlier dry run. Check
