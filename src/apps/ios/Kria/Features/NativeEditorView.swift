@@ -19,6 +19,8 @@ struct NativeEditorView: View {
     @StateObject private var panelDrafts = NativeEditorPanelDrafts()
     @StateObject private var panelLifecycle = NativeEditorPanelLifecycle()
     @State private var panel: NativeEditorPanel?
+    /// A ghost tapped in the preview: the Split tool opens its picker aimed at that panel, then clears this.
+    @State private var splitAddRequest: NativeSplitAddRequest?
     /// KRI-240: the caption line open in the caption editor (plan 026 D27: the
     /// source of truth for caption edit state; keyboard focus only follows it).
     @State private var captionEditingCueID: String?
@@ -112,6 +114,12 @@ struct NativeEditorView: View {
         GeometryReader { viewport in
             editorLifecycle(editorExitControls(editorPresentations(editorSurface(viewport: viewport))))
         }
+        // The preview's split ghosts ("+" on an empty or gapped panel) open the Split tool aimed at that panel.
+        .environment(\.nativeSplitGhostTap, NativeSplitGhostTap { sectionID, panelIndex in
+            splitAddRequest = NativeSplitAddRequest(sectionID: sectionID, panel: panelIndex)
+            previewFullscreen = false
+            changePanel(to: .split)
+        })
         .overlay(alignment: .topLeading) {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-document-snapshot") {
@@ -650,7 +658,11 @@ struct NativeEditorView: View {
                 NativeEditorTimeline(
                     session: session, uploads: model.uploads, bottomClearance: clearance, isCovered: panelIsOpen,
                     onSelectVisual: { selectTool(.visuals) }, onSelectText: { selectTool(.text) },
-                    onSelectDrawing: session.canAddDrawing ? { selectTool(.draw) } : nil
+                    onSelectDrawing: session.canAddDrawing ? { selectTool(.draw) } : nil,
+                    onOpenSplitAdd: { sectionID, panel in
+                        splitAddRequest = NativeSplitAddRequest(sectionID: sectionID, panel: panel)
+                        changePanel(to: .split)
+                    }
                 )
                     .ignoresSafeArea(.container, edges: .bottom)
                     // Safe-area expansion must not let the retained timeline
@@ -813,7 +825,7 @@ struct NativeEditorView: View {
         case .drawing(let id):
             NativeDrawingPanel(session: session, id: id, onDrawMore: { enterDrawMode(appendingTo: id) }, onDone: { changePanel(to: nil) }).id(id)
         case .split:
-            NativeSplitPanel(session: session) { changePanel(to: nil) }
+            NativeSplitPanel(session: session, addRequest: $splitAddRequest) { changePanel(to: nil) }
         case nil:
             EmptyView()
         }

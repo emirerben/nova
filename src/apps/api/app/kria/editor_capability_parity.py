@@ -195,7 +195,35 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("assign_split_panel",),
         fields=("offset_s",),
     ),
-    "split_screen_remove": _g("agent_ops", "removeSelectedSplitScreen", ("remove_split_screen",)),
+    "split_screen_remove": _g(
+        "agent_ops", "removeSplitScreen", ("remove_split_screen",), fields=("keep_panel",)
+    ),
+    # Absorbing the ordinary clips is the section growing to the whole video and each clip joining
+    # the top panel at its place.
+    "split_screen_whole_video": _g(
+        "agent_ops",
+        "extendSplitToWholeVideo",
+        ("update_split_screen", "assign_split_panel"),
+        fields=("duration_s", "slot_index", "offset_s"),
+    ),
+    "split_screen_loop_fill": _g(
+        "agent_ops",
+        "loopFillSplitPanel",
+        ("assign_split_panel",),
+        fields=("duplicate", "offset_s"),
+    ),
+    "split_screen_full_screen": _g(
+        "agent_unsupported",
+        "makeSplitFullScreen",
+        reason="Cutting a section at the playhead into a split part and full-screen clips has no "
+        "agent op; chat can shorten a section (update_split_screen) or unstack it whole "
+        "(remove_split_screen).",
+    ),
+    "split_screen_queries": _g(
+        "not_an_edit",
+        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen",
+        reason="Read-only checks the Split panel uses to decide what to offer.",
+    ),
     # ---------------------------------------------------------------- audio
     "music": _g(
         "agent_ops",

@@ -153,7 +153,7 @@
   "KriaUITests/NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow": 37.0,
   "KriaUITests/NativeEditorInspectorUITests/testSoundsTabShowsSongVolumeStartAndRemove": 47.6,
   "KriaUITests/NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations": 115.0,
-  "KriaUITests/NativeEditorInspectorUITests/testSplitPanelHandleExtensionClampsAtSectionAndMinimumWithoutMovingPeers": 52.9,
+  "KriaUITests/NativeEditorInspectorUITests/testSplitPanelHandleExtensionGrowsSectionAndClampsAtMinimumWithoutMovingPeers": 52.9,
   "KriaUITests/NativeEditorInspectorUITests/testSplitPanelReplacesVideoWithUnusedPhotoAndKeepsCrop": 42.5,
   "KriaUITests/NativeEditorInspectorUITests/testSplitPanelSpeedCropAndSourceGainKeepPeersExact": 123.2,
   "KriaUITests/NativeEditorInspectorUITests/testSplitPanelTrimCutDuplicateAndUndoKeepPeersExact": 89.9,

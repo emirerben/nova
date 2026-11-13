@@ -27,7 +27,6 @@ enum NativeSplitTimelineRebase {
     static func rebase(_ next: inout EditorDocument, from previous: EditorDocument) {
         guard !previous.splitScreenSections.isEmpty || !next.splitScreenSections.isEmpty else { return }
         let speech = previous.clips.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
-        func owns(_ raw: [String: JSONValue]) -> Bool { !speech || NativeSpeechTimelineProjection.ownerID(raw) == nil }
         let old = units(previous), new = units(next)
         guard old != new else { return }
         let oldEnd = old.last?.end ?? 0, newEnd = new.last?.end ?? 0
@@ -55,6 +54,22 @@ enum NativeSplitTimelineRebase {
             guard let a = parts.map({ $0.0 }).min(), let b = parts.map({ $0.1 }).max() else { let t = point(start); return (t, t) }
             return (a, max(a, end > oldEnd ? newEnd + end - oldEnd : b))
         }
+        remap(&next, speech: speech, point: point, interval: interval)
+    }
+
+    /// The timeline lost `spans` (base seconds, disjoint). Every lane after a span moves earlier by its length and a
+    /// lane inside one shrinks to the span's start, so a lane wholly inside it goes with it.
+    static func removeTime(_ spans: [(start: Double, end: Double)], from next: inout EditorDocument) {
+        let spans = spans.filter { $0.end > $0.start }
+        guard !spans.isEmpty else { return }
+        func point(_ time: Double) -> Double { time - spans.reduce(0) { $0 + max(0, min(time, $1.end) - $1.start) } }
+        let speech = next.clips.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
+        remap(&next, speech: speech, point: point) { (point($0), point($1)) }
+    }
+
+    private static func remap(_ next: inout EditorDocument, speech: Bool, point: (Double) -> Double,
+                              interval: (Double, Double) -> (Double, Double)) {
+        func owns(_ raw: [String: JSONValue]) -> Bool { !speech || NativeSpeechTimelineProjection.ownerID(raw) == nil }
         for i in next.captionCues.indices where !speech {
             let row = next.captionCues[i], span = interval(row.startS, row.endS)
             next.captionCues[i].startS = span.0; next.captionCues[i].endS = span.1

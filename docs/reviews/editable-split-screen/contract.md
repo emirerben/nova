@@ -33,7 +33,7 @@ Phone protocol 46 (main took 44 and 45 first) and feature `splitScreen` protect 
 
 Native model and mutation work owns these methods for UI integration:
 
-- `createSplitScreen(panelCount: Int, scope: NativeSplitScope)` creates a section. `.selectedClip` converts the selected ordinary clip into panel 0 and leaves the other panels empty. `.wholeVideo` turns every ordinary clip into panel 0 members of one section, keeping identities, windows and transitions. The section duration is unchanged. Empty panels display the section background and are filled by `addSplitPanelClip`.
+- `createSplitScreen(panelCount: Int, scope: NativeSplitScope)` creates a section. `.selectedClip` converts the ordinary clip under the playhead (the selection only when the playhead is inside a split) into panel 0 and leaves the other panels empty. `.wholeVideo` turns every ordinary clip into panel 0 members of one section, keeping identities, windows and transitions. The section duration is unchanged. Empty panels display the section background and are filled by `addSplitPanelClip`.
 - `selectedSplitScreenSectionID: String?` resolves from the selected clip membership.
 - `setSplitScreenPanelCount(_ count: Int)` preserves existing panels and creates or removes the third panel in one undo transaction.
 - `setSplitScreenDuration(_ duration: Double)` changes section boundaries and clamps member coverage without silently speeding media.
@@ -45,7 +45,7 @@ Native model and mutation work owns these methods for UI integration:
 - `splitSelectedClip()` cuts the selected member at the playhead, preserving source clock and appearance.
 - `duplicateSelectedClip()` adds an independent occurrence within the same panel when space exists.
 - `replaceSelectedClipSource(clipIndex: Int)` changes the selected occurrence's source, bounded by measured source duration.
-- `removeSelectedSplitScreen()` converts the selected panel's clips to sequential full-screen clips and removes the other panels in one transaction.
+- `removeSplitScreen(sectionID:keepPanel:)` converts the selected panel's clips to sequential full-screen clips and removes the other panels in one transaction.
 
 The ordinary inspector continues to own media edits. The split controls expose section layout, panel position and member offset. The timeline displays stable Top, Middle and Bottom rows and retains ordinary clip selection and trim gestures.
 
@@ -80,3 +80,18 @@ When true:
 - **Recipe.** V2 recipe sections carry `collapse_empty_panels` next to `panel_weights`. A recipe with the field set to true requires the `splitCollapse` capability. Members stay ordinary video clips on separate panel tracks.
 - **Gating.** `SPLIT_COLLAPSE_PROTOCOL = 47`. A client below 47 must not save a timeline that has `collapse_empty_panels: true`, and the server must not offer or accept the field below 47. The server advertises collapse only when `splitCollapse` is in `PHONE_RENDER_VERIFIED_FEATURES`, so the rollout stays dark until that setting is changed.
 - **Engine API.** `SplitScreenSection` gains `collapseEmptyPanels: Bool = false` (strict decode key `collapse_empty_panels`). `panelRect(index:canvas:activePanels:)` takes an optional ascending list of active panel indexes (nil = all panels, today's behavior).
+
+## Section length in fixed-layout sections (grow-only)
+
+Collapse sections derive their length from the longest member (shrink and grow). A section WITHOUT `collapse_empty_panels` keeps the length the creator gave it, but it GROWS when a member's trailing edge is dragged past the section end: `duration_s = max(duration_s, max(split_offset_s + duration_s))`. It never shrinks on its own. Trailing trim of a member is bounded by its source footage (still images by the 1800 s timeline cap), the next member in the same panel, and the 1800 s section cap. Later sections shift through the same section-timing rebase as collapse sections.
+
+## Gap-filling and whole-video operations (native session)
+
+- `extendSplitToWholeVideo(sectionID:)` absorbs every ordinary (non-split) clip, before and after the section, into panel 0 in timeline order. It requires exactly one section. Windows, identities and transitions are preserved.
+- `loopFillSplitPanel(sectionID:panel:)` repeats the panel's existing clips (in order) after its last member until the section end, clipping the last copy. Each copy gets a new slot identity.
+- `canAddToSplitPanel(sectionID:panel:)` is true when the panel has free time inside the section (a gap under the playhead, or time after its last member) or can still grow the section.
+- `makeSplitFullScreen(sectionID:side:)` cuts the section at the playhead. `.fromPlayhead` keeps the section before the playhead and turns the rest into ordinary clips from the chosen panel (the selected panel, else the first panel with footage). `.untilPlayhead` is the mirror.
+- `removeSplitScreen(sectionID:keepPanel:)` turns the section back into ordinary clips from `keepPanel` only.
+
+- `canAddToSplitPanel(sectionID:panel:)` is true only when an add has room: a gap under the playhead, or free time after the panel's last member. A panel that is full to the section end cannot take another clip; shorten one of its clips first. `addSplitPanelClip` clamps to that free time, so the affordance never offers an add that would be refused.
+- `wholeVideoUnavailableReason` explains in one short sentence why "Whole video" is unavailable; `defaultSplitScope` is `.wholeVideo` when there are at least two ordinary clips and no section.
