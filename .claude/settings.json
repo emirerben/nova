@@ -15,7 +15,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/merge-guard.py\"; [ -f \"$f\" ] || exit 0; exec python3 \"$f\"" }
+          { "type": "command", "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/merge-guard.py\"; [ -f \"$f\" ] || exit 0; exec python3 \"$f\"", "timeout": 45 }
         ]
       }
     ],
