@@ -120,7 +120,11 @@ from app.services.editor_deletions import (
     apply_editor_deletions,
     canonical_caption_rows,
 )
-from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
+from app.services.editor_limits import (
+    EDITOR_MAX_TIMELINE_SLOTS,
+    PLAYBACK_RATE_MAX,
+    PLAYBACK_RATE_MIN,
+)
 from app.services.generative_upload_paths import (
     DIRECT_VOICEOVER_PREFIX,
     LEGACY_DIRECT_CLIP_PREFIX,
@@ -1026,7 +1030,7 @@ class TimelineSlotEdit(BaseModel):
     # KRI-1136: the creator's tilt of this occurrence, ``{rotation_deg, backdrop}``. Omission
     # keeps the saved tilt, an explicit null (or an upright blank value) clears it.
     tilt: dict[str, Any] | None = None
-    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    playback_rate: float | None = Field(default=None, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX)
     # Explicit selected source edge for source-preserving speed edits. Omission
     # retains the legacy duration * rate window contract.
     source_end_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)

@@ -12,6 +12,7 @@ from datetime import datetime
 from app import storage
 from app.models import Job, MusicTrack
 from app.services.authored_editor import explicit_authored_slots, is_authored_timeline
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 
 
 def render_presentation(variant: dict, duration: float) -> dict:
@@ -124,7 +125,7 @@ def prepare_authored_assembly(
         duration = float(row["duration_s"])
         start = float(row["in_s"])
         rate = float(row.get("playback_rate") or 1)
-        if duration <= 0 or start < 0 or not 0.25 <= rate <= 4:
+        if duration <= 0 or start < 0 or not PLAYBACK_RATE_MIN <= rate <= PLAYBACK_RATE_MAX:
             raise ValueError("authored source window invalid")
         output = os.path.join(tmpdir, f"authored_occurrence_{index}.mp4")
         common = {

@@ -29,6 +29,7 @@ from app.schemas.edit_proposal import (
     CREATOR_STILL_HOLD_MIN_S,
     seconds_negated,
 )
+from app.services.editor_limits import FRAME_S, MOTION_FPS
 
 Authority = Literal["explicit", "accepted", "cleared"]
 
@@ -39,9 +40,8 @@ MIN_HOLD_S = CREATOR_STILL_HOLD_MIN_S
 MAX_HOLD_S = CREATOR_STILL_HOLD_MAX_S
 # Facts a model may file the seconds under; the first positive one is the hold.
 HOLD_FACT_KEYS = ("hold_s", "duration_s", "clip_duration_s", "per_clip_duration_s")
-# The renderer's frame clock: an applied hold is judged within one frame of the ask.
-HOLD_FPS = 30
-HOLD_TOLERANCE_S = 1.0 / HOLD_FPS + 1e-3
+# An applied hold is judged within one frame of the ask.
+HOLD_TOLERANCE_S = FRAME_S + 1e-3
 
 
 # Quoted on-screen copy ('title "1 second to midnight"'): its seconds are the copy's.
@@ -224,7 +224,7 @@ class AssetHold:
 
     @property
     def frames(self) -> int:
-        return max(1, int(round(self.hold_s * HOLD_FPS)))
+        return max(1, int(round(self.hold_s * MOTION_FPS)))
 
     def record(self) -> dict[str, Any]:
         return {
@@ -291,11 +291,11 @@ class VisualBudget:
 
     @property
     def held_s(self) -> float:
-        return round(self.held_frames / HOLD_FPS, 3)
+        return round(self.held_frames / MOTION_FPS, 3)
 
     @property
     def total_s(self) -> float:
-        return round((self.held_frames + self.unheld_frames) / HOLD_FPS, 3)
+        return round((self.held_frames + self.unheld_frames) / MOTION_FPS, 3)
 
 
 def visual_budget(
@@ -326,7 +326,7 @@ def visual_budget(
     )
     held = unheld = 0
     requirement_ids: list[str] = []
-    group_frames = max(1, int(round(group_hold_s * HOLD_FPS))) if group_hold_s else None
+    group_frames = max(1, int(round(group_hold_s * MOTION_FPS))) if group_hold_s else None
     for media_id in visuals:
         hold = holds.get(media_id)
         if hold is not None:

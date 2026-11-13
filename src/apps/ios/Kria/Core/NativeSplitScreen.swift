@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import KriaMediaEngine
 
 enum NativeSplitScope: Equatable { case selectedClip, wholeVideo }
 
@@ -137,7 +138,7 @@ struct EditorSplitScreenSection: Equatable, Sendable, Identifiable {
     }
 
     var isValid: Bool {
-        !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && id.count <= 160 && durationS.isFinite && durationS >= 0.1 && durationS <= 1800
+        !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && id.count <= 160 && durationS.isFinite && durationS >= EditorLimits.minClipSeconds && durationS <= 1800
         && (2...3).contains(panelCount) && panelWeights.count == panelCount
         && panelWeights.allSatisfy { $0.isFinite && $0 > 0 } && panelWeights.reduce(0, +).isFinite
         && gutter.isFinite && (0...0.1).contains(gutter)
@@ -214,7 +215,7 @@ extension EditorDocument {
                   let panel = slot.splitPanelIndex, panel < section.panelCount,
                   slot.raw["split_offset_s"]?.numberValue != nil,
                   slot.splitOffsetS.isFinite, slot.splitOffsetS >= 0,
-                  let duration = slot.durationS, duration.isFinite, duration >= 0.1,
+                  let duration = slot.durationS, duration.isFinite, duration >= EditorLimits.minClipSeconds,
                   slot.splitOffsetS + duration <= section.durationS + 0.000001 else { return false }
             if previous != id, !seen.insert(id).inserted { return false }
             previous = id

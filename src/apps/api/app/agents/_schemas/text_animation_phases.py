@@ -7,6 +7,8 @@ from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.services.editor_limits import ANIMATION_SPEED_MAX, ANIMATION_SPEED_MIN
+
 # Entrance and exit length at speed 1, for every edge. One value so a designed edge is never
 # slower than the pop or fade beside it; the native mirror is generated from this constant.
 TEXT_ANIMATION_EDGE_SECONDS = 0.4
@@ -101,7 +103,7 @@ class TextAnimationPhases(BaseModel):
     entrance: TextAnimationEdge = "none"
     exit: TextAnimationEdge = "none"
     loop: Literal["none", "pulse", "bounce", "float"] = "none"
-    speed: float = Field(default=1, ge=0.25, le=3)
+    speed: float = Field(default=1, ge=ANIMATION_SPEED_MIN, le=ANIMATION_SPEED_MAX)
 
 
 def phases_patch(value: object) -> dict[str, Any] | None:

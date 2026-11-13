@@ -4,9 +4,7 @@ from copy import deepcopy
 from math import fsum, isfinite
 from typing import Literal
 
-# A text piece may be as short as one output frame (30 fps): the least the video can show.
-# Every word-by-word floor imports this; do not restate it.
-MIN_TEXT_PIECE_S = 1 / 30
+from app.services.editor_limits import MIN_TEXT_PIECE_S, TEXT_PIECE_TOLERANCE_S
 
 
 class SequenceReadabilityError(ValueError):
@@ -94,8 +92,8 @@ def retime_sequence(
                     raise ValueError(f"Row {index} has invalid sequence timing projection")
                 current_duration, current_gap = current_pacing[index]
                 if (
-                    abs(current_duration - applied_duration) > 0.000002
-                    or abs(current_gap - applied_gap) > 0.000002
+                    abs(current_duration - applied_duration) > TEXT_PIECE_TOLERANCE_S
+                    or abs(current_gap - applied_gap) > TEXT_PIECE_TOLERANCE_S
                 ):
                     authored_timing_changed = True
         else:
@@ -170,7 +168,7 @@ def retime_sequence(
         params["sequence_timing"] = deepcopy(baseline[index][2])
 
     for index, row in enumerate(result):
-        if row["end_s"] - row["start_s"] < MIN_TEXT_PIECE_S - 0.000002 or (
+        if row["end_s"] - row["start_s"] < MIN_TEXT_PIECE_S - TEXT_PIECE_TOLERANCE_S or (
             index and row["start_s"] < result[index - 1]["end_s"]
         ):
             raise ValueError(

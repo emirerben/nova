@@ -54,7 +54,7 @@ struct NativeFootagePanel: View {
                         get: { session.footagePlaybackRate(for: selection) },
                         set: { session.setFootagePlaybackRate(selection, rate: $0) }
                     ),
-                    in: 0.25...4,
+                    in: EditorLimits.playbackRate,
                     step: 0.05
                 ) { Text("Playback rate") }
                 .accessibilityIdentifier("native-editor-playback-rate")
@@ -89,7 +89,7 @@ struct NativeFootagePanel: View {
                     get: { session.footagePlaybackRate(for: selection) },
                     set: { session.setFootagePlaybackRate(selection, rate: $0) }
                 ),
-                in: 0.25...4,
+                in: EditorLimits.playbackRate,
                 step: 0.05
             ) { Text("Playback rate") }
             .disabled(session.speedBlockedReason(for: selection) != nil)

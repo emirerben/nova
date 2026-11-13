@@ -59,6 +59,7 @@ from app.services.clip_facts import (
     order_by_capture_time,
 )
 from app.services.clip_order_sequence import ANCHOR_FACTS
+from app.services.editor_limits import MOTION_FPS
 from app.services.order_mode import order_mode
 
 if TYPE_CHECKING:
@@ -924,8 +925,6 @@ OPT_USE_PREFIX = "use_"
 # What an "order I filmed them" requirement means to the contract (brief order keys).
 ATTACHMENT_ORDER_KEY = "attachment"
 
-# The most clips a draft names; a hard bound on the evenly-spaced subset.
-_MAX_FIT_FRAMES_FPS = 30
 # A choice is asked at most this many times for the same inputs: the question and ONE
 # re-ask. After that the creator's plan goes through unchanged (never a default for them).
 MAX_ASKS_PER_QUESTION = 2
@@ -1197,14 +1196,14 @@ def _duration_vs_count(
         from app.pipeline.best_parts import MIN_INCLUDED_PART_S  # noqa: PLC0415
 
         floor_s = MIN_INCLUDED_PART_S
-    floor_frames = max(1, round(floor_s * _MAX_FIT_FRAMES_FPS))
+    floor_frames = max(1, round(floor_s * MOTION_FPS))
     count = len(clip_ids)
-    if count * floor_frames <= round(seconds * 1.10 * _MAX_FIT_FRAMES_FPS):
+    if count * floor_frames <= round(seconds * 1.10 * MOTION_FPS):
         return None
     ceiling = bound == "at_most"
-    needed = math.ceil(count * floor_frames / _MAX_FIT_FRAMES_FPS * 10 - 1e-9) / 10
+    needed = math.ceil(count * floor_frames / MOTION_FPS * 10 - 1e-9) / 10
     can_extend = needed <= cap.max_duration_s
-    fit = max(1, int(seconds * _MAX_FIT_FRAMES_FPS) // floor_frames)
+    fit = max(1, int(seconds * MOTION_FPS) // floor_frames)
     subset = _evenly_spaced(clip_ids, fit)
     shown = _clean_seconds(needed)
     asked = _clean_seconds(seconds)
@@ -2145,7 +2144,6 @@ _FREEZE_FRAME_SHARES = (
     (0.5, ("Middle", "Ortası"), ("middle", "the middle", "mid", "orta", "ortası")),
     (0.75, ("Late in it", "Sonuna yakın"), ("late", "later", "sonuna yakın")),
 )
-_FREEZE_FPS = 30
 # Same bounds the worker applies to a picked frame (`unified_montage._ground_freeze`).
 _FREEZE_MIN_MOTION_S = 0.3
 _FREEZE_END_MARGIN_S = 0.05
@@ -2183,7 +2181,7 @@ def _clip_name(row: Mapping[str, Any] | None, ordinal: int, count: int) -> tuple
 
 def _holdable_frame(at_s: float, duration_s: float | None) -> float | None:
     """``at_s`` on the 30 fps frame grid, or None when the worker could not hold it there."""
-    frame = round(round(at_s * _FREEZE_FPS) / _FREEZE_FPS, 3)
+    frame = round(round(at_s * MOTION_FPS) / MOTION_FPS, 3)
     if frame < _FREEZE_MIN_MOTION_S:
         return None
     if duration_s is not None and frame >= duration_s - _FREEZE_END_MARGIN_S:
@@ -2532,7 +2530,7 @@ def _picture_bounds_s(
 
     floor_s = cap.min_readable_shot_s
     lo, hi = frame_bounds_for_durations(durations, min_shot_s=floor_s)
-    return lo / _MAX_FIT_FRAMES_FPS, hi / _MAX_FIT_FRAMES_FPS
+    return lo / MOTION_FPS, hi / MOTION_FPS
 
 
 def _picture_identity(strategy: Mapping[str, Any], rows: list[Any], cap: ChoiceCapability) -> list:

@@ -40,6 +40,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
     uses_quick_photo_long_video_timing,
 )
+from app.services.editor_limits import MOTION_FPS
 from app.services.proposal_planning import SemanticPlanningError, plan_edit_proposal
 from app.text_fold import loose_text
 
@@ -571,7 +572,7 @@ def deterministic_fast_cuts(
     )
     # Render timelines are CFR at 30fps. Allocate in frames rather than
     # milliseconds so fallback source windows are always frame aligned.
-    fps = 30
+    fps = MOTION_FPS
     target_frames = int(round(target_duration_s * fps))
     source_capacity_frames = {
         ref.media_id: (

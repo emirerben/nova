@@ -19,8 +19,9 @@ from typing import Any
 from app.agents._schemas.text_element import CAPTION_CUE_SOURCE
 from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
 from app.schemas.guided_edit_revision import MAX_GUIDED_EDITOR_TOMBSTONES
+from app.services.editor_limits import MOTION_FPS
 
-GUIDED_FPS = 30.0
+GUIDED_FPS = float(MOTION_FPS)
 
 
 class GuidedTimelineError(ValueError):

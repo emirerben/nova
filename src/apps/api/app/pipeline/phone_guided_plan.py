@@ -43,6 +43,7 @@ from app.pipeline.phone_recipe_shared import (
 )
 from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
 from app.schemas.user_song import USER_SONG_REQUIRED_CAPABILITIES, USER_SONG_TRACK_ID
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 from app.services.phone_sources import (
     PhoneSourceBinding,
     PhoneVisualBinding,
@@ -430,7 +431,7 @@ def compile_phone_guided_plan(
             ):
                 raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
         rate = float(moment.playback_rate if moment.playback_rate is not None else 1)
-        if not math.isfinite(rate) or not 0.25 <= rate <= 4:
+        if not math.isfinite(rate) or not PLAYBACK_RATE_MIN <= rate <= PLAYBACK_RATE_MAX:
             raise UnsupportedPhonePlan(
                 "unsupported phone playback rate", capability="variableSpeed"
             )

@@ -44,6 +44,7 @@ from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.editor_limits import (
     EDITOR_MAX_TIMELINE_SLOTS,
+    EDITOR_MIN_CLIP_S,
     MAX_EDITOR_OPS,
     MOTION_FPS,
     MOTION_MAX_ACTIVE_FRAMES,
@@ -4163,6 +4164,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             effect_catalog=_effect_catalog(),
             caption_font_catalog=_caption_font_catalog(),
             custom_effect_catalog=_custom_effect_catalog(),
+            min_clip_s=f"{EDITOR_MIN_CLIP_S:g}",
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         prompt = _with_scope_fragment(prompt, input.variant_snapshot)

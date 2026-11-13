@@ -79,6 +79,7 @@ from app.schemas.text_style_intent import (
     TITLE_ANIMATION_SPEED,
 )
 from app.schemas.user_song import MIN_PLAYABLE_SONG_S, UserSongPlan
+from app.services.editor_limits import FRAME_S, PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 
 log = structlog.get_logger()
 
@@ -91,7 +92,7 @@ VOICEOVER_COMPILER_VERSION = 7
 # Only snapshots carrying an approved frame schedule opt into v8.
 SCHEDULED_COMPILER_VERSION = 8
 VARIANT_ID = "guided_story"
-_FRAME_S = 1.0 / 30.0
+_FRAME_S = FRAME_S
 _ALLOCATION_EPSILON_S = 0.0005
 _SOURCE_AUDIO_EDGE_FADE_S = 0.010
 _FRAME_FLOOR_EPSILON_S = 1e-9
@@ -235,7 +236,7 @@ class GuidedStoryMoment(BaseModel):
     # KRI-1136: the creator's tilt (`app.kria.clip_tilt.ClipTilt.row()`). Omitted when unset so
     # every stored plan keeps its exact dump. Honoured by the phone compiler only.
     tilt: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
-    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    playback_rate: float | None = Field(default=None, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX)
     # The creator silenced this moment's own (camera) sound in the editor. Omitted when
     # unset so every stored plan keeps its exact dump. Honoured by the phone compiler.
     source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)

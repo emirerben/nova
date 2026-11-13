@@ -29,6 +29,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.agents._schemas.visual_editor import VisualEditorStyle
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 from app.services.media_overlay_preview import nonblank_str
 
 # Canvas dimensions (portrait 9:16) — must match text_overlay_skia.CANVAS_{W,H}.
@@ -132,7 +133,7 @@ class MediaOverlay(BaseModel):
     # correct bounds without re-probing after Apply or page reload.
     clip_duration_s: float | None = Field(default=None, ge=0.0)
     source_crop: SourceCrop | None = None
-    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    playback_rate: float | None = Field(default=None, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX)
 
     # z-order (higher = rendered later = on top). Defaults to list position.
     z: int = Field(default=0, ge=0)

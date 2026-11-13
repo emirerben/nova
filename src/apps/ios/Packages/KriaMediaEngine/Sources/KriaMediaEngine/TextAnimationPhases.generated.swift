@@ -10,6 +10,10 @@ public struct TextAnimationPhases: Codable, Equatable, Sendable {
     public var exit: Edge
     public var loop: Loop
     public var speed: Double
+    public static let speedRange: ClosedRange<Double> = 0.25...3
+    public static func clampedSpeed(_ speed: Double) -> Double {
+        min(speedRange.upperBound, max(speedRange.lowerBound, speed))
+    }
     public init(entrance: Edge = .none, exit: Edge = .none,
                 loop: Loop = .none, speed: Double = 1) {
         self.entrance = entrance; self.exit = exit; self.loop = loop; self.speed = speed
@@ -26,7 +30,7 @@ public struct TextAnimationPhases: Codable, Equatable, Sendable {
         try validate()
     }
     public func validate() throws {
-        guard speed.isFinite, (0.25...3).contains(speed) else {
+        guard speed.isFinite, Self.speedRange.contains(speed) else {
             throw RecipeError.invalidTimeline
         }
     }
