@@ -153,6 +153,7 @@ def copilot_schema():
             "target_ids": arr(string),
             "clip_ids": arr(string),
             "clip_indexes": arr(integer),
+            "bar_indexes": arr(integer),
             "slot_indexes": arr(integer),
             "expected_count": integer,
             "indexes": arr(integer),
