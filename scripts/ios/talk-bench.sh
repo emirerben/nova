@@ -8,6 +8,7 @@
 #   scripts/ios/talk-bench.sh --scenarios video-cin0,video-cin0-old   # A/B the live-preview levers (see below)
 #   scripts/ios/talk-bench.sh --dry-run                          # resolve the plan, touch no device and build nothing
 #   scripts/ios/talk-bench.sh --pull-only manual                 # report on a session you ran by hand (see below)
+#   scripts/ios/talk-bench.sh --use-take --use-take-dwell 20 --use-take-after 12 --poll-files   # dwell in Review, then Use take
 #   scripts/ios/talk-bench.sh --retries 2 --retry-failed-runs 2  # install/launch retries, and reruns of a failed measurement
 #
 # HOW IT MEASURES. The app (Debug, KRIA_TALK_BENCH=1) records every Perf signpost interval, count and sample, and the
@@ -21,6 +22,11 @@
 # `-old-<lever>[-<lever>...]` with lever one of fresh, input, async, video, decode (only those). The Debug app reads this as
 # KRIA_TALK_BENCH_LIVE_OLD and writes the resulting values to the `live.tuning` fact of the report. The scenarios are
 # interleaved, so `video-cin0,video-cin0-old` is one A/B under the same thermal drift. Needs a background (photo or video).
+#
+# USE TAKE DWELL. --use-take-dwell N waits N seconds in Review before tapping Use take (what the creator spends deciding; the take
+# prewarm works during it), --use-take-after N keeps the app open N seconds after the tap. --poll-files copies the prewarm proxy
+# (Library/Caches/KriaTakePrewarm) and the staged upload (Library/Application Support/KriaUploads) off the phone while the test
+# runs and keeps them in <run>/polled/, because the fixture's failed upload deletes the staged copy within seconds.
 #
 # WHAT THE SCRIPTED RUN CANNOT DO. "Use take" and editor Save need a signed-in session on a backend that accepts the
 # upload; the UI-test fixture does not. Their signposts are in the app and the recorder captures them, but the scripted run
@@ -68,6 +74,9 @@ REINSTALL=0
 TEST_RETRIES=0
 DRY_RUN=0
 USE_TAKE=0
+USE_TAKE_DWELL=0
+USE_TAKE_AFTER=45
+POLL_FILES=0
 PULL_ONLY=""
 
 usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
@@ -88,6 +97,9 @@ while [[ $# -gt 0 ]]; do
     --cooldown-max) COOLDOWN_MAX="$2"; shift 2 ;;
     --retry-failed-runs) TEST_RETRIES="$2"; shift 2 ;;
     --use-take) USE_TAKE=1; shift ;;
+    --use-take-dwell) USE_TAKE_DWELL="$2"; shift 2 ;;
+    --use-take-after) USE_TAKE_AFTER="$2"; shift 2 ;;
+    --poll-files) POLL_FILES=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --pull-only) PULL_ONLY="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
@@ -181,6 +193,20 @@ fi
 
 [[ -n "$DEVICE_ID" ]] || { echo "No paired, available iPhone found. Connect one, or pass --device-id <udid> (xcrun devicectl list devices)." >&2; exit 2; }
 mkdir -p "$RUN_ROOT"
+
+poll_files() { # <dest>: keep every proxy and staged movie that shows up while the test runs
+  local dest="$1" scratch directory
+  mkdir -p "$dest/prewarm" "$dest/uploads"
+  while :; do
+    for directory in prewarm:Library/Caches/KriaTakePrewarm uploads:"Library/Application Support/KriaUploads"; do
+      scratch="$(mktemp -d)"
+      xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" \
+        --source "${directory#*:}" --destination "$scratch" >/dev/null 2>&1 || true
+      find "$scratch" -type f -size +100k -exec cp -n {} "$dest/${directory%%:*}"/ \; 2>/dev/null || true
+      rm -rf "$scratch"
+    done
+  done
+}
 
 pull_run() { # <run-dir>
   local run_dir="$1" scratch
@@ -330,12 +356,16 @@ for run in $(seq 1 "$RUNS"); do
       thermal_before="$(cool_down_device)"
       [[ "$REINSTALL" -eq 1 ]] && uninstall_app
       exit_code=0
+      poller=""
+      if [[ "$POLL_FILES" -eq 1 ]]; then poll_files "$run_dir/polled" & poller=$!; fi
       TEST_RUNNER_KRIA_TELEPROMPTER_HARDWARE_TEST=1 TEST_RUNNER_KRIA_TALK_BENCH=1 \
+      TEST_RUNNER_KRIA_TALK_USETAKE_DWELL="$USE_TAKE_DWELL" TEST_RUNNER_KRIA_TALK_USETAKE_AFTER="$USE_TAKE_AFTER" \
       TEST_RUNNER_KRIA_TALK_BENCH_BACKGROUND="$background" TEST_RUNNER_KRIA_TALK_BENCH_CINEMATIC="$cinematic" TEST_RUNNER_KRIA_TALK_BENCH_LIVE_OLD="$live_old" \
       TEST_RUNNER_KRIA_TALK_BENCH_SECONDS="$SECONDS_PER_TAKE" TEST_RUNNER_KRIA_TALK_BENCH_IDLE_SECONDS="$IDLE_SECONDS" TEST_RUNNER_KRIA_TALK_BENCH_REVIEW_TIMEOUT="$REVIEW_TIMEOUT" TEST_RUNNER_KRIA_TALK_BENCH_USE_TAKE="$USE_TAKE" \
         xcodebuild test-without-building -project "$IOS_ROOT/Kria.xcodeproj" -scheme "$SCHEME" -configuration Debug \
           -destination "platform=iOS,id=$DEVICE_ID" -derivedDataPath "$DERIVED_DATA" -enableCodeCoverage NO \
           -resultBundlePath "$run_dir/result.xcresult" -only-testing "$TEST_ID" >"$run_dir/xcodebuild.log" 2>&1 || exit_code=$?
+      if [[ -n "$poller" ]]; then kill "$poller" 2>/dev/null || true; wait "$poller" 2>/dev/null || true; fi
       [[ "$exit_code" -eq 0 ]] && break
       if infrastructure_failure "$run_dir/xcodebuild.log"; then
         infra_attempts=$((infra_attempts + 1))
