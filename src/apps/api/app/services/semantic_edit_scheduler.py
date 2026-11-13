@@ -13,12 +13,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from app.schemas.edit_frame_schedule import EditFrameSchedule, FrameScheduledMoment
 from app.schemas.semantic_edit import SemanticEditPlan
+from app.services.editor_limits import MOTION_FPS
 
 if TYPE_CHECKING:
     from app.agents.edit_proposal import EditProposalAgentInput
     from app.schemas.edit_proposal import FastMontageCut, MontageTextBinding, StoryBeat
 
-FPS = 30
+FPS = MOTION_FPS
 MIN_FRAMES = 3
 _PRECISION_TOLERANCE_S = 1e-6
 

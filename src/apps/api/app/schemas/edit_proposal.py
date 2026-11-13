@@ -35,7 +35,7 @@ from app.schemas.editorial_plan import EditorialPlan
 from app.schemas.text_composition import TextCompositionProgram
 from app.schemas.text_style_intent import LabelPosition, TitleAnimation
 from app.schemas.user_song import SongCaptionTrack, UserSongPlan
-from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
+from app.services.editor_limits import FRAME_S, MOTION_FPS, PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
 MIN_PROPOSAL_DURATION_S = 3
@@ -75,7 +75,7 @@ VideoReusePolicy = Literal["once", "distinct_windows", "allow_repeat"]
 # repair layer that enforces each shape's contract lives in
 # app.services.story_shapes.
 StoryShape = Literal["day_vlog", "single_hero"]
-NARRATION_FPS = 30
+NARRATION_FPS = MOTION_FPS
 
 
 def canonical_narration_duration_s(duration_s: float) -> float:
@@ -367,8 +367,8 @@ class MontageCadenceConstraint(BaseModel):
     @field_validator("cut_duration_s")
     @classmethod
     def validate_frame_alignment(cls, value: float) -> float:
-        frame_count = round(value * 30)
-        frame_aligned = frame_count / 30
+        frame_count = round(value * MOTION_FPS)
+        frame_aligned = frame_count / MOTION_FPS
         if abs(value - frame_aligned) > 0.001:
             raise ValueError("montage cadence cut duration must align to 30fps frames")
         return round(frame_aligned, 6)
@@ -387,7 +387,7 @@ def _recognized_frame_aligned_cadence(value: float) -> float | None:
 
     if not 0.4 <= value <= 3.0:
         return None
-    frame_aligned = round(value * 30) / 30
+    frame_aligned = round(value * MOTION_FPS) / MOTION_FPS
     if abs(value - frame_aligned) > 0.001:
         return None
     return round(frame_aligned, 6)
@@ -1937,7 +1937,7 @@ class CreatorStillHold(BaseModel):
 
 
 # One frame at 30 fps, plus rounding slack: what a held still may differ by on screen.
-CREATOR_STILL_HOLD_TOLERANCE_S = 1 / 30 + 0.001
+CREATOR_STILL_HOLD_TOLERANCE_S = FRAME_S + 0.001
 
 
 # ``EditProposalSnapshot.title`` is required even when the creator gave no title. Planners
@@ -2304,7 +2304,9 @@ class EditProposalSnapshot(BaseModel):
                     if self.frame_schedule is not None:
                         # Scheduled edits use only complete source frames; e.g.
                         # a 0.21s clip contains six safe frames at 30fps.
-                        source_duration_s = math.floor((source_duration_s + 1e-6) * 30) / 30
+                        source_duration_s = (
+                            math.floor((source_duration_s + 1e-6) * MOTION_FPS) / MOTION_FPS
+                        )
                     minimum_video_s = min(minimum_video_s, source_duration_s)
                 if cut.output_duration_s < minimum_video_s - 0.001:
                     raise ValueError(

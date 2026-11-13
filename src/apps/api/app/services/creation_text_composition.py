@@ -32,6 +32,7 @@ from app.agents.edit_copilot import (
     _font_catalog,
     _format_snapshot,
 )
+from app.agents.prompt_vocab import render_vocab_tokens
 from app.kria.brief import BriefRequirement
 from app.kria.text_sequence import is_text_sequence
 from app.schemas.edit_proposal import EditProposalSnapshot
@@ -81,7 +82,8 @@ _TEXT_OPS = frozenset(
         "realign_labels",
     }
 )
-_INSTRUCTIONS = """CREATION TEXT COMPOSITION
+_INSTRUCTIONS = render_vocab_tokens(
+    """CREATION TEXT COMPOSITION
 If the creator asks for web research, fact checking or verified facts in any language,
 return research_request: {topic: public topic without URLs/private details,
 request_quote: exact creator words requesting research}, intent="describe", a short
@@ -106,7 +108,7 @@ THAT bar, never add another text for it. When the brief also has a title text wi
 wording, or a second sequence, that title keeps the opening bar and each sequence's exact words
 sit in their own bar (on a clip, or the clip a clip-scoped sequence names): split the bar
 holding them.
-Give every piece at least one video frame (1/30 s): when the bar is
+Give every piece at least one video frame (1/{{MOTION_FPS}} s): when the bar is
 shorter than that per piece, first lengthen it with set_texts_timing (about 0.45 s per word is a
 comfortable default, never a requirement; never past total_duration_s). Preserve the combined
 wording and choose readable timing inside the requested clip. Apply timing and shared style
@@ -147,6 +149,7 @@ unmet request if the planned timing cannot support the requested explanation.
 When a current text brief is present, add independent text only when a live non-title
 text requirement requests it. A title styling request never authorizes another caption.
 """
+)
 
 
 _RESEARCHED_COPY_INSTRUCTIONS = """RESEARCHED COPY

@@ -26,6 +26,7 @@ from app.agents.editor_ops_v2 import OpSpec
 from app.kria.clip_tilt import MAX_ZOOM, MIN_ZOOM, ClipTilt, clamp_zoom, wrap_degrees
 from app.kria.recipes import ClipBackdrop
 from app.kria.reply_language import say
+from app.schemas.editor_window import below_editor_minimum
 from app.services.editor_limits import (
     EDITOR_MIN_CLIP_S,
     MOTION_FPS,
@@ -861,7 +862,7 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                     # that outgrows the footage after its start reaches back into the footage
                     # before it.
                     slide = "in_s" not in patch and "playback_rate" not in patch
-                    if not slide and (float(source) - in_s) / rate < EDITOR_MIN_CLIP_S:
+                    if not slide and below_editor_minimum((float(source) - in_s) / rate):
                         raise _err("That start point leaves too little footage in the clip")
                     new_in, duration = _fit_window(
                         float(source),
@@ -873,8 +874,8 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                     )
                     if new_in != in_s:
                         row["in_s"] = round(new_in, 3)
-                if duration < EDITOR_MIN_CLIP_S:
-                    raise _err("A clip cannot be shorter than 0.1 seconds")
+                if below_editor_minimum(duration):
+                    raise _err(f"A clip cannot be shorter than {EDITOR_MIN_CLIP_S:g} seconds")
                 row["duration_beats"] = None
                 row["duration_s"] = round(duration, 6 if "source_end_s" in row else 3)
                 if "source_end_s" in row and (

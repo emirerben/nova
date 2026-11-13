@@ -6267,12 +6267,12 @@ def _coerce_payload(
         start, end = _slot_window(slot) if isinstance(slot, dict) else (None, None)
         if start is not None and end is not None:
             remaining = end - start - out["start_s"]
-            if remaining < 0.1:
+            if remaining < EDITOR_MIN_CLIP_S:
                 state.invalid_value()
                 return None
     if name == "trim_output_start":
         total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
-        if total_s is not None and total_s - out["start_s"] < 0.1:
+        if total_s is not None and total_s - out["start_s"] < EDITOR_MIN_CLIP_S:
             state.invalid_value()
             return None
     if name == "remove_music":
