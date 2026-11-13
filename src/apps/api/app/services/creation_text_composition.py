@@ -46,9 +46,16 @@ log = structlog.get_logger()
 _SEQUENCE_TITLE_SCOPES = frozenset({"title", "global"})
 
 # The text-tool documentation and snapshot formatting come from the editor copilot's files.
+# text.txt renders {{TOKEN}} vocabularies (prompt_vocab and the module behind each token),
+# and the font catalog is built from the allowlist and the font registry it reads.
 CREATION_TEXT_COMPOSER_PROMPT_SOURCES: tuple[str, ...] = (
     "app/services/creation_text_composition.py",
     "app/agents/edit_copilot.py",
+    "app/agents/editor_ops_v2/__init__.py",
+    "app/agents/prompt_vocab.py",
+    "app/agents/_schemas/text_animation_phases.py",
+    "app/agents/_schemas/text_element.py",
+    "assets/fonts/font-registry.json",
     "prompts/edit_copilot_ops/text.txt",
 )
 CREATION_TEXT_COMPOSER_PROMPT_VERSION = prompt_fingerprint(

@@ -37,6 +37,8 @@ from app.schemas.research import (
 # (`story_idea_research.research_spec_identity`), so a hash would re-run paid searches on
 # every edit to this file.
 _RESEARCH_PROMPT_SOURCES = ("app/services/researched_text.py",)
+# The layers prompt opens with the creator's reply-language line.
+_RESEARCH_LAYERS_PROMPT_SOURCES = (*_RESEARCH_PROMPT_SOURCES, "app/kria/reply_language.py")
 
 
 class ResearchUnavailable(ValueError):
@@ -406,7 +408,7 @@ class ResearchLayersAgent(Agent[ResearchLayersInput, ResearchLayersOutput]):
     spec = AgentSpec(
         name="nova.research.text_layers",
         prompt_id="research_text_layers",
-        prompt_version=prompt_fingerprint("rl", _RESEARCH_PROMPT_SOURCES),
+        prompt_version=prompt_fingerprint("rl", _RESEARCH_LAYERS_PROMPT_SOURCES),
         model=JSON_COPILOT_MODEL,
         max_attempts=2,
         timeout_s=60,

@@ -27,9 +27,10 @@ from app.pipeline.style_sets import list_style_sets
 
 _DEFAULT_SET_ID = "default"
 
-# The candidate set lines come from assets/style_sets at run time, so they are not a source.
+# The candidate set lines default to every agentic set in the style-sets file.
 AGENTIC_STYLE_SELECTOR_PROMPT_SOURCES: tuple[str, ...] = (
     "app/agents/agentic_style_selector.py",
+    "assets/style_sets/style-sets.json",
     "prompts/select_agentic_style.txt",
 )
 AGENTIC_STYLE_SELECTOR_PROMPT_VERSION = prompt_fingerprint(

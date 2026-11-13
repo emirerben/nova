@@ -32,6 +32,12 @@ Ways this can fail, and the test that catches each:
   F9 a version that is part of a persisted cache key or digest becomes a hash and
      re-runs paid work on every edit                -> kept hand-numbered, see
                                                        docs/pipelines/prompt-version-history.md
+  F10 a file that renders into the prompt through a helper the agent module only calls
+     (read_fragment, prompt_language_line, the font catalog, the style-set list) is missing
+     from its sources                       -> test_every_read_fragment_is_a_source,
+                                               test_every_prompt_language_line_is_a_source,
+                                               test_composer_font_catalog_inputs_are_sources,
+                                               test_style_selector_fingerprints_its_style_sets
 Known limit, not guarded: prompt text built at render time from capability manifests
 and other runtime inputs is not a file, so no fingerprint can cover it.
 """
@@ -81,6 +87,7 @@ from app.services.creation_text_composition import (
     CreationTextComposerFast,
 )
 from app.services.researched_text import (
+    _RESEARCH_LAYERS_PROMPT_SOURCES,
     _RESEARCH_PROMPT_SOURCES,
     GroundedResearchAgent,
     ResearchCopyAgent,
@@ -105,6 +112,7 @@ ALL_SOURCES = [
     *LOADS_PROMPT_FILES.values(),
     ("app/agents/beat_aligner.py",),
     _RESEARCH_PROMPT_SOURCES,
+    _RESEARCH_LAYERS_PROMPT_SOURCES,
     CREATION_TEXT_COMPOSER_PROMPT_SOURCES,
 ]
 
@@ -195,7 +203,7 @@ def test_derived_specs_stamp_their_fingerprint() -> None:
         ),
         BeatAlignerAgent.spec: ("ba", BEAT_ALIGNER_PROMPT_VERSION, ("app/agents/beat_aligner.py",)),
         ResearchCopyAgent.spec: ("rc", None, _RESEARCH_PROMPT_SOURCES),
-        ResearchLayersAgent.spec: ("rl", None, _RESEARCH_PROMPT_SOURCES),
+        ResearchLayersAgent.spec: ("rl", None, _RESEARCH_LAYERS_PROMPT_SOURCES),
         ResearchReviewAgent.spec: ("rr", None, _RESEARCH_PROMPT_SOURCES),
         CreationTextComposer.spec: (
             "ct",
@@ -234,6 +242,10 @@ def test_plan_agents_fingerprint_their_banks() -> None:
         assert "app/agents/persona_examples.py" in sources
 
 
+def test_style_selector_fingerprints_its_style_sets() -> None:
+    assert "assets/style_sets/style-sets.json" in AGENTIC_STYLE_SELECTOR_PROMPT_SOURCES
+
+
 def test_a_missing_source_changes_the_version_without_crashing(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("rule\n")
     present = fp.prompt_fingerprint("xx", ("a.txt", "gone.txt"), root=tmp_path)
@@ -244,7 +256,14 @@ def test_a_missing_source_changes_the_version_without_crashing(tmp_path: Path) -
 _TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 
 
-@pytest.mark.parametrize("sources", AGENTS.values())
+# Every agent whose prompt can render a {{TOKEN}} vocabulary or a lane fragment.
+RENDERS_VOCABULARIES = {
+    **AGENTS,
+    "app/services/creation_text_composition.py": CREATION_TEXT_COMPOSER_PROMPT_SOURCES,
+}
+
+
+@pytest.mark.parametrize("sources", RENDERS_VOCABULARIES.values())
 def test_every_rendered_vocabulary_is_a_source(sources: tuple[str, ...]) -> None:
     used = {
         token
@@ -256,6 +275,40 @@ def test_every_rendered_vocabulary_is_a_source(sources: tuple[str, ...]) -> None
     assert "app/agents/prompt_vocab.py" in sources
     for token in used:
         assert prompt_vocab.PROMPT_VOCABULARY_SOURCES[token] in sources, token
+
+
+def test_every_read_fragment_is_a_source() -> None:
+    # The composer reads lane fragments with read_fragment, not load_prompt, so the
+    # load_prompt guard above can't see them. Its reader is a source too: it renders the
+    # {{TOKEN}} vocabularies into the fragment.
+    for module, sources in RENDERS_VOCABULARIES.items():
+        text = (API_ROOT / module).read_text(encoding="utf-8")
+        for name in re.findall(r'read_fragment\(\s*"([^"]+)"', text):
+            assert f"prompts/edit_copilot_ops/{name}" in sources, f"{module} reads {name}"
+            assert "app/agents/editor_ops_v2/__init__.py" in sources, module
+
+
+def test_every_prompt_language_line_is_a_source() -> None:
+    # The reply-language line is prepended to the prompt by app/kria/reply_language.py.
+    modules = {
+        "app/agents/persona_generator.py": PERSONA_PROMPT_SOURCES,
+        "app/agents/content_plan_generator.py": CONTENT_PLAN_PROMPT_SOURCES,
+        "app/services/researched_text.py": _RESEARCH_LAYERS_PROMPT_SOURCES,
+    }
+    for module, sources in modules.items():
+        text = (API_ROOT / module).read_text(encoding="utf-8")
+        assert re.search(r"\b(?:prompt_language_line|with_prompt_language)\(", text), module
+        assert "app/kria/reply_language.py" in sources, module
+    assert "app/kria/reply_language.py" not in _RESEARCH_PROMPT_SOURCES
+
+
+def test_composer_font_catalog_inputs_are_sources() -> None:
+    # The composer renders _font_catalog(): the allowlist and the registry it reads.
+    for rel in (
+        "app/agents/_schemas/text_element.py",
+        "assets/fonts/font-registry.json",
+    ):
+        assert rel in CREATION_TEXT_COMPOSER_PROMPT_SOURCES
 
 
 def test_prompt_vocab_sources_match_its_imports() -> None:
