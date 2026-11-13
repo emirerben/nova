@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.176.0] - 2026-11-13
+
+### Changed
+- feat(split-screen): close the gaps between the prototype and the app (KRI-1335) (#2280) <!-- release-pr: 2280 -->
+
 ## [0.88.175.0] - 2026-11-12
 
 ### Changed
