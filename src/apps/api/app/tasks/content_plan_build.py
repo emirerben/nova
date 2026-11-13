@@ -915,9 +915,11 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = _PhoneGateMessages(_PHONE_GATE
 # unrecognized or dynamic-suffix code (`single_hero_*`, `day_vlog_*`,
 # `guided_story_*` from `_classify_error`) still gets a real sentence instead
 # of silently falling through to nothing.
-JOB_FAILURE_MESSAGES: dict[str, str] = {code: r.en for code, r in JOB_FAILURE_REASONS.items()}
+JOB_FAILURE_MESSAGES: dict[str, str] = {
+    code: reason[0] for code, reason in JOB_FAILURE_REASONS.items()
+}
 
-DEFAULT_JOB_FAILURE_MESSAGE = DEFAULT_JOB_FAILURE_REASON.en
+DEFAULT_JOB_FAILURE_MESSAGE = DEFAULT_JOB_FAILURE_REASON[0]
 
 
 # Failure codes whose `Job.error_detail` is written for the creator (not a stack

@@ -67,7 +67,7 @@ from app.agents.main_creator import (
 )
 from app.config import settings
 from app.kria import ask_refusals, voiceover_script
-from app.kria.ask_refusals import stale_capability_refusal
+from app.kria.ask_refusals import is_refusal_code, stale_capability_refusal
 from app.kria.brief import (
     BriefCoverageError,
     BriefUpdate,
@@ -141,7 +141,12 @@ from app.kria.strategy_policy import (
     transcript_labels_dropped_notice,
 )
 from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
-from app.kria.turn_outcome import refusal_diagnostics
+from app.kria.turn_outcome import (
+    outcome_diagnostics,
+    reason_code_slug,
+    refusal_diagnostics,
+    stamp_outcome,
+)
 from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
@@ -1291,6 +1296,12 @@ def adapt_creator_action(
     creator answered), so whatever a model-authored strategy carried is discarded here.
     ``server_song_captions`` (KRI-578) is the same for the lyric-caption decision."""
     if isinstance(action, AskUser):
+        # KRI-1382: the model refuses through ask_user too; an ordinary question stays unstamped.
+        diagnostics = (
+            refusal_diagnostics(reason_code_slug(action.reason_code))
+            if is_refusal_code(action.reason_code)
+            else None
+        )
         if settings.kria_choice_questions_enabled:
             # KRI-476: the agent's own options become tappable (and stay listed in the
             # text for clients without the card). No/one option keeps the text question.
@@ -1301,11 +1312,13 @@ def adapt_creator_action(
                     turn_value="question",
                     response=asked[0],
                     choice_question=asked[1],
+                    diagnostics=diagnostics,
                 )
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
             response=action.question,
+            diagnostics=diagnostics,
         )
     if isinstance(action, DraftVoiceoverScript):
         # KRI-815: planned by `_plan_voiceover_script`; never a strategy or a draft.
@@ -2898,6 +2911,7 @@ async def _plan_editor_revision(
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
+            diagnostics=refusal_diagnostics("editor_request_unavailable"),
             response=say(
                 en=(
                     "Your saved request is too large or unavailable for this editor step. "
@@ -3673,6 +3687,7 @@ async def _plan_from_creator_output(
                     mode="respond",
                     turn_value="question",
                     response=ask_refusals.unmet_reply(),
+                    diagnostics=refusal_diagnostics("stale_capability_refusal"),
                 ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
@@ -4654,7 +4669,11 @@ async def _look_inside_clips_first(
             choice_question=asked[1] if asked is not None else None,
         )
     else:
-        plan = KriaTurnPlan(mode="respond", turn_value="question", response=unplaced_reply(clips))
+        plan = stamp_outcome(
+            KriaTurnPlan(mode="respond", turn_value="question", response=unplaced_reply(clips)),
+            "blocked",
+            "requested_shot_unplaced",
+        )
     return PlannedKriaTurn(
         plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
     )
@@ -6469,7 +6488,12 @@ async def _gate_unresolved_choices(
     if moments.recovery is not None:
         return replace(
             planned,
-            plan=KriaTurnPlan(mode="respond", turn_value="question", response=moments.recovery),
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=moments.recovery,
+                diagnostics=refusal_diagnostics("moment_order_unsupported"),
+            ),
         )
     if moments.question is not None:
         from app.services.named_moments import question_text  # noqa: PLC0415
@@ -7661,6 +7685,7 @@ async def _plan_live_turn(
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
+                diagnostics=outcome_diagnostics("blocked", "no_clips"),
                 response=say(
                     en=(
                         "Add at least one clip and I can shape the edit around what is "

@@ -284,9 +284,10 @@ def _sources_at(rev: str) -> dict[str, str]:
     return out
 
 
-def _pair_counts(result: Any) -> Counter:
-    # Not the kind: a conditional split into one say() per branch is the same sentence pair.
-    return Counter((p.file, p.en, p.tr) for p in result.pairs)
+def _sentence_counts(result: Any) -> Counter:
+    # Not the file either: moving a table to another module (the one job-failure reason table,
+    # KRI-1382) keeps every sentence pair, and that is what must not be lost.
+    return Counter((p.en, p.tr) for p in result.pairs)
 
 
 # Pairs the branch adds on purpose: copy that picked Turkish outside say() (``language == "tr"``
@@ -310,16 +311,15 @@ def test_codemod_kept_every_en_tr_pair() -> None:
         if "say(" in text:
             new = codemod.convert_source(_API / rel, text, codemod.Report())
         converted[rel] = new if new is not None else text
-    before = _pair_counts(build.harvest(converted))
-    after = _pair_counts(_harvest())
+    before = _sentence_counts(build.harvest(converted))
+    after = _sentence_counts(_harvest())
     # A sentence the chat stopped saying on purpose is listed, never silently lost.
-    retired = {tuple(row) for row in _json(_ROUTED_PAIRS).get("retired", [])}
+    retired = {(row[1], row[2]) for row in _json(_ROUTED_PAIRS).get("retired", [])}
     assert {k: v for k, v in (before - after).items() if k not in retired} == {}
-    routed = {tuple(row) for row in _json(_ROUTED_PAIRS)["pairs"]}
+    routed = {(row[1], row[2]) for row in _json(_ROUTED_PAIRS)["pairs"]}
     added = set(after - before)
     assert added - routed == set(), "new pairs: route copy through say() or pin them"
-    kept = {(en, tr) for row in before if row not in retired for _f, en, tr in [row]}
-    assert kept <= {(en, tr) for _f, en, tr in after}
+    assert {row for row in before if row not in retired} <= set(after)
 
 
 # ---------------------------------------------------------------- (d) pseudo language

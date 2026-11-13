@@ -5616,8 +5616,12 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     run_outcome = "superseded"
                     planned = replace(
                         planned,
-                        plan=planned.plan.model_copy(
-                            update={"response": continuation_superseded_reply()}
+                        plan=stamp_outcome(
+                            planned.plan.model_copy(
+                                update={"response": continuation_superseded_reply()}
+                            ),
+                            "superseded",
+                            "continuation_superseded",
                         ),
                     )
             if planned.plan.mode == "respond":
@@ -8766,9 +8770,9 @@ def _approved_generation_requirements_review(
 # KRI-520: Turkish copy for the Job failure sentences a render-failed event shows. Both
 # languages come from `job_failure_reasons.JOB_FAILURE_REASONS`, so a code cannot have one only.
 _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
-    code: reason.tr for code, reason in JOB_FAILURE_REASONS.items()
+    code: reason[1] for code, reason in JOB_FAILURE_REASONS.items()
 }
-_JOB_FAILURE_DEFAULT_TR = DEFAULT_JOB_FAILURE_REASON.tr
+_JOB_FAILURE_DEFAULT_TR = DEFAULT_JOB_FAILURE_REASON[1]
 
 
 # KRI-673: the failed card's headline, sent with the event so the client never has to
@@ -8818,9 +8822,9 @@ def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | Non
         and code in _JOB_FAILURE_MESSAGES_TR
         and english == JOB_FAILURE_MESSAGES[code]
     ):
-        return say(en=JOB_FAILURE_MESSAGES[code], tr=_JOB_FAILURE_MESSAGES_TR[code])
+        return say(en=JOB_FAILURE_REASONS[code][0], tr=JOB_FAILURE_REASONS[code][1])
     if code not in _JOB_FAILURE_MESSAGES_TR and english == DEFAULT_JOB_FAILURE_MESSAGE:
-        return say(en=DEFAULT_JOB_FAILURE_MESSAGE, tr=_JOB_FAILURE_DEFAULT_TR)
+        return say(en=DEFAULT_JOB_FAILURE_REASON[0], tr=DEFAULT_JOB_FAILURE_REASON[1])
     return say(en=english, tr=_JOB_FAILURE_MESSAGES_TR.get(code, _JOB_FAILURE_DEFAULT_TR))
 
 

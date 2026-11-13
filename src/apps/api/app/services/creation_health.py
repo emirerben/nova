@@ -10,8 +10,9 @@ Chat turn attempt. One `creator_agent_turns` row created in the window, bucketed
 creation day. A creator message is one turn, so a creator who tries again counts again. A client
 resend of the same message is the same row (unique `client_event_id`), and a worker-side claim
 retry or continuation reuses the row, so neither counts twice. `superseded` and `cancelled` turns
-are not attempts: the creator replaced or withdrew them. A turn still running is `in_progress`
-and is left out of the rate.
+are not attempts: the creator replaced or withdrew them, and so is a turn that finished with the
+`superseded` outcome (a newer message arrived while it was still working). A turn still running
+is `in_progress` and is left out of the rate.
 - success: the turn delivered its answer or draft (`completed`, or `awaiting_approval` once a
   draft is offered) and recorded no outcome code.
 - refused / blocked / recovery: `completed`, but the turn recorded an outcome code
@@ -19,11 +20,13 @@ and is left out of the rate.
   finish planning.
 - failed: `status = 'failed'`, with `error.code`.
 
-Render attempt. One `jobs` row created in the window. `cancelled` jobs are not attempts. A re-render
-mints a new Job and counts as a new attempt.
-- success: a ready status, plus `posting_failed` (the render finished; only publishing failed).
-- failed: a failed status. The reason is `Job.failure_reason`, or `no_reason_<status>` when the
-  worker wrote none.
+Render attempt. One `jobs` row created in the window. `cancelled` and `draft` jobs are not attempts.
+A re-render mints a new Job and counts as a new attempt.
+- success: a ready status, plus `posting_failed` / `posting_partial` / `clips_ready_partial` (the
+  render finished; only publishing or some clips fell short).
+- failed: a failed status, or `awaiting_device` with `Job.failure_reason` set (an iPhone render
+  that failed; a retry clears the reason). The reason is `Job.failure_reason`, or
+  `no_reason_<status>` when the worker wrote none.
 - anything else is `in_progress`.
 """
 
@@ -33,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Date, String, case, cast, func, select
+from sqlalchemy import Date, String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CreatorAgentTurn, Job
@@ -45,15 +48,36 @@ TOP_REASONS = 10
 
 TURN_IN_PROGRESS = ("pending", "queued", "planning", "executing", "observing")
 TURN_NOT_AN_ATTEMPT = ("superseded", "cancelled")
+SUPERSEDED_OUTCOME = "superseded"
 TURN_FAILED = "failed"
 # Turn-completion statuses that delivered the draft or answer (the outcome code decides the rest).
 TURN_DELIVERED = ("completed", "awaiting_approval")
 
-_RENDER_SUCCESS = tuple(sorted(PLAN_ITEM_JOB_READY | {JobStatus.POSTING_FAILED.value}))
-_RENDER_FAILED = tuple(
-    sorted(PLAN_ITEM_JOB_FAILED - {JobStatus.CANCELLED.value, JobStatus.POSTING_FAILED.value})
+# posting_* and clips_ready_partial: the render finished; only publishing or some clips fell short.
+_RENDER_SUCCESS = tuple(
+    sorted(
+        PLAN_ITEM_JOB_READY
+        | {
+            JobStatus.POSTING_FAILED.value,
+            JobStatus.POSTING_PARTIAL.value,
+            JobStatus.CLIPS_READY_PARTIAL.value,
+        }
+    )
 )
-_RENDER_NOT_AN_ATTEMPT = (JobStatus.CANCELLED.value,)
+_RENDER_FAILED = tuple(
+    sorted(
+        PLAN_ITEM_JOB_FAILED
+        - {
+            JobStatus.CANCELLED.value,
+            JobStatus.POSTING_FAILED.value,
+        }
+    )
+)
+# An iPhone render that failed never leaves `awaiting_device`: the phone, the reaper and export
+# verification only set `Job.failure_reason` (`apply_device_failure_variant_update`), and a retry
+# clears it again. So this status with a reason is a failed render, without one it is waiting.
+_RENDER_DEVICE_STATUS = JobStatus.AWAITING_DEVICE.value
+_RENDER_NOT_AN_ATTEMPT = (JobStatus.CANCELLED.value, JobStatus.DRAFT.value)
 
 UNKNOWN_TURN_FAILURE = "unknown_failure"
 
@@ -61,7 +85,8 @@ DEFINITIONS: dict[str, str] = {
     "turn_attempt": (
         "One runtime-v2 chat turn created in the window (UTC day). A creator message is one turn, "
         "so trying again counts again; a client resend of the same message and a worker retry "
-        "reuse the same turn and do not. Superseded and cancelled turns are not attempts; turns "
+        "reuse the same turn and do not. Superseded and cancelled turns, and turns that ended "
+        "with the superseded outcome (a newer message arrived mid-turn), are not attempts; turns "
         "still running are in_progress and left out of the rate."
     ),
     "turn_success": (
@@ -72,11 +97,18 @@ DEFINITIONS: dict[str, str] = {
     ),
     "render_attempt": (
         "One Job created in the window (UTC day). A re-render is a new Job and a new attempt. "
-        "Cancelled jobs are not attempts. Jobs still running are in_progress."
+        "Cancelled and draft jobs are not attempts. Jobs still running, and iPhone renders still "
+        "waiting on the phone, are in_progress."
     ),
     "render_success": (
-        "A ready status, or posting_failed (the render finished, only publishing failed). "
-        "failed jobs carry Job.failure_reason, or no_reason_<status> when none was written."
+        "A ready status, or posting_failed / posting_partial / clips_ready_partial (the render "
+        "finished, only publishing or some clips fell short). failed jobs are a failed status, or "
+        "awaiting_device with Job.failure_reason set (a failed iPhone render); they carry "
+        "Job.failure_reason, or no_reason_<status> when none was written."
+    ),
+    "share": (
+        "A top_failure_reasons row's count divided by all failures of its own source (turn or "
+        "render). The two sources are never pooled into one denominator."
     ),
     "success_rate": (
         "successes / attempts per stage, null when a day has no attempts. Turns and renders are "
@@ -125,6 +157,7 @@ async def _turn_rows(
             CreatorAgentTurn.created_at >= since,
             CreatorAgentTurn.created_at < until,
             status.not_in(TURN_NOT_AN_ATTEMPT),
+            or_(outcome_kind.is_(None), outcome_kind != SUPERSEDED_OUTCOME),
         )
         .group_by(day, bucket, code)
     )
@@ -135,13 +168,15 @@ async def _render_rows(
     db: AsyncSession, since: datetime, until: datetime
 ) -> list[tuple[date, str, str | None, int]]:
     status = Job.status
+    device_failed = and_(status == _RENDER_DEVICE_STATUS, Job.failure_reason.is_not(None))
+    failed = or_(status.in_(_RENDER_FAILED), device_failed)
     bucket = case(
         (status.in_(_RENDER_SUCCESS), "success"),
-        (status.in_(_RENDER_FAILED), "failed"),
+        (failed, "failed"),
         else_="in_progress",
     )
     code = case(
-        (status.in_(_RENDER_FAILED), func.coalesce(Job.failure_reason, "no_reason_" + status)),
+        (failed, func.coalesce(Job.failure_reason, "no_reason_" + status)),
         else_=None,
     )
     day = _utc_day(Job.created_at)
@@ -174,7 +209,7 @@ def _reason_label(source: str, code: str) -> str | None:
     if source != "render":
         return None
     reason = JOB_FAILURE_REASONS.get(code)
-    return reason.en if reason is not None else None
+    return reason[0] if reason is not None else None
 
 
 async def creation_health(
@@ -199,7 +234,9 @@ async def creation_health(
                 fallback = UNKNOWN_TURN_FAILURE if source == "turn" else "no_reason"
                 reasons[(source, bucket, code or fallback)] += n
 
-    failures = sum(reasons.values())
+    failures: Counter[str] = Counter()
+    for (source, _kind, _code), n in reasons.items():
+        failures[source] += n
     top = [
         {
             "source": source,
@@ -207,7 +244,7 @@ async def creation_health(
             "code": code,
             "label": _reason_label(source, code),
             "count": n,
-            "share": round(n / failures, 4),
+            "share": round(n / failures[source], 4),
         }
         for (source, kind, code), n in sorted(
             reasons.items(), key=lambda item: (-item[1], item[0])

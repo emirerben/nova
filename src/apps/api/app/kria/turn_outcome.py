@@ -11,6 +11,8 @@ Kinds:
   the commit could not honour).
 - `blocked`: a draft was held back until the creator answers or fixes something.
 - `recovery`: the system could not finish planning, or its work is still not ready.
+- `superseded`: the creator sent a newer message while this turn was still working, so this
+  turn's own answer was cut short. Not an attempt (see `creation_health`).
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from typing import Any, Literal
 
 from app.kria.contracts import KriaTurnPlan
 
-OutcomeKind = Literal["refused", "blocked", "recovery"]
+OutcomeKind = Literal["refused", "blocked", "recovery", "superseded"]
 
 OUTCOME_KEY = "outcome"
 UNCLASSIFIED_RECOVERY = "unclassified_recovery"
@@ -39,15 +41,24 @@ def stamp_outcome(plan: KriaTurnPlan, kind: OutcomeKind, code: str) -> KriaTurnP
     """`plan` with its outcome recorded; an outcome already on it is never replaced."""
     if read_outcome(plan.diagnostics) is not None:
         return plan
-    record = {"kind": kind, "code": code[:_CODE_MAX_CHARS]}
     return plan.model_copy(
-        update={"diagnostics": {**(plan.diagnostics or {}), OUTCOME_KEY: record}}
+        update={"diagnostics": {**(plan.diagnostics or {}), **outcome_diagnostics(kind, code)}}
     )
 
 
+def outcome_diagnostics(kind: OutcomeKind, code: str) -> dict[str, Any]:
+    """`KriaTurnPlan.diagnostics` for a plan that ends with this outcome."""
+    return {OUTCOME_KEY: {"kind": kind, "code": code[:_CODE_MAX_CHARS]}}
+
+
 def refusal_diagnostics(code: str) -> dict[str, Any]:
-    """`KriaTurnPlan.diagnostics` for a plan that is a refusal with this reason code."""
-    return {OUTCOME_KEY: {"kind": "refused", "code": code[:_CODE_MAX_CHARS]}}
+    return outcome_diagnostics("refused", code)
+
+
+def reason_code_slug(reason_code: str) -> str:
+    """A model-written free `reason_code` as a stable, countable code."""
+    spaced = "".join(ch if ch.isascii() and ch.isalnum() else " " for ch in reason_code.lower())
+    return "_".join(spaced.split()) or "unspecified"
 
 
 def read_outcome(diagnostics: Mapping[str, Any] | None) -> tuple[str, str] | None:

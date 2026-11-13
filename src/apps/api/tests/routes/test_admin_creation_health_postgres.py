@@ -10,7 +10,12 @@ Failure modes the numbers must survive (each has an assertion):
 * `awaiting_approval` (a draft was offered) counts as a failure;
 * a failed turn with no `error.code`, or a failed job with no `failure_reason`, vanishes instead
   of showing up as an unknown reason;
-* `posting_failed` (the render finished, publishing failed) counts as a failed creation;
+* `posting_failed` (the render finished, publishing failed) counts as a failed creation, and
+  `posting_partial` / `clips_ready_partial` stay in progress forever instead of a success;
+* an iPhone render that failed (`awaiting_device` + `failure_reason`, the only trace the phone, the
+  reaper and export verification leave) reads as still waiting, so phone failures never show;
+* a `draft` job, or a turn that ended with the `superseded` outcome, counts as an attempt;
+* the failure share pools turn and render failures into one denominator;
 * a day with no attempts is missing from the series or reports a 0% rate instead of null;
 * turns and renders are added together (one creation counted twice);
 * the render reason label comes from a second table that can drift from the sentence the client
@@ -102,6 +107,7 @@ async def test_turn_counts_follow_the_stated_definition(project):
         ("superseded", {}),
         ("cancelled", {}),
         ("planning", {}),
+        ("completed", {"plan": _outcome("superseded", "continuation_superseded")}),
     ):
         _turn(project, midnight + timedelta(seconds=1), status, **kwargs)
     _turn(project, midnight - timedelta(seconds=1), "completed")
@@ -140,6 +146,7 @@ async def test_render_counts_follow_the_stated_definition_and_labels_come_from_t
     _job(project, at, "processing_failed", "ffmpeg_failed")
     _job(project, at, "processing_failed")
     _job(project, at, "cancelled")
+    _job(project, at, "draft")
     _job(project, at, "processing")
 
     report = await _report(day, 1)
@@ -157,9 +164,47 @@ async def test_render_counts_follow_the_stated_definition_and_labels_come_from_t
         ("ffmpeg_failed", 2),
         ("no_reason_processing_failed", 1),
     ]
-    assert top[0]["label"] == JOB_FAILURE_REASONS["ffmpeg_failed"].en
+    assert top[0]["label"] == JOB_FAILURE_REASONS["ffmpeg_failed"][0]
     assert top[0]["share"] == round(2 / 3, 4)
     assert top[1]["label"] is None
+
+
+@pytest.mark.asyncio
+async def test_phone_render_failures_and_finished_partials_are_classified(project):
+    day = _day()
+    at = day.replace(hour=0, minute=0, second=0) + timedelta(seconds=1)
+    _job(project, at, "awaiting_device", "device_render_stale")
+    _job(project, at, "awaiting_device", "device_render_stale")
+    _job(project, at, "awaiting_device")
+    _job(project, at, "posting_partial")
+    _job(project, at, "clips_ready_partial")
+
+    report = await _report(day, 1)
+
+    assert report["renders"] == {
+        "attempts": 4,
+        "successes": 2,
+        "success_rate": 0.5,
+        "in_progress": 1,
+        "failed": 2,
+    }
+    assert [(r["source"], r["code"], r["count"]) for r in report["top_failure_reasons"]] == [
+        ("render", "device_render_stale", 2)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_failure_share_is_per_source_not_one_pooled_denominator(project):
+    day = _day()
+    at = day.replace(hour=0, minute=0, second=0) + timedelta(seconds=1)
+    _turn(project, at, "failed", error={"code": "runtime_provider_outcome_unknown"})
+    for _ in range(3):
+        _job(project, at, "processing_failed", "ffmpeg_failed")
+
+    report = await _report(day, 1)
+
+    shares = {r["source"]: r["share"] for r in report["top_failure_reasons"]}
+    assert shares == {"turn": 1.0, "render": 1.0}
 
 
 @pytest.mark.asyncio
@@ -218,6 +263,7 @@ def test_the_route_returns_the_report_with_its_definitions(admin):
         "turn_success",
         "render_attempt",
         "render_success",
+        "share",
         "success_rate",
     } <= set(body["definitions"])
     assert set(body) == {
