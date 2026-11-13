@@ -622,4 +622,52 @@ final class NativeSplitGapTests: XCTestCase {
         XCTAssertEqual(empty.document, original, "An empty panel cannot replace the split")
         XCTAssertFalse(empty.canUndo)
     }
+
+    // MARK: Cutting a photo
+
+    private static let photoRaw: [String: JSONValue] = ["media_kind": .string("image")]
+
+    @MainActor
+    func testCuttingAPhotoMakesTwoIndependentPhotosWithNoParentLink() throws {
+        let top = member(0, offset: 0, duration: 4)
+        let photo = member(1, offset: 0, duration: 4, clipIndex: 1, raw: Self.photoRaw)
+        let session = makeSession(document([top, photo], sections: [.init(id: "s", durationS: 4, panelCount: 2)]))
+        try select(session, photo)
+        session.currentTime = 2
+        XCTAssertTrue(session.canSplitSelectedClip)
+        session.splitSelectedClip()
+
+        let pieces = session.document.clips.filter { $0.splitPanelIndex == 1 }.sorted { $0.splitOffsetS < $1.splitOffsetS }
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces.map(\.parentSegmentID), [nil, nil], "The server refuses a parent link on a photo")
+        XCTAssertEqual(Set(pieces.compactMap(\.id)).count, 2)
+        XCTAssertEqual(pieces.map(\.splitOffsetS), [0, 2])
+    }
+
+    @MainActor
+    func testCuttingAVideoStillLinksTheSecondPieceToTheFirst() throws {
+        let top = member(0, offset: 0, duration: 4)
+        let video = member(1, offset: 0, duration: 4, clipIndex: 1)
+        let session = makeSession(document([top, video], sections: [.init(id: "s", durationS: 4, panelCount: 2)]))
+        try select(session, video)
+        session.currentTime = 2
+        session.splitSelectedClip()
+        let pieces = session.document.clips.filter { $0.splitPanelIndex == 1 }.sorted { $0.splitOffsetS < $1.splitOffsetS }
+        XCTAssertEqual(pieces.map(\.parentSegmentID), [nil, video.id])
+    }
+
+    @MainActor
+    func testFullScreenFromPlayheadOnAPhotoLinksNoParent() throws {
+        let top = member(0, offset: 0, duration: 6)
+        let photo = member(1, offset: 0, duration: 5, clipIndex: 1, raw: Self.photoRaw)
+        let session = makeSession(document([top, photo], sections: [.init(id: "s", durationS: 6, panelCount: 2)]))
+        try select(session, photo)
+        session.currentTime = 2.5
+        session.makeSplitFullScreen(sectionID: "s", side: .fromPlayhead)
+
+        let pieces = session.document.clips.filter { $0.clipIndex == 1 }
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces.map(\.parentSegmentID), [nil, nil])
+        XCTAssertEqual(Set(pieces.compactMap(\.id)).count, 2)
+    }
 }
