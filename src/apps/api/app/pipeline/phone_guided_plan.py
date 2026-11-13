@@ -67,16 +67,27 @@ class UnsupportedPhonePlan(ValueError):
     fixing this by adding the capability to ``phone_render_verified_features``
     does nothing, since the underlying plan content never reaches a recipe.
 
-    ``reason`` is a stable machine tag for rejects `app.pipeline.phone_plan_repair`
-    classifies (``"sequence_effect"``, ``"transition_window"``); None otherwise.
+    ``reason`` is a stable snake_case tag for the reject; ``lane`` the part of the plan it is
+    about (``"moment"``, ``"transition"``, ``"text"``, ``"sfx"``, ...) and ``item_id`` the one
+    row it names (a moment, a text element, a sound effect), when it names one.
+    `app.pipeline.phone_plan_repair` repairs and `app.pipeline.phone_plan_degrade` degrades by
+    them; the message stays the human-readable cause.
     """
 
     def __init__(
-        self, message: str, *, capability: str | None = None, reason: str | None = None
+        self,
+        message: str,
+        *,
+        capability: str | None = None,
+        reason: str | None = None,
+        lane: str | None = None,
+        item_id: str | None = None,
     ) -> None:
         super().__init__(message)
         self.capability = capability
         self.reason = reason
+        self.lane = lane
+        self.item_id = item_id
 
 
 class UserSongPlanDeclined(UnsupportedPhonePlan):
@@ -176,14 +187,22 @@ def _still_tilt_fields(moment: Any) -> dict[str, Any]:
     return fields
 
 
-def _phone_source_crop(crop: dict[str, float] | None) -> NormalizedSourceCrop | None:
+def _phone_source_crop(
+    crop: dict[str, float] | None, *, item_id: str | None = None
+) -> NormalizedSourceCrop | None:
     """The plan's re-frame as a recipe crop; a malformed one fails closed."""
     if crop is None:
         return None
     try:
         return NormalizedSourceCrop.model_validate(crop)
     except ValueError as exc:
-        raise UnsupportedPhonePlan("unsupported phone crop", capability="sourceCrop") from exc
+        raise UnsupportedPhonePlan(
+            "unsupported phone crop",
+            capability="sourceCrop",
+            reason="source_crop",
+            lane="moment",
+            item_id=item_id,
+        ) from exc
 
 
 def compile_phone_guided_plan(
@@ -269,12 +288,19 @@ def compile_phone_guided_plan(
         if lane == "editor_visual_blocks" and allow_editor_media:
             continue
         if getattr(plan, lane):
-            raise UnsupportedPhonePlan(f"unsupported phone lane: {lane}", capability=capability)
+            raise UnsupportedPhonePlan(
+                f"unsupported phone lane: {lane}",
+                capability=capability,
+                reason="unsupported_lane",
+                lane=lane,
+            )
     if plan.narration is not None:
         if narration is None:
             raise UnsupportedPhonePlan(
                 "recorded voiceover requires a phone narration binding",
                 capability="narrationAudio",
+                reason="narration_unbound",
+                lane="narration",
             )
         if (
             narration.generation != plan.narration.generation
@@ -283,6 +309,8 @@ def compile_phone_guided_plan(
             raise UnsupportedPhonePlan(
                 "the approved voiceover was replaced since approval",
                 capability="narrationAudio",
+                reason="narration_replaced",
+                lane="narration",
             )
     elif narration is not None:
         # A worker/plan mismatch: nothing in `plan.narration` asked for a
@@ -291,12 +319,17 @@ def compile_phone_guided_plan(
         raise UnsupportedPhonePlan(
             "phone narration binding was provided for a plan with no narration",
             capability="narrationAudio",
+            reason="narration_unexpected",
+            lane="narration",
         )
     user_song = plan.user_song
     if user_song is not None:
         if song is None:
             raise UnsupportedPhonePlan(
-                "a creator song requires a phone song binding", capability="musicBed"
+                "a creator song requires a phone song binding",
+                capability="musicBed",
+                reason="song_unbound",
+                lane="song",
             )
         if (
             song.plan_item_id != user_song.plan_item_id
@@ -308,12 +341,17 @@ def compile_phone_guided_plan(
             )
         ):
             raise UnsupportedPhonePlan(
-                "the approved song was replaced since approval", capability="musicBed"
+                "the approved song was replaced since approval",
+                capability="musicBed",
+                reason="song_replaced",
+                lane="song",
             )
     elif song is not None:
         raise UnsupportedPhonePlan(
             "phone song binding was provided for a plan with no creator song",
             capability="musicBed",
+            reason="song_unexpected",
+            lane="song",
         )
     if plan.licensed_sfx_intent and not plan.editor_sound_effects:
         from app.services.phone_rollout import phone_guided_sfx_supported  # noqa: PLC0415
@@ -324,7 +362,10 @@ def compile_phone_guided_plan(
         # planning-time dry run compiles the bare intent, which must not reject the plan.
         if not phone_guided_sfx_supported():
             raise UnsupportedPhonePlan(
-                "unsupported phone lane: licensed_sfx_intent", capability="soundEffects"
+                "unsupported phone lane: licensed_sfx_intent",
+                capability="soundEffects",
+                reason="unsupported_lane",
+                lane="licensed_sfx_intent",
             )
     sfx_requests = guided_sfx_requests(plan)
     if sorted(_sfx_key(resolved.request) for resolved in sound_effects) != sorted(
@@ -336,6 +377,8 @@ def compile_phone_guided_plan(
         raise UnsupportedPhonePlan(
             "the sound effects bound for the phone do not match the approved plan",
             capability="soundEffects",
+            reason="sfx_mismatch",
+            lane="sfx",
         )
     lipsync_takes = user_song.takes if user_song is not None and user_song.mode == "lipsync" else {}
     transition_names = {
@@ -358,9 +401,18 @@ def compile_phone_guided_plan(
     # V6 reconstructs cloud source audio at the same overlapping source
     # windows as the native mixer. Legacy transition renders discarded audio.
     if has_transitions and preserve_audio and plan.compiler_version < 6:
-        raise UnsupportedPhonePlan("source audio across guided transitions is not yet verified")
+        raise UnsupportedPhonePlan(
+            "source audio across guided transitions is not yet verified",
+            reason="legacy_transition_audio",
+            lane="audio",
+        )
     if plan.story_timeline and plan.story_timeline[-1].transition_after not in {None, "cut"}:
-        raise UnsupportedPhonePlan("final phone moment cannot transition to a missing moment")
+        raise UnsupportedPhonePlan(
+            "final phone moment cannot transition to a missing moment",
+            reason="final_transition",
+            lane="transition",
+            item_id=plan.story_timeline[-1].moment_id,
+        )
     if len({binding.media_id for binding in bindings}) != len(bindings):
         raise ValueError("phone bindings must have unique media identities")
     assets = {}
@@ -384,6 +436,9 @@ def compile_phone_guided_plan(
                 raise UnsupportedPhonePlan(
                     "unsupported phone photo" if still else "unsupported phone visual video",
                     capability="stillImages" if still else "visualVideos",
+                    reason="visual_unbound",
+                    lane="moment",
+                    item_id=moment.moment_id,
                 )
             visual = require_bound_visual(
                 visuals,
@@ -411,7 +466,12 @@ def compile_phone_guided_plan(
                 # photo whole, so the two contradict each other.
                 or (moment.source_crop is not None and moment.layout != "fullscreen")
             ):
-                raise UnsupportedPhonePlan("unsupported phone photo treatment")
+                raise UnsupportedPhonePlan(
+                    "unsupported phone photo treatment",
+                    reason="photo_treatment",
+                    lane="moment",
+                    item_id=moment.moment_id,
+                )
         else:
             # Constant speed is carried by the recipe, independently of the
             # approved source selection. Still images retain their own clock.
@@ -422,21 +482,38 @@ def compile_phone_guided_plan(
                 or moment.look_preset not in {"none", "golden_hour"}
                 or moment.look_adjustments
             ):
-                raise UnsupportedPhonePlan("unsupported phone moment treatment")
+                raise UnsupportedPhonePlan(
+                    "unsupported phone moment treatment",
+                    reason="moment_treatment",
+                    lane="moment",
+                    item_id=moment.moment_id,
+                )
             source = binding.original if binding is not None else visual
             if moment.look_preset == "golden_hour" and (
                 (source.width, source.height) != (canvas.width, canvas.height)
                 or source.orientation_degrees != 0
             ):
-                raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
+                raise UnsupportedPhonePlan(
+                    "phone looks require exact-canvas unrotated sources",
+                    reason="look_source",
+                    lane="moment",
+                    item_id=moment.moment_id,
+                )
         rate = float(moment.playback_rate if moment.playback_rate is not None else 1)
         if not math.isfinite(rate) or not 0.25 <= rate <= 4:
             raise UnsupportedPhonePlan(
-                "unsupported phone playback rate", capability="variableSpeed"
+                "unsupported phone playback rate",
+                capability="variableSpeed",
+                reason="playback_rate",
+                lane="moment",
+                item_id=moment.moment_id,
             )
         if rate != 1 and moment.media_id in lipsync_takes:
             raise UnsupportedPhonePlan(
-                "a lip-sync clip cannot change speed independently of its song"
+                "a lip-sync clip cannot change speed independently of its song",
+                reason="lipsync_speed",
+                lane="moment",
+                item_id=moment.moment_id,
             )
         source_duration = moment.source_end_s - moment.source_start_s
         # KRI-828: the creator's freeze holds the moment's last source frame after it plays.
@@ -447,7 +524,12 @@ def compile_phone_guided_plan(
             # an outgoing one dissolves out of the held frame (the slot's own duration owns
             # both). A hold at another speed is a different program. A lip-sync take may hold
             # over song nobody filmed: the next take's own sync check below still applies.
-            raise UnsupportedPhonePlan("a freeze frame needs a moving clip at normal speed")
+            raise UnsupportedPhonePlan(
+                "a freeze frame needs a moving clip at normal speed",
+                reason="freeze_speed",
+                lane="moment",
+                item_id=moment.moment_id,
+            )
         moving_duration = moment.duration_s - freeze_hold
         incoming = None
         expected_start = cursor
@@ -472,17 +554,35 @@ def compile_phone_guided_plan(
                 or duration
                 > min(previous.duration_s, moment.duration_s) + _TIMING_ROUNDING_TOLERANCE_S
             ):
-                raise UnsupportedPhonePlan("phone transition must overlap its neighbouring moments")
+                raise UnsupportedPhonePlan(
+                    "phone transition must overlap its neighbouring moments",
+                    reason="transition_overlap",
+                    lane="transition",
+                    item_id=moment.moment_id,
+                )
             if abs(duration - clamped) > _FRAME_S + _TIMING_ROUNDING_TOLERANCE_S:
                 raise UnsupportedPhonePlan(
-                    "phone transition timing must match the approved overlap"
+                    "phone transition timing must match the approved overlap",
+                    reason="transition_timing",
+                    lane="transition",
+                    item_id=moment.moment_id,
                 )
             if not _clock_aligned(duration):
-                raise UnsupportedPhonePlan("phone transition timing must match cloud milliseconds")
+                raise UnsupportedPhonePlan(
+                    "phone transition timing must match cloud milliseconds",
+                    reason="transition_clock",
+                    lane="transition",
+                    item_id=moment.moment_id,
+                )
             incoming = Transition(kind=transition_names[boundaries[index - 1]], duration=duration)
             expected_start -= duration
             if not _clock_aligned(expected_start):
-                raise UnsupportedPhonePlan("phone transition offset must match cloud milliseconds")
+                raise UnsupportedPhonePlan(
+                    "phone transition offset must match cloud milliseconds",
+                    reason="transition_clock",
+                    lane="transition",
+                    item_id=moment.moment_id,
+                )
         # A still has no source window: beat-snapped fast cuts keep the photo's
         # nominal source_end_s while duration_s moves, and cloud renders the
         # still for duration_s regardless.
@@ -504,7 +604,12 @@ def compile_phone_guided_plan(
                 abs_tol=_TIMING_ROUNDING_TOLERANCE_S,
             )
         ):
-            raise UnsupportedPhonePlan("phone moment timing must preserve its exact source window")
+            raise UnsupportedPhonePlan(
+                "phone moment timing must preserve its exact source window",
+                reason="moment_timing",
+                lane="moment",
+                item_id=moment.moment_id,
+            )
         if still:
             asset = visual.render_asset()
             manifest[asset.id] = asset
@@ -523,7 +628,7 @@ def compile_phone_guided_plan(
                     rate=1,
                     transition=incoming,
                     still_layout="supporting_card" if moment.layout == "supporting_card" else None,
-                    source_crop=_phone_source_crop(moment.source_crop),
+                    source_crop=_phone_source_crop(moment.source_crop, item_id=moment.moment_id),
                     **_still_tilt_fields(moment),
                 )
             )
@@ -554,7 +659,12 @@ def compile_phone_guided_plan(
                 abs((source_start - moment.output_start_s) - expected_offset)
                 > _LIPSYNC_SYNC_TOLERANCE_S
             ):
-                raise UnsupportedPhonePlan("a lip-sync clip has drifted off its song position")
+                raise UnsupportedPhonePlan(
+                    "a lip-sync clip has drifted off its song position",
+                    reason="lipsync_drift",
+                    lane="moment",
+                    item_id=moment.moment_id,
+                )
             if moment.source_end_s > source.duration_s or source_start >= source.duration_s:
                 # END-only refit. Shifting the start (what `refit_source_window`
                 # does) would slide the singer's mouth off the audio.
@@ -562,7 +672,10 @@ def compile_phone_guided_plan(
                 if available - source_start < 0.1:
                     raise UnsupportedPhonePlan(
                         "a lip-sync clip is shorter on this phone than when it was matched "
-                        "to the song, so it can no longer stay in sync"
+                        "to the song, so it can no longer stay in sync",
+                        reason="lipsync_footage",
+                        lane="moment",
+                        item_id=moment.moment_id,
                     )
                 refit_duration = round(min(source_duration, available - source_start), 6)
                 # The export safety margin is an intended trim; anything beyond
@@ -571,7 +684,10 @@ def compile_phone_guided_plan(
                 if source_duration - refit_duration - _EXPORT_SAFETY_MARGIN_S > _FRAME_S:
                     raise UnsupportedPhonePlan(
                         "a lip-sync clip runs past the end of its footage, so it can no "
-                        "longer stay in sync with the song"
+                        "longer stay in sync with the song",
+                        reason="lipsync_footage",
+                        lane="moment",
+                        item_id=moment.moment_id,
                     )
                 source_duration = refit_duration
         elif moment.source_end_s > source.duration_s or source_start >= source.duration_s:
@@ -584,7 +700,12 @@ def compile_phone_guided_plan(
                     source_start + source_duration - available > _FRAME_S + _EXPORT_SAFETY_MARGIN_S
                     or available - source_start < 0.1
                 ):
-                    raise UnsupportedPhonePlan("a freeze frame must stay on its selected frame")
+                    raise UnsupportedPhonePlan(
+                        "a freeze frame must stay on its selected frame",
+                        reason="freeze_frame",
+                        lane="moment",
+                        item_id=moment.moment_id,
+                    )
                 source_duration = round(available - source_start, 6)
             elif moment.playback_rate is not None:
                 # Never slide an explicitly selected action to compensate for a
@@ -595,11 +716,17 @@ def compile_phone_guided_plan(
                 deficit = source_start + source_duration - available
                 if deficit > rate * _FRAME_S + _EXPORT_SAFETY_MARGIN_S:
                     raise UnsupportedPhonePlan(
-                        "phone speed must preserve its selected source window"
+                        "phone speed must preserve its selected source window",
+                        reason="speed_window",
+                        lane="moment",
+                        item_id=moment.moment_id,
                     )
                 if available <= source_start:
                     raise UnsupportedPhonePlan(
-                        "phone speed must preserve its selected source window"
+                        "phone speed must preserve its selected source window",
+                        reason="speed_window",
+                        lane="moment",
+                        item_id=moment.moment_id,
                     )
                 source_duration = round(min(source_duration, available - source_start), 6)
             else:
@@ -628,13 +755,21 @@ def compile_phone_guided_plan(
                 fitted_duration = min(source_duration, available)
                 if fitted_duration < 0.1:
                     raise UnsupportedPhonePlan(
-                        "phone moment timing must preserve its exact source window"
+                        "phone moment timing must preserve its exact source window",
+                        reason="moment_timing",
+                        lane="moment",
+                        item_id=moment.moment_id,
                     )
                 source_start = min(source_start, max(0.0, available - fitted_duration))
                 source_duration = round(fitted_duration, 6)
         if pooled and source_start + source_duration > _DEVICE_SOURCE_LIMIT_S:
             # Named up front rather than as the recipe's own validation error.
-            raise UnsupportedPhonePlan("phone visual video window is past the 30-minute limit")
+            raise UnsupportedPhonePlan(
+                "phone visual video window is past the 30-minute limit",
+                reason="visual_window_limit",
+                lane="moment",
+                item_id=moment.moment_id,
+            )
         asset = (binding or visual).render_asset()
         manifest[asset.id] = asset
         assets[asset.id] = MediaAsset(
@@ -655,7 +790,7 @@ def compile_phone_guided_plan(
             # bytes are already on the server.
             is_proxy_available=binding is not None,
         )
-        source_crop = _phone_source_crop(moment.source_crop)
+        source_crop = _phone_source_crop(moment.source_crop, item_id=moment.moment_id)
         transform = MediaTransform()
         if (
             canvas.height > canvas.width
@@ -676,7 +811,11 @@ def compile_phone_guided_plan(
         if backdrop is not None or tilt_patch:
             if moment.look_preset == "golden_hour":
                 raise UnsupportedPhonePlan(
-                    "a color grade cannot be combined with a tilted clip", capability="clipTilt"
+                    "a color grade cannot be combined with a tilted clip",
+                    capability="clipTilt",
+                    reason="look_with_tilt",
+                    lane="moment",
+                    item_id=moment.moment_id,
                 )
             transform = transform.model_copy(update=tilt_patch)
         hold_duration = None
@@ -735,7 +874,10 @@ def compile_phone_guided_plan(
             available = round((previous_end or 0.0) - clip.timeline_start, 6)
             if previous_end is None or available <= 1e-6:
                 raise UnsupportedPhonePlan(
-                    "phone transition needs the full source window", reason="transition_window"
+                    "phone transition needs the full source window",
+                    reason="transition_window",
+                    lane="transition",
+                    item_id=clip.id,
                 )
             if available + 1e-6 < clip.transition.duration:
                 fitted = math.floor((available + 1e-9) / _FRAME_S) * _FRAME_S
@@ -820,7 +962,10 @@ def compile_phone_guided_plan(
             "ink-reveal",
         }:
             raise UnsupportedPhonePlan(
-                "sequence effect needs composite-stream parity", reason="sequence_effect"
+                "sequence effect needs composite-stream parity",
+                reason="sequence_effect",
+                lane="text",
+                item_id=overlay.get("element_id"),
             )
         source_id = overlay.get("element_id")
         source_element = source_elements_by_id.get(source_id)
@@ -879,7 +1024,10 @@ def compile_phone_guided_plan(
 
         if not allow_editor_media:
             raise UnsupportedPhonePlan(
-                "unsupported phone lane: editor_visual_blocks", capability="visualBlocks"
+                "unsupported phone lane: editor_visual_blocks",
+                capability="visualBlocks",
+                reason="unsupported_lane",
+                lane="editor_visual_blocks",
             )
         try:
             tracks.append(
@@ -892,7 +1040,12 @@ def compile_phone_guided_plan(
                 )
             )
         except UnsupportedEditorMedia as exc:
-            raise UnsupportedPhonePlan(str(exc), capability="visualBlocks") from exc
+            raise UnsupportedPhonePlan(
+                str(exc),
+                capability="visualBlocks",
+                reason="editor_media",
+                lane="editor_visual_blocks",
+            ) from exc
     audio = AudioMixRecipe(
         original_volume=(
             creator_original_level
@@ -1144,6 +1297,9 @@ def guided_sfx_requests(plan: GuidedStoryExecutionPlan) -> list[SubtitledSoundEf
             raise UnsupportedPhonePlan(
                 "a custom sound effect can't play on the iPhone yet; pick one from the library",
                 capability="soundEffects",
+                reason="sfx_custom",
+                lane="sfx",
+                item_id=str(row.get("id") or "") or None,
             )
         try:
             requests.append(
@@ -1160,5 +1316,8 @@ def guided_sfx_requests(plan: GuidedStoryExecutionPlan) -> list[SubtitledSoundEf
             raise UnsupportedPhonePlan(
                 "a sound effect in this plan can't be rendered on the iPhone",
                 capability="soundEffects",
+                reason="sfx_invalid",
+                lane="sfx",
+                item_id=str(row.get("id") or "") or None,
             ) from exc
     return requests
