@@ -55,7 +55,14 @@ def _open_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
-        [*settings.phone_render_verified_features, "speakerBackground"],
+        [
+            *(
+                f
+                for f in settings.phone_render_verified_features
+                if f not in {"speakerBackgroundWindows", "speakerBackgroundColor"}
+            ),
+            "speakerBackground",
+        ],
     )
 
 

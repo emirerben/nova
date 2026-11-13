@@ -2,163 +2,42 @@
 
 Why this exists: two KRI-132 fixes shipped green and failed on the first real
 iPhone, because every unit test resolved its manifest under config DEFAULTS and
-with no narration identity, while production runs with ~70 feature flags on.
+with no narration identity, while production runs with ~80 feature flags on.
 The capability that broke (`guided_voiceover_executable`) is only ever True
 when `creator_prompt_fidelity_enabled` and guided editing are both on AND the
 voiceover has a resolved narration identity -- i.e. always in production, never
 in the old tests.
 
-`PROD_TRUE_FLAGS` was derived on 2026-09-22 (re-derived 2026-10-02) from
-`fly secrets list --app nova-video`: every secret sharing
-`PHONE_RENDERING_ENABLED`'s digest holds the same value, and that one is
-known to be `true` (pilot renders work). No secret
-VALUE is recorded here, only which boolean flags are on. Re-derive when a phone
-gate changes behaviour in production but not in tests.
+The values come from `tests/prod_flags.snapshot.json`, which
+`scripts/prod_flag_snapshot.py` writes (KRI-1375); this file no longer carries a hand
+copy. Each snapshot entry names its evidence: the code default, the former Fly secret
+digest comparison (2026-10-08, no value read), or a live read of the production API
+(`GET /admin/kria/phone-render-config`). Refresh with
+`python scripts/prod_flag_snapshot.py refresh --live`; record newly learned flags with
+`set NAME=VALUE --source "..."`; `check` fails CI-side when `Settings` gains a field the
+snapshot has not seen. Flags still at an unconfirmed default are listed by `unverified`.
+Allowlists (`*_user_ids`) are Fly secrets: the snapshot holds the code default, not the
+production membership.
 
 Use `apply_prod_profile(monkeypatch)` (or the `prod_profile` fixture in
 conftest.py) at the top of any test that claims "this renders on the phone in
 production".
 """
 
-from __future__ import annotations
+import json
+from pathlib import Path
 
 from app.config import settings
 
-# Lower-cased `Settings` attribute names. Names that are not `Settings` fields
-# (read straight from the environment elsewhere) are skipped by
-# `apply_prod_profile`, so this list can stay a faithful copy of the secret list.
-PROD_TRUE_FLAGS: tuple[str, ...] = (
-    "carousel_auto_author_enabled",
-    "carousel_effects_enabled",
-    "conformance_feedback_enabled",
-    "creator_memory_enabled",
-    "creator_prompt_fidelity_enabled",
-    "custom_effects_enabled",
-    "edit_copilot_enabled",
-    "edit_director_enabled",
-    "edit_format_day_vlog_enabled",
-    "edit_format_single_hero_enabled",
-    "edit_format_talking_head_enabled",
-    "edit_transitions_enabled",
-    "edit_wide_looks_enabled",
-    "evolving_type_enabled",
-    "generative_direct_voiceover_strict_enabled",
-    "guided_edit_capability_enabled",
-    "guided_edit_conversation_enabled",
-    "guided_edit_direction_confirmation_enabled",
-    "guided_edit_enforcement_enabled",
-    "guided_story_editor_v2_enabled",
-    "guided_text_face_placement_enabled",
-    "landscape_output_enabled",
-    "lyrics_editor_enabled",
-    "lyrics_optional_enabled",
-    "main_creator_agent_auto_iteration_enabled",
-    "main_creator_agent_enabled",
-    "main_creator_agent_execution_enabled",
-    "main_creator_agent_freeform_uploads_enabled",
-    "main_creator_agent_quality_review_enabled",
-    "main_creator_agent_review_enabled",
-    "main_creator_agent_workspace_enabled",
-    "matte_depth_occluder_enabled",
-    "media_overlays_enabled",
-    "media_overlay_alpha_enabled",
-    "motion_scenes_enabled",
-    "narrated_self_narration_enabled",
-    "narrated_storyboard_enabled",
-    "nova_steps_feed_enabled",
-    "overlay_autoapply_enabled",
-    "overlay_autoplace_enabled",
-    "phone_rendering_enabled",
-    # Fly secret digest 2026-09-23 (KRI-174): editor media imports are ON.
-    "phone_editor_media_enabled",
-    "pool_asset_queued_status_enabled",
-    "render_autostop_enabled",
-    "retake_cut_enabled",
-    "reviewer_login_enabled",
-    "silence_cut_enabled",
-    "smart_captions_enabled",
-    "smart_caption_emphasis_cues_enabled",
-    "smart_caption_face_placement_enabled",
-    "smart_caption_layout_balance_enabled",
-    "smart_caption_section_heading_enabled",
-    "smart_caption_transcript_cache_enabled",
-    "smart_music_bed_enabled",
-    "smart_scene_matcher_enabled",
-    "sound_effects_enabled",
-    "style_agent_enabled",
-    "subtitled_archetype_enabled",
-    "subtitled_text_lane_enabled",
-    "text_appearance_enabled",
-    "text_behind_subject_enabled",
-    "text_motion_v2_enabled",
-    "tiktok_draft_upload_enabled",
-    "tiktok_performance_sync_enabled",
-    "tiktok_publishing_enabled",
-    "tiktok_style_vision_enabled",
-    "user_style_enabled",
-    "visual_blocks_enabled",
-    "visual_block_autoplan_enabled",
-    # Re-derived 2026-09-28 (KRI-217): on in production (same digest), missing
-    # above. Without the runtime-v2 flags no prod-shaped test reached the lane
-    # that refused every iOS montage with a photo. (MONTAGE_UNIFIED_PLAN_ENABLED
-    # was on too; KRI-220 removed the flag.)
-    "clip_facts_enabled",
-    "clip_intents_enabled",
-    "kria_editor_state_turns_enabled",
-    "kria_guided_timeline_ops",
-    "phone_talking_head_rendering_enabled",
-    "creator_clip_preparation_enabled",
-    "edit_proposal_semantic_enabled",
-    "guided_voiceover_speech_cleanup_enabled",
-    "kria_creative_brief_enabled",
-    "kria_runtime_v2_enabled",
-    "kria_runtime_v2_phone_enabled",
-    "phone_sfx_speech_duck_enabled",
-    "phone_subtitled_editor_lanes_enabled",
-    "phone_subtitled_media_lanes_enabled",
-    "phone_subtitled_reaction_beats_enabled",
-    "phone_subtitled_video_overlays_enabled",
-    # Re-derived 2026-10-08 (KRI-519): same digest as PHONE_RENDERING_ENABLED.
-    "phone_voiceover_editor_lanes_enabled",
-)
+SNAPSHOT_PATH = Path(__file__).with_name("prod_flags.snapshot.json")
+PROD_SNAPSHOT: dict[str, dict[str, object]] = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))[
+    "settings"
+]
 
-# `PHONE_RENDER_VERIFIED_FEATURES` as read from the production api machine on
-# 2026-10-02 (unchanged; a capability-name list, not a secret).
-# `behindSubject` (text behind people on the phone) is deliberately ABSENT until a
-# physical-device preview + export check adds it in prod; under this profile the phone
-# compile strips the flag (`test_text_behind_subject_phone.py::
-# test_the_production_profile_strips_the_flag`). Add it here only after the fly secret.
-PROD_VERIFIED_FEATURES: tuple[str, ...] = (
-    "alphaOverlay",
-    "animatedText",
-    "audioDucking",
-    "audioMix",
-    "authoredText",
-    "basicComposition",
-    "cameraEffects",
-    "captions",
-    "carouselEffects",
-    "clipTransitions",
-    "crossfade",
-    "customEffects",
-    "editorMedia",
-    "goldenHourLook",
-    "hdr",
-    "hevcDecode",
-    "local1080Export",
-    "mediaCards",
-    "motionPresets",
-    "motionScenes",
-    "musicBed",
-    "narrationAudio",
-    "positionedText",
-    "semanticCamera",
-    "slidePosts",
-    "soundEffects",
-    "stillImages",
-    "variableSpeed",
-    "visualBlocks",
-    "visualVideos",
+# `PHONE_RENDER_VERIFIED_FEATURES` as read from the production API: a capability-name
+# list, not a secret. `behindSubject` etc. are present only when production verified them.
+PROD_VERIFIED_FEATURES: tuple[str, ...] = tuple(
+    PROD_SNAPSHOT["phone_render_verified_features"]["value"]  # type: ignore[arg-type]
 )
 
 # A voiceover as production sees it: the upload has been probed, so the
@@ -171,13 +50,25 @@ PROD_NARRATION_IDENTITY: dict[str, object] = {
 }
 
 
+def prod_setting_overrides() -> dict[str, object]:
+    """Every snapshot value backed by evidence, by `Settings` attribute.
+
+    Entries still at ``default`` are left to the running `Settings`: they carry no
+    information about production, and a test's own environment may legitimately differ.
+    """
+
+    return {
+        name: entry["value"]
+        for name, entry in PROD_SNAPSHOT.items()
+        if entry["source"] != "default" and hasattr(settings, name)
+    }
+
+
 def apply_prod_profile(monkeypatch) -> list[str]:
-    """Turn on every flag production has on; return the names actually applied."""
+    """Run with the settings production has; return the names actually applied."""
 
     applied: list[str] = []
-    for name in PROD_TRUE_FLAGS:
-        if hasattr(settings, name):
-            monkeypatch.setattr(settings, name, True)
-            applied.append(name)
-    monkeypatch.setattr(settings, "phone_render_verified_features", list(PROD_VERIFIED_FEATURES))
+    for name, value in prod_setting_overrides().items():
+        monkeypatch.setattr(settings, name, value)
+        applied.append(name)
     return applied
