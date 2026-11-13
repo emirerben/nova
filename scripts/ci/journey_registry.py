@@ -34,65 +34,97 @@ STEP_CALL = re.compile(r"journey_registry\.py\s+step\s+([\w.-]+)")
 LITERAL_TEST_PATH = re.compile(
     r"(?<![\w/.-])(?:src/apps/api/)?tests/[\w/.-]+/?test_\w+\.py"
 )
+TEST_REFERENCE = re.compile(
+    r"(?<![\w/.-])((?:src/apps/api/)?tests/[\w/.-]+\.py)((?:::\w+)*)"
+)
+SWIFT_TESTS = "src/apps/ios/Tests"
+# Files that name tests by path but are not derived from markers. `check` fails
+# when one names a test that no longer exists; `sync` follows git renames in.
+HAND_LISTS = ("Makefile", "scripts/verify-kria.sh", ".github/workflows/*.yml")
+RENAME_FOLLOWERS = (*HAND_LISTS, "scripts/ci/test_*.py")
+NOT_REWRITTEN = ("scripts/ci/test_journey_registry.py",)
 
 
 def split_tests(value) -> list[str]:
     return value.split() if isinstance(value, str) else list(value or [])
 
 
+def is_journey_mark(node) -> bool:
+    """`pytest.mark.journey` or `mark.journey`, however it is imported or aliased."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "journey"
+        and (
+            (isinstance(node.value, ast.Attribute) and node.value.attr == "mark")
+            or (isinstance(node.value, ast.Name) and node.value.id == "mark")
+        )
+    )
+
+
+def module_marks(tree: ast.Module):
+    """Nodes inside a module-level `pytestmark = ...` or `pytestmark: T = ...`."""
+    inside = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            names, value = [node.target], node.value
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in names):
+            inside.update(id(sub) for sub in ast.walk(value))
+    return inside
+
+
 def marked_files(root: Path = ROOT):
     """Every (file relative to the API root, journey id, step name) declared by a marker.
 
-    Raises ValueError for a marker this scanner cannot read, so a declaration
-    can never be dropped silently.
+    pytest accepts a journey mark on a decorator, a class or a call spelled any
+    way, but only a module-level `pytestmark` can name a CI step. Raises
+    ValueError for any other spelling, so a declaration can never be dropped
+    silently.
     """
     api = root / API
     found = []
     for path in sorted((api / "tests").rglob("*.py")):
         text = path.read_text()
-        if "mark.journey" not in text:
+        if "journey" not in text:
             continue
         rel = path.relative_to(api).as_posix()
         try:
             tree = ast.parse(text)
         except SyntaxError as error:
             raise ValueError(f"{rel}: cannot parse to read its journey marker: {error}")
-        for node in tree.body:
-            if not (
-                isinstance(node, ast.Assign)
-                and any(
-                    isinstance(t, ast.Name) and t.id == "pytestmark"
-                    for t in node.targets
-                )
-            ):
+        inside = module_marks(tree)
+        called = {id(n.func): n for n in ast.walk(tree) if isinstance(n, ast.Call)}
+        for node in ast.walk(tree):
+            if not is_journey_mark(node):
                 continue
-            for call in ast.walk(node.value):
-                if not (
-                    isinstance(call, ast.Call)
-                    and isinstance(call.func, ast.Attribute)
-                    and call.func.attr == "journey"
-                    and isinstance(call.func.value, ast.Attribute)
-                    and call.func.value.attr == "mark"
-                ):
-                    continue
-                args = [a.value for a in call.args if isinstance(a, ast.Constant)]
-                steps = {
-                    k.arg: k.value.value
-                    for k in call.keywords
-                    if isinstance(k.value, ast.Constant)
-                }
-                if (
-                    len(args) != 1
-                    or len(call.args) != 1
-                    or not isinstance(args[0], str)
-                    or set(steps) - {"step"}
-                    or len(steps) != len(call.keywords)
-                ):
-                    raise ValueError(
-                        f'{rel}:{call.lineno}: write the marker as pytest.mark.journey("<id>"'
-                        ', step="<name>") with string literals'
-                    )
-                found.append((rel, args[0], steps.get("step", args[0])))
+            call = called.get(id(node))
+            if id(node) not in inside or call is None:
+                raise ValueError(
+                    f"{rel}:{node.lineno}: declare the journey with a module-level "
+                    'pytestmark = pytest.mark.journey("<id>", step="<name>"); a decorator, '
+                    "a class attribute or a bare mark never reaches a CI step"
+                )
+            args = [a.value for a in call.args if isinstance(a, ast.Constant)]
+            steps = {
+                k.arg: k.value.value
+                for k in call.keywords
+                if isinstance(k.value, ast.Constant)
+            }
+            if (
+                len(args) != 1
+                or len(call.args) != 1
+                or not isinstance(args[0], str)
+                or set(steps) - {"step"}
+                or len(steps) != len(call.keywords)
+            ):
+                raise ValueError(
+                    f'{rel}:{call.lineno}: write the marker as pytest.mark.journey("<id>"'
+                    ', step="<name>") with string literals'
+                )
+            found.append((rel, args[0], steps.get("step", args[0])))
     return found
 
 
@@ -157,7 +189,90 @@ def test_def_exists(path: Path, name: str) -> bool:
     )
 
 
-def check(root: Path = ROOT, manifest: Path = MANIFEST) -> list[str]:
+def follower_files(root: Path) -> list[Path]:
+    """Files whose literal test paths sync rewrites after a git rename."""
+    files = {
+        path
+        for pattern in RENAME_FOLLOWERS
+        for path in root.glob(pattern)
+        if path.is_file() and path.relative_to(root).as_posix() not in NOT_REWRITTEN
+    }
+    return sorted(files)
+
+
+def swift_test_ids(root: Path) -> set[str]:
+    """Every `Class/testName` some Swift file under the iOS Tests dir declares."""
+    ids = set()
+    for path in (root / SWIFT_TESTS).rglob("*.swift"):
+        text = path.read_text()
+        methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", text)
+        for name in re.findall(r"\bclass\s+(\w+)\b", text):
+            ids.update(f"{name}/{method}" for method in methods)
+    return ids
+
+
+def hand_list_problems(root: Path) -> list[str]:
+    """Test paths named by hand in the Makefile, scripts and non-CI workflows."""
+    problems = []
+    api = root / API
+    for path in follower_files(root):
+        rel = path.relative_to(root).as_posix()
+        if rel == ".github/workflows/ci.yml" or rel.startswith("scripts/ci/test_"):
+            continue
+        for match in TEST_REFERENCE.finditer(path.read_text()):
+            file, nodes = match.groups()
+            target = root / file if file.startswith(f"{API}/") else api / file
+            if not target.exists():
+                problems.append(f"{rel} names {file!r}, which does not exist")
+            elif nodes and not test_def_exists(target, nodes.split("::")[-1]):
+                problems.append(f"{rel} names {file}{nodes}, which has no such test")
+    return problems
+
+
+def stale_after_rename(root: Path, base: str | None, manifest: Path) -> list[str]:
+    """Hand-kept files that still name a path git renamed since `base`."""
+    try:
+        base = base or git(root, "merge-base", "HEAD", "origin/main").strip()
+        moved = renames(root, base)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    problems = []
+    for path in [manifest, *follower_files(root)]:
+        if not path.exists():
+            continue
+        text = path.read_text()
+        for old, new in sorted(moved.items()):
+            variants = [(old, new)]
+            if old.startswith(f"{API}/") and new.startswith(f"{API}/"):
+                variants.append((old.removeprefix(f"{API}/"), new.removeprefix(f"{API}/")))
+            for before, after in variants:
+                if rename_pattern(before).search(text):
+                    problems.append(
+                        f"{path.relative_to(root).as_posix()} still names {before!r}, "
+                        f"which git renamed to {after!r}"
+                    )
+    return problems
+
+
+def swift_problems(rows: list[dict], root: Path) -> list[str]:
+    if not (root / SWIFT_TESTS).is_dir():
+        return []
+    known = swift_test_ids(root)
+    problems = []
+    for row in rows:
+        tests = [*row.get("xctests", []), *([row["xctest"]] if row.get("xctest") else [])]
+        for test in tests:
+            parts = test.removesuffix("()").split("/")
+            if len(parts) != 3 or "/".join(parts[1:]) not in known:
+                problems.append(
+                    f"{row['id']}: xctest {test!r} names no test under {SWIFT_TESTS}"
+                )
+    return problems
+
+
+def check(
+    root: Path = ROOT, manifest: Path = MANIFEST, base: str | None = None
+) -> list[str]:
     """Every way the registries and the tests can disagree, named."""
     problems = []
     api = root / API
@@ -208,10 +323,14 @@ def check(root: Path = ROOT, manifest: Path = MANIFEST) -> list[str]:
         for path in row["paths"]:
             if not (root / path).exists():
                 problems.append(f"{row['id']}: path {path!r} does not exist")
+    problems += swift_problems(rows, root)
+    problems += hand_list_problems(root)
+    problems += stale_after_rename(root, base, manifest)
     if problems:
         problems.append(
-            f"Fix: run `{FIX}` to follow git renames into scripts/ci/journey-manifest.json; "
-            "delete an entry whose file was removed"
+            f"Fix: run `{FIX}` to follow git renames (stage the rename first) into "
+            "scripts/ci/journey-manifest.json, the Makefile, scripts and workflows; "
+            "delete an entry whose file or test was removed"
         )
     return problems
 
@@ -236,24 +355,31 @@ def renames(root: Path, base: str) -> dict[str, str]:
     return out
 
 
+def rename_pattern(path: str) -> re.Pattern:
+    return re.compile(rf"(?<![\w/.-]){re.escape(path)}(?![\w/.-])")
+
+
 def sync(
     root: Path = ROOT, manifest: Path = MANIFEST, base: str | None = None
 ) -> list[str]:
-    """Rewrite manifest entries whose file git renamed; return what was changed."""
+    """Rewrite entries whose file git renamed; return what was changed."""
     base = base or git(root, "merge-base", "HEAD", "origin/main").strip()
     moved = renames(root, base)
-    text = manifest.read_text()
     changed = []
-    for old, new in sorted(moved.items()):
-        pairs = [(old, new)]
-        if old.startswith(f"{API}/") and new.startswith(f"{API}/"):
-            pairs.append((old.removeprefix(f"{API}/"), new.removeprefix(f"{API}/")))
-        for before, after in pairs:
-            pattern = re.compile(rf'(?<=[\s"]){re.escape(before)}(?=[\s":])')
-            text, count = pattern.subn(after, text)
-            if count:
-                changed.append(f"{before} -> {after} ({count})")
-    manifest.write_text(text)
+    for path in [manifest, *follower_files(root)]:
+        text = original = path.read_text()
+        for old, new in sorted(moved.items()):
+            pairs = [(old, new)]
+            if old.startswith(f"{API}/") and new.startswith(f"{API}/"):
+                pairs.append((old.removeprefix(f"{API}/"), new.removeprefix(f"{API}/")))
+            for before, after in pairs:
+                text, count = rename_pattern(before).subn(after, text)
+                if count:
+                    changed.append(
+                        f"{path.relative_to(root).as_posix()}: {before} -> {after} ({count})"
+                    )
+        if text != original:
+            path.write_text(text)
     return changed
 
 
@@ -278,7 +404,7 @@ def main(argv: list[str]) -> int:
             print(
                 "\n".join(changed)
                 if changed
-                else "journey manifest already follows git renames"
+                else "journey registries already follow git renames"
             )
             problems = check()
             for problem in problems:

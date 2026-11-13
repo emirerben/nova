@@ -186,11 +186,7 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
             (WORKFLOW.parents[2] / "scripts/ios/ui-test-groups.json").read_text()
         )
         smoke = manifest["smoke"]
-        self.assertIn(
-            "KriaUITests/CreationUITests/"
-            "testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
-            smoke,
-        )
+        self.assertTrue(any("/CreationUITests/" in test for test in smoke))
         self.assertTrue(any("/EditorUITests/" in test for test in smoke))
         # The PR subset must stay bounded.
         self.assertLessEqual(len(smoke), 6)

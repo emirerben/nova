@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -83,8 +84,13 @@ class UISelectionTests(unittest.TestCase):
             for test in data["groups"][group]
         ]
         self.assertEqual(len(features), len(set(features)))
-        self.assertEqual(set(features), ui.discovered())
-        self.assertEqual(data["unclassified"], [])
+        unclassified = {
+            test
+            for test in ui.discovered()
+            if test.split("/")[1] in data["unclassified"]
+        }
+        self.assertEqual(set(features) | unclassified, ui.discovered())
+        self.assertLessEqual(unclassified, set(data["groups"]["smoke"]))
 
     def test_each_exact_mapping_selects_smoke_and_one_feature(self):
         for path, group in ui.manifest()["sources"].items():
@@ -111,7 +117,10 @@ class UISelectionTests(unittest.TestCase):
             if not methods or relative in data["sources"]:
                 continue
             groups = set().union(
-                *(owners[f"KriaUITests/{classes[0]}/{name}"] for name in methods)
+                *(
+                    owners.get(f"KriaUITests/{classes[0]}/{name}", set())
+                    for name in methods
+                )
             )
             if len(groups) != 1:
                 continue
@@ -228,7 +237,10 @@ class UISelectionTests(unittest.TestCase):
                 "class NewTests: XCTestCase { func testNew() {} }"
             )
             data = ui.manifest(root)
-            self.assertEqual(data["unclassified"], ["NewTests"])
+            self.assertEqual(
+                set(data["unclassified"]) - set(ui.manifest()["unclassified"]),
+                {"NewTests"},
+            )
             self.assertIn("KriaUITests/NewTests/testNew", data["groups"]["smoke"])
             self.assertEqual(ui.select_groups([path], root)[0], "smoke,projects")
             self.assertIn(
@@ -265,7 +277,7 @@ class UISelectionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ui.expected_tests("smoke,editor")
         data = json.loads(ui.MANIFEST.read_text())
-        data["overrides"]["SignInUITests/testGone"] = "creation"
+        data["overrides"]["SignInUITests/testSignInShowsEveryProviderAndLegalLink"] = "nope"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.json"
             path.write_text(json.dumps(data))
@@ -273,6 +285,53 @@ class UISelectionTests(unittest.TestCase):
                 self.assertEqual(ui.select_groups(["any"])[0], "full")
                 with self.assertRaises(ValueError):
                     ui.expected_tests("smoke,creation")
+
+    def test_an_in_place_rename_is_named_by_check_and_followed_by_sync(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tests = root / "src/apps/ios/Tests/KriaUITests"
+            shutil.copytree(ui.ROOT / "src/apps/ios/Tests/KriaUITests", tests)
+            groups = root / "ui-test-groups.json"
+            groups.write_text(json.dumps({**json.loads(ui.MANIFEST.read_text()), "sources": {}}))
+            journeys = root / "journey-manifest.json"
+            smoke = "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface"
+            override = "AccountPrivacyUITests/testATypeFollowsAllTextUntilItIsChangedByHand"
+            journeys.write_text(json.dumps({"xctests": [smoke]}))
+
+            def git(*args):
+                subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "t@example.com")
+            git("config", "user.name", "t")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            for name, old, new in (
+                ("EditorUITests", "testNativeEditorBackButtonReturnsToPreviousSurface", "testBackReturns"),
+                ("AccountPrivacyUITests", "testATypeFollowsAllTextUntilItIsChangedByHand", "testATypeFollows"),
+            ):
+                file = tests / f"{name}.swift"
+                file.write_text(file.read_text().replace(f"func {old}(", f"func {new}("))
+            with patch.object(ui, "MANIFEST", groups):
+                problems = ui.check(root)
+                self.assertTrue(any("testNativeEditorBack" in p for p in problems))
+                self.assertTrue(any("testATypeFollowsAll" in p for p in problems))
+                self.assertIn("make sync-test-registries", problems[-1])
+                value, _ = ui.select_groups(
+                    ["src/apps/ios/Tests/KriaUITests/EditorUITests.swift"], root
+                )
+                self.assertNotEqual(value, "full")
+                self.assertNotIn(smoke, ui.expected_tests("smoke", root))
+                ui.sync(root, base="HEAD", journeys=journeys)
+                self.assertEqual(ui.check(root), [])
+                self.assertIn(
+                    smoke.replace("testNativeEditorBackButtonReturnsToPreviousSurface", "testBackReturns"),
+                    ui.expected_tests("smoke", root),
+                )
+                self.assertIn("EditorUITests/testBackReturns", journeys.read_text())
+                self.assertIn(
+                    "AccountPrivacyUITests/testATypeFollows", json.loads(groups.read_text())["overrides"]
+                )
 
     def test_focused_filters_preserve_smoke_and_deduplicate(self):
         data = ui.manifest()

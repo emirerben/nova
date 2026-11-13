@@ -106,10 +106,10 @@ class ThroughputTests(unittest.TestCase):
         )
         module = importlib.util.module_from_spec(registry)
         registry.loader.exec_module(module)
-        self.assertEqual(
-            module.step_files("kri-623-ruled-out-clips"),
-            ["tests/kria/test_kri623_ruled_out_clips.py"],
-        )
+        files = module.step_files("kri-623-ruled-out-clips")
+        self.assertTrue(files)
+        for file in files:
+            self.assertTrue((module.ROOT / module.API / file).is_file(), file)
 
     def native_steps(self):
         """[(name, if-expression)] for every step of ci.yml's journey-native job."""

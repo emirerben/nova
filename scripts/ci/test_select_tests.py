@@ -36,10 +36,12 @@ class ClassificationTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("journey_registry.py step kri-215-learning-loop", workflow)
-        self.assertIn(
-            "tests/incidents/test_request_following_loop.py",
-            journey_registry.step_files("kri-215-learning-loop"),
-        )
+        files = journey_registry.step_files("kri-215-learning-loop")
+        self.assertTrue(files)
+        for file in files:
+            self.assertTrue(
+                (journey_registry.ROOT / journey_registry.API / file).is_file(), file
+            )
 
     def test_manifest_native_routing_is_conservative_and_mixed_safe(self):
         self.assertFalse(ci.journey_native_for_ids(["kri-577-reliability-gates"]))

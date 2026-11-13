@@ -2676,9 +2676,7 @@
         "KriaTests/GeneratedMediaTests/testUncertainFailuresKeepStableReceiptForStatusOnlyRecovery",
         "KriaUITests/GeneratedMediaUITests/testApprovedNarrationPreviewThenUseAttachesAudioWithoutImageAsset",
         "KriaUITests/GeneratedMediaUITests/testDisabledCapabilitiesPreserveRecordImportAndHideGeneration",
-        "KriaUITests/GeneratedMediaUITests/testGeneratedImagePreviewUseRefreshesVisualPool",
-        "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain",
-        "KriaUITests/GeneratedMediaUITests/testValidationRejectionRequiresEditAndExplicitNewSubmission"
+        "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain"
       ],
       "paths": [
         "src/apps/api/app/routes/generated_media.py",

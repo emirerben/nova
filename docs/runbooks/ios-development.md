@@ -839,12 +839,14 @@ can focus too, so an edited test there now runs before merge. Before, it selecte
 `full`, and PRs ran only smoke.
 A test method added, renamed or removed inside a classified class needs no
 registry edit: it stays in the class's group. A new XCTestCase class that is not
-in `classes` runs in every selection (it joins smoke) until you add it with a
-`creation`, `projects` or `editor` group; `make sync-test-registries` lists such
-classes. A registry entry naming a class, test or source that no longer exists
-makes the selector fall back to `full` and fails `make check-test-registries`
-(also run by `preship-check.sh` and `scripts/ios/tests`). After `git mv` of a UI
-test file or app source, `make sync-test-registries` follows the rename.
+in `classes` runs in every selection (it joins smoke) with no edit required;
+`make check-test-registries` prints an advisory line naming it so you can add a
+`creation`, `projects` or `editor` group later. A registry entry naming a class,
+test or source that no longer exists fails `make check-test-registries` (also run
+by `preship-check.sh`) with the fix command; selection ignores the stale entry
+instead of failing the UI leg. After a rename, `make sync-test-registries`
+follows a renamed UI test file or app source, a renamed class and a renamed test
+method into the registry.
 
 UI tests remain serial. The preparation builds both test bundles, executes all
 non-UI tests, and writes the existing one-use receipt. Main smoke and nightly/manual UI runs
@@ -1268,4 +1270,4 @@ Adding the next update:
    short sentences and a card to four steps, and leave ticket IDs, PR numbers and flag
    names out. `WhatsNewTests` fails the build on any of these.
 5. Run `KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh`. A new UI test method needs no
-   registry edit; a new UI test class goes in `classes` of `scripts/ios/ui-test-groups.json`.
+   registry edit; a new UI test class runs in every selection until you add it to `classes` of `scripts/ios/ui-test-groups.json`.
