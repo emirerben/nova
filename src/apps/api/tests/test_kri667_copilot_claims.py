@@ -26,7 +26,7 @@ from structlog.testing import capture_logs
 
 from app.agents._runtime import ModelClient
 from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput, EditCopilotOutput
-from app.kria.planner import _PHONE_STAGED_REPLY, _PHONE_STAGED_REPLY_TR, _phone_editor_reply
+from app.kria.planner import _phone_editor_reply
 from app.kria.reply_language import reply_language_for
 from app.routes._copilot import _honest_outcome
 from tests.services.test_kria_capture_time_ops import (  # noqa: F401
@@ -130,7 +130,8 @@ def test_empty_claim_keeps_wording_that_sounds_like_a_claim(language, reply) -> 
 
 
 def test_claimed_op_dropped_while_a_sibling_survives_names_the_reason() -> None:
-    # swap_music is outside the allowed families: the parser rejects it, edit_text survives.
+    # swap_music is outside the allowed families: the parser rejects it, edit_text survives,
+    # and the dropped op is named as an unmet request the phone receipts list (KRI-1386).
     snapshot = _basic_snapshot(allowed=["text"])
     raw = dict(
         ops=[EDIT_HOOK, {"op": "swap_music", "track_id": "t1"}],
@@ -139,26 +140,21 @@ def test_claimed_op_dropped_while_a_sibling_survives_names_the_reason() -> None:
     )
     english = _parse("New hook, new song.", **raw)
     assert [op["op"] for op in english.ops] == ["edit_text"]
+    assert english.unmet_requests == [
+        {"request": "change the music", "reason": "I can't change that on this edit yet"}
+    ]
+    named = "I couldn't change the music: I can't change that on this edit yet."
     with capture_logs() as logs:
-        assert _route(english) == ("proposed", f"{CANNED_EN} I can't change that on this edit yet.")
+        assert _route(english) == ("proposed", f"I prepared the supported changes. {named}")
     check = next(e for e in logs if e["event"] == "edit_copilot.claim_check")
-    assert check["claimed"] == ["edit_text", "swap_music"]
-    assert check["kept"] == ["edit_text"]
-    assert check["unbacked"] == ["swap_music"]
+    assert check["unbacked"] == []
     with reply_language_for("tr"):
         turkish = _parse("Yeni kanca, yeni şarkı.", **raw)
-        outcome, reply = _route(turkish)
-        assert (outcome, reply) == (
+        assert _route(turkish) == (
             "proposed",
-            f"{CANNED_TR} Bunu bu düzenlemede henüz değiştiremiyorum.",
+            "Desteklenen değişiklikleri hazırladım. Müzik için değişiklik yapmak mümkün olmadı: "
+            "Bunu bu düzenlemede henüz değiştiremiyorum.",
         )
-        # The canned line stays first, so the phone planner still swaps it.
-        assert _phone_editor_reply(reply) == (
-            f"{_PHONE_STAGED_REPLY_TR} Bunu bu düzenlemede henüz değiştiremiyorum."
-        )
-    assert _phone_editor_reply(_route(english)[1]) == (
-        f"{_PHONE_STAGED_REPLY} I can't change that on this edit yet."
-    )
 
 
 @pytest.mark.parametrize(

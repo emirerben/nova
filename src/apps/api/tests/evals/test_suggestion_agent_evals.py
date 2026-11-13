@@ -651,7 +651,6 @@ def _ctx_plan(case_name="nermin-matcha-update::first_prompt"):
 class _Raising:
     def __init__(self, exc):
         self.exc = exc
-        self.supports_clarification_retry = False
         self.calls = 0
 
     def invoke(self, **kwargs):

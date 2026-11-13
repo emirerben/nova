@@ -185,15 +185,16 @@ def test_kria_bulk_followup_replays_honest_impossible_all() -> None:
 
 
 def test_sfx_hallucinated_catalog_id_replays_zero_ops() -> None:
-    """Unknown sound IDs must remain a clarification, never an executable edit."""
+    """Unknown sound IDs are never an executable edit: the op fails and goes back for repair."""
     fixture = _fixture("sfx_hallucinated_effect_id")
     result = run_eval(fixture)
 
     assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
     assert result.output is not None
     assert result.output["ops"] == []
-    assert result.output["needs_clarification"] is True
+    assert result.output["outcome"] == "failed"
     assert result.output["intent"] == "edit"
+    assert [item["op"] for item in result.output["repair"]["rejected"]] == ["add_sfx"]
 
 
 @pytest.mark.skipif(

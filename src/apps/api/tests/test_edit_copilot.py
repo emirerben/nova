@@ -420,11 +420,11 @@ def test_copilot_unknown_op_dropped() -> None:
     assert out.confidence == 0.9
 
 
-def test_copilot_bad_font_drops_and_caps_confidence() -> None:
+def test_copilot_bad_font_drops_as_failed() -> None:
     out = _parse([{"op": "patch_text_style", "bar_index": 0, "patch": {"font_family": "Papyrus"}}])
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_accepts_staggered_slice_effect_and_catalogs_it() -> None:
@@ -2873,8 +2873,8 @@ def test_copilot_trim_output_start_drops_only_no_effect_from_compound_edit() -> 
 def test_copilot_trim_cannot_remove_the_entire_remaining_output(op: dict) -> None:
     out = _parse([op], confidence=0.9, snapshot=_full_snapshot())
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_new_ops_coerce_and_clamp() -> None:
@@ -3028,7 +3028,7 @@ def test_copilot_new_index_ops_oob_negative_and_non_int_drop(op: dict) -> None:
 def test_copilot_hallucinated_ids_and_unopenable_tool_drop(op: dict) -> None:
     out = _parse([op], snapshot=_full_snapshot())
     assert out.ops == []
-    assert out.confidence == 0.4
+    assert out.outcome == "failed"
 
 
 def test_copilot_swap_music_requires_swappable() -> None:
@@ -3106,8 +3106,8 @@ def test_copilot_remove_music_requires_a_current_removable_track(music_patch: di
     snap["music"].update(music_patch)
     out = _parse([{"op": "remove_music"}], confidence=0.9, snapshot=snap)
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_set_intro_layout_parses() -> None:
@@ -3115,15 +3115,15 @@ def test_copilot_set_intro_layout_parses() -> None:
     assert out.ops == [{"op": "set_intro_layout", "layout": "cluster"}]
 
 
-def test_copilot_set_intro_layout_invalid_layout_drops_and_caps_confidence() -> None:
+def test_copilot_set_intro_layout_invalid_layout_drops_as_failed() -> None:
     out = _parse(
         [{"op": "set_intro_layout", "layout": "stacked"}],
         confidence=0.9,
         snapshot=_full_snapshot(),
     )
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_set_intro_layout_family_not_allowed_drop() -> None:
@@ -3163,8 +3163,8 @@ def test_copilot_set_intro_layout_cluster_ineligible_drop() -> None:
         snapshot=snap,
     )
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_set_intro_layout_sequence_capable_allows_cluster() -> None:
@@ -3195,8 +3195,8 @@ def test_copilot_undo_last_edit_cannot_undo_drop() -> None:
     }
     out = _parse([{"op": "undo_last_edit"}], confidence=0.9, snapshot=snap)
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_undo_last_edit_missing_history_state_drop() -> None:
@@ -3223,8 +3223,8 @@ def test_copilot_repeat_last_edit_no_summary_drop() -> None:
     snap["history_state"] = {"can_undo_last_turn": False, "last_turn_summary": None}
     out = _parse([{"op": "repeat_last_edit"}], confidence=0.9, snapshot=snap)
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_repeat_last_edit_missing_history_state_drop() -> None:
@@ -3286,7 +3286,7 @@ def test_copilot_apply_custom_effect_parses(monkeypatch: pytest.MonkeyPatch) -> 
     assert out.ops[0]["effect"]["filters"] == [{"name": "curves", "params": {"preset": "vintage"}}]
 
 
-def test_copilot_apply_custom_effect_invalid_spec_drops_and_caps_confidence(
+def test_copilot_apply_custom_effect_invalid_spec_drops_as_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "custom_effects_enabled", True)
@@ -3298,8 +3298,8 @@ def test_copilot_apply_custom_effect_invalid_spec_drops_and_caps_confidence(
         snapshot=snap,
     )
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_apply_custom_effect_family_not_allowed_drop(
@@ -3436,8 +3436,8 @@ def test_copilot_set_carousel_moment_mode_stills_rejected() -> None:
         snapshot=_full_snapshot(),
     )
     assert out.ops == []
-    assert out.confidence == 0.4
-    assert out.needs_clarification
+    assert out.outcome == "failed"
+    assert not out.needs_clarification
 
 
 def test_copilot_set_carousel_moment_duration_clamped() -> None:
@@ -3464,7 +3464,7 @@ def test_copilot_set_carousel_moment_focus_clip_index_negative_rejected() -> Non
         snapshot=_full_snapshot(),
     )
     assert out.ops == []
-    assert out.confidence == 0.4
+    assert out.outcome == "failed"
 
 
 def test_copilot_set_carousel_moment_focus_clip_index_null_lets_nova_pick() -> None:
@@ -3484,7 +3484,7 @@ def test_copilot_set_carousel_moment_invalid_config_type_rejected() -> None:
         snapshot=_full_snapshot(),
     )
     assert out.ops == []
-    assert out.confidence == 0.4
+    assert out.outcome == "failed"
 
 
 def test_copilot_set_carousel_moment_empty_config_rejected() -> None:
@@ -3494,7 +3494,7 @@ def test_copilot_set_carousel_moment_empty_config_rejected() -> None:
         snapshot=_full_snapshot(),
     )
     assert out.ops == []
-    assert out.confidence == 0.4
+    assert out.outcome == "failed"
 
 
 def test_copilot_patch_overlay_whitelist_and_empty_drop() -> None:
@@ -4720,87 +4720,9 @@ def test_copilot_unknown_placement_still_drops() -> None:
     assert out.ops == []
 
 
-def test_copilot_retries_once_with_the_rejected_ops_quoted() -> None:
-    # 2026-09-19 (job d9a965b0): a value the contract rejects used to end the
-    # turn with "I couldn't build a valid draft change". The agent now raises
-    # once so the runtime re-asks with the rejected ops and the value rules.
-    from app.agents._runtime import SchemaError
-
-    agent = _agent()
-    agent._value_retry_armed = True  # what run() sets for a live client
-    raw = json.dumps(
-        {
-            "intent": "edit",
-            "ops": [
-                {"op": "patch_text_style", "bar_index": 0, "patch": {"font_family": "Papyrus"}}
-            ],
-            "confidence": 0.9,
-            "reply": "Done.",
-            "suggestions": [],
-            "needs_clarification": False,
-        }
-    )
-    payload = EditCopilotInput(
-        utterance="use papyrus", prior_turns=[], variant_snapshot=_snapshot()
-    )
-
-    with pytest.raises(SchemaError, match="operation values rejected"):
-        agent.parse(raw, payload)
-
-    hint = agent.schema_clarification()
-    assert "Papyrus" in hint
-    assert "patch_text_style" in hint
-    assert "position must be one of top, middle, bottom, custom" in hint
-    assert "LEFT edge" in hint
-
-    # The second attempt is honest, never a third call.
-    second = agent.parse(raw, payload)
-    assert second.outcome == "failed"
-    assert second.ops == []
-
-
-def test_copilot_targeted_retry_is_not_used_for_unsupported_or_stale_ops() -> None:
-    agent = _agent()
-    agent._value_retry_armed = True
-    raw = json.dumps(
-        {
-            "intent": "edit",
-            "ops": [{"op": "restyle_all", "preset": "x"}],
-            "confidence": 0.9,
-            "reply": "Done.",
-            "suggestions": [],
-            "needs_clarification": False,
-        }
-    )
-    out = agent.parse(
-        raw, EditCopilotInput(utterance="x", prior_turns=[], variant_snapshot=_snapshot())
-    )
-    assert out.outcome == "unsupported"
-    assert agent._value_retry_hint is None
-
-
 def test_copilot_direct_parse_never_raises_for_invalid_values() -> None:
     out = _parse([{"op": "patch_text_style", "bar_index": 0, "patch": {"font_family": "Papyrus"}}])
     assert out.outcome == "failed"
-
-
-def test_copilot_run_arms_the_targeted_retry_only_for_capable_clients(monkeypatch) -> None:
-    from app.agents import _runtime
-
-    class _Cassette(ModelClient):
-        supports_clarification_retry = False
-
-    seen: list[bool] = []
-
-    def fake_run(self, input, *, ctx=None):  # noqa: A002
-        seen.append(self._value_retry_armed)
-        return "ran"
-
-    monkeypatch.setattr(_runtime.Agent, "run", fake_run)
-    payload = EditCopilotInput(utterance="x", prior_turns=[], variant_snapshot=_snapshot())
-    assert EditCopilotAgent(_Cassette()).run(payload) == "ran"
-    assert EditCopilotAgent(ModelClient()).run(payload) == "ran"
-    assert seen == [False, True]
 
 
 def test_copilot_rotation_is_a_style_field_and_is_clamped() -> None:
