@@ -473,6 +473,23 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertNotNil(clean.music)
     }
 
+    /// KRI-1394: a chat turn that only changed the creator's song is still a chat head. Its `sections` hold
+    /// whatever the turn started from, never the published text.
+    func testAChatHeadWithOnlyASongEditIsNotACommittedSnapshot() {
+        let song: JSONValue = .object(["volume": .number(0.4), "removed": .bool(false)])
+        let payload: [String: JSONValue] = [
+            "base_generation": .string("g1"), "editor_state_version": .number(2), "user_song": song,
+            "sections": .object(["user_song": song, "text_elements": .array([.object(["id": .string("t1"), "text": .string("unsaved"),
+                                                                                     "start_s": .number(0), "end_s": .number(2)])])]),
+        ]
+        let head = DraftSnapshot(draftID: "d5", itemID: "item", variantKey: "initial", draftRevision: 5,
+            snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "schema_version": .number(2), "editor_payload": .object(payload)],
+            canUndo: true, createdAt: .now)
+        let clean = EditorDocument(snapshot: head.editorDraft(projectID: UUID(), authoritativeVariant: Self.variant()).serverSnapshot)
+        XCTAssertEqual(clean.textElements.map(\.text), ["hello"], "the published text, not the chat head's")
+    }
+
     func testUndoingAStagedChatHeadReturnsToThePublishedDocument() async throws {
         let (session, _) = await loaded(Self.incidentHead())
         XCTAssertEqual(session.document.textElements.first?.text, "changed")

@@ -3090,7 +3090,7 @@ extension DraftSnapshot {
            variantBaseline(authoritativeVariant) == (baseGenerationID ?? "")
             || authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
            let payload = Self.object(snapshot["editor_payload"]), payload["editor_state_version"] == .number(2),
-           !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }) {
+           !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }), payload[Self.userSongKey] == nil {
             // A committed full snapshot owns authoring state. The variant is
             // a render projection and may lag this exact durable revision.
             var document = snapshot
@@ -3311,6 +3311,27 @@ extension DraftSnapshot {
         var sections: Set<EditorSection>
         /// `base` with the chat-changed lanes overlaid (decode with `EditorDocument`).
         var snapshot: [String: JSONValue]
+        /// The chat's song edit (`set_user_song`, KRI-1394). It is `EditorDocument.userSong`, which no snapshot
+        /// carries, so it travels beside `snapshot`. Set exactly when `sections` holds `.userSong`.
+        var userSong: EditorUserSongState?
+    }
+
+    /// The flat `user_song` key: the Save's `EditorCommitUserSong` section (`volume`, `window_start_s`,
+    /// `window_end_s`, `removed`), relative to the saved song like the editor's own song edits.
+    private static let userSongKey = "user_song"
+
+    /// The draft's song edit, nil when it holds none or a field is unreadable. Empty when the section
+    /// is the saved song (`removed: false`, no field set), as a chat undo of `set_user_song` writes it.
+    private static func stagedUserSong(_ value: JSONValue?) -> EditorUserSongState? {
+        guard let fields = object(value) else { return nil }
+        if fields["removed"] == .bool(true) { return EditorUserSongState(removed: true) }
+        var state = EditorUserSongState()
+        for (key, path) in [("volume", \EditorUserSongState.volume), ("window_start_s", \.windowStartS), ("window_end_s", \.windowEndS)] {
+            guard let field = fields[key], field != .null else { continue }
+            guard case let .number(number) = field, number.isFinite, number >= 0 else { return nil }
+            state[keyPath: path] = number
+        }
+        return state
     }
 
     /// Editor-commit key (flat draft key) -> lane. The server keeps the lanes a
@@ -3342,7 +3363,7 @@ extension DraftSnapshot {
     func stagedChatEdit(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> StagedChatEdit? {
         guard let lanes = chatLanes(over: base, variant: variant, appliedRevision: appliedRevision),
               !lanes.changed.isEmpty else { return nil }
-        return StagedChatEdit(sections: lanes.changed, snapshot: lanes.snapshot)
+        return StagedChatEdit(sections: lanes.changed, snapshot: lanes.snapshot, userSong: lanes.userSong)
     }
 
     /// KRI-1384: the lanes a newer chat head carries at the saved value, as chat "undo that" writes
@@ -3352,7 +3373,7 @@ extension DraftSnapshot {
     }
 
     private func chatLanes(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?)
-        -> (changed: Set<EditorSection>, restored: Set<EditorSection>, snapshot: [String: JSONValue])? {
+        -> (changed: Set<EditorSection>, restored: Set<EditorSection>, snapshot: [String: JSONValue], userSong: EditorUserSongState?)? {
         guard let variant, snapshot["kind"]?.stringValue == "editor" else { return nil }
         if let appliedRevision, draftRevision <= appliedRevision { return nil }
         guard let draftPayload = Self.object(snapshot["editor_payload"]) else { return nil }
@@ -3399,9 +3420,13 @@ extension DraftSnapshot {
             guard differs else { restored.insert(lane.section); continue }
             sections = candidate; changed.insert(lane.section)
         }
+        var userSong: EditorUserSongState?
+        if let song = Self.stagedUserSong(draftPayload[Self.userSongKey]) {
+            if song.isEmpty { restored.insert(.userSong) } else { userSong = song; changed.insert(.userSong) }
+        }
         payload["sections"] = .object(sections)
         var next = base; next["editor_payload"] = .object(payload)
-        return (changed, restored.subtracting(changed), next)
+        return (changed, restored.subtracting(changed), next, userSong)
     }
 
     /// Merge chat `TimelineSlotEdit` rows (wire shape) onto the editor's richer
