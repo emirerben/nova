@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.213.0] - 2026-11-14
+
+### Changed
+- fix(ios): split divider moves the video panels while the finger is down (KRI-1418) (#2330) <!-- release-pr: 2330 -->
+
 ## [0.88.212.0] - 2026-11-14
 
 ### Changed
