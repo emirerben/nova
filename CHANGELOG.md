@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.208.0] - 2026-11-14
+
+### Changed
+- fix(kria): chat "undo that" for caption lines, picture blocks and video shape (KRI-1384) (#2322) <!-- release-pr: 2322 -->
+
 ## [0.88.207.0] - 2026-11-14
 
 ### Changed
