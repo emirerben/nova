@@ -8,15 +8,57 @@
     "goal": "Make a quick coastal sequence that still has a beginning and ending",
     "pace": "fast",
     "target_duration_s": 7,
-    "mixed_media_timing": {"image_hold":"very_fast","video_hold":"longer","boundary_style":"cut"},
+    "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+    },
     "media": [
-      {"media_id":"b1","lane":"clip","kind":"video","duration_s":5,"subject":"sailboat leaving harbor"},
-      {"media_id":"b2","lane":"asset","kind":"image","subject":"rocky beach"},
-      {"media_id":"b3","lane":"asset","kind":"video","duration_s":5,"subject":"swimming underwater"},
-      {"media_id":"b4","lane":"asset","kind":"image","subject":"boats at anchor"},
-      {"media_id":"b5","lane":"asset","kind":"video","duration_s":5,"subject":"waves at shore"},
-      {"media_id":"b6","lane":"asset","kind":"image","subject":"coastline viewpoint"},
-      {"media_id":"b7","lane":"asset","kind":"image","subject":"sunset over sea"}
+      {
+        "media_id": "b1",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "sailboat leaving harbor"
+      },
+      {
+        "media_id": "b2",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "rocky beach"
+      },
+      {
+        "media_id": "b3",
+        "lane": "asset",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "swimming underwater"
+      },
+      {
+        "media_id": "b4",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "boats at anchor"
+      },
+      {
+        "media_id": "b5",
+        "lane": "asset",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "waves at shore"
+      },
+      {
+        "media_id": "b6",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "coastline viewpoint"
+      },
+      {
+        "media_id": "b7",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "sunset over sea"
+      }
     ]
   },
   "raw_text": "{\"title\":\"Corfu by the water\",\"duration_s\":7,\"story_beats\":[],\"mixed_media_timing\":{\"image_hold\":\"very_fast\",\"video_hold\":\"longer\",\"boundary_style\":\"cut\"},\"fast_cuts\":[{\"cut_id\":\"c1\",\"media_id\":\"b1\",\"source_start_s\":0,\"source_end_s\":1.5,\"output_duration_s\":1.5,\"role\":\"hook\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c2\",\"media_id\":\"b2\",\"source_start_s\":0,\"source_end_s\":0.625,\"output_duration_s\":0.625,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c3\",\"media_id\":\"b3\",\"source_start_s\":0,\"source_end_s\":1.5,\"output_duration_s\":1.5,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c4\",\"media_id\":\"b4\",\"source_start_s\":0,\"source_end_s\":0.625,\"output_duration_s\":0.625,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c5\",\"media_id\":\"b5\",\"source_start_s\":0,\"source_end_s\":1.5,\"output_duration_s\":1.5,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c6\",\"media_id\":\"b6\",\"source_start_s\":0,\"source_end_s\":0.625,\"output_duration_s\":0.625,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c7\",\"media_id\":\"b7\",\"source_start_s\":0,\"source_end_s\":0.625,\"output_duration_s\":0.625,\"role\":\"payoff\",\"transition\":\"none\",\"beat_align\":true}]}",
@@ -24,5 +66,6 @@
     "source": "hand_authored_golden",
     "case": "source-aware fast montage cut program",
     "contract": "the specialist emits prompt-visible aliases that resolve to owned media; source-aware fast cuts remain bounded, non-adjacent, and renderable within the complete 150-item guided-edit universe"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

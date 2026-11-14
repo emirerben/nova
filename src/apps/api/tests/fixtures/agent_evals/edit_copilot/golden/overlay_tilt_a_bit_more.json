@@ -78,5 +78,6 @@
     "source": "hand_authored_golden",
     "case": "relative ask after a tilt: rotation_delta_deg adds to the card's own angle, never rotation_deg",
     "lane": "overlay_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

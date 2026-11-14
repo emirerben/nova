@@ -100,5 +100,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "video_reuse_followup"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

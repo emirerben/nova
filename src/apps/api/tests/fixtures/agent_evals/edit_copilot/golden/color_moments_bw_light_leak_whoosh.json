@@ -78,5 +78,6 @@
     "source": "hand_authored_golden",
     "case": "EN: one black-and-white window, light-leak exit, a catalog whoosh locked to the exit edge",
     "lane": "color_moments"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -5,7 +5,9 @@
     "utterance": "keep this font but reveal the title like ink from left to right",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["style"],
+      "allowed_op_families": [
+        "style"
+      ],
       "has_narrated_captions": false,
       "text_bars": [
         {
@@ -50,5 +52,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "explicit ink reveal preserving font"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

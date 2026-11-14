@@ -107,5 +107,6 @@
     "source": "hand_authored_golden",
     "case": "bulk duration is ONE patch_slots op",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -238,5 +238,6 @@
     "source": "hand_authored_golden",
     "case": "labels_yellow_background_popin",
     "lane": "kria_v2_text"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

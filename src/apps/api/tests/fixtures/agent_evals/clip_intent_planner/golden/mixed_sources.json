@@ -41,15 +41,22 @@
         "op": "label",
         "label_source": "clip",
         "transcript_kind": null,
-        "source_quote_keywords": ["sport", "clip"]
+        "source_quote_keywords": [
+          "sport",
+          "clip"
+        ]
       },
       {
         "op": "label",
         "label_source": "transcript",
         "transcript_kind": "score",
-        "source_quote_keywords": ["score", "say"]
+        "source_quote_keywords": [
+          "score",
+          "say"
+        ]
       }
     ],
     "expect_any": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

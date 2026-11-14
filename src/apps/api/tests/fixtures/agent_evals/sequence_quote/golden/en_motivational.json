@@ -15,7 +15,10 @@
     "hero_transcript": "",
     "tone": "gritty, no-excuses, quietly proud",
     "language": "en",
-    "content_pillars": ["discipline over motivation", "training alone"],
+    "content_pillars": [
+      "discipline over motivation",
+      "training alone"
+    ],
     "theme": "the work nobody sees",
     "idea": "late-night solo session montage",
     "video_duration_s": 10.4
@@ -27,5 +30,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "The approved rhythm-mode demo quote, pinned verbatim. 10.4s video → target 8 sentences; the quote splits into 9 on [.!?…] ('So…' ends its own 1-word sentence), inside the 4-9 band. 33 total words, every sentence 1-6 words, exactly one quoted span ('just luck'), ends with terminal punctuation. First-person no-excuses voice coheres with the discipline persona while staying grounded in the solo-gym footage."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

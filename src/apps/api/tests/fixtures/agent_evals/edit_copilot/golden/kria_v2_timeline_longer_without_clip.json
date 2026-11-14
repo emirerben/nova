@@ -5,7 +5,9 @@
     "utterance": "make it longer",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["title"],
+      "allowed_op_families": [
+        "title"
+      ],
       "editor_ops_version": 2,
       "slots": [],
       "text_bars": [],
@@ -20,7 +22,9 @@
     "ops": [],
     "confidence": 0.95,
     "reply": "I can't change the length on this edit. I can still help with the title.",
-    "suggestions": ["Change the title"],
+    "suggestions": [
+      "Change the title"
+    ],
     "needs_clarification": false,
     "outcome": "rejection",
     "rejection_reasons": [],
@@ -38,8 +42,14 @@
     "capability_contract": {
       "intent": "reject",
       "needs_clarification": false,
-      "reply_contains": ["length", "title"],
-      "reply_excludes": ["text"]
+      "reply_contains": [
+        "length",
+        "title"
+      ],
+      "reply_excludes": [
+        "text"
+      ]
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

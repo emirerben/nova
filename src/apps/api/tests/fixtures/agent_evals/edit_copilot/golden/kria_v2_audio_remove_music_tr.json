@@ -47,5 +47,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "remove_music_tr"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

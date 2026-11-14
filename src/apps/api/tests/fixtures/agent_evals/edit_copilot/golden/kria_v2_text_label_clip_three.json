@@ -207,5 +207,6 @@
     "source": "hand_authored_golden",
     "case": "label_clip_three",
     "lane": "kria_v2_text"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

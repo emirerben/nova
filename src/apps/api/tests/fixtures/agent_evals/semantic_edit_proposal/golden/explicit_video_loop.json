@@ -46,5 +46,6 @@
   "meta": {
     "source": "legacy_fixture_semantic_projection",
     "case": "Explicit loop request permits adjacent overlapping windows of one video"
-  }
+  },
+  "prompt_sha": "90a245e17eae4aea"
 }

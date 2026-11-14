@@ -126,5 +126,6 @@
     "source": "hand_authored_golden",
     "case": "Turkish relative zoom ask",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

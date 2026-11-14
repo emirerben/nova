@@ -17,11 +17,17 @@
     "fields": {},
     "confidence": 0.45,
     "reply": "What would you like to change? For example: font, text size, text color, or your overall style set.",
-    "suggestions": ["Change my font", "Make text bigger", "Different style set", "Adjust text color"],
+    "suggestions": [
+      "Change my font",
+      "Make text bigger",
+      "Different style set",
+      "Adjust text color"
+    ],
     "needs_clarification": true
   },
   "meta": {
     "source": "hand_authored_golden",
     "case": "Ambiguous utterance — 'change my style' could mean font, color, style set, or content. Low confidence forces clarify intent and needs_clarification=true."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

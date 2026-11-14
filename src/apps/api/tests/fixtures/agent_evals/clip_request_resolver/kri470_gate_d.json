@@ -225,5 +225,6 @@
     "gate_case": "d",
     "contract": "Contract: 'remaining clips' resolves to m002..m012, excluding the talk-to-camera clip m001.",
     "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

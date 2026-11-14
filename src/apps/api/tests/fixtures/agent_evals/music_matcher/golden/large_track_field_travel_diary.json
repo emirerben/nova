@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "948510046d6c5857",
   "input": {
     "clip_summaries": [
       {
@@ -63,7 +64,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "nostalgic", "patient"],
+          "vibe_tags": [
+            "wistful",
+            "nostalgic",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "memory-lane drive",
@@ -81,7 +86,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "reverent", "spacious"],
+          "vibe_tags": [
+            "sweeping",
+            "reverent",
+            "spacious"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "quiet awe",
@@ -99,7 +108,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["upbeat", "hopeful", "anthemic"],
+          "vibe_tags": [
+            "upbeat",
+            "hopeful",
+            "anthemic"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "open-road optimism",
@@ -117,7 +130,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["ambient", "atmospheric", "patient"],
+          "vibe_tags": [
+            "ambient",
+            "atmospheric",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "after-hours stillness",
@@ -135,7 +152,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "playful", "punchy"],
+          "vibe_tags": [
+            "swagger",
+            "playful",
+            "punchy"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "after-dark cool",
@@ -153,7 +174,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["wistful", "warm", "playful"],
+          "vibe_tags": [
+            "wistful",
+            "warm",
+            "playful"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "easy afternoon",
@@ -171,7 +196,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "tender", "homesick"],
+          "vibe_tags": [
+            "wistful",
+            "tender",
+            "homesick"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "homesick longing",
@@ -189,7 +218,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "comedy",
-          "vibe_tags": ["quirky", "playful", "deadpan"],
+          "vibe_tags": [
+            "quirky",
+            "playful",
+            "deadpan"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "mockumentary deadpan",
@@ -207,7 +240,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "confident", "punchy"],
+          "vibe_tags": [
+            "swagger",
+            "confident",
+            "punchy"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "street attitude",
@@ -220,96 +257,68 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_acoustic_journey\", \"score\": 9.0, \"rationale\": \"Travel-diary acoustic with golden-hour grade is the textbook fit for passports, plane sunrises, plazas, and map-flipping cafe scenes; 8 slots fits the 5 clips with room for double-cuts.\", \"predicted_strengths\": [\"warm golden hour grade aligns with plane sunrise and plaza clips\", \"medium pacing supports 5s clips with comfortable breathing\", \"wistful vibe reads against 'we made it out' hook\"]}, {\"track_id\": \"track_cinematic_travel\", \"score\": 8.5, \"rationale\": \"Travel-diary cinematic gives the same content an epic-storytelling frame — distinct enough from the acoustic top to be a real top-K variant.\", \"predicted_strengths\": [\"distinct vibe from acoustic top — adds top-K variety\", \"sweeping mood lifts the cloud-window and plaza clips\", \"warm amber grade aligns with sunrise tones\"]}, {\"track_id\": \"track_hiphop_night_market\", \"score\": 8.0, \"rationale\": \"Night-market after-dark hip-hop names the street-food clip directly; rounds out a genre-distinct top-K and gives the night-market beat its own variant.\", \"predicted_strengths\": [\"third distinct genre — completes diverse top-K\", \"high-contrast neon grade matches the night-market clip\", \"hard-cut transitions punctuate the street-food motion\"]}, {\"track_id\": \"track_pop_voyage\", \"score\": 7.5, \"rationale\": \"Open-road pop frames the travel diary as upbeat adventure; viable but vibe-overlaps with the acoustic top pick on warmth.\", \"predicted_strengths\": [\"anthemic mood lifts the plaza clip\", \"warm golden hour grade aligns\", \"hopeful read matches 'we made it out' hook\"]}, {\"track_id\": \"track_pop_indie\", \"score\": 7.0, \"rationale\": \"Lo-fi indie pop is a quieter alternative to the open-road pop — works for the cafe map-flipping clip; slightly redundant against the acoustic top pick.\", \"predicted_strengths\": [\"casual copy_tone fits the cafe map clip\", \"warm golden hour grade still aligns\"]}, {\"track_id\": \"track_acoustic_homesick\", \"score\": 6.5, \"rationale\": \"Homesick acoustic gives the travel diary a melancholy frame; useful fallback but low energy under-serves the street-food clip.\", \"predicted_strengths\": [\"tender mood lifts the boarding-pass and map clips\", \"warm golden hour grade aligns\"]}, {\"track_id\": \"track_electronic_atmospheric\", \"score\": 6.0, \"rationale\": \"Atmospheric electronic fits the street-food and plaza clips with cool neon urban feel but the warm sunrise plane clip fights the grade.\", \"predicted_strengths\": [\"high-contrast neon grade matches the night-market clip\", \"ambient vibe supports the plane-window pacing\"]}, {\"track_id\": \"track_hiphop_swagger_day\", \"score\": 4.5, \"rationale\": \"Daytime saturated-street swagger has nothing to do with reflective travel-diary footage; wrong tonal universe even if pacing could work for the street-food clip.\", \"predicted_strengths\": [\"only useful if user pivots toward a city-fashion edit\"]}, {\"track_id\": \"track_comedy_quirky\", \"score\": 3.0, \"rationale\": \"Mockumentary comedy reframes the entire travel-diary as a sight-gag, which loses the genuine emotional weight of the boarding-pass and plane-window clips.\", \"predicted_strengths\": [\"only useful for ironic travel-vlog framing, not a real recommendation\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_cinematic_travel\",\n      \"score\": 9.2,\n      \"rationale\": \"This track perfectly enhances the travel narrative, providing sweeping and reverent tones for both slow and dynamic shots.\",\n      \"predicted_strengths\": [\n        \"sweeping travel mood\",\n        \"matches varied pacing\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_journey\",\n      \"score\": 8.8,\n      \"rationale\": \"The wistful and sentimental vibe of this acoustic track beautifully complements the travel diary aesthetic of the clips.\",\n      \"predicted_strengths\": [\n        \"wistful travel diary vibe\",\n        \"medium energy match\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_indie\",\n      \"score\": 8.5,\n      \"rationale\": \"Its warm and playful mood fits the candid travel moments, offering a lighter, more approachable feel.\",\n      \"predicted_strengths\": [\n        \"warm and casual mood\",\n        \"medium energy alignment\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_atmospheric\",\n      \"score\": 7.8,\n      \"rationale\": \"The ambient and atmospheric feel offers a unique, contemplative urban travel experience, especially for the slower clips.\",\n      \"predicted_strengths\": [\n        \"atmospheric urban vibe\",\n        \"patient pacing\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_night_market\",\n      \"score\": 7.0,\n      \"rationale\": \"This track brings a punchy and energetic flavor, specifically enhancing the fast-paced night market scene and city shots.\",\n      \"predicted_strengths\": [\n        \"high energy urban feel\",\n        \"strong fit for market clip\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_voyage\",\n      \"score\": 6.5,\n      \"rationale\": \"The upbeat and hopeful anthemic feel can elevate the travel montage, though it might be a bit too high energy for some clips.\",\n      \"predicted_strengths\": [\n        \"upbeat travel montage\",\n        \"hopeful tone\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
-        "track_id": "track_acoustic_journey",
-        "score": 9.0,
-        "rationale": "Travel-diary acoustic with golden-hour grade is the textbook fit for passports, plane sunrises, plazas, and map-flipping cafe scenes; 8 slots fits the 5 clips with room for double-cuts.",
-        "predicted_strengths": [
-          "warm golden hour grade aligns with plane sunrise and plaza clips",
-          "medium pacing supports 5s clips with comfortable breathing",
-          "wistful vibe reads against 'we made it out' hook"
-        ]
-      },
-      {
         "track_id": "track_cinematic_travel",
-        "score": 8.5,
-        "rationale": "Travel-diary cinematic gives the same content an epic-storytelling frame — distinct enough from the acoustic top to be a real top-K variant.",
+        "score": 9.2,
+        "rationale": "This track perfectly enhances the travel narrative, providing sweeping and reverent tones for both slow and dynamic shots.",
         "predicted_strengths": [
-          "distinct vibe from acoustic top — adds top-K variety",
-          "sweeping mood lifts the cloud-window and plaza clips",
-          "warm amber grade aligns with sunrise tones"
+          "sweeping travel mood",
+          "matches varied pacing"
         ]
       },
       {
-        "track_id": "track_hiphop_night_market",
-        "score": 8.0,
-        "rationale": "Night-market after-dark hip-hop names the street-food clip directly; rounds out a genre-distinct top-K and gives the night-market beat its own variant.",
+        "track_id": "track_acoustic_journey",
+        "score": 8.8,
+        "rationale": "The wistful and sentimental vibe of this acoustic track beautifully complements the travel diary aesthetic of the clips.",
         "predicted_strengths": [
-          "third distinct genre — completes diverse top-K",
-          "high-contrast neon grade matches the night-market clip",
-          "hard-cut transitions punctuate the street-food motion"
-        ]
-      },
-      {
-        "track_id": "track_pop_voyage",
-        "score": 7.5,
-        "rationale": "Open-road pop frames the travel diary as upbeat adventure; viable but vibe-overlaps with the acoustic top pick on warmth.",
-        "predicted_strengths": [
-          "anthemic mood lifts the plaza clip",
-          "warm golden hour grade aligns",
-          "hopeful read matches 'we made it out' hook"
+          "wistful travel diary vibe",
+          "medium energy match"
         ]
       },
       {
         "track_id": "track_pop_indie",
-        "score": 7.0,
-        "rationale": "Lo-fi indie pop is a quieter alternative to the open-road pop — works for the cafe map-flipping clip; slightly redundant against the acoustic top pick.",
+        "score": 8.5,
+        "rationale": "Its warm and playful mood fits the candid travel moments, offering a lighter, more approachable feel.",
         "predicted_strengths": [
-          "casual copy_tone fits the cafe map clip",
-          "warm golden hour grade still aligns"
-        ]
-      },
-      {
-        "track_id": "track_acoustic_homesick",
-        "score": 6.5,
-        "rationale": "Homesick acoustic gives the travel diary a melancholy frame; useful fallback but low energy under-serves the street-food clip.",
-        "predicted_strengths": [
-          "tender mood lifts the boarding-pass and map clips",
-          "warm golden hour grade aligns"
+          "warm and casual mood",
+          "medium energy alignment"
         ]
       },
       {
         "track_id": "track_electronic_atmospheric",
-        "score": 6.0,
-        "rationale": "Atmospheric electronic fits the street-food and plaza clips with cool neon urban feel but the warm sunrise plane clip fights the grade.",
+        "score": 7.8,
+        "rationale": "The ambient and atmospheric feel offers a unique, contemplative urban travel experience, especially for the slower clips.",
         "predicted_strengths": [
-          "high-contrast neon grade matches the night-market clip",
-          "ambient vibe supports the plane-window pacing"
+          "atmospheric urban vibe",
+          "patient pacing"
         ]
       },
       {
-        "track_id": "track_hiphop_swagger_day",
-        "score": 4.5,
-        "rationale": "Daytime saturated-street swagger has nothing to do with reflective travel-diary footage; wrong tonal universe even if pacing could work for the street-food clip.",
+        "track_id": "track_hiphop_night_market",
+        "score": 7.0,
+        "rationale": "This track brings a punchy and energetic flavor, specifically enhancing the fast-paced night market scene and city shots.",
         "predicted_strengths": [
-          "only useful if user pivots toward a city-fashion edit"
+          "high energy urban feel",
+          "strong fit for market clip"
         ]
       },
       {
-        "track_id": "track_comedy_quirky",
-        "score": 3.0,
-        "rationale": "Mockumentary comedy reframes the entire travel-diary as a sight-gag, which loses the genuine emotional weight of the boarding-pass and plane-window clips.",
+        "track_id": "track_pop_voyage",
+        "score": 6.5,
+        "rationale": "The upbeat and hopeful anthemic feel can elevate the travel montage, though it might be a bit too high energy for some clips.",
         "predicted_strengths": [
-          "only useful for ironic travel-vlog framing, not a real recommendation"
+          "upbeat travel montage",
+          "hopeful tone"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "large library — 9 candidate tracks, travel diary content, acoustic + cinematic + hip-hop diversify top-K"
+    "source": "provider_smoke_capture",
+    "case": "large library — 9 candidate tracks, travel diary content, acoustic + cinematic + hip-hop diversify top-K",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

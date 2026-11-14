@@ -36,5 +36,6 @@
   "meta": {
     "source": "hand-authored golden",
     "purpose": "Demonstrates well-spaced moments (span 1.5-21s, ~19s), energy variation (6.5/9.0/7.5 spread=2.5), concrete action descriptions, no clustering. Used to verify rubric judging post-prompt-change without needing live Gemini access (original clip bytes are not preserved)."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

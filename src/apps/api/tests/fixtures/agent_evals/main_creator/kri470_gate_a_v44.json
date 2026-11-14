@@ -358,5 +358,6 @@
     "dated": true,
     "contract": "Before-picture (v44): timing(8) + select, plain montage (no archetype); with an include-all intent over 12 clips the gate asks duration_vs_count.",
     "note": "Kept alongside the v45 re-record: this is what prompt 2026-10-06-v44 emitted for the same input (superseded; pinned by the chain test as the before-picture)."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -75,5 +75,6 @@
     "source": "hand_authored_golden",
     "case": "TR: black-and-white window with a white-flash entry plus the end fade",
     "lane": "color_moments"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

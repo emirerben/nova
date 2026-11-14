@@ -5,10 +5,19 @@
     "utterance": "make it shorter",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["text"],
+      "allowed_op_families": [
+        "text"
+      ],
       "editor_ops_version": 2,
       "slots": [],
-      "text_bars": [{"text": "old hook", "start_s": 0, "end_s": 8, "size_px": 64}],
+      "text_bars": [
+        {
+          "text": "old hook",
+          "start_s": 0,
+          "end_s": 8,
+          "size_px": 64
+        }
+      ],
       "total_duration_s": 8,
       "max_duration_s": 120
     }
@@ -19,7 +28,9 @@
     "ops": [],
     "confidence": 0.95,
     "reply": "I can't change the length on this edit. I can still help with the text.",
-    "suggestions": ["Rewrite the text"],
+    "suggestions": [
+      "Rewrite the text"
+    ],
     "needs_clarification": false,
     "outcome": "rejection",
     "rejection_reasons": [],
@@ -37,8 +48,14 @@
     "capability_contract": {
       "intent": "reject",
       "needs_clarification": false,
-      "reply_contains": ["length", "text"],
-      "reply_excludes": ["title"]
+      "reply_contains": [
+        "length",
+        "text"
+      ],
+      "reply_excludes": [
+        "title"
+      ]
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -103,5 +103,6 @@
     "source": "hand_authored_golden",
     "case": "TR whole-edit retarget",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

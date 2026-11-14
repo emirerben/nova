@@ -61,5 +61,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "add_sfx_unknown_id"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

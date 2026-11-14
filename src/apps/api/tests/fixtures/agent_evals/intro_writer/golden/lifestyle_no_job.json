@@ -40,6 +40,7 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "freedom/slow-living footage \u2192 original minimalist juxtaposition hook grounded in THIS clip (the 'regular tuesday' beach-office), in the reference voice (cf. @vvvayda 'this and no job'); NOT a copy of the exemplar"
-  }
+    "case": "freedom/slow-living footage → original minimalist juxtaposition hook grounded in THIS clip (the 'regular tuesday' beach-office), in the reference voice (cf. @vvvayda 'this and no job'); NOT a copy of the exemplar"
+  },
+  "prompt_sha": "unpinned"
 }

@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "6a8447bf24ee9276",
   "input": {
     "clip_summaries": [
       {
@@ -73,7 +74,12 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["upbeat", "playful", "celebratory", "warm"],
+          "vibe_tags": [
+            "upbeat",
+            "playful",
+            "celebratory",
+            "warm"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "good-mood family party",
@@ -91,7 +97,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["tender", "warm", "intimate"],
+          "vibe_tags": [
+            "tender",
+            "warm",
+            "intimate"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "family memory",
@@ -109,7 +119,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "tender", "reverent"],
+          "vibe_tags": [
+            "sweeping",
+            "tender",
+            "reverent"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "ceremony reverence",
@@ -127,7 +141,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "comedy",
-          "vibe_tags": ["silly", "bouncy", "playful"],
+          "vibe_tags": [
+            "silly",
+            "bouncy",
+            "playful"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "cartoon mischief",
@@ -145,7 +163,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["uplifting", "pulsing", "celebratory"],
+          "vibe_tags": [
+            "uplifting",
+            "pulsing",
+            "celebratory"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "anthemic build",
@@ -163,7 +185,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["upbeat", "glossy", "hopeful"],
+          "vibe_tags": [
+            "upbeat",
+            "glossy",
+            "hopeful"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "open-road optimism",
@@ -181,7 +207,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "punchy", "confident"],
+          "vibe_tags": [
+            "swagger",
+            "punchy",
+            "confident"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "street attitude",
@@ -199,7 +229,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "tender", "homesick"],
+          "vibe_tags": [
+            "wistful",
+            "tender",
+            "homesick"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "homesick longing",
@@ -212,87 +246,68 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_pop_kids_party\", \"score\": 9.3, \"rationale\": \"The clip set is the literal content this track's profile names — kids' birthday party, candle blow, confetti popper, present unwrap, family dancing; warm tungsten grade matches the interior lighting one-to-one.\", \"predicted_strengths\": [\"warm tungsten grade matches the interior party lighting\", \"playful celebratory mood reads against 'six candles' hook\", \"10 slots over 6 clips supports tight celebratory montage pacing\"]}, {\"track_id\": \"track_electronic_uplift\", \"score\": 8.5, \"rationale\": \"Build-and-drop electronic frames the candle-blow into confetti-pop as the literal beat-drop moment; gives the party a music-video variant distinct from the warm-pop top pick.\", \"predicted_strengths\": [\"beat_pulse transitions land on the candle blow into confetti pop\", \"uplifting vibe serves the celebration crescendo\", \"distinct genre from top pop pick — adds top-K variety\"]}, {\"track_id\": \"track_acoustic_family\", \"score\": 8.0, \"rationale\": \"Tender family acoustic reframes the same content as a warm memory variant; the parent-hug clip lands especially well here.\", \"predicted_strengths\": [\"distinct vibe from electronic and pop picks — true top-K variety\", \"tender mood elevates the parent-hug clip\", \"warm tungsten grade aligns\"]}, {\"track_id\": \"track_pop_radio\", \"score\": 7.5, \"rationale\": \"Open-road upbeat pop has similar vibe overlap with the party-pop top pick; serviceable fallback but slightly miscast on warm interior content vs travel content it's labeled for.\", \"predicted_strengths\": [\"hopeful mood fits the dancing clip\", \"medium pacing aligns with 3-4s clip lengths\"]}, {\"track_id\": \"track_cinematic_family\", \"score\": 7.2, \"rationale\": \"Reverent family cinematic gives the party emotional weight but reads heavier than a 6-year-old's birthday actually carries; useful for the parent-hug clip specifically.\", \"predicted_strengths\": [\"parent-hug clip lands inside this profile\", \"warm amber grade aligns with candle glow\"]}, {\"track_id\": \"track_comedy_silly\", \"score\": 6.5, \"rationale\": \"Cartoon-mischief comedy fits the chaotic kids-dancing and confetti chaos but loses the warm family-memory weight the candle-blow and parent-hug clips depend on.\", \"predicted_strengths\": [\"works for the kids-dancing chaos clip\", \"hard-cut transitions punctuate the confetti pop\"]}, {\"track_id\": \"track_acoustic_slow\", \"score\": 5.5, \"rationale\": \"Homesick acoustic frames the birthday as nostalgia; works for the parent-hug clip but low energy under-serves the candle-blow and confetti-pop celebration beats.\", \"predicted_strengths\": [\"parent-hug clip works well\", \"slow pacing supports unwrapping clip\"]}, {\"track_id\": \"track_hiphop_swagger\", \"score\": 2.5, \"rationale\": \"Street swagger has no relationship to a kids' birthday party; wrong vibe, wrong grade.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_pop_kids_party\",\n      \"score\": 9.8,\n      \"rationale\": \"This track perfectly captures the high-energy, celebratory, and warm essence of a kids' birthday party, aligning with every clip.\",\n      \"predicted_strengths\": [\n        \"Vibe matches perfectly\",\n        \"Energy and pacing are ideal\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_uplift\",\n      \"score\": 8.7,\n      \"rationale\": \"The uplifting, celebratory pulse of this track makes it a strong fit for the energetic confetti moments and dancing kids.\",\n      \"predicted_strengths\": [\n        \"High-energy celebration\",\n        \"Confetti and dance-floor moments\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_family\",\n      \"score\": 8.5,\n      \"rationale\": \"This track offers a sweeping, tender approach to family milestones, elevating the emotional moments of the birthday celebration.\",\n      \"predicted_strengths\": [\n        \"Elevates emotional family moments\",\n        \"Suits the 'big moment' feel\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_family\",\n      \"score\": 8.2,\n      \"rationale\": \"Its tender and warm intimacy works well for the candid family hugs and warm interior shots, creating a touching memory.\",\n      \"predicted_strengths\": [\n        \"Highlights candid family moments\",\n        \"Warm, sentimental tone\"\n      ]\n    },\n    {\n      \"track_id\": \"track_comedy_silly\",\n      \"score\": 6.0,\n      \"rationale\": \"While the clips are joyful, this track's comedic profile could exaggerate the kids' antics for a more playful, less serious edit.\",\n      \"predicted_strengths\": [\n        \"Enhances kid antics\",\n        \"Playful energy\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_radio\",\n      \"score\": 4.5,\n      \"rationale\": \"Although upbeat, this track's vibe leans more towards travel and general optimism, not specifically aligning with the birthday party context.\",\n      \"predicted_strengths\": [\n        \"Upbeat energy\",\n        \"Good for general positivity\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_pop_kids_party",
-        "score": 9.3,
-        "rationale": "The clip set is the literal content this track's profile names — kids' birthday party, candle blow, confetti popper, present unwrap, family dancing; warm tungsten grade matches the interior lighting one-to-one.",
+        "score": 9.8,
+        "rationale": "This track perfectly captures the high-energy, celebratory, and warm essence of a kids' birthday party, aligning with every clip.",
         "predicted_strengths": [
-          "warm tungsten grade matches the interior party lighting",
-          "playful celebratory mood reads against 'six candles' hook",
-          "10 slots over 6 clips supports tight celebratory montage pacing"
+          "Vibe matches perfectly",
+          "Energy and pacing are ideal"
         ]
       },
       {
         "track_id": "track_electronic_uplift",
-        "score": 8.5,
-        "rationale": "Build-and-drop electronic frames the candle-blow into confetti-pop as the literal beat-drop moment; gives the party a music-video variant distinct from the warm-pop top pick.",
+        "score": 8.7,
+        "rationale": "The uplifting, celebratory pulse of this track makes it a strong fit for the energetic confetti moments and dancing kids.",
         "predicted_strengths": [
-          "beat_pulse transitions land on the candle blow into confetti pop",
-          "uplifting vibe serves the celebration crescendo",
-          "distinct genre from top pop pick — adds top-K variety"
-        ]
-      },
-      {
-        "track_id": "track_acoustic_family",
-        "score": 8.0,
-        "rationale": "Tender family acoustic reframes the same content as a warm memory variant; the parent-hug clip lands especially well here.",
-        "predicted_strengths": [
-          "distinct vibe from electronic and pop picks — true top-K variety",
-          "tender mood elevates the parent-hug clip",
-          "warm tungsten grade aligns"
-        ]
-      },
-      {
-        "track_id": "track_pop_radio",
-        "score": 7.5,
-        "rationale": "Open-road upbeat pop has similar vibe overlap with the party-pop top pick; serviceable fallback but slightly miscast on warm interior content vs travel content it's labeled for.",
-        "predicted_strengths": [
-          "hopeful mood fits the dancing clip",
-          "medium pacing aligns with 3-4s clip lengths"
+          "High-energy celebration",
+          "Confetti and dance-floor moments"
         ]
       },
       {
         "track_id": "track_cinematic_family",
-        "score": 7.2,
-        "rationale": "Reverent family cinematic gives the party emotional weight but reads heavier than a 6-year-old's birthday actually carries; useful for the parent-hug clip specifically.",
+        "score": 8.5,
+        "rationale": "This track offers a sweeping, tender approach to family milestones, elevating the emotional moments of the birthday celebration.",
         "predicted_strengths": [
-          "parent-hug clip lands inside this profile",
-          "warm amber grade aligns with candle glow"
+          "Elevates emotional family moments",
+          "Suits the 'big moment' feel"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_family",
+        "score": 8.2,
+        "rationale": "Its tender and warm intimacy works well for the candid family hugs and warm interior shots, creating a touching memory.",
+        "predicted_strengths": [
+          "Highlights candid family moments",
+          "Warm, sentimental tone"
         ]
       },
       {
         "track_id": "track_comedy_silly",
-        "score": 6.5,
-        "rationale": "Cartoon-mischief comedy fits the chaotic kids-dancing and confetti chaos but loses the warm family-memory weight the candle-blow and parent-hug clips depend on.",
+        "score": 6.0,
+        "rationale": "While the clips are joyful, this track's comedic profile could exaggerate the kids' antics for a more playful, less serious edit.",
         "predicted_strengths": [
-          "works for the kids-dancing chaos clip",
-          "hard-cut transitions punctuate the confetti pop"
+          "Enhances kid antics",
+          "Playful energy"
         ]
       },
       {
-        "track_id": "track_acoustic_slow",
-        "score": 5.5,
-        "rationale": "Homesick acoustic frames the birthday as nostalgia; works for the parent-hug clip but low energy under-serves the candle-blow and confetti-pop celebration beats.",
+        "track_id": "track_pop_radio",
+        "score": 4.5,
+        "rationale": "Although upbeat, this track's vibe leans more towards travel and general optimism, not specifically aligning with the birthday party context.",
         "predicted_strengths": [
-          "parent-hug clip works well",
-          "slow pacing supports unwrapping clip"
-        ]
-      },
-      {
-        "track_id": "track_hiphop_swagger",
-        "score": 2.5,
-        "rationale": "Street swagger has no relationship to a kids' birthday party; wrong vibe, wrong grade.",
-        "predicted_strengths": [
-          "no real fit"
+          "Upbeat energy",
+          "Good for general positivity"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "large library (8 tracks) — kid's birthday party, pop celebration tops"
+    "source": "provider_smoke_capture",
+    "case": "large library (8 tracks) — kid's birthday party, pop celebration tops",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

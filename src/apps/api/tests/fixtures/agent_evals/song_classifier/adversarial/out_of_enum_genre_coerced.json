@@ -35,5 +35,6 @@
   "meta": {
     "source": "hand_authored_adversarial",
     "case": "out-of-enum genre 'rock' is coerced to 'other' by MusicLabels._coerce_genre so the track still labels instead of the classifier refusing (prod blocker fix)"
-  }
+  },
+  "prompt_sha": "da60e8413cab95ba"
 }

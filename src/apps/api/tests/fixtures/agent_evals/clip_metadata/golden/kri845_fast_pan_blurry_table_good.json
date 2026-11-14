@@ -43,5 +43,6 @@
   "meta": {
     "source": "hand-authored golden",
     "purpose": "KRI-845: covers a fast pan whose edges smear (fork tines doubled, glass rims ghosted) while the plates stay recognisable: visual_quality names the blur plainly ('blurry, fast pan') instead of clearing it because the subject can still be made out. Its sharp look-alike would say 'fast pan, stays sharp'. Authored from tests/fixtures/kri845_m1_clip_detail.json (Don Julio M1_04); a single moment because the clip is 2.6 s. Hand-authored; no live run was made (no paid calls)."
-  }
+  },
+  "prompt_sha": "37dd541722d4c6ba"
 }

@@ -59,5 +59,6 @@
   "meta": {
     "source": "hand_authored_adversarial",
     "case": "ALIGNED PERSONA + SLOP-FRAMED IDEA (eng-review D5 / outside-voice route 2) — the planner idea itself uses the transformation frame ('how the gym changed my life'). Wrong output echoes it. Correct: translate to an in-the-moment hook grounded in the footage; persona stays honored (gym/discipline), framing does not leak."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

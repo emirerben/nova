@@ -88,5 +88,6 @@
       "pub"
     ],
     "contract": "KRI-129: the chat turn already resolved the creator's quoted 'post match pub' into a caption clip-intent for the pub clip. The recorded model response also captioned the Park beat on its own ('A lively afternoon in the park.') -- the exact failure mode the quoted-phrase heuristic could not always prevent (the model kept captioning an unlabelled chapter). app.agents.edit_proposal._apply_caption_intents must force the pub beat's thought to exactly \"post match pub\" and blank every other beat's thought, including the Park beat's unrequested one."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

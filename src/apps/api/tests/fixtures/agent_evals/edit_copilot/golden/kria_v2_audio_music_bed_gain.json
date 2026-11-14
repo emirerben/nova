@@ -52,5 +52,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "music_bed_gain"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

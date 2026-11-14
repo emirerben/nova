@@ -1,6 +1,7 @@
 {
   "agent": "nova.layout.text_designer",
   "prompt_version": "2026-05-14",
+  "prompt_sha": "c0915739619766cb",
   "input": {
     "slot_position": 1,
     "slot_type": "hook",
@@ -18,7 +19,8 @@
     "accel_at_s": null
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "notes": "The lead-in companion to subject_first_slot. Tests the inverse hierarchy rule (prefix must be QUIETER than its subject — small/serif/white/no-effect/null-accel even when copy_tone=energetic would pull a subject to bold-sans-gold-font-cycle). The structural check explicitly fires if a prefix placeholder comes back at 'large' or above; this fixture's 'small' is the canonical baseline."
+    "source": "provider_smoke_capture",
+    "notes": "The lead-in companion to subject_first_slot. Tests the inverse hierarchy rule (prefix must be QUIETER than its subject — small/serif/white/no-effect/null-accel even when copy_tone=energetic would pull a subject to bold-sans-gold-font-cycle). The structural check explicitly fires if a prefix placeholder comes back at 'large' or above; this fixture's 'small' is the canonical baseline.",
+    "test_run_id": "kri1428-text_designer-20261114"
   }
 }

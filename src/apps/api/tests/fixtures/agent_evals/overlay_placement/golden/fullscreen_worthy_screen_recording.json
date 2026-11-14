@@ -3,20 +3,76 @@
   "prompt_version": "1.1.0",
   "input": {
     "words": [
-      {"word": "so", "start_s": 0.2, "end_s": 0.4},
-      {"word": "I", "start_s": 0.4, "end_s": 0.5},
-      {"word": "checked", "start_s": 0.5, "end_s": 0.9},
-      {"word": "what", "start_s": 3.0, "end_s": 3.2},
-      {"word": "it", "start_s": 3.2, "end_s": 3.3},
-      {"word": "actually", "start_s": 3.3, "end_s": 3.8},
-      {"word": "sends", "start_s": 3.8, "end_s": 4.2},
-      {"word": "it", "start_s": 5.0, "end_s": 5.1},
-      {"word": "builds", "start_s": 5.1, "end_s": 5.5},
-      {"word": "a", "start_s": 5.5, "end_s": 5.6},
-      {"word": "payload", "start_s": 5.6, "end_s": 6.1},
-      {"word": "every", "start_s": 6.1, "end_s": 6.4},
-      {"word": "single", "start_s": 6.4, "end_s": 6.8},
-      {"word": "turn", "start_s": 6.8, "end_s": 7.2}
+      {
+        "word": "so",
+        "start_s": 0.2,
+        "end_s": 0.4
+      },
+      {
+        "word": "I",
+        "start_s": 0.4,
+        "end_s": 0.5
+      },
+      {
+        "word": "checked",
+        "start_s": 0.5,
+        "end_s": 0.9
+      },
+      {
+        "word": "what",
+        "start_s": 3.0,
+        "end_s": 3.2
+      },
+      {
+        "word": "it",
+        "start_s": 3.2,
+        "end_s": 3.3
+      },
+      {
+        "word": "actually",
+        "start_s": 3.3,
+        "end_s": 3.8
+      },
+      {
+        "word": "sends",
+        "start_s": 3.8,
+        "end_s": 4.2
+      },
+      {
+        "word": "it",
+        "start_s": 5.0,
+        "end_s": 5.1
+      },
+      {
+        "word": "builds",
+        "start_s": 5.1,
+        "end_s": 5.5
+      },
+      {
+        "word": "a",
+        "start_s": 5.5,
+        "end_s": 5.6
+      },
+      {
+        "word": "payload",
+        "start_s": 5.6,
+        "end_s": 6.1
+      },
+      {
+        "word": "every",
+        "start_s": 6.1,
+        "end_s": 6.4
+      },
+      {
+        "word": "single",
+        "start_s": 6.4,
+        "end_s": 6.8
+      },
+      {
+        "word": "turn",
+        "start_s": 6.8,
+        "end_s": 7.2
+      }
     ],
     "assets": [
       {
@@ -67,5 +123,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "portrait screen recording IS the thing being described -> slot full, outside the hook, whoosh; creator context reinforces the match; panorama photo NOT chosen for full"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

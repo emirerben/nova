@@ -15,5 +15,6 @@
     "source": "hand_authored_golden",
     "expect_intents": [],
     "expect_any": false
-  }
+  },
+  "prompt_sha": "unpinned"
 }

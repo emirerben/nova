@@ -775,5 +775,6 @@
     "voiceover_cues": {
       "min_includes": 2
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

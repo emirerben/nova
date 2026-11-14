@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "e058d629e43d13cc",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["patient", "warm", "intimate"],
+          "vibe_tags": [
+            "patient",
+            "warm",
+            "intimate"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "morning calm",
@@ -71,7 +76,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "nostalgic", "tender"],
+          "vibe_tags": [
+            "wistful",
+            "nostalgic",
+            "tender"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "memory-lane longing",
@@ -89,7 +98,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["mellow", "warm", "patient"],
+          "vibe_tags": [
+            "mellow",
+            "warm",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "bedroom-studio calm",
@@ -107,7 +120,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["tender", "reverent", "patient"],
+          "vibe_tags": [
+            "tender",
+            "reverent",
+            "patient"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "hushed reverence",
@@ -125,7 +142,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["glossy", "anthemic", "neon"],
+          "vibe_tags": [
+            "glossy",
+            "anthemic",
+            "neon"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "main-character night out",
@@ -138,60 +159,58 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_acoustic_morning\", \"score\": 9.3, \"rationale\": \"Slow Saturday's profile names this exact content — kettles, coffee, reading, cat b-roll; 6 slots over 4 long-take clips is a clean fit and warm tungsten matches the lighting.\", \"predicted_strengths\": [\"warm tungsten grade matches the kitchen and couch lighting\", \"slow pacing supports 6-7s static clips\", \"casual copy_tone fits 'saturday slow' hook\"]}, {\"track_id\": \"track_hiphop_lofi\", \"score\": 8.4, \"rationale\": \"Lofi mellow hip-hop with the same warm tungsten grade is a genuine genre-distinct top-K alternative for the same morning-routine content.\", \"predicted_strengths\": [\"distinct genre from acoustic top — adds top-K variety\", \"same warm tungsten grade alignment\", \"casual copy_tone reads naturally over quiet b-roll\"]}, {\"track_id\": \"track_cinematic_soft\", \"score\": 7.8, \"rationale\": \"Hushed reverent cinematic frames the morning routine as quietly intentional; works for the long-take pacing without inflating the content.\", \"predicted_strengths\": [\"reverent vibe lifts the steam and book-reading clips\", \"6 slots fits 4 long-take clips\", \"warm amber grade aligns with morning warmth\"]}, {\"track_id\": \"track_acoustic_folk\", \"score\": 7.5, \"rationale\": \"Nostalgic folk variant works for the same content but reads slightly heavier than the actual mood — the clips are calm, not specifically memory-tinged.\", \"predicted_strengths\": [\"tender mood still fits cat/book clips\", \"slow pacing supports the clip lengths\"]}, {\"track_id\": \"track_pop_neon\", \"score\": 1.2, \"rationale\": \"Peaks_high neon nightlife pop is the inverse of slow morning calm — wrong energy, wrong pacing, wrong tonal universe entirely.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_acoustic_morning\",\n      \"score\": 9.8,\n      \"rationale\": \"This track perfectly captures the quiet, warm morning routine aesthetic of the clips with its intimate vibe and slow pacing.\",\n      \"predicted_strengths\": [\n        \"ideal content profile match\",\n        \"perfect energy and pacing fit\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_lofi\",\n      \"score\": 9.0,\n      \"rationale\": \"The mellow, patient vibe and 'lofi morning routines' profile align well with the clips' cozy, unhurried feel.\",\n      \"predicted_strengths\": [\n        \"strong vibe and mood match\",\n        \"appropriate energy for calm scenes\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_soft\",\n      \"score\": 8.0,\n      \"rationale\": \"Its tender, patient mood and 'quiet emotional storytelling' profile would elevate the intimate, reflective quality of the clips.\",\n      \"predicted_strengths\": [\n        \"enhances quiet intimacy\",\n        \"suitable low energy and slow pace\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_folk\",\n      \"score\": 6.5,\n      \"rationale\": \"While the acoustic genre and slow pace fit, the nostalgic 'memory-lane' mood is slightly off for a current morning routine.\",\n      \"predicted_strengths\": [\n        \"acoustic genre fit\",\n        \"matching low energy\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_neon\",\n      \"score\": 1.0,\n      \"rationale\": \"This track's high energy, fast pacing, and 'main-character night out' vibe are completely at odds with the calm morning clips.\",\n      \"predicted_strengths\": [\n        \"high slots count\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_acoustic_morning",
-        "score": 9.3,
-        "rationale": "Slow Saturday's profile names this exact content — kettles, coffee, reading, cat b-roll; 6 slots over 4 long-take clips is a clean fit and warm tungsten matches the lighting.",
+        "score": 9.8,
+        "rationale": "This track perfectly captures the quiet, warm morning routine aesthetic of the clips with its intimate vibe and slow pacing.",
         "predicted_strengths": [
-          "warm tungsten grade matches the kitchen and couch lighting",
-          "slow pacing supports 6-7s static clips",
-          "casual copy_tone fits 'saturday slow' hook"
+          "ideal content profile match",
+          "perfect energy and pacing fit"
         ]
       },
       {
         "track_id": "track_hiphop_lofi",
-        "score": 8.4,
-        "rationale": "Lofi mellow hip-hop with the same warm tungsten grade is a genuine genre-distinct top-K alternative for the same morning-routine content.",
+        "score": 9.0,
+        "rationale": "The mellow, patient vibe and 'lofi morning routines' profile align well with the clips' cozy, unhurried feel.",
         "predicted_strengths": [
-          "distinct genre from acoustic top — adds top-K variety",
-          "same warm tungsten grade alignment",
-          "casual copy_tone reads naturally over quiet b-roll"
+          "strong vibe and mood match",
+          "appropriate energy for calm scenes"
         ]
       },
       {
         "track_id": "track_cinematic_soft",
-        "score": 7.8,
-        "rationale": "Hushed reverent cinematic frames the morning routine as quietly intentional; works for the long-take pacing without inflating the content.",
+        "score": 8.0,
+        "rationale": "Its tender, patient mood and 'quiet emotional storytelling' profile would elevate the intimate, reflective quality of the clips.",
         "predicted_strengths": [
-          "reverent vibe lifts the steam and book-reading clips",
-          "6 slots fits 4 long-take clips",
-          "warm amber grade aligns with morning warmth"
+          "enhances quiet intimacy",
+          "suitable low energy and slow pace"
         ]
       },
       {
         "track_id": "track_acoustic_folk",
-        "score": 7.5,
-        "rationale": "Nostalgic folk variant works for the same content but reads slightly heavier than the actual mood — the clips are calm, not specifically memory-tinged.",
+        "score": 6.5,
+        "rationale": "While the acoustic genre and slow pace fit, the nostalgic 'memory-lane' mood is slightly off for a current morning routine.",
         "predicted_strengths": [
-          "tender mood still fits cat/book clips",
-          "slow pacing supports the clip lengths"
+          "acoustic genre fit",
+          "matching low energy"
         ]
       },
       {
         "track_id": "track_pop_neon",
-        "score": 1.2,
-        "rationale": "Peaks_high neon nightlife pop is the inverse of slow morning calm — wrong energy, wrong pacing, wrong tonal universe entirely.",
+        "score": 1.0,
+        "rationale": "This track's high energy, fast pacing, and 'main-character night out' vibe are completely at odds with the calm morning clips.",
         "predicted_strengths": [
-          "no real fit"
+          "high slots count"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "acoustic morning coffee — second acoustic case, lofi hip-hop fills variety"
+    "source": "provider_smoke_capture",
+    "case": "acoustic morning coffee — second acoustic case, lofi hip-hop fills variety",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

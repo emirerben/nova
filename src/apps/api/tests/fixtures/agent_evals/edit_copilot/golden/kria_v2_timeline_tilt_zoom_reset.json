@@ -139,5 +139,6 @@
     "source": "hand_authored_golden",
     "case": "reset the zoom only: zoom 1 keeps the angle, tilt null would clear the angle too",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

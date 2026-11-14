@@ -30,5 +30,6 @@
     "expect_any": true,
     "contract": "Contract: 'using all my clips' => one include intent 'all clips'.",
     "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

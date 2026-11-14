@@ -130,5 +130,6 @@
       "pub"
     ],
     "contract": "KRI-127: none of the `subject` strings say pub/park explicitly; only the shared record's `setting` field (now threaded onto EditProposalMedia) distinguishes the two groups the creator named."
-  }
+  },
+  "prompt_sha": "506647122b746617"
 }

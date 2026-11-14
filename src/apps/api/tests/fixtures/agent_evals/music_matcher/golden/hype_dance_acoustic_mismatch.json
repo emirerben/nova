@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "e67fad7c7892b9f1",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,12 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["pulsing", "anthemic", "frantic", "euphoric"],
+          "vibe_tags": [
+            "pulsing",
+            "anthemic",
+            "frantic",
+            "euphoric"
+          ],
           "energy": "peaks_high",
           "pacing": "frantic",
           "mood": "dance-floor peak",
@@ -71,7 +77,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["punchy", "swagger", "confident"],
+          "vibe_tags": [
+            "punchy",
+            "swagger",
+            "confident"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "dance-crew battle",
@@ -89,7 +99,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["glossy", "anthemic", "celebratory"],
+          "vibe_tags": [
+            "glossy",
+            "anthemic",
+            "celebratory"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "stage-show triumph",
@@ -107,7 +121,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["tender", "patient", "reverent"],
+          "vibe_tags": [
+            "tender",
+            "patient",
+            "reverent"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "hushed reverence",
@@ -125,7 +143,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "tender", "nostalgic"],
+          "vibe_tags": [
+            "wistful",
+            "tender",
+            "nostalgic"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "bittersweet memory",
@@ -138,59 +160,57 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_electronic_dance_hype\", \"score\": 9.5, \"rationale\": \"Frantic peaks_high electronic with beat-locked freezes is the literal content of these clips — strobe poses and crew synch hits land on a track whose profile names them directly.\", \"predicted_strengths\": [\"peaks_high + frantic pacing matches avg clip energy of 9.25\", \"beat_pulse transitions land on the freeze and stomp clips\", \"13 slots over 4 short clips supports rapid intercutting\"]}, {\"track_id\": \"track_hiphop_choreo\", \"score\": 9.0, \"rationale\": \"Dance-crew choreography is named in this track's ideal profile word for word; hard-cut transitions punch the synchronized formation hits and freeze poses.\", \"predicted_strengths\": [\"hard-cut transitions land each freeze pose\", \"distinct vibe from electronic top — adds top-K variety\", \"swagger vibe reads against 'watch this drop' hook\"]}, {\"track_id\": \"track_pop_anthem\", \"score\": 8.6, \"rationale\": \"Stage-show triumph pop frames the same choreography as a music-video performance edit; rounds out the top-K with a third genre band that still serves the content.\", \"predicted_strengths\": [\"third distinct genre completes diverse top-K\", \"glossy mood lifts the strobe lighting\", \"whip_pan transitions fit the spinning dancer clip\"]}, {\"track_id\": \"track_cinematic_calm\", \"score\": 1.8, \"rationale\": \"Hushed reverent cinematic is the wrong band for frantic strobe-lit choreography — drains every clip's energy.\", \"predicted_strengths\": [\"no real fit\"]}, {\"track_id\": \"track_acoustic_slow_ballad\", \"score\": 1.5, \"rationale\": \"Slow wistful acoustic ballad over a hype dance reel is the textbook example of the wrong call — wrong energy, wrong pacing, wrong copy_tone, wrong grade.\", \"predicted_strengths\": [\"no real fit — flagged as canonical mismatch case\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_electronic_dance_hype\",\n      \"score\": 9.5,\n      \"rationale\": \"This track's pulsating energy and beat-drop freezes perfectly complement the strobe-lit dancers and sharp, synchronized choreography.\",\n      \"predicted_strengths\": [\n        \"high energy match\",\n        \"strobe-lit choreography fit\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_choreo\",\n      \"score\": 9.2,\n      \"rationale\": \"The punchy rhythm and confidence of this track are an excellent match for the dance crew's synchronized moves and sharp footwork.\",\n      \"predicted_strengths\": [\n        \"strong choreo-crew fit\",\n        \"beat-locked motion synergy\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_anthem\",\n      \"score\": 8.5,\n      \"rationale\": \"Its anthemic feel and high energy will elevate the dance performances, especially the sharp poses and dramatic freezes.\",\n      \"predicted_strengths\": [\n        \"uplifting performance feel\",\n        \"fast pacing compatibility\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_calm\",\n      \"score\": 1.5,\n      \"rationale\": \"The calm and slow pacing of this track is entirely mismatched with the clips' high-energy dance and sharp movements.\",\n      \"predicted_strengths\": [\n        \"minimal slot usage\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_slow_ballad\",\n      \"score\": 1.0,\n      \"rationale\": \"The wistful and slow nature of this ballad completely clashes with the dynamic and high-energy dance clips.\",\n      \"predicted_strengths\": [\n        \"minimal slot usage\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_electronic_dance_hype",
         "score": 9.5,
-        "rationale": "Frantic peaks_high electronic with beat-locked freezes is the literal content of these clips — strobe poses and crew synch hits land on a track whose profile names them directly.",
+        "rationale": "This track's pulsating energy and beat-drop freezes perfectly complement the strobe-lit dancers and sharp, synchronized choreography.",
         "predicted_strengths": [
-          "peaks_high + frantic pacing matches avg clip energy of 9.25",
-          "beat_pulse transitions land on the freeze and stomp clips",
-          "13 slots over 4 short clips supports rapid intercutting"
+          "high energy match",
+          "strobe-lit choreography fit"
         ]
       },
       {
         "track_id": "track_hiphop_choreo",
-        "score": 9.0,
-        "rationale": "Dance-crew choreography is named in this track's ideal profile word for word; hard-cut transitions punch the synchronized formation hits and freeze poses.",
+        "score": 9.2,
+        "rationale": "The punchy rhythm and confidence of this track are an excellent match for the dance crew's synchronized moves and sharp footwork.",
         "predicted_strengths": [
-          "hard-cut transitions land each freeze pose",
-          "distinct vibe from electronic top — adds top-K variety",
-          "swagger vibe reads against 'watch this drop' hook"
+          "strong choreo-crew fit",
+          "beat-locked motion synergy"
         ]
       },
       {
         "track_id": "track_pop_anthem",
-        "score": 8.6,
-        "rationale": "Stage-show triumph pop frames the same choreography as a music-video performance edit; rounds out the top-K with a third genre band that still serves the content.",
+        "score": 8.5,
+        "rationale": "Its anthemic feel and high energy will elevate the dance performances, especially the sharp poses and dramatic freezes.",
         "predicted_strengths": [
-          "third distinct genre completes diverse top-K",
-          "glossy mood lifts the strobe lighting",
-          "whip_pan transitions fit the spinning dancer clip"
+          "uplifting performance feel",
+          "fast pacing compatibility"
         ]
       },
       {
         "track_id": "track_cinematic_calm",
-        "score": 1.8,
-        "rationale": "Hushed reverent cinematic is the wrong band for frantic strobe-lit choreography — drains every clip's energy.",
+        "score": 1.5,
+        "rationale": "The calm and slow pacing of this track is entirely mismatched with the clips' high-energy dance and sharp movements.",
         "predicted_strengths": [
-          "no real fit"
+          "minimal slot usage"
         ]
       },
       {
         "track_id": "track_acoustic_slow_ballad",
-        "score": 1.5,
-        "rationale": "Slow wistful acoustic ballad over a hype dance reel is the textbook example of the wrong call — wrong energy, wrong pacing, wrong copy_tone, wrong grade.",
+        "score": 1.0,
+        "rationale": "The wistful and slow nature of this ballad completely clashes with the dynamic and high-energy dance clips.",
         "predicted_strengths": [
-          "no real fit — flagged as canonical mismatch case"
+          "minimal slot usage"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "hype dance reel — peaks_high+frantic; slow acoustic explicitly ranked very low (case d)"
+    "source": "provider_smoke_capture",
+    "case": "hype dance reel — peaks_high+frantic; slow acoustic explicitly ranked very low (case d)",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

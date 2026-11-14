@@ -52,5 +52,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "original_mute_device"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -280,5 +280,6 @@
         "time_format": "hour"
       }
     ]
-  }
+  },
+  "prompt_sha": "unpinned"
 }

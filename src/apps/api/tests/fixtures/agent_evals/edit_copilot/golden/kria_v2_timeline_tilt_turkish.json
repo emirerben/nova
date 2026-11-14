@@ -123,5 +123,6 @@
     "source": "hand_authored_golden",
     "case": "Turkish phrasing: 'sağa' is right (positive), 'ikinci' is slot index 1",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

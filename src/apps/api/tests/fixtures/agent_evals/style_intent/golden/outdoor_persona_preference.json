@@ -14,14 +14,22 @@
   "raw_text": "{\"intent\": \"persona_preference\", \"fields\": {\"free_text\": \"Focus on outdoor content and hiking adventures\"}, \"confidence\": 0.88, \"reply\": \"Got it — I'll shift your content focus toward outdoor and hiking adventures. Your next plan will reflect this.\", \"suggestions\": [\"More travel content\", \"Reduce gym footage\", \"Add cooking content\", \"Change my style\"], \"needs_clarification\": false}",
   "output": {
     "intent": "persona_preference",
-    "fields": {"free_text": "Focus on outdoor content and hiking adventures"},
+    "fields": {
+      "free_text": "Focus on outdoor content and hiking adventures"
+    },
     "confidence": 0.88,
     "reply": "Got it — I'll shift your content focus toward outdoor and hiking adventures. Your next plan will reflect this.",
-    "suggestions": ["More travel content", "Reduce gym footage", "Add cooking content", "Change my style"],
+    "suggestions": [
+      "More travel content",
+      "Reduce gym footage",
+      "Add cooking content",
+      "Change my style"
+    ],
     "needs_clarification": false
   },
   "meta": {
     "source": "hand_authored_golden",
     "case": "persona_preference — content strategy request (topic focus), not a visual style change. Should NOT map to style_edit or scope_reduction."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

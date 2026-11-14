@@ -37,7 +37,7 @@
         },
         {
           "id": "text-2",
-          "text": "3\u20131",
+          "text": "3–1",
           "start_s": 2,
           "end_s": 4
         }
@@ -93,5 +93,6 @@
       "photo-1",
       "video-2"
     ]
-  }
+  },
+  "prompt_sha": "unpinned"
 }

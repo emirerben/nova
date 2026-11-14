@@ -3,94 +3,534 @@
   "prompt_version": "2",
   "input": {
     "words": [
-      {"i": 0, "text": "Okay,", "start_s": 0.0, "end_s": 0.3},
-      {"i": 1, "text": "we're", "start_s": 0.36, "end_s": 0.6},
-      {"i": 2, "text": "recording.", "start_s": 0.6, "end_s": 1.22},
-      {"i": 3, "text": "Curvan", "start_s": 1.54, "end_s": 1.72},
-      {"i": 4, "text": "celebrated", "start_s": 1.72, "end_s": 2.24},
-      {"i": 5, "text": "its", "start_s": 2.24, "end_s": 2.58},
-      {"i": 6, "text": "10th", "start_s": 2.58, "end_s": 2.98},
-      {"i": 7, "text": "year", "start_s": 2.98, "end_s": 3.14},
-      {"i": 8, "text": "with", "start_s": 3.14, "end_s": 3.32},
-      {"i": 9, "text": "a", "start_s": 3.32, "end_s": 3.56},
-      {"i": 10, "text": "Sunrise", "start_s": 3.56, "end_s": 3.96},
-      {"i": 11, "text": "Fashion", "start_s": 3.96, "end_s": 4.4},
-      {"i": 12, "text": "Show", "start_s": 4.4, "end_s": 4.7},
-      {"i": 13, "text": "at", "start_s": 4.7, "end_s": 4.94},
-      {"i": 14, "text": "Pamukkale.", "start_s": 4.94, "end_s": 5.46},
-      {"i": 15, "text": "And", "start_s": 6.08, "end_s": 6.3},
-      {"i": 16, "text": "it", "start_s": 6.3, "end_s": 6.54},
-      {"i": 17, "text": "wasn't", "start_s": 6.54, "end_s": 6.8},
-      {"i": 18, "text": "alone.", "start_s": 6.8, "end_s": 7.2},
-      {"i": 19, "text": "Lumo", "start_s": 7.9, "end_s": 7.9},
-      {"i": 20, "text": "was", "start_s": 7.9, "end_s": 8.2},
-      {"i": 21, "text": "the", "start_s": 8.2, "end_s": 8.4},
-      {"i": 22, "text": "show's", "start_s": 8.4, "end_s": 8.7},
-      {"i": 23, "text": "technology", "start_s": 8.7, "end_s": 9.26},
-      {"i": 24, "text": "partner.", "start_s": 9.26, "end_s": 9.6},
-      {"i": 25, "text": "The", "start_s": 10.14, "end_s": 10.24},
-      {"i": 26, "text": "patterns", "start_s": 10.24, "end_s": 10.52},
-      {"i": 27, "text": "were", "start_s": 10.52, "end_s": 10.86},
-      {"i": 28, "text": "drawn", "start_s": 10.86, "end_s": 11.12},
-      {"i": 29, "text": "on", "start_s": 11.12, "end_s": 11.54},
-      {"i": 30, "text": "Lumo", "start_s": 11.54, "end_s": 11.7},
-      {"i": 31, "text": "tablets,", "start_s": 11.7, "end_s": 12.18},
-      {"i": 32, "text": "and", "start_s": 12.44, "end_s": 12.64},
-      {"i": 33, "text": "the", "start_s": 12.64, "end_s": 12.74},
-      {"i": 34, "text": "whole", "start_s": 12.74, "end_s": 13.08},
-      {"i": 35, "text": "show", "start_s": 13.08, "end_s": 13.2},
-      {"i": 36, "text": "was", "start_s": 13.2, "end_s": 13.88},
-      {"i": 37, "text": "filmed", "start_s": 13.88, "end_s": 13.88},
-      {"i": 38, "text": "on", "start_s": 13.88, "end_s": 14.26},
-      {"i": 39, "text": "Lumo", "start_s": 14.26, "end_s": 14.54},
-      {"i": 40, "text": "phones,", "start_s": 14.54, "end_s": 14.98},
-      {"i": 41, "text": "mounted", "start_s": 15.3, "end_s": 15.44},
-      {"i": 42, "text": "on", "start_s": 15.44, "end_s": 15.94},
-      {"i": 43, "text": "drones.", "start_s": 15.94, "end_s": 16.28},
-      {"i": 44, "text": "So", "start_s": 16.9, "end_s": 17.24},
-      {"i": 45, "text": "Lumo", "start_s": 17.24, "end_s": 17.46},
-      {"i": 46, "text": "took", "start_s": 17.46, "end_s": 17.68},
-      {"i": 47, "text": "its", "start_s": 17.68, "end_s": 17.88},
-      {"i": 48, "text": "tech", "start_s": 17.88, "end_s": 18.12},
-      {"i": 49, "text": "from", "start_s": 18.12, "end_s": 18.38},
-      {"i": 50, "text": "cold", "start_s": 18.38, "end_s": 18.66},
-      {"i": 51, "text": "hard...", "start_s": 18.66, "end_s": 19.26},
-      {"i": 52, "text": "No,", "start_s": 19.26, "end_s": 19.52},
-      {"i": 53, "text": "again.", "start_s": 19.52, "end_s": 19.8},
-      {"i": 54, "text": "So", "start_s": 20.26, "end_s": 20.5},
-      {"i": 55, "text": "Lumo", "start_s": 20.5, "end_s": 20.82},
-      {"i": 56, "text": "took", "start_s": 20.82, "end_s": 21.02},
-      {"i": 57, "text": "its", "start_s": 21.02, "end_s": 21.22},
-      {"i": 58, "text": "tech", "start_s": 21.22, "end_s": 21.44},
-      {"i": 59, "text": "from", "start_s": 21.44, "end_s": 21.68},
-      {"i": 60, "text": "cold", "start_s": 21.68, "end_s": 22.0},
-      {"i": 61, "text": "hardware", "start_s": 22.0, "end_s": 22.46},
-      {"i": 62, "text": "to", "start_s": 22.46, "end_s": 22.9},
-      {"i": 63, "text": "a", "start_s": 22.9, "end_s": 23.2},
-      {"i": 64, "text": "creative", "start_s": 23.2, "end_s": 23.46},
-      {"i": 65, "text": "space", "start_s": 23.46, "end_s": 23.84},
-      {"i": 66, "text": "that", "start_s": 23.84, "end_s": 24.48},
-      {"i": 67, "text": "feeds", "start_s": 24.48, "end_s": 24.48},
-      {"i": 68, "text": "fashion.", "start_s": 24.48, "end_s": 24.86},
-      {"i": 69, "text": "In", "start_s": 25.06, "end_s": 25.58},
-      {"i": 70, "text": "short,", "start_s": 25.58, "end_s": 25.8},
-      {"i": 71, "text": "it's", "start_s": 25.9, "end_s": 26.16},
-      {"i": 72, "text": "a", "start_s": 26.16, "end_s": 26.28},
-      {"i": 73, "text": "real", "start_s": 26.28, "end_s": 26.5},
-      {"i": 74, "text": "1", "start_s": 26.5, "end_s": 26.84},
-      {"i": 75, "text": "plus", "start_s": 26.84, "end_s": 27.04},
-      {"i": 76, "text": "1", "start_s": 27.04, "end_s": 27.38},
-      {"i": 77, "text": "equals", "start_s": 27.38, "end_s": 27.7},
-      {"i": 78, "text": "3", "start_s": 27.7, "end_s": 28.08},
-      {"i": 79, "text": "story.", "start_s": 28.08, "end_s": 28.58},
-      {"i": 80, "text": "So", "start_s": 28.58, "end_s": 29.32},
-      {"i": 81, "text": "what", "start_s": 29.32, "end_s": 29.58},
-      {"i": 82, "text": "did", "start_s": 29.58, "end_s": 29.72},
-      {"i": 83, "text": "you", "start_s": 29.72, "end_s": 29.92},
-      {"i": 84, "text": "think", "start_s": 29.92, "end_s": 30.12},
-      {"i": 85, "text": "of", "start_s": 30.12, "end_s": 30.3},
-      {"i": 86, "text": "this", "start_s": 30.3, "end_s": 30.48},
-      {"i": 87, "text": "collaboration?", "start_s": 30.48, "end_s": 30.98}
+      {
+        "i": 0,
+        "text": "Okay,",
+        "start_s": 0.0,
+        "end_s": 0.3
+      },
+      {
+        "i": 1,
+        "text": "we're",
+        "start_s": 0.36,
+        "end_s": 0.6
+      },
+      {
+        "i": 2,
+        "text": "recording.",
+        "start_s": 0.6,
+        "end_s": 1.22
+      },
+      {
+        "i": 3,
+        "text": "Curvan",
+        "start_s": 1.54,
+        "end_s": 1.72
+      },
+      {
+        "i": 4,
+        "text": "celebrated",
+        "start_s": 1.72,
+        "end_s": 2.24
+      },
+      {
+        "i": 5,
+        "text": "its",
+        "start_s": 2.24,
+        "end_s": 2.58
+      },
+      {
+        "i": 6,
+        "text": "10th",
+        "start_s": 2.58,
+        "end_s": 2.98
+      },
+      {
+        "i": 7,
+        "text": "year",
+        "start_s": 2.98,
+        "end_s": 3.14
+      },
+      {
+        "i": 8,
+        "text": "with",
+        "start_s": 3.14,
+        "end_s": 3.32
+      },
+      {
+        "i": 9,
+        "text": "a",
+        "start_s": 3.32,
+        "end_s": 3.56
+      },
+      {
+        "i": 10,
+        "text": "Sunrise",
+        "start_s": 3.56,
+        "end_s": 3.96
+      },
+      {
+        "i": 11,
+        "text": "Fashion",
+        "start_s": 3.96,
+        "end_s": 4.4
+      },
+      {
+        "i": 12,
+        "text": "Show",
+        "start_s": 4.4,
+        "end_s": 4.7
+      },
+      {
+        "i": 13,
+        "text": "at",
+        "start_s": 4.7,
+        "end_s": 4.94
+      },
+      {
+        "i": 14,
+        "text": "Pamukkale.",
+        "start_s": 4.94,
+        "end_s": 5.46
+      },
+      {
+        "i": 15,
+        "text": "And",
+        "start_s": 6.08,
+        "end_s": 6.3
+      },
+      {
+        "i": 16,
+        "text": "it",
+        "start_s": 6.3,
+        "end_s": 6.54
+      },
+      {
+        "i": 17,
+        "text": "wasn't",
+        "start_s": 6.54,
+        "end_s": 6.8
+      },
+      {
+        "i": 18,
+        "text": "alone.",
+        "start_s": 6.8,
+        "end_s": 7.2
+      },
+      {
+        "i": 19,
+        "text": "Lumo",
+        "start_s": 7.9,
+        "end_s": 7.9
+      },
+      {
+        "i": 20,
+        "text": "was",
+        "start_s": 7.9,
+        "end_s": 8.2
+      },
+      {
+        "i": 21,
+        "text": "the",
+        "start_s": 8.2,
+        "end_s": 8.4
+      },
+      {
+        "i": 22,
+        "text": "show's",
+        "start_s": 8.4,
+        "end_s": 8.7
+      },
+      {
+        "i": 23,
+        "text": "technology",
+        "start_s": 8.7,
+        "end_s": 9.26
+      },
+      {
+        "i": 24,
+        "text": "partner.",
+        "start_s": 9.26,
+        "end_s": 9.6
+      },
+      {
+        "i": 25,
+        "text": "The",
+        "start_s": 10.14,
+        "end_s": 10.24
+      },
+      {
+        "i": 26,
+        "text": "patterns",
+        "start_s": 10.24,
+        "end_s": 10.52
+      },
+      {
+        "i": 27,
+        "text": "were",
+        "start_s": 10.52,
+        "end_s": 10.86
+      },
+      {
+        "i": 28,
+        "text": "drawn",
+        "start_s": 10.86,
+        "end_s": 11.12
+      },
+      {
+        "i": 29,
+        "text": "on",
+        "start_s": 11.12,
+        "end_s": 11.54
+      },
+      {
+        "i": 30,
+        "text": "Lumo",
+        "start_s": 11.54,
+        "end_s": 11.7
+      },
+      {
+        "i": 31,
+        "text": "tablets,",
+        "start_s": 11.7,
+        "end_s": 12.18
+      },
+      {
+        "i": 32,
+        "text": "and",
+        "start_s": 12.44,
+        "end_s": 12.64
+      },
+      {
+        "i": 33,
+        "text": "the",
+        "start_s": 12.64,
+        "end_s": 12.74
+      },
+      {
+        "i": 34,
+        "text": "whole",
+        "start_s": 12.74,
+        "end_s": 13.08
+      },
+      {
+        "i": 35,
+        "text": "show",
+        "start_s": 13.08,
+        "end_s": 13.2
+      },
+      {
+        "i": 36,
+        "text": "was",
+        "start_s": 13.2,
+        "end_s": 13.88
+      },
+      {
+        "i": 37,
+        "text": "filmed",
+        "start_s": 13.88,
+        "end_s": 13.88
+      },
+      {
+        "i": 38,
+        "text": "on",
+        "start_s": 13.88,
+        "end_s": 14.26
+      },
+      {
+        "i": 39,
+        "text": "Lumo",
+        "start_s": 14.26,
+        "end_s": 14.54
+      },
+      {
+        "i": 40,
+        "text": "phones,",
+        "start_s": 14.54,
+        "end_s": 14.98
+      },
+      {
+        "i": 41,
+        "text": "mounted",
+        "start_s": 15.3,
+        "end_s": 15.44
+      },
+      {
+        "i": 42,
+        "text": "on",
+        "start_s": 15.44,
+        "end_s": 15.94
+      },
+      {
+        "i": 43,
+        "text": "drones.",
+        "start_s": 15.94,
+        "end_s": 16.28
+      },
+      {
+        "i": 44,
+        "text": "So",
+        "start_s": 16.9,
+        "end_s": 17.24
+      },
+      {
+        "i": 45,
+        "text": "Lumo",
+        "start_s": 17.24,
+        "end_s": 17.46
+      },
+      {
+        "i": 46,
+        "text": "took",
+        "start_s": 17.46,
+        "end_s": 17.68
+      },
+      {
+        "i": 47,
+        "text": "its",
+        "start_s": 17.68,
+        "end_s": 17.88
+      },
+      {
+        "i": 48,
+        "text": "tech",
+        "start_s": 17.88,
+        "end_s": 18.12
+      },
+      {
+        "i": 49,
+        "text": "from",
+        "start_s": 18.12,
+        "end_s": 18.38
+      },
+      {
+        "i": 50,
+        "text": "cold",
+        "start_s": 18.38,
+        "end_s": 18.66
+      },
+      {
+        "i": 51,
+        "text": "hard...",
+        "start_s": 18.66,
+        "end_s": 19.26
+      },
+      {
+        "i": 52,
+        "text": "No,",
+        "start_s": 19.26,
+        "end_s": 19.52
+      },
+      {
+        "i": 53,
+        "text": "again.",
+        "start_s": 19.52,
+        "end_s": 19.8
+      },
+      {
+        "i": 54,
+        "text": "So",
+        "start_s": 20.26,
+        "end_s": 20.5
+      },
+      {
+        "i": 55,
+        "text": "Lumo",
+        "start_s": 20.5,
+        "end_s": 20.82
+      },
+      {
+        "i": 56,
+        "text": "took",
+        "start_s": 20.82,
+        "end_s": 21.02
+      },
+      {
+        "i": 57,
+        "text": "its",
+        "start_s": 21.02,
+        "end_s": 21.22
+      },
+      {
+        "i": 58,
+        "text": "tech",
+        "start_s": 21.22,
+        "end_s": 21.44
+      },
+      {
+        "i": 59,
+        "text": "from",
+        "start_s": 21.44,
+        "end_s": 21.68
+      },
+      {
+        "i": 60,
+        "text": "cold",
+        "start_s": 21.68,
+        "end_s": 22.0
+      },
+      {
+        "i": 61,
+        "text": "hardware",
+        "start_s": 22.0,
+        "end_s": 22.46
+      },
+      {
+        "i": 62,
+        "text": "to",
+        "start_s": 22.46,
+        "end_s": 22.9
+      },
+      {
+        "i": 63,
+        "text": "a",
+        "start_s": 22.9,
+        "end_s": 23.2
+      },
+      {
+        "i": 64,
+        "text": "creative",
+        "start_s": 23.2,
+        "end_s": 23.46
+      },
+      {
+        "i": 65,
+        "text": "space",
+        "start_s": 23.46,
+        "end_s": 23.84
+      },
+      {
+        "i": 66,
+        "text": "that",
+        "start_s": 23.84,
+        "end_s": 24.48
+      },
+      {
+        "i": 67,
+        "text": "feeds",
+        "start_s": 24.48,
+        "end_s": 24.48
+      },
+      {
+        "i": 68,
+        "text": "fashion.",
+        "start_s": 24.48,
+        "end_s": 24.86
+      },
+      {
+        "i": 69,
+        "text": "In",
+        "start_s": 25.06,
+        "end_s": 25.58
+      },
+      {
+        "i": 70,
+        "text": "short,",
+        "start_s": 25.58,
+        "end_s": 25.8
+      },
+      {
+        "i": 71,
+        "text": "it's",
+        "start_s": 25.9,
+        "end_s": 26.16
+      },
+      {
+        "i": 72,
+        "text": "a",
+        "start_s": 26.16,
+        "end_s": 26.28
+      },
+      {
+        "i": 73,
+        "text": "real",
+        "start_s": 26.28,
+        "end_s": 26.5
+      },
+      {
+        "i": 74,
+        "text": "1",
+        "start_s": 26.5,
+        "end_s": 26.84
+      },
+      {
+        "i": 75,
+        "text": "plus",
+        "start_s": 26.84,
+        "end_s": 27.04
+      },
+      {
+        "i": 76,
+        "text": "1",
+        "start_s": 27.04,
+        "end_s": 27.38
+      },
+      {
+        "i": 77,
+        "text": "equals",
+        "start_s": 27.38,
+        "end_s": 27.7
+      },
+      {
+        "i": 78,
+        "text": "3",
+        "start_s": 27.7,
+        "end_s": 28.08
+      },
+      {
+        "i": 79,
+        "text": "story.",
+        "start_s": 28.08,
+        "end_s": 28.58
+      },
+      {
+        "i": 80,
+        "text": "So",
+        "start_s": 28.58,
+        "end_s": 29.32
+      },
+      {
+        "i": 81,
+        "text": "what",
+        "start_s": 29.32,
+        "end_s": 29.58
+      },
+      {
+        "i": 82,
+        "text": "did",
+        "start_s": 29.58,
+        "end_s": 29.72
+      },
+      {
+        "i": 83,
+        "text": "you",
+        "start_s": 29.72,
+        "end_s": 29.92
+      },
+      {
+        "i": 84,
+        "text": "think",
+        "start_s": 29.92,
+        "end_s": 30.12
+      },
+      {
+        "i": 85,
+        "text": "of",
+        "start_s": 30.12,
+        "end_s": 30.3
+      },
+      {
+        "i": 86,
+        "text": "this",
+        "start_s": 30.3,
+        "end_s": 30.48
+      },
+      {
+        "i": 87,
+        "text": "collaboration?",
+        "start_s": 30.48,
+        "end_s": 30.98
+      }
     ],
     "language": "en"
   },
@@ -111,11 +551,105 @@
     "source_json_path": [
       "words_source_time"
     ],
-    "source_slice": [0, 88],
+    "source_slice": [
+      0,
+      88
+    ],
     "language": "en",
     "case": "KRI-1176 Green 3 (TestFlight 1876, 2026-11-03): the creator's take IMG_7231.MOV, recorded words on the SOURCE timeline (88 words, language en). Words 44-53 ('So Lumo took its tech from cold hard... No, again.') are the abandoned take; word 54 starts the kept re-delivery. 'Okay, we're recording.' (0-2) is a slate line, not a restart, and must survive this detector. raw_text is the hand-authored expected answer; the fixture's job is to gate a later paid live run for precision.",
-    "must_cut": [44, 45, 46, 47, 48, 49, 50, 51, 52, 53],
-    "must_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87],
+    "must_cut": [
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53
+    ],
+    "must_keep": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87
+    ],
     "raw_text_origin": "hand_authored_expected_answer (NOT a live model capture)"
-  }
+  },
+  "prompt_sha": "9b4f2d27478f5e7e"
 }

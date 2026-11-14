@@ -127,5 +127,6 @@
     "source": "hand_authored_golden",
     "case": "reset: tilt null removes the angle and the backdrop",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

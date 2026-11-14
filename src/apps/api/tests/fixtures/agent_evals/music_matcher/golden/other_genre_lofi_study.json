@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "7f26c5ee9653e2ef",
   "input": {
     "clip_summaries": [
       {
@@ -33,7 +34,12 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "other",
-          "vibe_tags": ["mellow", "patient", "warm", "ambient"],
+          "vibe_tags": [
+            "mellow",
+            "patient",
+            "warm",
+            "ambient"
+          ],
           "energy": "low",
           "pacing": "medium",
           "mood": "study-with-me focus",
@@ -51,7 +57,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["patient", "warm", "intimate"],
+          "vibe_tags": [
+            "patient",
+            "warm",
+            "intimate"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "morning calm",
@@ -69,7 +79,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["mellow", "warm", "patient"],
+          "vibe_tags": [
+            "mellow",
+            "warm",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "bedroom-studio calm",
@@ -87,7 +101,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["ambient", "ethereal", "patient"],
+          "vibe_tags": [
+            "ambient",
+            "ethereal",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "atmospheric drift",
@@ -105,7 +123,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["glossy", "anthemic", "celebratory"],
+          "vibe_tags": [
+            "glossy",
+            "anthemic",
+            "celebratory"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "stage-show triumph",
@@ -118,60 +140,58 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_other_lofi_study\", \"score\": 9.2, \"rationale\": \"Study-with-me profile names this exact content — desk lamp writing, rain-on-window, slow hand motion; the warm tungsten grade matches and 6 slots fits 2 long-take clips with comfortable intercutting.\", \"predicted_strengths\": [\"warm tungsten grade matches the desk lamp lighting\", \"casual copy_tone reads naturally over the 'two more chapters' hook\", \"6 slots over 2 long clips supports detail intercutting without micro-cuts\"]}, {\"track_id\": \"track_hiphop_lofi\", \"score\": 8.6, \"rationale\": \"Lofi hip-hop is the textbook genre-mate for study b-roll; mellow vibe and warm tungsten grade align tightly, and the genre is distinct enough from 'other' to add real top-K variety.\", \"predicted_strengths\": [\"distinct genre from top pick — adds top-K variety\", \"same warm tungsten grade alignment\", \"mellow vibe lifts the rain-window clip\"]}, {\"track_id\": \"track_acoustic_intimate\", \"score\": 8.2, \"rationale\": \"Slow patient acoustic with the same warm tungsten grade is a real alternative variant — quieter than lofi hip-hop, more emotional than ambient electronic.\", \"predicted_strengths\": [\"warm tungsten grade aligns\", \"slow patient pacing supports 7-8s long-take clips\", \"casual copy_tone reads naturally over study content\"]}, {\"track_id\": \"track_electronic_ambient\", \"score\": 6.8, \"rationale\": \"Ambient electronic frames the same study content with a cool-blue atmospheric feel; viable but the grade fights the warm tungsten desk-lamp light.\", \"predicted_strengths\": [\"ambient vibe supports the rain-window clip\", \"medium pacing matches long-take clips\"]}, {\"track_id\": \"track_pop_anthem\", \"score\": 1.5, \"rationale\": \"Peaks_high stage-show pop over quiet study b-roll is the wrong energy band and the wrong tonal universe entirely.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_other_lofi_study\",\n      \"score\": 9.8,\n      \"rationale\": \"This track's profile directly matches the study b-roll, desk-lamp scenes, and rain-on-windows in the clips.\",\n      \"predicted_strengths\": [\n        \"perfect vibe match\",\n        \"ideal content profile\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_lofi\",\n      \"score\": 9.2,\n      \"rationale\": \"The mellow, warm, and patient vibe of this lofi hip-hop track complements the quiet study and rain scenes.\",\n      \"predicted_strengths\": [\n        \"strong vibe match\",\n        \"energy and pacing fit\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_ambient\",\n      \"score\": 8.5,\n      \"rationale\": \"Its ambient, ethereal mood with synth atmospherics is a great fit for the rain-on-window shot and dim interior.\",\n      \"predicted_strengths\": [\n        \"atmospheric match\",\n        \"good energy alignment\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_intimate\",\n      \"score\": 7.0,\n      \"rationale\": \"The warm, patient, and intimate vibe could work for the quiet study moments, but it's less specific than lofi options.\",\n      \"predicted_strengths\": [\n        \"calm and warm vibe\",\n        \"low energy match\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_anthem\",\n      \"score\": 1.0,\n      \"rationale\": \"The track's high energy, fast pacing, and celebratory mood completely contradict the mellow and quiet clip content.\",\n      \"predicted_strengths\": [\n        \"lyric-less audio\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_other_lofi_study",
-        "score": 9.2,
-        "rationale": "Study-with-me profile names this exact content — desk lamp writing, rain-on-window, slow hand motion; the warm tungsten grade matches and 6 slots fits 2 long-take clips with comfortable intercutting.",
+        "score": 9.8,
+        "rationale": "This track's profile directly matches the study b-roll, desk-lamp scenes, and rain-on-windows in the clips.",
         "predicted_strengths": [
-          "warm tungsten grade matches the desk lamp lighting",
-          "casual copy_tone reads naturally over the 'two more chapters' hook",
-          "6 slots over 2 long clips supports detail intercutting without micro-cuts"
+          "perfect vibe match",
+          "ideal content profile"
         ]
       },
       {
         "track_id": "track_hiphop_lofi",
-        "score": 8.6,
-        "rationale": "Lofi hip-hop is the textbook genre-mate for study b-roll; mellow vibe and warm tungsten grade align tightly, and the genre is distinct enough from 'other' to add real top-K variety.",
+        "score": 9.2,
+        "rationale": "The mellow, warm, and patient vibe of this lofi hip-hop track complements the quiet study and rain scenes.",
         "predicted_strengths": [
-          "distinct genre from top pick — adds top-K variety",
-          "same warm tungsten grade alignment",
-          "mellow vibe lifts the rain-window clip"
-        ]
-      },
-      {
-        "track_id": "track_acoustic_intimate",
-        "score": 8.2,
-        "rationale": "Slow patient acoustic with the same warm tungsten grade is a real alternative variant — quieter than lofi hip-hop, more emotional than ambient electronic.",
-        "predicted_strengths": [
-          "warm tungsten grade aligns",
-          "slow patient pacing supports 7-8s long-take clips",
-          "casual copy_tone reads naturally over study content"
+          "strong vibe match",
+          "energy and pacing fit"
         ]
       },
       {
         "track_id": "track_electronic_ambient",
-        "score": 6.8,
-        "rationale": "Ambient electronic frames the same study content with a cool-blue atmospheric feel; viable but the grade fights the warm tungsten desk-lamp light.",
+        "score": 8.5,
+        "rationale": "Its ambient, ethereal mood with synth atmospherics is a great fit for the rain-on-window shot and dim interior.",
         "predicted_strengths": [
-          "ambient vibe supports the rain-window clip",
-          "medium pacing matches long-take clips"
+          "atmospheric match",
+          "good energy alignment"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_intimate",
+        "score": 7.0,
+        "rationale": "The warm, patient, and intimate vibe could work for the quiet study moments, but it's less specific than lofi options.",
+        "predicted_strengths": [
+          "calm and warm vibe",
+          "low energy match"
         ]
       },
       {
         "track_id": "track_pop_anthem",
-        "score": 1.5,
-        "rationale": "Peaks_high stage-show pop over quiet study b-roll is the wrong energy band and the wrong tonal universe entirely.",
+        "score": 1.0,
+        "rationale": "The track's high energy, fast pacing, and celebratory mood completely contradict the mellow and quiet clip content.",
         "predicted_strengths": [
-          "no real fit"
+          "lyric-less audio"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "other genre — lofi study b-roll, N=2 clips, 'other' genre tops"
+    "source": "provider_smoke_capture",
+    "case": "other genre — lofi study b-roll, N=2 clips, 'other' genre tops",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

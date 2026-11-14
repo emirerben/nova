@@ -314,5 +314,6 @@
     ],
     "forbids_insert_clips": true,
     "cutaway_before_insert": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

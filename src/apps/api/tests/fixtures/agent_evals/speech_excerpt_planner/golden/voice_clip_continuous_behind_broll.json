@@ -124,5 +124,6 @@
     "source": "hand_authored_golden",
     "case": "Prod job fecf9337: strategy-designated voice clip, 30s target, voice continuous behind b-roll (was a 7.6s two-quote plan from the wrong clip).",
     "expect": "excerpts"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

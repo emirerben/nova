@@ -35,13 +35,20 @@
     "expect_intents": [
       {
         "op": "label",
-        "source_quote_keywords": ["label", "sport"]
+        "source_quote_keywords": [
+          "label",
+          "sport"
+        ]
       },
       {
         "op": "group",
-        "source_quote_keywords": ["group", "pub"]
+        "source_quote_keywords": [
+          "group",
+          "pub"
+        ]
       }
     ],
     "expect_any": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

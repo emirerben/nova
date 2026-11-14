@@ -267,5 +267,6 @@
     "contract": "Contract (v45): same request, no capture times => order{capture_time} only, no invented timing; the gate asks order_basis.",
     "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
     "test_run_id": "kri470-v45-rerecord-20261007"
-  }
+  },
+  "prompt_sha": "unpinned"
 }
