@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.207.0] - 2026-11-14
+
+### Changed
+- KRI-1381: derive persona, plan and six more prompt versions from their source files (#2306) <!-- release-pr: 2306 -->
+
 ## [0.88.206.0] - 2026-11-14
 
 ### Changed
