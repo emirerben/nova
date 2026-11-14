@@ -345,11 +345,47 @@ def _labels_video_text(language: str, detected: str, message: str | None) -> boo
     return _text_language(own[colon + 1 :])[0] == detected
 
 
+# An `ask_user` reason code naming the words for the video ("lyrics_text_needed",
+# "missing_caption_words"), not how they look ("text_position", "caption_style").
+_VIDEO_WORDS_REASON = frozenset(
+    "lyric lyrics line lines word words wording text texts caption captions title subtitle "
+    "subtitles quote".split()
+)
+_VIDEO_LOOK_REASON = frozenset(
+    "position placement place where font color colour style size timing time when length "
+    "duration language animation corner".split()
+)
+# Tag on an assistant event (copied from the turn plan) for a typed "paste the lyrics" ask.
+VIDEO_TEXT_ASK_KEY = "asks_video_text"
+
+
+def asks_for_video_words(reason_code: str | None) -> bool:
+    """True when an ``ask_user`` reason code asks the creator for words to put on the video."""
+    tokens = set(re.findall(r"[a-z]+", (reason_code or "").lower()))
+    return bool(tokens & _VIDEO_WORDS_REASON) and not tokens & _VIDEO_LOOK_REASON
+
+
+def _open_video_text_ask(events: list[Any]) -> bool:
+    """The newest assistant reply is a tagged typed ask and nobody has answered it yet."""
+    from app.services.choice_questions import EVENT_TYPE_KEY  # noqa: PLC0415
+
+    open_ask = False
+    for role, payload in events:
+        if not isinstance(payload, Mapping):
+            continue
+        if role == "user":
+            open_ask = False
+        elif role == "assistant" and payload.get(EVENT_TYPE_KEY) == "assistant_response":
+            open_ask = payload.get(VIDEO_TEXT_ASK_KEY) is True
+    return open_ask
+
+
 def asks_for_video_text(events: Any) -> bool:
     """True when the open question asks the creator to type words for the video (KRI-1363).
 
     ``events`` are ``(role, payload)`` in order, as `choice_questions.tag_event` builds them.
-    A title's words typed as the answer are the video's language, not the chat's.
+    A title's words, or the lyrics pasted after "Could you paste the lines?", typed as the
+    answer are the video's language, not the chat's.
     """
     if not own_words_enabled():
         return False
@@ -363,9 +399,61 @@ def asks_for_video_text(events: Any) -> bool:
 
     events = list(events)
     question = latest_open_choice_question(events)
-    if question is not None and question.get("conflict") == CONFLICT_TITLE_TEXT:
+    if question is not None:
+        conflict = str(question.get("conflict") or "")
+        if conflict == CONFLICT_TITLE_TEXT or (
+            conflict.startswith("ask_user:") and asks_for_video_words(conflict[9:])
+        ):
+            return True
+    if _open_video_text_ask(events):
         return True
     return latest_open_creative_question(events) is not None
+
+
+# Language the chat had before its latest switch, kept beside ``STATE_KEY``.
+EARLIER_STATE_KEY = "reply_language_before"
+# Share of a message's words the video's text must hold for the message to count as that text.
+_VIDEO_TEXT_COVERAGE = 0.8
+
+
+def earlier_reply_language(thread: Any) -> str | None:
+    """The chat's language before its latest switch, or None."""
+    state = getattr(thread, "state", None)
+    stored = state.get(EARLIER_STATE_KEY) if isinstance(state, Mapping) else None
+    return stored if stored in _supported() else None
+
+
+def short_reply_in(message: str | None, language: str | None) -> bool:
+    """True for a clear reply in ``language`` too short to switch a chat ("Do it", "Yes")."""
+    if language is None or not own_words_enabled():
+        return False
+    detected, strength = _detect(message)
+    return detected == language and strength < _SWITCH_STRENGTH
+
+
+def switched_language(message: str | None, language: str) -> bool:
+    """True when ``message`` reads clearly enough as ``language`` to have switched a chat."""
+    detected, strength = _detect(message)
+    return detected == language and strength >= _SWITCH_STRENGTH
+
+
+def is_video_text(message: str | None, texts: Any) -> bool:
+    """True when the video's ``texts`` hold (nearly) every word of ``message``.
+
+    A switch made by words the creator pasted for the video ("Could you paste the lines?" then
+    the lyrics with no label) was never the creator changing language.
+    """
+    words = [loose_text(word) for word in _WORD.findall(_own_words(message or ""))]
+    if len(words) < _SWITCH_STRENGTH:
+        return False
+    held: set[str] = set()
+    for text in texts:
+        if isinstance(text, str):
+            held.update(
+                loose_text(word) for word in _WORD.findall(unicodedata.normalize("NFC", text))
+            )
+    found = sum(1 for word in words if word in held)
+    return found / len(words) >= _VIDEO_TEXT_COVERAGE
 
 
 def resolve_reply_language(
@@ -477,15 +565,24 @@ def thread_reply_language(thread: Any) -> str | None:
     return stored if stored in _supported() else None
 
 
-def remember_reply_language(thread: Any, language: str | None) -> None:
-    """Store the chat's language on the locked thread row; a no-op when unchanged."""
+def remember_reply_language(thread: Any, language: str | None, *, restored: bool = False) -> None:
+    """Store the chat's language on the locked thread row; a no-op when unchanged.
+
+    A switch also keeps the language it left (``EARLIER_STATE_KEY``); ``restored`` (going back
+    to it) forgets it, so a later short reply cannot flip the chat again.
+    """
     if language not in _supported() or not enabled():
         return
     state = getattr(thread, "state", None)
     current = dict(state) if isinstance(state, Mapping) else {}
-    if current.get(STATE_KEY) == language:
+    before = current.get(STATE_KEY)
+    if before == language:
         return
     current[STATE_KEY] = language
+    if restored or before not in _supported():
+        current.pop(EARLIER_STATE_KEY, None)
+    else:
+        current[EARLIER_STATE_KEY] = before
     thread.state = current
 
 
