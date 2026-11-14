@@ -240,8 +240,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("make_split_full_screen",),
         fields=("section_id", "at_s", "side", "panel"),
     ),
-    # KRI-1421: blank blocks are a person's action first. PR 2327 owns the split ops; until one places
-    # a blank (`add_split_panel_clip` with `blank: true`), the agent cannot.
+    # KRI-1421: blank blocks are a person's action first. PR 2327 owns the split ops; until one
+    # places a blank (`add_split_panel_clip` with `blank: true`), the agent cannot.
     "split_screen_blank": _g(
         "agent_unsupported",
         "fillSplitPanelWithBlank setSelectedBlankColor",
