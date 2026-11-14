@@ -31,6 +31,7 @@ from app.agents._schemas.text_element import (
 from app.config import settings
 from app.kria.clip_tilt import ClipTilt
 from app.kria.editor_head import payload_current
+from app.kria.split_screen import is_blank_row
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
@@ -2124,7 +2125,7 @@ def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
                 **{
                     key: value for key, value in row.items() if key in TimelineSlotEdit.model_fields
                 },
-                "clip_index": int(row["clip_index"]),
+                "clip_index": None if is_blank_row(row) else int(row["clip_index"]),
                 "in_s": float(row.get("in_s") or 0),
                 "transition_after": row.get("transition_after") or "cut",
                 "look_preset": row.get("look_preset") or "none",
@@ -3293,7 +3294,11 @@ def _op_add_unused_sources(state: _DraftState, op: dict[str, Any]) -> None:
     selector = op.get("selector") or {}
     wanted = str(selector.get("media_kind") or "all")
     paths = list((state.job.all_candidates or {}).get("clip_paths") or [])
-    used = {int(row.get("clip_index")) for row in state.slots if not row.get("removed")}
+    used = {
+        int(row["clip_index"])
+        for row in state.slots
+        if not row.get("removed") and row.get("clip_index") is not None
+    }
     durations = {
         int(row["clip_index"]): float(row["duration_s"])
         for row in _source_pool_rows(state.job, state.variant)

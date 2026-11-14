@@ -1,4 +1,4 @@
-"""KRI-1421: a blank block fills a split panel with one flat colour (protocol 51, `splitBlankPanel`).
+"""KRI-1421: a blank block fills a split panel with a flat colour (protocol 51).
 
 Ways this can fail, and the test that catches each:
 * a blank placed outside a split panel, with a `clip_index`, with a bad colour, or overlapping a
@@ -31,7 +31,8 @@ from app.services.client_protocol import (
 
 FIXTURE = (
     Path(__file__).parents[3]
-    / "ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/Fixtures/split-screen-blank-recipe.json"
+    / "ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests"
+    / "Fixtures/split-screen-blank-recipe.json"
 )
 
 
@@ -149,7 +150,7 @@ def edit(**fields):
 
 
 def test_a_blank_slot_is_valid_without_a_clip_index_and_uppercases_its_colour():
-    slot = edit(**{k: v for k, v in blank(1).items() if k != "slot_id"}, color="#ff00aa")
+    slot = edit(**{**blank(1, color="#ff00aa"), "slot_id": None})
     assert slot.clip_index is None
     assert slot.color == "#FF00AA"
     assert slot.model_dump(mode="json", exclude_none=True)["media_kind"] == "blank"
@@ -169,7 +170,6 @@ def test_a_blank_slot_is_valid_without_a_clip_index_and_uppercases_its_colour():
         {**blank(1), "transition_after": "crossfade"},
         {"in_s": 0, "duration_s": 2},
         {"media_kind": "video", "in_s": 0, "duration_s": 2},
-        {"color": "#FF0000", "clip_index": 0, "in_s": 0, "duration_s": 2},
     ],
     ids=[
         "clip-index",
@@ -182,13 +182,19 @@ def test_a_blank_slot_is_valid_without_a_clip_index_and_uppercases_its_colour():
         "source-audio",
         "transition",
         "no-source-no-kind",
-        "unknown-kind",
-        "colour-on-a-clip",
+        "video-with-no-source",
     ],
 )
 def test_slot_schema_refuses_the_wrong_shape(fields):
     with pytest.raises(ValidationError):
         edit(**{k: v for k, v in fields.items() if k != "slot_id"})
+
+
+def test_a_source_slot_keeps_its_old_shape_whatever_kind_or_colour_it_carries():
+    slot = edit(clip_index=0, in_s=1, duration_s=2, media_kind="image", color="red")
+    dumped = slot.model_dump(mode="json")
+    assert "media_kind" not in dumped and "color" not in dumped
+    assert dumped["clip_index"] == 0
 
 
 def authored(monkeypatch, *tokens):
@@ -477,3 +483,69 @@ def test_a_recipe_blank_must_sit_inside_its_section_and_panel():
         wire["split_screen_sections"][0]["blanks"][0].update(change)
         with pytest.raises(ValidationError):
             EditRecipeV2.model_validate(wire)
+
+
+def test_an_unrelated_chat_edit_keeps_a_blank_the_ai_cannot_place_itself(monkeypatch):
+    """PR 2327 owns the split ops; an edit over a timeline that holds a blank must not drop it."""
+    from copy import deepcopy
+
+    from app.agents.edit_copilot import _ParseState, parse_editor_operation
+    from app.services import kria_editor_ops as editor
+    from app.services.client_protocol import bind_sending_build, unbind_sending_build
+    from tests.services.test_kria_editor_ops import _job, _variant
+
+    variant = _variant()
+    variant["render_destination"] = "device"
+    variant["editor_timeline_mode"] = "authored"
+    variant["user_timeline"] = deepcopy(variant.pop("ai_timeline"))
+    monkeypatch.setattr(
+        editor, "_editor_capabilities", lambda *args: {"timeline": True, "clips": {}}
+    )
+    monkeypatch.setattr(editor, "split_screen_available", lambda *args: True)
+    verified(monkeypatch, "splitScreen", "splitBlankPanel")
+    token = bind_sending_build(51)
+    try:
+        job = _job(variant)
+        snapshot = editor.build_editor_snapshot(job, variant)
+        snapshot["editor_ops_version"] = 2
+        parsed = parse_editor_operation(
+            {"op": "create_split_screen", "slot_indexes": [0, 1], "panel_count": 3},
+            snapshot,
+            _ParseState(0.99),
+        )
+        draft = editor.compile_editor_ops(job, variant, [parsed])
+        payload = draft.payload.model_dump(mode="json", exclude_none=True)
+        section_id = payload["split_screen_sections"][0]["id"]
+        variant = editor.project_editor_draft(variant, payload, job)
+        slots = variant["user_timeline"]["slots"]
+        stored = variant["user_timeline"]["split_screen_sections"][0]
+        stored["duration_s"] += 1
+        slots.append(
+            {
+                "slot_id": "blank-1",
+                "media_kind": "blank",
+                "color": "#112233",
+                "in_s": 0,
+                "duration_s": 1,
+                "removed": False,
+                "transition_after": "cut",
+                "split_section_id": section_id,
+                "split_panel_index": 0,
+                "split_offset_s": stored["duration_s"] - 1,
+            }
+        )
+        job = _job(variant)
+        snapshot = editor.build_editor_snapshot(job, variant)
+        snapshot["editor_ops_version"] = 2
+        parsed = parse_editor_operation(
+            {"op": "update_split_screen", "section_id": section_id, "gutter": 0.02},
+            snapshot,
+            _ParseState(0.99),
+        )
+        assert parsed is not None
+        draft = editor.compile_editor_ops(job, variant, [parsed])
+        kept = draft.payload.model_dump(mode="json", exclude_none=True)["timeline_slots"]
+        blanks = [row for row in kept if row.get("media_kind") == "blank"]
+        assert [(row["color"], row.get("clip_index")) for row in blanks] == [("#112233", None)]
+    finally:
+        unbind_sending_build(token)
