@@ -6,7 +6,7 @@ import copy
 import math
 from dataclasses import dataclass
 
-from app.schemas.editor_window import below_editor_minimum
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
 from app.services.editor_limits import (
     EDITOR_MIN_CLIP_S,
     FRAME_S,
@@ -64,7 +64,11 @@ def slice_source_window(row: dict, start: float, end: float) -> dict:
             raise ValueError("The held frame needs a positive source sample endpoint")
         source_start, source_end, rate = max(0.0, frame - FRAME_S), frame, 1.0
         hold = end - start - (source_end - source_start)
-    result.update(in_s=source_start, duration_s=end - start, duration_beats=None)
+    result.update(
+        in_s=source_start,
+        duration_s=snap_to_editor_minimum(end - start),
+        duration_beats=None,
+    )
     if "source_end_s" in row or clock.hold:
         result["source_end_s"] = source_end
     if "playback_rate" in row or clock.hold:
@@ -102,6 +106,7 @@ def resize_source_window(row: dict, duration: float) -> dict:
         duration = min(duration, (float(row["source_duration_s"]) - clock.start) / clock.rate)
     if below_editor_minimum(duration):
         raise ValueError("There is not enough source footage")
+    duration = snap_to_editor_minimum(duration)
     if duration <= current:
         return slice_source_window(row, 0, duration)
     result = copy.deepcopy(row)
@@ -114,6 +119,7 @@ def resize_source_window(row: dict, duration: float) -> dict:
         duration = min(duration, (float(row["source_duration_s"]) - clock.start) / clock.rate)
     if below_editor_minimum(duration):
         raise ValueError("There is not enough source footage")
+    duration = snap_to_editor_minimum(duration)
     result.update(duration_s=duration, duration_beats=None)
     if "source_end_s" in row:
         result["source_end_s"] = clock.start + duration * clock.rate

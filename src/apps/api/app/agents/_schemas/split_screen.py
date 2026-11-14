@@ -10,7 +10,7 @@ class SplitPanelClip(BaseModel):
 
     media_id: str = Field(min_length=1, max_length=160)
     source_start_s: float | None = Field(default=None, ge=0, le=36000)
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
 
 
 class SplitPanelSource(BaseModel):
