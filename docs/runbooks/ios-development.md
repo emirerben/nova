@@ -117,14 +117,29 @@ The script stops, rather than leave a gate behind, when:
 - the feature's constant is already on `origin/main`. Shipped builds depend on that
   number; add a new constant for the new gate (`--force` only for one that has not
   shipped).
+- a config field it would move (named, or picked up by the `<feature>_min_client_protocol`
+  / `<feature>_client_protocol` rule) is already on `origin/main`. A feature name that
+  collides with a shipped gate such as `caption-animation` or `kria-minimum` would
+  otherwise lock older builds out; add a new field instead. Every field it does move is
+  printed with its old and new value.
+
+When two features took the same number, the one that rebases second just re-runs the
+same command: a field whose `<name>_PROTOCOL` constant belongs to the other feature is
+left alone.
 
 Tests compare against `KriaClientProtocolContract.version` or the constant, never a
 literal. `scripts/bump-protocol.py --check` (run by
-`tests/test_client_protocol_single_source.py`) fails on the current number in the
-`Client-Protocol` header forms, `set_client_protocol(N)`, `.default == N`,
-`minimum_client_protocol: N`, `(N, True)` parametrize rows, `XCTAssertEqual` against
-`KriaClientProtocolContract.version` and `appProtocol: N`. A floor such as
-`XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, N, ...)` is allowed.
+`tests/test_client_protocol_single_source.py`) fails when, on a test line that mentions
+"protocol", the current number sits in a code position (after `=`, `==`, `:`, `(`, `,`,
+`[` or inside quotes), so `assert X_PROTOCOL == N`, `client_protocol=N`, `"Client-Protocol": "N"`,
+`str(N)` and `KriaClientProtocolContract.version == N` all fail. It also flags
+`set_client_protocol(N)`, `.default == N`, `requires_protocol: N`, `(N, True)` parametrize
+rows and `appProtocol: N`. It fails too when a `config.py` gate or server constant is above
+the app's version. A floor such as `XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, N, ...)`
+is allowed, and `protocol-literal-ok` on a line marks a fixture number that is not the
+app's. Limit: a number on a line that never mentions "protocol" (for example an argument
+to a gate helper like `planned_for(47)`) is not seen, because every `50` in the suite would
+otherwise match; reference the constant there.
 The guard reads tests only: app code that gates on a number must read the
 `client_protocol.py` constant (server) or the contract (iOS), as a literal there keeps
 its old value after a re-bump. The per-version doc comment above `static let version`
