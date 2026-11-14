@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.231.0] - 2026-11-14
+
+### Changed
+- refactor(editor): one source for clip, rate, fps and text-piece limits (KRI-1377) (#2313) <!-- release-pr: 2313 -->
+
 ## [0.88.230.0] - 2026-11-14
 
 ### Fixed
