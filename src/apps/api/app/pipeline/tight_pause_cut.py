@@ -42,6 +42,7 @@ from app.pipeline.silence_cut import (
 from app.pipeline.speech_voice_guard import (
     FLOOR_PERCENTILE,
     FRAME_S,
+    MIN_ABOVE_FLOOR_DB,
     SAMPLE_RATE,
     _field,
     _merge,
@@ -582,21 +583,42 @@ def tighten_pauses(
     guard_dropped = guard_trimmed = 0
     new: list[Removal] = []
     if candidates:
-        probe = CutPlan(
-            keep_segments=_complement(candidates, duration_s),
-            removed=list(candidates),
-            time_saved_s=sum(r.end_s - r.start_s for r in candidates),
-        )
-        guarded, g_report = guard_audible_speech(
-            probe,
-            samples,
-            exempt=(),
-            sr=sr,
-            min_cut_s=min_cut_s,
-            min_floor_db=TIGHT_MIN_FLOOR_DBFS,
-        )
-        guard_dropped, guard_trimmed = g_report["dropped_total"], g_report["trimmed_total"]
-        new = sorted(guarded.removed, key=lambda r: r.start_s)
+        # KRI-1409: a join-edge cut (before the first kept word / after the last) is outside the
+        # talk, so a voice there must be as loud as the sound the cutter itself protects: a
+        # room hum a few dB over the floor no longer holds a join open. Pauses between words
+        # keep today's guard.
+        talk_lo, talk_hi = kept[0][0], max(w[1] for w in kept)
+        edge = [
+            r
+            for r in candidates
+            if (trim_head and r.end_s <= talk_lo + _EPS)
+            or (trim_tail and r.start_s >= talk_hi - _EPS)
+        ]
+        inner = [r for r in candidates if r not in edge]
+        for group, above_floor_db in (
+            (inner, MIN_ABOVE_FLOOR_DB),
+            (edge, TIGHT_QUIET_ABOVE_FLOOR_DB),
+        ):
+            if not group:
+                continue
+            probe = CutPlan(
+                keep_segments=_complement(group, duration_s),
+                removed=list(group),
+                time_saved_s=sum(r.end_s - r.start_s for r in group),
+            )
+            guarded, g_report = guard_audible_speech(
+                probe,
+                samples,
+                exempt=(),
+                sr=sr,
+                min_cut_s=min_cut_s,
+                min_floor_db=TIGHT_MIN_FLOOR_DBFS,
+                min_above_floor_db=above_floor_db,
+            )
+            guard_dropped += g_report["dropped_total"]
+            guard_trimmed += g_report["trimmed_total"]
+            new.extend(guarded.removed)
+        new.sort(key=lambda r: r.start_s)
 
     consented = list(plan.removed)
     new = _enforce_fragments(consented, new, kept, normalized, duration_s)
