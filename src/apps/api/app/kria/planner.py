@@ -1288,7 +1288,7 @@ def _pins_without_caption_repeats(
     """
 
     def words(text: str) -> tuple[str, ...]:
-        return tuple(re.findall(r"\w+", _pin_key(text)))
+        return tuple("".join(c if c.isalnum() else " " for c in _pin_key(text)).split())
 
     captions = {
         words(intent.creator_text)
