@@ -60,6 +60,16 @@ Added with the fourth verifier's findings, before the fix:
  26. a caption fault on a Voiceover edit refuses the whole video although captions are a
      preference, or the captions go silently, or their receipt still names a caption language;
  27. a caption fault drops the beat cards and sound effects too, then refuses anyway.
+
+Added with the fifth verifier's findings, before the fix:
+ 28. a confirmed text the contract does not pin in time (role "any") with no clear spot at
+     any readable size still asks the creator to choose, although it fits later on the
+     timeline (prod 22d2bf99 and ff749bf5);
+ 29. the move touches a text the contract pins in time (an opening text leaves 0 s), a text
+     that fit at its time (at its size or smaller), its words or its length, or runs it past
+     the end of the video;
+ 30. the move is silent: no note, an English note in a Turkish chat, or no recovery naming
+     the row.
 """
 
 from __future__ import annotations
@@ -380,6 +390,100 @@ def test_a_size_the_creator_chose_never_shrinks():
 
     with pytest.raises(CreatorRenderContractError) as refused:
         phone_plan_repair._place_added_contract_text(plan, element)
+    assert refused.value.decline_reason == "needs_choice"
+
+
+# Twelve rows over the first 3 s of a 6 s edit: no readable size of a confirmed text fits there.
+WALL = [
+    row.model_copy(update={"id": f"wall-{index}", "y_frac": round(0.08 + 0.075 * index, 3)})
+    for index, row in enumerate([CROWD[0]] * 12)
+]
+LATER_CROWD = [row.model_copy(update={"start_s": 3.0, "end_s": 6.0}) for row in CROWD]
+
+
+def _walled(role: str, *later):
+    plan, bindings = fixture()
+    clip = plan.story_timeline[0].model_copy(
+        update={"source_end_s": 8, "output_end_s": 6, "duration_s": 6}
+    )
+    beat = plan.beat_windows[0].model_copy(
+        update={"approved_duration_s": 6, "resolved_duration_s": 6, "end_s": 6}
+    )
+    plan = plan.model_copy(
+        update={
+            "story_timeline": [clip],
+            "beat_windows": [beat],
+            "approved_duration_s": 6,
+            "resolved_duration_s": 6,
+            "text_elements": [*WALL, *later],
+        }
+    )
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role=role, text=LONG),)
+    )
+    return plan, bindings, contract
+
+
+@pytest.mark.usefixtures("_verified")
+@pytest.mark.parametrize(
+    "language,later,note",
+    [
+        (None, (), f"Showed your text “{LONG}” later so it fits clearly next to the other text"),
+        (
+            "tr",
+            (),
+            f"“{LONG}” yazını diğer yazıların yanına net sığsın diye daha sonra gösterdim",
+        ),
+        (
+            None,
+            LATER_CROWD,
+            f"Showed your text “{LONG}” later and smaller so it fits clearly next to the other "
+            "text",
+        ),
+    ],
+)
+def test_a_confirmed_text_with_no_room_at_any_size_shows_later_instead_of_asking(
+    language, later, note
+):
+    """Failure modes 28 to 30: prod 22d2bf99's English text had no spot at 0 s at any size."""
+    plan, bindings, contract = _walled("any", *later)
+
+    with reply_language_for(language):
+        result = compile_phone_guided_repaired(plan, bindings, contract=contract)
+
+    [added] = [e for e in result.plan.text_elements if e.text == LONG]
+    assert (added.start_s, added.end_s) == (3.0, 3.0 + phone_plan_repair._TITLE_HOLD_S)
+    assert (added.size_px < 64) is bool(later)
+    assert result.notes[1:] == [note]
+    actions = [(r.reason, r.lane, r.item_id, r.action) for r in result.recoveries]
+    assert actions == [
+        ("contract_text_fit", "text", added.id, "moved"),
+        *([("contract_text_fit", "text", added.id, "shrunk")] if later else []),
+    ]
+    assert [e for e in result.plan.text_elements if e.text != LONG] == plan.text_elements
+    verify_phone_recipe(contract, result.recipe, source_audio={"source": True})
+
+
+@pytest.mark.usefixtures("_verified")
+def test_without_the_move_the_walled_text_asks_for_a_choice(monkeypatch):
+    """Failure mode 8 for the move: the wall really leaves no room at 0 s at any size."""
+    plan, bindings, contract = _walled("any")
+    monkeypatch.setattr(phone_plan_repair, "_later_starts", lambda _plan, _element: [])
+
+    with pytest.raises(CreatorRenderContractError) as refused:
+        compile_phone_guided_repaired(plan, bindings, contract=contract)
+
+    assert refused.value.decline_reason == "needs_choice"
+
+
+@pytest.mark.usefixtures("_verified")
+def test_an_opening_text_never_moves_off_the_start():
+    """Failure mode 29: the contract pins an opening text to 0 s, so it still asks."""
+    plan, bindings, contract = _walled("opening")
+
+    with pytest.raises(CreatorRenderContractError) as refused:
+        compile_phone_guided_repaired(plan, bindings, contract=contract)
+
     assert refused.value.decline_reason == "needs_choice"
 
 
