@@ -194,18 +194,20 @@ def degrade_notes(recoveries: Sequence[Recovery]) -> list[str]:
     """One note per kind of change, in the bound chat language.
 
     A row degraded twice (a zoom, then a look) is one row that lost both; rows that lost the
-    same parts share a line, so a look every clip carried is one note, not one per clip.
+    same parts share a line, so a look every clip carried is one note, not one per clip. A row
+    is its item, so two texts with the same words are two rows.
     """
-    lost_by_row: dict[tuple[str | None, int | None, str | None], tuple[str, ...]] = {}
+    rows_lost: dict[tuple[str | None, str | None], tuple[Recovery, tuple[str, ...]]] = {}
     for recovery in recoveries:
         if recovery.action != "dropped":
             continue
-        row = (recovery.subject, recovery.number, recovery.label)
-        lost = {*lost_by_row.get(row, ()), *recovery.lost}
-        lost_by_row[row] = tuple(part for part in _LOST.values() if part in lost)
+        row = (recovery.subject, recovery.item_id)
+        first, lost = rows_lost.get(row, (recovery, ()))
+        merged = {*lost, *recovery.lost}
+        rows_lost[row] = (first, tuple(part for part in _LOST.values() if part in merged))
     groups: dict[tuple[str | None, tuple[str, ...]], list[tuple[int | None, str | None]]] = {}
-    for (subject, number, label), lost in lost_by_row.items():
-        groups.setdefault((subject, lost), []).append((number, label))
+    for (subject, _item_id), (first, lost) in rows_lost.items():
+        groups.setdefault((subject, lost), []).append((first.number, first.label))
     notes = []
     for (subject, lost), rows in groups.items():
         if subject == "ending":
@@ -309,6 +311,13 @@ def shrunk_on_screen_note(text: str) -> str:
         en="Made your text {text} smaller so it fits clearly on screen",
         tr="{text} yazını ekrana net sığsın diye küçülttüm",
         text=_quoted(text),
+    )
+
+
+def captions_dropped_note() -> str:
+    return say(
+        en="Left out the captions: your iPhone can't draw them yet",
+        tr="Altyazıları çıkardım: iPhone'un onları henüz çizemiyor",
     )
 
 

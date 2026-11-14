@@ -4747,7 +4747,7 @@ def _phone_pin_contract(snapshot: dict, variant_id: str = "guided_story") -> Any
 def _phone_repair_notes(
     snapshot: dict, contract: Any, duration_s: float, notes: list[str]
 ) -> list[str]:
-    """Every "What Kria changed" line for a phone plan, recorded in the job's trace.
+    """Every "What Kria changed" line for a phone plan; the worker traces them once pinned.
 
     ``notes`` are the compile repairs; the planner's own (``unified_montage.repair_notes``:
     asks the approved draft could not meet, KRI-129) and a confirmed length the footage
@@ -4756,7 +4756,6 @@ def _phone_repair_notes(
     """
     from app.services.creator_render_contract import creator_length_note  # noqa: PLC0415
     from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
-    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     planned = (snapshot.get("unified_montage") or {}).get("repair_notes") or []
     merged = [note for note in planned if isinstance(note, str) and note]
@@ -4769,12 +4768,6 @@ def _phone_repair_notes(
         length_note = creator_length_note(contract, duration_s, length_policy=policy)
         if length_note is not None and length_note not in merged:
             merged.append(length_note)
-    if merged:
-        record_pipeline_event(
-            "phone_plan",
-            "phone_plan_repaired",
-            {"generation_id": snapshot.get("creator_generation_id"), "notes": merged},
-        )
     return merged
 
 
@@ -5254,8 +5247,6 @@ def _run_phone_guided_job(
             toggle_receipt = toggle_record(toggle_lane, candidate, recipe, bindings)
             break
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
-    # Only the compile this render keeps: a refused candidate or the pre-card compile is not.
-    record_recoveries(compiled.recoveries)
     repair_notes = _phone_repair_notes(
         (
             stage_contract_revision(
@@ -5431,6 +5422,17 @@ def _run_phone_guided_job(
         job.failure_reason = None
         db.commit()
 
+    # Only the compile this render pinned (never a refused candidate or the pre-card compile),
+    # and never under the job's row lock.
+    if repair_notes:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "phone_plan",
+            "phone_plan_repaired",
+            {"generation_id": generation, "notes": repair_notes},
+        )
+    record_recoveries(compiled.recoveries)
     # The look chip names the face the typography step really picked (not the plan default).
     _emit_burned_look_block(job_id, raw_plan)
     # KRI-448: the pinned plan's blocks went out above with `post_caption` deciding; the
@@ -16958,7 +16960,16 @@ def _run_phone_narrated_job(
         narrated_title_entrance,
         narrated_title_text_elements,
     )
-    from app.pipeline.phone_subtitled_lanes import SubtitledLaneError, drop_lane  # noqa: PLC0415
+    from app.pipeline.phone_plan_degrade import (  # noqa: PLC0415
+        Recovery,
+        captions_dropped_note,
+        record_recoveries,
+    )
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        SubtitledLaneError,
+        drop_lane,
+        lane_names,
+    )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
@@ -16988,8 +16999,8 @@ def _run_phone_narrated_job(
     generation = snapshot.get("creator_generation_id")
     # "What Kria changed" lines for asks the approved edit could not meet (KRI-129).
     narrated_repair_notes: list[str] = []
-    # Word-timed texts shrunk to find a clear spot; recorded once the recipe is kept.
-    spoken_recoveries: list = []
+    # Word-timed texts shrunk to find a clear spot, captions left out; recorded once pinned.
+    phone_recoveries: list = []
     if not isinstance(generation, str) or not generation:
         raise ValueError("Phone rendering requires an immutable approved generation")
     bindings = tuple(
@@ -17645,7 +17656,6 @@ def _run_phone_narrated_job(
                         )
                     record_pipeline_event("narrated", "spoken_text", spoken_receipt)
                     from app.pipeline.phone_plan_degrade import (  # noqa: PLC0415
-                        Recovery,
                         shrunk_on_screen_note,
                     )
 
@@ -17659,7 +17669,7 @@ def _run_phone_narrated_job(
                         narrated_repair_notes.extend(
                             shrunk_on_screen_note(shown_text[row["element_id"]]) for row in shrunk
                         )
-                    spoken_recoveries = [
+                    phone_recoveries = [
                         Recovery(
                             reason="spoken_text_fit",
                             lane="spoken_text",
@@ -17742,6 +17752,36 @@ def _run_phone_narrated_job(
                     )
                     break
                 except ValueError as exc:
+                    if (
+                        isinstance(exc, UnsupportedPhonePlan)
+                        and exc.reason == "captions_compile"
+                        and cues
+                    ):
+                        # KRI-1376: the caption style is a preference the contract does not pin,
+                        # so captions the phone cannot draw are left out and the creator told.
+                        log.warning(
+                            "phone_narrated.captions_dropped", job_id=job_id, error=str(exc)
+                        )
+                        cues = None
+                        phone_recoveries.append(
+                            Recovery(
+                                reason="captions_compile",
+                                lane="captions",
+                                item_id=None,
+                                action="dropped",
+                            )
+                        )
+                        narrated_record["caption_language"] = None
+                        narrated_record["spoken_language"] = None
+                        with _worker_reply_language(snapshot):
+                            narrated_repair_notes.append(captions_dropped_note())
+                            # The receipts read the record's caption language: stamp them again.
+                            _narrated_alignment_receipts(
+                                narrated_record,
+                                narrated_brief,
+                                bound=bool(snapshot.get("creator_brief_binding")),
+                            )
+                        continue
                     # An ask for one clip's own sound never costs the creator their video: the
                     # compile that refused it is retried without the tail, then without the
                     # gains (a lane error is the lane's, below).
@@ -17761,10 +17801,19 @@ def _run_phone_narrated_job(
                     if not isinstance(exc, UnsupportedPhonePlan):
                         raise
                     # A beat lane never fails the job: drop the lane that failed
-                    # (every lane when the error names none), then recompile.
-                    if lanes is None or (beat_receipt is None and timed_receipt is None):
+                    # (every lane when the error names none), then recompile. A reject that
+                    # names another part (the title, a step) is not the beats' to fix.
+                    if (
+                        lanes is None
+                        or (beat_receipt is None and timed_receipt is None)
+                        or (
+                            not isinstance(exc, SubtitledLaneError)
+                            and exc.lane is not None
+                            and exc.lane not in lane_names(lanes)
+                        )
+                    ):
                         raise
-                    lane = exc.lane if isinstance(exc, SubtitledLaneError) else None
+                    lane = exc.lane
                     log.warning("phone_narrated_beats.lane_dropped", job_id=job_id, lane=lane)
                     dropped = (
                         drop_lane(lanes, lane)
@@ -17829,9 +17878,6 @@ def _run_phone_narrated_job(
                     pass
 
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes and lanes.overlays))
-    from app.pipeline.phone_plan_degrade import record_recoveries  # noqa: PLC0415
-
-    record_recoveries(spoken_recoveries)
     variant_id = "narrated"
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=variant_id, revision=1, recipe=recipe
@@ -17987,6 +18033,8 @@ def _run_phone_narrated_job(
         job.failure_reason = None
         db.commit()
 
+    # Only a pinned render's recoveries, and never under the job's row lock.
+    record_recoveries(phone_recoveries)
     # KRI-443: pinned + committed, no lock held: report the decided sections. The
     # voiceover is the soundtrack; the title counts only when the recipe carries it.
     _emit_phone_blocks_best_effort(
