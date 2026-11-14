@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import replace
 
 import pytest
 import pytest_asyncio
@@ -46,7 +47,7 @@ from app.kria.api_schemas import ApprovalDecisionBody, ChoiceSelectionIn, Submit
 from app.kria.brief import load_latest_brief_sync
 from app.kria.reply_language import say
 from app.kria.runtime import approval_fingerprint, decide_approval, submit_turn
-from app.kria.strategy_policy import RefusedStrategy
+from app.kria.strategy_policy import CheckedStrategy, RefusedStrategy
 from app.models import (
     CreationThread,
     CreationThreadEvent,
@@ -68,6 +69,10 @@ SIMPLER_ASKS = (
     "Bunlar olmadan mı hazırlayayım, yoksa isteğini mi değiştirmek istersin?",
 )
 _REAL_CHECK = approval_readiness.check_strategy_for_runtime_v2
+LENGTH = say(
+    en="Your clips are about 14 seconds, so the video can't be 14.005 seconds.",
+    tr="Klipler toplam yaklaşık 14 saniye, bu yüzden video 14.005 saniye olamıyor.",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -103,18 +108,22 @@ def _readiness_refuses(monkeypatch: pytest.MonkeyPatch, *, code: str = SIMPLER_V
         if strategy.target_duration_s == ASKED_S:
             if kwargs.get("ask_before_simplifying"):
                 return RefusedStrategy(
-                    question=say(
-                        en="Your clips are about 14 seconds, so the video can't be 14.005 "
-                        "seconds. Should I make a simpler version?",
-                        tr="Klipler toplam yaklaşık 14 saniye, bu yüzden video 14.005 saniye "
-                        "olamıyor. Daha sade bir sürüm yapayım mı?",
+                    question=f"{LENGTH} "
+                    + say(
+                        en="Should I make a simpler version?", tr="Daha sade bir sürüm yapayım mı?"
                     )
                     if code == SIMPLER_VERSION_REASON
                     else say(en="This edit can't be made.", tr="Bu düzenleme yapılamıyor."),
                     code=code,
                     fields=("target_duration_s",) if code == SIMPLER_VERSION_REASON else (),
                 )
-            strategy = strategy.model_copy(update={"target_duration_s": KEPT_S})
+            # Prod's length sentence is a notice of the check that does not ask.
+            checked = _REAL_CHECK(
+                manifest, strategy.model_copy(update={"target_duration_s": KEPT_S}), **kwargs
+            )
+            if isinstance(checked, CheckedStrategy):
+                return replace(checked, notices=(*checked.notices, LENGTH))
+            return checked
         return _REAL_CHECK(manifest, strategy, **kwargs)
 
     monkeypatch.setattr(approval_readiness, "check_strategy_for_runtime_v2", check)
@@ -276,7 +285,9 @@ async def test_yes_after_the_readiness_refusal_drafts_the_simpler_version(
     user_id, thread_id, status, held = await _hold(monkeypatch, language)
     # F1: the hold asks the question and carries the card that answers it.
     assert status == "completed" and held.event_type == "assistant_response"
-    assert SIMPLER_ASKS[0 if language == "en" else 1] in held.content
+    # The refusal alone: one question, naming what changes, never "without these" under the
+    # title the simpler version keeps.
+    assert held.content == f"{LENGTH} {SIMPLER_ASKS[0 if language == 'en' else 1]}"
     question = held.payload["choice_question"]
     assert question["dropped_fields"] == ["target_duration_s"]
     assert question["brief_version"] == 1
@@ -294,6 +305,7 @@ async def test_yes_after_the_readiness_refusal_drafts_the_simpler_version(
     strategy = _head_strategy(thread_id)
     assert strategy["target_duration_s"] == KEPT_S
     assert strategy["opening_title"] == "Fenerbahçe"
+    assert LENGTH in drafted.content
     # F4: the title ask stays in the request; only the strategy's length was left out.
     with sync_session() as db:
         brief = load_latest_brief_sync(db, thread_id)
@@ -410,4 +422,29 @@ async def test_a_tap_beside_a_new_ask_is_not_consent(monkeypatch):
     # F7: the new ask is a new request; it gets its own offer.
     assert status == "completed" and reply.event_type == "assistant_response", reply.content
     assert reply.payload.get("choice_question", {}).get("brief_version") == 2, reply.payload
+    assert "Black and white" not in reply.content
+
+
+@pytest.mark.asyncio
+async def test_a_yes_beside_a_changed_ask_is_not_consent(monkeypatch):
+    user_id, thread_id, _, held = await _hold(monkeypatch)
+    with sync_session() as db:
+        (title,) = load_latest_brief_sync(db, thread_id).live()
+    _model(
+        monkeypatch,
+        updates=[
+            {
+                "operation": "change",
+                "target_requirement_id": title.id,
+                "kind": "text",
+                "scope": "title",
+                "literal": "Galatasaray",
+            }
+        ],
+    )
+    status, reply = await _turn(user_id, thread_id, "Yes")
+    # F7: the card never covered a rewritten ask.
+    assert status == "completed" and reply.event_type == "assistant_response", reply.content
+    assert reply.payload["choice_question"]["brief_version"] == 2
+    assert _head_strategy(thread_id) is None and not _pending(thread_id)
     assert _head_strategy(thread_id) is None and not _pending(thread_id)

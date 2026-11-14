@@ -1862,10 +1862,9 @@ def _consented_policy_simplification(
     offered = card.get("brief_version")
     if offered is not None:
         latest = load_latest_brief_sync(db, thread_id)
-        # A new or withdrawn ask is a new request the card never answered.
-        if offered != (latest.version if latest is not None else 0) or any(
-            update.operation != "change" for update in planned.brief_updates
-        ):
+        # The card covers strategy fields only: any brief update on this turn (a new, changed
+        # or withdrawn ask) is a request it never answered.
+        if offered != (latest.version if latest is not None else 0) or planned.brief_updates:
             return None
     simplified = simplified_strategy(manifest, strategy) if manifest is not None else None
     if simplified is None:
@@ -2888,13 +2887,14 @@ def _complete_draft_turn(
                 simplified, simplified_notices = consented
                 document = document.model_copy(update={"strategy": simplified})
                 snapshot, snapshot_hash = canonical_snapshot(document)
-                planned = replace(
-                    planned,
-                    policy_notices=(
-                        *planned.policy_notices,
-                        *(n for n in simplified_notices if n not in planned.policy_notices),
-                    ),
+                added = [n for n in simplified_notices if n not in planned.policy_notices]
+                planned = replace(planned, policy_notices=(*planned.policy_notices, *added))
+                # The reply says what the simpler version changed: receipts keep the summary,
+                # which carries the policy notices (as the planner's KRI-759 summary does).
+                arguments = arguments.model_copy(
+                    update={"summary": " ".join([arguments.summary.strip(), *added]).strip()[:1000]}
                 )
+                reply_text = " ".join([reply_text, *added]).strip()
                 log.info(
                     "kria_readiness_simpler_version_drafted",
                     thread_id=str(thread.id),
@@ -3808,6 +3808,12 @@ def _complete_draft_turn(
             policy_refusal = (readiness_report or {}).get("policy_refusal")
             refusal_card = (
                 bool(policy_refusal)
+                # The card answers only the refusal; an ask held for its own reason is not
+                # something "yes" can agree to.
+                and all(
+                    row["disposition"] in APPROVABLE or row["reason"] == policy_problem
+                    for row in readiness_report["requirements"]
+                )
                 and _choice_questions_on
                 and not simpler_version_chosen
                 and planned.suggestion_pin is None
@@ -3857,7 +3863,11 @@ def _complete_draft_turn(
                 mode="respond",
                 turn_value="question",
                 choice_question=simpler_question,
-                response=_fit_reply(
+                # The refusal names what the simpler version changes and asks once, as the
+                # planner's own refusal does; the brief rows under it are not what "yes" drops.
+                response=policy_problem
+                if refusal_card
+                else _fit_reply(
                     reply_text,
                     " ".join(part for part in (draft_state, leaves_out, ask) if part),
                     notice=route_notice,
