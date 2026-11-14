@@ -187,6 +187,41 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         XCTAssertFalse(session.canUndo)
     }
 
+    /// KRI-1418. Samples 20 ms apart sit inside the 80 ms window a transaction normally waits for, so a preview that
+    /// only changes once the finger pauses or lifts never shows one of them while the finger is moving.
+    @MainActor
+    func testEveryDividerSampleReachesThePreviewWhileTheFingerIsStillMoving() async throws {
+        let source = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var document = EditorDocument(clips: [member(0, offset: 0, duration: 3, clipIndex: 0), member(1, offset: 0, duration: 3, clipIndex: 1)],
+                                      capabilities: Self.editable)
+        document.splitScreenSections = [.init(id: "s", durationS: 3, panelCount: 2)]
+        let session = makeSession(document)
+        session.currentTime = 0.5
+        await session.prepareFixtureSourcePreview(url: source)
+        func shown() -> [Double]? { session.displayedSourcePreviewRecipe?.splitScreenSections.first?.panelWeights }
+        XCTAssertEqual(shown(), [1, 1])
+
+        session.beginSplitDividerDrag(sectionID: "s", between: 0, and: 1)
+        var seen: [[Double]] = []
+        var expectedLast: [Double] = []
+        for step in 1...30 {
+            session.updateSplitDividerDrag(deltaFraction: 0.01 * Double(step))
+            expectedLast = try XCTUnwrap(session.splitContextAtPlayhead).section.panelWeights
+            try await Task.sleep(for: .milliseconds(20))
+            if let weights = shown(), weights != [1, 1], !seen.contains(weights) { seen.append(weights) }
+        }
+        XCTAssertGreaterThanOrEqual(seen.count, 5, "The picture follows the finger instead of waiting for it to stop: \(seen.count) of 30 samples were shown")
+        XCTAssertFalse(session.canUndo, "Live updates add no undo snapshot")
+
+        session.endSplitDividerDrag()
+        XCTAssertTrue(session.canUndo)
+        for _ in 0..<200 where shown() != expectedLast { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(shown(), expectedLast, "Release settles on the last sample")
+        session.undo()
+        for _ in 0..<200 where shown() != [1, 1] { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(shown(), [1, 1], "Undo puts the old ratio back on screen")
+    }
+
     @MainActor
     func testSwapExchangesWholePanelsInOneStepWithoutTouchingClipsOrSizes() throws {
         let topA = member(0, offset: 0, duration: 2)
