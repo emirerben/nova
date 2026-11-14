@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.222.0] - 2026-11-14
+
+### Changed
+- feat(ios): a picked clip appears at once and uploads behind it (KRI-1419) (#2336) <!-- release-pr: 2336 -->
+
 ## [0.88.221.0] - 2026-11-14
 
 ### Changed
