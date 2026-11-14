@@ -61,19 +61,29 @@ class ThoughtSummaryPublisher:
         self._last_write_at = 0.0
         self._attempt_started_at: datetime | None = None
         self._model_succeeded = False
+        self._kept = ""
 
     def begin_attempt(self) -> Callable[[str], None]:
+        """A retry replaces the failed attempt's text. A follow-up round keeps the last good one.
+
+        A repair or tool-result round is a new model call in the same turn. Wiping the row
+        when it starts would blank the thinking the creator was reading, so a round that
+        follows a parsed answer keeps that answer's summary and appends below it.
+        """
         with self._lock:
             if self._generation == 0:
                 self._discard_prior_request_locked()
-            self._discard_current_locked()
+            if self._model_succeeded and self._row_id is not None and not self._closed:
+                self._kept = self._text
+            else:
+                self._discard_current_locked()
             self._generation += 1
             generation = self._generation
-            self._text = ""
-            self._row_id = None
+            self._text = f"{self._kept}\n\n" if self._kept.strip() else ""
             self._closed = False
             self._last_write_at = 0.0
-            self._attempt_started_at = datetime.now(UTC)
+            if self._row_id is None:
+                self._attempt_started_at = datetime.now(UTC)
             self._model_succeeded = False
 
         def publish(chunk: str) -> None:
@@ -144,7 +154,9 @@ class ThoughtSummaryPublisher:
             self._closed = True
             if not self._model_succeeded:
                 self._discard_current_locked()
-                return
+                self._text = self._kept
+                if self._row_id is None:
+                    return
             if self._row_id is None or not self._text.strip():
                 return
             try:
@@ -165,22 +177,27 @@ class ThoughtSummaryPublisher:
             if self._closed:
                 return
             self._closed = True
+            self._kept = ""
             self._discard_current_locked()
 
     def _discard_current_locked(self) -> None:
+        """Drop the current attempt's text; text kept from an earlier round of the turn stays."""
         if self._row_id is None:
             return
+        keep = bool(self._kept.strip())
+        values = {"text": self._kept} if keep else {"status": "failed", "text": ""}
         try:
             with sync_session() as db:
                 db.execute(
                     update(ThoughtSummary)
                     .where(ThoughtSummary.id == self._row_id, ThoughtSummary.status == "streaming")
-                    .values(status="failed", text="")
+                    .values(**values)
                 )
                 db.commit()
         except Exception:  # noqa: BLE001 - an unavailable summary store cannot fail a retry
             log.warning("thought_summary_discard_failed")
-        self._row_id = None
+        if not keep:
+            self._row_id = None
 
     def _discard_prior_request_locked(self) -> None:
         """Fence unfinished rows left by an earlier worker for this request."""

@@ -85,6 +85,60 @@ def thought_subjects():
             db.commit()
 
 
+def test_a_follow_up_round_keeps_the_thinking_the_creator_was_reading(
+    thought_subjects, monkeypatch
+) -> None:
+    """Failure modes: a repair or tool round blanked the row; a failed round lost earlier text."""
+    monkeypatch.setattr(settings, "thought_summaries_enabled", True)
+    owner_id, _, thread_id, _ = thought_subjects
+
+    def row(request_id: str) -> tuple[str, str]:
+        with sync_session() as db:
+            found = db.scalars(
+                select(ThoughtSummary).where(
+                    ThoughtSummary.creator_id == owner_id,
+                    ThoughtSummary.client_request_id == request_id,
+                )
+            ).all()
+        assert len(found) == 1
+        return found[0].status, found[0].text
+
+    rounds = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="rounds"
+    )
+    rounds.begin_attempt()("Planning the title timing.")
+    rounds.mark_model_success()
+    rounds.begin_attempt()("The caption op was refused, fixing it.")
+    assert row("rounds") == (
+        "streaming",
+        "Planning the title timing.\n\nThe caption op was refused, fixing it.",
+    )
+    rounds.mark_model_success()
+    rounds.complete()
+    assert row("rounds")[0] == "completed"
+    assert row("rounds")[1].startswith("Planning the title timing.")
+
+    retried = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="retried"
+    )
+    retried.begin_attempt()("First answer.")
+    retried.mark_model_success()
+    retried.begin_attempt()("A round that then fails")
+    retried.begin_attempt()("Second try.")
+    retried.mark_model_success()
+    retried.complete()
+    assert row("retried") == ("completed", "First answer.\n\nSecond try.")
+
+    ended = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="ended"
+    )
+    ended.begin_attempt()("First answer.")
+    ended.mark_model_success()
+    ended.begin_attempt()("A round that never parses")
+    ended.complete()
+    assert row("ended") == ("completed", "First answer.")
+
+
 @pytest.mark.asyncio
 async def test_attempt_fencing_history_ownership_and_chat_revision(
     thought_subjects, thought_async_sessions, monkeypatch
