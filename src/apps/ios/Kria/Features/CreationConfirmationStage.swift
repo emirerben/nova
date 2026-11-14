@@ -5,8 +5,8 @@ import SwiftUI
 struct CreationConfirmationConflict: Equatable {
     /// Sent by "Refresh the direction" so Kria re-plans against the footage attached now.
     static let refreshDirectionMessage = "Keep the same plan with my current footage"
-    static let changedMessage = "This project changed. Review the latest options and try again."
-    static let missingReasonMessage = "This direction is out of date. Refresh it before creating the video."
+    static let changedMessage = String(localized: "This project changed. Review the latest options and try again.")
+    static let missingReasonMessage = String(localized: "This direction is out of date. Refresh it before creating the video.")
     /// Actions the card sends through the Creator confirmation controller.
     static let confirmationActions: Set<String> = ["generate", "retry", "create_without_cleanup", "retry_speech_cleanup"]
     /// Revision and idempotency fences. The refresh after every conflict resolves them.
@@ -193,7 +193,7 @@ func shouldSurfaceSpeechCleanupConflict(
 /// second generic banner would contradict it, so show nothing extra.
 func submitTurnConflictMessage(detail: String?, approvalExpired: Bool) -> String? {
     if let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty { return detail }
-    return approvalExpired ? nil : "This conversation changed while you were sending. Review it and try again."
+    return approvalExpired ? nil : String(localized: "This conversation changed while you were sending. Review it and try again.")
 }
 
 /// KRI-118 item 2: `day_vlog`/`single_hero` still report `edit_format:
@@ -205,8 +205,8 @@ func submitTurnConflictMessage(detail: String?, approvalExpired: Bool) -> String
 /// picker entry.
 func storyShapeSubtitle(creatorAgent: [String: JSONValue]?) -> String? {
     switch creatorAgent?["story_shape"]?.stringValue {
-    case "day_vlog": "Day vlog"
-    case "single_hero": "Single hero"
+    case "day_vlog": String(localized: "Day vlog")
+    case "single_hero": String(localized: "Single hero")
     default: nil
     }
 }
@@ -247,7 +247,7 @@ struct CreationConfirmationStage: View {
     private var isFailure: Bool { thread.summary.status == .failed }
     private var hasVideo: Bool { attachedVideoClipCount(in: thread.state ?? [:]) > 0 }
     private var proposalSummary: String {
-        thread.creatorAgent?["summary"]?.stringValue ?? "Kria will use your footage and direction to make a new cut. Rendering starts only after you approve."
+        thread.creatorAgent?["summary"]?.stringValue ?? String(localized: "Kria will use your footage and direction to make a new cut. Rendering starts only after you approve.")
     }
     /// KRI-132: a phone-gate rejection is structural, not a transient failure --
     /// retrying without changing the project (a different format, a voiceover
@@ -278,7 +278,7 @@ struct CreationConfirmationStage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(isFailure ? "Your project is safe" : "Here’s the direction I’ll use")
+            Text(isFailure ? String(localized: "Your project is safe") : String(localized: "Here’s the direction I’ll use"))
                 .font(KriaFont.headline(24))
             if let storyShapeLabel {
                 Text(storyShapeLabel)
@@ -351,19 +351,19 @@ struct CreationConfirmationStage: View {
     /// could work (KRI-132) -- confirming again dispatches the identical request.
     @ViewBuilder private func retryOrCreateButton(payload: [String: JSONValue]) -> some View {
         if isFailure && isNotRetryableNowFailureCode(thread.lastAssistantErrorCode) {
-            Text(thread.lastAssistantErrorMessage ?? "Kria’s AI has reached its usage limit for now. Your project is saved; trying again right away won’t help.")
+            Text(thread.lastAssistantErrorMessage ?? String(localized: "Kria’s AI has reached its usage limit for now. Your project is saved; trying again right away won’t help."))
                 .font(KriaFont.body(13))
                 .foregroundStyle(KriaColor.failureText)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("creation-confirmation-not-retryable-now")
         } else if isNonRetryablePhoneGateFailure {
-            Text(thread.lastAssistantErrorMessage ?? "This edit can’t render on your iPhone yet. Your project is saved.")
+            Text(thread.lastAssistantErrorMessage ?? String(localized: "This edit can’t render on your iPhone yet. Your project is saved."))
                 .font(KriaFont.body(13))
                 .foregroundStyle(KriaColor.failureText)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("creation-confirmation-phone-gate")
         } else {
-            Button(isFailure ? "Retry generation" : "Create this video") {
+            Button(isFailure ? String(localized: "Retry generation") : String(localized: "Create this video")) {
                 perform(isFailure ? "retry" : "generate", payload)
             }.buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
         }

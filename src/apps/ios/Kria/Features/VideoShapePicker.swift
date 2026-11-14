@@ -136,9 +136,9 @@ struct RenderShapePickerState: Equatable {
 /// Words for the picker, shared by the confirm card and the editor.
 enum VideoShapeCopy {
     static func orientationTitle(_ orientation: String) -> String {
-        orientation == RenderShapeOffer.landscape ? "Landscape 16:9" : "Vertical 9:16"
+        orientation == RenderShapeOffer.landscape ? String(localized: "Landscape 16:9") : String(localized: "Vertical 9:16")
     }
-    static func fitTitle(_ fit: String) -> String { fit == RenderShapeOffer.fill ? "Crop" : "Black bars" }
+    static func fitTitle(_ fit: String) -> String { fit == RenderShapeOffer.fill ? String(localized: "Crop", comment: "Video shape option: fill the frame by cropping") : String(localized: "Black bars", comment: "Video shape option: show whole frame with black bars") }
 }
 
 /// A two-option choice drawn as a pill pair. Each segment is a 44pt-minimum touch
@@ -231,7 +231,7 @@ struct VideoShapePicker: View {
         VStack(alignment: .leading, spacing: 12) {
             if offer.offersOrientation {
                 VideoShapeSegments(
-                    title: "Video shape",
+                    title: String(localized: "Video shape"),
                     options: offer.orientations,
                     selection: choice.orientation,
                     label: VideoShapeCopy.orientationTitle,
@@ -242,7 +242,7 @@ struct VideoShapePicker: View {
             }
             if offer.showsFitRow(for: choice) {
                 VideoShapeSegments(
-                    title: "Sideways clips",
+                    title: String(localized: "Sideways clips"),
                     options: offer.fitChoices,
                     selection: choice.landscapeFit,
                     label: VideoShapeCopy.fitTitle,

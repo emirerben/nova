@@ -110,7 +110,7 @@ enum NativeEditorMerge {
         guard let selected = merged.state else { return .conflicts(merged.conflicts) }
         let selectedSong = selected.userSong?.objectValue ?? [:]
         guard selectedSong["authority"] == (remoteSong ?? .null) else {
-            return .unsupported("The song changed in the latest version. Use the latest conflicting changes, then edit the new song.")
+            return .unsupported(String(localized: "The song changed in the latest version. Use the latest conflicting changes, then edit the new song."))
         }
         var raw = remote.encodeSnapshot()
         if var payload = raw["editor_payload"]?.objectValue {
@@ -127,13 +127,13 @@ enum NativeEditorMerge {
                   let intents = try? JSONDecoder().decode([EditorDeletion].self, from: data),
                   intents.allSatisfy({ !$0.kind.isEmpty && !$0.id.isEmpty }),
                   deletionValue == .array(intents.map({ .object(["kind": .string($0.kind), "id": .string($0.id)]) })) else {
-                return .unsupported("The latest deletion information could not be read safely. Your edits are still here.")
+                return .unsupported(String(localized: "The latest deletion information could not be read safely. Your edits are still here."))
             }
             decoded.deletions = intents
         }
         if let state = selected.editorState {
             guard let value = state.stringValue, ["empty", "renderable"].contains(value) else {
-                return .unsupported("The latest editor state could not be read safely. Your edits are still here.")
+                return .unsupported(String(localized: "The latest editor state could not be read safely. Your edits are still here."))
             }
             decoded.editorState = value
         }
@@ -142,7 +142,7 @@ enum NativeEditorMerge {
               preservesExplicitValues(.object(selected.sections), in:
                 validated["editor_payload"]?.objectValue?["sections"] ?? .object(validated)),
               validIntervals(.object(selected.sections)) else {
-            return .unsupported("These edits cannot be combined safely. Your changes are still here; review the conflicting timing or media before saving.")
+            return .unsupported(String(localized: "These edits cannot be combined safely. Your changes are still here; review the conflicting timing or media before saving."))
         }
         let edit = selectedSong["edit"]?.objectValue ?? [:]
         let songEdit = EditorUserSongState(volume: edit["volume"]?.numberValue,

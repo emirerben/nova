@@ -48,17 +48,17 @@ struct NativeTiltSheet: View {
                 }
                 if session.canTiltZoom { zoomSection }
                 HStack(spacing: 8) {
-                    pill("Nudge left", systemImage: "arrow.counterclockwise", id: "native-editor-tilt-nudge-left", iconOnly: true) {
+                    pill(String(localized: "Nudge left"), systemImage: "arrow.counterclockwise", id: "native-editor-tilt-nudge-left", iconOnly: true) {
                         setRotation(tilt.rotationDeg - 1)
                     }
-                    pill("Nudge right", systemImage: "arrow.clockwise", id: "native-editor-tilt-nudge-right", iconOnly: true) {
+                    pill(String(localized: "Nudge right"), systemImage: "arrow.clockwise", id: "native-editor-tilt-nudge-right", iconOnly: true) {
                         setRotation(tilt.rotationDeg + 1)
                     }
-                    pill("Turn 90°", systemImage: "rotate.right", id: "native-editor-tilt-turn-90") {
+                    pill(String(localized: "Turn 90°"), systemImage: "rotate.right", id: "native-editor-tilt-turn-90") {
                         commit(tilt.turnedQuarter())
                     }
                     Spacer(minLength: 0)
-                    pill("Reset", systemImage: nil, id: "native-editor-tilt-reset", enabled: !tilt.isIdentity, blockable: false) {
+                    pill(String(localized: "Reset"), systemImage: nil, id: "native-editor-tilt-reset", enabled: !tilt.isIdentity, blockable: false) {
                         session.setClipTilt(nil, for: selection)
                         applyAllNote = nil
                     }
@@ -78,7 +78,7 @@ struct NativeTiltSheet: View {
     private var zoomSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                KriaSectionLabel(title: "Zoom")
+                KriaSectionLabel(title: String(localized: "Zoom"))
                 Spacer(minLength: 0)
                 Text(Self.zoomReadout(tilt.zoom))
                     .font(KriaFont.headline(20))
@@ -100,8 +100,8 @@ struct NativeTiltSheet: View {
     }
 
     private var backdropOptions: [(kind: String, title: String)] {
-        let options = [("blank", "Blank"), ("color", "Colour"), ("blur", "Blur")]
-        return session.canTiltBackdropMedia ? options + [("media", "Photo or video")] : options
+        let options = [("blank", String(localized: "Blank", comment: "Clip background option: plain empty background")), ("color", String(localized: "Colour", comment: "Clip background option: solid colour")), ("blur", String(localized: "Blur", comment: "Clip background option: blurred picture"))]
+        return session.canTiltBackdropMedia ? options + [("media", String(localized: "Photo or video"))] : options
     }
 
     private var mediaBackdropID: String? {
@@ -111,7 +111,7 @@ struct NativeTiltSheet: View {
 
     private var backgroundSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            KriaSectionLabel(title: "Background")
+            KriaSectionLabel(title: String(localized: "Background"))
             HStack(spacing: 4) {
                 ForEach(backdropOptions, id: \.kind) { option in
                     let kind = option.kind, title = option.title
@@ -156,7 +156,7 @@ struct NativeTiltSheet: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(isBlocked)
-                        .accessibilityLabel(swatch.name)
+                        .accessibilityLabel(Self.localizedSwatchName(swatch.name))
                         .accessibilityAddTraits(current.uppercased() == swatch.hex ? .isSelected : [])
                         .accessibilityIdentifier("native-editor-tilt-swatch-\(swatch.name.lowercased())")
                     }
@@ -164,7 +164,7 @@ struct NativeTiltSheet: View {
             }
             if let poolID = mediaBackdropID { mediaBackdropRow(poolID) }
             if session.timelineClips.count > 1 {
-                pill("Use this background on every clip", systemImage: nil, id: "native-editor-tilt-apply-all", enabled: !isBlocked) {
+                pill(String(localized: "Use this background on every clip"), systemImage: nil, id: "native-editor-tilt-apply-all", enabled: !isBlocked) {
                     let result = session.applyTiltBackdropToAllClips(tilt.backdrop)
                     applyAllNote = Self.applyAllNote(result)
                 }
@@ -189,10 +189,10 @@ struct NativeTiltSheet: View {
             .background(KriaColor.softZinc)
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(asset == nil ? "Missing photo or video" : "Chosen photo or video")
+            .accessibilityLabel(asset == nil ? String(localized: "Missing photo or video") : String(localized: "Chosen photo or video"))
             .accessibilityIdentifier("native-editor-tilt-media-thumbnail")
             VStack(alignment: .leading, spacing: 2) {
-                Text(asset?.sourceFilename ?? (asset?.kind == "video" ? "Video" : "Photo"))
+                Text(asset?.sourceFilename ?? (asset?.kind == "video" ? String(localized: "Video") : String(localized: "Photo")))
                     .font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink).lineLimit(1)
                 if missing {
                     Text("That photo or video isn’t available anymore. Choose another or Reset.")
@@ -202,7 +202,7 @@ struct NativeTiltSheet: View {
                 }
             }
             Spacer(minLength: 0)
-            pill("Change", systemImage: nil, id: "native-editor-tilt-media-change") { showsMediaPicker = true }
+            pill(String(localized: "Change", comment: "Button: pick a different background photo or video"), systemImage: nil, id: "native-editor-tilt-media-change") { showsMediaPicker = true }
         }
     }
 
@@ -211,7 +211,7 @@ struct NativeTiltSheet: View {
             ScrollView {
                 NativeVisualPoolPicker(
                     session: session, uploads: uploads, projectID: projectID, idPrefix: "native-editor-tilt-media",
-                    choices: session.tiltBackdropChoices, selectedID: mediaBackdropID, noneTitle: "None",
+                    choices: session.tiltBackdropChoices, selectedID: mediaBackdropID, noneTitle: String(localized: "None"),
                     onNone: { setBackdrop(.blank); showsMediaPicker = false },
                     onSelect: { asset in setBackdrop(.media(asset.id)); showsMediaPicker = false }
                 )
@@ -279,18 +279,30 @@ struct NativeTiltSheet: View {
 
     static func readout(_ degrees: Double) -> String {
         let rounded = (degrees * 10).rounded() / 10
-        let text = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
+        let text = rounded == rounded.rounded() ? String(Int(rounded)) : rounded.formatted(.number.precision(.fractionLength(1)))
         return text + "°"
     }
 
     /// "1.3x", "1x", "0.5x": the zoom without trailing zeros.
-    static func zoomReadout(_ zoom: Double) -> String { String(format: "%gx", ClipTilt.clampZoom(zoom)) }
+    static func zoomReadout(_ zoom: Double) -> String { String(localized: "\(ClipTilt.clampZoom(zoom), format: .number.precision(.fractionLength(0...2)))x", comment: "Zoom factor, e.g. 1.3x") }
 
     static func applyAllNote(_ result: (applied: Int, skipped: Int)) -> String {
-        let applied = result.applied == 1 ? "1 clip" : "\(result.applied) clips"
-        guard result.skipped > 0 else { return "Applied to \(applied)." }
-        let skipped = result.skipped == 1 ? "1 clip was" : "\(result.skipped) clips were"
-        return "Applied to \(applied). \(skipped) left alone because it can’t be tilted."
+        let applied = String(localized: "Applied to \(result.applied) clips.")
+        guard result.skipped > 0 else { return applied }
+        let skipped = String(localized: "\(result.skipped) clips were left alone because it can’t be tilted.")
+        return "\(applied) \(skipped)"
+    }
+
+    private static func localizedSwatchName(_ name: String) -> String {
+        switch name {
+        case "Black": String(localized: "Black")
+        case "White": String(localized: "White")
+        case "Butter": String(localized: "Butter", comment: "Colour name: soft yellow")
+        case "Pink": String(localized: "Pink")
+        case "Blue": String(localized: "Blue")
+        case "Green": String(localized: "Green")
+        default: name
+        }
     }
 
     static func color(hex: String) -> Color {

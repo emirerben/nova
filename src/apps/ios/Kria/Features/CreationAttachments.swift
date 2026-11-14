@@ -243,9 +243,9 @@ struct AttachmentSheet: View {
     /// Names only the kinds the Visuals pickers offer on this destination.
     private var visualsCaption: String {
         let kinds = uploadDestination(for: .visual).visualKinds
-        return kinds == [.image] ? "Photos and screenshots."
-            : kinds == [.video] ? "Short supporting videos."
-            : "Photos, screenshots, or short supporting videos."
+        return kinds == [.image] ? String(localized: "Photos and screenshots.")
+            : kinds == [.video] ? String(localized: "Short supporting videos.")
+            : String(localized: "Photos, screenshots, or short supporting videos.")
     }
 
     var body: some View {
@@ -254,8 +254,8 @@ struct AttachmentSheet: View {
                 attachmentNavigation
                 if let lastGeneratedDraft, lastGeneratedDraft.recovery != nil,
                    capabilitiesLoaded, generatedMediaEnabled(lastGeneratedDraft.capability) {
-                    KriaNoticeCard(tone: .info, title: "Your preview is still here",
-                                   action: KriaNoticeAction(title: "Open") { generatedDraft = lastGeneratedDraft }, style: .banner)
+                    KriaNoticeCard(tone: .info, title: String(localized: "Your preview is still here"),
+                                   action: KriaNoticeAction(title: String(localized: "Open")) { generatedDraft = lastGeneratedDraft }, style: .banner)
                         .padding(.horizontal, 24).accessibilityIdentifier("generated-media-resume")
                 }
                 KriaStepRail(steps: steps.map { $0 == .overlays ? (usesVisualPoolOnly ? SlideMediaCopy.poolTitle : $0.title) : $0.title },
@@ -472,7 +472,7 @@ struct AttachmentSheet: View {
 
     private var footageStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AttachmentHeading(title: "Add footage", subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
+            AttachmentHeading(title: String(localized: "Add footage"), subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
             FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true,
                               controls: .tiles(record: auth.localStorageIdentity == nil ? nil : { openCamera(withScript: false) }),
                               launchSource: $pickerLaunch, onLaunchedSourceCancelled: launchedPickerCancelled)
@@ -518,25 +518,25 @@ struct AttachmentSheet: View {
     private var replacementNotice: String? {
         guard let target = replaceTarget else { return nil }
         let video = thread?.job != nil
-            ? " Kria makes the video again from the new take. Text and caption changes you made to the current video won’t carry over. Your current video stays until the new one is ready."
+            ? " " + String(localized: "Kria makes the video again from the new take. Text and caption changes you made to the current video won’t carry over. Your current video stays until the new one is ready.")
             : ""
-        return "This replaces \(target.displayName). Your script, background and other clips stay.\(video)"
+        return String(localized: "This replaces \(target.displayName). Your script, background and other clips stay.") + video
     }
 
     private func teleprompterAdmission(_ take: TeleprompterTakeManifest?) -> String? {
         guard uploadDestination(for: .clip) == .phone else {
-            return uploadDestination(for: .clip).message ?? "This edit can’t accept an on-device recording yet. Your take is saved on this iPhone."
+            return uploadDestination(for: .clip).message ?? String(localized: "This edit can’t accept an on-device recording yet. Your take is saved on this iPhone.")
         }
         let ownID = take?.intakeID
         if let ownID, model.uploads.containsIntake(recordID: ownID) { return nil }
         if replaceTarget != nil {
-            return replacementUnderway ? "Your new take is still being swapped in. Wait for it to finish before recording another." : nil
+            return replacementUnderway ? String(localized: "Your new take is still being swapped in. Wait for it to finish before recording another.") : nil
         }
         // KRI-719: a Talking edit can hold several clips, so a take is only
         // refused once the edit is full, not whenever any clip is attached.
         let occupied = existing(for: .clip) + model.uploads.reservedCount(projectID: projectID, role: .clip)
         guard occupied < maximumClipCount else {
-            return "This video already has \(FootageStageCopy.count(maximumClipCount, "clip")). Your take is saved: remove a clip in Add media, then reopen it."
+            return String(localized: "This video already has \(FootageStageCopy.count(maximumClipCount, "clip")). Your take is saved: remove a clip in Add media, then reopen it.")
         }
         return nil
     }
@@ -572,7 +572,7 @@ struct AttachmentSheet: View {
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files,
             consentGiven: true, purpose: .analysisProxy, role: .clip, itemID: itemID,
             limit: capabilities?.media?["clips"], recordID: take.intakeID, replacesMediaID: replaceTarget?.mediaID)
-        return accepted ? .queued : .failed(model.uploads.failures.first(where: { $0.id == take.intakeID })?.message ?? "Couldn’t add this take. Your recording is saved; try again.")
+        return accepted ? .queued : .failed(model.uploads.failures.first(where: { $0.id == take.intakeID })?.message ?? String(localized: "Couldn’t add this take. Your recording is saved; try again."))
     }
 
     /// The live background picker needs the server to offer it. UI tests force it on (the simulator has no server flag).
@@ -585,7 +585,7 @@ struct AttachmentSheet: View {
     /// Uploads the background the creator filmed in front of, as a visual, after the take itself was handed to intake.
     /// The recording stays raw; the server decides what the picture is for. A failure never un-attaches the take.
     private func useCameraBackground(_ take: TeleprompterTakeManifest, _ reference: SpeakerBackgroundReference, _ url: URL) async -> BackgroundIntakeResult {
-        guard let itemID else { return .failed("This edit isn’t ready for a background yet.") }
+        guard let itemID else { return .failed(String(localized: "This edit isn’t ready for a background yet.")) }
         let selection = CameraBackgroundSelection(projectID: projectID, itemID: itemID, recordID: reference.id,
                                                   kind: reference.kind, fileName: reference.fileName)
         if model.uploads.containsIntake(recordID: reference.id) {
@@ -597,7 +597,7 @@ struct AttachmentSheet: View {
             purpose: uploadDestination(for: .visual) == .phone ? .analysisProxy : .cloudRenderSource,
             role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], recordID: reference.id)
         guard accepted else {
-            return .failed(model.uploads.failures.first(where: { $0.id == reference.id })?.message ?? "Add it again from your media.")
+            return .failed(model.uploads.failures.first(where: { $0.id == reference.id })?.message ?? String(localized: "Add it again from your media."))
         }
         return .queued(selection)
     }
@@ -622,7 +622,7 @@ struct AttachmentSheet: View {
             let latest = try await model.api.project(threadID: projectID)
             let attached = CreationAttachedMedia.parse(latest.state ?? [:]).contains { $0.filename == take.fileName }
             if attached { await refresh(); return .attached }
-            return .failed("This take hasn’t been added yet. Use take to retry; your recording is saved.")
+            return .failed(String(localized: "This take hasn’t been added yet. Use take to retry; your recording is saved."))
         } catch {
             // Unknown server status is never permission to reserve another
             // logical take. Keep checking the stable identity on reconnect.
@@ -632,10 +632,10 @@ struct AttachmentSheet: View {
 
     private var voiceoverStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AttachmentHeading(title: recorder.hasRecording ? (recorder.isImported ? "Review voiceover" : "Review recording") : "Add voiceover",
-                              subtitle: recorder.hasRecording ? "Listen before adding this recording to your video."
-                                  : recorder.isRecording ? (voiceoverScript == nil ? "Say your voiceover. I’ll keep recording until you stop." : "Read your script out loud. I’ll keep recording until you stop.")
-                                  : "Record it here, upload one you’ve made, or use an AI voice.")
+            AttachmentHeading(title: recorder.hasRecording ? (recorder.isImported ? String(localized: "Review voiceover") : String(localized: "Review recording")) : String(localized: "Add voiceover"),
+                              subtitle: recorder.hasRecording ? String(localized: "Listen before adding this recording to your video.")
+                                  : recorder.isRecording ? (voiceoverScript == nil ? String(localized: "Say your voiceover. I’ll keep recording until you stop.") : String(localized: "Read your script out loud. I’ll keep recording until you stop."))
+                                  : String(localized: "Record it here, upload one you’ve made, or use an AI voice."))
             if let voiceoverScript, !recorder.hasRecording {
                 VoiceoverScriptReadAlong(script: voiceoverScript)
                     .id("\(voiceoverScript.scriptID)-\(voiceoverScript.revision)")
@@ -662,12 +662,12 @@ struct AttachmentSheet: View {
                 let canUploadAudio = uploadDestination(for: .voiceover).canUpload
                 let aiVoice: KriaSourceOption? = {
                     guard capabilitiesLoaded, capabilities?.generatedNarration == true, canRecord, itemID != nil, let voiceoverScript else { return nil }
-                    return KriaSourceOption(id: "ai-voice", symbol: "waveform", title: "AI voice", caption: "Read by AI",
+                    return KriaSourceOption(id: "ai-voice", symbol: "waveform", title: String(localized: "AI voice"), caption: String(localized: "Read by AI"),
                                             identifier: "generate-narration", isEnabled: !loadingNarration) { generateNarration(for: voiceoverScript) }
                 }()
                 KriaSourceRow(options: [
-                    .record(symbol: "mic.fill", caption: "Use your mic", identifier: "voiceover-record", isEnabled: canRecord && canUploadAudio) { Task { await recorder.start() } },
-                    .upload(caption: "Use an audio file", identifier: "voiceover-upload", isEnabled: canRecord && canUploadAudio) { voiceoverPickerLaunch = capabilities?.mediaLibrary == true ? .sources : .files },
+                    .record(symbol: "mic.fill", caption: String(localized: "Use your mic"), identifier: "voiceover-record", isEnabled: canRecord && canUploadAudio) { Task { await recorder.start() } },
+                    .upload(caption: String(localized: "Use an audio file"), identifier: "voiceover-upload", isEnabled: canRecord && canUploadAudio) { voiceoverPickerLaunch = capabilities?.mediaLibrary == true ? .sources : .files },
                     aiVoice
                 ].compactMap { $0 })
                 if footageDurationSummary.count > 0 {
@@ -702,20 +702,20 @@ struct AttachmentSheet: View {
             do {
                 let approved = try await model.api.generatedNarrationScript(itemID: itemID)
                 guard approved.matches(voiceoverScript) else {
-                    voiceoverUploadError = "The script changed. Open its latest card before generating narration."
+                    voiceoverUploadError = String(localized: "The script changed. Open its latest card before generating narration.")
                     return
                 }
                 openGeneratedMedia(GeneratedMediaDraft(capability: .narration, script: approved))
-            } catch { voiceoverUploadError = "Couldn’t load the current script. Try again when connected." }
+            } catch { voiceoverUploadError = String(localized: "Couldn’t load the current script. Try again when connected.") }
         }
     }
 
     private var songStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AttachmentHeading(title: songPreview.hasRecording ? "Review your song" : "Add your song",
-                              subtitle: songPreview.hasRecording ? "Listen before adding this song to your video."
-                                  : resolvedFormat == .lipsync ? "Add the song you’re lip-syncing to."
-                                  : "Cut your clips to a song, or lip-sync to it. Tell Kria which in your message.")
+            AttachmentHeading(title: songPreview.hasRecording ? String(localized: "Review your song") : String(localized: "Add your song"),
+                              subtitle: songPreview.hasRecording ? String(localized: "Listen before adding this song to your video.")
+                                  : resolvedFormat == .lipsync ? String(localized: "Add the song you’re lip-syncing to.")
+                                  : String(localized: "Cut your clips to a song, or lip-sync to it. Tell Kria which in your message."))
             if songPreview.hasRecording {
                 SongReviewView(player: songPreview)
                 SongReviewActions(onUse: { Task { await useSong() } }, onChooseAnother: { songPreview.discard(); songUploadError = nil },
@@ -766,16 +766,16 @@ struct AttachmentSheet: View {
 
     private var overlaysStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AttachmentHeading(title: usesVisualPoolOnly ? SlideMediaCopy.addHeading : "Add overlays", subtitle: usesVisualPoolOnly ? SlideMediaCopy.subtitle : "Optional photos and supporting clips can add context to your video.")
+            AttachmentHeading(title: usesVisualPoolOnly ? SlideMediaCopy.addHeading : String(localized: "Add overlays"), subtitle: usesVisualPoolOnly ? SlideMediaCopy.subtitle : String(localized: "Optional photos and supporting clips can add context to your video."))
             if uploadDestination(for: .visual).canUpload, !usesVisualPoolOnly { Text(visualsCaption).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc) }
             if capabilitiesLoaded, capabilities?.generatedImages == true, itemID != nil {
                 OverlaySetNotice(overlays: overlaySet) { openOverlaySet() }
             }
-            if pool == nil, error == nil { HStack(spacing: 8) { KriaSpinner(size: 16); Text(usesVisualPoolOnly ? SlideMediaCopy.loading : "Loading overlays…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) } }
+            if pool == nil, error == nil { HStack(spacing: 8) { KriaSpinner(size: 16); Text(usesVisualPoolOnly ? SlideMediaCopy.loading : String(localized: "Loading overlays…")).kriaType(.label).foregroundStyle(KriaColor.mutedInk) } }
             if pool != nil {
                 FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil, libraryEnabled: capabilities?.mediaLibrary == true,
                                   controls: .tiles(record: nil, third: capabilitiesLoaded && capabilities?.generatedImages == true && itemID != nil
-                                    ? KriaSourceOption(id: "generate", symbol: "sparkles", title: "Generate", caption: "Make with AI", identifier: "generate-image") {
+                                    ? KriaSourceOption(id: "generate", symbol: "sparkles", title: String(localized: "Generate"), caption: String(localized: "Make with AI"), identifier: "generate-image") {
                                         openOverlaySet()
                                     } : nil),
                                   launchSource: $pickerLaunch, onLaunchedSourceCancelled: launchedPickerCancelled)
@@ -787,7 +787,7 @@ struct AttachmentSheet: View {
             }
             if let error {
                 Text(error).kriaType(.label).foregroundStyle(KriaColor.failureText)
-                Button(usesVisualPoolOnly ? SlideMediaCopy.retryLoading : "Retry loading overlays") { Task { await loadVisuals() } }
+                Button(usesVisualPoolOnly ? SlideMediaCopy.retryLoading : String(localized: "Retry loading overlays")) { Task { await loadVisuals() } }
                     .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
             }
         }
@@ -820,7 +820,7 @@ struct AttachmentSheet: View {
                     } else {
                         FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .song), attachedClipCount: existing(for: .song), attachedMediaIDs: attachedMediaIDs(for: .song), role: .song, itemID: itemID, limit: capabilities?.songLimit, destination: uploadDestination(for: .song), onAudioFileSelected: songPreview.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
                     }
-                    Button(hasSongOrPendingSong ? "Continue" : "Skip, no song") { advance() }
+                    Button(hasSongOrPendingSong ? String(localized: "Continue") : String(localized: "Skip, no song")) { advance() }
                         .buttonStyle(KriaButtonStyle(role: hasSongOrPendingSong ? .primary : .tertiary, size: hasSongOrPendingSong ? .large : .medium, fullWidth: hasSongOrPendingSong))
                         .accessibilityIdentifier(hasSongOrPendingSong ? "song-continue" : "song-skip")
                         .disabled(songPreview.isImporting)
@@ -829,7 +829,7 @@ struct AttachmentSheet: View {
         }
         else {
             VStack(spacing: 8) {
-                Button(stepIndex == steps.count - 1 ? "Done" : "Next") { advance() }
+                Button(stepIndex == steps.count - 1 ? String(localized: "Done") : String(localized: "Next")) { advance() }
                     .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
                     .accessibilityIdentifier(stepIndex == steps.count - 1 ? "attachment-done" : "attachment-next")
             }.padding(.horizontal, 24).padding(.vertical, 12)
@@ -870,9 +870,9 @@ struct AttachmentSheet: View {
             ForEach(attachedMedia(for: role)) { attachment in
                 VStack(spacing: 8) {
                     KriaMediaRow(name: attachment.displayName,
-                                 status: .ready(role == .voiceover ? "Voiceover · Ready" : role == .song ? "Song · Ready"
-                                    : "Video · Ready"),
-                                 trailing: .remove(label: "Remove \(attachment.displayName)") { Task { await removeAttached(attachment) } },
+                                 status: .ready(role == .voiceover ? String(localized: "Voiceover · Ready") : role == .song ? String(localized: "Song · Ready")
+                                    : String(localized: "Video · Ready")),
+                                 trailing: .remove(label: String(localized: "Remove \(attachment.displayName)")) { Task { await removeAttached(attachment) } },
                                  onFill: !offersSongRange(for: attachment)) {
                         CreationAttachmentThumbnail(media: attachment)
                     }
@@ -903,27 +903,27 @@ struct AttachmentSheet: View {
     /// One attached overlay or photo (Paper S1.01): a `KriaMediaRow` with its status, one trailing control and,
     /// when it failed, a visible Retry. Edit image lives in the menu; a row with nothing to edit shows a trash disc.
     private func visualRow(_ asset: CreationVisual) -> some View {
-        let name = asset.sourceFilename ?? (usesVisualPoolOnly ? (asset.kind == "video" ? "Video" : "Photo") : "Visual")
-        let kindLabel = asset.kind == "video" ? "Video" : "Photo"
+        let name = asset.sourceFilename ?? (usesVisualPoolOnly ? (asset.kind == "video" ? String(localized: "Video", comment: "Media kind") : String(localized: "Photo", comment: "Media kind")) : String(localized: "Visual", comment: "Media kind: an overlay"))
+        let kindLabel = asset.kind == "video" ? String(localized: "Video", comment: "Media kind") : String(localized: "Photo", comment: "Media kind")
         let status: KriaMediaRow<AnyView>.Status
         if asset.status == "failed" {
             status = .failed(asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id)))
         } else if asset.preparationStage != nil {
             status = .preparing
         } else if asset.status == "ready" {
-            status = .ready("\(kindLabel) · Ready")
+            status = .ready(String(localized: "\(kindLabel) · Ready"))
         } else {
             status = .ready(asset.statusCaption(retryingAutomatically: false))
         }
         let canEditImage = capabilitiesLoaded && capabilities?.generatedImageEditing == true
             && asset.kind == "image" && asset.status == "ready" && asset.sourceGeneration != nil
-        let removeAction = KriaMenuAction(title: "Remove", systemImage: "trash", isDestructive: true) { Task { await remove(asset) } }
+        let removeAction = KriaMenuAction(title: String(localized: "Remove", comment: "Menu action: remove the attachment"), systemImage: "trash", isDestructive: true) { Task { await remove(asset) } }
         let trailing: KriaMediaRow<AnyView>.Trailing = canEditImage
-            ? .menu(label: "Actions for \(name)", [
-                KriaMenuAction(title: "Edit image", systemImage: "wand.and.stars") { openGeneratedMedia(GeneratedMediaDraft(capability: .imageEdit, source: asset)) },
+            ? .menu(label: String(localized: "Actions for \(name)"), [
+                KriaMenuAction(title: String(localized: "Edit image"), systemImage: "wand.and.stars") { openGeneratedMedia(GeneratedMediaDraft(capability: .imageEdit, source: asset)) },
                 removeAction,
             ])
-            : .remove(label: "Remove \(asset.sourceFilename ?? (usesVisualPoolOnly ? SlideMediaCopy.removeFallback : "visual"))") { Task { await remove(asset) } }
+            : .remove(label: String(localized: "Remove \(asset.sourceFilename ?? (usesVisualPoolOnly ? SlideMediaCopy.removeFallback : String(localized: "visual")))")) { Task { await remove(asset) } }
         let canRetry = asset.status == "failed" && asset.retryable != false && !mutatingVisual && autoRetry.canRetryManually(asset.id)
         return KriaMediaRow(name: name, status: status, trailing: trailing,
                             onRetry: canRetry ? { Task { await retry(asset) } } : nil) {
@@ -950,7 +950,7 @@ struct AttachmentSheet: View {
 
     private var voiceoverWarning: String? {
         guard let footage = footageDurationSummary.exactDuration, recorder.duration > footage else { return nil }
-        return "Your voiceover is \(DurationFormatter.seconds(recorder.duration - footage)) longer than your footage. Add more footage, or use it anyway."
+        return String(localized: "Your voiceover is \(DurationFormatter.seconds(recorder.duration - footage)) longer than your footage. Add more footage, or use it anyway.")
     }
     /// A pick the composer's + started ends back in the chat; from the sheet's own picker it moves on to the next step.
     private func advanceAfterFootageSelection() {
@@ -980,7 +980,7 @@ struct AttachmentSheet: View {
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"])
         uploadingRecording = false
         if accepted { voiceoverUploadError = nil; recorder.discard(); advance() }
-        else { voiceoverUploadError = "This voiceover couldn’t be added. Your recording is still here—try again." }
+        else { voiceoverUploadError = String(localized: "This voiceover couldn’t be added. Your recording is still here—try again.") }
     }
     private func useSong() async {
         guard !uploadingSong, let url = songPreview.recordingURL, canAddSong else { return }
@@ -990,7 +990,7 @@ struct AttachmentSheet: View {
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .song, itemID: itemID, limit: capabilities?.songLimit)
         uploadingSong = false
         if accepted { songUploadError = nil; songPreview.discard(); advance() }
-        else { songUploadError = "This song couldn’t be added. It’s still here, so try again." }
+        else { songUploadError = String(localized: "This song couldn’t be added. It’s still here, so try again.") }
     }
     private func removeAttached(_ attachment: CreationAttachedMedia) async {
         guard !removingMedia else { return }
@@ -1007,8 +1007,8 @@ struct AttachmentSheet: View {
         } catch APIError.conflict {
             pendingRemoval = nil
             await refresh()
-            mediaRemovalError = "This project changed. Review the attached files and try again."
-        } catch { mediaRemovalError = "Couldn’t remove the file. \(error.localizedDescription)" }
+            mediaRemovalError = String(localized: "This project changed. Review the attached files and try again.")
+        } catch { mediaRemovalError = String(localized: "Couldn’t remove the file. \(error.localizedDescription)") }
     }
     @discardableResult
     private func loadVisuals() async -> Bool {
@@ -1019,7 +1019,7 @@ struct AttachmentSheet: View {
             preparation.observe(loaded.assets, now: Date())
             error = nil
             return true
-        } catch { self.error = "Kria couldn’t load your visuals. \(error.localizedDescription)"; return false }
+        } catch { self.error = String(localized: "Kria couldn’t load your visuals. \(error.localizedDescription)"); return false }
     }
     /// One poll of the pool followed by any automatic reanalyze that is due.
     /// Serialized so a foreground pass never acts on a snapshot older than a
@@ -1050,7 +1050,7 @@ struct AttachmentSheet: View {
         mutatingVisual = true
         defer { mutatingVisual = false }
         do { try await model.api.removeVisual(itemID: itemID, assetID: asset.id); await loadVisuals() }
-        catch { self.error = "Couldn’t remove this visual. \(error.localizedDescription)" }
+        catch { self.error = String(localized: "Couldn’t remove this visual. \(error.localizedDescription)") }
     }
     private func retry(_ asset: CreationVisual) async {
         guard let itemID, !mutatingVisual, autoRetry.beginManualRetry(asset.id) else { return }
@@ -1062,7 +1062,7 @@ struct AttachmentSheet: View {
             await loadVisuals()
         } catch {
             autoRetry.recordAttempt(assetID: asset.id, result: nil, now: Date())
-            self.error = "Couldn’t retry this visual. \(error.localizedDescription)"
+            self.error = String(localized: "Couldn’t retry this visual. \(error.localizedDescription)")
         }
     }
 }

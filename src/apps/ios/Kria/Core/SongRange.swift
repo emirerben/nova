@@ -21,12 +21,12 @@ struct SongFilmingRange: Equatable, Sendable {
 
     /// "Filmed 0:40 - 1:50"
     var summary: String {
-        "Filmed \(SongRangeMath.timecode(start)) - \(SongRangeMath.timecode(end))"
+        String(localized: "Filmed \(SongRangeMath.timecode(start)) - \(SongRangeMath.timecode(end))")
     }
 
     /// What VoiceOver reads for the row.
     var spokenSummary: String {
-        "Filmed from \(SongRangeMath.timecode(start)) to \(SongRangeMath.timecode(end))"
+        String(localized: "Filmed from \(SongRangeMath.timecode(start)) to \(SongRangeMath.timecode(end))")
     }
 }
 
@@ -59,7 +59,7 @@ enum SongRangeMath {
 /// What the creator is choosing in the sheet: whole seconds, always inside the song, with the To picker free to
 /// go below From + 5 s (Save is then off and says why) but From never leaving To behind.
 struct SongRangeDraft: Equatable {
-    static let tooShortMessage = "Pick at least five seconds."
+    static var tooShortMessage: String { String(localized: "Pick at least five seconds.") }
 
     /// Last whole second of the song.
     let limit: Int
@@ -113,9 +113,9 @@ enum SongRangeSubmission {
     /// Copy for the sheet to show inline.
     case failed(String)
 
-    static let genericFailure = "Couldn’t save that. Try again."
-    static let offlineFailure = "Couldn’t save that. Check your connection and try again."
-    static let songMissing = "Attach a song first."
+    static var genericFailure: String { String(localized: "Couldn’t save that. Try again.") }
+    static var offlineFailure: String { String(localized: "Couldn’t save that. Check your connection and try again.") }
+    static var songMissing: String { String(localized: "Attach a song first.") }
 
     private enum Cause { case unavailable, revisionChanged, message(String) }
 

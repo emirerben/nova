@@ -47,16 +47,16 @@ struct CameraRollEventCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel([title, "\(event.entries.count) \(event.entries.count == 1 ? "item" : "items")", note].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([title, String(localized: "\(event.entries.count) items"), note].compactMap { $0 }.joined(separator: ", "))
         .accessibilityValue(next)
         .accessibilityIdentifier("camera-roll-event-\(event.id)")
     }
 
     private var nextStep: String {
         let count = model.ideas(in: event.id).count
-        if count > 0 { return "\(count) \(count == 1 ? "idea" : "ideas")" }
-        if event.entries.isEmpty { return "Add footage" }
-        return model.isGenerating(event.id) ? "Finding ideas" : "Find ideas"
+        if count > 0 { return String(localized: "\(count) ideas") }
+        if event.entries.isEmpty { return String(localized: "Add footage") }
+        return model.isGenerating(event.id) ? String(localized: "Finding ideas") : String(localized: "Find ideas")
     }
 
     @ViewBuilder private var footage: some View {
@@ -112,7 +112,7 @@ struct CameraRollEventPage: View {
     private func page(_ event: CameraRollEvent) -> some View {
         VStack(spacing: 0) {
             HStack {
-                CameraRollCircleButton(identifier: "camera-roll-back", label: "Back", action: { dismiss() }) {
+                CameraRollCircleButton(identifier: "camera-roll-back", label: String(localized: "Back"), action: { dismiss() }) {
                     Image(systemName: "chevron.left").font(.system(size: 16, weight: .semibold)).foregroundStyle(KriaColor.ink)
                 }
                 Spacer()
@@ -175,7 +175,7 @@ struct CameraRollEventPage: View {
                             if expanded { model.expanded.remove(event.id) } else { model.expanded.insert(event.id) }
                         }
                     } label: {
-                        Text(expanded ? "Show fewer" : "Show all \(event.entries.count)").font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                        Text(expanded ? String(localized: "Show fewer") : String(localized: "Show all \(event.entries.count)")).font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
                             .padding(.horizontal, 16).frame(height: 40).background(KriaColor.fill, in: Capsule()).frame(minHeight: 44).contentShape(Capsule())
                     }
                     .buttonStyle(.plain).accessibilityIdentifier(expanded ? "camera-roll-collapse-\(event.id)" : "camera-roll-expand-\(event.id)")
@@ -202,7 +202,7 @@ struct CameraRollEventPage: View {
                 .buttonStyle(.plain).disabled(ready == 0).opacity(ready == 0 ? 0.45 : 1)
                 .accessibilityIdentifier("camera-roll-find-ideas-\(event.id)")
                 if ready == 0 {
-                    Text(event.entries.isEmpty ? "Add footage to find ideas." : "Ideas need at least one item that is ready.")
+                    Text(event.entries.isEmpty ? String(localized: "Add footage to find ideas.") : String(localized: "Ideas need at least one item that is ready."))
                         .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
                 }
             }
@@ -217,7 +217,7 @@ struct CameraRollEventPage: View {
                 Button { model.anotherIdea(in: event.id) } label: {
                     HStack(spacing: 8) {
                         if generating { KriaSpinner(size: 14) } else { Image(systemName: "sparkle").font(.system(size: 12, weight: .bold)) }
-                        Text(generating ? "Finding another" : "Another idea").font(KriaFont.body(15).weight(.bold))
+                        Text(generating ? String(localized: "Finding another") : String(localized: "Another idea")).font(KriaFont.body(15).weight(.bold))
                     }
                     .foregroundStyle(KriaColor.ink).padding(.horizontal, 18).frame(height: 44).background(KriaColor.butter, in: Capsule()).contentShape(Capsule())
                 }
@@ -348,7 +348,7 @@ struct CameraRollNoticeBanner: View {
                     .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("camera-roll-notice")
                 Button { model.notice = nil } label: {
                     Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(KriaColor.mutedInk).frame(width: 44, height: 28)
-                }.buttonStyle(.plain).accessibilityLabel("Dismiss")
+                }.buttonStyle(.plain).accessibilityLabel(String(localized: "Dismiss"))
             }
             .padding(.leading, 16).padding(.vertical, 12)
             .background(notice.kind == .error ? KriaColor.failureSoft : KriaColor.fill, in: RoundedRectangle(cornerRadius: 24, style: .continuous))

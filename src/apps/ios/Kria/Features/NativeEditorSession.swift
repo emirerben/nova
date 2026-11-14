@@ -1078,17 +1078,17 @@ enum EditorOpenIntent { case warm, open }
     static func deviceRenderRetryMessage(_ presentation: DeviceRenderPresentation) -> String {
         switch DeviceRenderAttentionCopy.nextStep(presentation) {
         case .resume:
-            return "Your edit is saved. Rendering is paused on this iPhone; resume it when you’re ready."
+            return String(localized: "Your edit is saved. Rendering is paused on this iPhone; resume it when you’re ready.")
         case .reviewInChat:
-            return "Your edit is saved. This iPhone can’t render this version; review it in chat and Kria will make one it can."
+            return String(localized: "Your edit is saved. This iPhone can’t render this version; review it in chat and Kria will make one it can.")
         case .updateApp:
-            return "Your edit is saved. This edit needs a newer version of Kria. Update the app to finish it."
+            return String(localized: "Your edit is saved. This edit needs a newer version of Kria. Update the app to finish it.")
         case .renderNow:
-            return "Your edit is saved. Kria can render it on this iPhone now."
+            return String(localized: "Your edit is saved. Kria can render it on this iPhone now.")
         case .retry:
             break
         }
-        return presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
+        return presentation.message ?? String(localized: "Your edit is saved, but this iPhone needs to retry rendering it.")
     }
 
     /// The device render behind the retry banner is the creator's own pause.
@@ -1742,22 +1742,22 @@ enum EditorOpenIntent { case warm, open }
     /// conditions ``canDownloadCurrentVideo`` checks, explained. `nil` exactly
     /// when export is available.
     var exportBlockReason: String? {
-        if isShowingPreviousPreview { return "The preview shows the previous version. Check the preview update before exporting." }
+        if isShowingPreviousPreview { return String(localized: "The preview shows the previous version. Check the preview update before exporting.") }
         guard !canDownloadCurrentVideo else { return nil }
-        if document.editorState == "empty" { return "Add a clip before exporting." }
-        if isSaving { return "Saving your changes…" }
-        if hasUnsavedChanges { return "Save your changes to export the current video." }
+        if document.editorState == "empty" { return String(localized: "Add a clip before exporting.") }
+        if isSaving { return String(localized: "Saving your changes…") }
+        if hasUnsavedChanges { return String(localized: "Save your changes to export the current video.") }
         if pendingPreviewGeneration != nil || (sourcePreviewState == .ready && !sourcePreviewSettled) {
-            return "Kria is updating the preview. Try again in a moment."
+            return String(localized: "Kria is updating the preview. Try again in a moment.")
         }
         switch sourcePreviewState {
         case .idle, .preparing:
-            return "Preparing the preview…"
+            return String(localized: "Preparing the preview…")
         case .failed, .originalsUnavailable, .ready:
             // The source preview is ready or has fallen back to the rendered
             // video, but the player hasn't caught up yet (a brief window
             // during a rebuild) or the session has no job to export from.
-            return "This video isn’t ready to export yet."
+            return String(localized: "This video isn’t ready to export yet.")
         }
     }
 
@@ -2790,7 +2790,7 @@ enum EditorOpenIntent { case warm, open }
         case other
     }
 
-    static let targetLostMessage = "This project was started over or removed in another place, so this edit isn’t linked to it anymore. Go back to the chat to keep going."
+    static let targetLostMessage = String(localized: "This project was started over or removed in another place, so this edit isn’t linked to it anymore. Go back to the chat to keep going.")
 
     static func refreshFailure(_ error: Error) -> RefreshFailure {
         if error is CancellationError { return .cancelled }
@@ -3259,7 +3259,7 @@ enum EditorOpenIntent { case warm, open }
                           self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
                     if error is CancellationError { return }
                     guard case .transient = Self.refreshFailure(error) else {
-                        self.latestJobRefreshMessage = "The latest version could not be checked. Your edits are still here."
+                        self.latestJobRefreshMessage = String(localized: "The latest version could not be checked. Your edits are still here.")
                         return
                     }
                     guard attempt < retryDelays.count,
@@ -3311,12 +3311,12 @@ enum EditorOpenIntent { case warm, open }
         let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
         let cooldown = latestJobCooldowns[scope] ?? NativeEditorReadCooldown()
         guard !cooldown.isPaused else {
-            latestJobRefreshMessage = "The server supplied an unsupported retry interval. Your edits are still here."
+            latestJobRefreshMessage = String(localized: "The server supplied an unsupported retry interval. Your edits are still here.")
             return
         }
         let delay = max(Self.latestJobSlowRecheck, cooldown.delay(now: latestJobReadNow()))
         let identity = editorOperationIdentity, owner = api.mediaLibraryOwner, sleep = latestJobReadSleep
-        latestJobRefreshMessage = "The latest version will be checked again automatically. Your edits are still here."
+        latestJobRefreshMessage = String(localized: "The latest version will be checked again automatically. Your edits are still here.")
         latestJobDrainTask = Task { [weak self] in
             do { try await sleep(delay) } catch { return }
             guard !Task.isCancelled, let self, self.observersVisible, self.editorOperationIdentity == identity,
@@ -3341,7 +3341,7 @@ enum EditorOpenIntent { case warm, open }
             case .ready:
                 return true
             case .wait(let delay):
-                latestJobRefreshMessage = "Waiting for the server's retry window. The latest version will be checked automatically."
+                latestJobRefreshMessage = String(localized: "Waiting for the server's retry window. The latest version will be checked automatically.")
                 try await latestJobReadSleep(delay)
             }
             // Another in-flight response may have extended the deadline while asleep.
@@ -3497,7 +3497,7 @@ enum EditorOpenIntent { case warm, open }
         let exhausted = newVersionWatchAttempts >= 64
         let delay = exhausted ? Self.latestJobSlowRecheck : delays[min(newVersionWatchAttempts, delays.count - 1)]
         newVersionWatchAttempts = min(newVersionWatchAttempts + 1, 64)
-        if exhausted { latestJobRefreshMessage = "The latest version is still rendering. It will be checked again automatically." }
+        if exhausted { latestJobRefreshMessage = String(localized: "The latest version is still rendering. It will be checked again automatically.") }
         let owner = api.mediaLibraryOwner, sleep = latestJobReadSleep
         newVersionWatchTask = Task { [weak self] in
             do { try await sleep(delay) } catch { return }
@@ -3720,7 +3720,7 @@ enum EditorOpenIntent { case warm, open }
                let saved = try? JSONDecoder().decode(CreationVariant.self, from: data),
                saved.matchesSavedEditor(jobID: editorJobID.uuidString, itemID: resolvedPlanItemID) {
                 pendingRenderRetrySections = [.timeline]
-                saveState = .renderRetryNeeded("Your edit is saved. Retry its render when you’re ready.")
+                saveState = .renderRetryNeeded(String(localized: "Your edit is saved. Retry its render when you’re ready."))
             }
             loadState = .loaded
             loadSucceeded()
@@ -3742,8 +3742,8 @@ enum EditorOpenIntent { case warm, open }
                 }
                 // No receipt proves promotion. Do not replay an uncertain metadata POST.
                 loadSucceeded()
-                saveState = .loadFailed("The editor could not confirm opening this video. Your Gallery video is still available.")
-                loadState = .failed("The editor could not confirm opening this video. Your Gallery video is still available.")
+                saveState = .loadFailed(String(localized: "The editor could not confirm opening this video. Your Gallery video is still available."))
+                loadState = .failed(String(localized: "The editor could not confirm opening this video. Your Gallery video is still available."))
                 return
             }
             if scheduleLoadRetry(after: error, { [weak self] in
@@ -3798,17 +3798,17 @@ enum EditorOpenIntent { case warm, open }
         if apiError == .editorNotReady {
             delays = loadRenderingDelays
             limit = 80
-            message = "Your video is still rendering. The editor opens as soon as it’s ready."
+            message = String(localized: "Your video is still rendering. The editor opens as soon as it’s ready.")
         } else {
             switch Self.refreshFailure(error) {
             case .transient:
                 delays = loadRetryDelays; limit = Self.loadTransientRetryLimit
                 message = RequestFailureCause(error) == .connection
-                    ? "Waiting for a connection. The editor opens on its own when you’re back online."
-                    : "Kria is taking a moment. Trying again…"
+                    ? String(localized: "Waiting for a connection. The editor opens on its own when you’re back online.")
+                    : String(localized: "Kria is taking a moment. Trying again…")
             case .readConflict where apiError != .contentPlanUnavailable && (apiError?.conflictCode == nil || apiError?.isBaselineConflict == true):
                 delays = loadRetryDelays; limit = 2
-                message = "Loading the latest cut…"
+                message = String(localized: "Loading the latest cut…")
             default:
                 loadSucceeded()
                 return false
@@ -3821,7 +3821,7 @@ enum EditorOpenIntent { case warm, open }
         let exhausted = loadRetryAttempt >= limit
         let delay = exhausted ? Self.latestJobSlowRecheck : delays[min(loadRetryAttempt, delays.count - 1)]
         loadRetryAttempt = min(loadRetryAttempt + 1, limit)
-        loadWaitingMessage = exhausted ? "The editor will check again automatically. Your saved edit is safe." : message
+        loadWaitingMessage = exhausted ? String(localized: "The editor will check again automatically. Your saved edit is safe.") : message
         saveState = .idle
         loadState = .loading
         scheduleLoadObservation(retry, delay: delay)
@@ -4135,7 +4135,7 @@ enum EditorOpenIntent { case warm, open }
                 let matches = binding?.original.fingerprint?.hex == descriptor.sha256
                     && binding?.original.fingerprint?.byteCount == descriptor.byteCount
                 if !matches || (try? store.resolve(mediaIDs: [mediaID])) == nil {
-                    missing.append(OriginalRelinkTarget(mediaID: mediaID, descriptor: descriptor, title: "Original \(missing.count + 1)"))
+                    missing.append(OriginalRelinkTarget(mediaID: mediaID, descriptor: descriptor, title: String(localized: "Original \(missing.count + 1)")))
                 }
             }
             return missing
@@ -4162,7 +4162,7 @@ enum EditorOpenIntent { case warm, open }
 
     /// KRI-211: plain words for "the originals live somewhere else", shared by the preview and
     /// the device-render panel so both explain the same thing the same way.
-    static let originalsUnavailableMessage = "The original clips for this edit are on another device. Find the files to edit here."
+    static let originalsUnavailableMessage = String(localized: "The original clips for this edit are on another device. Find the files to edit here.")
 
     static func isMissingOriginals(_ error: Error) -> Bool {
         switch error {
@@ -4186,33 +4186,33 @@ enum EditorOpenIntent { case warm, open }
     static func sourcePreviewMessage(for error: Error) -> String {
         switch error {
         case let conflict as APIError where conflict.isBaselineConflict:
-            return "This video changed while it was loading. Retry to load the newest version."
+            return String(localized: "This video changed while it was loading. Retry to load the newest version.")
         case APIError.conflict:
-            return "A source video or edit asset could not be loaded. Retry in a moment."
+            return String(localized: "A source video or edit asset could not be loaded. Retry in a moment.")
         case APIError.sessionExpired:
-            return "Sign in again to load the source videos."
+            return String(localized: "Sign in again to load the source videos.")
         case NativeEditorRenderError.missingSpeechCaptionTiming:
-            return "Your range is kept. Add captions for the newly exposed speech, turn captions off, or restore the previous range before exporting."
+            return String(localized: "Your range is kept. Add captions for the newly exposed speech, turn captions off, or restore the previous range before exporting.")
         case NativeEditorRenderError.unsupportedLane:
-            return "This edit contains an effect that iPhone preview does not support yet."
+            return String(localized: "This edit contains an effect that iPhone preview does not support yet.")
         case NativeEditorRenderError.missingFont:
-            return "A required font is missing from this app build. Update the app and try again."
+            return String(localized: "A required font is missing from this app build. Update the app and try again.")
         case NativeEditorRenderError.missingVideoTrack:
-            return "This edit’s video can’t be previewed on iPhone yet."
+            return String(localized: "This edit’s video can’t be previewed on iPhone yet.")
         case RecipeError.invalidTimeline:
-            return "This change can’t be previewed. Undo it to get the preview back."
+            return String(localized: "This change can’t be previewed. Undo it to get the preview back.")
         case NativeEditorRenderError.tooManyTextLayers:
-            return "This edit has more on-screen text than iPhone preview can show. Remove some text or captions to preview it."
+            return String(localized: "This edit has more on-screen text than iPhone preview can show. Remove some text or captions to preview it.")
         case NativeEditorPlaybackFailure.liveItem:
-            return "The editable preview couldn’t play on this iPhone, so the finished video is shown. Retry to rebuild it."
+            return String(localized: "The editable preview couldn’t play on this iPhone, so the finished video is shown. Retry to rebuild it.")
         case NativeEditorPlaybackFailure.finishedItem:
-            return "The video couldn’t be loaded. Check your connection and retry."
+            return String(localized: "The video couldn’t be loaded. Check your connection and retry.")
         case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal:
             return Self.originalsUnavailableMessage
         default:
             return RequestFailureCause(error) == .connection
-                ? "A source video or edit asset could not be loaded. Check your connection and retry."
-                : "A source video or edit asset could not be loaded. \(error.localizedDescription)"
+                ? String(localized: "A source video or edit asset could not be loaded. Check your connection and retry.")
+                : String(localized: "A source video or edit asset could not be loaded. \(error.localizedDescription)")
         }
     }
 
@@ -5496,8 +5496,9 @@ enum EditorOpenIntent { case warm, open }
                 let aligned = snap.map { abs($0 - target) < 1e-9 } ?? false
                 resized.length = target - offset
                 if !section.collapseEmptyPanels { next.splitScreenSections[sectionIndex].durationS = max(section.durationS, target) }
-                let panel = NativeSplitScreenRows.panelTitle(index: slot.splitPanelIndex ?? 0, count: section.panelCount)
-                splitHint = "\(panel) ends at \(String(format: "%.1f", target))s\(aligned ? " · aligned" : "")\(outOfFootage ? " · out of footage" : "")"
+                let panel = NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: slot.splitPanelIndex ?? 0, count: section.panelCount))
+                let endText = String(localized: "\(panel) ends at \(target, format: .number.precision(.fractionLength(1)))s")
+                splitHint = endText + (aligned ? String(localized: " · aligned") : "") + (outOfFootage ? String(localized: " · out of footage") : "")
             }
         }
         // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
@@ -5551,7 +5552,7 @@ enum EditorOpenIntent { case warm, open }
     private static func refusedSplitTrimReason(_ document: EditorDocument) -> String {
         let total = NativeEditorInteraction.timelineProjection(
             slots: document.clips, carousel: nil, splitSections: document.splitScreenSections).totalDuration
-        return total > 1800 ? "A video can't run longer than 30 minutes." : "That trim doesn't fit this split."
+        return total > 1800 ? String(localized: "A video can't run longer than 30 minutes.") : String(localized: "That trim doesn't fit this split.")
     }
 
     #if DEBUG
@@ -5731,7 +5732,7 @@ enum EditorOpenIntent { case warm, open }
         var candidate = document
         Self.applyClipTransition(to: &candidate, index: index, transition: transition, duration: duration)
         guard candidate.splitScreenIsValid else {
-            splitScreenActionError = "This transition would move clips outside the section. Extend the section first."
+            splitScreenActionError = String(localized: "This transition would move clips outside the section. Extend the section first.")
             return
         }
         splitScreenActionError = nil
@@ -5752,7 +5753,7 @@ enum EditorOpenIntent { case warm, open }
             Self.applyClipTransition(to: &candidate, index: index, transition: transition, duration: duration)
         }
         guard candidate.splitScreenIsValid else {
-            splitScreenActionError = "These transitions would move clips outside a section. Extend the section first."
+            splitScreenActionError = String(localized: "These transitions would move clips outside a section. Extend the section first.")
             return
         }
         splitScreenActionError = nil
@@ -5864,16 +5865,16 @@ enum EditorOpenIntent { case warm, open }
                 let url = try await source()
                 await addDeviceTimelineMedia(fileURL: url, source: uploadSource, alreadyPreparing: true, replacingSlotID: replacingSlotID)
             } catch {
-                addClipError = "This file couldn’t be read. Try Files or choose it again."
+                addClipError = String(localized: "This file couldn’t be read. Try Files or choose it again.")
             }
             return
         }
         guard (canEditTimeline || document.editorState == "empty"), let api, let jobID else {
-            addClipError = "The timeline can’t be edited right now. Try adding it again in a moment."
+            addClipError = String(localized: "The timeline can’t be edited right now. Try adding it again in a moment.")
             return
         }
         guard draft.clips.count < Self.maxTimelineClips else {
-            addClipError = "This edit already has the maximum number of clips."
+            addClipError = String(localized: "This edit already has the maximum number of clips.")
             return
         }
         isAddingClip = true
@@ -5900,7 +5901,7 @@ enum EditorOpenIntent { case warm, open }
             guard canEditTimeline || document.editorState == "empty" else {
                 // The clip uploaded and was minted into the job's pool, but the timeline is no longer
                 // editable (a save or render began). Say so rather than silently discarding it.
-                addClipError = "The clip uploaded, but the timeline changed while it was uploading. Add it again."
+                addClipError = String(localized: "The clip uploaded, but the timeline changed while it was uploading. Add it again.")
                 return
             }
             transactDocument(section: .timeline) { doc in
@@ -5912,10 +5913,10 @@ enum EditorOpenIntent { case warm, open }
             }
             addClipError = nil
         } catch is AddClipSourceUnreadable {
-            addClipError = "This file couldn’t be read. Try Files or choose it again."
+            addClipError = String(localized: "This file couldn’t be read. Try Files or choose it again.")
         } catch let error as URLError where [.networkConnectionLost, .cancelled, .notConnectedToInternet, .timedOut].contains(error.code) {
-            addClipError = "The upload was interrupted. Your edit is unchanged. Keep Kria open while it uploads and try again."
-        } catch { addClipError = "This file couldn’t be added. Your edit is unchanged. " + error.localizedDescription }
+            addClipError = String(localized: "The upload was interrupted. Your edit is unchanged. Keep Kria open while it uploads and try again.")
+        } catch { addClipError = String(localized: "This file couldn’t be added. Your edit is unchanged. \(error.localizedDescription)") }
     }
 
     func addText(content: String? = nil) {
@@ -5972,16 +5973,16 @@ enum EditorOpenIntent { case warm, open }
     func pasteUnavailableMessage(for content: PastedContent) -> String? {
         switch content {
         case .text:
-            return canEditSection(.text) && duration > 0 ? nil : "Adding text isn’t available for this edit."
+            return canEditSection(.text) && duration > 0 ? nil : String(localized: "Adding text isn’t available for this edit.")
         case .image:
-            if itemID == nil { return "Open a saved edit to paste a picture." }
+            if itemID == nil { return String(localized: "Open a saved edit to paste a picture.") }
             if let message = visualImportUnavailableMessage { return message }
-            guard canAuthorVisuals else { return "Adding pictures isn’t available for this edit." }
+            guard canAuthorVisuals else { return String(localized: "Adding pictures isn’t available for this edit.") }
             // The same limits `addLibraryVisual` / `admitDeviceVisual` enforce after the upload, checked first
             // so a refused picture is never uploaded.
-            if document.visualBlocks.count >= 20 { return "This edit already has 20 visuals. Remove one to paste another." }
+            if document.visualBlocks.count >= 20 { return String(localized: "This edit already has 20 visuals. Remove one to paste another.") }
             if rendersOnDevice, !phoneAllowsVisualKind("image") || editorSourceTarget(kind: .visual) == nil {
-                return "Adding pictures isn’t available for this edit on this iPhone."
+                return String(localized: "Adding pictures isn’t available for this edit on this iPhone.")
             }
             return nil
         }
@@ -5990,7 +5991,7 @@ enum EditorOpenIntent { case warm, open }
     /// Entry point for the system Paste control. Anything that can't be placed says why, never a silent no-op.
     func paste(providers: [NSItemProvider]) async {
         guard let content = await PasteboardIntake.load(from: providers) else {
-            pasteError = "Kria can’t use what’s on your clipboard. Copy text or a picture and try again."
+            pasteError = String(localized: "Kria can’t use what’s on your clipboard. Copy text or a picture and try again.")
             return
         }
         if let message = pasteUnavailableMessage(for: content) {
@@ -6023,12 +6024,12 @@ enum EditorOpenIntent { case warm, open }
     func pasteImage(fileURL: URL) async {
         guard !isPastingImage else {
             try? FileManager.default.removeItem(at: fileURL)
-            pasteError = "Still adding your last picture. Try again in a moment."
+            pasteError = String(localized: "Still adding your last picture. Try again in a moment.")
             return
         }
         guard let uploads = mediaUploads, let itemID else {
             try? FileManager.default.removeItem(at: fileURL)
-            pasteError = "Adding a picture isn’t available right now."
+            pasteError = String(localized: "Adding a picture isn’t available right now.")
             return
         }
         isPastingImage = true
@@ -6044,7 +6045,7 @@ enum EditorOpenIntent { case warm, open }
         }
         guard baselineRead else {
             try? FileManager.default.removeItem(at: fileURL)
-            pasteError = "Kria couldn’t reach your visuals. Check your connection and try again."
+            pasteError = String(localized: "Kria couldn’t reach your visuals. Check your connection and try again.")
             return
         }
         let known = Set(visualLibrary.map(\.id))
@@ -6053,7 +6054,7 @@ enum EditorOpenIntent { case warm, open }
             consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: itemID)
         // Not deleted on refusal: a busy server leaves a Retry in the visual failures that re-reads this file.
         guard accepted else {
-            pasteError = "That picture couldn’t be added. Your edit is unchanged."
+            pasteError = String(localized: "That picture couldn’t be added. Your edit is unchanged.")
             return
         }
         // The background uploader registers the asset with the pool, then analysis marks it ready.
@@ -6071,13 +6072,13 @@ enum EditorOpenIntent { case warm, open }
                     return
                 }
                 if asset.status == "failed" {
-                    pasteError = "That picture couldn’t be prepared. Your edit is unchanged."
+                    pasteError = String(localized: "That picture couldn’t be prepared. Your edit is unchanged.")
                     return
                 }
             }
             try? await Task.sleep(for: .seconds(1))
         }
-        pasteError = "Adding the picture is taking longer than expected. If it is already in your visuals, add it from there."
+        pasteError = String(localized: "Adding the picture is taking longer than expected. If it is already in your visuals, add it from there.")
     }
 
     func updatePendingText(_ content: String) { pendingText?.text = content }
@@ -6327,7 +6328,7 @@ enum EditorOpenIntent { case warm, open }
             visualError = nil
             return true
         } catch {
-            if !Task.isCancelled { visualError = "Your visuals couldn’t load. Try again. " + error.localizedDescription }
+            if !Task.isCancelled { visualError = String(localized: "Your visuals couldn’t load. Try again. \(error.localizedDescription)") }
             return false
         }
     }
@@ -6415,9 +6416,9 @@ enum EditorOpenIntent { case warm, open }
         return canAuthorVisuals || canEditSection(.motionScenes)
     }
     var visualImportUnavailableMessage: String? {
-        if itemID == nil { return "Open a saved edit to add photos or videos." }
-        if rendersOnDevice && !canImportVisuals { return "Adding media isn’t available for this edit on this iPhone." }
-        if !canImportVisuals { return "Adding visuals isn’t available for this edit." }
+        if itemID == nil { return String(localized: "Open a saved edit to add photos or videos.") }
+        if rendersOnDevice && !canImportVisuals { return String(localized: "Adding media isn’t available for this edit on this iPhone.") }
+        if !canImportVisuals { return String(localized: "Adding visuals isn’t available for this edit.") }
         return nil
     }
 
@@ -6428,7 +6429,7 @@ enum EditorOpenIntent { case warm, open }
     /// case, surfaced separately since the timeline and Visuals import gate independently.
     var addClipUnavailableMessage: String? {
         if let cloudEditorUnavailableMessage { return cloudEditorUnavailableMessage }
-        return rendersOnDevice && !canRegisterPhoneSources ? "Adding media isn’t available for this edit on this iPhone." : nil
+        return rendersOnDevice && !canRegisterPhoneSources ? String(localized: "Adding media isn’t available for this edit on this iPhone.") : nil
     }
 
     var canAddTimelineMedia: Bool {
@@ -6439,9 +6440,9 @@ enum EditorOpenIntent { case warm, open }
     /// conditions above; nil when adding is allowed.
     var addClipUnavailableReason: String? {
         if let cloudEditorUnavailableMessage { return cloudEditorUnavailableMessage }
-        if rendersOnDevice && !canRegisterPhoneSources { return "Adding media isn’t available for this edit on this iPhone." }
-        if !canEditTimeline && document.editorState != "empty" { return "This edit’s timeline can’t be changed." }
-        if draft.clips.count >= Self.maxTimelineClips { return "An edit can have up to \(Self.maxTimelineClips) clips." }
+        if rendersOnDevice && !canRegisterPhoneSources { return String(localized: "Adding media isn’t available for this edit on this iPhone.") }
+        if !canEditTimeline && document.editorState != "empty" { return String(localized: "This edit’s timeline can’t be changed.") }
+        if draft.clips.count >= Self.maxTimelineClips { return String(localized: "An edit can have up to \(Self.maxTimelineClips) clips.") }
         return nil
     }
 
@@ -6489,7 +6490,7 @@ enum EditorOpenIntent { case warm, open }
             }
             try await Task.sleep(for: .seconds(1))
         }
-        uploads.failEditorPlacement(recordID, error: "Preparation is taking longer than expected. Try again.")
+        uploads.failEditorPlacement(recordID, error: String(localized: "Preparation is taking longer than expected. Try again."))
         throw APIError.offline
     }
 
@@ -6658,7 +6659,7 @@ enum EditorOpenIntent { case warm, open }
         let placements = allPlacements.filter { $0.target.baseGeneration == document.revision.baseGeneration }
         for stale in allPlacements where stale.target.baseGeneration != document.revision.baseGeneration {
             await uploads.discardEditorPlacement(stale.id)
-            addClipError = "A pending import belongs to an older version of this edit and was removed."
+            addClipError = String(localized: "A pending import belongs to an older version of this edit and was removed.")
         }
         for placement in placements where placement.status != "failed" && pendingPlacementIDs.insert(placement.id).inserted {
             Task { @MainActor [weak self] in
@@ -6669,7 +6670,7 @@ enum EditorOpenIntent { case warm, open }
                     try await self.placeEditorSource(placement, response: response)
                 } catch {
                     if self.editorImportsActive && !(error is CancellationError) {
-                        uploads.failEditorPlacement(placement.id, error: "This import couldn’t be added. Try again.")
+                        uploads.failEditorPlacement(placement.id, error: String(localized: "This import couldn’t be added. Try again."))
                     }
                 }
             }
@@ -6707,7 +6708,7 @@ enum EditorOpenIntent { case warm, open }
     func addDeviceTimelineMedia(fileURL: URL, source: UploadSource, alreadyPreparing: Bool = false, replacingSlotID: String? = nil,
                                 splitPanel: (sectionID: String, panel: Int, offset: Double)? = nil) async {
         guard canAddTimelineMedia, let uploads = mediaUploads else {
-            addClipError = "Adding media isn’t available for this edit right now."
+            addClipError = String(localized: "Adding media isn’t available for this edit right now.")
             return
         }
         guard !isAddingClip || alreadyPreparing else { return }
@@ -6759,8 +6760,8 @@ enum EditorOpenIntent { case warm, open }
             try await placeEditorSource(placement, response: response)
         } catch {
             guard editorImportsActive, !(error is CancellationError) else { return }
-            if let importID { uploads.failEditorPlacement(importID, error: "This media couldn’t be added. Try again.") }
-            addClipError = "This media couldn’t be added. Your edit is unchanged. " + error.localizedDescription
+            if let importID { uploads.failEditorPlacement(importID, error: String(localized: "This media couldn’t be added. Try again.")) }
+            addClipError = String(localized: "This media couldn’t be added. Your edit is unchanged. \(error.localizedDescription)")
         }
     }
 
@@ -6823,7 +6824,7 @@ enum EditorOpenIntent { case warm, open }
                 try? FileManager.default.removeItem(at: add.source.url)
             }
             guard !(error is CancellationError) else { return }
-            addClipError = "This media couldn’t be added. Your edit is unchanged. " + error.localizedDescription
+            addClipError = String(localized: "This media couldn’t be added. Your edit is unchanged. \(error.localizedDescription)")
         }
     }
 
@@ -6895,7 +6896,7 @@ enum EditorOpenIntent { case warm, open }
             try await placeEditorSource(placement, response: response)
         } catch {
             guard editorImportsActive, !(error is CancellationError), pendingTimelineAdds[id] != nil else { return }
-            uploads.failEditorPlacement(id, error: "This media couldn’t be uploaded. Try again.")
+            uploads.failEditorPlacement(id, error: String(localized: "This media couldn’t be uploaded. Try again."))
         }
     }
 
@@ -6977,7 +6978,7 @@ enum EditorOpenIntent { case warm, open }
             guard !Task.isCancelled, identity == editorOperationIdentity else { return false }
         }
         guard !document.clips.contains(where: { $0.raw["pending_local"] == .bool(true) }) else {
-            saveState = .failed("A clip didn’t finish uploading. Retry or remove it, then save.")
+            saveState = .failed(String(localized: "A clip didn’t finish uploading. Retry or remove it, then save."))
             return false
         }
         return true
@@ -7088,7 +7089,7 @@ enum EditorOpenIntent { case warm, open }
                 preferred: min(3, asset.kind == "video" ? asset.durationS ?? 0 : 3)),
               let block = NativeVisualAuthoring.media(asset: asset, start: window.start, end: window.end,
                 z: Int(document.visualBlocks.compactMap { $0.raw["z"]?.numberValue }.max() ?? 0) + 1) else {
-            visualError = "This visual isn’t ready, or there isn’t enough room at the playhead."
+            visualError = String(localized: "This visual isn’t ready, or there isn’t enough room at the playhead.")
             return
         }
         isAddingVisual = true
@@ -7102,7 +7103,7 @@ enum EditorOpenIntent { case warm, open }
             transactDocument(section: .visualBlocks) { $0.visualBlocks.append(block) }
             visualError = nil
             select(.init(kind: .visualBlock, id: block.id))
-        } catch { visualError = "This visual couldn’t be opened. Your edit is unchanged. " + error.localizedDescription }
+        } catch { visualError = String(localized: "This visual couldn’t be opened. Your edit is unchanged. \(error.localizedDescription)") }
     }
 
     /// Visual-pool bytes are already registered by the shared background
@@ -7113,7 +7114,7 @@ enum EditorOpenIntent { case warm, open }
         guard canImportVisuals, !isAddingVisual, document.visualBlocks.count < 20, asset.status == "ready",
               phoneAllowsVisualKind(asset.kind), let target = editorSourceTarget(kind: .visual),
               let api else {
-            visualError = "This visual isn’t available for this edit on this iPhone."
+            visualError = String(localized: "This visual isn’t available for this edit on this iPhone.")
             return
         }
         isAddingVisual = true
@@ -7141,8 +7142,8 @@ enum EditorOpenIntent { case warm, open }
             visualError = nil
         } catch {
             guard editorImportsActive, !(error is CancellationError) else { return }
-            if let importID { mediaUploads?.failEditorPlacement(importID, error: "This visual couldn’t be added. Try again.") }
-            visualError = "This visual couldn’t be added. Your edit is unchanged. " + error.localizedDescription
+            if let importID { mediaUploads?.failEditorPlacement(importID, error: String(localized: "This visual couldn’t be added. Try again.")) }
+            visualError = String(localized: "This visual couldn’t be added. Your edit is unchanged. \(error.localizedDescription)")
         }
     }
 
@@ -7150,7 +7151,7 @@ enum EditorOpenIntent { case warm, open }
         guard canAuthorVisuals, canEditSection(.text), document.visualBlocks.count < 20,
               let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection),
               let (block, element) = NativeVisualAuthoring.card(text: text, bold: bold, start: window.start, end: window.end) else {
-            visualError = "Enter some text and move the playhead inside the edit."
+            visualError = String(localized: "Enter some text and move the playhead inside the edit.")
             return nil
         }
         transactDocument(sections: [.visualBlocks, .text]) {
@@ -7166,7 +7167,7 @@ enum EditorOpenIntent { case warm, open }
               let hash = Self.object(previewVariant["editor_capabilities"])?["motion_runtime_hash"]?.stringValue ?? document.motionRuntimeHash,
               let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection),
               let scene = NativeVisualAuthoring.motion(preset: preset, assets: assets, start: window.start, end: window.end) else {
-            visualError = "Choose the required ready photos and move the playhead inside the edit."
+            visualError = String(localized: "Choose the required ready photos and move the playhead inside the edit.")
             return
         }
         let generation = document.revision.baseGeneration
@@ -7184,7 +7185,7 @@ enum EditorOpenIntent { case warm, open }
             transactDocument(section: .motionScenes) { $0.motionScenes.append(scene); $0.motionRuntimeHash = hash }
             visualError = nil
             select(.init(kind: .motionScene, id: scene.id))
-        } catch { visualError = "The composition couldn’t be opened. " + error.localizedDescription }
+        } catch { visualError = String(localized: "The composition couldn’t be opened. \(error.localizedDescription)") }
     }
 
     func addCameraPulse(easing: String = CameraEmphasis.pulseEasing, intensity: Double? = nil) {
@@ -7193,7 +7194,7 @@ enum EditorOpenIntent { case warm, open }
         let strength = intensity ?? bounds.defaultIntensity
         guard strength.isFinite, canEditSection(.cameraEffects),
               let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection, preferred: bounds.defaultDuration, minimum: bounds.minDuration) else {
-            visualError = "\(CameraEmphasis.label(resolved)) isn’t available at this position in the edit."
+            visualError = String(localized: "\(CameraEmphasis.label(resolved)) isn’t available at this position in the edit.")
             return
         }
         let effect = EditorCameraEffect(id: UUID().uuidString, startS: window.start, endS: window.end, effect: CameraEmphasis.token,
@@ -7630,11 +7631,11 @@ enum EditorOpenIntent { case warm, open }
     func drawingCapMessage(extraPoints: Int = 0, extraStrokes: Int = 0, editing id: String? = nil) -> String? {
         let others = document.drawings.filter { $0.id != id }
         let current = id.flatMap { drawing(id: $0) }
-        if id == nil, document.drawings.count >= DrawingLimits.maxDrawings { return "You can add up to \(DrawingLimits.maxDrawings) drawings." }
-        if (current?.strokes.count ?? 0) + extraStrokes > DrawingLimits.maxStrokesPerDrawing { return "That’s as many strokes as one drawing holds." }
-        if (current?.pointCount ?? 0) + extraPoints > DrawingLimits.maxPointsPerDrawing { return "That drawing is as detailed as it can get." }
+        if id == nil, document.drawings.count >= DrawingLimits.maxDrawings { return String(localized: "You can add up to \(DrawingLimits.maxDrawings) drawings.") }
+        if (current?.strokes.count ?? 0) + extraStrokes > DrawingLimits.maxStrokesPerDrawing { return String(localized: "That’s as many strokes as one drawing holds.") }
+        if (current?.pointCount ?? 0) + extraPoints > DrawingLimits.maxPointsPerDrawing { return String(localized: "That drawing is as detailed as it can get.") }
         if others.reduce(0, { $0 + $1.pointCount }) + (current?.pointCount ?? 0) + extraPoints > DrawingLimits.maxPointsPerVariant {
-            return "This video has as many drawings as it can hold."
+            return String(localized: "This video has as many drawings as it can hold.")
         }
         return nil
     }
@@ -7647,14 +7648,14 @@ enum EditorOpenIntent { case warm, open }
         let editableEnd = timelineClips.map(\.end).max() ?? duration
         guard let window = NativeVisualAuthoring.window(at: currentTime, duration: editableEnd, projection: timelineProjection, preferred: 3, minimum: 0.5),
               drawingCapMessage(extraPoints: strokes.reduce(0) { $0 + $1.points.count }, extraStrokes: strokes.count) == nil else {
-            visualError = "A drawing can’t be added at this position."
+            visualError = String(localized: "A drawing can’t be added at this position.")
             return false
         }
         var drawing = EditorDrawing(startS: window.start, endS: window.end, canvasAspect: min(4.9, max(0.21, canvasAspect)), strokes: strokes)
         let center = drawing.strokeCenter
         drawing.centerX = center.x; drawing.centerY = center.y
         drawing.drawDurationS = min(1.2, window.end - window.start)
-        guard drawing.isValid else { visualError = "That drawing can’t be saved."; return false }
+        guard drawing.isValid else { visualError = String(localized: "That drawing can’t be saved."); return false }
         transactDocument(section: .drawings) { $0.drawings.append(drawing) }
         // Show it finished: the playhead moves to where the pen lifts, so Done never leaves an empty-looking frame.
         select(.init(kind: .drawing, id: drawing.id), seekToStart: false)
@@ -7913,8 +7914,8 @@ enum EditorOpenIntent { case warm, open }
     }
 
     func textDeletion(id: String) -> TextDeletion {
-        guard let element = document.textElements.first(where: { $0.id == id }) else { return .blocked("This text no longer exists.") }
-        if element.isReadOnly { return .blocked("This title can't be edited here yet.") }
+        guard let element = document.textElements.first(where: { $0.id == id }) else { return .blocked(String(localized: "This text no longer exists.")) }
+        if element.isReadOnly { return .blocked(String(localized: "This title can't be edited here yet.")) }
         return .allowed
     }
 
@@ -8325,14 +8326,14 @@ enum EditorOpenIntent { case warm, open }
                 row.raw["x_frac"] = .number(x)
                 row.raw["y_frac"] = .number(0.5)
                 guard let block = textMeasurer?.textBlockRect(for: row, in: document) else {
-                    captionPlacementMessage = "This font could not be measured. The caption has not moved."
+                    captionPlacementMessage = String(localized: "This font could not be measured. The caption has not moved.")
                     return
                 }
                 left = max(left, x - block.minX); right = max(right, block.maxX - x)
                 above = max(above, 0.5 - block.minY); below = max(below, block.maxY - 0.5)
             }
             guard left + right <= safe.width, above + below <= safe.height else {
-                captionPlacementMessage = "Use a smaller caption size or a common alignment to fit inside the safe area."
+                captionPlacementMessage = String(localized: "Use a smaller caption size or a common alignment to fit inside the safe area.")
                 return
             }
             let next: Double
@@ -8348,7 +8349,7 @@ enum EditorOpenIntent { case warm, open }
             coordinate = next
         }
         guard converged else {
-            captionPlacementMessage = "This caption cannot fit at that position. Try a smaller size."
+            captionPlacementMessage = String(localized: "This caption cannot fit at that position. Try a smaller size.")
             return
         }
         writeCaptionStyle(scope, values: placement.isHorizontal
@@ -9002,7 +9003,7 @@ enum EditorOpenIntent { case warm, open }
                 // Every exit still owned by this editor must be terminal. A
                 // load/reset owns its own state, even for identical target IDs.
                 if editorOperationIdentity == identity, !isSaving, saveState == .saving {
-                    saveState = .failed("Saving was interrupted. Your edits are still here. Try again when you’re ready.")
+                    saveState = .failed(String(localized: "Saving was interrupted. Your edits are still here. Try again when you’re ready."))
                 }
             }
         }
@@ -9020,7 +9021,7 @@ enum EditorOpenIntent { case warm, open }
                     // Consent covered the previous generation's render. A retry
                     // is not a local lane edit and cannot overwrite a newer save.
                     // Keep genuine edits (including edits made in flight) unsaved.
-                    saveState = .renderRetryNeeded("A newer saved edit was loaded. Your local changes are preserved. Review the edit before retrying its render.")
+                    saveState = .renderRetryNeeded(String(localized: "A newer saved edit was loaded. Your local changes are preserved. Review the edit before retrying its render."))
                     return
                 }
                 // The newest version may already contain everything the creator changed.
@@ -9031,17 +9032,17 @@ enum EditorOpenIntent { case warm, open }
                 guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
                 if saveHitNewerVersion {
                     saveHitNewerVersion = false
-                    saveState = .failed("This edit changed again while saving. Your edits are still here on the newest version. Save again to send them.")
+                    saveState = .failed(String(localized: "This edit changed again while saving. Your edits are still here on the newest version. Save again to send them."))
                     return
                 }
             case .superseded:
                 return
             case .deferred:
-                saveState = .failed("Your edits are still here. Finish what you're editing, then save again.")
+                saveState = .failed(String(localized: "Your edits are still here. Finish what you're editing, then save again."))
                 return
             case .alreadyTried, .failed:
                 let detail = if case .failed(let error) = reload { " \(error.localizedDescription)" } else { "" }
-                saveState = .failed("Your edits are still here, but the newest version couldn’t be loaded.\(detail)")
+                saveState = .failed(String(localized: "Your edits are still here, but the newest version couldn’t be loaded.\(detail)"))
                 return
             }
         }
@@ -9055,8 +9056,8 @@ enum EditorOpenIntent { case warm, open }
         guard !isSaving, hasUnsavedChanges || !retrySections.isEmpty else { return }
         let saveEditorEpoch = editorLoadEpoch
         defer { if editorLoadEpoch == saveEditorEpoch { userSongRetry = nil } }
-        guard document.splitScreenIsValid else { saveState = .failed("This split-screen layout cannot be saved. Your edits are still here."); return }
-        guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
+        guard document.splitScreenIsValid else { saveState = .failed(String(localized: "This split-screen layout cannot be saved. Your edits are still here.")); return }
+        guard let api, let itemID, let variantKey else { saveState = .failed(String(localized: "Load the project before saving edits.")); return }
         isSaving = true; saveState = .saving
         let submittedDocument = document
         let journal = EditorSaveHistory(submitted: submittedDocument, limit: historyLimit)
@@ -9248,7 +9249,7 @@ enum EditorOpenIntent { case warm, open }
                 await withTaskCancellationHandler { await committedRead?.value } onCancel: { committedRead?.cancel() }
                 guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingRenderRetrySections = acknowledged
-                saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
+                saveState = .renderRetryNeeded(response.renderRecovery ?? String(localized: "Your edit is saved. Its preview render did not start, so you can retry it safely."))
             }
         } catch let error as APIError where error.isBaselineConflict {
             guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
@@ -9487,8 +9488,8 @@ enum EditorOpenIntent { case warm, open }
 
     private func showConvergeNotice(replaced: Bool, canUndo: Bool) {
         convergeNotice = replaced
-            ? "Updated to the latest version. Some of your edits were replaced." + (canUndo ? " Undo to restore them." : "")
-            : "Updated to the latest version."
+            ? (canUndo ? String(localized: "Updated to the latest version. Some of your edits were replaced. Undo to restore them.") : String(localized: "Updated to the latest version. Some of your edits were replaced."))
+            : String(localized: "Updated to the latest version.")
         convergeNoticeTask?.cancel()
         convergeNoticeTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(6))
@@ -9561,16 +9562,16 @@ enum EditorOpenIntent { case warm, open }
     /// it cannot silently detach a creator's timed work from its footage.
     var clipSpeedBlockedReason: String? {
         if GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: ridesGuidedTimeline), !canEditSection(.text) {
-            return "Speed isn’t available while this edit’s text timing is locked."
+            return String(localized: "Speed isn’t available while this edit’s text timing is locked.")
         }
-        if !document.captionCues.isEmpty { return "Speed isn’t available while captions are timed to this edit." }
-        if !document.mediaOverlays.isEmpty { return "Speed isn’t available while media overlays are timed to this edit." }
-        if !document.visualBlocks.isEmpty { return "Speed isn’t available while visuals are timed to this edit." }
-        if !document.motionScenes.isEmpty { return "Speed isn’t available while motion is timed to this edit." }
-        if !document.cameraEffects.isEmpty { return "Speed isn’t available while camera effects are timed to this edit." }
-        if !document.soundEffects.isEmpty { return "Speed isn’t available while sound effects are timed to this edit." }
-        if !document.drawings.isEmpty { return "Speed isn’t available while drawings are timed to this edit." }
-        if document.carouselMoment != nil { return "Speed isn’t available while a carousel changes this edit’s timing." }
+        if !document.captionCues.isEmpty { return String(localized: "Speed isn’t available while captions are timed to this edit.") }
+        if !document.mediaOverlays.isEmpty { return String(localized: "Speed isn’t available while media overlays are timed to this edit.") }
+        if !document.visualBlocks.isEmpty { return String(localized: "Speed isn’t available while visuals are timed to this edit.") }
+        if !document.motionScenes.isEmpty { return String(localized: "Speed isn’t available while motion is timed to this edit.") }
+        if !document.cameraEffects.isEmpty { return String(localized: "Speed isn’t available while camera effects are timed to this edit.") }
+        if !document.soundEffects.isEmpty { return String(localized: "Speed isn’t available while sound effects are timed to this edit.") }
+        if !document.drawings.isEmpty { return String(localized: "Speed isn’t available while drawings are timed to this edit.") }
+        if document.carouselMoment != nil { return String(localized: "Speed isn’t available while a carousel changes this edit’s timing.") }
         return nil
     }
 
@@ -9579,9 +9580,9 @@ enum EditorOpenIntent { case warm, open }
         guard let selection, selection.kind == .clip else { return nil }
         if let found = sourceWindowSlot(for: selection) {
             let kind = found.slot.raw["media_kind"]?.stringValue ?? found.slot.raw["kind"]?.stringValue
-            if kind == "image" { return "Photos do not have playback speed." }
+            if kind == "image" { return String(localized: "Photos do not have playback speed.") }
             if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) {
-                return "Photos do not have playback speed."
+                return String(localized: "Photos do not have playback speed.")
             }
         }
         return rendersOnDevice ? clipSpeedBlockedReason : nil
@@ -9589,11 +9590,11 @@ enum EditorOpenIntent { case warm, open }
 
     /// Why Crop is greyed out for the selected clip, or nil when it is available.
     func cropBlockedReason(for selection: EditorSelection?) -> String? {
-        guard let selection, selection.kind == .clip else { return "Select a clip to crop it." }
-        if !canCropClips { return document.capabilities["clips.source_crop"]?.reason.map(nativeEditorWireLabel) ?? "Crop isn’t available for this edit." }
+        guard let selection, selection.kind == .clip else { return String(localized: "Select a clip to crop it.") }
+        if !canCropClips { return document.capabilities["clips.source_crop"]?.reason.map(nativeEditorWireLabel) ?? String(localized: "Crop isn’t available for this edit.") }
         if let slotID = timelineClips.first(where: { $0.id.uuidString == selection.id })?.slotID,
            document.clips.first(where: { $0.id == slotID })?.raw["layout"]?.stringValue == "supporting_card" {
-            return "Supporting cards keep their own layout."
+            return String(localized: "Supporting cards keep their own layout.")
         }
         return nil
     }
@@ -9682,14 +9683,14 @@ enum EditorOpenIntent { case warm, open }
 
     /// Why Range is greyed out for the selected clip, or nil when it is available.
     func sourceWindowBlockedReason(for selection: EditorSelection?) -> String? {
-        guard let found = sourceWindowSlot(for: selection) else { return talkingRangeUnavailableCopy ?? "Select a clip to choose its range." }
+        guard let found = sourceWindowSlot(for: selection) else { return talkingRangeUnavailableCopy ?? String(localized: "Select a clip to choose its range.") }
         if let leaf = talkingRangeLeaf, NativePhoneTalkingSource.isSourceSlot(found.slot) {
             // The timeline is closed for Talking; the leaf alone decides a window change on its own segments.
             if !leaf.editable { return NativePhoneTalkingSource.rangeClosedCopy(reason: leaf.reason) }
-        } else if !canEditTimeline || !canEdit(.timeline) { return "Clip edits are locked for this render." }
+        } else if !canEditTimeline || !canEdit(.timeline) { return String(localized: "Clip edits are locked for this render.") }
         let kind = found.slot.raw["media_kind"]?.stringValue ?? found.slot.raw["kind"]?.stringValue
-        if kind == "image" { return "Photos have no range to choose." }
-        if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) { return "Photos have no range to choose." }
+        if kind == "image" { return String(localized: "Photos have no range to choose.") }
+        if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) { return String(localized: "Photos have no range to choose.") }
         return nil
     }
 
@@ -11065,7 +11066,7 @@ enum EditorOpenIntent { case warm, open }
         if let loaded { lastPhoneRenderingCapabilities = loaded.phoneRendering ?? .disabled }
         let creationMode = loaded?.creationMode
         if creationMode == .deviceOnly, !rendersOnDevice {
-            let message = "This video was rendered in the cloud and can’t be changed on this iPhone. You can still play its existing video."
+            let message = String(localized: "This video was rendered in the cloud and can’t be changed on this iPhone. You can still play its existing video.")
             cloudEditorUnavailableMessage = message
             canEditTimeline = false
             canEditText = false
@@ -11200,7 +11201,7 @@ enum EditorOpenIntent { case warm, open }
         guard observersVisible else { return }
         if surfaceDeviceRenderFailure() { return }
         guard let api, let jobID, let variantKey else {
-            saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
+            saveState = .previewFailed(String(localized: "Your edit is saved, but this device cannot check the new preview yet."))
             return
         }
         let identity = editorOperationIdentity
@@ -11223,7 +11224,7 @@ enum EditorOpenIntent { case warm, open }
                 let backoff = exhausted ? Self.latestJobSlowRecheck : (unreachable == 0 ? interval : min(interval * (1 << min(unreachable, 4)), .seconds(15)))
                 if exhausted, let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation {
                     self.previewSlowGeneration = generation
-                    self.saveState = .previewFailed("Your edit is saved. The preview will be checked again automatically.")
+                    self.saveState = .previewFailed(String(localized: "Your edit is saved. The preview will be checked again automatically."))
                 }
                 do { try await sleep(backoff) } catch { return }
                 guard !Task.isCancelled else { return }
@@ -11245,7 +11246,7 @@ enum EditorOpenIntent { case warm, open }
                         guard let self, self.observersVisible, self.editorOperationIdentity == identity,
                               self.pendingPreviewGeneration == generation, api.mediaLibraryOwner == owner else { return }
                         self.previewObservationTerminal = true
-                        self.saveState = .previewFailed("Your edit is saved, but this preview cannot be checked right now.")
+                        self.saveState = .previewFailed(String(localized: "Your edit is saved, but this preview cannot be checked right now."))
                         return
                     }
                     continue
@@ -11357,15 +11358,15 @@ enum EditorOpenIntent { case warm, open }
             return true
         }
         if status == "needs_attention" {
-            saveState = .renderRetryNeeded("Your edit is saved, but its preview needs attention before rendering can continue.")
+            saveState = .renderRetryNeeded(String(localized: "Your edit is saved, but its preview needs attention before rendering can continue."))
             return true
         }
         if status == "cancelled" || status == "superseded" {
-            saveState = .previewFailed("Your edit is saved. This preview is no longer rendering.")
+            saveState = .previewFailed(String(localized: "Your edit is saved. This preview is no longer rendering."))
             return true
         }
         if status == "failed" {
-            saveState = .renderRetryNeeded("Your edit is saved, but its preview render failed. You can retry it safely.")
+            saveState = .renderRetryNeeded(String(localized: "Your edit is saved, but its preview render failed. You can retry it safely."))
             return true
         }
         return false
@@ -11622,13 +11623,13 @@ extension NativeEditorSession {
 
     /// Nil exactly when `createSplitScreen(scope: .wholeVideo)` works.
     var wholeVideoUnavailableReason: String? {
-        guard canEditSplitScreen else { return "Split screen isn’t available for this edit." }
-        guard document.splitScreenSections.isEmpty else { return "Remove the split to cover the whole video." }
+        guard canEditSplitScreen else { return String(localized: "Split screen isn’t available for this edit.") }
+        guard document.splitScreenSections.isEmpty else { return String(localized: "Remove the split to cover the whole video.") }
         let clips = document.clips.filter { !$0.removed }
-        guard clips.count >= 2 else { return "This edit has only one clip." }
-        guard clips.allSatisfy({ ($0.durationS ?? 0) >= minimumClipDuration }) else { return "Some clips are too short to split." }
+        guard clips.count >= 2 else { return String(localized: "This edit has only one clip.") }
+        guard clips.allSatisfy({ ($0.durationS ?? 0) >= minimumClipDuration }) else { return String(localized: "Some clips are too short to split.") }
         let probe = EditorSplitScreenSection(id: "whole-video", durationS: 1800, panelCount: 2)
-        return wholeVideoDocument(into: probe) == nil ? "The whole video can’t be split." : nil
+        return wholeVideoDocument(into: probe) == nil ? String(localized: "The whole video can’t be split.") : nil
     }
 
     /// Collapse needs this build at protocol 47 or later and the server's say-so: the editor capability
@@ -11709,7 +11710,7 @@ extension NativeEditorSession {
         }.map(\.clipIndex))
         let admitted = Set((sourcePool?.clips ?? []).filter { $0.nativeSource != nil }.map(\.clipIndex))
         // A pending add's provisional index is not a source anyone can pick again (KRI-1419).
-        return measured.union(admitted).subtracting(pendingClipIndices).sorted().map { ($0, "Clip \($0 + 1)") }
+        return measured.union(admitted).subtracting(pendingClipIndices).sorted().map { ($0, String(localized: "Clip \($0 + 1)")) }
     }
 
     var canCreateWholeVideoSplit: Bool { wholeVideoUnavailableReason == nil }
@@ -11910,7 +11911,7 @@ extension NativeEditorSession {
         return opening
     }
 
-    static let splitPanelFullMessage = "This panel is full. Shorten a clip in it to make room."
+    static let splitPanelFullMessage = String(localized: "This panel is full. Shorten a clip in it to make room.")
 
     func addSplitPanelClip(sectionID: String, panel: Int, fileURL: URL) async {
         guard canEditSplitScreen, !isAddingClip else { return }
@@ -11942,7 +11943,7 @@ extension NativeEditorSession {
                     guard self.document.revision.baseGeneration == generation, self.canEditSplitScreen else { return }
                     self.resolvedSources = (self.resolvedSources ?? [:]).merging(sources) { _, new in new }
                     self.insertSplitPanelSource(sourceClipIndex, sectionID: sectionID, panel: panel, offset: opening.start)
-                } catch { self.splitScreenActionError = "This media could not be opened. Try again." }
+                } catch { self.splitScreenActionError = String(localized: "This media could not be opened. Try again.") }
             }
             return
         }
@@ -11954,7 +11955,7 @@ extension NativeEditorSession {
         let traits = sourceTraits(clipIndex)
         let length = min(traits.isPhoto ? Self.addedClipDurationS : traits.measured ?? 0, opening.end - opening.start)
         guard length >= minimumClipDuration else {
-            splitScreenActionError = traits.isPhoto ? Self.splitPanelFullMessage : "This video is too short to add."
+            splitScreenActionError = traits.isPhoto ? Self.splitPanelFullMessage : String(localized: "This video is too short to add.")
             return
         }
         splitScreenActionError = nil
@@ -12050,7 +12051,7 @@ extension NativeEditorSession {
               let id = selectedSplitScreenSectionID,
               let index = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
         guard document.clips.contains(where: { !$0.isBlank && $0.splitSectionID == id && $0.splitOffsetS <= duration - minimumClipDuration + 0.000001 }) else {
-            splitScreenActionError = "Keep at least one clip inside the section. Move a clip earlier before shortening it."
+            splitScreenActionError = String(localized: "Keep at least one clip inside the section. Move a clip earlier before shortening it.")
             return
         }
         splitScreenActionError = nil
@@ -12134,7 +12135,7 @@ extension NativeEditorSession {
                           self.clipSlotIndex(slotID) != nil else { return }
                     self.resolvedSources = (self.resolvedSources ?? [:]).merging(sources) { _, new in new }
                     self.replaceClipSource(slotID: slotID, clipIndex: clipIndex)
-                } catch { self.splitScreenActionError = "This media could not be opened. Try again." }
+                } catch { self.splitScreenActionError = String(localized: "This media could not be opened. Try again.") }
             }
             return
         }
@@ -12157,7 +12158,7 @@ extension NativeEditorSession {
         let frameOverride = document.clips[index].raw["speaker_frame_override"].flatMap { EditorSpeakerFrameOverride(json: $0) }
         let preservesSpeaker = frameOverride != nil && frameOverride != .inherit
         if isPhoto && preservesSpeaker {
-            splitScreenActionError = "Use default framing before replacing this speaker with a photo."
+            splitScreenActionError = String(localized: "Use default framing before replacing this speaker with a photo.")
             return
         }
         guard isPhoto || (measured ?? 0) >= minimumClipDuration else { return }

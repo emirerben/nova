@@ -108,9 +108,9 @@ struct ReviewPlanView: View {
     }
 
     private var subtitle: String {
-        if model.isUpdating { return "Kria is updating your video" }
-        if model.showsUpdated { return "Your changes are in. Undo any you don’t like" }
-        return "Tap Change on anything you’d like different"
+        if model.isUpdating { return String(localized: "Kria is updating your video") }
+        if model.showsUpdated { return String(localized: "Your changes are in. Undo any you don’t like") }
+        return String(localized: "Tap Change on anything you’d like different")
     }
 
     private var header: some View {
@@ -142,7 +142,7 @@ struct ReviewPlanView: View {
                 .accessibilityIdentifier("review-loading")
         } else if model.blocks.isEmpty {
             VStack(spacing: 12) {
-                Text(model.loadFailed ? "Kria couldn’t load your plan." : "Nothing to review yet.")
+                Text(model.loadFailed ? String(localized: "Kria couldn’t load your plan.") : String(localized: "Nothing to review yet."))
                     .font(KriaFont.body(15)).foregroundStyle(KriaColor.mutedInk)
                 if model.loadFailed {
                     Button("Try again") { Task { await model.refresh() } }
@@ -228,7 +228,7 @@ struct ReviewPlanView: View {
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 8)) : AnyLayout(HStackLayout(alignment: .bottom, spacing: 8))
             layout {
                 TextField(
-                    scope.isEmpty ? "Tap Change on a section, then tell Kria what you want" : "Tell Kria what to change (optional)",
+                    scope.isEmpty ? String(localized: "Tap Change on a section, then tell Kria what you want") : String(localized: "Tell Kria what to change (optional)"),
                     text: Binding(get: { model.draft.prompt }, set: { model.draft.prompt = $0 }),
                     axis: .vertical
                 )
@@ -244,7 +244,7 @@ struct ReviewPlanView: View {
                 if let dictation {
                     Button { toggleDictation(dictation) } label: { DictationMicLabel(dictation: dictation) }
                         .disabled(dictation.phase == .finalizing || dictation.phase == .requestingPermission || model.isBusy)
-                        .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate what to change")
+                        .accessibilityLabel(dictation.isListening ? String(localized: "Stop dictation") : String(localized: "Dictate what to change"))
                         .accessibilityIdentifier("review-dictate")
                 }
                 Button { updateTapped() } label: { Text("Update video") }
@@ -270,7 +270,7 @@ struct ReviewPlanView: View {
             HStack(spacing: 10) {
                 Image(systemName: "sparkle").font(.system(size: 15, weight: .semibold)).foregroundStyle(KriaColor.ink)
                     .accessibilityHidden(true)
-                Text("Kria is updating \(count) section\(count == 1 ? "" : "s")")
+                Text("Kria is updating \(count) sections")
                     .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("review-updating")
@@ -289,7 +289,7 @@ struct ReviewPlanView: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "sparkle").font(.system(size: 16, weight: .semibold)).foregroundStyle(KriaColor.ink)
                     .padding(.top, 2).accessibilityHidden(true)
-                Text(model.updateSummaryText ?? "Done.")
+                Text(model.updateSummaryText ?? String(localized: "Done."))
                     .font(KriaFont.body(14)).foregroundStyle(KriaColor.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -396,7 +396,7 @@ private struct ReviewSectionCard: View {
     // MARK: Header
 
     private var subtitle: String? {
-        if block.skipped { return "Not used" }
+        if block.skipped { return String(localized: "Not used") }
         guard block.state == .decided, !isDeciding, block.payload != nil, section != .title,
               let summary = block.summary, !summary.isEmpty else { return nil }
         return summary
@@ -405,7 +405,7 @@ private struct ReviewSectionCard: View {
     private var headerRow: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(section == .title && !block.skipped ? "Title" : section.cardTitle)
+                Text(section == .title && !block.skipped ? String(localized: "Title", comment: "Section name in the plan review") : section.cardTitle)
                     .font(KriaFont.body(section == .title ? 13 : 17).weight(section == .title ? .regular : .semibold))
                     .foregroundStyle(section == .title ? KriaColor.mutedInk : KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
@@ -422,21 +422,21 @@ private struct ReviewSectionCard: View {
 
     @ViewBuilder private var pill: some View {
         if isDeciding {
-            KriaPlanPill(title: "", style: .working("Updating"))
+            KriaPlanPill(title: "", style: .working(String(localized: "Updating")))
                 .accessibilityIdentifier("review-updating-\(section.rawValue)")
         } else if isUpdated {
-            KriaPlanPill(title: "Updated", style: .updated)
+            KriaPlanPill(title: String(localized: "Updated"), style: .updated)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(section.label) updated")
                 .accessibilityIdentifier("review-updated-\(section.rawValue)")
         } else if model.canChange(block) {
             Button { model.toggle(section) } label: {
-                KriaPlanPill(title: isFlagged ? "Changing" : "Change", style: isFlagged ? .changing : .change)
+                KriaPlanPill(title: isFlagged ? String(localized: "Changing") : String(localized: "Change", comment: "Button: change this section of the plan"), style: isFlagged ? .changing : .change)
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isFlagged ? "Changing \(section.label). Tap to cancel" : "Change \(section.label)")
+            .accessibilityLabel(isFlagged ? String(localized: "Changing \(section.label). Tap to cancel") : String(localized: "Change \(section.label)"))
             .accessibilityIdentifier("review-change-\(section.rawValue)")
         }
     }
@@ -494,10 +494,10 @@ private struct ReviewSectionCard: View {
     }
 
     private var wasText: String {
-        guard let previous = block.previous else { return "Updated" }
-        if previous.skipped { return "Was not used" }
-        if let summary = previous.summary, !summary.isEmpty { return "Was \(summary)" }
-        return "Was the previous version"
+        guard let previous = block.previous else { return String(localized: "Updated") }
+        if previous.skipped { return String(localized: "Was not used") }
+        if let summary = previous.summary, !summary.isEmpty { return String(localized: "Was \(summary)") }
+        return String(localized: "Was the previous version")
     }
 }
 
@@ -547,10 +547,10 @@ private struct ReviewClipRows: View {
 
     private func transitionName(_ transition: PlanTransition) -> String {
         switch transition {
-        case .cut: "Cut"
-        case .dissolve: "Dissolve"
-        case .whip: "Whip"
-        case .fade: "Fade out"
+        case .cut: String(localized: "Cut", comment: "Transition name")
+        case .dissolve: String(localized: "Dissolve", comment: "Transition name")
+        case .whip: String(localized: "Whip", comment: "Transition name")
+        case .fade: String(localized: "Fade out", comment: "Transition name")
         }
     }
 
@@ -560,7 +560,7 @@ private struct ReviewClipRows: View {
                 HStack(spacing: 12) {
                     PlanClipTile(clip: clip, width: 40, height: 54)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(clip.role ?? clip.label ?? "Clip \(clip.index + 1)")
+                        Text(clip.role ?? clip.label ?? String(localized: "Clip \(clip.index + 1)"))
                             .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink).lineLimit(1)
                         Text("\(PlanTimeFormat.clock(clip.startS)) to \(PlanTimeFormat.clock(clip.endS))")
                             .font(KriaFont.body(13)).foregroundStyle(KriaColor.ink.opacity(0.7))
@@ -624,7 +624,7 @@ private struct ReviewCaptionRows: View {
                         .frame(width: 8, height: 8)
                         .opacity(changed.contains(line.id) ? 1 : 0)
                         .accessibilityIdentifier(changed.contains(line.id) ? "review-changed-line-\(line.id)" : "review-line-\(line.id)")
-                        .accessibilityLabel(changed.contains(line.id) ? "Changed line" : "")
+                        .accessibilityLabel(changed.contains(line.id) ? String(localized: "Changed line") : "")
                 }
             }
             let more = payload.count - payload.lines.count
@@ -652,13 +652,13 @@ private struct ReviewMixSliders: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let music = mix.musicLevel {
-                row(title: "Music", id: "music_level", value: Binding(
+                row(title: String(localized: "Music"), id: "music_level", value: Binding(
                     get: { model.draft.musicLevel ?? music },
                     set: { model.draft.editMix(musicLevel: $0, current: mix) }
                 ))
             }
             if let original = mix.originalLevel {
-                row(title: "Original sound", id: "original_level", value: Binding(
+                row(title: String(localized: "Original sound"), id: "original_level", value: Binding(
                     get: { model.draft.originalLevel ?? original },
                     set: { model.draft.editMix(originalLevel: $0, current: mix) }
                 ))

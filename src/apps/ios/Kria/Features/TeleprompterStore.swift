@@ -9,7 +9,7 @@ struct TeleprompterManifestLoad: Sendable {
 
     var recoveryWarning: String? {
         guard !corruptedManifestNames.isEmpty else { return nil }
-        return "A recorded take needs recovery. Your other saved takes are still available."
+        return String(localized: "A recorded take needs recovery. Your other saved takes are still available.")
     }
 }
 

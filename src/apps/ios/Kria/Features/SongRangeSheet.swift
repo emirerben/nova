@@ -10,11 +10,11 @@ struct SongRangeRow: View {
     let onTap: () -> Void
 
     private var title: String {
-        guard let range else { return "Where in the song did you film?" }
+        guard let range else { return String(localized: "Where in the song did you film?") }
         return range.summary
     }
     private var accessibilityText: String {
-        guard let range else { return "Where in the song did you film?" }
+        guard let range else { return String(localized: "Where in the song did you film?") }
         return range.spokenSummary
     }
 
@@ -166,7 +166,7 @@ struct SongRangeWheelPair: View {
         .disabled(!isEnabled)
     }
 
-    private func wheel(title: String, selection: Binding<Int>, upper: Int, id: String) -> some View {
+    private func wheel(title: LocalizedStringKey, selection: Binding<Int>, upper: Int, id: String) -> some View {
         VStack(spacing: 4) {
             Text(title).kriaType(.caption).fontWeight(.medium).foregroundStyle(KriaColor.mutedInk)
             Picker(title, selection: selection) {

@@ -4,10 +4,18 @@ import SwiftUI
 // mapping for the wire contract's transition values, not two.
 func nativeEditorWireLabel(_ value: String) -> String {
     switch value {
-    case "none": return "Original"
-    case "dip_to_black": return "Dip to Black"
-    case "preserve_cuts": return "Preserve Cuts"
-    case "resync_beats": return "Resync Beats"
+    case "none": return String(localized: "Original", comment: "Transition option: no change, the original")
+    case "dip_to_black": return String(localized: "Dip to Black", comment: "Transition name")
+    case "preserve_cuts": return String(localized: "Preserve Cuts", comment: "Music alignment option")
+    case "resync_beats": return String(localized: "Resync Beats", comment: "Music alignment option")
+    case "cut": return String(localized: "Cut", comment: "Transition name: a plain cut")
+    case "crossfade": return String(localized: "Crossfade", comment: "Transition name")
+    case "flash": return String(localized: "Flash", comment: "Transition name")
+    case "stadium_diffusion": return String(localized: "Stadium Diffusion", comment: "Colour look name")
+    case "olive_film": return String(localized: "Olive Film", comment: "Colour look name")
+    case "smoky_split_tone": return String(localized: "Smoky Split Tone", comment: "Colour look name")
+    case "golden_hour": return String(localized: "Golden Hour", comment: "Colour look name")
+    case "faded_analog": return String(localized: "Faded Analog", comment: "Colour look name")
     default: return value.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ").capitalized
     }
 }
@@ -90,7 +98,7 @@ private struct NativeSelectedBackgroundWindowInspector: View {
     private var window: EditorSpeakerBackgroundWindow? { session.speakerBackgroundWindows.first { $0.localID == selection.id } }
 
     private func name(_ window: EditorSpeakerBackgroundWindow) -> String {
-        session.visualLibrary.first { $0.id == window.mediaID }?.sourceFilename ?? (window.kind == .video ? "Video" : "Photo")
+        session.visualLibrary.first { $0.id == window.mediaID }?.sourceFilename ?? (window.kind == .video ? String(localized: "Video") : String(localized: "Photo"))
     }
 
     private func timeRow(_ title: String, seconds: Double, id: String) -> some View {
@@ -109,7 +117,7 @@ private struct NativeSelectedBackgroundWindowInspector: View {
             if let window {
                 Section("Background") {
                     LabeledContent("Shows", value: name(window))
-                    LabeledContent("Kind", value: window.kind == .video ? "Video" : "Photo")
+                    LabeledContent("Kind", value: window.kind == .video ? String(localized: "Video") : String(localized: "Photo"))
                     timeRow("Starts", seconds: window.startS, id: "native-editor-selected-\(selection.kind.rawValue)-start")
                     timeRow("Ends", seconds: window.endS, id: "native-editor-selected-\(selection.kind.rawValue)-end")
                 }
@@ -158,13 +166,13 @@ struct NativeDocumentInspector: View {
                 .font(KriaFont.body(16).weight(.semibold))
             if let background = session.document.backgroundMusic {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(background.trackID ?? "Background music", systemImage: background.muted ? "speaker.slash" : "waveform")
+                    Label(background.trackID ?? String(localized: "Background music"), systemImage: background.muted ? "speaker.slash" : "waveform")
                     NativeEditorSlider(session: session, value: $backgroundLevel, in: -40...0, step: 0.5) { Text("Background music level") }
                         .onChange(of: backgroundLevel) { _, value in session.setBackgroundMusicLevel(value) }
                         .accessibilityIdentifier("native-editor-background-music-level")
                     LabeledContent(
                         "Level",
-                        value: backgroundLevel.formatted(.number.precision(.fractionLength(1))) + " dB"
+                        value: String(localized: "\(backgroundLevel, format: .number.precision(.fractionLength(1))) dB")
                     )
                 }
                 .padding(12)
@@ -175,7 +183,7 @@ struct NativeDocumentInspector: View {
                 Text("No background music lane")
                         .foregroundStyle(KriaColor.zinc)
             }
-            LabeledContent("Title", value: session.document.title ?? "Untitled")
+            LabeledContent("Title", value: session.document.title ?? String(localized: "Untitled"))
             // KRI-306: the video shape is a real control now, gated by the server's
             // `orientation` / `landscape_fit` capabilities. A server that advertises
             // neither keeps the old read-only line.
@@ -184,13 +192,13 @@ struct NativeDocumentInspector: View {
             } else {
                 LabeledContent("Orientation", value: NativeVideoShape.orientationLabel(session.document.orientation))
             }
-            LabeledContent("Lyrics", value: session.document.lyrics == nil ? "None" : "Available")
+            LabeledContent("Lyrics", value: session.document.lyrics == nil ? String(localized: "None", comment: "No lyrics") : String(localized: "Available", comment: "Lyrics are available"))
             if !canEditBackground {
-                nativeLockedNote(session: session, keys: ["background_music"], fallback: "Background music is locked for this render.")
+                nativeLockedNote(session: session, keys: ["background_music"], fallback: String(localized: "Background music is locked for this render."))
             }
-            nativeLockedNoteIfNeeded(session: session, keys: ["title", "lyrics"], fallback: "Title and lyrics are read-only in this native pass.")
+            nativeLockedNoteIfNeeded(session: session, keys: ["title", "lyrics"], fallback: String(localized: "Title and lyrics are read-only in this native pass."))
             if !session.hasVideoShapeCapability {
-                nativeLockedNoteIfNeeded(session: session, keys: ["orientation"], fallback: "Orientation is read-only in this native pass.")
+                nativeLockedNoteIfNeeded(session: session, keys: ["orientation"], fallback: String(localized: "Orientation is read-only in this native pass."))
             }
         }
         .onAppear { backgroundLevel = session.document.backgroundMusic?.gainDB ?? 0 }
@@ -267,13 +275,13 @@ struct NativeVideoShapeSection: View {
     /// sentence; show a sentence either way, naming the control that is closed.
     static func copy(for reason: String, axis: Axis) -> String {
         guard !reason.contains(" ") else { return reason }
-        if reason == "disabled" { return "Changing the video shape isn’t available right now." }
+        if reason == "disabled" { return String(localized: "Changing the video shape isn’t available right now.") }
         // Reached only while Vertical is picked on a still-landscape video (the fit row is hidden
         // for Landscape): the server opens bars/crop once the switch is saved and re-rendered.
-        if reason == "landscape_output" { return "Save the switch to vertical first, then you can choose black bars or crop." }
+        if reason == "landscape_output" { return String(localized: "Save the switch to vertical first, then you can choose black bars or crop.") }
         switch axis {
-        case .orientation: return "This edit’s format can’t change shape."
-        case .fit: return "Black bars and crop can’t be changed for this edit."
+        case .orientation: return String(localized: "This edit’s format can’t change shape.")
+        case .fit: return String(localized: "Black bars and crop can’t be changed for this edit.")
         }
     }
 
@@ -401,21 +409,21 @@ struct NativeEffectBrowserInspector: View {
                 }
             }
             if kinds.count == 1, !capabilityKeys.isEmpty {
-                nativeLockedNoteIfNeeded(session: session, keys: capabilityKeys, fallback: "Creation and editing are controlled by the render capabilities.")
+                nativeLockedNoteIfNeeded(session: session, keys: capabilityKeys, fallback: String(localized: "Creation and editing are controlled by the render capabilities."))
             }
         }
     }
 
     private func browserItemName(_ item: NativeEditorTimelineItem) -> String {
         switch item.kind {
-        case .soundEffect: return session.document.soundEffects.first(where: { $0.id == item.id })?.kind ?? "Sound effect"
-        case .mediaOverlay: return session.document.mediaOverlays.first(where: { $0.id == item.id })?.kind ?? "Media overlay"
-        case .visualBlock: return session.document.visualBlocks.first(where: { $0.id == item.id })?.kind ?? "Visual block"
-        case .motionScene: return session.document.motionScenes.first(where: { $0.id == item.id })?.preset ?? "Motion scene"
+        case .soundEffect: return session.document.soundEffects.first(where: { $0.id == item.id })?.kind ?? String(localized: "Sound effect")
+        case .mediaOverlay: return session.document.mediaOverlays.first(where: { $0.id == item.id })?.kind ?? String(localized: "Media overlay")
+        case .visualBlock: return session.document.visualBlocks.first(where: { $0.id == item.id })?.kind ?? String(localized: "Visual block")
+        case .motionScene: return session.document.motionScenes.first(where: { $0.id == item.id })?.preset ?? String(localized: "Motion scene")
         case .cameraEffect:
-            guard let effect = session.document.cameraEffects.first(where: { $0.id == item.id }) else { return "Camera effect" }
+            guard let effect = session.document.cameraEffects.first(where: { $0.id == item.id }) else { return String(localized: "Camera effect") }
             return CameraEmphasis.label(effect.raw["easing"]?.stringValue)
-        case .carousel: return "Carousel moment"
+        case .carousel: return String(localized: "Carousel moment")
         default: return item.kind.rawValue
         }
     }
@@ -449,8 +457,8 @@ private struct NativeSelectedClipInspector: View {
         probe.transitionAfter = transition
         probe.transitionDurationS = transitionDuration
         let overlap = NativeEditorInteraction.transitionOverlap(left: probe, leftDuration: leftDuration, rightDuration: rightDuration)
-        if overlap <= 0 { return "This clip is too short for a transition here — it will render as a cut." }
-        if overlap + 0.005 < transitionDuration { return "Shortened to \(String(format: "%.2f", overlap))s to fit this clip." }
+        if overlap <= 0 { return String(localized: "This clip is too short for a transition here — it will render as a cut.") }
+        if overlap + 0.005 < transitionDuration { return String(localized: "Shortened to \(overlap, format: .number.precision(.fractionLength(2)))s to fit this clip.") }
         return nil
     }
     @State private var showRange = false
@@ -533,7 +541,7 @@ private struct NativeSelectedClipInspector: View {
             if !session.canEditTimeline {
                 Section {
                     Label(session.sourceWindowBlockedReason(for: selection) == nil
-                          ? "Only Range can change in this render." : "Clip edits are locked for this render.", systemImage: "lock")
+                          ? String(localized: "Only Range can change in this render.") : String(localized: "Clip edits are locked for this render."), systemImage: "lock")
                 }
             }
             Section {
@@ -570,6 +578,13 @@ private struct NativeSelectedTextInspector: View {
     @State private var stroke = 0.0
 
     private var layer: EditorTextElement? { session.document.textElements.first(where: { $0.id == selection.id }) }
+    private static func alignmentTitle(_ value: String) -> String {
+        switch value {
+        case "left": String(localized: "Left", comment: "Text alignment")
+        case "right": String(localized: "Right", comment: "Text alignment")
+        default: String(localized: "Center", comment: "Text alignment")
+        }
+    }
     private var canEditTextFields: Bool { nativeEditorEditable(session, keys: ["text_elements"], fallback: session.canEditText) }
 
     var body: some View {
@@ -588,7 +603,7 @@ private struct NativeSelectedTextInspector: View {
             Section("Style") {
                 NativeFontPicker(
                     selection: style,
-                    accessibilityLabelText: "Text style",
+                    accessibilityLabelText: String(localized: "Text style"),
                     accessibilityID: "native-editor-selected-text-style"
                 ) { value in
                     guard let value else { return }
@@ -607,7 +622,7 @@ private struct NativeSelectedTextInspector: View {
                     .accessibilityLabel("Text width")
                     .accessibilityIdentifier("native-editor-selected-text-width")
                 Picker("Alignment", selection: $alignment) {
-                    ForEach(["left", "center", "right"], id: \.self) { Text($0.capitalized).tag($0) }
+                    ForEach(["left", "center", "right"], id: \.self) { Text(Self.alignmentTitle($0)).tag($0) }
                 }
                 .onChange(of: alignment) { _, value in session.setTextAlignment(id: selection.id, alignment: value) }
                 .accessibilityIdentifier("native-editor-selected-text-alignment")
@@ -632,7 +647,7 @@ private struct NativeSelectedTextInspector: View {
                 .onChange(of: animation) { _, value in session.setTextAnimation(id: selection.id, animation: value) }
                 .accessibilityIdentifier("native-editor-selected-text-animation")
                 if !nativeEditorEditable(session, keys: ["text_elements"], fallback: session.canEditText) {
-                    nativeLockedNote(session: session, keys: ["text_elements"], fallback: "Text layout is locked for this render.")
+                    nativeLockedNote(session: session, keys: ["text_elements"], fallback: String(localized: "Text layout is locked for this render."))
                 }
             }
             .disabled(!canEditTextFields)
@@ -660,7 +675,7 @@ private struct NativeSelectedTextInspector: View {
                     .onChange(of: behindSubject) { _, value in session.setTextBehindSubject(id: selection.id, behind: value) }
                     .accessibilityIdentifier("native-editor-selected-text-behind-subject")
                 if !nativeEditorEditable(session, keys: ["text_elements"], fallback: session.canEditText) {
-                    nativeLockedNote(session: session, keys: ["text_elements"], fallback: "Text appearance is locked for this render.")
+                    nativeLockedNote(session: session, keys: ["text_elements"], fallback: String(localized: "Text appearance is locked for this render."))
                 }
             }
             .disabled(!canEditTextFields)
@@ -715,6 +730,9 @@ private struct NativeSelectedCaptionInspector: View {
     @State private var shadow = false
     @State private var stroke = 0.0
     private let styles = ["Sentence", "Word"]
+    private static func styleTitle(_ value: String) -> String {
+        value == "Word" ? String(localized: "Word", comment: "Caption style: one word at a time") : String(localized: "Sentence", comment: "Caption style: a whole sentence at a time")
+    }
 
     private var cue: EditorCaptionCue? {
         session.document.captionCues.first(where: { $0.id == selection.id })
@@ -747,7 +765,7 @@ private struct NativeSelectedCaptionInspector: View {
                 .accessibilityIdentifier("native-editor-selected-caption-toggle")
 
                 Picker("Style", selection: $style) {
-                    ForEach(styles, id: \.self, content: Text.init)
+                    ForEach(styles, id: \.self) { Text(Self.styleTitle($0)) }
                 }
                 .pickerStyle(.menu)
                 .onChange(of: style) { _, value in session.setCaptionStyle(value.lowercased()) }
@@ -755,7 +773,7 @@ private struct NativeSelectedCaptionInspector: View {
                 .accessibilityIdentifier("native-editor-selected-caption-style")
                 NativeFontPicker(
                     selection: font,
-                    accessibilityLabelText: "Caption font",
+                    accessibilityLabelText: String(localized: "Caption font"),
                     accessibilityID: "native-editor-selected-caption-font"
                 ) { value in
                     guard let value else { return }
@@ -783,7 +801,7 @@ private struct NativeSelectedCaptionInspector: View {
                 NativeEditorSlider(session: session, value: $stroke, in: 0...12, step: 1) { Text("Caption stroke") }
                     .onChange(of: stroke) { _, value in session.setCaptionStrokeWidth(value) }
                 if !nativeEditorEditable(session, keys: ["caption_meta"], fallback: session.canEditCaptions) {
-                    nativeLockedNote(session: session, keys: ["caption_meta"], fallback: "Caption appearance is locked for this render.")
+                    nativeLockedNote(session: session, keys: ["caption_meta"], fallback: String(localized: "Caption appearance is locked for this render."))
                 }
             }
             .disabled(!nativeEditorEditable(session, keys: ["caption_meta"], fallback: session.canEditCaptions))
@@ -896,16 +914,24 @@ private struct NativeSelectedEffectInspector: View {
     @State private var easing = CameraEmphasis.pulseEasing
     @State private var carouselPosition = "middle"
 
+    private static func positionTitle(_ value: String) -> String {
+        switch value {
+        case "intro": String(localized: "Intro", comment: "Carousel moment position")
+        case "outro": String(localized: "Outro", comment: "Carousel moment position")
+        default: String(localized: "Middle", comment: "Carousel moment position")
+        }
+    }
+
     private var title: String {
         switch selection.kind {
-        case .soundEffect: return "Sound effect"
-        case .mediaOverlay: return "Media overlay"
-        case .visualBlock: return "Visual block"
-        case .motionScene: return "Motion scene"
-        case .cameraEffect: return "Camera effect"
-        case .carousel: return "Carousel moment"
-        case .drawing: return "Drawing"
-        default: return "Selected item"
+        case .soundEffect: return String(localized: "Sound effect")
+        case .mediaOverlay: return String(localized: "Media overlay")
+        case .visualBlock: return String(localized: "Visual block")
+        case .motionScene: return String(localized: "Motion scene")
+        case .cameraEffect: return String(localized: "Camera effect")
+        case .carousel: return String(localized: "Carousel moment")
+        case .drawing: return String(localized: "Drawing")
+        default: return String(localized: "Selected item")
         }
     }
 
@@ -1145,7 +1171,7 @@ private struct NativeSelectedEffectInspector: View {
         case .carousel:
             Section("Carousel moment") {
                 Picker("Position", selection: $carouselPosition) {
-                    ForEach(["intro", "middle", "outro"], id: \.self) { Text($0.capitalized).tag($0) }
+                    ForEach(["intro", "middle", "outro"], id: \.self) { Text(Self.positionTitle($0)).tag($0) }
                 }
                 .onChange(of: carouselPosition) { _, value in session.setCarouselMomentPosition(value) }
                 .accessibilityIdentifier("native-editor-selected-carousel-position")
@@ -1163,18 +1189,18 @@ private struct NativeSelectedEffectInspector: View {
         switch selection.kind {
         case .visualBlock:
             guard let value = session.document.visualBlocks.first(where: { $0.id == selection.id }) else { return nil }
-            return ("Preset", value.raw["style_preset_id"]?.stringValue ?? value.raw["preset"]?.stringValue ?? value.kind)
+            return (String(localized: "Preset"), value.raw["style_preset_id"]?.stringValue ?? value.raw["preset"]?.stringValue ?? value.kind)
         case .motionScene:
             guard let value = session.document.motionScenes.first(where: { $0.id == selection.id }) else { return nil }
-            return ("Preset", value.preset ?? "Default")
+            return (String(localized: "Preset"), value.preset ?? String(localized: "Default"))
         case .cameraEffect:
             guard let value = session.document.cameraEffects.first(where: { $0.id == selection.id }) else { return nil }
-            return ("Effect", value.effect ?? "Default")
+            return (String(localized: "Effect"), value.effect ?? String(localized: "Default"))
         case .carousel:
-            return ("Moment", nativeString(session.document.carouselMoment?["id"]) ?? selection.id)
+            return (String(localized: "Moment"), nativeString(session.document.carouselMoment?["id"]) ?? selection.id)
         case .drawing:
             guard let value = session.document.drawings.first(where: { $0.id == selection.id }) else { return nil }
-            return ("Strokes", String(value.strokes.count))
+            return (String(localized: "Strokes"), String(value.strokes.count))
         default: return nil
         }
     }
@@ -1187,7 +1213,7 @@ private struct NativeSelectedEffectInspector: View {
                 if let record, let kind = record.kind { LabeledContent("Kind", value: kind) }
                 if let detail { LabeledContent(detail.0, value: detail.1) }
                 if !editable {
-                    nativeLockedNote(session: session, keys: capabilityKeys, fallback: "This object is read-only until its renderer capability is available.")
+                    nativeLockedNote(session: session, keys: capabilityKeys, fallback: String(localized: "This object is read-only until its renderer capability is available."))
                 }
             }
             timingSection

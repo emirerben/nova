@@ -108,7 +108,7 @@ struct SuggestionCard: Decodable, Equatable, Identifiable, Sendable {
         var parts = [title]
         if let why { parts.append(why) }
         if let evidence = evidence.first { parts.append(evidence) }
-        if let copyText { parts.append("Text: \(copyText)") }
+        if let copyText { parts.append(String(localized: "Text: \(copyText)")) }
         return parts.joined(separator: ". ")
     }
 

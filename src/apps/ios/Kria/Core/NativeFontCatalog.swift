@@ -12,12 +12,12 @@ enum NativeFontGroup: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .editorial: "Editorial"
-        case .headlines: "Headlines"
-        case .clean: "Clean"
-        case .handwriting: "Handwriting"
-        case .script: "Script"
-        case .mono: "Mono"
+        case .editorial: String(localized: "Editorial", comment: "Font group")
+        case .headlines: String(localized: "Headlines", comment: "Font group")
+        case .clean: String(localized: "Clean", comment: "Font group: plain, simple fonts")
+        case .handwriting: String(localized: "Handwriting", comment: "Font group")
+        case .script: String(localized: "Script", comment: "Font group: cursive fonts")
+        case .mono: String(localized: "Mono", comment: "Font group: monospaced fonts")
         }
     }
 

@@ -41,16 +41,30 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         }
     }
 
+    /// What the rail shows; `rawValue` stays the English identifier source.
+    var title: String {
+        switch self {
+        case .kria: "Kria"
+        case .text: String(localized: "Text", comment: "Editor tool: text overlays")
+        case .captions: String(localized: "Captions")
+        case .visuals: String(localized: "Visuals", comment: "Editor tool: photos, videos and effects layered over the video")
+        case .background: String(localized: "Background")
+        case .sounds: String(localized: "Sounds")
+        case .draw: String(localized: "Draw")
+        case .split: String(localized: "Split", comment: "Editor tool: split screen")
+        }
+    }
+
     var accessibilityHint: String {
         switch self {
-        case .kria: "Review editing proposals from Kria"
-        case .text: "Add or edit text overlays"
-        case .captions: "Turn captions on or off and choose a style"
-        case .visuals: "Browse visual lanes and adjust supported effects"
-        case .background: "Put a photo or video behind you"
-        case .sounds: "Adjust music and add sound effects"
-        case .draw: "Draw on the video with your finger"
-        case .split: "Show two or three clips on screen at once"
+        case .kria: String(localized: "Review editing proposals from Kria")
+        case .text: String(localized: "Add or edit text overlays")
+        case .captions: String(localized: "Turn captions on or off and choose a style")
+        case .visuals: String(localized: "Browse visual lanes and adjust supported effects")
+        case .background: String(localized: "Put a photo or video behind you")
+        case .sounds: String(localized: "Adjust music and add sound effects")
+        case .draw: String(localized: "Draw on the video with your finger")
+        case .split: String(localized: "Show two or three clips on screen at once")
         }
     }
 }
@@ -115,9 +129,9 @@ struct NativeEditorSaveBanner: View {
     @ViewBuilder private var statusBanner: some View {
         switch session.saveState {
         case .failed(let message):
-            banner(title: "Couldn’t save this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
+            banner(title: String(localized: "Couldn’t save this edit"), detail: message, systemImage: "exclamationmark.triangle", tint: .red)
         case .renderRetryNeeded(let message):
-            banner(title: "Saved — render didn’t start", detail: message, systemImage: "arrow.clockwise", tint: .orange)
+            banner(title: String(localized: "Saved — render didn’t start"), detail: message, systemImage: "arrow.clockwise", tint: .orange)
         case .deviceRenderRetryNeeded(let message):
             let step = session.deviceRenderNextStep
             VStack(spacing: 0) {
@@ -147,10 +161,10 @@ struct NativeEditorSaveBanner: View {
                 }
             }
         case .loadFailed(let message):
-            banner(title: "Couldn’t load this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
+            banner(title: String(localized: "Couldn’t load this edit"), detail: message, systemImage: "exclamationmark.triangle", tint: .red)
         case .previewFailed(let message):
             VStack(spacing: 0) {
-                banner(title: "Preview needs another check", detail: message, systemImage: "arrow.clockwise", tint: .orange)
+                banner(title: String(localized: "Preview needs another check"), detail: message, systemImage: "arrow.clockwise", tint: .orange)
                 Button("Check preview again") { session.retryPreviewRefresh() }
                     .font(KriaFont.body(12).weight(.semibold))
                     .foregroundStyle(KriaColor.ink)
@@ -160,10 +174,10 @@ struct NativeEditorSaveBanner: View {
             }
         case .previewPending:
             banner(
-                title: "Edit saved",
+                title: String(localized: "Edit saved"),
                 detail: session.rendersOnDevice
-                    ? "Applying it to your video on this iPhone…"
-                    : "Applying it to your video…",
+                    ? String(localized: "Applying it to your video on this iPhone…")
+                    : String(localized: "Applying it to your video…"),
                 systemImage: "checkmark.circle",
                 tint: KriaColor.ink
             )
@@ -174,11 +188,11 @@ struct NativeEditorSaveBanner: View {
 
     static func deviceTitle(_ step: DeviceRenderAttentionCopy.NextStep) -> String {
         switch step {
-        case .resume: "Saved — rendering paused"
-        case .reviewInChat: "Saved — this edit needs a change"
-        case .updateApp: "Saved — update Kria to render this edit"
-        case .renderNow: "Saved — ready to render on this iPhone"
-        case .retry: "Saved — iPhone render needs a retry"
+        case .resume: String(localized: "Saved — rendering paused")
+        case .reviewInChat: String(localized: "Saved — this edit needs a change")
+        case .updateApp: String(localized: "Saved — update Kria to render this edit")
+        case .renderNow: String(localized: "Saved — ready to render on this iPhone")
+        case .retry: String(localized: "Saved — iPhone render needs a retry")
         }
     }
 
@@ -194,10 +208,10 @@ struct NativeEditorSaveBanner: View {
 
     private func deviceButton(_ step: DeviceRenderAttentionCopy.NextStep) -> String {
         switch step {
-        case .reviewInChat where reviewInChat != nil: "Review in chat"
-        case .updateApp: "Update Kria"
-        case .renderNow where retryApproved == nil: "Render on this iPhone"
-        default: retryApproved == nil ? (step == .resume ? "Resume rendering" : "Retry device render") : "Review retry in chat"
+        case .reviewInChat where reviewInChat != nil: String(localized: "Review in chat")
+        case .updateApp: String(localized: "Update Kria")
+        case .renderNow where retryApproved == nil: String(localized: "Render on this iPhone")
+        default: retryApproved == nil ? (step == .resume ? String(localized: "Resume rendering") : String(localized: "Retry device render")) : String(localized: "Review retry in chat")
         }
     }
 
@@ -217,12 +231,12 @@ struct NativeEditorRefreshIndicator: View {
         case .idle:
             EmptyView()
         case .reconnecting:
-            chip("Offline. Kria will catch up when you’re back online.", systemImage: "wifi.slash")
+            chip(String(localized: "Offline. Kria will catch up when you’re back online."), systemImage: "wifi.slash")
         case .newVersionRendering:
-            chip("New version rendering… You can keep editing this one.", systemImage: "hourglass")
+            chip(String(localized: "New version rendering… You can keep editing this one."), systemImage: "hourglass")
         case .targetLost(let message):
             VStack(spacing: 0) {
-                NativeEditorBannerRow(title: "This edit isn’t linked to the project anymore", detail: message,
+                NativeEditorBannerRow(title: String(localized: "This edit isn’t linked to the project anymore"), detail: message,
                     systemImage: "link", tint: KriaColor.ink, identifier: "native-editor-target-lost")
                 Button("Back to chat", action: onBackToChat)
                     .font(KriaFont.body(12).weight(.semibold))
@@ -415,7 +429,7 @@ struct NativeEditorTransport: View {
                     .background(KriaColor.ink)
                     .clipShape(Circle())
             }
-            .accessibilityLabel(session.isPlaying ? "Pause preview" : "Play preview")
+            .accessibilityLabel(session.isPlaying ? String(localized: "Pause preview") : String(localized: "Play preview"))
             .accessibilityIdentifier("native-editor-play-pause")
 
             Text(nativeTimecode(clock.currentTime))
@@ -442,7 +456,7 @@ struct NativeEditorTransport: View {
                 })
                 .accessibilityElement()
                 .accessibilityLabel("Preview position")
-                .accessibilityValue("\(Int(progress * 100)) percent")
+                .accessibilityValue(String(localized: "\(Int(progress * 100)) percent"))
                 .accessibilityAdjustableAction { direction in
                     let increment = max(session.playbackDuration, 1) / 20
                     switch direction {
@@ -491,7 +505,7 @@ struct NativeEditorTimeline: View {
                 HStack(spacing: 8) {
                     if pending.status == "failed" { Image(systemName: "exclamationmark.circle").foregroundStyle(KriaColor.failureText) }
                     else { ProgressView().controlSize(.small) }
-                    Text(pending.status == "failed" ? (pending.error ?? "Couldn’t prepare media.") : "Preparing media import…")
+                    Text(pending.status == "failed" ? (pending.error ?? String(localized: "Couldn’t prepare media.")) : String(localized: "Preparing media import…"))
                         .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     Spacer()
                     if pending.status == "failed" && pending.retryable {
@@ -557,7 +571,7 @@ struct NativeEditorContextStrip: View {
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
                 .disabled(rangeBlocked != nil && !session.sourceWindowExplainsOnTap(for: session.selection))
                 .accessibilityIdentifier("native-editor-clip-range")
-                .accessibilityHint(rangeBlocked ?? "Choose which part of the original clip plays")
+                .accessibilityHint(rangeBlocked ?? String(localized: "Choose which part of the original clip plays"))
 
                 // KRI-44: only where the server explicitly lists `clips.source_crop`; legacy cloud variants never show it.
                 if session.serverOffersClipCrop {
@@ -570,7 +584,7 @@ struct NativeEditorContextStrip: View {
                     .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
                     .disabled(blocked != nil || !session.canEdit(.timeline))
                     .accessibilityIdentifier("native-editor-clip-crop")
-                    .accessibilityHint(blocked ?? "Choose which part of this clip shows")
+                    .accessibilityHint(blocked ?? String(localized: "Choose which part of this clip shows"))
                 }
 
                 // KRI-1136: only where the server explicitly lists `clips.tilt`.
@@ -584,7 +598,7 @@ struct NativeEditorContextStrip: View {
                     .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
                     .disabled(tiltBlocked != nil || !session.canEdit(.timeline))
                     .accessibilityIdentifier("native-editor-clip-tilt")
-                    .accessibilityHint(tiltBlocked ?? "Turn this clip to any angle")
+                    .accessibilityHint(tiltBlocked ?? String(localized: "Turn this clip to any angle"))
                 }
 
                 // Toggles the selected clip's own sound (it used to open Adjust and show a static
@@ -601,7 +615,7 @@ struct NativeEditorContextStrip: View {
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
                 .disabled(clipID == nil || !session.canEditClipAudio || !session.canEditOriginalAudio)
                 .accessibilityIdentifier("native-editor-clip-audio")
-                .accessibilityValue(audioOn ? "On" : "Off")
+                .accessibilityValue(audioOn ? String(localized: "On") : String(localized: "Off"))
                 .accessibilityHint("Turns this clip's original sound on or off")
 
                 if session.canEditOperation(["clips.transitions"], section: .timeline) {
@@ -707,7 +721,7 @@ struct NativeEditorTextContextStrip: View {
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false, isDestructive: true))
                 .disabled(deleteBlockedReason != nil)
                 .accessibilityLabel("Delete text")
-                .accessibilityHint(deleteBlockedReason ?? "Removes this text. Undo brings it back.")
+                .accessibilityHint(deleteBlockedReason ?? String(localized: "Removes this text. Undo brings it back."))
                 .accessibilityIdentifier("native-editor-text-delete")
             }
             Button(action: onDeselect) {
@@ -820,7 +834,7 @@ struct NativeEditorToolRail: View {
             VStack(spacing: 4) {
                 Image(systemName: tool.icon)
                     .font(.system(size: 17, weight: .medium))
-                Text(tool.rawValue)
+                Text(tool.title)
                     .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
                     .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                     .lineLimit(1)
@@ -841,8 +855,8 @@ struct NativeEditorToolRail: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(tool.rawValue)
-        .accessibilityHint(selected == tool ? "Close this panel" : tool.accessibilityHint)
+        .accessibilityLabel(tool.title)
+        .accessibilityHint(selected == tool ? String(localized: "Close this panel") : tool.accessibilityHint)
         .accessibilityAddTraits(selected == tool ? .isSelected : [])
         .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
     }

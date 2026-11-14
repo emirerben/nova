@@ -30,11 +30,11 @@ enum SlidePostSize: String, CaseIterable, Sendable {
     var label: String { "\(rawValue) \(name)" }
     var name: String {
         switch self {
-        case .fullScreen: "Full screen"
-        case .portrait: "Portrait"
-        case .tall: "Tall"
-        case .square: "Square"
-        case .wide: "Wide"
+        case .fullScreen: String(localized: "Full screen")
+        case .portrait: String(localized: "Portrait", comment: "Slide post size name")
+        case .tall: String(localized: "Tall", comment: "Slide post size name")
+        case .square: String(localized: "Square", comment: "Slide post size name")
+        case .wide: String(localized: "Wide", comment: "Slide post size name")
         }
     }
 

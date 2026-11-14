@@ -64,7 +64,7 @@ struct SlidePostDrawingLayerView: View {
         .allowsHitTesting(false)
         .accessibilityElement()
         .accessibilityLabel("Drawing")
-        .accessibilityValue("\(drawing.strokes.count) stroke\(drawing.strokes.count == 1 ? "" : "s")")
+        .accessibilityValue(String(localized: "\(drawing.strokes.count) strokes"))
         .accessibilityIdentifier("slidepost-drawing-ink")
     }
 }
@@ -137,7 +137,7 @@ struct SlidePostHeader: View {
             .kriaFloatingSurface(Circle())
         }
         .disabled(isExporting)
-        .accessibilityLabel(isExporting ? "Preparing post" : "Export post")
+        .accessibilityLabel(isExporting ? String(localized: "Preparing post") : String(localized: "Export post"))
         .accessibilityIdentifier("slidepost-export")
     }
 
@@ -181,8 +181,8 @@ struct SlidePostTransportRow: View {
         HStack(spacing: 8) {
             subtitleView
             Spacer(minLength: 4)
-            historyButton("arrow.uturn.backward", label: "Undo", id: "slidepost-undo", enabled: canUndo, action: onUndo)
-            historyButton("arrow.uturn.forward", label: "Redo", id: "slidepost-redo", enabled: canRedo, action: onRedo)
+            historyButton("arrow.uturn.backward", label: String(localized: "Undo"), id: "slidepost-undo", enabled: canUndo, action: onUndo)
+            historyButton("arrow.uturn.forward", label: String(localized: "Redo"), id: "slidepost-redo", enabled: canRedo, action: onRedo)
         }
         .padding(.horizontal, 14).frame(height: 54).background(KriaColor.paper)
     }
@@ -334,7 +334,7 @@ struct SlidePostStrip: View {
             .accessibilityLabel(pendingLabel(tile.phase))
             .accessibilityValue(pendingValue(tile.phase))
             .accessibilityIdentifier("slidepost-pending-\(index + 1)")
-            Text(failed ? "Retry" : "Adding").font(KriaFont.body(11).weight(.semibold))
+            Text(failed ? String(localized: "Retry") : String(localized: "Adding", comment: "Under a slide tile while its photo or video is still arriving")).font(KriaFont.body(11).weight(.semibold))
                 .foregroundStyle(failed ? KriaColor.failureText : KriaColor.zinc).lineLimit(1).minimumScaleFactor(0.7).accessibilityHidden(true)
         }
         .frame(width: Self.tileWidth)
@@ -356,13 +356,13 @@ struct SlidePostStrip: View {
     }
     private func pendingLabel(_ phase: SlidePostPendingTile.Phase) -> String {
         switch phase {
-        case .uploading: "Uploading media"
-        case .processing: "Preparing media"
-        case .failed(let message, let record): record == nil ? "Failed, choose again. \(message)" : "Failed, retry. \(message)"
+        case .uploading: String(localized: "Uploading media")
+        case .processing: String(localized: "Preparing media")
+        case .failed(let message, let record): record == nil ? String(localized: "Failed, choose again. \(message)") : String(localized: "Failed, retry. \(message)")
         }
     }
     private func pendingValue(_ phase: SlidePostPendingTile.Phase) -> String {
-        if case .uploading(let progress?) = phase { return "\(Int((progress * 100).rounded())) percent" }
+        if case .uploading(let progress?) = phase { return String(localized: "\(Int((progress * 100).rounded())) percent") }
         return ""
     }
 
@@ -400,7 +400,7 @@ struct SlidePostStrip: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Slide \(index + 1)")
-            .accessibilityValue([index == coverIndex ? "Cover" : nil, slide.edits?.framing?.orientation == .landscape ? "Landscape" : nil].compactMap { $0 }.joined(separator: ", "))
+            .accessibilityValue([index == coverIndex ? String(localized: "Cover", comment: "Marks the slide used as the post cover") : nil, slide.edits?.framing?.orientation == .landscape ? String(localized: "Landscape") : nil].compactMap { $0 }.joined(separator: ", "))
             .accessibilityAddTraits(selected ? .isSelected : [])
             .accessibilityIdentifier("slidepost-tile-\(index + 1)")
             Text("\(index + 1)").font(KriaFont.body(11).weight(selected ? .bold : .semibold)).foregroundStyle(selected ? KriaColor.ink : KriaColor.zinc)
@@ -602,14 +602,14 @@ struct SlidePostToolBar: View {
 
     private var row: some View {
         HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
-            item("textformat", "Text", id: "slidepost-tool-text", active: mode == .text, action: onText)
-            item("star.square", "Cover", id: "slidepost-tool-cover", active: false, enabled: canCover, action: onCover)
-            item("circle.lefthalf.filled", "Look", id: "slidepost-tool-look", active: mode == .look, action: onLook)
-            if showsCrop { item("crop", "Crop", id: "slidepost-tool-crop", active: mode == .crop, action: onCrop) }
-            if showsTilt { item("rotate.right", "Tilt", id: "slidepost-tool-tilt", active: mode == .tilt, action: onTilt) }
-            if showsSize { item("aspectratio", "Size", id: "slidepost-tool-size", active: false, action: onSize) }
-            if showsDraw { item("pencil.tip", "Draw", id: "slidepost-tool-draw", active: mode == .draw, action: onDraw) }
-            if let onGenerate { item("sparkles", "Picture", id: "slidepost-tool-generate", active: false, action: onGenerate) }
+            item("textformat", String(localized: "Text", comment: "Tool: add or edit text"), id: "slidepost-tool-text", active: mode == .text, action: onText)
+            item("star.square", String(localized: "Cover", comment: "Tool: set this slide as the post cover"), id: "slidepost-tool-cover", active: false, enabled: canCover, action: onCover)
+            item("circle.lefthalf.filled", String(localized: "Look", comment: "Tool: colour look / filter"), id: "slidepost-tool-look", active: mode == .look, action: onLook)
+            if showsCrop { item("crop", String(localized: "Crop"), id: "slidepost-tool-crop", active: mode == .crop, action: onCrop) }
+            if showsTilt { item("rotate.right", String(localized: "Tilt"), id: "slidepost-tool-tilt", active: mode == .tilt, action: onTilt) }
+            if showsSize { item("aspectratio", String(localized: "Size", comment: "Tool: change the post size"), id: "slidepost-tool-size", active: false, action: onSize) }
+            if showsDraw { item("pencil.tip", String(localized: "Draw"), id: "slidepost-tool-draw", active: mode == .draw, action: onDraw) }
+            if let onGenerate { item("sparkles", String(localized: "Picture", comment: "Tool: add a generated picture"), id: "slidepost-tool-generate", active: false, action: onGenerate) }
             if let onPaste { pasteItem(onPaste) }
             Menu {
                 Button(role: .destructive, action: onRemove) { Label("Remove slide", systemImage: "trash") }.disabled(!canRemove)
@@ -619,7 +619,7 @@ struct SlidePostToolBar: View {
                     Button(role: .destructive, action: onClearDrawing) { Label("Remove drawing", systemImage: "scribble") }
                         .accessibilityIdentifier("slidepost-clear-drawing")
                 }
-            } label: { label("ellipsis", "More", active: false) }
+            } label: { label("ellipsis", String(localized: "More"), active: false) }
             .accessibilityIdentifier("slidepost-tool-more")
         }
         .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)

@@ -4,7 +4,7 @@ import Foundation
 enum OverlayGenerationMode: String, Codable, CaseIterable, Identifiable {
     case prompt, automatic
     var id: String { rawValue }
-    var title: String { self == .prompt ? "Follow my prompt" : "Auto-generate overlays" }
+    var title: String { self == .prompt ? String(localized: "Follow my prompt") : String(localized: "Auto-generate overlays") }
 }
 
 struct OverlayPlanRequest: Encodable, Sendable {

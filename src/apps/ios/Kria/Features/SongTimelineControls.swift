@@ -94,7 +94,7 @@ struct SongTimelineTransport: View {
         }
         .buttonStyle(.plain)
         .disabled(!canPlay)
-        .accessibilityLabel(clock.isPlaying ? "Pause song" : "Play song")
+        .accessibilityLabel(clock.isPlaying ? String(localized: "Pause song") : String(localized: "Play song"))
         .accessibilityIdentifier("song-timeline-play")
     }
 
@@ -112,7 +112,7 @@ struct SongTimelineTransport: View {
             .accessibilityIdentifier("song-timeline-current-time")
     }
 
-    private func stepButton(_ symbol: String, label: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+    private func stepButton(_ symbol: String, label: LocalizedStringKey, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
@@ -180,7 +180,7 @@ struct SongTimelineActionBar: View {
         .accessibilityIdentifier("song-timeline-actions")
     }
 
-    private func chip(_ title: String, id: String, label: String? = nil, prominent: Bool = false, action: @escaping () -> Void) -> some View {
+    private func chip(_ title: LocalizedStringKey, id: String, label: LocalizedStringKey? = nil, prominent: Bool = false, action: @escaping () -> Void) -> some View {
         Button(title, action: action)
             .buttonStyle(SongTimelineChipStyle(prominent: prominent))
             .disabled(isSending)

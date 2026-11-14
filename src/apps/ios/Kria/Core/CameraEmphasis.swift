@@ -36,7 +36,7 @@ enum CameraEmphasis {
     static var shortestDuration: Double { bounds(pulseEasing).minDuration }
 
     static func label(_ easing: String?) -> String {
-        resolve(easing) == holdEasing ? "Zoom in" : "Pulse"
+        resolve(easing) == holdEasing ? String(localized: "Zoom in", comment: "Camera emphasis effect name") : String(localized: "Pulse", comment: "Camera emphasis effect name")
     }
 
     /// Clamp an authored window to the easing's bounds.

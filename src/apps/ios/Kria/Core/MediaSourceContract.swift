@@ -29,11 +29,11 @@ enum MediaSourceContractError: Error, LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .unsupportedContainer: "Export this as MP4 or MOV first."
-        case .missingVideoTrack: "This file doesn't have a video track."
-        case .durationMismatch: "This clip's length changed during upload. Try again."
-        case .audioPresenceMismatch: "This clip's audio didn't match after upload. Try again."
-        case .unsupportedGeometry: "This clip couldn't be processed. Try re-exporting it."
+        case .unsupportedContainer: String(localized: "Export this as MP4 or MOV first.")
+        case .missingVideoTrack: String(localized: "This file doesn't have a video track.")
+        case .durationMismatch: String(localized: "This clip's length changed during upload. Try again.")
+        case .audioPresenceMismatch: String(localized: "This clip's audio didn't match after upload. Try again.")
+        case .unsupportedGeometry: String(localized: "This clip couldn't be processed. Try re-exporting it.")
         }
     }
 }

@@ -36,8 +36,8 @@ private struct ChooseScreen: View {
     let close: () -> Void
 
     var body: some View {
-        KriaSheetScaffold(heading: "Make overlays",
-                          message: "Start from one idea. Add variations of it, each with its own prompt.",
+        KriaSheetScaffold(heading: String(localized: "Make overlays"),
+                          message: String(localized: "Start from one idea. Add variations of it, each with its own prompt."),
                           onClose: close) {
             VStack(spacing: 12) {
                 ChoiceCard(symbol: "sparkle", title: "Let Kria decide",
@@ -59,8 +59,8 @@ private struct ChooseScreen: View {
 
 private struct ChoiceCard: View {
     let symbol: String
-    let title: String
-    let detail: String
+    let title: LocalizedStringKey
+    let detail: LocalizedStringKey
     let identifier: String
     let action: () -> Void
 
@@ -99,17 +99,17 @@ private struct ComposeScreen: View {
 
     private var drafts: [OverlayCard] { overlays.drafts }
     private var draftCount: Int { drafts.count }
-    private var heading: String { overlays.origin == .decide ? "Kria’s overlay ideas" : "Your overlays" }
+    private var heading: String { overlays.origin == .decide ? String(localized: "Kria’s overlay ideas") : String(localized: "Your overlays") }
     private var message: String {
-        if overlays.origin == .decide { return "Variations of one look. Change any prompt or remove the ones you don’t want." }
-        return draftCount > 1 ? "Each overlay has its own prompt. Add as many variations as you like."
-            : "Describe what you want to see. Add more overlays for variations of it."
+        if overlays.origin == .decide { return String(localized: "Variations of one look. Change any prompt or remove the ones you don’t want.") }
+        return draftCount > 1 ? String(localized: "Each overlay has its own prompt. Add as many variations as you like.")
+            : String(localized: "Describe what you want to see. Add more overlays for variations of it.")
     }
     private var canMake: Bool { drafts.allSatisfy(\.promptIsValid) && draftCount > 0 }
     private var reason: String? {
         if canMake { return nil }
         return drafts.contains { $0.prompt.count > OverlayLimits.maxPrompt }
-            ? "Shorten the longest prompt to start." : "Describe each overlay to start."
+            ? String(localized: "Shorten the longest prompt to start.") : String(localized: "Describe each overlay to start.")
     }
 
     var body: some View {
@@ -149,7 +149,7 @@ private struct ComposeScreen: View {
         }
     }
 
-    private var makeTitle: String { draftCount == 1 ? "Make overlay" : "Make \(draftCount) overlays" }
+    private var makeTitle: String { draftCount == 1 ? String(localized: "Make overlay") : String(localized: "Make \(draftCount) overlays") }
 }
 
 private struct PromptCard: View {
@@ -213,7 +213,7 @@ private struct AddOverlayRow: View {
                 .frame(width: 44, height: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Add overlay").kriaType(.button).foregroundStyle(KriaColor.ink)
-                    Text(isEnabled ? "Starts from your last prompt" : "You can make up to \(OverlayLimits.maxOverlays) at once")
+                    Text(isEnabled ? String(localized: "Starts from your last prompt") : String(localized: "You can make up to \(OverlayLimits.maxOverlays) at once"))
                         .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                 }
                 Spacer(minLength: 0)
@@ -240,15 +240,15 @@ private struct MakingScreen: View {
     private var ready: Int { overlays.madeCards.filter { $0.generation?.phase == .ready }.count }
     private var stalled: Bool { overlays.isStalled }
     private var heading: String {
-        if stalled { return "Still making your overlays" }
-        return total == 1 ? "Making your overlay" : "Making \(total) overlays"
+        if stalled { return String(localized: "Still making your overlays") }
+        return total == 1 ? String(localized: "Making your overlay") : String(localized: "Making \(total) overlays")
     }
     private var message: String {
         if stalled {
             let waiting = overlays.makingCount
-            return "\(ready) of \(total) \(total == 1 ? "is" : "are") ready. \(waiting == 1 ? "The last one is" : "\(waiting) are") taking longer than usual. You can close this."
+            return waiting == 1 ? String(localized: "\(ready) of \(total) ready. The last one is taking longer than usual. You can close this.") : String(localized: "\(ready) of \(total) ready. \(waiting) are taking longer than usual. You can close this.")
         }
-        return "\(ready) of \(total) \(total == 1 ? "is" : "are") ready. You can close this, it keeps going."
+        return String(localized: "\(ready) of \(total) ready. You can close this, it keeps going.")
     }
 
     var body: some View {
@@ -269,7 +269,7 @@ private struct MakingScreen: View {
             }
         }
         .onChange(of: ready) { _, value in
-            AccessibilityNotification.Announcement("\(value) of \(total) ready").post()
+            AccessibilityNotification.Announcement(String(localized: "\(value) of \(total) ready")).post()
         }
     }
 
@@ -300,17 +300,17 @@ private struct ResultsScreen: View {
     let finish: () -> Void
 
     private var count: Int { overlays.readyCount }
-    private var heading: String { overlays.madeCards.count == 1 ? "Your overlay" : "Your \(overlays.madeCards.count) overlays" }
-    private var useTitle: String { count == 0 ? "Use overlays" : (count == 1 ? "Use overlay" : "Use \(count) overlays") }
+    private var heading: String { overlays.madeCards.count == 1 ? String(localized: "Your overlay") : String(localized: "Your \(overlays.madeCards.count) overlays") }
+    private var useTitle: String { count == 0 ? String(localized: "Use overlays") : (count == 1 ? String(localized: "Use overlay") : String(localized: "Use \(count) overlays")) }
     /// Butter never sits beside a red notice, so the primary turns ink while one is on screen.
     private var showsFailure: Bool { overlays.problems.contains(where: \.isFailure) }
     private var reason: String? {
-        if overlays.makingCount > 0 { return "Waiting for the rest to finish." }
-        return count == 0 ? "Nothing is ready to use yet." : nil
+        if overlays.makingCount > 0 { return String(localized: "Waiting for the rest to finish.") }
+        return count == 0 ? String(localized: "Nothing is ready to use yet.") : nil
     }
 
     var body: some View {
-        KriaSheetScaffold(heading: heading, message: "Each overlay has its own prompt.", onClose: close) {
+        KriaSheetScaffold(heading: heading, message: String(localized: "Each overlay has its own prompt."), onClose: close) {
             VStack(spacing: 8) {
                 ForEach(overlays.problems, id: \.self) { problem in
                     OverlayProblemCard(problem: problem, handlers: .init(
@@ -361,11 +361,11 @@ private struct EditScreen: View {
     }
 
     var body: some View {
-        KriaSheetScaffold(heading: "Edit overlay \(number)", onBack: { overlays.resumeScreen() }, onClose: close) {
+        KriaSheetScaffold(heading: String(localized: "Edit overlay \(number)"), onBack: { overlays.resumeScreen() }, onClose: close) {
             VStack(spacing: 16) {
                 VStack(spacing: 8) {
                     OverlayThumbnail(url: card?.generation?.previewURL, phase: card?.generation?.phase, width: 140, height: 210, radius: 16)
-                    Text(card?.generation?.phase == .ready ? "How overlay \(number) looks now" : "Overlay \(number) isn’t ready yet")
+                    Text(card?.generation?.phase == .ready ? String(localized: "How overlay \(number) looks now") : String(localized: "Overlay \(number) isn’t ready yet"))
                         .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                 }
                 .frame(maxWidth: .infinity)
@@ -391,7 +391,7 @@ private struct EditScreen: View {
                 .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
                 .disabled(!valid)
                 .accessibilityIdentifier("generated-media-submit")
-                .kriaDisabledReason(valid ? nil : "Describe the overlay to remake it.")
+                .kriaDisabledReason(valid ? nil : String(localized: "Describe the overlay to remake it."))
             if valid {
                 Text("Only this overlay changes. The others stay as they are.")
                     .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
@@ -410,7 +410,7 @@ private struct RemadeScreen: View {
     private var remake: OverlayGeneration? { overlays.card(cardID)?.remake }
     private var phase: OverlayGeneration.Phase { remake?.phase ?? .making }
     private var remakeShowsFailure: Bool { remake.map { problem(for: $0).isFailure && phase != .making && phase != .ready } ?? false }
-    private var heading: String { phase == .ready ? "Overlay \(number), remade" : "Remaking overlay \(number)" }
+    private var heading: String { phase == .ready ? String(localized: "Overlay \(number), remade") : String(localized: "Remaking overlay \(number)") }
 
     var body: some View {
         KriaSheetScaffold(heading: heading, onClose: close) {
@@ -435,7 +435,7 @@ private struct RemadeScreen: View {
                 .buttonStyle(KriaButtonStyle(role: remakeShowsFailure ? .ink : .primary, fullWidth: true))
                 .disabled(phase != .ready)
                 .accessibilityIdentifier("generated-media-use")
-                .kriaDisabledReason(phase == .making ? "Making your overlay…" : nil)
+                .kriaDisabledReason(phase == .making ? String(localized: "Making your overlay…") : nil)
             HStack(spacing: 12) {
                 Button("Try again") { overlays.retryRemake(cardID) }
                     .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
@@ -547,7 +547,7 @@ private struct StatusLabel: View {
                 KriaCheckDisc(size: 16)
                 Text("Ready").foregroundStyle(KriaColor.mutedInk)
             case .making:
-                Text(stalled ? "Still working" : "Making…").foregroundStyle(KriaColor.mutedInk)
+                Text(stalled ? String(localized: "Still working") : String(localized: "Making…")).foregroundStyle(KriaColor.mutedInk)
             case .failed: Text("Didn’t finish").foregroundStyle(KriaColor.failureText)
             case .unsure: Text("Not sure yet").foregroundStyle(KriaColor.mutedInk)
             case .unsaved: Text("Didn’t save").foregroundStyle(KriaColor.failureText)
@@ -619,7 +619,7 @@ struct OverlayThumbnail: View {
 /// A 44pt white disc with an SF Symbol, for the actions on a fill card.
 private struct OverlayIconButton: View {
     let symbol: String
-    let label: String
+    let label: LocalizedStringKey
     let identifier: String
     var isEnabled = true
     let action: () -> Void
@@ -663,7 +663,7 @@ struct OverlaySetNotice: View {
                 else { KriaNoticeIcon(tone: overlays.problems.isEmpty ? .success : .info, size: 20) }
                 Text(title).kriaType(.label).foregroundStyle(KriaColor.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Button(overlays.makingCount > 0 || !overlays.problems.isEmpty ? "Open" : "Review", action: open)
+                Button(overlays.makingCount > 0 || !overlays.problems.isEmpty ? String(localized: "Open") : String(localized: "Review", comment: "Button: review the finished overlays"), action: open)
                     .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium))
                     .accessibilityIdentifier("generated-media-resume")
             }
@@ -676,10 +676,10 @@ struct OverlaySetNotice: View {
 
     private var title: String {
         if overlays.makingCount > 0 {
-            return total == 1 ? "Your overlay is still being made" : "\(overlays.makingCount) overlays are still being made"
+            return total == 1 ? String(localized: "Your overlay is still being made") : String(localized: "\(overlays.makingCount) overlays are still being made")
         }
         return overlays.problems.isEmpty
-            ? (total == 1 ? "Your overlay is ready to review" : "Your overlays are ready to review")
-            : "Some overlays need your attention"
+            ? (total == 1 ? String(localized: "Your overlay is ready to review") : String(localized: "Your overlays are ready to review"))
+            : String(localized: "Some overlays need your attention")
     }
 }

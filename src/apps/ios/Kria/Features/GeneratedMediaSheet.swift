@@ -27,7 +27,7 @@ import AVKit
     func handleSubmissionFailure(_ error: Error) -> Bool {
         guard GeneratedMediaRequestFailure.isDefiniteRejection(error) else { return false }
         clearRecovery()
-        submissionRejection = "The server rejected this request. Edit it and review the current source or script before generating again."
+        submissionRejection = String(localized: "The server rejected this request. Edit it and review the current source or script before generating again.")
         return true
     }
 
@@ -88,11 +88,11 @@ struct GeneratedMediaSheet: View {
     private var narration: Bool { draft.capability == .narration }
     private var editing: Bool { draft.capability == .imageEdit }
     private var heading: String {
-        if narration { return "AI voice" }
-        if case .ready = stage { return editing ? "Your edit" : "Your image" }
-        return editing ? "Edit image" : "Generate image"
+        if narration { return String(localized: "AI voice") }
+        if case .ready = stage { return editing ? String(localized: "Your edit") : String(localized: "Your image") }
+        return editing ? String(localized: "Edit image") : String(localized: "Generate image")
     }
-    private var noun: OverlayProblemNoun { narration ? .voice : OverlayProblemNoun(singular: "image", plural: "images") }
+    private var noun: OverlayProblemNoun { narration ? .voice : OverlayProblemNoun(singular: String(localized: "image"), plural: String(localized: "images")) }
     private var promptIsTooLong: Bool { draft.prompt.count > OverlayLimits.maxPrompt }
     private var promptIsEmpty: Bool { draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
@@ -186,18 +186,18 @@ struct GeneratedMediaSheet: View {
                     OverlayThumbnail(url: source.previewURL ?? source.displayURL, phase: .ready, width: 64, height: 96, radius: 12)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Editing this image").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                        Text(source.sourceFilename ?? "Image").kriaType(.button).foregroundStyle(KriaColor.ink)
+                        Text(source.sourceFilename ?? String(localized: "Image")).kriaType(.button).foregroundStyle(KriaColor.ink)
                     }
                 }
             }
-            KriaField(label: editing ? "Describe what to change" : "Describe your image", text: $draft.prompt,
-                      placeholder: editing ? "Describe what to change" : "Describe the image you want",
-                      helper: embedded ? "Generating uses your account’s allowance." : "Images come without words or titles. Add text in the editor.",
+            KriaField(label: editing ? String(localized: "Describe what to change") : String(localized: "Describe your image"), text: $draft.prompt,
+                      placeholder: editing ? String(localized: "Describe what to change") : String(localized: "Describe the image you want"),
+                      helper: embedded ? String(localized: "Generating uses your account’s allowance.") : String(localized: "Images come without words or titles. Add text in the editor."),
                       maxCount: embedded ? nil : OverlayLimits.maxPrompt, isMultiline: true, minHeight: embedded ? 76 : 132)
                 .disabled(busy || draft.submissionRejection != nil)
                 .accessibilityIdentifier("generated-media-prompt")
             if !embedded {
-                KriaField(label: "Name", text: $draft.title, placeholder: "Name (optional)", helper: "Helps Kria know where the image fits.")
+                KriaField(label: String(localized: "Name"), text: $draft.title, placeholder: String(localized: "Name (optional)"), helper: String(localized: "Helps Kria know where the image fits."))
                     .disabled(busy || draft.submissionRejection != nil)
                     .accessibilityIdentifier("generated-media-title")
             }
@@ -227,7 +227,7 @@ struct GeneratedMediaSheet: View {
                 .lineLimit(full || showsFullScript ? nil : 3)
                 .textSelection(.enabled)
             if !full {
-                Button(showsFullScript ? "Show less" : "Show full script") { showsFullScript.toggle() }
+                Button(showsFullScript ? String(localized: "Show less") : String(localized: "Show full script")) { showsFullScript.toggle() }
                     .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium))
                     .padding(.leading, -12)
             }
@@ -260,7 +260,7 @@ struct GeneratedMediaSheet: View {
             VStack(spacing: 16) {
                 imageFrame(url: nil, ready: false)
                 VStack(spacing: 4) {
-                    Text(embedded ? " " : (stalled ? "This is taking longer than usual." : "Making your image…"))
+                    Text(embedded ? " " : (stalled ? String(localized: "This is taking longer than usual.") : String(localized: "Making your image…")))
                         .kriaType(.button).foregroundStyle(KriaColor.ink)
                     Text("You can close this. It keeps going.").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 }
@@ -311,7 +311,7 @@ struct GeneratedMediaSheet: View {
                         .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(voice.isPlaying ? "Pause AI voice" : "Play AI voice")
+                .accessibilityLabel(voice.isPlaying ? String(localized: "Pause AI voice") : String(localized: "Play AI voice"))
                 .accessibilityIdentifier("generated-media-play")
                 NarrationWaveform(progress: voice.progress)
             }
@@ -349,7 +349,7 @@ struct GeneratedMediaSheet: View {
                 .buttonStyle(KriaButtonStyle(role: activeProblems.contains(where: \.isFailure) ? .ink : .primary, fullWidth: true, isLoading: busy))
                 .disabled(!canUse)
                 .accessibilityIdentifier("generated-media-use")
-                .kriaDisabledReason(canUse || busy ? nil : (previewLoaded ? nil : "Loading your \(narration ? "voice" : "image")…"))
+                .kriaDisabledReason(canUse || busy ? nil : (previewLoaded ? nil : narration ? String(localized: "Loading your voice…") : String(localized: "Loading your image…")))
             if allowsNewGeneration {
                 HStack(spacing: 12) {
                     Button("Try again") { retry() }
@@ -365,7 +365,7 @@ struct GeneratedMediaSheet: View {
                 .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: busy))
                 .disabled(busy || !allowsNewGeneration || draft.submissionRejection != nil || (!narration && (promptIsEmpty || promptIsTooLong)))
                 .accessibilityIdentifier("generated-media-submit")
-                .kriaDisabledReason(!narration && draft.submissionRejection == nil ? (promptIsEmpty ? "Describe your image to start." : (promptIsTooLong ? "Shorten your prompt to start." : nil)) : nil)
+                .kriaDisabledReason(!narration && draft.submissionRejection == nil ? (promptIsEmpty ? String(localized: "Describe your image to start.") : (promptIsTooLong ? String(localized: "Shorten your prompt to start.") : nil)) : nil)
         }
     }
 
@@ -376,13 +376,13 @@ struct GeneratedMediaSheet: View {
     }
 
     private var useTitle: String {
-        if narration { return "Use AI voice" }
-        if embedded { return "Add to timeline" }
-        return editing ? "Use edit" : "Use image"
+        if narration { return String(localized: "Use AI voice") }
+        if embedded { return String(localized: "Add to timeline") }
+        return editing ? String(localized: "Use edit") : String(localized: "Use image")
     }
     private var submitTitle: String {
-        if narration { return "Approve script and make voice" }
-        return editing ? "Make edit" : "Generate image"
+        if narration { return String(localized: "Approve script and make voice") }
+        return editing ? String(localized: "Make edit") : String(localized: "Generate image")
     }
 
     private func matchesApproval(_ value: GeneratedMediaOperation) -> Bool {

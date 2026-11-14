@@ -21,7 +21,7 @@ struct NativeBackgroundPanel: View {
     @State private var tab = Tab.background
 
     var body: some View {
-        NativeEditorLanePanel(title: "Background", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }) {
+        NativeEditorLanePanel(title: "Background", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }, heading: String(localized: "Background")) {
             VStack(spacing: 12) {
             if let opening = session.speakerFullScreenOpening { fullScreenOpeningRow(opening) }
             if session.canEditSpeakerBackgroundColor { colorSection }
@@ -29,7 +29,7 @@ struct NativeBackgroundPanel: View {
             else if session.canEditSpeakerBackgroundColor { sectionTitle("Photo or video", id: "native-editor-background-media-title") }
             NativeVisualPoolPicker(
                 session: session, uploads: uploads, projectID: projectID, idPrefix: "native-editor-background",
-                choices: session.speakerBackgroundChoices, selectedID: session.speakerBackground?.mediaID, noneTitle: "None",
+                choices: session.speakerBackgroundChoices, selectedID: session.speakerBackground?.mediaID, noneTitle: String(localized: "None", comment: "Choice: no background"),
                 onNone: { session.endTransaction(); _ = session.removeSpeakerBackground() },
                 onSelect: { asset in
                     session.endTransaction()
@@ -58,7 +58,7 @@ struct NativeBackgroundPanel: View {
     /// speaker in the corner from the first frame (one undo step). Read-only while the server does not open the capability.
     private func fullScreenOpeningRow(_ opening: EditorFullScreenWindow) -> some View {
         let length = ((opening.endS - opening.startS) * 10).rounded() / 10
-        let text = "Starts full screen · " + (length == length.rounded() ? String(Int(length)) : String(format: "%.1f", length)) + " s"
+        let text = String(localized: "Starts full screen · \(length, format: .number.precision(.fractionLength(0...1))) s")
         return HStack(spacing: 8) {
             Text(text).font(KriaFont.body(13)).foregroundStyle(KriaColor.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -80,8 +80,8 @@ struct NativeBackgroundPanel: View {
 
     /// White, black, green screen, blue screen and a neutral grey, then any colour the system picker offers.
     static let colorSwatches: [(id: String, name: String, hex: String)] = [
-        ("white", "White", "#FFFFFF"), ("black", "Black", "#000000"), ("green", "Green", "#00FF00"),
-        ("blue", "Blue", "#0000FF"), ("grey", "Grey", "#808080"),
+        ("white", String(localized: "White", comment: "Background colour"), "#FFFFFF"), ("black", String(localized: "Black", comment: "Background colour"), "#000000"), ("green", String(localized: "Green", comment: "Background colour"), "#00FF00"),
+        ("blue", String(localized: "Blue", comment: "Background colour"), "#0000FF"), ("grey", String(localized: "Grey", comment: "Background colour"), "#808080"),
     ]
 
     private var currentColor: String? { session.speakerBackgroundColor }
@@ -145,7 +145,7 @@ struct NativeBackgroundPanel: View {
 
     // MARK: Sequence and Speaker (KRI-1162)
 
-    private func sectionTitle(_ text: String, id: String) -> some View {
+    private func sectionTitle(_ text: LocalizedStringKey, id: String) -> some View {
         Text(text).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityAddTraits(.isHeader)
@@ -153,7 +153,7 @@ struct NativeBackgroundPanel: View {
     }
 
     private func poolName(_ mediaID: String, kind: VisualMediaKind) -> String {
-        session.visualLibrary.first { $0.id == mediaID }?.sourceFilename ?? (kind == .video ? "Video" : "Photo")
+        session.visualLibrary.first { $0.id == mediaID }?.sourceFilename ?? (kind == .video ? String(localized: "Video", comment: "Media kind") : String(localized: "Photo", comment: "Media kind"))
     }
 
     /// Tap a pool tile to add it after the last one; the chosen ones sit below in order, each with its number and an x.
@@ -187,7 +187,7 @@ struct NativeBackgroundPanel: View {
 
     private func sequenceAddTile(_ asset: CreationVisual) -> some View {
         let kind = VisualMediaKind(rawValue: asset.kind) ?? .image
-        let name = asset.sourceFilename ?? (kind == .video ? "Video" : "Photo")
+        let name = asset.sourceFilename ?? (kind == .video ? String(localized: "Video", comment: "Media kind") : String(localized: "Photo", comment: "Media kind"))
         return Button { session.addSpeakerBackgroundWindow(mediaID: asset.id, kind: kind) } label: {
             NativeVisualThumbnail(asset: asset)
                 .frame(width: 56, height: 56)
@@ -237,8 +237,8 @@ struct NativeBackgroundPanel: View {
     }
 
     private static let speakerChoices: [(preset: String, label: String)] = [
-        ("full", "Full"), ("small_bottom_right", "Bottom right"), ("small_bottom_left", "Bottom left"),
-        ("small_top_right", "Top right"), ("small_top_left", "Top left"),
+        ("full", String(localized: "Full", comment: "Speaker position: whole screen")), ("small_bottom_right", String(localized: "Bottom right")), ("small_bottom_left", String(localized: "Bottom left")),
+        ("small_top_right", String(localized: "Top right")), ("small_top_left", String(localized: "Top left")),
     ]
 
     /// Which choice is lit: no frame is Full, a preset frame is that preset, anything else is Custom (kept untouched).
@@ -293,7 +293,7 @@ struct NativeBackgroundAimControls: View {
     let windowIndex: Int?
 
     /// The buttons: x on the wire. A button is lit only when the current aim is within 0.005 of it.
-    static let sides: [(token: String, label: String, x: Double)] = [("left", "Left", 0), ("center", "Centre", 0.5), ("right", "Right", 1)]
+    static let sides: [(token: String, label: String, x: Double)] = [("left", String(localized: "Left", comment: "Aim the background at the left"), 0), ("center", String(localized: "Centre", comment: "Aim the background at the centre"), 0.5), ("right", String(localized: "Right", comment: "Aim the background at the right"), 1)]
     static let litBand = 0.005
 
     private var idPrefix: String { windowIndex == nil ? "native-editor-background-aim-fill" : "native-editor-background-aim" }
@@ -325,7 +325,7 @@ struct NativeBackgroundAimControls: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!session.canEditSpeakerBackgroundFocus)
-                    .accessibilityLabel("Aim " + side.label.lowercased())
+                    .accessibilityLabel(String(localized: "Aim \(side.label)"))
                     .accessibilityAddTraits(selected ? .isSelected : [])
                     .accessibilityIdentifier("\(idPrefix)-\(side.token)")
                 }
@@ -365,7 +365,7 @@ struct BackgroundZoomSlider: View {
     static let holdBand = 0.05
     static let step = 0.01
 
-    static func readout(_ zoom: Double) -> String { String(format: "%gx", (zoom * 100).rounded() / 100) }
+    static func readout(_ zoom: Double) -> String { String(localized: "\((zoom * 100).rounded() / 100, format: .number)x", comment: "Zoom readout, e.g. 1.5x") }
 
     /// `raw` snapped to the detent at 1x, else clamped and rounded to hundredths.
     static func snapped(_ raw: Double) -> Double {

@@ -165,10 +165,10 @@ struct TeleprompterScreen: View {
     private var topRow: some View {
         ZStack {
             HStack {
-                KriaCameraCloseButton(identifier: "teleprompter-close", label: flow.captureBusy ? "Stop and review take" : "Close camera", action: closeCapture)
+                KriaCameraCloseButton(identifier: "teleprompter-close", label: flow.captureBusy ? String(localized: "Stop and review take") : String(localized: "Close camera"), action: closeCapture)
                 Spacer()
                 if !flow.captureBusy, showsControls {
-                    KriaCameraCapsule(title: "Script", symbol: "text.alignleft", identifier: "teleprompter-script",
+                    KriaCameraCapsule(title: String(localized: "Script", comment: "Teleprompter script button"), symbol: "text.alignleft", identifier: "teleprompter-script",
                                       isOn: flow.useScript) { flow.editScript() }
                 }
             }
@@ -181,7 +181,7 @@ struct TeleprompterScreen: View {
 
     /// The reading window's own control, kept with Script at the top.
     private var textWindowRow: some View {
-        KriaCameraCapsule(title: "Text window", symbol: "slider.horizontal.3", identifier: "teleprompter-window-settings") { showsWindowSettings = true }
+        KriaCameraCapsule(title: String(localized: "Text window"), symbol: "slider.horizontal.3", identifier: "teleprompter-window-settings") { showsWindowSettings = true }
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, alignment: .trailing)
     }
@@ -252,7 +252,7 @@ struct TeleprompterScreen: View {
             }
             Group {
                 if idle {
-                    KriaCameraIconButton(symbol: "arrow.triangle.2.circlepath.camera", label: "Flip camera",
+                    KriaCameraIconButton(symbol: "arrow.triangle.2.circlepath.camera", label: String(localized: "Flip camera"),
                                          identifier: "teleprompter-flip") { flow.flipCamera() }
                 } else { Color.clear.frame(width: 44, height: 44) }
             }
@@ -308,7 +308,7 @@ struct TeleprompterScreen: View {
         if flow.attachmentFinished {
             VStack(spacing: 16) {
                 KriaCheckDisc(size: 24)
-                Text(replacementNotice == nil ? "Take added to your edit" : "Take replaced").kriaType(.heading).foregroundStyle(KriaColor.ink)
+                Text(replacementNotice == nil ? String(localized: "Take added to your edit") : String(localized: "Take replaced")).kriaType(.heading).foregroundStyle(KriaColor.ink)
                 Button("Done") { dismiss() }.buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
             }
             .padding(.horizontal, 24).frame(maxHeight: .infinity)
@@ -319,7 +319,7 @@ struct TeleprompterScreen: View {
                     ReviewTakePlayer(url: flow.store.fileURL(for: take)).id("\(take.id.uuidString)-\(take.cinematic?.isSettled ?? true)")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    KriaNoticeCard(tone: .failure, title: "This interrupted take couldn’t be played.")
+                    KriaNoticeCard(tone: .failure, title: String(localized: "This interrupted take couldn’t be played."))
                         .frame(maxHeight: .infinity, alignment: .top)
                 }
                 reviewNotices(take: take, silent: silent, admission: admission)
@@ -341,11 +341,11 @@ struct TeleprompterScreen: View {
     @ViewBuilder private func reviewNotices(take: TeleprompterTakeManifest, silent: Bool, admission: String?) -> some View {
         VStack(spacing: 8) {
             if take.interrupted, take.status != .invalid {
-                KriaNoticeCard(tone: .warning, title: "\(take.stopReason?.creatorMessage ?? "Recording was interrupted.") Review this take before using it.")
+                KriaNoticeCard(tone: .warning, title: String(localized: "\(take.stopReason?.creatorMessage ?? String(localized: "Recording was interrupted.")) Review this take before using it."))
             }
             if silent {
-                KriaNoticeCard(tone: .failure, title: "This take has no sound.",
-                               message: "Your microphone didn’t record anything. Record again with the mic uncovered.")
+                KriaNoticeCard(tone: .failure, title: String(localized: "This take has no sound."),
+                               message: String(localized: "Your microphone didn’t record anything. Record again with the mic uncovered."))
                     .accessibilityIdentifier("teleprompter-silent-take")
             } else if take.audioCheck?.verdict == .quiet {
                 KriaNoticeCard(tone: .warning, title: TeleprompterRecordingFlow.quietTakeMessage)
@@ -355,7 +355,7 @@ struct TeleprompterScreen: View {
                 reviewNote(cinematicNote(cinematic), id: "teleprompter-review-cinematic")
             }
             if take.speakerBackground != nil {
-                reviewNote("Your background is added with this take.", id: "teleprompter-review-background")
+                reviewNote(String(localized: "Your background is added with this take."), id: "teleprompter-review-background")
             }
             if let note = flow.backgroundNote { reviewNote(note, id: "teleprompter-background-note") }
             if let note = flow.photosNote { reviewNote(note, id: "teleprompter-photos-note") }
@@ -380,14 +380,14 @@ struct TeleprompterScreen: View {
 
     private var progressText: String {
         if flow.waitingForBake && !flow.usingTake && !flow.queueAccepted {
-            return "Finishing your Cinematic look" + (flow.bakeProgress.map { " (\(Int($0 * 100))%)" } ?? "") + "…"
+            return flow.bakeProgress.map { String(localized: "Finishing your Cinematic look (\(Int($0 * 100))%)…") } ?? String(localized: "Finishing your Cinematic look…")
         }
-        return replacementNotice == nil ? "Adding take to your edit…" : "Swapping in your new take…"
+        return replacementNotice == nil ? String(localized: "Adding take to your edit…") : String(localized: "Swapping in your new take…")
     }
 
     private func cinematicNote(_ state: CinematicBakeState) -> String {
         guard !state.isSettled, let progress = flow.bakeProgress, progress > 0 else { return state.creatorMessage }
-        return state.creatorMessage + " \(Int(progress * 100))%"
+        return String(localized: "\(state.creatorMessage) \(Int(progress * 100))%")
     }
 
     private func reviewNote(_ text: String, id: String) -> some View {
@@ -403,11 +403,11 @@ struct TeleprompterScreen: View {
         let limitHit = blocked && (admission?.hasPrefix("This video already has") ?? false)
         return VStack(spacing: 8) {
             if canUse, !blocked {
-                Button(take.audioCheck?.verdict == .quiet ? "Use anyway" : replacementNotice == nil ? "Use take" : "Replace take") { Task { await flow.useTake(intake) } }
+                Button(take.audioCheck?.verdict == .quiet ? String(localized: "Use anyway") : replacementNotice == nil ? String(localized: "Use take") : String(localized: "Replace take")) { Task { await flow.useTake(intake) } }
                     .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true, isLoading: flow.usingTake || flow.waitingForBake))
                     .disabled(busy || flow.waitingForBake).accessibilityIdentifier("teleprompter-use-take")
             } else if canUse, blocked {
-                Button(limitHit ? "Manage clips" : "Close") { flow.persistDraft(); dismiss() }
+                Button(limitHit ? String(localized: "Manage clips") : String(localized: "Close")) { flow.persistDraft(); dismiss() }
                     .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true)).accessibilityIdentifier("teleprompter-manage-clips")
             } else {
                 Button { Task { await flow.retake() } } label: { Label("Record again", systemImage: KriaSourceOption.recordSymbol) }
@@ -475,7 +475,7 @@ private struct TeleprompterBackgroundMenu: View {
     @State private var loading = false
 
     private var stateLabel: String {
-        switch flow.background?.reference.kind { case .image: "Photo"; case .video: "Video"; case nil: "None" }
+        switch flow.background?.reference.kind { case .image: String(localized: "Photo"); case .video: String(localized: "Video"); case nil: String(localized: "None", comment: "No background selected") }
     }
 
     var body: some View {
@@ -487,7 +487,7 @@ private struct TeleprompterBackgroundMenu: View {
                     .accessibilityIdentifier("teleprompter-background-clear")
             }
         } label: {
-            KriaCameraCapsule(title: "Background", symbol: "photo.on.rectangle", isOn: flow.background != nil, isSwitch: true, isBusy: loading)
+            KriaCameraCapsule(title: String(localized: "Background", comment: "Teleprompter: picture behind the speaker"), symbol: "photo.on.rectangle", isOn: flow.background != nil, isSwitch: true, isBusy: loading)
         }
         .disabled(flow.captureBusy || loading)
         .accessibilityLabel("Background").accessibilityValue(stateLabel)
@@ -501,7 +501,7 @@ private struct TeleprompterBackgroundMenu: View {
             Task {
                 defer { loading = false }
                 guard let url = try? await picked.loadTransferable(type: ImportedMedia.self)?.url else {
-                    flow.backgroundNote = "Couldn’t read that file. Choose another photo or video."
+                    flow.backgroundNote = String(localized: "Couldn’t read that file. Choose another photo or video.")
                     return
                 }
                 flow.chooseBackground(from: url, kind: isVideo ? .video : .image)
@@ -530,7 +530,7 @@ private struct TeleprompterSavingLabel: View {
     var body: some View {
         HStack(spacing: 10) {
             KriaSpinner()
-            Text(starting ? "Starting recording…" : "Saving take…")
+            Text(starting ? String(localized: "Starting recording…") : String(localized: "Saving take…"))
                 .font(KriaFont.body(15).weight(.semibold))
         }.padding(16).kriaGlassPanel(cornerRadius: 24)
     }
@@ -545,7 +545,7 @@ private struct TeleprompterCinematicCapsule: View {
     var body: some View {
         // While the graph is rebuilt for a front-camera request the capsule follows the request, then the real state.
         let settling = flow.cinematicEnabled && camera.position == .front && camera.phase == .preparing
-        KriaCameraCapsule(title: "Cinematic", symbol: "camera.aperture", identifier: "teleprompter-cinematic",
+        KriaCameraCapsule(title: String(localized: "Cinematic", comment: "Apple Cinematic video mode"), symbol: "camera.aperture", identifier: "teleprompter-cinematic",
                           isOn: camera.cinematicActive || settling, isSwitch: true) { flow.setCinematic(!flow.cinematicEnabled) }
     }
 }
@@ -558,7 +558,7 @@ private struct TeleprompterCinematicNote: View {
 
     private var text: String? {
         guard flow.cinematicEnabled, camera.error == nil, camera.phase != .preparing else { return nil }
-        if camera.position == .back { return "Cinematic records with the front camera, so this take is standard." }
+        if camera.position == .back { return String(localized: "Cinematic records with the front camera, so this take is standard.") }
         return camera.cinematicNote
     }
 
@@ -606,18 +606,18 @@ private struct TeleprompterWindowSettings: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WorkspaceTopRow(title: "Text window", leading: { Color.clear.frame(width: 44, height: 44) }, trailing: {
-                KriaGlassCloseButton(identifier: "teleprompter-window-settings-close", label: "Close text window settings") { dismiss() }
+            WorkspaceTopRow(title: String(localized: "Text window"), leading: { Color.clear.frame(width: 44, height: 44) }, trailing: {
+                KriaGlassCloseButton(identifier: "teleprompter-window-settings-close", label: String(localized: "Close text window settings")) { dismiss() }
             })
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    KriaSectionLabel(title: "Background")
+                    KriaSectionLabel(title: String(localized: "Background", comment: "Teleprompter text window background style heading"))
                     backgroundChoices
-                    KriaSectionLabel(title: "Size")
+                    KriaSectionLabel(title: String(localized: "Size"))
                     sliderControls
-                    KriaSectionLabel(title: "Position")
+                    KriaSectionLabel(title: String(localized: "Position"))
                     moveControls
-                    KriaSectionLabel(title: "Reading")
+                    KriaSectionLabel(title: String(localized: "Reading", comment: "Teleprompter settings heading"))
                     Button("Start of script") { script.reset() }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
                     Stepper("Text size \(Int(script.fontSize))", value: Binding(get: { Double(script.fontSize) }, set: { script.setFontSize(CGFloat($0)); persist() }), in: 18...32, step: 2)
                         .font(KriaFont.body(15)).disabled(!canChangeFont).accessibilityIdentifier("teleprompter-text-size")
@@ -644,15 +644,15 @@ private struct TeleprompterWindowSettings: View {
     @ViewBuilder private var backgroundChoices: some View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(spacing: 8) {
-                appearanceButton(.transparent, title: "Transparent")
-                appearanceButton(.glass, title: "Glass")
-                appearanceButton(.solid, title: "Solid")
+                appearanceButton(.transparent, title: String(localized: "Transparent", comment: "Teleprompter text window style"))
+                appearanceButton(.glass, title: String(localized: "Glass", comment: "Teleprompter text window style"))
+                appearanceButton(.solid, title: String(localized: "Solid", comment: "Teleprompter text window style"))
             }
         } else {
             HStack(spacing: 8) {
-                appearanceButton(.transparent, title: "Transparent")
-                appearanceButton(.glass, title: "Glass")
-                appearanceButton(.solid, title: "Solid")
+                appearanceButton(.transparent, title: String(localized: "Transparent", comment: "Teleprompter text window style"))
+                appearanceButton(.glass, title: String(localized: "Glass", comment: "Teleprompter text window style"))
+                appearanceButton(.solid, title: String(localized: "Solid", comment: "Teleprompter text window style"))
             }
         }
     }
@@ -718,7 +718,7 @@ private struct TeleprompterProgressChip: View {
             let total = script.visualLines.count
             let current = (script.visualLines.lastIndex { $0.anchor <= script.scrollPosition + 1 } ?? 0) + 1
             let percent = Int((min(1, script.scrollPosition / script.travelDistance) * 100).rounded())
-            KriaCameraCapsule(title: "Line \(current) of \(total) · \(percent)%", identifier: "teleprompter-progress")
+            KriaCameraCapsule(title: String(localized: "Line \(current) of \(total) · \(percent)%"), identifier: "teleprompter-progress")
         }
     }
 }
@@ -772,10 +772,10 @@ private struct TeleprompterSpeedSheet: View {
 /// Reads the script itself, so the pace and the prompter switch redraw as it changes (the flow does not republish it).
 private struct TeleprompterScriptStatusRow: View {
     @ViewBuilder private var chips: some View {
-        KriaCameraCapsule(title: "Speed · \(script.wordsPerMinute) wpm", identifier: "teleprompter-speed", action: openSpeed)
+        KriaCameraCapsule(title: String(localized: "Speed · \(script.wordsPerMinute) wpm"), identifier: "teleprompter-speed", action: openSpeed)
         TeleprompterProgressChip(script: script)
         if !manual {
-            KriaCameraCapsule(title: script.isPlaying ? "Stop prompter" : "Start prompter", identifier: "teleprompter-pause-text") {
+            KriaCameraCapsule(title: script.isPlaying ? String(localized: "Stop prompter") : String(localized: "Start prompter"), identifier: "teleprompter-pause-text") {
                 if script.isPlaying { script.pause() } else { script.resume() }
             }
         }
@@ -791,11 +791,11 @@ private struct TeleprompterScriptStatusRow: View {
         VStack(spacing: 8) {
             if manual {
                 HStack(spacing: 8) {
-                    KriaCameraCapsule(title: "Previous line", identifier: "teleprompter-action-previous line") { script.backLine() }
-                    KriaCameraCapsule(title: "Next line", identifier: "teleprompter-action-next line") { script.nextLine() }
+                    KriaCameraCapsule(title: String(localized: "Previous line"), identifier: "teleprompter-action-previous line") { script.backLine() }
+                    KriaCameraCapsule(title: String(localized: "Next line"), identifier: "teleprompter-action-next line") { script.nextLine() }
                 }
                 if !UIAccessibility.isVoiceOverRunning {
-                    KriaCameraCapsule(title: "Use steady scrolling", identifier: "teleprompter-steady", action: useSteady)
+                    KriaCameraCapsule(title: String(localized: "Use steady scrolling"), identifier: "teleprompter-steady", action: useSteady)
                 }
             }
             Group {

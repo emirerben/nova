@@ -32,8 +32,8 @@ struct NativeSongReferenceCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            .accessibilityHint(expanded ? "Hides the song details" : "Shows the song details")
+            .accessibilityValue(expanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+            .accessibilityHint(expanded ? String(localized: "Hides the song details") : String(localized: "Shows the song details"))
             .accessibilityIdentifier("native-song-reference-toggle")
 
             if expanded {
@@ -69,7 +69,7 @@ struct NativeSongReferenceCard: View {
                 Text("Use \(reference.timeRange) in TikTok or Instagram.").monospacedDigit()
                 Text("Song audio is not included in this video.")
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                Button(copied ? "Song details copied" : "Copy song details") {
+                Button(copied ? String(localized: "Song details copied") : String(localized: "Copy song details")) {
                     UIPasteboard.general.string = reference.copyText
                     copied = true
                 }

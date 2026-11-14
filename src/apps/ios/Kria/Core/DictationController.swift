@@ -228,14 +228,14 @@ protocol DictationTranscriber: Sendable {
                 }
             } catch {
                 guard generation == current else { return }
-                if partial.isEmpty { onText(base); showNotice("Couldn’t transcribe that. Try again.") }
+                if partial.isEmpty { onText(base); showNotice(String(localized: "Couldn’t transcribe that. Try again.")) }
                 return
             }
         }
         // The server heard nothing (or there was no server pass): the live words, if any, are all we have.
         if partial.isEmpty {
             onText(base)
-            showNotice("Didn’t catch that. Try again.")
+            showNotice(String(localized: "Didn’t catch that. Try again."))
         }
     }
 
@@ -267,9 +267,9 @@ protocol DictationTranscriber: Sendable {
 
     private static func message(for error: Error) -> String {
         switch error as? DictationEngineError {
-        case .microphoneDenied: "Microphone access is off. Allow it in Settings to talk to Kria."
-        case .couldNotStart: "Couldn’t start the microphone. Try again."
-        case nil: "Couldn’t start dictation. Try again."
+        case .microphoneDenied: String(localized: "Microphone access is off. Allow it in Settings to talk to Kria.")
+        case .couldNotStart: String(localized: "Couldn’t start the microphone. Try again.")
+        case nil: String(localized: "Couldn’t start dictation. Try again.")
         }
     }
 

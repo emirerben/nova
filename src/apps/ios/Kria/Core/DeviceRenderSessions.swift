@@ -74,12 +74,12 @@ struct DeviceRenderPresentation: Equatable, Sendable {
 enum DeviceRenderButtonTitle {
     static func `for`(phase: DeviceRenderPhase) -> String {
         switch phase {
-        case .preparing, .rendering: "Rendering on iPhone…"
-        case .syncing: "Syncing…"
-        case .localReady, .synced: "Rendered on iPhone"
-        case .needsAttention: "Needs attention"
-        case .cancelled: "Render stopped"
-        case .superseded: "Edit updated"
+        case .preparing, .rendering: String(localized: "Rendering on iPhone…")
+        case .syncing: String(localized: "Syncing…")
+        case .localReady, .synced: String(localized: "Rendered on iPhone")
+        case .needsAttention: String(localized: "Needs attention")
+        case .cancelled: String(localized: "Render stopped")
+        case .superseded: String(localized: "Edit updated")
         }
     }
 
@@ -88,11 +88,11 @@ enum DeviceRenderButtonTitle {
     /// quiet network waits keep the label of the phase they sit on.
     static func `for`(presentation: DeviceRenderPresentation) -> String {
         switch presentation.waiting {
-        case .cooling, .storage: "Waiting to render"
-        case .checking: "Checking render…"
+        case .cooling, .storage: String(localized: "Waiting to render")
+        case .checking: String(localized: "Checking render…")
         case .connection, .server, nil:
             presentation.phase == .cancelled && presentation.reasonCode == DeviceRenderSessions.pausedReason
-                ? "Render paused" : Self.for(phase: presentation.phase)
+                ? String(localized: "Render paused") : Self.for(phase: presentation.phase)
         }
     }
 }
@@ -445,8 +445,8 @@ enum DeviceRenderGate: Equatable {
         observations.removeValue(forKey: key)?.cancel()
         var held = presentations[key] ?? DeviceRenderPresentation(phase: .cancelled)
         held.phase = .cancelled
-        held.message = unreadable ? "Kria couldn’t save or read the render intent. Tap Resume to check the current edit."
-                : pending ? "The last retry wasn’t confirmed. Tap Resume to check the current edit." : nil
+        held.message = unreadable ? String(localized: "Kria couldn’t save or read the render intent. Tap Resume to check the current edit.")
+                : pending ? String(localized: "The last retry wasn’t confirmed. Tap Resume to check the current edit.") : nil
         held.reasonCode = Self.pausedReason
         presentations[key] = held
     }
@@ -740,8 +740,8 @@ enum DeviceRenderGate: Equatable {
         let missingOutput = saved.outputURL != nil
         presentations[key] = DeviceRenderPresentation(phase: .needsAttention,
             message: missingOutput
-                ? "Your edits are saved, but this iPhone’s finished file could not be verified. Retry to render it again. Kria will keep checking the original result."
-                : "Your edits are saved. This iPhone could not confirm whether rendering finished. Retry to start a new local attempt, or wait while Kria checks the original result.",
+                ? String(localized: "Your edits are saved, but this iPhone’s finished file could not be verified. Retry to render it again. Kria will keep checking the original result.")
+                : String(localized: "Your edits are saved. This iPhone could not confirm whether rendering finished. Retry to start a new local attempt, or wait while Kria checks the original result."),
             reasonCode: missingOutput ? "local_output_unavailable" : "local_export_unconfirmed",
             requiresServerRetry: false)
     }
@@ -921,7 +921,7 @@ enum DeviceRenderGate: Equatable {
             presentations[key] = DeviceRenderPresentation(
                 phase: keepsExport ? .localReady : .needsAttention,
                 localFile: !unchecked && saved?.request == request ? saved?.outputURL : nil,
-                message: keepsExport ? "Your video is ready on this iPhone. This iPhone can’t sync this version of the edit." : nil,
+                message: keepsExport ? String(localized: "Your video is ready on this iPhone. This iPhone can’t sync this version of the edit.") : nil,
                 reasonCode: reasonCode,
                 outputVerificationPending: unchecked
             )
@@ -1031,7 +1031,7 @@ enum DeviceRenderGate: Equatable {
             presentation = DeviceRenderPresentation(phase: .needsAttention)
         }
         presentation.waiting = nil
-        presentation.message = "Kria couldn’t prepare this edit on your iPhone. Your project is saved. \(error.localizedDescription)"
+        presentation.message = String(localized: "Kria couldn’t prepare this edit on your iPhone. Your project is saved. \(error.localizedDescription)")
         presentations[key] = presentation
         let report = reportPreparationFailure
         Task { await report(key.jobID, error) }
@@ -1303,8 +1303,8 @@ enum DeviceRenderGate: Equatable {
                 return false
             }
             presentation.message = RequestFailureCause(error) == .connection
-                ? "Kria couldn’t retry this edit. Check your connection and try again."
-                : "Kria couldn’t retry this edit. \(error.localizedDescription)"
+                ? String(localized: "Kria couldn’t retry this edit. Check your connection and try again.")
+                : String(localized: "Kria couldn’t retry this edit. \(error.localizedDescription)")
             presentations[key] = presentation
             return false
         }
@@ -1394,7 +1394,7 @@ enum DeviceRenderGate: Equatable {
                 let matches = binding?.original.fingerprint?.hex == asset.fingerprint.sha256
                     && binding?.original.fingerprint?.byteCount == asset.fingerprint.byteCount
                 if !matches || (try? store.resolve(mediaIDs: [mediaID])) == nil {
-                    missing.append(DeviceRelinkTarget(identity: request.identity, asset: asset, title: "Original \(seen.count)"))
+                    missing.append(DeviceRelinkTarget(identity: request.identity, asset: asset, title: String(localized: "Original \(seen.count)")))
                 }
             }
             return missing
@@ -1610,8 +1610,8 @@ enum DeviceRenderGate: Equatable {
         DeviceRenderPresentation(
             phase: receipt.phase, localFile: receipt.outputURL,
             message: receipt.error == nil ? nil : (receipt.outputURL == nil
-                ? "This edit couldn’t finish on your iPhone. Your project is saved."
-                : "Your video is ready on this iPhone. Syncing didn’t finish; you can retry without rendering again."),
+                ? String(localized: "This edit couldn’t finish on your iPhone. Your project is saved.")
+                : String(localized: "Your video is ready on this iPhone. Syncing didn’t finish; you can retry without rendering again.")),
             // A stopped receipt is the creator's Stop (`cancelByUser`); housekeeping
             // cancels drop or replace the presentation instead.
             reasonCode: receipt.phase == .cancelled ? pausedReason : nil
@@ -1625,7 +1625,7 @@ enum DeviceRenderGate: Equatable {
             value.localFile = nil
             value.outputVerificationPending = [.localReady, .syncing].contains(receipt.phase)
             if receipt.error != nil {
-                value.message = "Your video is ready on this iPhone. Kria is still checking it."
+                value.message = String(localized: "Your video is ready on this iPhone. Kria is still checking it.")
             }
         }
         return value

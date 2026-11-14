@@ -23,7 +23,7 @@ struct KriaThoughtSummary: Codable, Equatable, Identifiable, Sendable {
     var durationLabel: String? {
         guard let durationMS else { return nil }
         let seconds = max(1, Int((Double(durationMS) / 1000).rounded()))
-        return "Thought for \(seconds)s"
+        return String(localized: "Thought for \(seconds)s")
     }
 }
 
@@ -137,7 +137,7 @@ private struct ThoughtSummaryRow: View {
 
     private var isStreaming: Bool { summary.status == .streaming }
     private var title: String {
-        isStreaming ? (summary.headline ?? "Kria is thinking") : (summary.durationLabel ?? "Thought")
+        isStreaming ? (summary.headline ?? String(localized: "Kria is thinking")) : (summary.durationLabel ?? String(localized: "Thought"))
     }
     private var detail: AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
@@ -165,8 +165,8 @@ private struct ThoughtSummaryRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("thought-summary-toggle")
-            .accessibilityLabel(isStreaming ? "Kria is thinking: \(title)" : title)
-            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityLabel(isStreaming ? String(localized: "Kria is thinking: \(title)") : title)
+            .accessibilityValue(isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
             .accessibilityHint("Shows Kria's full thinking")
             if isExpanded {
                 Text(detail)

@@ -290,16 +290,16 @@ public enum MediaEngineError: Error, Equatable, Sendable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .avFoundationUnavailable: "Video editing isn’t available on this device."
-        case .exportUnavailable: "This video can’t be exported right now."
-        case .exportFailed: "The export didn’t finish. Try again."
-        case .thumbnailWriteFailed: "Couldn’t generate a preview thumbnail."
-        case .waveformFailed: "Couldn’t read this clip’s audio."
-        case .insufficientStorage: "Your iPhone is low on storage. Free up space and try again."
-        case .unsupportedCapability: "This clip uses a format this iPhone can’t process."
-        case .missingAsset(let id): "One of the clips in this video is missing (\(id))."
-        case .missingBrandingResource(let file): "This app build is missing a Kria branding file (\(file)). Reinstall the app and try again."
-        case .cancelled: "Export was cancelled."
+        case .avFoundationUnavailable: String(localized: "Video editing isn’t available on this device.")
+        case .exportUnavailable: String(localized: "This video can’t be exported right now.")
+        case .exportFailed: String(localized: "The export didn’t finish. Try again.")
+        case .thumbnailWriteFailed: String(localized: "Couldn’t generate a preview thumbnail.")
+        case .waveformFailed: String(localized: "Couldn’t read this clip’s audio.")
+        case .insufficientStorage: String(localized: "Your iPhone is low on storage. Free up space and try again.")
+        case .unsupportedCapability: String(localized: "This clip uses a format this iPhone can’t process.")
+        case .missingAsset(let id): String(localized: "One of the clips in this video is missing (\(id)).")
+        case .missingBrandingResource(let file): String(localized: "This app build is missing a Kria branding file (\(file)). Reinstall the app and try again.")
+        case .cancelled: String(localized: "Export was cancelled.")
         }
     }
 }
@@ -314,6 +314,6 @@ public struct NativePreviewFeatureError: Error, Sendable, LocalizedError {
     public init(_ feature: String, isStructural: Bool = false) { self.feature = feature; self.isStructural = isStructural }
 
     public var errorDescription: String? {
-        "This video uses a preview feature (\(feature)) that isn’t supported yet."
+        String(localized: "This video uses a preview feature (\(feature)) that isn’t supported yet.")
     }
 }

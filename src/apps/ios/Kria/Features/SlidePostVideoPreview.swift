@@ -266,16 +266,16 @@ struct SlidePostVideoControls: View {
         }
         .buttonStyle(.plain)
         .padding(4)
-        .accessibilityLabel(playback.paused ? "Play video" : "Pause video")
+        .accessibilityLabel(playback.paused ? String(localized: "Play video") : String(localized: "Pause video"))
         .accessibilityValue(statusValue)
         .accessibilityIdentifier("slidepost-video-toggle")
     }
 
     private var statusValue: String {
         switch playback.timeControlStatus {
-        case .playing: "Playing"
-        case .waitingToPlayAtSpecifiedRate: "Loading"
-        default: "Paused"
+        case .playing: String(localized: "Playing")
+        case .waitingToPlayAtSpecifiedRate: String(localized: "Loading")
+        default: String(localized: "Paused")
         }
     }
 }

@@ -150,8 +150,8 @@ struct NativeEditorView: View {
                     editor(viewport: viewport)
                 } else {
                     NativeEditorLoadSurface(
-                        title: "Opening the editor…",
-                        detail: session.loadWaitingMessage ?? "Loading the latest cut and its editing controls.",
+                        title: String(localized: "Opening the editor…"),
+                        detail: session.loadWaitingMessage ?? String(localized: "Loading the latest cut and its editing controls."),
                         projectTitle: project.workspaceTitle,
                         isLoading: true,
                         onBack: requestBack,
@@ -160,7 +160,7 @@ struct NativeEditorView: View {
                 }
             case .failed(let message):
                 NativeEditorLoadSurface(
-                    title: "The editor couldn’t open",
+                    title: String(localized: "The editor couldn’t open"),
                     detail: message,
                     projectTitle: project.workspaceTitle,
                     isLoading: false,
@@ -284,12 +284,12 @@ struct NativeEditorView: View {
         Group {
             if let newer = session.newerJobPrompt {
                 NativeEditorNoticeCard(
-                    title: "A new version of your video is ready",
-                    message: "Switching discards your unsaved edits.",
-                    primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-switch-job") {
+                    title: String(localized: "A new version of your video is ready"),
+                    message: String(localized: "Switching discards your unsaved edits."),
+                    primary: NativeEditorNoticeAction(title: String(localized: "Use latest version"), identifier: "native-editor-switch-job") {
                         Task { await session.switchToLatestJob(newer, api: model.api) }
                     },
-                    secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-keep-editing") {
+                    secondary: NativeEditorNoticeAction(title: String(localized: "Keep mine"), identifier: "native-editor-keep-editing") {
                         session.keepEditingCurrentJob()
                     })
             } else if let message = session.convergeNotice ?? session.latestJobRefreshMessage {
@@ -735,8 +735,8 @@ struct NativeEditorView: View {
                                                 reduceMotion: shouldReduceMotion,
                                                 accessibilityIdentifier: "native-editor-panel-resize",
                                                 topAligned: true,
-                                                accessibilityTitle: "Editor panel size",
-                                                accessibilityHint: "Swipe up or down to resize the editor panel",
+                                                accessibilityTitle: String(localized: "Editor panel size"),
+                                                accessibilityHint: String(localized: "Swipe up or down to resize the editor panel"),
                                                 dismiss: panelDismiss
                                             )
                                         }
@@ -1033,11 +1033,11 @@ struct NativeEditorView: View {
             reduceMotion: shouldReduceMotion,
             accessibilityIdentifier: "native-editor-timeline-resize",
             bounds: -metrics.growRange...metrics.shrinkRange,
-            accessibilityTitle: "Preview size",
-            accessibilityHint: "Swipe up to shrink or down to enlarge the video preview",
+            accessibilityTitle: String(localized: "Preview size"),
+            accessibilityHint: String(localized: "Swipe up to shrink or down to enlarge the video preview"),
             describe: { value, bounds in
                 let span = max(0.0001, bounds.upperBound - bounds.lowerBound)
-                return "\(Int(((bounds.upperBound - value) / span) * 100)) percent of maximum size"
+                return String(localized: "\(Int(((bounds.upperBound - value) / span) * 100)) percent of maximum size")
             },
             incrementFraction: -0.25,
             spansRow: true
@@ -1198,26 +1198,26 @@ private enum NativeEditorInspector: Identifiable {
 
     var title: String {
         switch self {
-        case .tool(let tool): return tool.rawValue
+        case .tool(let tool): return tool.title
         case .selection(let selection):
             switch selection.kind {
-            case .clip: return "Clip"
-            case .text: return "Text"
-            case .captionCue: return "Caption"
-            case .music: return "Music"
-            case .soundEffect: return "Sound effect"
-            case .mediaOverlay: return "Overlay"
-            case .visualBlock, .motionScene, .cameraEffect: return "Visual"
-            case .drawing: return "Drawing"
-            case .carousel: return "Carousel"
-            case .speakerBackgroundWindow: return "Background"
-            case .speaker: return "You"
+            case .clip: return String(localized: "Clip", comment: "Kind of timeline item")
+            case .text: return String(localized: "Text", comment: "Kind of timeline item")
+            case .captionCue: return String(localized: "Caption", comment: "Kind of timeline item")
+            case .music: return String(localized: "Music", comment: "Kind of timeline item")
+            case .soundEffect: return String(localized: "Sound effect")
+            case .mediaOverlay: return String(localized: "Overlay", comment: "Kind of timeline item")
+            case .visualBlock, .motionScene, .cameraEffect: return String(localized: "Visual", comment: "Kind of timeline item")
+            case .drawing: return String(localized: "Drawing")
+            case .carousel: return String(localized: "Carousel")
+            case .speakerBackgroundWindow: return String(localized: "Background", comment: "Kind of timeline item")
+            case .speaker: return String(localized: "You", comment: "Timeline item: the speaker in the video")
             }
-        case .adjust: return "Adjust"
-        case .crop: return "Crop"
-        case .tilt: return "Tilt"
-        case .sourceWindow: return "Range"
-        case .videoShape: return "Video shape"
+        case .adjust: return String(localized: "Adjust", comment: "Editor inspector title")
+        case .crop: return String(localized: "Crop", comment: "Editor inspector title")
+        case .tilt: return String(localized: "Tilt", comment: "Editor inspector title")
+        case .sourceWindow: return String(localized: "Range", comment: "Editor inspector title: the part of the source clip used")
+        case .videoShape: return String(localized: "Video shape")
         }
     }
 
@@ -1240,9 +1240,9 @@ private struct NativeEditorInspectorView: View {
                 case .tool(.kria): NativeKriaInspector(session: session)
                 case .tool(.text): NativeTextInspector(session: session)
                 case .tool(.captions): NativeCaptionsInspector(session: session)
-                case .tool(.visuals): NativeEffectBrowserInspector(session: session, kinds: [.visualBlock, .motionScene, .cameraEffect, .carousel], title: "Visual lanes")
+                case .tool(.visuals): NativeEffectBrowserInspector(session: session, kinds: [.visualBlock, .motionScene, .cameraEffect, .carousel], title: String(localized: "Visual lanes"))
                 case .tool(.sounds): NativeSoundsInspector(session: session)
-                case .tool: NativeEditorUnavailableView(title: "Editor", reason: "This tool is not available for the current render.", systemImage: "lock")
+                case .tool: NativeEditorUnavailableView(title: String(localized: "Editor"), reason: String(localized: "This tool is not available for the current render."), systemImage: "lock")
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
                 case .crop(let selection): NativeCropSheet(session: session, selection: selection, embedded: true)
@@ -1276,11 +1276,11 @@ private struct NativeKriaInspector: View {
                 Text("Kria keeps proposals reversible. Pick one to make a small, visible change, then decide whether to save.")
                     .font(KriaFont.body(15))
                     .foregroundStyle(KriaColor.zinc)
-                NativeProposalCard(title: "Give the story a starting point", detail: "Add a clean text hook to the opening frame.", actionTitle: "Add hook") {
+                NativeProposalCard(title: String(localized: "Give the story a starting point"), detail: String(localized: "Add a clean text hook to the opening frame."), actionTitle: String(localized: "Add hook")) {
                     session.addText()
                 }
                 .disabled(!session.canEditText)
-                NativeProposalCard(title: "Make speech easier to follow", detail: "Turn on captions so the cut still works without sound.", actionTitle: session.draft.captions.enabled ? "Captions on" : "Turn on captions") {
+                NativeProposalCard(title: String(localized: "Make speech easier to follow"), detail: String(localized: "Turn on captions so the cut still works without sound."), actionTitle: session.draft.captions.enabled ? String(localized: "Captions on") : String(localized: "Turn on captions")) {
                     if !session.draft.captions.enabled { session.toggleCaptions() }
                 }
                 // toggleCaptions() writes caption_meta ("enabled"), so this is
@@ -1401,7 +1401,7 @@ private struct NativeCaptionsInspector: View {
                 Text("Captions stay synchronized to the cut. Toggle them on to preview the readable version.")
             }
             Section("Style") {
-                Picker("Caption style", selection: $style) { ForEach(styles, id: \.self, content: Text.init) }
+                Picker("Caption style", selection: $style) { ForEach(styles, id: \.self) { name in Text(name == "Word" ? String(localized: "Word", comment: "Caption style: one word at a time") : String(localized: "Sentence", comment: "Caption style: a sentence at a time")) } }
                     .pickerStyle(.menu)
                     .onChange(of: style) { _, newValue in session.setCaptionStyle(newValue.lowercased()) }
                     .disabled(!session.canEditCaptionMeta)
@@ -1433,7 +1433,7 @@ private struct NativeSoundsPanel: View {
     private var selectedSfx: EditorTimedEffect? {
         panelDrafts.soundsTab == .effects ? NativeSoundEffectsPanelBody.selectedEffect(session) : nil
     }
-    private var heading: String? { selectedSfx == nil ? nil : "Edit sound" }
+    private var heading: String? { selectedSfx == nil ? String(localized: "Sounds") : String(localized: "Edit sound") }
 
     var body: some View {
         NativeEditorLanePanel(
@@ -1443,8 +1443,8 @@ private struct NativeSoundsPanel: View {
             heading: heading,
             onAdd: selectedSfx == nil ? nil : { session.select(nil); panelDrafts.sfxScreen = .library },
             onDelete: selectedSfx.map { effect in { player.stop(); session.removeSoundEffect(id: effect.id); panelDrafts.sfxScreen = .home } },
-            addLabel: "Add sound", addID: "native-editor-add-another-sfx",
-            removeLabel: "Remove sound", removeID: "native-editor-remove-sfx"
+            addLabel: String(localized: "Add sound"), addID: "native-editor-add-another-sfx",
+            removeLabel: String(localized: "Remove sound"), removeID: "native-editor-remove-sfx"
         ) {
             switch panelDrafts.soundsTab {
             case .music: NativeSoundsControls(session: session, panelDrafts: panelDrafts)
@@ -1494,7 +1494,7 @@ private struct NativeSoundsControls: View {
                     Image(systemName: "music.note").frame(width: 44, height: 44)
                         .background(KriaColor.sage, in: RoundedRectangle(cornerRadius: 12))
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(session.draft.music?.title ?? "Music").font(KriaFont.body(15).weight(.semibold))
+                        Text(session.draft.music?.title ?? String(localized: "Music")).font(KriaFont.body(15).weight(.semibold))
                         Text("Music track").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
                     }
                     Spacer(minLength: 0)

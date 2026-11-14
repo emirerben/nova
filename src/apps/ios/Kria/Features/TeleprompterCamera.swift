@@ -138,7 +138,7 @@ import UIKit
         captureQueue.async { [weak self] in self?.wantsCinematic = requested }
     }
 
-    static let cinematicFallbackNote = "Cinematic couldn’t start on this camera, so you’re recording in standard mode."
+    static var cinematicFallbackNote: String { String(localized: "Cinematic couldn’t start on this camera, so you’re recording in standard mode.") }
 
     /// Reads whether the graph really records Cinematic, after it was built or changed.
     private nonisolated func publishCinematicState() {
@@ -225,13 +225,13 @@ import UIKit
             guard let self else { return }
             guard self.isConfigured, let output = self.movieOutput else {
                 Task { @MainActor [weak self] in
-                    self?.finishStartupFailure("The camera is no longer ready. Prepare it again before recording.")
+                    self?.finishStartupFailure(String(localized: "The camera is no longer ready. Prepare it again before recording."))
                 }
                 return
             }
             guard !self.recordingRequested else {
                 Task { @MainActor [weak self] in
-                    self?.finishStartupFailure("A camera recording is already starting. Try again after it finishes.")
+                    self?.finishStartupFailure(String(localized: "A camera recording is already starting. Try again after it finishes."))
                 }
                 return
             }
@@ -245,7 +245,7 @@ import UIKit
             } catch {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    let message = "Couldn’t start the camera recording. \(error.localizedDescription)"
+                    let message = String(localized: "Couldn’t start the camera recording. \(error.localizedDescription)")
                     self.finishStartupFailure(message)
                 }
             }
@@ -292,7 +292,7 @@ import UIKit
         let microphone = AVCaptureDevice.authorizationStatus(for: .audio)
         guard camera != .restricted, microphone != .restricted else {
             guard generation == operationGeneration else { return false }
-            fail(message: "Camera or microphone access is restricted on this iPhone. Upload a video instead.", kind: .restricted)
+            fail(message: String(localized: "Camera or microphone access is restricted on this iPhone. Upload a video instead."), kind: .restricted)
             return false
         }
         let cameraAllowed: Bool
@@ -303,7 +303,7 @@ import UIKit
         }
         guard generation == operationGeneration else { return false }
         guard cameraAllowed else {
-            fail(message: "Turn it on in Settings to record here, or upload a video you already have.", kind: .cameraAccess)
+            fail(message: String(localized: "Turn it on in Settings to record here, or upload a video you already have."), kind: .cameraAccess)
             return false
         }
         let microphoneAllowed: Bool
@@ -314,7 +314,7 @@ import UIKit
         }
         guard generation == operationGeneration else { return false }
         guard microphoneAllowed else {
-            fail(message: "Turn it on in Settings to record with sound, or upload a video.", kind: .microphoneAccess)
+            fail(message: String(localized: "Turn it on in Settings to record with sound, or upload a video."), kind: .microphoneAccess)
             return false
         }
         return true
@@ -529,7 +529,7 @@ import UIKit
         guard phase == .preparing || phase == .ready || phase == .recording || phase == .finalizing else { return }
         markNeedsRebuild("interruption")
         if phase == .recording || phase == .finalizing || startRequested {
-            error = "\(reason.creatorMessage) A playable partial take will be kept."
+            error = String(localized: "\(reason.creatorMessage) A playable partial take will be kept.")
             stopRecording(reason: reason)
         } else {
             stopSession()
@@ -814,11 +814,11 @@ private extension TeleprompterCamera {
             phase = .ready
             // AVCapture sometimes supplies AVErrorRecordingSuccessfullyFinishedKey alongside a
             // successful file. The validated file, rather than that text, is authoritative.
-            if wasInterrupted, let stopReason { error = "\(stopReason.creatorMessage) This partial take is playable." }
+            if wasInterrupted, let stopReason { error = String(localized: "\(stopReason.creatorMessage) This partial take is playable.") }
             onFinalized?(url, wasInterrupted ? error : nil)
         case let .invalid(reason):
             let delegateDetail = delegateError.map { ": \($0.localizedDescription)" } ?? ""
-            let message = "The recorded video couldn’t be finalized (\(reason))\(delegateDetail)"
+            let message = String(localized: "The recorded video couldn’t be finalized (\(reason))\(delegateDetail)")
             error = message
             phase = .failed
             onFinalized?(nil, message)
@@ -859,10 +859,10 @@ private extension TeleprompterCamera {
 
         var errorDescription: String? {
             switch self {
-            case .frontCameraUnavailable: "The camera is unavailable here. Recording needs a physical iPhone."
-            case .microphoneUnavailable: "The microphone is unavailable. Upload a video instead."
-            case .couldNotConfigure: "The camera could not be configured. Try closing another app that is using the camera."
-            case .cancelled: "Camera setup was cancelled."
+            case .frontCameraUnavailable: String(localized: "The camera is unavailable here. Recording needs a physical iPhone.")
+            case .microphoneUnavailable: String(localized: "The microphone is unavailable. Upload a video instead.")
+            case .couldNotConfigure: String(localized: "The camera could not be configured. Try closing another app that is using the camera.")
+            case .cancelled: String(localized: "Camera setup was cancelled.")
             }
         }
     }

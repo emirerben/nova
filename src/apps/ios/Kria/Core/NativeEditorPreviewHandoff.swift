@@ -51,10 +51,10 @@ enum NativeEditorPreviousPreviewStatus: Equatable, Sendable {
     case updating, slow, failed, cancelled
     var message: String {
         switch self {
-        case .updating: "Updating preview — showing the previous version."
-        case .slow: "Updating the preview is taking longer than usual — showing the previous version."
-        case .failed: "Preview update failed — showing the previous version."
-        case .cancelled: "Preview update stopped — showing the previous version."
+        case .updating: String(localized: "Updating preview — showing the previous version.")
+        case .slow: String(localized: "Updating the preview is taking longer than usual — showing the previous version.")
+        case .failed: String(localized: "Preview update failed — showing the previous version.")
+        case .cancelled: String(localized: "Preview update stopped — showing the previous version.")
         }
     }
 }

@@ -67,8 +67,8 @@ struct NativePreviewDangerGuide: View {
     var followsFace = false
 
     private var message: String {
-        if edges.isEmpty { return "Reels & TikTok guide · approximate" }
-        return followsFace ? "Your face may be covered on Reels or TikTok" : "May be covered on Reels or TikTok"
+        if edges.isEmpty { return String(localized: "Reels & TikTok guide · approximate") }
+        return followsFace ? String(localized: "Your face may be covered on Reels or TikTok") : String(localized: "May be covered on Reels or TikTok")
     }
 
     var body: some View {

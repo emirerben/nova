@@ -34,7 +34,7 @@ struct ChoiceQuestionCard: View {
         switch mode {
         case .answered(let summary):
             Group {
-                if let summary { KriaYouChose(text: summary) } else { KriaAnsweredReceipt(text: "You answered") }
+                if let summary { KriaYouChose(text: summary) } else { KriaAnsweredReceipt(text: String(localized: "You answered")) }
             }
             .accessibilityIdentifier("choice-card-answered")
         case .superseded:

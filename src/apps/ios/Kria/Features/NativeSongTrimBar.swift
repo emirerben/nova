@@ -162,13 +162,13 @@ struct NativeSongTrimBar: View {
         let boxWidth: CGFloat = box.upperBound - box.lowerBound
         let boxMid: CGFloat = (box.lowerBound + box.upperBound) / 2
         let knobOffset: CGFloat = center - boxMid
-        let label: String = isStart ? "Song start" : "Song end"
+        let label: String = isStart ? String(localized: "Song start") : String(localized: "Song end")
         let identifier: String = isStart ? "native-editor-your-song-trim-start" : "native-editor-your-song-trim-end"
         let timecode: String = NativeEditorYourSong.timecode(value(of: which))
-        let spoken: String = isStart ? "Starts at \(timecode)" : "Ends at \(timecode)"
+        let spoken: String = isStart ? String(localized: "Starts at \(timecode)") : String(localized: "Ends at \(timecode)")
         let hint: String = controls.mode == .lipsync
-            ? "Adjust to cut your video to this point. You can undo it before saving."
-            : "Adjust to move this point one second at a time."
+            ? String(localized: "Adjust to cut your video to this point. You can undo it before saving.")
+            : String(localized: "Adjust to move this point one second at a time.")
         let drag: some Gesture = DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .updating($isDragging) { _, state, _ in state = true }
             .onChanged { gesture in

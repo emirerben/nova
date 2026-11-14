@@ -146,10 +146,10 @@ struct KriaStatusPill: View {
 
     private var label: String {
         switch status {
-        case .draft: "Draft"
-        case .rendering: "Rendering"
-        case .ready: "Ready"
-        case .failed: "Needs attention"
+        case .draft: String(localized: "Draft")
+        case .rendering: String(localized: "Rendering")
+        case .ready: String(localized: "Ready")
+        case .failed: String(localized: "Needs attention")
         }
     }
 
@@ -168,7 +168,7 @@ struct KriaStatusPill: View {
             .foregroundStyle(treatment.foreground)
             .padding(.horizontal, 10).padding(.vertical, 4)
             .background(treatment.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .accessibilityLabel("Project status: \(label)")
+            .accessibilityLabel(String(localized: "Project status: \(label)"))
     }
 }
 

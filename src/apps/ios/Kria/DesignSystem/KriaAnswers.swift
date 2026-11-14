@@ -105,7 +105,7 @@ struct KriaChoiceRow: View {
         Button(action: action) { content }
             .buttonStyle(KriaChoiceRowStyle(state: state, isRecommended: isRecommended))
             .disabled(state == .sending)
-            .accessibilityLabel([title, detail, isRecommended ? "recommended" : nil].compactMap { $0 }.joined(separator: ", "))
+            .accessibilityLabel([title, detail, isRecommended ? String(localized: "recommended") : nil].compactMap { $0 }.joined(separator: ", "))
             .accessibilityAddTraits(state == .selected ? .isSelected : [])
     }
 
@@ -215,7 +215,7 @@ struct KriaAnswerStack: View {
     @State private var tappedID: String?
     @State private var sendFailed = false
 
-    private let failureText = "Couldn’t send your answer. Tap it again."
+    private let failureText = String(localized: "Couldn’t send your answer. Tap it again.")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -230,7 +230,7 @@ struct KriaAnswerStack: View {
                 .modifier(OptionIdentifier(identifier: option.identifier))
             }
             if let typeMyOwn {
-                KriaChoiceRow(title: "Type my own", typeMyOwn: true, action: typeMyOwn)
+                KriaChoiceRow(title: String(localized: "Type my own"), typeMyOwn: true, action: typeMyOwn)
                     .disabled(isSending || isLocked || heldID != nil)
                     .accessibilityIdentifier("answer-type-my-own")
             }
