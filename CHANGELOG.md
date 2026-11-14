@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.216.0] - 2026-11-14
+
+### Changed
+- fix(api): the AI can put several clips in one split-screen panel (KRI-1420) (#2327) <!-- release-pr: 2327 -->
+
 ## [0.88.215.0] - 2026-11-14
 
 ### Changed
