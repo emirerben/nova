@@ -36,6 +36,8 @@ Rules:
 - When done, `git worktree remove ../nova-<topic>` after the PR merges. List active worktrees with `git worktree list`.
 - `.claude/worktrees/agent-*` are auto-managed by the Agent tool (`isolation: "worktree"`) — leave those alone.
 - Skip the worktree only for read-only investigation or one-file config tweaks.
+- At most three concurrent sessions, each on a separate area; never two on one branch.
+- Client protocol numbers: run `scripts/bump-protocol.py <feature> [--config-field <name>]` when rebasing, never hand-pick ([runbook](docs/runbooks/ios-development.md)).
 
 ## Stack
 - Frontend: Next.js (src/apps/web/) — **frozen**; only privacy/terms, landing, admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) are live. Archive tag: `web-archive-2026-11`.
@@ -226,7 +228,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (replay only; needs `ANTHROPIC_API_KEY`). Paid live Gemini requires an approved development-ledger run (hard cap $2, no judge); see `tests/evals/README.md`.
-- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump `prompt_version` (auto fingerprints, never bump: Main Creator, brief extractor, persona, content plan and the others listed in `docs/pipelines/prompt-version-history.md`); free replay evals must pass (live/judge optional, paid). Enums: `prompt_vocab.py` tokens; guard `test_prompt_vocab_drift.py`.
+- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump `prompt_version` (auto fingerprints, never bump: Main Creator, brief extractor, persona, content plan and the others listed in `docs/pipelines/prompt-version-history.md`); free replay evals must pass; a fixture whose prompt changed fails replay until re-recorded live (`tests/evals/README.md` "Fixture pins"; judge optional, paid). Enums: `prompt_vocab.py` tokens; guard `test_prompt_vocab_drift.py`.
 - **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh`. See `tests/evals/README.md` for the full prompt-iteration loop.
 - **Layer-2 cache-bump rule:** any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts must bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py`. Guard: `.github/workflows/layer2-cache-guard.yml`. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.
 - See `docs/pipelines/layer2-text-overlay.md` for Layer-2 stage details, OCR backend divergence (local Apple Vision ≠ prod Cloud Vision), and the template_text agent rubric.

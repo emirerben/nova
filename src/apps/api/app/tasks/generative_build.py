@@ -872,6 +872,27 @@ def _classify_phone_plan_failure(exc: BaseException) -> tuple[str, _PlanFailureK
     return "phone_plan_failed", "bug"
 
 
+def _phone_failure_details(
+    exc: BaseException, *, failure_reason: str, kind: str, decline: bool
+) -> tuple[str, str | None]:
+    """``(error_detail, creator_detail)`` a failed phone plan persists.
+
+    ``creator_detail`` is text the exception itself wrote for the creator (a question, an
+    authored refusal), or None: nothing else of its message is stored for the creator to read.
+    ``error_detail`` is what the status routes return: an authored typed message, that text,
+    or the code's sentence.
+    """
+    from app.tasks.content_plan_build import humanize_job_failure_reason  # noqa: PLC0415
+
+    creator_detail = getattr(exc, "creator_detail", None)
+    detail = (
+        str(exc)
+        if decline or kind == "plan_defect"
+        else creator_detail or humanize_job_failure_reason(failure_reason) or str(exc)
+    )
+    return detail, creator_detail
+
+
 def _planning_retry(kind: str) -> tuple[int, int] | None:
     """``(countdown_s, max_retries)`` when this delivery may retry ``kind`` once more."""
     retries = _TASK_RETRIES.get()
@@ -3034,22 +3055,14 @@ def _run_generative_job_impl(
                 # return it). A raw exception -- "1 validation error for EditRecipeV2 ..."
                 # in prod 5df2e3ec -- stays in the log and the admin pipeline trace.
                 # A typed decline's message is its authored refusal (chat reads it back).
-                from app.tasks.content_plan_build import (  # noqa: PLC0415
-                    CREATOR_FACING_DETAIL_CODES,
-                    humanize_job_failure_reason,
-                )
-
-                detail = (
-                    str(exc)
-                    if decline
-                    or kind == "plan_defect"
-                    or failure_reason in CREATOR_FACING_DETAIL_CODES
-                    else humanize_job_failure_reason(failure_reason) or str(exc)
+                detail, creator_detail = _phone_failure_details(
+                    exc, failure_reason=failure_reason, kind=kind, decline=bool(decline)
                 )
                 terminalized = _fail_job(
                     job_id,
                     detail,
                     failure_reason=failure_reason,
+                    creator_detail=creator_detail,
                     **({"decline": decline} if decline else {}),
                 )
                 if not terminalized:
@@ -7065,6 +7078,35 @@ def _save_request_recovery(
     return True
 
 
+def _text_question_message(question: str) -> str:
+    """The text composer's question as the creator reads it (call under `_worker_reply_language`).
+
+    The composer writes it for the creator, in the language they wrote in. When it is a statement
+    (a request it could not act on) the way forward is added.
+    """
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    text = " ".join(question.split())
+    if text.endswith("?"):
+        return text
+    return f"{text} " + say(
+        en="Tell me how you'd like the text instead.",
+        tr="Metnin bunun yerine nasıl olmasını istediğini söyle.",
+    )
+
+
+def _text_shown_as_planned_note() -> str:
+    """One line with the finished video: the creator's text is on it, what was left alone."""
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    return say(
+        en="Your text is on the video as you wrote it. I didn't change how it looks because "
+        "I wasn't sure what you meant. Tell me what you'd like and I'll change it.",
+        tr="Yazın videoda senin yazdığın gibi duruyor. Ne demek istediğinden emin olamadığım "
+        "için görünümünü değiştirmedim. Ne istediğini söyle, değiştireyim.",
+    )
+
+
 def _repaired_downstream_requirement_ids(brief: Any, contract: Any) -> set[str]:
     """Brief asks a later stage repairs and reports itself, so the planner's note skips them.
 
@@ -7461,7 +7503,9 @@ def _run_phone_unified_montage_job(
     # This uses the request already bound to this job, never a newer thread message.
     from app.agents._runtime import RunContext  # noqa: PLC0415
     from app.services.creation_text_composition import (  # noqa: PLC0415
+        CreationTextClarification,
         compose_creation_text,
+        planned_text_if_shown,
         snapshot_copy_constraints,
     )
 
@@ -7471,21 +7515,63 @@ def _run_phone_unified_montage_job(
         else ""
     )
 
+    text_requirements = brief.live() if brief is not None else None
+
     def compose(candidate: Any) -> Any:
-        return compose_creation_text(
-            candidate.snapshot,
-            creator_request=str(request or ""),
-            ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
-            copy_constraints=snapshot_copy_constraints(candidate.snapshot),
-            text_requirements=brief.live() if brief is not None else None,
-            # KRI-881: sourced wording the creator approved, replayed without a new search.
-            prepared_research=_approved_research(snapshot),
-        )
+        try:
+            return compose_creation_text(
+                candidate.snapshot,
+                creator_request=str(request or ""),
+                ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+                copy_constraints=snapshot_copy_constraints(candidate.snapshot),
+                text_requirements=text_requirements,
+                # KRI-881: sourced wording the creator approved, replayed without a new search.
+                prepared_research=_approved_research(snapshot),
+            )
+        except CreationTextClarification as asked:
+            # KRI-1456: the composer asked the creator something. When the plan already draws
+            # every wording they asked for, the question is about layout or style and must not
+            # cost them the video: it is made as planned and the note says what was not asked of
+            # the composer. Otherwise the question goes to the creator below.
+            as_planned = planned_text_if_shown(
+                candidate.snapshot,
+                copy_constraints=snapshot_copy_constraints(candidate.snapshot),
+                text_requirements=text_requirements,
+            )
+            if as_planned is None:
+                raise
+            candidate.text_question = {"question": asked.question, "unmet": list(asked.unmet)}
+            return as_planned
 
     # A planner direction built as a story (text_explainer / guided_story) never costs the
     # creator their video: if the text step cannot place its text, or the phone cannot draw the
     # layout, the fast montage the route always made is composed instead and the note says why.
-    plan = _composed_plan(plan, assignments, all_candidates, compose)
+    try:
+        plan = _composed_plan(plan, assignments, all_candidates, compose)
+    except CreationTextClarification as asked:
+        if not snapshot.get("creator_brief_binding"):
+            raise  # nothing to bind a question to: it fails, showing its own creator_detail
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        with _worker_reply_language(snapshot):
+            message = _text_question_message(asked.question)
+        record_pipeline_event(
+            "assembly",
+            "creation_text_question",
+            {
+                "decision": "ask_creator",
+                "generation_id": generation,
+                "question": asked.question,
+                "unmet_requests": list(asked.unmet),
+            },
+        )
+        # No receipts: the default ones judge an empty plan and would mark the wording that is
+        # drawn as missing beside the question.
+        if not _save_request_recovery(
+            job_id, snapshot, ownership_epoch=ownership_epoch, message=message, receipts=[]
+        ):
+            return None
+        raise UnsupportedPhonePlan(message) from asked
     record = plan.record()
     from app.kria.brief_checks import FINAL_SOURCE_CUTS, montage_final_source_cuts  # noqa: PLC0415
 
@@ -7501,6 +7587,23 @@ def _run_phone_unified_montage_job(
         # video, saying why (`story_direction.fallback_note`).
         with _worker_reply_language(snapshot):
             record["repair_notes"] = [fallback_note(plan.direction_fallback, str(requested))]
+    if plan.text_question:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "assembly",
+            "creation_text_question",
+            {
+                "decision": "text_shown_as_planned",
+                "generation_id": generation,
+                **plan.text_question,
+            },
+        )
+        with _worker_reply_language(snapshot):
+            record["repair_notes"] = [
+                *record.get("repair_notes", []),
+                _text_shown_as_planned_note(),
+            ]
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
     # (byte-identical record) when nothing was collapsed.
     record.update(montage_record_fields(duplicate_aliases))
@@ -43021,7 +43124,13 @@ def _fail_job(
     failure_reason: str | None = None,
     speech_cleanup_failure_reason: str | None = None,
     decline: dict[str, str] | None = None,
+    creator_detail: str | None = None,
 ) -> bool:
+    """Terminalize ``job_id`` as ``processing_failed``.
+
+    ``creator_detail`` is text written for the creator, stamped beside ``failure_reason`` so a
+    reader can show it. ``error_detail`` never is that: it may hold an exception's message.
+    """
     reanalysis_id: uuid.UUID | None = None
     committed = False
     try:
@@ -43183,6 +43292,18 @@ def _fail_job(
                         }
                     if speech_cleanup_failure_reason:
                         patch["speech_cleanup_failure_reason"] = speech_cleanup_failure_reason
+                    from app.tasks.content_plan_build import (  # noqa: PLC0415
+                        CREATOR_FAILURE_DETAIL_FIELD,
+                    )
+
+                    # Each failure states its own creator-facing reason or none: an earlier
+                    # failure's must not outlive it.
+                    ap = {k: v for k, v in ap.items() if k != CREATOR_FAILURE_DETAIL_FIELD}
+                    if creator_detail and failure_reason:
+                        patch[CREATOR_FAILURE_DETAIL_FIELD] = {
+                            "failure_reason": failure_reason,
+                            "text": creator_detail,
+                        }
                     job.assembly_plan = {**ap, **patch} if patch else ap
 
                     # Publish a failed cleanup receipt only for a genuine

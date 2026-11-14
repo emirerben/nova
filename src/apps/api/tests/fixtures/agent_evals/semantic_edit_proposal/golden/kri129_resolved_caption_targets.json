@@ -7,7 +7,7 @@
     "target_duration_s": 20,
     "media_scope": "all",
     "video_reuse_policy": "once",
-    "creator_request": "Use London Day as the title. Add a caption about the weather to the park clips. Put post match pub on the pub clips. The unrelated song is called \u201cBackground music\u201d.",
+    "creator_request": "Use London Day as the title. Add a caption about the weather to the park clips. Put post match pub on the pub clips. The unrelated song is called “Background music”.",
     "opening_title": "London Day",
     "clip_intents": [
       {
@@ -81,5 +81,6 @@
       "pub": "post match pub"
     },
     "expected_frames": 600
-  }
+  },
+  "prompt_sha": "98098d937c76a64a"
 }

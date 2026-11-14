@@ -1,6 +1,7 @@
 {
   "agent": "nova.layout.text_designer",
   "prompt_version": "2026-05-14",
+  "prompt_sha": "ec1eab8c089755e3",
   "input": {
     "slot_position": 1,
     "slot_type": "hook",
@@ -18,7 +19,8 @@
     "accel_at_s": 8.0
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "notes": "Signature hook treatment. Pinned to the calibration pattern documented in the prompt: subject on slot 1 = xxlarge / sans / gold / start 3.0s / font-cycle with accel ≈ 8s. Tests hierarchy_fit (subject gets the bold treatment), slot_position_awareness (slot 1 carries the heaviest typography), timing_accuracy (start_s 3.0 is the long-hook landing), and tone_typography (energetic → bold sans + gold + font-cycle)."
+    "source": "provider_smoke_capture",
+    "notes": "Signature hook treatment. Pinned to the calibration pattern documented in the prompt: subject on slot 1 = xxlarge / sans / gold / start 3.0s / font-cycle with accel ≈ 8s. Tests hierarchy_fit (subject gets the bold treatment), slot_position_awareness (slot 1 carries the heaviest typography), timing_accuracy (start_s 3.0 is the long-hook landing), and tone_typography (energetic → bold sans + gold + font-cycle).",
+    "test_run_id": "kri1428-text_designer-20261114"
   }
 }

@@ -96,5 +96,6 @@
     "source": "hand_authored_golden",
     "case": "gate closed: the op is refused, not applied",
     "lane": "kria-1138-slide-tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

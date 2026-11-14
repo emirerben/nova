@@ -6,9 +6,21 @@
     "creator_context": "Travel creator; warm and direct.",
     "item_context": "A day exploring Lisbon.",
     "media_context": [
-      {"media_id": "clip-1", "kind": "video", "creator_note": "arrival"},
-      {"media_id": "clip-2", "kind": "video", "creator_note": "sunset"},
-      {"media_id": "photo-1", "kind": "image", "creator_note": "city detail"}
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "creator_note": "arrival"
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "creator_note": "sunset"
+      },
+      {
+        "media_id": "photo-1",
+        "kind": "image",
+        "creator_note": "city detail"
+      }
     ],
     "conversation": [],
     "capability_manifest": {
@@ -18,20 +30,51 @@
       "render_program": "guided",
       "has_voiceover": false,
       "media": [
-        {"media_id": "clip-1", "kind": "video", "label": "arrival"},
-        {"media_id": "clip-2", "kind": "video", "label": "sunset"},
-        {"media_id": "photo-1", "kind": "image", "label": "city detail"}
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "label": "arrival"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "label": "sunset"
+        },
+        {
+          "media_id": "photo-1",
+          "kind": "image",
+          "label": "city detail"
+        }
       ],
       "catalog": [
-        {"catalog_id": "music-track-1", "kind": "music", "label": "Warm travel beat"}
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm travel beat"
+        }
       ],
       "capabilities": {
-        "dispatch_render": {"available": true},
-        "draft_guided_proposal": {"available": true},
-        "media_overlays": {"available": false, "reason_code": "disabled_by_setting"},
-        "sound_effects": {"available": false, "reason_code": "disabled_by_setting"},
-        "transitions": {"available": true},
-        "wide_looks": {"available": false, "reason_code": "disabled_by_setting"}
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "transitions": {
+          "available": true
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        }
       },
       "limits": {
         "max_media_refs": 50,
@@ -48,5 +91,6 @@
   "meta": {
     "source": "hand-authored-v1-safety",
     "contract": "guided strategies are normalized without opaque selected_media_ids so the specialist receives a bounded alias shortlist"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

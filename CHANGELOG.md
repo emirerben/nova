@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.231.0] - 2026-11-14
+
+### Changed
+- refactor(editor): one source for clip, rate, fps and text-piece limits (KRI-1377) (#2313) <!-- release-pr: 2313 -->
+
+## [0.88.230.0] - 2026-11-14
+
+### Fixed
+- fix(kria): a text question reaches the creator and failures show their reason (KRI-1456) (#2357) <!-- release-pr: 2357 -->
+
+## [0.88.229.0] - 2026-11-14
+
+### Fixed
+- fix(ios): keep the timeline glide out of editor UI tests so main is green again (KRI-1450) (#2344) <!-- release-pr: 2344 -->
+
+## [0.88.228.0] - 2026-11-14
+
+### Changed
+- feat(dev): one script assigns the client protocol number, tests stop hard-coding it (KRI-1381) (#2307) <!-- release-pr: 2307 -->
+
+## [0.88.227.0] - 2026-11-14
+
+### Changed
+- fix(kria): one requested text makes one on-screen text (KRI-1424) (#2341) <!-- release-pr: 2341 -->
+
+## [0.88.226.0] - 2026-11-14
+
+### Changed
+- test(evals): pin agent fixtures to the prompt they were recorded for (KRI-1428) (#2350) <!-- release-pr: 2350 -->
+
+## [0.88.225.0] - 2026-11-14
+
+### Changed
+- fix(kria): readiness's "simpler version?" hold carries its card and yes drafts it (KRI-1447) (#2342) <!-- release-pr: 2342 -->
+
+## [0.88.224.0] - 2026-11-14
+
+### Changed
+- fix(kria): pasted lyrics no longer move the chat language (KRI-1448) (#2343) <!-- release-pr: 2343 -->
+
 ## [0.88.223.0] - 2026-11-14
 
 ### Changed

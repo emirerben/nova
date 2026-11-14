@@ -132,7 +132,12 @@ from app.kria.narration_notes import (
 from app.kria.order_replacement import OrderReplacementProof
 from app.kria.paid_call_scope import paid_call_request_id
 from app.kria.removed_messages import is_removed, removed_turn_ids
-from app.kria.reply_language import current_reply_language, is_client_stock_message, say
+from app.kria.reply_language import (
+    asks_for_video_words,
+    current_reply_language,
+    is_client_stock_message,
+    say,
+)
 from app.kria.strategy_policy import (
     RefusedStrategy,
     check_strategy_for_runtime_v2,
@@ -1272,6 +1277,42 @@ def brief_order_fields(
     return confirm_unordered_groups(resolved_intents, brief), ordering_choice
 
 
+def _pins_without_caption_repeats(
+    pins: Sequence[PinnedText], resolved: Sequence[ResolvedClipIntent]
+) -> list[PinnedText]:
+    """Drop a run of pins whose words, in order, are a placed caption's creator text.
+
+    Prod thread 6db7ecd4: pasted lyrics came back as one caption plus the same words split
+    into three pins, so the contract demanded both layouts and the text pass refused the
+    overlap. The caption is kept: it is what the brief's literal check reads.
+    """
+
+    def words(text: str) -> tuple[str, ...]:
+        return tuple("".join(c if c.isalnum() else " " for c in _pin_key(text)).split())
+
+    captions = {
+        words(intent.creator_text)
+        for intent in resolved
+        if intent.op in {"caption", "label"}
+        and intent.status == "resolved"
+        and intent.assignments
+        and intent.creator_text
+    }
+    captions.discard(())
+    kept = list(pins)
+    for caption in captions:
+        for start in range(len(kept)):
+            joined: tuple[str, ...] = ()
+            for end in range(start, len(kept)):
+                joined += words(kept[end].text)
+                if len(joined) >= len(caption):
+                    break
+            if joined == caption:
+                kept[start : end + 1] = []
+                break
+    return kept
+
+
 def adapt_creator_action(
     action: AskUser | ProposeStrategy | ReviewDecision | DraftVoiceoverScript,
     *,
@@ -1305,6 +1346,7 @@ def adapt_creator_action(
             mode="respond",
             turn_value="question",
             response=action.question,
+            asks_video_text=asks_for_video_words(action.reason_code),
         )
     if isinstance(action, DraftVoiceoverScript):
         # KRI-815: planned by `_plan_voiceover_script`; never a strategy or a draft.
@@ -1388,7 +1430,10 @@ def adapt_creator_action(
                 en="The earlier story outline is saved for review and is not part of this plan.",
                 tr="Önceki hikâye taslağı inceleme için saklandı ve bu planın parçası değil.",
             )
+    pins = action.strategy.pinned_texts or []
+    kept_pins = _pins_without_caption_repeats(pins, server_resolved_clip_intents or [])
     strategy_update = {
+        **({"pinned_texts": kept_pins or None} if len(kept_pins) != len(pins) else {}),
         "story_structure": reconciled_story,
         "selection_reconciliation": selection_reconciliation,
         "confirmed_order_replacement": server_order_replacement,

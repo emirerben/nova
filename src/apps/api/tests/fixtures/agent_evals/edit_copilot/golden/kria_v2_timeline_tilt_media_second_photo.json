@@ -150,5 +150,6 @@
     "source": "hand_authored_golden",
     "case": "second photo of the pool as a media backdrop on the tilted clip; keeps the angle",
     "lane": "kria_v2_timeline_tilt_media"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

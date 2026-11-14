@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from app.agents._schemas.visual_editor import VisualEditorStyle
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 
 MAX_VISUAL_BLOCKS = 20
 MAX_BLOCK_DURATION_S = 10.0
@@ -202,7 +203,7 @@ class MediaBlock(VisualBlockBase):
     trim_start_s: float | None = Field(default=None, ge=0.0)
     trim_end_s: float | None = Field(default=None, gt=0.0)
     source_crop: SourceCrop | None = None
-    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    playback_rate: float | None = Field(default=None, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX)
     display_mode: Literal["fullscreen", "overlay"] = "fullscreen"
     transform: MediaTransform = Field(default_factory=MediaTransform)
     x_frac: float = Field(default=0.5, ge=0.0, le=1.0)

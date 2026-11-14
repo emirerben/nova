@@ -5,8 +5,16 @@
     "utterance": "trim the video starting from second 1",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["timeline"],
-      "slots": [{"output_start_s": 1, "output_end_s": 6, "duration_s": 5}],
+      "allowed_op_families": [
+        "timeline"
+      ],
+      "slots": [
+        {
+          "output_start_s": 1,
+          "output_end_s": 6,
+          "duration_s": 5
+        }
+      ],
       "total_duration_s": 5,
       "revision": 3
     }
@@ -20,5 +28,9 @@
     "suggestions": [],
     "needs_clarification": false
   },
-  "meta": {"source": "hand_authored_golden", "case": "truthful no-op keeps the draft unchanged"}
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "truthful no-op keeps the draft unchanged"
+  },
+  "prompt_sha": "unpinned"
 }

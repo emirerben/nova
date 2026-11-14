@@ -126,5 +126,6 @@
     "source": "hand_authored_golden",
     "case": "relative zoom ask: zoom_delta adds to the clip's own zoom, never zoom (which replaces it)",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

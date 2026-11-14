@@ -3805,18 +3805,18 @@
         }
       }
     },
-    "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here." : {
+    "A clip is shorter than the %@ second minimum. Lengthen it a little and save again. Your edits are still here." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ein Clip ist kürzer als die Mindestlänge von 0,1 Sekunden. Verlängere ihn etwas und speichere nochmal. Deine Änderungen sind noch da."
+            "value" : "Ein Clip ist kürzer als die Mindestlänge von %@ Sekunden. Verlängere ihn etwas und speichere nochmal. Deine Änderungen sind noch da."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Bir klip 0,1 saniyelik asgari süreden kısa. Biraz uzat ve tekrar kaydet. Düzenlemelerin hâlâ burada."
+            "value" : "Bir klip %@ saniyelik asgari süreden kısa. Biraz uzat ve tekrar kaydet. Düzenlemelerin hâlâ burada."
           }
         }
       }

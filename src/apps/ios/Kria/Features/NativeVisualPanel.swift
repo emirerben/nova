@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import KriaMediaEngine
 import SwiftUI
 
 struct NativeVisualPanel: View {
@@ -537,7 +538,7 @@ struct NativeVisualPanel: View {
                         }.accessibilityLabel(phase == "entrance" ? String(localized: "In visual animation \(Self.effectTitle(effect))") : phase == "exit" ? String(localized: "Out visual animation \(Self.effectTitle(effect))") : String(localized: "Loop visual animation \(Self.effectTitle(effect))"))
                     }
                 }
-                slider(String(localized: "Animation speed"), value: Binding(get: { animation["speed"]?.numberValue ?? 1 }, set: { setAnimation("speed", value: .number($0), selected: selected) }), range: 0.25...3)
+                slider(String(localized: "Animation speed"), value: Binding(get: { animation["speed"]?.numberValue ?? 1 }, set: { setAnimation("speed", value: .number($0), selected: selected) }), range: TextAnimationPhases.speedRange)
                 Text("Changes motion speed. Visual timing stays the same.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }.disabled(!session.canStyleVisual(selected))
         } else if let element = cardElement {

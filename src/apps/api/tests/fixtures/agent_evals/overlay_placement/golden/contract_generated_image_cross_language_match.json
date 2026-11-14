@@ -132,5 +132,6 @@
     "pins": "the output contract (a correct answer parses and has this shape) and the prompt content, not model behaviour",
     "case": "English-titled generated image 'Beer' over Turkish speech about alcohol sales: placed at the spoken word, 'likely'. The shape of the 2026-11-03 prod miss with a synthetic transcript, kept as the input for a future live run.",
     "unproven": "Recorded-response contract. The transcript and timings are synthetic. Whether the real model follows prompt 1.4.0 on this input is NOT measured here; only a live run measures it."
-  }
+  },
+  "prompt_sha": "9a84dd0170ddf6ff"
 }
