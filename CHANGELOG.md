@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.221.0] - 2026-11-14
+
+### Changed
+- chore(agents): delete four dead agents with no production caller (KRI-1428) (#2335) <!-- release-pr: 2335 -->
+
 ## [0.88.220.0] - 2026-11-14
 
 ### Changed
