@@ -46,6 +46,7 @@ LANES: tuple[str, ...] = (
     "caption_lines",
     "layer_order",
     "video_shape",
+    "split_full_screen",
 )
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
 # prompts stay byte-identical (KRI-301).
@@ -98,6 +99,7 @@ _GATED_LANES = (
     "caption_lines",
     "layer_order",
     "video_shape",
+    "split_full_screen",
 )
 
 
@@ -226,6 +228,9 @@ def family_fragments(snapshot: object) -> str:
     if isinstance(snapshot.get("layer_order"), dict):
         # KRI-1394: only while a stack of pictures can be reordered.
         names.append("layer_order.txt")
+    if snapshot.get("split_full_screen"):
+        # KRI-1394: only while a split section can play part full screen from chat.
+        names.append("split_full_screen.txt")
     parts: list[str] = []
     for name in names:
         try:

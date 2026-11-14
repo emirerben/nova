@@ -803,6 +803,7 @@
     "Optional: shorten the {word} so it ends before the video does.": "Optional: Kürz {word}, damit es endet, bevor das Video endet.",
     "Original camera audio is required by the render contract.": "Der Originalton der Kamera ist für die Videoerstellung vorgeschrieben.",
     "Our AI took too long to plan this edit, so your video wasn't made. Your edit and footage are saved. Try again in a moment.": "Unsere KI hat zu lange gebraucht, um diesen Edit zu planen, deshalb wurde dein Video nicht erstellt. Dein Edit und dein Material sind gespeichert. Versuch es gleich nochmal.",
+    "Part of a split screen can't go full screen from chat on this edit.": "In diesem Edit kann ich einen Teil des Split-Screens nicht per Chat auf Vollbild stellen.",
     "Partly": "Teilweise",
     "Partly done.": "Teilweise erledigt.",
     "Photo and sound pop-ins timed to your words aren't available for this edit yet": "Foto- und Ton-Einblendungen, die auf deine Worte abgestimmt sind, gibt es für diesen Edit noch nicht",

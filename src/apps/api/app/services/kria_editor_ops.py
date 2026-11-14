@@ -1838,6 +1838,15 @@ def build_editor_snapshot(
         snapshot["split_screen_sections"] = sections
     if split_screen_available(job, variant):
         snapshot["split_screen_available"] = True
+    if sections and "clip" in families:
+        from app.agents.editor_ops_v2.split_full_screen import (  # noqa: PLC0415
+            split_full_screen_snapshot,
+        )
+
+        # KRI-1394: present only where chat may make part of a split full screen.
+        offered = split_full_screen_snapshot(job, variant, slot_rows, sections)
+        if offered:
+            snapshot["split_full_screen"] = offered
     timeline_max_slots = caps.get("timeline_max_slots")
     if isinstance(timeline_max_slots, int) and timeline_max_slots > 0:
         snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
@@ -2873,6 +2882,8 @@ class _DraftState:
     user_song: dict[str, Any] | None = None
     # KRI-1394: the `orientation` / `landscape_fit` Save sections this bundle set.
     video_shape: dict[str, Any] | None = None
+    # KRI-1394: `make_split_full_screen` ran: the timeline it planned and the time it lost.
+    split_full_screen: dict[str, Any] | None = None
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -3670,6 +3681,11 @@ def compile_editor_ops(
             if isinstance(exc, KriaEditorOpError):
                 raise
             raise KriaEditorOpError(str(exc)) from exc
+        if state.split_full_screen is not None and state.slots != state.split_full_screen["slots"]:
+            # Its lanes follow the time it lost, not a later clip edit's serial rebase.
+            raise KriaEditorOpError(
+                "Make part of the split full screen on its own, then ask for the next change"
+            )
         if state.split_screen_sections and name in {
             "patch_slots",
             "set_clip_duration",
@@ -3762,7 +3778,11 @@ def compile_editor_ops(
     rebase_before = {
         key: copy.deepcopy(getattr(state, lane)) for key, lane in rebase_fields.items()
     }
-    if "timeline" in changed and (
+    if state.split_full_screen is not None:
+        from app.agents.editor_ops_v2.split_full_screen import follow_lost_time  # noqa: PLC0415
+
+        follow_lost_time(state)
+    elif "timeline" in changed and (
         state.split_screen_sections or state.initial_split_screen_sections
     ):
         from app.services.kria_editor_timeline import rebase_guided_text

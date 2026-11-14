@@ -3858,7 +3858,8 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_creator_song.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_layer_order.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_speaker_full_opening.json",
-        "src/apps/api/tests/fixtures/request_following/threads/action_video_shape.json"
+        "src/apps/api/tests/fixtures/request_following/threads/action_video_shape.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_full_screen.json"
       ]
     },
     {
@@ -3889,6 +3890,23 @@
         "src/apps/api/tests/evals/request_following/compare_tools.py",
         "src/apps/api/tests/kria/test_copilot_tool_calls.py",
         "src/apps/api/tests/agents/test_copilot_tools.py"
+      ]
+    },
+    {
+      "id": "kri-1394-split-full-screen",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_split_full_screen_parity.py tests/kria/test_kri1394_split_full_screen.py tests/kria/test_editor_capability_parity.py tests/agents/test_editor_ops_v2.py",
+      "xctests": [
+        "KriaTests/NativeSplitFullScreenParityTests/testThePhonePlannerGivesTheSharedAnswer"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/split_full_screen.py",
+        "src/apps/api/app/agents/editor_ops_v2/split_full_screen.py",
+        "src/apps/api/prompts/edit_copilot_ops/split_full_screen.txt",
+        "src/apps/api/tests/fixtures/split_full_screen.json",
+        "src/apps/api/tests/kria/test_split_full_screen_parity.py",
+        "src/apps/api/tests/kria/test_kri1394_split_full_screen.py",
+        "src/apps/ios/Tests/KriaTests/NativeSplitFullScreenParityTests.swift"
       ]
     }
   ]

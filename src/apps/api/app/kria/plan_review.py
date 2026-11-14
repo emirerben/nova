@@ -78,6 +78,7 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "remove_split_screen",
             "move_split_clip",
             "move_split_screen",
+            "make_split_full_screen",
             "add_unused_sources",
             "set_media_duration",
             "stack_images",

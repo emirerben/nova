@@ -140,7 +140,10 @@ log = structlog.get_logger()
 # is these rules with each op's definition bullet moved into that op's tool description and the
 # JSON output block replaced by prompts/edit_copilot_tools.txt; the turn block is the user
 # message. JSON mode (the default) is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v127"
+# v128 (KRI-1394): make_split_full_screen (SPLIT FULL SCREEN, prompts/edit_copilot_ops/
+# split_full_screen.txt), printed only where a split section can play part full screen from chat,
+# so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v128"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1533,6 +1536,20 @@ def _format_snapshot(snapshot: dict) -> str:
                     },
                     sort_keys=True,
                 )
+            )
+    full_screen = snapshot.get("split_full_screen")
+    if isinstance(full_screen, list) and full_screen:
+        lines.append("SPLIT FULL SCREEN (part of a section full screen, make_split_full_screen):")
+        for row in full_screen[:20]:
+            if not isinstance(row, dict) or row.get("panel_count") not in (2, 3):
+                continue
+            lines.append(
+                f"section {_clean_prompt_data(row.get('section_id'), max_chars=160)!r} plays "
+                f"{_fmt_round3(_first_number(row, ('start_s',)))}-"
+                f"{_fmt_round3(_first_number(row, ('end_s',)))}s with "
+                f"{row['panel_count']} panels; at_s from "
+                f"{_fmt_round3(_first_number(row, ('at_s_min',)))} to "
+                f"{_fmt_round3(_first_number(row, ('at_s_max',)))}"
             )
     appearance = _text_appearance_inventory(snapshot)
     if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
