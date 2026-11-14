@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.217.0] - 2026-11-14
+
+### Changed
+- fix(api): admit a picked photo once its bytes are verified (KRI-1419) (#2332) <!-- release-pr: 2332 -->
+
 ## [0.88.216.0] - 2026-11-14
 
 ### Changed
