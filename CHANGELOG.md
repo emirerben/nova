@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.228.0] - 2026-11-14
+
+### Changed
+- feat(dev): one script assigns the client protocol number, tests stop hard-coding it (KRI-1381) (#2307) <!-- release-pr: 2307 -->
+
 ## [0.88.227.0] - 2026-11-14
 
 ### Changed
