@@ -18,9 +18,13 @@ Ways it could go wrong, written down before the code (each has a case below):
 7. Clips left out of a stated length keep their old message (which clips are in, and why).
 8. The stated marker is trusted from the model: only the server stamp
    (``target_duration_requested`` / ``creator_duration_s``) makes a length stated.
+9. A stated length accepted within tolerance still renders the whole-second floor (8 s on a
+   7.6 s clip planned as 7 s, 12.5 % short with no question).
 """
 
 from __future__ import annotations
+
+import pytest
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.reply_language import reply_language_for
@@ -105,10 +109,14 @@ def test_a_stated_length_the_clips_cant_reach_still_says_so(prod_profile) -> Non
     )
 
 
-def test_a_stated_length_within_tolerance_passes(prod_profile) -> None:
-    manifest = _manifest([13.98])
-    checked = _check(manifest, _strategy(14, stated=14))
+@pytest.mark.parametrize(("stated", "clip_s"), [(14, 13.98), (8, 7.6), (10, 9.6)])
+def test_a_stated_length_within_tolerance_renders_the_clips_length(
+    prod_profile, stated: float, clip_s: float
+) -> None:
+    manifest = _manifest([clip_s])
+    checked = _check(manifest, _strategy(stated, stated=stated))
     assert isinstance(checked, CheckedStrategy), checked.question
+    assert checked.strategy.target_duration_s == clip_s
     _fixed_point(manifest, checked)
 
 

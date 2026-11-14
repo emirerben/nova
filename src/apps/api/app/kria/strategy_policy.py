@@ -842,7 +842,10 @@ def _floored_capacity_s(
     if manifest is None or not planned < before.target_duration_s:
         return None
     durations = {media.media_id: media.duration_s for media in manifest.media}
-    capacity = sum(durations.get(media_id) or 0.0 for media_id in after.selected_media_ids)
+    selected = [durations.get(media_id) for media_id in after.selected_media_ids]
+    if not selected or any(not duration or duration <= 0 for duration in selected):
+        return None
+    capacity = sum(selected)
     return capacity if int(capacity) == planned else None
 
 
@@ -1450,10 +1453,15 @@ def check_strategy_for_runtime_v2(
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
     capacity = _floored_capacity_s(manifest, strategy, checked)
-    if capacity is not None and strategy.target_duration_s <= capacity:
-        # A length the clips already run keeps its fraction, so approval readiness's
-        # re-check of this draft finds it unchanged.
-        checked = checked.model_copy(update={"target_duration_s": strategy.target_duration_s})
+    if capacity is not None and (
+        strategy.target_duration_s <= capacity or not _length_lost(strategy, checked, manifest)
+    ):
+        # The plan runs the clips' real length, not the whole-second floor: a length the
+        # clips already run keeps its fraction (approval readiness's re-check finds it
+        # unchanged), and a stated one within tolerance renders what the check accepted.
+        checked = checked.model_copy(
+            update={"target_duration_s": min(strategy.target_duration_s, capacity)}
+        )
     # Some compiler paths already repair an unavailable optional treatment. Keep
     # their notices and apply the same first-turn policy as a typed refusal.
     if simplify_unsupported:
