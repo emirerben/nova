@@ -41,6 +41,7 @@ from app.kria.reply_language import say
 from app.kria.route_disclosure import ask_declines, draft_route
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
+from app.services.choice_questions import SIMPLER_VERSION_REASON
 from app.services.clip_order_sequence import stated_anchors
 from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
@@ -520,6 +521,7 @@ def assess_readiness(
     requirements = brief.live() if brief is not None else []
     strategy = strategy or {}
     policy_problem = None
+    refusal: RefusedStrategy | None = None
     # S3 Yorum2 (Bug F): contract lines that are one order ask's own, by its id. That ask is
     # held; every other ask keeps its own verdict, so one reply names every blocker.
     order_problems: dict[str, str] = {}
@@ -539,12 +541,12 @@ def assess_readiness(
     else:
         try:
             typed = CreativeStrategy.model_validate(strategy)
-            checked = check_strategy_for_runtime_v2(
-                manifest, typed, ask_before_simplifying=True, ask_about_stated_settings=True
-            )
+            checked = _policy_check(manifest, typed)
             # Re-running policy must not silently repair an approved promise.
             if isinstance(checked, RefusedStrategy):
                 policy_problem = checked.question
+                if checked.code == SIMPLER_VERSION_REASON and checked.fields:
+                    refusal = checked
             elif checked.strategy.model_dump(mode="json") != typed.model_dump(mode="json"):
                 policy_problem = say(
                     en=(
@@ -882,6 +884,11 @@ def assess_readiness(
         ),
         "requirements": rows,
         "policy_problem": policy_problem,
+        # Only while that refusal is still the problem: its fields are what a simpler-version
+        # card offers to leave out (`simplified_strategy` drafts them once the creator agrees).
+        "policy_refusal": {"code": refusal.code, "fields": list(refusal.fields)}
+        if refusal is not None and policy_problem == refusal.question
+        else None,
         # KRI-901: an input, not a verdict (the dispositions above carry it into the
         # digest). Saved so approval re-checks with the client the draft was made for.
         "protected_marks": bool(protected_marks),
@@ -889,6 +896,46 @@ def assess_readiness(
     # Pydantic values in capability records are serialized without model text.
     report["digest"] = digest(_identity(report))
     return report
+
+
+def _policy_check(manifest: ResolvedCreatorManifest, typed: CreativeStrategy):  # noqa: ANN202
+    return check_strategy_for_runtime_v2(
+        manifest, typed, ask_before_simplifying=True, ask_about_stated_settings=True
+    )
+
+
+def simplification_refusal(
+    manifest: ResolvedCreatorManifest | None, strategy: Mapping[str, Any] | None
+) -> RefusedStrategy | None:
+    """The "simpler version?" refusal readiness would hold this strategy on, if any."""
+    if manifest is None or not strategy:
+        return None
+    try:
+        checked = _policy_check(manifest, CreativeStrategy.model_validate(strategy))
+    except ValueError:
+        return None
+    if (
+        isinstance(checked, RefusedStrategy)
+        and checked.code == SIMPLER_VERSION_REASON
+        and checked.fields
+    ):
+        return checked
+    return None
+
+
+def simplified_strategy(
+    manifest: ResolvedCreatorManifest, strategy: Mapping[str, Any]
+) -> tuple[dict[str, Any], tuple[str, ...]] | None:
+    """What the creator agreed to on that refusal's card: the strategy the same check keeps
+    without asking, and its notices. Drafting it (not the asked one) is what lets the approval
+    re-check, which reads only the saved strategy, agree with the draft."""
+    try:
+        checked = check_strategy_for_runtime_v2(manifest, CreativeStrategy.model_validate(strategy))
+    except ValueError:
+        return None
+    if isinstance(checked, RefusedStrategy):
+        return None
+    return checked.strategy.model_dump(mode="json", exclude_none=True), tuple(checked.notices)
 
 
 def _defers_to_unified_montage(

@@ -169,6 +169,7 @@ from app.services.choice_questions import (
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_refusal_consent,
     simpler_version_answer,
     simpler_version_ask,
     simpler_version_question,
@@ -1813,6 +1814,66 @@ def _without_tap_removals(planned: PlannedKriaTurn, snapshot: Mapping[str, Any])
     )
 
 
+def _consented_policy_simplification(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread_id: uuid.UUID,
+    strategy: Mapping[str, Any] | None,
+    planned: PlannedKriaTurn,
+    *,
+    source_event: CreationThreadEvent | None,
+) -> tuple[dict[str, Any], tuple[str, ...]] | None:
+    """Tadic (prod thread aa36d140): approval readiness's own re-check held the draft on a
+    "Should I make a simpler version?" refusal the planner's check never raised, so the
+    planner's KRI-759 consent never ran and each "Evet" re-planned into the same hold. The
+    simplified strategy (and its notices) when the creator took that card for exactly the
+    fields readiness drops now, at the brief revision it was offered at."""
+    from app.kria.approval_readiness import (  # noqa: PLC0415
+        simplification_refusal,
+        simplified_strategy,
+    )
+
+    if not settings.kria_choice_questions_enabled or source_event is None:
+        return None
+    manifest = planned.readiness_manifest
+    refusal = simplification_refusal(manifest, strategy)
+    if refusal is None:
+        return None
+    rows = db.execute(
+        select(
+            CreationThreadEvent.role,
+            CreationThreadEvent.payload,
+            CreationThreadEvent.event_type,
+            CreationThreadEvent.content,
+        )
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role.in_({"user", "assistant"}),
+            CreationThreadEvent.sequence <= source_event.sequence,
+        )
+        .order_by(CreationThreadEvent.sequence)
+    ).all()
+    card = simpler_refusal_consent(
+        [tag_event(*row) for row in rows],
+        refusal.fields,
+        carried=settings.narrated_simpler_consent_fixes_enabled,
+    )
+    if card is None:
+        return None
+    offered = card.get("brief_version")
+    if offered is not None:
+        latest = load_latest_brief_sync(db, thread_id)
+        # A new or withdrawn ask is a new request the card never answered.
+        if offered != (latest.version if latest is not None else 0) or any(
+            update.operation != "change" for update in planned.brief_updates
+        ):
+            return None
+    simplified = simplified_strategy(manifest, strategy) if manifest is not None else None
+    if simplified is None:
+        return None
+    # The same done-deal line the planner's KRI-759 consent says.
+    return simplified[0], (*simplified[1], *([refusal.agreed] if refusal.agreed else []))
+
+
 def _simpler_version_consent(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -1874,6 +1935,13 @@ def _simpler_version_consent(
         }:
             continue
         question = payload.get("choice_question") or simpler_version_question()
+        if (
+            coverage.get("reason") == "approval_requirements_not_ready"
+            and question.get("dropped_fields") is not None
+        ):
+            # A readiness policy refusal's card agrees to strategy fields
+            # (`_consented_policy_simplification`), never to leaving brief asks out.
+            return None
         named = question.get(SIMPLER_OMITTED_IDS_KEY)
         if isinstance(named, list):
             # KRI-968: consent covers exactly what the reply named, at that revision. A
@@ -2807,6 +2875,31 @@ def _complete_draft_turn(
             thread.creator_id
         )
         readiness_report = None
+        consented = None
+        if readiness_required and apply_intent.tool_name == "draft.apply_strategy":
+            consented = _consented_policy_simplification(
+                db,
+                thread.id,
+                document.strategy,
+                planned,
+                source_event=db.get(CreationThreadEvent, turn.source_event_id),
+            )
+            if consented is not None:
+                simplified, simplified_notices = consented
+                document = document.model_copy(update={"strategy": simplified})
+                snapshot, snapshot_hash = canonical_snapshot(document)
+                planned = replace(
+                    planned,
+                    policy_notices=(
+                        *planned.policy_notices,
+                        *(n for n in simplified_notices if n not in planned.policy_notices),
+                    ),
+                )
+                log.info(
+                    "kria_readiness_simpler_version_drafted",
+                    thread_id=str(thread.id),
+                    turn_id=str(turn.id),
+                )
         # KRI-901: one answer for the mark gate and readiness (an app with the mark card and a
         # draft the phone Talking writer renders); off it neither asks nor promises.
         _marks_route = render_intent is not None and _marks_route_sync(
@@ -3710,7 +3803,16 @@ def _complete_draft_turn(
                 # brief revision this reply never writes.
                 reply_text = readiness_reply(brief, readiness_report)
                 requirement_receipts = receipts_before_omission
-            can_offer_simpler = (
+            # Tadic: readiness's own "Should I make a simpler version?" needs its card, or a
+            # "yes" re-plans into the same hold.
+            policy_refusal = (readiness_report or {}).get("policy_refusal")
+            refusal_card = (
+                bool(policy_refusal)
+                and _choice_questions_on
+                and not simpler_version_chosen
+                and planned.suggestion_pin is None
+            )
+            can_offer_simpler = refusal_card or (
                 simpler_keeps_an_ask
                 and not simpler_version_chosen
                 and (not readiness_required or bool(unmet_ids) and not policy_problem)
@@ -3721,7 +3823,15 @@ def _complete_draft_turn(
             # KRI-968: name what the simpler version leaves out before the creator picks it,
             # and record those ids on the question so a tap consents to exactly them.
             leaves_out, simpler_question = (
-                _simpler_version_offer(brief, unmet_ids, arrow_only_ids=arrow_only_ids)
+                (
+                    "",
+                    {
+                        **simpler_version_question(policy_refusal["fields"]),
+                        "brief_version": brief.version if brief is not None else 0,
+                    },
+                )
+                if refusal_card
+                else _simpler_version_offer(brief, unmet_ids, arrow_only_ids=arrow_only_ids)
                 if can_offer_simpler
                 else ("", None)
             )
