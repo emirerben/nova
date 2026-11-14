@@ -41,6 +41,7 @@ FEATURES = ("creation", "projects", "editor")
 FOCUSED = tuple(f"smoke,{group}" for group in FEATURES)
 UI_TEST_ROOT = "src/apps/ios/Tests/KriaUITests/"
 SWIFT_TEST_ROOT = "src/apps/ios/Tests/"
+SWIFT_PATH = re.compile(r"src/apps/ios/Tests/[\w/.-]+\.swift")
 TEST_ID = re.compile(r"[A-Za-z_]\w*/test\w+")
 # Members of the single XCTestCase class sit at exactly four spaces. Test bodies
 # (including nested helpers) are indented further; file scope is at column 0.
@@ -165,7 +166,7 @@ def stale_entries(root=ROOT):
     }
 
 
-def check(root=ROOT, base=None, journeys=None):
+def check(root=ROOT, base=None, journeys=None, after_sync=False):
     """Problems that would make UI selection wrong or fall back to full, each with its fix."""
     try:
         stale = stale_entries(root)
@@ -181,7 +182,15 @@ def check(root=ROOT, base=None, journeys=None):
     except (OSError, ValueError, KeyError, TypeError) as error:
         problems.append(f"UI registry unreadable: {error}")
     problems += stale_followers(root, base, journeys)
-    if problems:
+    problems += missing_swift_files(root, journeys)
+    if problems and after_sync:
+        problems.append(
+            "`make sync-test-registries` followed every rename it could and these "
+            "remain: edit or delete each named entry by hand in "
+            "scripts/ios/ui-test-groups.json or the named file (a removed test, or a "
+            "method renamed in the same edit that added or removed another)"
+        )
+    elif problems:
         problems.append(
             "Fix: run `make sync-test-registries` to follow renamed UI test files, "
             "classes and methods into the registry, workflows and self-tests (stage a "
@@ -314,6 +323,46 @@ def swift_followers(root, journeys=None):
     return [path for path in files if path.is_file()]
 
 
+def self_tests(root):
+    return sorted((root / "scripts/ios/tests").glob("*.py"))
+
+
+def bare_renames(renames):
+    """Class names and `func` names that changed, for the self-tests that quote
+    real tests outside the `Class/method` spelling."""
+    classes, methods = {}, {}
+    for old, new in renames.items():
+        (old_class, old_method), (new_class, new_method) = old.split("/"), new.split("/")
+        if old_class != new_class:
+            classes[old_class] = new_class
+        if old_method != new_method:
+            methods[old_method] = new_method
+    return classes, methods
+
+
+def bare_patterns(renames):
+    classes, methods = bare_renames(renames)
+    yield from (
+        (swift_name_pattern(old), new, old) for old, new in sorted(classes.items())
+    )
+    yield from (
+        (re.compile(rf"(?<=func ){re.escape(old)}(?!\w)"), new, old)
+        for old, new in sorted(methods.items())
+    )
+
+
+def missing_swift_files(root, journeys=None):
+    """Swift test files that a workflow or self-test names by path but are gone."""
+    problems = []
+    for path in [*swift_followers(root, journeys)]:
+        for name in sorted(set(SWIFT_PATH.findall(path.read_text()))):
+            if not (root / name).is_file():
+                problems.append(
+                    f"{path.relative_to(root).as_posix()} names {name}, which does not exist"
+                )
+    return problems
+
+
 def stale_followers(root, base=None, journeys=None):
     """Followers that still name a test git renamed since `base`."""
     try:
@@ -335,6 +384,14 @@ def stale_followers(root, base=None, journeys=None):
         text = path.read_text()
         for old, new in sorted(renames.items()):
             if swift_name_pattern(old).search(text):
+                problems.append(
+                    f"{path.relative_to(root).as_posix()} still names {old!r}, "
+                    f"which git renamed to {new!r}"
+                )
+    for path in self_tests(root):
+        text = path.read_text()
+        for pattern, new, old in bare_patterns(renames):
+            if pattern.search(text):
                 problems.append(
                     f"{path.relative_to(root).as_posix()} still names {old!r}, "
                     f"which git renamed to {new!r}"
@@ -361,6 +418,7 @@ def sync(root=ROOT, base=None, journeys=None):
             changed.append(f"{old} -> {new}")
     renames = test_renames(base, root)
     changed += follow_test_renames(data, renames)
+    followers_self = set(self_tests(root))
     for path in swift_followers(root, journeys):
         text = original = path.read_text()
         for old, new in renames.items():
@@ -369,6 +427,13 @@ def sync(root=ROOT, base=None, journeys=None):
                 changed.append(
                     f"{path.relative_to(root).as_posix()}: {old} -> {new} ({count})"
                 )
+        if path in followers_self:
+            for pattern, new, old in bare_patterns(renames):
+                text, count = pattern.subn(new, text)
+                if count:
+                    changed.append(
+                        f"{path.relative_to(root).as_posix()}: {old} -> {new} ({count})"
+                    )
         if text != original:
             path.write_text(text)
     data["classes"] = dict(sorted(data["classes"].items()))
@@ -782,7 +847,7 @@ def main():
         problems = []
         if sys.argv[1] == "sync":
             print("\n".join(sync()) or "UI registry already follows git renames")
-        problems = check()
+        problems = check(after_sync=sys.argv[1] == "sync")
         for name in unclassified() if not problems else ():
             print(
                 f"UI test class {name} is not in ui-test-groups.json classes: its tests "

@@ -141,6 +141,16 @@ class JourneyRegistryTests(unittest.TestCase):
         )
         self.tree.write(".github/workflows/ci.yml", workflow)
         self.assertTrue(any("by hand" in problem for problem in self.tree.check()))
+        for path in ("tests/test_alpha.py", "src/apps/api/tests/test_alpha.py"):
+            with self.subTest(path=path):
+                self.tree.write(
+                    ".github/workflows/ci.yml",
+                    WORKFLOW.format(step="alpha")
+                    + f"          python3 -m pytest {path}\n",
+                )
+                self.assertTrue(
+                    any("by hand" in problem for problem in self.tree.check())
+                )
 
     def test_unknown_journey_and_unreadable_markers_fail_closed(self):
         self.tree.write(
@@ -286,6 +296,26 @@ class JourneyRegistryTests(unittest.TestCase):
             if row["id"] == "beta"
         )
         self.assertEqual(beta["api_tests"], "tests/kria/test_beta.py")
+
+    def test_a_python_heredoc_that_calls_api_tests_runs_the_marked_journey(self):
+        self.tree.write(
+            ".github/workflows/ci.yml",
+            WORKFLOW.format(step="alpha")
+            + '          tests = journey_registry.api_tests("beta")\n',
+        )
+        rows = json.loads(self.tree.manifest.read_text())
+        rows["journeys"].append(
+            {
+                "id": "beta",
+                "needs_native": False,
+                "paths": [f"{registry.API}/app/alpha.py"],
+            }
+        )
+        self.tree.manifest.write_text(json.dumps(rows))
+        self.tree.write(
+            f"{registry.API}/tests/kria/test_beta.py", MARKED.format(id="beta", step="")
+        )
+        self.assertEqual(self.tree.check(), [])
 
     def test_workflow_native_test_names_must_name_real_tests_in_their_target(self):
         self.tree.write(

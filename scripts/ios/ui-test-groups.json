@@ -43,6 +43,7 @@
     "SongRangeUITests": "creation",
     "SpeakerBackgroundUITests": "editor",
     "SpeakerFrameDirectManipulationUITests": "editor",
+    "SplitBlankUITests": "editor",
     "SplitFlowGapsUITests": "editor",
     "SplitScreenAcceptanceUITests": "editor",
     "SteerNowUITests": "creation",

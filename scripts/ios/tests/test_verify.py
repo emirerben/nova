@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -17,6 +18,8 @@ spec = importlib.util.spec_from_file_location(
 )
 ui = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ui)
+sys.path.insert(0, str(Path(__file__).parent))
+import ui_fixture  # noqa: E402
 
 STUB = r"""#!/usr/bin/env python3
 import json, os, pathlib, signal, sys, time
@@ -264,7 +267,8 @@ class VerifyShellTests(unittest.TestCase):
 
     def test_changed_method_selection_runs_smoke_plus_exactly_those_tests(self):
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
-        changed = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        fixture = ui_fixture.fixtures(ui)[0]
+        changed = f"{fixture.cls}/{fixture.methods[0]}"
         result = self.run_verify(suite="ui", groups=f"smoke,{changed}")
         self.assertEqual(result.returncode, 0, result.stderr)
         data = ui.manifest()
