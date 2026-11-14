@@ -42,6 +42,7 @@ from app.services.content_plan_persona import (
 )
 from app.services.creator_sessions import ACTIVE_CREATOR_PHASES
 from app.services.edit_proposal_limits import queue_for_guided_contract
+from app.services.job_failure_reasons import DEFAULT_JOB_FAILURE_REASON, JOB_FAILURE_REASONS
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.seed_provenance import match_specs_to_seeds
 from app.services.slide_post_generation_receipts import (
@@ -915,121 +916,10 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = _PhoneGateMessages(_PHONE_GATE
 # `guided_story_*` from `_classify_error`) still gets a real sentence instead
 # of silently falling through to nothing.
 JOB_FAILURE_MESSAGES: dict[str, str] = {
-    "creation_text_failed": (
-        "I couldn't prepare the text while keeping your approved wording. "
-        "Your draft and footage are saved. Try generating this edit again."
-    ),
-    # KRI-466: the creator's song could not be lined up; `error_detail` carries the
-    # specific, actionable copy (see CREATOR_FACING_DETAIL_CODES).
-    "user_song_plan_declined": (
-        "I couldn't line your clips up with your song. Film with the song playing out "
-        "loud, or sing along clearly, then try again."
-    ),
-    # KRI-653: the talking take has no sound; `error_detail` carries the actionable copy.
-    "silent_audio_declined": (
-        "Your video has no sound, so there's nothing to caption or cut. Record it again "
-        "and check that nothing is covering the microphone."
-    ),
-    "phone_plan_unsupported": (
-        "This edit uses something your iPhone can't render yet. Start a new edit "
-        "with a different clip or format."
-    ),
-    # KRI-286: retryable -- the device capability this edit needs is not switched on
-    # yet (a rollout decision or an ops kill switch), so the same edit works once it is.
-    "phone_capability_unavailable": (
-        "This edit needs an iPhone rendering feature that's switched off right now. "
-        "Your edit and footage are saved. Try again later, or ask for a different style."
-    ),
-    # A provider spend cap or an exhausted AI budget: retrying right away answers the
-    # same, so the copy says to wait instead of offering a retry loop.
-    "ai_quota_exhausted": (
-        "Kria's AI service has reached its usage limit for now, so your video wasn't made. "
-        "Your edit and footage are saved. Trying again right away won't help; try again "
-        "later."
-    ),
-    # KRI-673: the AI that writes the on-screen text ran out of time on a big edit (prod:
-    # 35 clips). Say which step, and what actually helps.
-    "creation_text_timeout": (
-        "Writing the on-screen text for this many clips took longer than our AI allows, so "
-        "your video wasn't made. Your edit and footage are saved. Try again; if it happens "
-        "again, use fewer clips or ask for less text."
-    ),
-    "plan_ai_timeout": (
-        "Our AI took too long to plan this edit, so your video wasn't made. "
-        "Your edit and footage are saved. Try again in a moment."
-    ),
-    # Catch-all for an unclassified planning failure (our bug, or storage that stayed
-    # unavailable after the worker's own retries): do not blame the iPhone, it was never
-    # involved (KRI-673).
-    "phone_plan_failed": (
-        "Something broke while planning this edit, so your video wasn't made. "
-        "Your edit and footage are saved. Try again, or ask for a change."
-    ),
-    # KRI-725: the cloud worker refused a prepared edit before rendering it.
-    "prepared_execution_stale": (
-        "Something you approved changed before this edit could render, so I didn't "
-        "make it. Ask Kria to prepare the edit again."
-    ),
-    "prepared_execution_unsupported": (
-        "This edit was prepared by a newer version of Kria than the one rendering it. "
-        "Ask Kria to prepare it again."
-    ),
-    # A phone project reached the server renderer, which only has preview copies of the
-    # clips. Re-attaching uploads previews again, so never tell the creator to do that.
-    "originals_not_uploaded": (
-        "Only preview copies of your clips are uploaded (the originals stay on your "
-        "iPhone), so this edit has to be made on your iPhone. Your edit is saved. Open the "
-        "project on the iPhone that has the clips and ask Kria to make it again."
-    ),
-    "processing_timeout": (
-        "Processing timed out — your clips are heavy (likely 4K/HDR). Try fewer or shorter clips."
-    ),
-    "speech_cleanup_failed": (
-        "Cleaning up the audio didn't finish. Try again, or turn off speech cleanup."
-    ),
-    "no_labeled_tracks": (
-        "No matching music was found for this edit. Try again, or pick a track yourself."
-    ),
-    "matching_failed": "Matching your footage to music didn't finish. Try again.",
-    "auto_music_disabled": "Automatic music matching is turned off right now. Try again later.",
-    # Server rendering is off and this project was never set up to render on the iPhone
-    # (a web or older project), so updating the app changes nothing.
-    "cloud_render_disabled": (
-        "This project can only be rendered on our servers, and server rendering is "
-        "switched off, so this version wasn't made. Start a new edit on your iPhone with "
-        "these clips to make it there."
-    ),
-    "dispatch_publish_failed": "The render couldn't be handed to the queue. Give it another go.",
-    "drive_import_failed": "Importing from Drive didn't finish. Try again.",
-    "drive_import_dispatch_failed": "Importing from Drive didn't finish. Try again.",
-    "upload_promotion_failed": "Saving your upload didn't finish. Try again.",
-    "skia_disabled": "This edit needs a renderer that's temporarily turned off. Try again later.",
-    "cancelled_by_admin": "This render was cancelled.",
-    "render_oom": "Rendering ran out of memory — your clips are heavy. Try fewer or shorter clips.",
-    "ffmpeg_failed": "Something went wrong while assembling your video. Try again.",
-    "gemini_analysis_failed": "Analyzing your footage didn't finish. Try again.",
-    "analysis_failed": "Analyzing your footage didn't finish. Try again.",
-    "copy_generation_failed": "Writing your video's captions didn't finish. Try again.",
-    "output_upload_failed": "Your finished video couldn't be saved. Try again.",
-    "user_clip_download_failed": (
-        "One of your clips couldn't be downloaded. Reattach it and try again."
-    ),
-    "user_clip_unusable": (
-        "One of your clips couldn't be used (it may be corrupted or unsupported). "
-        "Try a different clip."
-    ),
-    "template_misconfigured": "This template has a configuration problem. Try a different one.",
-    "template_assets_missing": "This template is missing assets it needs. Try a different one.",
-    "artifact_eligibility_revoked": "This export is no longer available.",
-    "eligibility_changed_during_export": "Something changed while exporting. Try again.",
+    code: reason[0] for code, reason in JOB_FAILURE_REASONS.items()
 }
 
-# Never blank: an unrecognized or None-but-status-failed code still needs a
-# real sentence, not a fallthrough to nothing.
-DEFAULT_JOB_FAILURE_MESSAGE = (
-    "Something went wrong and this render didn't finish. Your direction and "
-    "footage are still saved — try again."
-)
+DEFAULT_JOB_FAILURE_MESSAGE = DEFAULT_JOB_FAILURE_REASON[0]
 
 
 # Failure codes whose `Job.error_detail` is written for the creator (not a stack

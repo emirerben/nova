@@ -4800,6 +4800,52 @@
         "The typed native wire cannot carry the repairs tag; untagged fixes match by op name only (KRI-1393)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1382-creation-health",
+      "tickets": [
+        "KRI-1382"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1382",
+      "journey": "kri-1382-creation-health",
+      "symptom": "A refused or recovering creation turn finished as an ordinary assistant message with no failure code, so a creation that delivered nothing counted as a success and failed creations left no evidence to count.",
+      "boundary": "persistence",
+      "paths": [
+        "src/apps/api/app/kria/turn_outcome.py",
+        "src/apps/api/app/services/cleared_failures.py",
+        "src/apps/api/app/services/creation_health.py",
+        "src/apps/api/app/services/job_failure_reasons.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_turn_outcome_postgres.py",
+        "tests/routes/test_admin_creation_health_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real run_kria_turn and the real completion transaction on Postgres with the planner's own refusal builders (strategy check, request recovery, ask_user refusals through adapt_creator_action); the report is read back with creation_health. Mutants (ask_user refusal unstamped, superseded turn stamped as a failure, device render failure read as in progress, one pooled failure share) each fail at least one case.",
+        "live_model": "Not run; no paid call was needed for this contract.",
+        "native_output": "Not applicable: server-side counting; no iPhone output changes.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Strategy refusals, request recovery, approval readiness holds and unclassified recovery replies are each counted under their own code",
+        "A main-creator ask_user refusal is a refusal; an ordinary clarifying ask_user stays a success",
+        "A turn closed by a newer message is not an attempt",
+        "An iPhone render that failed (awaiting_device with a failure reason) is a failed render, not in progress",
+        "Finished-but-partial renders are successes and draft jobs are not attempts",
+        "A planner conflict question and a moment-order question are blocked turns, the same code the commit gate records",
+        "A repeated send and a status or help question are inert turns, not attempts; admin test renders (synthetic user) are not attempts",
+        "A Job a failed approval dispatch compensated (status failed, kria_dispatch_aborted) is a failed render",
+        "An iPhone retry, auto-resume, admin retry and the creator's Retry on a failed Create video log the failure they clear, so a retried failure stays a failed attempt (retry is its own attempt)",
+        "Title wording and authorship proposals are routine hand-offs, not blocked turns; each kind keeps its own top reasons so refusals are never cut by the volume of failed codes"
+      ],
+      "neighbours_gap": [
+        "A refusal reply built outside the stamped sites and the central conflict-question markers still counts as a success until it is stamped; the editor-capacity and length-waiting replies and the editor copilot no-op refusal are stamped at their site and covered by no replay of their own",
+        "A failure cleared by a worker re-enqueue or an in-place variant re-render (the same attempt run again) is not logged; neither is an export the server repaired automatically (see repair_history on the device record) or a phone failure while an accepted video exists"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

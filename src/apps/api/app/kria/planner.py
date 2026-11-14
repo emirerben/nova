@@ -67,7 +67,7 @@ from app.agents.main_creator import (
 )
 from app.config import settings
 from app.kria import ask_refusals, voiceover_script
-from app.kria.ask_refusals import stale_capability_refusal
+from app.kria.ask_refusals import is_refusal_code, stale_capability_refusal
 from app.kria.brief import (
     BriefCoverageError,
     BriefUpdate,
@@ -141,6 +141,12 @@ from app.kria.strategy_policy import (
     transcript_labels_dropped_notice,
 )
 from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
+from app.kria.turn_outcome import (
+    outcome_diagnostics,
+    reason_code_slug,
+    refusal_diagnostics,
+    stamp_outcome,
+)
 from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
@@ -1290,6 +1296,12 @@ def adapt_creator_action(
     creator answered), so whatever a model-authored strategy carried is discarded here.
     ``server_song_captions`` (KRI-578) is the same for the lyric-caption decision."""
     if isinstance(action, AskUser):
+        # KRI-1382: the model refuses through ask_user too; an ordinary question stays unstamped.
+        diagnostics = (
+            refusal_diagnostics(reason_code_slug(action.reason_code))
+            if is_refusal_code(action.reason_code)
+            else None
+        )
         if settings.kria_choice_questions_enabled:
             # KRI-476: the agent's own options become tappable (and stay listed in the
             # text for clients without the card). No/one option keeps the text question.
@@ -1300,11 +1312,13 @@ def adapt_creator_action(
                     turn_value="question",
                     response=asked[0],
                     choice_question=asked[1],
+                    diagnostics=diagnostics,
                 )
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
             response=action.question,
+            diagnostics=diagnostics,
         )
     if isinstance(action, DraftVoiceoverScript):
         # KRI-815: planned by `_plan_voiceover_script`; never a strategy or a draft.
@@ -2085,7 +2099,16 @@ def adapt_editor_action(
 ) -> KriaTurnPlan:
     """Draft edits are reversible; rendering is a distinct, policy-gated action."""
     if not ops:
-        return KriaTurnPlan(mode="respond", turn_value="question", response=reply)
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=reply,
+            **(
+                {"diagnostics": refusal_diagnostics("editor_request_unmet")}
+                if unmet_requests
+                else {}
+            ),
+        )
     # "Change all fonts" arrives as one op per bar; merge identical per-bar style
     # patches so a many-bar edit fits the MAX_EDITOR_OPS tool bound instead of failing
     # the whole turn (KRI-203).
@@ -2094,6 +2117,7 @@ def adapt_editor_action(
         return KriaTurnPlan(
             mode="respond",
             turn_value="recovery",
+            diagnostics=outcome_diagnostics("recovery", "editor_too_many_ops"),
             response=say(
                 en=(
                     "That is more changes than I can apply in one go, so I left the video "
@@ -2897,6 +2921,7 @@ async def _plan_editor_revision(
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
+            diagnostics=refusal_diagnostics("editor_request_unavailable"),
             response=say(
                 en=(
                     "Your saved request is too large or unavailable for this editor step. "
@@ -3672,6 +3697,7 @@ async def _plan_from_creator_output(
                     mode="respond",
                     turn_value="question",
                     response=ask_refusals.unmet_reply(),
+                    diagnostics=refusal_diagnostics("stale_capability_refusal"),
                 ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
@@ -4653,7 +4679,11 @@ async def _look_inside_clips_first(
             choice_question=asked[1] if asked is not None else None,
         )
     else:
-        plan = KriaTurnPlan(mode="respond", turn_value="question", response=unplaced_reply(clips))
+        plan = stamp_outcome(
+            KriaTurnPlan(mode="respond", turn_value="question", response=unplaced_reply(clips)),
+            "blocked",
+            "requested_shot_unplaced",
+        )
     return PlannedKriaTurn(
         plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
     )
@@ -4988,22 +5018,17 @@ async def _plan_creator_action(
                 )
         if isinstance(checked, RefusedStrategy):
             log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
-            return PlannedKriaTurn(
-                plan=KriaTurnPlan(
-                    mode="respond",
-                    turn_value="question",
-                    response=checked.question,
-                    # KRI-759: a "simpler version?" needs buttons, or a "yes" is only a new
-                    # message that replans into the same refusal.
-                    choice_question=(
-                        simpler_version_question(checked.fields)
-                        if checked.code == SIMPLER_VERSION_REASON
-                        and settings.kria_choice_questions_enabled
-                        else None
-                    ),
+            return _refused_turn(
+                manifest,
+                checked,
+                # KRI-759: a "simpler version?" needs buttons, or a "yes" is only a new
+                # message that replans into the same refusal.
+                choice_question=(
+                    simpler_version_question(checked.fields)
+                    if checked.code == SIMPLER_VERSION_REASON
+                    and settings.kria_choice_questions_enabled
+                    else None
                 ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
             )
         song_caption_text = "\n".join(
             text
@@ -5022,13 +5047,7 @@ async def _plan_creator_action(
             )
             if need_song is not None:
                 log.info("kria_strategy_refused", thread_id=str(thread_id), code=need_song.code)
-                return PlannedKriaTurn(
-                    plan=KriaTurnPlan(
-                        mode="respond", turn_value="question", response=need_song.question
-                    ),
-                    manifest_hash=manifest.manifest_hash,
-                    context_hash=manifest.context_hash,
-                )
+                return _refused_turn(manifest, need_song)
         policy_notices = checked.notices
         for omitted_field in checked.omitted_fields:
             value = getattr(action.strategy, omitted_field)
@@ -5069,13 +5088,7 @@ async def _plan_creator_action(
             # lip-sync edit needs (no hero shape, no source-audio plan) apply.
             kept = check_strategy_for_runtime_v2(manifest, gate.strategy)
             if isinstance(kept, RefusedStrategy):
-                return PlannedKriaTurn(
-                    plan=KriaTurnPlan(
-                        mode="respond", turn_value="question", response=kept.question
-                    ),
-                    manifest_hash=manifest.manifest_hash,
-                    context_hash=manifest.context_hash,
-                )
+                return _refused_turn(manifest, kept)
             extra = [n for n in kept.notices if n not in policy_notices]
             action = action.model_copy(
                 update={
@@ -5860,6 +5873,28 @@ def _request_recovery(
     )
 
 
+def _refused_turn(
+    manifest: ResolvedCreatorManifest,
+    refused: RefusedStrategy,
+    *,
+    choice_question: Any = None,
+) -> PlannedKriaTurn:
+    """The reply for a strategy the server check refused, with its reason code recorded on the
+    turn (KRI-1382): a refusal completes as an ordinary assistant message, so without the code
+    the turn row says nothing about why nothing was made."""
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=refused.question,
+            choice_question=choice_question,
+            diagnostics=refusal_diagnostics(refused.code),
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+    )
+
+
 async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:
     item = await db.get(PlanItem, item_id)
     if item is None:
@@ -6463,7 +6498,12 @@ async def _gate_unresolved_choices(
     if moments.recovery is not None:
         return replace(
             planned,
-            plan=KriaTurnPlan(mode="respond", turn_value="question", response=moments.recovery),
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=moments.recovery,
+                diagnostics=refusal_diagnostics("moment_order_unsupported"),
+            ),
         )
     if moments.question is not None:
         from app.services.named_moments import question_text  # noqa: PLC0415
@@ -6505,6 +6545,7 @@ async def _gate_unresolved_choices(
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="question",
+                    diagnostics=outcome_diagnostics("blocked", "editorial_text_capacity"),
                     response=say(
                         en=(
                             "The planned explanations need more reading time than this edit "
@@ -6619,6 +6660,7 @@ async def _gate_unresolved_choices(
                 mode="respond",
                 turn_value="progress",
                 response=waiting,
+                diagnostics=outcome_diagnostics("recovery", "length_inputs_waiting"),
             ),
         )
     if not resolution.answers and not none_answers.answers:
@@ -7655,6 +7697,7 @@ async def _plan_live_turn(
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
+                diagnostics=outcome_diagnostics("blocked", "no_clips"),
                 response=say(
                     en=(
                         "Add at least one clip and I can shape the edit around what is "

@@ -58,6 +58,7 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
+from app.kria.turn_outcome import outcome_diagnostics
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
     ContentPlan,
@@ -1133,11 +1134,13 @@ async def submit_turn(
         )
     remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
+    inert_code = ""
     with reply_language_for(reply_language):
         if scope is not None:
             pass  # "Update: captions, music" is never a status or help question
         elif duplicate is not None:
             inert_response = ("progress", duplicate_reply(duplicate))
+            inert_code = "duplicate_send"
         elif is_status_question(body.message):
             status = getattr(active, "status", None)
             if status in {"pending", "planning"}:
@@ -1164,6 +1167,7 @@ async def submit_turn(
                     tr="Şu anda devam eden bir düzenleme yok. Projenin son hâli kaydedildi.",
                 )
             inert_response = ("progress", message)
+            inert_code = "status_question"
         elif is_help_question(body.message):
             inert_response = (
                 "question",
@@ -1179,6 +1183,7 @@ async def submit_turn(
                     ),
                 ),
             )
+            inert_code = "help_question"
 
     if inert_response is not None:
         turn_value, message = inert_response
@@ -1243,7 +1248,10 @@ async def submit_turn(
             mode="respond",
             turn_value=turn_value,
             response=message,
-            **({"diagnostics": {"suggestion_pin": refusal}} if refusal is not None else {}),
+            diagnostics={
+                **({"suggestion_pin": refusal} if refusal is not None else {}),
+                **outcome_diagnostics("inert", inert_code),
+            },
         )
         db.add(
             CreatorAgentTurn(

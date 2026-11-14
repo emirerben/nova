@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, settings
 from app.database import get_db
 from app.routes.admin import _require_admin
+from app.services.creation_health import MAX_DAYS, creation_health
 from app.services.kria_trace import (
     reconciliation_actions,
     resolve_kria_trace,
@@ -101,3 +102,24 @@ async def get_phone_render_config() -> PhoneRenderConfigResponse:
         default_verified_features=sorted(default),
         authored_text_verified="authoredText" in verified,
     )
+
+
+class CreationHealthResponse(BaseModel):
+    window: dict[str, Any]
+    definitions: dict[str, str]
+    turns: dict[str, Any]
+    renders: dict[str, Any]
+    daily: list[dict[str, Any]]
+    top_failure_reasons: list[dict[str, Any]]
+
+
+@router.get("/creation-health", response_model=CreationHealthResponse)
+async def get_creation_health(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    days: int = Query(default=7, ge=1, le=MAX_DAYS),
+) -> CreationHealthResponse:
+    """Daily success rate and top failure reasons for chat turns and renders.
+
+    `definitions` in the response says exactly what counts as an attempt and a success.
+    """
+    return CreationHealthResponse(**await creation_health(db, days=days))
