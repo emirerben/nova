@@ -300,3 +300,26 @@ async def test_a_hand_edit_to_another_caption_key_survives_the_delete(
         assert meta["color"] == "#FFCC00", "U2: the creator's colour stays"
     finally:
         await async_engine.dispose()
+
+
+SONG = _probe("creator_song", {"op": "set_user_song", "volume": 0.6})
+
+
+@pytest.mark.asyncio
+async def test_a_song_change_is_not_undone_from_chat(
+    copilot,  # noqa: F811
+    monkeypatch,
+) -> None:
+    user_id, thread_id, session_id = _seed_runtime_project()
+    _seed(user_id, session_id, SONG, monkeypatch)
+    copilot.answers = {"Do it": SONG.reference, "Undo that": [UNDO]}
+    try:
+        await _say(user_id, thread_id, "Do it", _clean("s0"))
+        edited = _head(thread_id)
+        assert "user_song" in edited["snap"]["editor_payload"], "the phone reads the flat key"
+        assert _record(edited["id"]) is None or "chat_undo" not in _record(edited["id"])
+        await _say(user_id, thread_id, "Undo that", _phone(edited, "user_song", sid="s1"))
+        assert "history_state" not in copilot.snapshots["Undo that"], "refused, not half undone"
+        assert _head(thread_id)["id"] == edited["id"], "nothing was written"
+    finally:
+        await async_engine.dispose()

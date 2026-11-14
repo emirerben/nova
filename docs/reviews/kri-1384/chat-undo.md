@@ -107,6 +107,13 @@ draft `caption_meta` with `font_set: false`) re-stages the lane wholesale throug
 the phone never showed the chat's fit change either. An editor state without the chat's value
 refuses the undo (`_untouched`). That staging gap belongs to KRI-1394, not to undo.
 
+When `set_user_song` is made to seal, the restored draft must keep a flat `user_song` key. An
+empty value or `{removed: false}` means the song is put back. The iPhone staging in #2320 reads
+only that flat key, so a restore that drops it never reaches an open editor. `_replay` keeps every
+key the merge carries, so a restored `user_song` stays present. The undo E2E for the song must
+assert the key on the restored payload. Today the turn is refused
+(`test_a_song_change_is_not_undone_from_chat`), and the chat turn's own draft carries the flat key.
+
 An undo turn stores no record, so a second "undo" is refused rather than chained or toggled.
 `repeat_last_edit` stays unsupported (the `redo` parity group): it replays the web client's op log.
 
@@ -146,6 +153,7 @@ The gaps closed after #2311 add these, in `src/apps/api/tests/kria/test_chat_und
 | U6 | The seal checks a replay the commit does not write | `seal` and the commit both read `_replay` (`CompiledUndo.draft`) |
 | U7 | A hand edit to the lane after the turn is overwritten | `test_a_hand_edit_after_the_chat_turn_takes_the_undo_away`, all six cases |
 | U8 | A turn that changed nothing is offered and the receipt claims an undo | `seal` refuses a turn with no changed lane (a no-op `set_layer_order` does not even compile) |
+| U9 | A song change is half undone or the phone never sees it | `test_a_song_change_is_not_undone_from_chat` (refused, nothing written, the chat draft carries the flat `user_song` key) |
 
 ## Evidence
 
