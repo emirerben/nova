@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.226.0] - 2026-11-14
+
+### Changed
+- test(evals): pin agent fixtures to the prompt they were recorded for (KRI-1428) (#2350) <!-- release-pr: 2350 -->
+
 ## [0.88.225.0] - 2026-11-14
 
 ### Changed
