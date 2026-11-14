@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.206.0] - 2026-11-14
+
+### Changed
+- feat(kria): chat makes part of a split screen full screen on iPhone (KRI-1394) (#2323) <!-- release-pr: 2323 -->
+
 ## [0.88.205.0] - 2026-11-14
 
 ### Changed
