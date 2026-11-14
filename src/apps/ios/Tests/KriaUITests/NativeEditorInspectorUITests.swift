@@ -1254,6 +1254,54 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
     }
 
+    /// KRI-1450: #2317's release-velocity glide kept the timeline moving after XCUITest's fast, exact drags, so every
+    /// editor UI test that asserts where a drag lands broke. Ways this can go wrong (written before the fix):
+    /// 1. The glide runs in the editor's test mode, so a 0.05 s press-and-drag lands seconds away from its release.
+    /// 2. The glide is switched off everywhere (or for real users) to quiet the tests, so a flick stops dead again.
+    /// 3. The opt-in launch argument is ignored, so nothing covers the glide in UI tests any more.
+    /// This test covers 2 and 3: without the opt-in the time stays where the flick let go, and with it the same flick
+    /// lands further on. `testTimelineSwipesSeekUnderFixedPlayhead` covers 1.
+    func testFlickGlidesOnPastTheReleaseOnlyWhenTheGlideIsSwitchedOn() {
+        /// The time shown right after the release, and once it has stopped changing.
+        func flick(glide: Bool) -> (released: String?, settled: String?) {
+            let app = XCUIApplication()
+            app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
+                + (glide ? ["-ui-testing-editor-timeline-glide"] : [])
+            app.launch()
+            defer { app.terminate() }
+            let timeline = app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch
+            let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
+            guard timeline.waitForExistence(timeout: 8) else { return (nil, nil) }
+            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -110, dy: 0)))
+            let released = time.value as? String
+            var settled = released
+            for _ in 0..<30 {
+                Thread.sleep(forTimeInterval: 0.2)
+                let now = time.value as? String
+                if now == settled { break }
+                settled = now
+            }
+            return (released, settled)
+        }
+        let exact = flick(glide: false)
+        XCTAssertNotNil(exact.released)
+        XCTAssertNotEqual(exact.released, "0:00.0", "the drag itself seeks")
+        XCTAssertEqual(exact.settled, exact.released, "in editor test mode the timeline stops where the finger let go")
+        let glided = flick(glide: true)
+        if let off = seconds(exact.settled), let on = seconds(glided.settled) {
+            XCTAssertGreaterThan(on, off + 0.3, "with the glide switched on, the same flick carries on past where it let go")
+        } else {
+            XCTFail("unreadable times \(String(describing: exact.settled)), \(String(describing: glided.settled))")
+        }
+    }
+
+    private func seconds(_ label: String?) -> Double? {
+        guard let parts = label?.split(separator: ":"), parts.count == 2,
+              let minutes = Double(parts[0]), let seconds = Double(parts[1]) else { return nil }
+        return minutes * 60 + seconds
+    }
+
     func testTimelineResizeShrinksPreviewAndRestoresIt() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
