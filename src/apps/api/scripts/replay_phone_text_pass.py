@@ -9,11 +9,18 @@ the fences are stand-ins; nothing is dispatched and nothing writes to production
     python scripts/admin.py --prod GET /admin/jobs/<id>/debug > /tmp/<id>.json
     DATABASE_URL=$(cat ../../../.dev/test-db-url) \\
         .venv/bin/python scripts/replay_phone_text_pass.py /tmp/<id>.json --out receipt.json \
-        [--no-degrade]
+        [--no-degrade] [--record answers.json | --answers answers.json]
 
 ``--no-degrade`` runs the text gates as before KRI-1376 (the negative control). The receipt names
 the outcome, the notes the creator would read and the drawn text layers; each model call and its
 cost is in the ``agent_run`` log lines.
+
+``--record`` writes every model agent's raw answer of a live run, in call order, as
+``[[agent class, raw text or null], ...]`` (null: the call failed). ``--answers`` replays such a
+file at $0: each model agent gets its next recorded answer and no model is called. An agent with
+no recorded answer fails its call, and the receipt's ``not_replayed`` names it: the phone
+typography call falls back to Inter on a failure, so a replay without its answer can render
+where prod's font choice would not.
 
 Clip facts run for real (the capture copies onto each clip's analysis) except the landmark guess,
 which makes no model call. Visuals cannot be rebuilt: no read-only admin route returns their
@@ -26,6 +33,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import sys
 import uuid
 from contextlib import contextmanager
@@ -34,7 +42,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+API_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(API_DIR))
 
 
 def _bindings(assignments: list[dict]) -> list[dict]:
@@ -57,8 +66,57 @@ def _bindings(assignments: list[dict]) -> list[dict]:
     return rows
 
 
-def _not_replayed(snapshot: dict, landmark_asks: int) -> list[str]:
-    gaps = []
+Answers = list[list[str | None]]
+
+
+@contextmanager
+def _model_answers(answers: Answers | None, recorded: Answers, unanswered: list[str]):
+    """Answer every model agent from ``answers`` (no model call), or record each live answer."""
+    from app.agents import _runtime  # noqa: PLC0415
+
+    run = _runtime.Agent.run
+    queue = [list(row) for row in answers or ()]
+
+    def answered(self, input, *, ctx=None):  # noqa: A002
+        name = type(self).__name__
+        for index, (agent, raw) in enumerate(queue):
+            if agent == name:
+                del queue[index]
+                if raw is None:
+                    raise _runtime.TerminalError(f"{name}: the recorded call failed")
+                return self.parse(raw, self._validate_input(input))
+        unanswered.append(name)
+        raise _runtime.TerminalError(f"{name}: no recorded answer")
+
+    def recording(self, input, *, ctx=None):  # noqa: A002
+        raw: list[str] = []
+        parse = self.parse
+
+        def keep(text, validated):
+            output = parse(text, validated)
+            raw[:] = [text]
+            return output
+
+        self.parse = keep
+        try:
+            return run(self, input, ctx=ctx)
+        finally:
+            del self.parse
+            recorded.append([type(self).__name__, raw[0] if raw else None])
+
+    def routed(self, input, *, ctx=None):  # noqa: A002
+        if self.spec.model == "rule_based":
+            return run(self, input, ctx=ctx)
+        if answers is not None:
+            return answered(self, input, ctx=ctx)
+        return recording(self, input, ctx=ctx)
+
+    with mock.patch.object(_runtime.Agent, "run", routed):
+        yield
+
+
+def _not_replayed(snapshot: dict, landmark_asks: int, unanswered: list[str]) -> list[str]:
+    gaps = [f"{name}: no recorded answer, so its call failed" for name in unanswered]
     visuals = snapshot.get("visuals") or []
     if visuals:
         gaps.append(
@@ -73,7 +131,13 @@ def _not_replayed(snapshot: dict, landmark_asks: int) -> list[str]:
     return gaps
 
 
-def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
+def replay(
+    capture: dict,
+    *,
+    degrade: bool,
+    answers: Answers | None = None,
+    recorded: Answers | None = None,
+) -> dict[str, Any]:
     from app.config import settings  # noqa: PLC0415
     from app.kria.brief import CreativeBrief  # noqa: PLC0415
     from app.kria.recipes import MediaCapability  # noqa: PLC0415
@@ -110,6 +174,8 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
     events: list[tuple[str, str, dict]] = []
     text_drops: list = []
     landmark_asks: list[str] = []
+    unanswered: list[str] = []
+    recorded = recorded if recorded is not None else []
     compose = composition.compose_creation_text
 
     def composed(*args, drops=None, **kwargs):
@@ -175,18 +241,21 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
     for patch in patches:
         patch.start()
     try:
-        gb._run_generative_job(str(job.id))
+        with _model_answers(answers, recorded, unanswered):
+            gb._run_generative_job(str(job.id))
     finally:
         mock.patch.stopall()
     variant = (job.assembly_plan.get("variants") or [{}])[0]
     drawn: list[str] = []
+    fonts: list[str] = []
     if job.status == "awaiting_device":
         recipe = device_status(job, "guided_story").request.recipe
         drawn = [" ".join(run.text for run in layer.runs) for layer in recipe.text_layers]
+        fonts = sorted({run.font_asset_id for layer in recipe.text_layers for run in layer.runs})
     return {
         "job_id": source["id"],
         "degrade": degrade,
-        "not_replayed": _not_replayed(binding["media_snapshot"], len(landmark_asks)),
+        "not_replayed": _not_replayed(binding["media_snapshot"], len(landmark_asks), unanswered),
         "status": job.status,
         "failure": failures[-1] if failures else None,
         "text_drops": [drop.record() for drop in text_drops],
@@ -203,6 +272,7 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
             if event == "requirement_recovery" and data.get("lane") == "text"
         ],
         "drawn_text_layers": drawn,
+        "drawn_fonts": fonts,
     }
 
 
@@ -211,10 +281,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("capture", type=Path, help="admin /jobs/<id>/debug JSON")
     parser.add_argument("--out", type=Path, required=True, help="where the receipt is written")
     parser.add_argument("--no-degrade", action="store_true", help="run the pre-KRI-1376 gates")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--record", type=Path, help="write the live run's model answers here")
+    source.add_argument("--answers", type=Path, help="replay these recorded model answers ($0)")
     args = parser.parse_args(argv)
     capture = json.loads(args.capture.read_text(encoding="utf-8"))
-    receipt = replay(capture, degrade=not args.no_degrade)
-    args.out.write_text(json.dumps(receipt, ensure_ascii=False, indent=2, default=str) + "\n")
+    answers = json.loads(args.answers.read_text(encoding="utf-8")) if args.answers else None
+    out, record = args.out.resolve(), args.record.resolve() if args.record else None
+    import app.config  # noqa: F401, PLC0415 - settings read the caller's .env before the chdir
+
+    # The image runs from this layout (/app). From the repo root the planner sized e7bf7099's
+    # pinned lines 52/52/46 px instead of 52/36/50, and the contract fit decline went away.
+    os.chdir(API_DIR)
+    recorded: Answers = []
+    receipt = replay(capture, degrade=not args.no_degrade, answers=answers, recorded=recorded)
+    if record is not None:
+        record.write_text(json.dumps(recorded, ensure_ascii=False, indent=2) + "\n")
+    out.write_text(json.dumps(receipt, ensure_ascii=False, indent=2, default=str) + "\n")
     for gap in receipt["not_replayed"]:
         print(f"not replayed: {gap}", file=sys.stderr)
     return 0
