@@ -369,6 +369,7 @@
       "KriaUITests/EditorUITests/testClipActionsDismissOnOutsideTapAndKeepClipSelectionWorking",
       "KriaUITests/EditorUITests/testPreviewObjectTapStillSelectsNotFullscreen",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead",
+      "KriaUITests/NativeEditorInspectorUITests/testFlickGlidesOnPastTheReleaseOnlyWhenTheGlideIsSwitchedOn",
       "KriaUITests/NativeEditorInspectorUITests/testDraggingTrailingClipHandleToRightEdgeAutoScrollsPastVisibleWindow",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingTextBlockToRightEdgeAutoScrollsPastVisibleWindow",
       "KriaUITests/NativeCaptionVisualUITests/testAnalyzingGalleryCanScrollInBothDirections",
