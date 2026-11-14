@@ -1,0 +1,55 @@
+name: Fix chain recheck
+
+# KRI-1383: a fix PR's `Fix chain` result is only as fresh as the last time the
+# PR was pushed or edited. When a fix PR merges, rerun the check on the other
+# open fix PRs for the same ticket, so a stale green cannot let a third fix through.
+# The rerun reads the live merged-PR index, so it sees the PR that just merged.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+concurrency:
+  group: fix-chain-recheck-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  recheck:
+    name: Fix chain recheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Rerun Fix chain on open fix PRs for the merged ticket
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" > "$RUNNER_TEMP/merged.json" || { echo "::warning::could not read the PR for $SHA; nothing rechecked"; exit 0; }
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --base main --limit 200 \
+            --json number,title,headRefName,headRefOid > "$RUNNER_TEMP/open.json" || { echo "::warning::could not list open PRs; nothing rechecked"; exit 0; }
+          subject="$(git log -1 --format=%s)"
+          python3 scripts/ci/fix-chain-recheck.py --merged "$RUNNER_TEMP/merged.json" \
+            --subject "$subject" --open "$RUNNER_TEMP/open.json" > "$RUNNER_TEMP/stale.txt" || exit 1
+          while read -r number head; do
+            [ -n "$number" ] || continue
+            run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow fix-chain.yml --commit "$head" \
+              --event pull_request --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            if [ -z "$run" ]; then
+              echo "::warning::PR #$number has no Fix chain run on $head to rerun"
+              continue
+            fi
+            if gh run rerun "$run" --repo "$GITHUB_REPOSITORY"; then
+              echo "reran Fix chain run $run for PR #$number"
+            else
+              echo "::warning::could not rerun Fix chain run $run for PR #$number (still running? it reads the live index)"
+            fi
+          done < "$RUNNER_TEMP/stale.txt"

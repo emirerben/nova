@@ -2,7 +2,9 @@ name: Fix chain
 
 # KRI-1383: a third fix PR on one KRI ticket needs a failure-mode list
 # (docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule).
-# Body and title edits recheck without starting the heavy suites.
+# Body and title edits recheck without starting the heavy suites. When another fix
+# PR on the same ticket merges, fix-chain-recheck.yml reruns this check on the
+# open ones, so a green result cannot outlive the count it was computed against.
 # Skip marker (own line in the PR body, with a reason): [skip-fix-chain] <reason>
 # Add `Fix chain` to the required checks in branch protection after this lands.
 on:
@@ -14,9 +16,11 @@ permissions:
   contents: read
   pull-requests: read
 
+# Only a push supersedes an in-flight run; a body edit (the usual fix) queues
+# behind it instead of cancelling a run on the current head.
 concurrency:
   group: fix-chain-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
   fix-chain:

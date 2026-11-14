@@ -111,6 +111,13 @@ class FixChainWorkflowTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("KRI-9 already has 3 prior fix PR(s)", out)
 
+    def test_a_body_edit_never_cancels_a_run_on_the_current_head(self):
+        text = WORKFLOW.read_text()
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event.action == 'synchronize' }}", text
+        )
+        self.assertNotIn("cancel-in-progress: true", text)
+
     def test_unfetchable_index_fails_the_job(self):
         code, out = self.run_step(gh_down=True)
         self.assertEqual(code, 1, out)

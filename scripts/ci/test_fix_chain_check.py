@@ -21,6 +21,15 @@ wrong:
   count as PRs of their own; the PR is counted once, by its index title
 - rebase-merged PRs: N commits without "(#N)" are one PR, not N; a feat PR
   carrying a "fix: review nits" commit is not a fix PR
+- real rows that contain "<" (a threshold like "< 0.1", a generic like
+  "Array<Clip>") or whose text precedes the "->" arrow are rows, not placeholders
+- a block or skip marker inside an HTML comment is invisible to reviewers and
+  must not satisfy the gate
+- parallel fix PRs: a PR checked at one prior fix goes stale when its sibling
+  merges; the same check at merge time must block it
+- a PR whose title says "KRI-n: ..." but whose squash subject says "fix(...)"
+  counts once, to one ticket, never to two
+- the blocked hint names every skip-reason limit it enforces
 - the PR under check is gated on one ticket (title, else branch), the same one
   it is charged to once merged: a child-titled fix on a parent-named branch is
   gated by the child, not the parent's chain
@@ -242,6 +251,75 @@ class FixChainTests(unittest.TestCase):
                 self.assertEqual(
                     self.run_check(title="fix: three (KRI-7)", body=body)[0], 1
                 )
+
+    def test_real_rows_with_angle_brackets_are_accepted(self):
+        self.two_fixes()
+        body = (
+            "Failure modes for KRI-7\n"
+            "- trim window < 0.1 s -> Save rejects with a named code | covered by tests/test_trim.py::test_min\n"
+            "- Array<Clip> empty -> no crash | uncovered - adding tests/test_clips.py::test_empty\n"
+        )
+        code, out = self.run_check(title="fix: three (KRI-7)", body=body)
+        self.assertEqual(code, 0, out)
+
+    def test_arrow_does_not_close_a_placeholder(self):
+        self.two_fixes()
+        body = (
+            "Failure modes for KRI-7\n"
+            "- <shape -> <outcome> | covered by <test id>\n"
+            "- <a -> <b> | uncovered - adding <test id>\n"
+        )
+        self.assertEqual(self.run_check(title="fix: three (KRI-7)", body=body)[0], 1)
+
+    def test_block_or_skip_inside_html_comment_does_not_pass(self):
+        self.two_fixes()
+        hidden = {
+            "block": "<!--\n" + GOOD_BLOCK + "-->\n",
+            "unterminated": "<!--\n" + GOOD_BLOCK,
+            "skip": "<!-- [skip-fix-chain] umbrella ticket, unrelated typo in copy -->\n",
+        }
+        for name, body in hidden.items():
+            with self.subTest(name):
+                self.assertEqual(
+                    self.run_check(title="fix: three (KRI-7)", body=body)[0], 1
+                )
+        visible = "<!-- note -->\n" + GOOD_BLOCK
+        self.assertEqual(self.run_check(title="fix: three (KRI-7)", body=visible)[0], 0)
+
+    def test_two_open_fix_prs_block_the_one_that_merges_third(self):
+        self.main_commit("fix(editor): one (KRI-7) (#101)")
+        merged_sibling = {
+            "number": 102,
+            "title": "fix(editor): two (KRI-7)",
+            "headRefName": "codex/kri-7-two",
+        }
+        first_look = self.run_check(title="fix(editor): three (KRI-7)", pr=103)
+        self.assertEqual(first_look[0], 0, first_look[1])
+        self.main_commit("fix(editor): two (KRI-7) (#102)")
+        again = self.run_check(
+            title="fix(editor): three (KRI-7)", pr=103, index=[merged_sibling]
+        )
+        self.assertEqual(again[0], 1, again[1])
+
+    def test_title_without_fix_but_subject_fix_counts_once_to_one_ticket(self):
+        self.main_commit("fix(kria): one (#201)")
+        self.main_commit("fix(kria): two (KRI-8) (#202)")
+        index = [
+            {"number": 201, "title": "KRI-7: one", "headRefName": "codex/kri-9-x"},
+            {"number": 202, "title": "KRI-8: two", "headRefName": "codex/kri-9-y"},
+        ]
+        code, out = self.run_check(title="fix: third (KRI-7)", index=index)
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 prior fix", out)
+        code, out = self.run_check(title="fix: third (KRI-9)", index=index)
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 prior fix", out)
+
+    def test_blocked_hint_names_both_skip_reason_limits(self):
+        self.two_fixes()
+        _, out = self.run_check(title="fix: three (KRI-7)")
+        self.assertIn("20 characters", out)
+        self.assertIn("4 distinct words", out)
 
     def test_doc_block_counts_only_when_changed_in_this_pr(self):
         self.two_fixes()

@@ -4,11 +4,13 @@
 Rule: docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule (KRI-1383).
 Shared by scripts/preship-check.sh and .github/workflows/fix-chain.yml.
 
-Prior fixes are fix-prefixed PRs already on the main ref. A fix is charged to
-the first KRI id in its squash subject, falling back to the first id in its PR
-title or branch name (from --pr-index, a JSON list of
-{number, title, headRefName}). Counting only the first id keeps a child fix that
-names its parent second from inflating the parent's count.
+Prior fixes are merged PRs on the main ref. A merged PR counts as a fix when its
+PR title or its squash subject starts with fix (the PR under check is gated on
+its title only, so a subject edited at merge time can add to a count, never
+exempt a PR). Each PR is charged once, to the first KRI id in its squash subject,
+falling back to the first id in its PR title or branch name (from --pr-index, a
+JSON list of {number, title, headRefName}). Counting only the first id keeps a
+child fix that names its parent second from inflating the parent's count.
 
 Only first-parent history is read, so the branch commits of a merge-commit PR
 never count as PRs of their own. With a PR index, a first-parent commit that has
@@ -40,7 +42,8 @@ ROW_RE = re.compile(
     re.IGNORECASE,
 )
 SKIP_RE = re.compile(r"^" + re.escape(SKIP_MARKER) + r"(?:\s+(.*))?$")
-PLACEHOLDER_RE = re.compile(r"<[^<>\n]*>")
+COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
+PLACEHOLDER_RE = re.compile(r"(?<!\w)<[A-Za-z](?:[^<>\n-]|-(?!>))*>")
 EMPTY_TOKENS = {
     "todo",
     "tbd",
@@ -76,41 +79,43 @@ def git(repo, *args):
 def prior_fixes(repo, main_ref, index, current_pr):
     """Map ticket -> set of PR keys that are merged fix PRs charged to it."""
     by_number = {int(entry["number"]): entry for entry in index}
-    found = {}
-
-    def charge(key, ticket):
-        if ticket:
-            found.setdefault(ticket, set()).add(key)
-
+    prs = {}
     for line in git(
         repo, "log", "--first-parent", main_ref, "--format=%H%x1f%s"
     ).splitlines():
         sha, _, subject = line.partition("\x1f")
-        if not is_fix(subject):
-            continue
         pr = PR_RE.search(subject)
         number = int(pr.group(1)) if pr else None
-        if number is not None and number == current_pr:
-            continue
-        if number is None and index:
-            continue
-        key = f"pr-{number}" if number is not None else sha
-        ticket = first_ticket(subject)
-        if ticket is None and number in by_number:
-            entry = by_number[number]
-            ticket = first_ticket(entry.get("title")) or first_ticket(
-                entry.get("headRefName")
-            )
-        charge(key, ticket)
-
+        if number is None:
+            if index or not is_fix(subject):
+                continue
+            prs[sha] = (subject, {})
+        else:
+            prs[number] = (subject, by_number.get(number, {}))
     for number, entry in by_number.items():
-        if number == current_pr or not is_fix(entry.get("title")):
+        prs.setdefault(number, ("", entry))
+
+    found = {}
+    for key, (subject, entry) in prs.items():
+        if key == current_pr:
             continue
-        charge(
-            f"pr-{number}",
-            first_ticket(entry.get("title")) or first_ticket(entry.get("headRefName")),
+        title = entry.get("title")
+        if not (is_fix(subject) or is_fix(title)):
+            continue
+        ticket = (
+            first_ticket(subject)
+            or first_ticket(title)
+            or first_ticket(entry.get("headRefName"))
         )
+        if ticket:
+            found.setdefault(ticket, set()).add(f"pr-{key}" if isinstance(key, int) else key)
     return found
+
+
+def visible_lines(text):
+    """Lines a reviewer sees on the rendered PR: HTML comments are dropped."""
+    text = COMMENT_RE.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
+    return text.split("\n")
 
 
 def valid_token(token):
@@ -120,7 +125,7 @@ def valid_token(token):
 
 def failure_mode_problems(text, ticket):
     """Return None when text carries a usable block for ticket, else a reason."""
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines = visible_lines(text)
     problem = f"no 'Failure modes for {ticket}' heading"
     for start, line in enumerate(lines):
         heading = HEADING_RE.match(line)
@@ -156,7 +161,7 @@ def failure_mode_problems(text, ticket):
 
 
 def skip_reason(text):
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+    for line in visible_lines(text):
         match = SKIP_RE.match(line.strip())
         if not match:
             continue
@@ -270,7 +275,8 @@ def main(argv):
         )
         print("  Or, if this is not a repeat of the same fault, add its own line:")
         print(
-            f"    {SKIP_MARKER} <one-line reason, at least {MIN_REASON_CHARS} characters>"
+            f"    {SKIP_MARKER} <one-line reason: at least {MIN_REASON_CHARS} characters "
+            f"and {MIN_REASON_WORDS} distinct words>"
         )
         print(
             "  Rule: docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule"
