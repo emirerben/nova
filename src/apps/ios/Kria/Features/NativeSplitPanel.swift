@@ -530,6 +530,18 @@ struct NativeSplitMediaPicker: View {
     // MARK: Gallery
 
     @ViewBuilder private var gallery: some View {
+        #if DEBUG
+        if NativeSplitPickerFixture.isActive {
+            NativeSplitPickerFixtureGrid(disabled: working) { id in choose(.photo(id)) }
+        } else {
+            photoGallery
+        }
+        #else
+        photoGallery
+        #endif
+    }
+
+    @ViewBuilder private var photoGallery: some View {
         if photoStatus == .authorized || photoStatus == .limited {
             NativeSplitPhotoGrid(picked: pickedPhotoIDs, showsPicks: multi, disabled: working) { id in
                 choose(.photo(id))
@@ -598,6 +610,13 @@ struct NativeSplitMediaPicker: View {
     }
 
     private func checkSaved() async {
+        #if DEBUG
+        if NativeSplitPickerFixture.isActive {
+            try? await Task.sleep(for: NativeSplitPickerFixture.libraryAnswerDelay)
+            savedAvailable = true
+            return
+        }
+        #endif
         let api = api
         guard api.mediaLibraryOwner != nil, let capabilities = try? await api.creationCapabilities(),
               capabilities.mediaLibrary == true else { return }
@@ -646,6 +665,9 @@ struct NativeSplitMediaPicker: View {
     private func loader(for pick: Pick) -> Loader {
         switch pick {
         case .photo(let id):
+            #if DEBUG
+            if NativeSplitPickerFixture.isActive { return { try await NativeSplitPickerFixture.read() } }
+            #endif
             return { try await PhotosLibraryAssetExporter().exportFile(localIdentifier: id) }
         case .saved(let id):
             let api = api
