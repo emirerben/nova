@@ -2,7 +2,7 @@
   "fixture_id": "action_history",
   "provenance": "authored",
   "footage": "harbor_run",
-  "description": "Parity group history: a plain request on a phone snapshot, expecting the op applied. Undo has no phone compile handler; expected to fail.",
+  "description": "Parity group history: a plain request on a phone snapshot, expecting the op applied. Right after a chat turn turned the title red; the editor still holds it.",
   "turns": [
     {
       "turn_id": "t0",
@@ -15,6 +15,7 @@
           "variant_snapshot": {
             "allowed_op_families": [
               "clip",
+              "history",
               "music",
               "sfx",
               "text",
@@ -334,8 +335,25 @@
                 }
               }
             ],
-            "text_bars": [],
+            "text_bars": [
+              {
+                "font_family": "Inter",
+                "size_px": 72,
+                "color": "#FF0000",
+                "effect": "static",
+                "alignment": "center",
+                "position": "middle",
+                "id": "title",
+                "text": "Harbour run",
+                "start_s": 0.0,
+                "end_s": 2.5,
+                "role": "generative_intro"
+              }
+            ],
             "total_duration_s": 23.0,
+            "history_state": {
+              "can_undo_last_turn": true
+            },
             "label_facts": true,
             "timeline_patch_capabilities": {
               "duration_s": true,
@@ -517,16 +535,16 @@
             "editor_ops_version": 2
           }
         },
-        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"There is nothing to undo right now.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Undo that.\",\n      \"reason\": \"There are no recent edits available to undo right now.\"\n    }\n  ],\n  \"claimed_ops\": []\n}",
-        "prompt_version": "2026-11-11-v122",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"undo_last_edit\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Undid the last change.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"undo_last_edit\"\n  ]\n}",
+        "prompt_version": "2026-11-13-v125",
         "model_actual": "gemini-3.1-pro-preview",
-        "recorded_at": "2026-11-13T08:19:37Z",
-        "latency_s": 10.14,
+        "recorded_at": "2026-11-13T19:27:53Z",
+        "latency_s": 13.39,
         "model_calls": 1,
-        "tokens_in": 28730,
-        "tokens_out": 127,
-        "tokens_thoughts": 749,
-        "test_run_id": "rf-baseline-20261113-b"
+        "tokens_in": 29080,
+        "tokens_out": 123,
+        "tokens_thoughts": 144,
+        "test_run_id": "rf-kri1384-undo-20261113-a"
       }
     }
   ],
@@ -544,8 +562,7 @@
           }
         ],
         "stage": "parsed",
-        "reference_compiles": false,
-        "blocked_reason": "undo_last_edit: I can't change that on this edit yet."
+        "reference_compiles": true
       },
       "source": "Undo that.",
       "introduced_in_turn": 0,
@@ -659,23 +676,21 @@
   "reference_probe": {
     "families": [
       "clip",
+      "history",
       "music",
       "sfx",
       "text",
       "title",
       "transition"
     ],
-    "parsed_ops": [],
-    "parse_outcome": "unsupported",
-    "parse_reasons": [
-      {
-        "op": "undo_last_edit",
-        "reason": "capability_unavailable",
-        "detail": "I can't change that on this edit yet."
-      }
-    ]
+    "parsed_ops": [
+      "undo_last_edit"
+    ],
+    "parse_outcome": "proposed",
+    "parse_reasons": [],
+    "compiles": true
   },
   "baseline": {
-    "history-op-applied": "unmet"
+    "history-op-applied": "met"
   }
 }

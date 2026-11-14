@@ -1424,7 +1424,11 @@ enum KriaClientProtocolContract {
     /// 49 (KRI-720): cuts every take of a several-take Talking preview from the receipt's `phone_talking_multi_clip.speaker_removed`
     /// rows. The server serves a build below 49 that receipt with no `speaker_media_ids`, so it previews the finished video
     /// instead of later takes uncut.
-    static let version = 49
+    ///
+    /// 50 (KRI-1384): a newer chat head that puts a staged lane back to the saved value (chat "undo that")
+    /// returns that lane to the saved document when the creator has not touched it since. The server offers
+    /// chat undo only to this protocol (`chat_undo_min_client_protocol`).
+    static let version = 50
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -3336,6 +3340,19 @@ extension DraftSnapshot {
     /// variant's current baseline — a save/render happened since; a head the server marked `head_current` is never stale),
     /// was already applied (`appliedRevision`), or changes nothing.
     func stagedChatEdit(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> StagedChatEdit? {
+        guard let lanes = chatLanes(over: base, variant: variant, appliedRevision: appliedRevision),
+              !lanes.changed.isEmpty else { return nil }
+        return StagedChatEdit(sections: lanes.changed, snapshot: lanes.snapshot)
+    }
+
+    /// KRI-1384: the lanes a newer chat head carries at the saved value, as chat "undo that" writes
+    /// them. `stagedChatEdit` stages nothing for them, so an editor holding the undone edit drops it here.
+    func restoredChatSections(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> Set<EditorSection> {
+        chatLanes(over: base, variant: variant, appliedRevision: appliedRevision)?.restored ?? []
+    }
+
+    private func chatLanes(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?)
+        -> (changed: Set<EditorSection>, restored: Set<EditorSection>, snapshot: [String: JSONValue])? {
         guard let variant, snapshot["kind"]?.stringValue == "editor" else { return nil }
         if let appliedRevision, draftRevision <= appliedRevision { return nil }
         guard let draftPayload = Self.object(snapshot["editor_payload"]) else { return nil }
@@ -3355,6 +3372,7 @@ extension DraftSnapshot {
         let baseSections = Self.object(payload["sections"]) ?? [:]
         var sections = baseSections
         var changed: Set<EditorSection> = []
+        var restored: Set<EditorSection> = []
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
             let removesMusic = lane.section == .music && draftPayload["remove_music"] == .bool(true)
@@ -3378,13 +3396,12 @@ extension DraftSnapshot {
             }
             let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
                 || (removesMusic && candidate["music"] != baseSections["music"])
-            guard differs else { continue }
+            guard differs else { restored.insert(lane.section); continue }
             sections = candidate; changed.insert(lane.section)
         }
-        guard !changed.isEmpty else { return nil }
         payload["sections"] = .object(sections)
         var next = base; next["editor_payload"] = .object(payload)
-        return StagedChatEdit(sections: changed, snapshot: next)
+        return (changed, restored.subtracting(changed), next)
     }
 
     /// Merge chat `TimelineSlotEdit` rows (wire shape) onto the editor's richer

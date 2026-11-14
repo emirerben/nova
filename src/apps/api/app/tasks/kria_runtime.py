@@ -152,6 +152,7 @@ from app.routes.generative_jobs import (
     prepare_editor_commit,
     variant_render_baseline,
 )
+from app.services import kria_editor_undo
 from app.services.choice_questions import (
     CONFLICT_ORDER_BASIS,
     CONFLICT_SPEECH_OCCURRENCE,
@@ -2205,6 +2206,7 @@ def _complete_draft_turn(
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
     restore_record: dict[str, Any] | None = None  # KRI-442: pre-update lanes for Undo
+    undo_turn = False  # KRI-1384: this turn is a chat "undo that"
     pointer_sync: dict[str, Any] | None = None  # where an editor draft moved the session pointer
     scope_note = ""  # KRI-441: "I left X alone." for what layer 3 took back
     if apply_intent.tool_name == "draft.apply_strategy":
@@ -2500,6 +2502,24 @@ def _complete_draft_turn(
                 head if head is not None and head.base_job_id == job.id else None,
                 client_state,
             )
+            undo_turn = kria_editor_undo.is_undo_bundle(arguments.operations)
+            if undo_turn and head is not None and head.source_execution_id is not None:
+                # KRI-1384: re-derived under the head lock; a hand edit, Save or turn that
+                # landed after planning takes the undo away (the compile then refuses).
+                undone = db.get(CreatorAgentExecution, head.source_execution_id)
+                kria_editor_undo.attach(
+                    editor_base.projected,
+                    kria_editor_undo.undo_point(
+                        head,
+                        undone.result if undone is not None else None,
+                        job=job,
+                        variant=variant,
+                        source=editor_base.source,
+                        prior=editor_base.prior_payload,
+                        client_state=client_state,
+                        client_protocol=client_protocol,
+                    ),
+                )
             from app.kria.editor_repair import verify_editor_repair, verify_editor_repair_ownership
 
             verify_editor_repair_ownership(planned, plan_row=plan_row, job=job, session=session)
@@ -2719,6 +2739,33 @@ def _complete_draft_turn(
                 changes=changes,
                 client_state_id=state_id,
             )
+            if (
+                not undo_turn
+                and planned.suggestion_pin is None
+                and isinstance(compiled.payload, EditorCommitRequest)
+            ):
+                # KRI-1384: what "undo that" puts back. A scoped turn keeps its section record
+                # for plan review either way; an unscoped one stores a record only when the
+                # undo it allows is exact. An undo turn stores none, so undo never chains.
+                sealed = kria_editor_undo.seal(
+                    restore_record
+                    if scoped_fields is not None
+                    else kria_editor_undo.chat_record(
+                        editor_payload_dump(compiled.payload),
+                        compiled.before,
+                        turn_id=str(turn.id),
+                        base_job_id=str(job.id),
+                        timeline_rebase=compiled.timeline_rebase,
+                        clip_bar_ids=frozenset(_clip_label_links(job, editor_base.projected)),
+                    ),
+                    job=job,
+                    saved=variant,
+                    prior=prior_payload,
+                    written=document.editor_payload or {},
+                    before=compiled.before,
+                    changes=changes,
+                )
+                restore_record = sealed if sealed is not None else restore_record
             snapshot, snapshot_hash = canonical_snapshot(document)
             if client_state is not None:
                 state_trace = {
@@ -3191,6 +3238,10 @@ def _complete_draft_turn(
                         reply_text = reply_from_diff(
                             phrases, notices=planned.policy_notices, notes=arguments.notes
                         )
+        if undo_turn:
+            # KRI-1384: the receipt names what the undo put back, never the model's guess.
+            reply_text = kria_editor_undo.undo_reply(compiled)
+            reply_lead, also_changed, receipt_reply = None, [], None
         if speed_notice:
             reply_text = f"{reply_text}\n{speed_notice}"
         if draft_research is not None and draft_research.ready:

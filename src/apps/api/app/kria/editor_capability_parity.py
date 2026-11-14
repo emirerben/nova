@@ -380,13 +380,15 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         fields=("orientation", "landscape_fit"),
     ),
     # --------------------------------------------------------------- history
-    "history": _g(
+    # KRI-1384: every chat edit turn stores its pre-edit lanes; undo_last_edit puts them back
+    # while the editor still holds what the turn wrote (app.services.kria_editor_undo), offered
+    # to app builds at chat_undo_min_client_protocol.
+    "history": _g("agent_ops", "undo", ("undo_last_edit",)),
+    "redo": _g(
         "agent_unsupported",
-        "undo redo",
-        reason="Chat undo needs the pre-edit lanes of the last chat turn. Only a flagged "
-        "plan-review update stores them (plan_review_before, KRI-442, behind "
-        "LIVE_PLAN_REVIEW_ENABLED); an ordinary chat turn stores none and the snapshot carries "
-        "no history_state, so undo_last_edit cannot compile. repeat_last_edit replays the web "
+        "redo",
+        reason="Redo after a chat undo is the editor's own redo stack; an undo turn stores no "
+        "restore record, so chat cannot redo or undo twice. repeat_last_edit replays the web "
         "client's local op log, which iPhone chat does not have.",
     ),
     # The creator's approval of a generated image stays native (the preview review). Chat places

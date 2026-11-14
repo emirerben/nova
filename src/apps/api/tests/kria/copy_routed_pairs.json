@@ -892,6 +892,31 @@
    "Gelecek videolarda {role} için gölge {state} olsun."
   ],
   [
+   "app/services/kria_editor_undo.py",
+   "I can't undo that from chat: the edit changed after my last change, or that change can't be put back exactly. Nothing was changed. Use Undo in the editor, or tell me what to change back.",
+   "Bunu sohbetten geri alamıyorum: son değişikliğimden sonra düzenleme değişti ya da o değişiklik tam olarak geri getirilemiyor. Hiçbir şey değişmedi. Editördeki Geri Al'ı kullan ya da neyi eski haline getireyim, söyle."
+  ],
+  [
+   "app/services/kria_editor_undo.py",
+   "I undid my last change ({what}). Save when you're happy with it.",
+   "Son değişikliğimi geri aldım ({what}). Memnun kaldığında kaydet."
+  ],
+  [
+   "app/services/kria_editor_undo.py",
+   "Undid: {what}",
+   "Geri alındı: {what}"
+  ],
+  [
+   "app/services/kria_editor_undo.py",
+   "Undo has to be its own request. Nothing was changed.",
+   "Geri alma ayrı bir istek olmalı. Hiçbir şey değişmedi."
+  ],
+  [
+   "app/services/kria_editor_undo.py",
+   "your last change",
+   "son değişikliğin"
+  ],
+  [
    "app/services/named_moments.py",
    "I showed you where each of my moments is.",
    "Anlarımın her birinin nerede olduğunu gösterdim."

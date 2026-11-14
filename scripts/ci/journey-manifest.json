@@ -3803,6 +3803,7 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_trim_and_move.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_generated_overlay_approval.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_history.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_history__revert.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_media_overlays.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_music.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_music__swap.json",

@@ -75,6 +75,7 @@ _PORTABLE_FAMILIES = {
     "clip",
     "color_moments",
     "effect",
+    "history",
     "music",
     "overlay",
     "sfx",
@@ -1029,6 +1030,10 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         # KRI-1394: the creator's own song, where the editor's Sounds tab offers it.
         if song_state(job, variant) is not None:
             families.append("user_song")
+    from app.services.kria_editor_undo import available as undo_available  # noqa: PLC0415
+
+    if undo_available(variant):
+        families.append("history")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
@@ -1810,6 +1815,9 @@ def build_editor_snapshot(
         "text_bars": text_bars,
         "total_duration_s": duration,
     }
+    if "history" in families:
+        # KRI-1384: only an undo the compile can do exactly; repeat stays the web's op log.
+        snapshot["history_state"] = {"can_undo_last_turn": True}
     if variant.get("resolved_archetype") in {"subtitled", "talking_head"}:
         # KRI-816: the recorded speech is the edit's primary track, so research
         # places sourced text only in its pauses (narrated/voiceover cues do not).
@@ -3518,6 +3526,10 @@ def compile_editor_ops(
     """
 
     _load_lane_handlers()
+    from app.services.kria_editor_undo import compile_undo, is_undo_bundle  # noqa: PLC0415
+
+    if is_undo_bundle(ops):
+        return compile_undo(job, variant, ops)
     preserve_text = preserve_text or any(op.get("preserve_text") is True for op in ops)
     if preserve_text:
         from app.agents.editor_ops_v2 import lane_specs

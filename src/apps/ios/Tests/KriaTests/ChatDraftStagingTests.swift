@@ -838,6 +838,73 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
     }
 
+    /// KRI-1384: chat "undo that" writes a newer head whose lane is back to the saved value. Server
+    /// rows placed by fractions carry `position: custom`, which the editor's clean document also spells.
+    private static func restoredHead(revision: Int) -> DraftSnapshot {
+        let rows = variant()["text_elements"]?.arrayValue ?? []
+        let published: JSONValue = .array(rows.map { row in
+            guard case var .object(object) = row else { return row }
+            object["position"] = .string("custom")
+            return .object(object)
+        })
+        return DraftSnapshot(draftID: "d\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision,
+            snapshotHash: "h\(revision)", etag: "e\(revision)", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
+                       "editor_payload": .object(["base_generation": .string("g1"), "text_elements": published,
+                                                  "sections": .object(["text_elements": published])])],
+            canUndo: true, createdAt: .now)
+    }
+
+    func testANewerChatHeadThatPutsALaneBackReachesTheLiveEditor() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        fake.draftSnapshot = Self.chatSnapshot(textOnly: true)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        fake.draftSnapshot = Self.restoredHead(revision: 4)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "hello", "the chat's undo reached the editor")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        session.undo()
+        XCTAssertEqual(session.document.textElements.first?.text, "changed", "the editor's Undo brings the chat edit back")
+        session.redo()
+        XCTAssertEqual(session.document.textElements.first?.text, "hello")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "hello", "the same head is not applied twice")
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testANewerChatHeadThatPutsALaneBackLeavesALaneTheCreatorEditedSinceAlone() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        fake.draftSnapshot = Self.chatSnapshot(textOnly: true)
+        await session.synchronizePromptRevision()
+        session.setTextStyle(id: "t1", style: "Inter")
+        fake.draftSnapshot = Self.restoredHead(revision: 4)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"))
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    private static func withoutNulls(_ value: JSONValue?) -> JSONValue? {
+        switch value {
+        case let .object(object): return .object(object.compactMapValues { withoutNulls($0) })
+        case let .array(array): return .array(array.compactMap { withoutNulls($0) })
+        case .some(.null), .none: return nil
+        default: return value
+        }
+    }
+
+    func testAnUntouchedStagedChatLaneIsSentBackAsTheHeadWroteIt() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let head = Self.chatSnapshot(textOnly: true)
+        fake.draftSnapshot = head
+        await session.synchronizePromptRevision()
+        let state = try XCTUnwrap(session.exportEditorState())
+        let lanes = try XCTUnwrap(Self.encoded(state)["lanes"]?.objectValue)
+        let written = Self.withoutNulls(head.snapshot["editor_payload"]?.objectValue?["text_elements"])
+        XCTAssertEqual(Self.withoutNulls(lanes["text_elements"]), written)
+    }
+
     /// Failure mode 26: a newer AI draft replacing an earlier staged AI lane is not "your edits were replaced".
     func testNewerAIDraftOverlappingAnEarlierStagedAILaneNeverClaimsTheCreatorsEditsWereReplaced() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())

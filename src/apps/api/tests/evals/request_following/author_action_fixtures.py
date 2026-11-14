@@ -248,6 +248,34 @@ def _speaker_take(variant: dict[str, Any]) -> None:
     variant["user_timeline"]["slots"][0]["speaker_subject"] = True
 
 
+def _after_chat_recolor(variant: dict[str, Any]) -> None:
+    """The editor right after a chat turn turned the title red, as the planner offers undo for it
+    (KRI-1384): the turn's restore record, and the staged state still holding what it wrote."""
+    from app.services import kria_editor_undo
+
+    before = copy.deepcopy(variant["text_elements"])
+    after = [{**row, "color": "#FF0000"} if row.get("id") == "title" else row for row in before]
+    variant["text_elements"] = after
+    record = kria_editor_undo.chat_record(
+        {"text_elements": after}, {"text_elements": before}, turn_id="chat-turn", base_job_id="job"
+    )
+    changes = ["Patch text style"]
+    record[kria_editor_undo.MARK] = {
+        "v": 1,
+        "changes": changes,
+        "order": {"text_elements": [row["id"] for row in before]},
+    }
+    kria_editor_undo.attach(
+        variant,
+        {
+            "turn_id": "chat-turn",
+            "record": record,
+            "current": {"text_elements": after},
+            "changes": changes,
+        },
+    )
+
+
 def _one_unused(variant: dict[str, Any]) -> None:
     variant["user_timeline"]["slots"].pop()
 
@@ -680,7 +708,19 @@ SCENARIOS: list[Scenario] = [
         "Undo that.",
         [{"op": "undo_last_edit"}],
         [{"op": "undo_last_edit"}],
-        note="Undo has no phone compile handler; expected to fail.",
+        note="Right after a chat turn turned the title red; the editor still holds it.",
+        plan_texts=(TITLE,),
+        variant=_after_chat_recolor,
+    ),
+    Scenario(
+        "history",
+        "Revert that, I liked it before.",
+        [{"op": "undo_last_edit"}],
+        [{"op": "undo_last_edit"}],
+        note="Revert phrasing of the same undo (KRI-1392 serves it as an in-place edit).",
+        suffix="revert",
+        plan_texts=(TITLE,),
+        variant=_after_chat_recolor,
     ),
 ]
 
@@ -987,7 +1027,14 @@ def build(scenario: Scenario) -> dict[str, Any]:
             except Exception as exc:  # noqa: BLE001 - the verdict is the message
                 probe["compiles"] = False
                 probe["compile_error"] = f"{type(exc).__name__}: {exc}"[:300]
-    return {"snapshot": snapshot, "probe": probe, "ops": parsed.ops, "compiled": compiled}
+    return {
+        "snapshot": snapshot,
+        "probe": probe,
+        "ops": parsed.ops,
+        "compiled": compiled,
+        "job": job,
+        "variant": variant,
+    }
 
 
 def fixture_for(scenario: Scenario, built: dict[str, Any]) -> dict[str, Any]:
