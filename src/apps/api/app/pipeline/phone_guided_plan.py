@@ -79,7 +79,18 @@ class UnsupportedPhonePlan(ValueError):
         self.reason = reason
 
 
-class UserSongPlanDeclined(UnsupportedPhonePlan):
+class _AuthoredForCreator(UnsupportedPhonePlan):
+    """An unsupported plan whose message is itself the copy the creator reads.
+
+    ``creator_detail`` is what a failure may show instead of the code's generic sentence.
+    """
+
+    @property
+    def creator_detail(self) -> str:
+        return str(self)
+
+
+class UserSongPlanDeclined(_AuthoredForCreator):
     """The creator's own song could not be planned into an edit (KRI-466).
 
     The message is creator-facing copy (what to do next), stored on the job's
@@ -87,7 +98,7 @@ class UserSongPlanDeclined(UnsupportedPhonePlan):
     """
 
 
-class SilentAudioPlanDeclined(UnsupportedPhonePlan):
+class SilentAudioPlanDeclined(_AuthoredForCreator):
     """The talking take has no sound at all (KRI-653).
 
     A dead microphone records a valid audio track of zeros; captions and a speech cut over it

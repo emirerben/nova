@@ -825,6 +825,12 @@ def test_a_song_plan_decline_shows_its_own_detail_and_asks_the_user() -> None:
     job.assembly_plan = {"variants": [{"variant_id": VARIANT}]}
     job.failure_reason = "user_song_plan_declined"
     job.error_detail = "Your song was replaced after this edit was approved. Ask for it again."
+    # The decline's own message is stamped as creator-facing by the worker (`_fail_job`); the
+    # raw `error_detail` alone is never shown (KRI-1456).
+    job.assembly_plan["creator_failure_detail"] = {
+        "failure_reason": "user_song_plan_declined",
+        "text": job.error_detail,
+    }
     _, execution, events = _observe(job, {})
     assert execution.error["code"] == "user_song_plan_declined"
     assert execution.error["recovery"] == "ask_user"

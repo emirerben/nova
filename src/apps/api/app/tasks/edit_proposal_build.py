@@ -2760,7 +2760,7 @@ def _run_draft_attempt(
                     if isinstance(exc, SemanticPlanningError)
                     else job_failure_message("creation_text_timeout")
                     if isinstance(exc, CreationTextTimeoutError)
-                    else job_failure_message("creation_text_failed")
+                    else job_failure_message("creation_text_failed", exc.creator_detail)
                     if isinstance(exc, CreationTextCompositionError)
                     else "Kria couldn't plan this edit. Try again.",
                     retryable=exc.retryable if isinstance(exc, SemanticPlanningError) else True,
