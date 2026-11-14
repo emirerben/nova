@@ -177,6 +177,8 @@ class JourneyRegistryTests(unittest.TestCase):
         spellings = {
             "annotated": 'import pytest\n\npytestmark: list = [pytest.mark.journey("alpha")]\n',
             "bare_mark": 'from pytest import mark\n\npytestmark = mark.journey("alpha")\n',
+            "aliased_mark": 'from pytest import mark as m\n\npytestmark = m.journey("alpha")\n',
+            "aliased_module": 'import pytest as pt\n\npytestmark = pt.mark.journey("alpha")\n',
             "combined": 'import pytest\n\npytestmark = [pytest.mark.slow, pytest.mark.journey("alpha")]\n',
         }
         for name, text in spellings.items():
@@ -202,6 +204,13 @@ class JourneyRegistryTests(unittest.TestCase):
                     any("module-level" in problem for problem in self.tree.check())
                 )
                 (self.tree.root / path).unlink()
+
+    def test_a_marker_on_a_named_node_journey_is_refused(self):
+        rows = json.loads(self.tree.manifest.read_text())
+        rows["journeys"][0]["api_tests"] = "tests/kria/test_listed.py::test_it"
+        self.tree.manifest.write_text(json.dumps(rows))
+        problems = self.tree.check()
+        self.assertTrue(any("api-cases" in problem for problem in problems), problems)
 
     def test_other_hand_lists_fail_check_on_a_rename_and_sync_follows_it(self):
         self.tree.write("Makefile", "t:\n\tpytest tests/kria/test_listed.py::test_it\n")
@@ -348,15 +357,19 @@ class JourneyRegistryTests(unittest.TestCase):
         self.assertTrue(problems)
         self.assertFalse(any("make sync-test-registries" in p for p in problems))
 
-    def test_a_trigger_path_may_be_a_filename_prefix(self):
+    def test_a_trigger_path_must_select_what_the_selector_would_match(self):
         self.tree.write(f"{registry.API}/app/alpha_two.py", "")
         rows = json.loads(self.tree.manifest.read_text())
-        rows["journeys"][0]["paths"] = [f"{registry.API}/app/alpha_"]
-        self.tree.manifest.write_text(json.dumps(rows))
-        self.assertEqual(self.tree.check(), [])
-        rows["journeys"][0]["paths"] = [f"{registry.API}/app/omega_"]
-        self.tree.manifest.write_text(json.dumps(rows))
-        self.assertTrue(any("matches no file" in p for p in self.tree.check()))
+        for dead in (f"{registry.API}/app/alpha_", f"{registry.API}/app"):
+            rows["journeys"][0]["paths"] = [dead]
+            self.tree.manifest.write_text(json.dumps(rows))
+            self.assertTrue(
+                any("matches no file" in p for p in self.tree.check()), dead
+            )
+        for live in (f"{registry.API}/app/alpha_two.py", f"{registry.API}/app/"):
+            rows["journeys"][0]["paths"] = [live]
+            self.tree.manifest.write_text(json.dumps(rows))
+            self.assertEqual(self.tree.check(), [], live)
 
 
 if __name__ == "__main__":

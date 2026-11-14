@@ -129,8 +129,10 @@ renamed test needs no registry edit. CI self-tests assert properties of a step
 without a marker and `xctests` stay in the manifest. A journey that `ci.yml`
 runs through `journey_registry.py tests <id>` (clip speed, camera-roll
 recommendations, the plaza title, recovery) takes a marker the same way. A
-trigger path may be a filename prefix (`.../SplitScreen`), so a new test file
-with that prefix selects its journey with no edit.
+trigger path is one file or a directory ending in `/`, the rule
+`select-tests.py` applies (`journey_registry.matches_journey_path`); `check`
+fails a path that selects nothing, so a new test file is added to `paths` by
+hand to trigger its journey.
 
 `make check-test-registries` (also a `scripts/ci` unit test and
 `preship-check.sh`) fails on a manifest path, test or `xctests` entry that does
