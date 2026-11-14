@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.200.0] - 2026-11-14
+
+### Changed
+- feat(kria): the chat copilot on typed tool calls, and Gemini vs Sol vs Sonnet on them (KRI-1393, KRI-797) (#2319) <!-- release-pr: 2319 -->
+
 ## [0.88.199.0] - 2026-11-14
 
 ### Fixed
