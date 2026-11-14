@@ -31,12 +31,19 @@ from app.agents.edit_copilot import (
     EditCopilotOutput,
     _font_catalog,
     _format_snapshot,
+    _not_applied,
 )
 from app.kria.brief import BriefRequirement
 from app.kria.text_sequence import is_text_sequence
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.research import PreparedResearch
 from app.schemas.text_composition import ResearchLayerShape, TextCompositionProgram
+from app.services.creation_text_degrade import (
+    TextDrop,
+    degrade_text_ops,
+    literal_ops,
+    shrink,
+)
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
 log = structlog.get_logger()
@@ -249,7 +256,21 @@ class CreationTextComposer(EditCopilotAgent):
 
 
 class CreationTextCompositionError(ValueError):
-    pass
+    """A text gate's rejection. ``reason`` names the gate (``creation_text_degrade``): a typed
+    rejection about one item may be degraded; ``None`` always fails the render."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+        item_id: str | None = None,
+        op_index: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.item_id = item_id
+        self.op_index = op_index
 
 
 class CreationTextTimeoutError(CreationTextCompositionError):
@@ -383,7 +404,11 @@ def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
             )
             actual = ordered[-1]["text"] if cumulative else " ".join(row["text"] for row in ordered)
             if _copy_key(actual) != _copy_key(expected):
-                raise CreationTextCompositionError("Text composition changed confirmed copy")
+                raise CreationTextCompositionError(
+                    "Text composition changed confirmed copy",
+                    reason="copy_changed",
+                    item_id=source_id,
+                )
             continue
         moved = next(
             (
@@ -394,7 +419,9 @@ def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
             None,
         )
         if moved is None:
-            raise CreationTextCompositionError("Text composition changed confirmed copy")
+            raise CreationTextCompositionError(
+                "Text composition changed confirmed copy", reason="copy_changed", item_id=source_id
+            )
         movable.remove(moved)
 
 
@@ -423,7 +450,9 @@ def _check_added_text(
     if any(
         op.get("op") == "add_text" and not isinstance(op.get("research"), dict) for op in operations
     ):
-        raise CreationTextCompositionError("Text composition added unrequested text")
+        raise CreationTextCompositionError(
+            "Text composition added unrequested text", reason="unasked_text"
+        )
 
 
 def _ask_words(text: str) -> tuple[str, ...]:
@@ -766,11 +795,14 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     if program.base_digest != _digest(texts, slots):
         raise CreationTextCompositionError("Text composition no longer matches its base timeline")
     if any(op.get("op") not in _TEXT_OPS for op in [*program.operations, *program.then]):
-        raise CreationTextCompositionError("Text composition contains a non-text operation")
+        raise CreationTextCompositionError(
+            "Text composition contains a non-text operation", reason="replay_failed"
+        )
     writing = sorted({str(op.get("op")) for op in program.then} & _WRITING_OPS)
     if writing and any(shape.source == "research" for shape in program.research_layers):
         raise CreationTextCompositionError(
-            "Researched text can only be shaped, not written again: " + ", ".join(writing)
+            "Researched text can only be shaped, not written again: " + ", ".join(writing),
+            reason="copy_changed",
         )
     if not program.operations:
         if program.then:
@@ -846,7 +878,9 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         lane_before = {row["id"]: row for row in texts if is_caption_text_bar(row)}
         lane_after = {row.get("id"): row for row in state.text if is_caption_text_bar(row)}
         if lane_before != lane_after:
-            raise CreationTextCompositionError("Text composition cannot change the caption lane")
+            raise CreationTextCompositionError(
+                "Text composition cannot change the caption lane", reason="replay_failed"
+            )
         total = max((float(x.get("output_end_s") or 0) for x in slots), default=0)
         rows = []
         ids = set()
@@ -859,7 +893,9 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     except CreationTextCompositionError:
         raise
     except (ValueError, TypeError, KeyError) as exc:
-        raise CreationTextCompositionError(f"Text composition could not compile: {exc}") from exc
+        raise CreationTextCompositionError(
+            f"Text composition could not compile: {exc}", reason="replay_failed"
+        ) from exc
     rows = apply_text_look(rows, program.text_look)
     result = copy.deepcopy(plan)
     result["text_elements"] = rows
@@ -1003,11 +1039,15 @@ def _to_full_bar_indexes(ops: list[dict], texts: list[dict]) -> list[dict]:
 
     def full(value: Any) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(visible):
-            raise CreationTextCompositionError("Text composition addressed an unknown text bar")
+            raise CreationTextCompositionError(
+                "Text composition addressed an unknown text bar",
+                reason="replay_failed",
+                op_index=index,
+            )
         return visible[value]
 
     out: list[dict] = []
-    for op in ops:
+    for index, op in enumerate(ops):
         rewritten = dict(op)
         if "bar_index" in rewritten:
             rewritten["bar_index"] = full(rewritten["bar_index"])
@@ -1051,40 +1091,57 @@ def _song_caption_lane(snapshot: EditProposalSnapshot) -> dict[str, Any] | None:
 
 
 def _writer_editorial_plan(snapshot: EditProposalSnapshot, slots: list[dict]) -> dict | None:
+    """The approved story beats with their output windows. A beat none of whose clips the cut
+    plays has no window to write in: it is left out here, and ``_check_editorial_text`` says
+    so."""
     if snapshot.editorial_plan is None:
         return None
     result = snapshot.editorial_plan.model_dump(mode="json")
+    placed = []
     for beat in result["beats"]:
         windows = [row for row in slots if row.get("media_id") in beat["media_ids"]]
         if not windows:
-            raise CreationTextCompositionError("An editorial beat has no footage")
+            continue
+        placed.append(beat)
         beat["output_start_s"] = min(float(row["output_start_s"]) for row in windows)
         beat["output_end_s"] = max(float(row["output_end_s"]) for row in windows)
         beat["reading_time_rule"] = (
             "Text duration must be at least min(3.0, max(1.2, 0.8 + 0.06 * character_count)) "
             "seconds, entirely inside this beat. Shorten the copy to fit."
         )
-    return result
+    return {**result, "beats": placed}
 
 
-def _check_editorial_text(snapshot: EditProposalSnapshot, plan: dict) -> None:
+def _check_editorial_text(snapshot: EditProposalSnapshot, plan: dict) -> list[TextDrop]:
     """A requested explanation cannot disappear into a title-only successful render.
 
     This checks presence, placement and reading time, not factual correctness. The
     footage-grounded writer and the human review still own the meaning of the copy.
+    A beat whose clips the cut does not play, or that got no readable explanation, renders
+    without one and is returned as a drop (KRI-1376); only a story with no explanation left
+    at all fails.
     """
     if snapshot.editorial_plan is None:
-        return
+        return []
     from app.pipeline.unified_montage import min_display_s
 
-    for beat in snapshot.editorial_plan.beats:
-        if not beat.text_goal:
-            continue
+    goals = [
+        (index, beat) for index, beat in enumerate(snapshot.editorial_plan.beats) if beat.text_goal
+    ]
+    unmet: list[CreationTextCompositionError] = []
+    for index, beat in goals:
         windows = [
             row for row in plan.get("story_timeline", []) if row.get("media_id") in beat.media_ids
         ]
         if not windows:
-            raise CreationTextCompositionError("An explanatory beat has no footage")
+            unmet.append(
+                CreationTextCompositionError(
+                    "An explanatory beat has no footage",
+                    reason="editorial_unmet",
+                    item_id=f"beat-{index}",
+                )
+            )
+            continue
         start = min(float(row["output_start_s"]) for row in windows)
         end = max(float(row["output_end_s"]) for row in windows)
         explanation = [
@@ -1099,9 +1156,16 @@ def _check_editorial_text(snapshot: EditProposalSnapshot, plan: dict) -> None:
             >= min_display_s(len(str(row["text"]))) - 1 / 30
         ]
         if not explanation:
-            raise CreationTextCompositionError(
-                "Text composition omitted readable explanatory text for: " + beat.purpose
+            unmet.append(
+                CreationTextCompositionError(
+                    "Text composition omitted readable explanatory text for: " + beat.purpose,
+                    reason="editorial_unmet",
+                    item_id=f"beat-{index}",
+                )
             )
+    if unmet and len(unmet) == len(goals):
+        raise unmet[0]
+    return [shrink(error) for error in unmet]
 
 
 def creation_model_snapshot(
@@ -1228,10 +1292,15 @@ def compose_creation_text(
     copy_constraints: Mapping[str, str] | None = None,
     text_requirements: Sequence[BriefRequirement] | None = None,
     prepared_research: PreparedResearch | None = None,
+    drops: list[TextDrop] | None = None,
 ) -> EditProposalSnapshot:
-    """Compose the initial text lane, then make sure a requested animation is on it."""
+    """Compose the initial text lane, then make sure a requested animation is on it.
+
+    ``drops`` collects what the text pass left out or did only in part (KRI-1376); the caller
+    puts their notes on its own channel (the approval card, or the render's repair notes).
+    """
     look = _requested_look(text_requirements)
-    composed = _compose_creation_text(
+    composed, dropped = _compose_creation_text(
         snapshot,
         creator_request=creator_request,
         ctx=ctx,
@@ -1240,6 +1309,14 @@ def compose_creation_text(
         prepared_research=prepared_research,
         research_look=look,
     )
+    if drops is not None:
+        drops.extend(dropped)
+    if dropped:
+        log.info(
+            "creation_text_degraded",
+            job_id=getattr(ctx, "job_id", None),
+            drops=[drop.event() for drop in dropped],
+        )
     return _ensure_text_look(_drop_unused_story_seeds(composed), look)
 
 
@@ -1611,9 +1688,17 @@ def uncovered_layer_asks(
     layers: Sequence[Any], requirements: Sequence[BriefRequirement] | None
 ) -> list[str]:
     """Live text asks with a requested position that no researched layer fills."""
+    return [
+        req.description or req.id for req in _uncovered_layer_requirements(layers, requirements)
+    ]
+
+
+def _uncovered_layer_requirements(
+    layers: Sequence[Any], requirements: Sequence[BriefRequirement] | None
+) -> list[BriefRequirement]:
     positions = {layer.position for layer in layers}
     return [
-        req.description or req.id
+        req
         for req in requirements or ()
         if req.live
         and (req.kind == "text" or is_text_sequence(req))
@@ -1636,7 +1721,14 @@ def _compose_from_research(
     constraints: Mapping[str, str],
     text_requirements: Sequence[BriefRequirement] | None,
     ctx: RunContext | None,
-) -> tuple[EditCopilotOutput, list[dict], dict[str, str], list[ResearchLayerShape]]:
+) -> tuple[
+    EditCopilotOutput,
+    list[dict],
+    list[dict],
+    dict[str, str],
+    list[ResearchLayerShape],
+    list[TextDrop],
+]:
     """Reviewed research writes the words; the text composer only shapes them.
 
     The layers are either ``approved`` before render (KRI-881: replayed by
@@ -1647,8 +1739,11 @@ def _compose_from_research(
     binds a bar already in its snapshot), so the composer shapes the bars in the program's
     ``then`` bundle, with them held as confirmed copy and no way to add or reword text. Returns
     the shaping answer with the layers' ops as ``ops`` (full lane, after ``pinned_ops``), the
-    ``then`` ops, the researched bars' copy constraints, and the layer shapes the program
-    records so every replay keeps them as reviewed.
+    ``then`` ops as the composer wrote them, the full lane it shaped (with the layers), the
+    researched bars' copy constraints, the layer shapes the program
+    records so every replay keeps them as reviewed, and one ``incomplete`` drop per asked
+    layer no reviewed layer fills. A layer the writer reported unmet stays a failure: the
+    writer's answer then skipped the evidence checks and the claim review.
     """
     from app.services.researched_text import (  # noqa: PLC0415
         ResearchUnavailable,
@@ -1686,11 +1781,22 @@ def _compose_from_research(
             )
     except ResearchUnavailable as exc:
         raise CreationTextCompositionError(str(exc)) from exc
-    uncovered = uncovered_layer_asks(layers, text_requirements)
-    if uncovered:
+    uncovered = _uncovered_layer_requirements(layers, text_requirements)
+    if uncovered and not layers:
         raise CreationTextCompositionError(
-            "Text composition is incomplete: no researched text for " + "; ".join(uncovered)
+            "Text composition is incomplete: no researched text for "
+            + "; ".join(req.description or req.id for req in uncovered)
         )
+    # KRI-1376: the reviewed layers render, and the note names each asked layer they miss.
+    drops = [
+        shrink(
+            CreationTextCompositionError(
+                "Text composition is incomplete: no researched text", reason="incomplete"
+            ),
+            text=req.description or None,
+        )
+        for req in uncovered
+    ]
     known = {row.get("id") for row in lane}
     written_lane = replay_text_composition(
         plan, TextCompositionProgram(base_digest=base_digest, operations=[*pinned_ops, *first])
@@ -1713,24 +1819,18 @@ def _compose_from_research(
     )
     if shaped.research_request is not None:
         raise CreationTextCompositionError("The text pass asked to research again")
-    second = (
-        _to_full_bar_indexes(shaped.ops, written_lane)
-        if "caption_lane" in shaping_snapshot
-        else shaped.ops
-    )
     shapes = _layer_shapes(layer_rows, layers, text_requirements)
-    # Replay checks the shapes (`_check_research_layers`): the same rule a saved program meets.
-    replay_text_composition(
-        plan,
-        TextCompositionProgram(
-            base_digest=base_digest,
-            operations=[*pinned_ops, *first],
-            then=second,
-            copy_constraints={**constraints, **researched},
-            research_layers=shapes,
-        ),
+    # The caller maps the indexes and replays the shapes (`_check_research_layers`) per
+    # candidate, the same rules a saved program meets, so one bad shaping op is dropped alone
+    # (KRI-1376).
+    return (
+        shaped.model_copy(update={"ops": first}),
+        shaped.ops,
+        written_lane,
+        researched,
+        shapes,
+        drops,
     )
-    return shaped.model_copy(update={"ops": first}), second, researched, shapes
 
 
 _WRITING_OPS = frozenset({"add_text", "rewrite_text", "edit_text"})
@@ -1780,10 +1880,14 @@ def _check_research_layers(rows: list[dict], program: TextCompositionProgram) ->
     for shape, pieces in zip(shapes, shown, strict=True):
         name = _layer_name(shape)
         if not pieces:
-            raise CreationTextCompositionError(f"{name} is missing")
+            raise CreationTextCompositionError(
+                f"{name} is missing", reason="research_missing", item_id=shape.bar_id
+            )
         if shape.position and any(piece.get("position") != shape.position for piece in pieces):
             raise CreationTextCompositionError(
-                f"{name} moved off its requested {shape.position} place"
+                f"{name} moved off its requested {shape.position} place",
+                reason="layer_shape",
+                item_id=shape.bar_id,
             )
         if any(
             piece["start_s"] < shape.start_s - _FRAME_S or piece["end_s"] > shape.end_s + _FRAME_S
@@ -1792,7 +1896,9 @@ def _check_research_layers(rows: list[dict], program: TextCompositionProgram) ->
             window = "reviewed" if shape.source == "research" else "approved"
             raise CreationTextCompositionError(
                 f"{name} was moved outside its {window} "
-                f"{shape.start_s:.1f}-{shape.end_s:.1f} s window"
+                f"{shape.start_s:.1f}-{shape.end_s:.1f} s window",
+                reason="layer_shape",
+                item_id=shape.bar_id,
             )
     for index, (shape, pieces) in enumerate(zip(shapes, shown, strict=True)):
         partner = shape.together_with
@@ -1813,14 +1919,18 @@ def _check_research_layers(rows: list[dict], program: TextCompositionProgram) ->
                     else _layer_name(shape)
                 )
                 raise CreationTextCompositionError(
-                    f"{what} is not on screen together with {_layer_name(shapes[partner]).lower()}"
+                    f"{what} is not on screen together with {_layer_name(shapes[partner]).lower()}",
+                    reason="layer_shape",
+                    item_id=shape.bar_id,
                 )
         if shape.unit is None:
             continue
         lead = _layer_name(shape, lead=False)
         if len(pieces) < 2:
             raise CreationTextCompositionError(
-                f"Text composition is incomplete: {lead} is not shown a piece at a time"
+                f"Text composition is incomplete: {lead} is not shown a piece at a time",
+                reason="layer_shape",
+                item_id=shape.bar_id,
             )
         if shape.unit == "word":
             counts = [len(piece["text"].split()) for piece in pieces]
@@ -1830,7 +1940,9 @@ def _check_research_layers(rows: list[dict], program: TextCompositionProgram) ->
             )
             if counts != (list(range(1, len(pieces) + 1)) if builds_up else [1] * len(pieces)):
                 raise CreationTextCompositionError(
-                    f"Text composition is incomplete: {lead} is not shown one word at a time"
+                    f"Text composition is incomplete: {lead} is not shown one word at a time",
+                    reason="layer_shape",
+                    item_id=shape.bar_id,
                 )
 
 
@@ -1853,8 +1965,8 @@ def _compose_creation_text(
     text_requirements: Sequence[BriefRequirement] | None = None,
     prepared_research: PreparedResearch | None = None,
     research_look: Any = None,
-) -> EditProposalSnapshot:
-    """Compose the initial text lane of a planned draft.
+) -> tuple[EditProposalSnapshot, list[TextDrop]]:
+    """Compose the initial text lane of a planned draft, and what it left out (KRI-1376).
 
     ``prepared_research`` (KRI-881) is the sourced wording the creator approved with its
     citations. It is replayed onto the same clips without any search or rewrite, and the
@@ -1886,7 +1998,7 @@ def _compose_creation_text(
         ]
         _check_added_text([*seeds_kept_out, *program.then], text_requirements)
         plan = compile_proposal_execution_plan(snapshot)
-        _check_editorial_text(snapshot, plan)
+        unexplained = _check_editorial_text(snapshot, plan)
         constraints = dict(copy_constraints or {})
         if text_requirements is not None:
             constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
@@ -1904,10 +2016,9 @@ def _compose_creation_text(
                     )
                 }
             )
-        return snapshot
+        return snapshot, unexplained
     if not creator_request.strip() and pinned_research is None and approved_layers is None:
-        _check_editorial_text(snapshot, compile_proposal_execution_plan(snapshot))
-        return snapshot
+        return snapshot, _check_editorial_text(snapshot, compile_proposal_execution_plan(snapshot))
     if len(creator_request) > 12000:
         raise CreationTextCompositionError("Text composition needs the complete creator request")
     plan = compile_proposal_execution_plan(snapshot)
@@ -1967,7 +2078,7 @@ def _compose_creation_text(
                         base_digest=_digest(texts, slots), copy_constraints=constraints
                     )
                 }
-            )
+            ), []
     if pinned_research is not None:
         # KRI-881: the creator approved these sourced explanations with their citations.
         # They are replayed first, never searched or written again, and protected from the
@@ -2049,7 +2160,9 @@ def _compose_creation_text(
         output = _run_composer(composer_input, slots=slots, bar_count=len(model_texts), ctx=ctx)
     full_lane_ops = False
     then: list[dict] = []
+    shaping_lane: list[dict] = []
     shapes: list[ResearchLayerShape] = []
+    drops: list[TextDrop] = []
     owned = (
         _server_timed_sequences(texts_for_model, text_requirements)
         if approved_layers is None
@@ -2071,7 +2184,7 @@ def _compose_creation_text(
         and pinned_research is None
         and research_needs_text_layers(text_requirements)
     ):
-        output, then, researched, shapes = _compose_from_research(
+        output, then, shaping_lane, researched, shapes, uncovered = _compose_from_research(
             output.research_request,
             approved=approved_layers,
             snapshot=snapshot,
@@ -2086,6 +2199,7 @@ def _compose_creation_text(
             ctx=ctx,
         )
         constraints = {**constraints, **researched}
+        drops.extend(uncovered)
         full_lane_ops = True
     elif output.research_request is not None and pinned_research is not None:
         # The creator approved this research before render: it is never searched again.
@@ -2114,6 +2228,7 @@ def _compose_creation_text(
             )
         except ResearchUnavailable as exc:
             raise CreationTextCompositionError(str(exc)) from exc
+    unmet: CreationTextCompositionError | None = None
     if (
         output.needs_clarification
         or output.unmet_requests
@@ -2124,42 +2239,23 @@ def _compose_creation_text(
         details = "; ".join(
             str(row.get("reason", "")) for row in output.unmet_requests if row.get("reason")
         )
-        raise CreationTextCompositionError(
-            "Text composition is incomplete: " + (details or output.reply)
+        # KRI-1376 (KRI-129): the creator approved this draft, so what the composer could do
+        # renders and the note says the rest could not. Raised only if no asked text is left.
+        unmet = CreationTextCompositionError(
+            "Text composition is incomplete: " + (details or output.reply), reason="incomplete"
         )
-    operations = output.ops
+        drops.append(shrink(unmet, **_unmet_ask(output)))
+        log.info(
+            "creation_text_incomplete_rendered",
+            job_id=getattr(ctx, "job_id", None),
+            intent=output.intent,
+            unmet=len(output.unmet_requests),
+            ops=len(output.ops),
+        )
     from app.config import settings  # noqa: PLC0415
 
     asked_only = settings.text_composer_asked_only_enabled
-    if not asked_only:
-        _check_added_text([*operations, *then], text_requirements)
-    if caption_lane is not None and not full_lane_ops:
-        operations = _to_full_bar_indexes(operations, texts_for_model)
-    if asked_only:
-        operations = _drop_unasked_added_text(
-            operations,
-            text_requirements,
-            plan=plan,
-            texts=texts,
-            slots=slots,
-            pinned_ops=pinned_ops,
-            snapshot=snapshot,
-            ctx=ctx,
-            shaped_after_pins=bool(seeded) and not full_lane_ops,
-        )
-    if owned and not full_lane_ops:
-        operations, styles = _without_owned_sequences(operations, {item.bar_id for item in owned})
-        total = max((float(row.get("output_end_s") or 0) for row in slots), default=0.0)
-        operations = [
-            *operations,
-            *_server_sequence_ops(owned, _shared_span(owned, total), styles),
-        ]
-    if seeded and not full_lane_ops:
-        # The composer shaped bars the first bundle adds; a later bundle's selectors bind them.
-        then, operations = operations, list(pinned_ops)
-    else:
-        # The composer addressed the lane with the approved research already in place.
-        operations = [*pinned_ops, *operations]
+    total = max((float(row.get("output_end_s") or 0) for row in slots), default=0.0)
     if seeded:
         shapes = [
             *shapes,
@@ -2167,15 +2263,82 @@ def _compose_creation_text(
                 texts_for_model, text_requirements, slots, offset=len(shapes)
             ),
         ]
-    program = TextCompositionProgram(
-        base_digest=_digest(texts, slots),
-        operations=operations,
-        then=then,
-        research_layers=shapes,
-        copy_constraints=constraints,
+    # Reviewed research layers are fixed; only the composer's own ops may be dropped.
+    fixed_ops = list(output.ops) if full_lane_ops else []
+    composer_ops = then if full_lane_ops else list(output.ops)
+
+    def program_for(ops: list[dict]) -> tuple[TextCompositionProgram, dict]:
+        operations, shaped = (list(fixed_ops), list(ops)) if full_lane_ops else (list(ops), [])
+        if not asked_only:
+            _check_added_text([*operations, *shaped], text_requirements)
+        if caption_lane is not None and full_lane_ops:
+            shaped = _to_full_bar_indexes(shaped, shaping_lane)
+        elif caption_lane is not None:
+            operations = _to_full_bar_indexes(operations, texts_for_model)
+        if asked_only:
+            operations = _drop_unasked_added_text(
+                operations,
+                text_requirements,
+                plan=plan,
+                texts=texts,
+                slots=slots,
+                pinned_ops=pinned_ops,
+                snapshot=snapshot,
+                ctx=ctx,
+                shaped_after_pins=bool(seeded) and not full_lane_ops,
+            )
+        if owned and not full_lane_ops:
+            operations, styles = _without_owned_sequences(
+                operations, {item.bar_id for item in owned}
+            )
+            operations = [
+                *operations,
+                *_server_sequence_ops(owned, _shared_span(owned, total), styles),
+            ]
+        if seeded and not full_lane_ops:
+            # The composer shaped bars the first bundle adds; a later bundle's selectors bind them.
+            shaped, operations = operations, list(pinned_ops)
+        else:
+            # The composer addressed the lane with the approved research already in place.
+            operations = [*pinned_ops, *operations]
+        program = TextCompositionProgram(
+            base_digest=_digest(texts, slots),
+            operations=operations,
+            then=shaped,
+            research_layers=shapes,
+            copy_constraints=constraints,
+        )
+        return program, replay_text_composition(plan, program)
+
+    degraded = degrade_text_ops(
+        composer_ops,
+        program_for,
+        # The rows the composer's own ops address, as it saw them (caption rows hidden).
+        lane=(
+            [row for row in shaping_lane if caption_lane is None or not is_caption_text_bar(row)]
+            if full_lane_ops
+            else model_texts
+        ),
+        protected=literal_ops(text_requirements),
+        text_asked=_may_own_added_text(text_requirements),
     )
-    composed = replay_text_composition(plan, program)
-    _check_editorial_text(snapshot, composed)
+    program, composed = degraded.result
+    if (
+        unmet is not None
+        and not degraded.ops
+        and (
+            output.rejection_reasons
+            or (
+                text_requirements is not None and not _meets_a_text_ask(composed, text_requirements)
+            )
+        )
+    ):
+        # Nothing the composer wrote renders, and it refused its whole answer or none of her
+        # text asks is on screen: the pass failed as a whole, not in one part. Without a brief
+        # (the draft's dry run) only a refused answer is known to be whole.
+        raise unmet
+    drops.extend(degraded.drops)
+    drops.extend(_check_editorial_text(snapshot, composed))
     if text_requirements:
         from app.kria.brief_checks import (  # noqa: PLC0415
             check_requirement,
@@ -2192,12 +2355,142 @@ def _compose_creation_text(
             )
         ]
         final_facts = plan_facts_from_editor_payload(composed)
-        if any(
-            check_requirement(req, final_facts).status != "met" for req in hierarchy_requirements
-        ):
-            raise CreationTextCompositionError(
-                "Text composition did not satisfy the requested hierarchy"
+        for req in hierarchy_requirements:
+            if check_requirement(req, final_facts).status == "met":
+                continue
+            drops.append(
+                shrink(
+                    CreationTextCompositionError(
+                        "Text composition did not satisfy the requested hierarchy",
+                        reason="hierarchy_unmet",
+                    ),
+                    text=req.literal or None,
+                    action=(
+                        "dropped"
+                        if req.literal and not _literal_shown(composed, req.literal)
+                        else "shrunk"
+                    ),
+                )
             )
-    if not operations and not constraints:
-        return snapshot
-    return snapshot.model_copy(update={"text_composition": program})
+    if drops and not _shows_asked_text(composed, text_requirements):
+        raise (
+            unmet
+            or degraded.cause
+            or CreationTextCompositionError(
+                "Text composition left none of the requested text on screen", reason="incomplete"
+            )
+        )
+    if not program.operations and not constraints:
+        return snapshot, drops
+    return snapshot.model_copy(update={"text_composition": program}), drops
+
+
+def _unmet_ask(output: EditCopilotOutput) -> dict[str, Any]:
+    """What the ``incomplete`` note names: her first unmet ask in her words, or that only ops
+    the parser refused are missing.
+
+    The parser appends one entry per refused op after the composer's own (KRI-1386), worded as
+    an action on that op's target ("change the text"), never as her ask.
+    """
+    refused = {_not_applied(item)[0]["request"] for item in output.not_applied}
+    for row in output.unmet_requests:
+        request = str(row.get("request") or "").strip()
+        if request in refused:
+            break
+        if request:
+            return {"text": request}
+    clarifying = output.needs_clarification or output.intent not in {"edit", "describe"}
+    return {"asked": bool(clarifying or not output.not_applied)}
+
+
+def _text_asks(requirements: Sequence[BriefRequirement] | None) -> list[BriefRequirement]:
+    return [
+        req
+        for req in requirements or ()
+        if req.live and (req.kind == "text" or is_text_sequence(req))
+    ]
+
+
+def _may_own_added_text(requirements: Sequence[BriefRequirement] | None) -> bool:
+    """Whether an added line the gates call unasked may still be one the creator asked for.
+
+    Only a text ask that describes its words ("the same but for the English translation",
+    prod 3c312af4) can own a line it does not spell; a line holding a literal is never dropped
+    (``literal_ops``). Unknown asks (no brief) count as asked, so a drop is said, not hidden.
+    """
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    return requirements is None or any(
+        not fold_text(req.literal or "") for req in _text_asks(requirements)
+    )
+
+
+def _meets_a_text_ask(plan: dict, requirements: Sequence[BriefRequirement] | None) -> bool:
+    """Whether her own words for one live text ask are on screen: her literal as whole visible
+    rows in screen order (``_literal_shown``), or her sequence shown piece by piece
+    (``text_sequence_shown``). A described ask has no words to find and is never counted.
+    """
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    asks = [req for req in _text_asks(requirements) if fold_text(req.literal or "")]
+    if not asks:
+        return False
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        plan_facts_from_editor_payload,
+        text_sequence_shown,
+    )
+
+    facts = plan_facts_from_editor_payload(plan)
+    return any(
+        text_sequence_shown(req, facts)
+        if is_text_sequence(req)
+        else _literal_shown(plan, req.literal or "")
+        for req in asks
+    )
+
+
+def _literal_shown(plan: dict, literal: str) -> bool:
+    """Whether ``literal`` reads word for word as one visible row, or as consecutive whole rows
+    in screen order (the stacked lines the planner split it into, prod d6c58d7b). A match that
+    starts or ends inside a row is another line's words, not hers.
+    """
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    rows = [
+        text
+        for _start, _index, text in sorted(
+            (_screen_start(row), index, str(row.get("text") or ""))
+            for index, row in enumerate(plan.get("text_elements") or [])
+            if not row.get("removed") and not is_caption_text_bar(row)
+        )
+    ]
+    words = _ask_words(literal)
+    if not words:
+        return fold_text(literal) in {fold_text(text) for text in rows}
+    lines = [_ask_words(text) for text in rows]
+    for first in range(len(lines)):
+        read: tuple[str, ...] = ()
+        for line in lines[first:]:
+            read += line
+            if len(read) >= len(words):
+                break
+        if read == words:
+            return True
+    return False
+
+
+def _shows_asked_text(plan: dict, requirements: Sequence[BriefRequirement] | None) -> bool:
+    """Whether a degraded lane still shows text, when the creator asked for some (KRI-1376).
+
+    A degrade drops or shrinks one item; it never turns a text ask into a video with no text.
+    """
+    asked = requirements is None or any(
+        req.live and (req.kind == "text" or req.scope == "title" or is_text_sequence(req))
+        for req in requirements
+    )
+    return not asked or any(
+        not row.get("removed")
+        and not is_caption_text_bar(row)
+        and str(row.get("text") or "").strip()
+        for row in plan.get("text_elements") or []
+    )

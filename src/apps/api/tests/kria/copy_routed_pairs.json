@@ -782,6 +782,56 @@
    " ve {count} tane daha"
   ],
   [
+   "app/services/creation_text_degrade.py",
+   "I couldn't do every part of your text request, so the video shows the parts I could",
+   "Yazı isteğinin her kısmını yapamadım, videoda yapabildiğim kısımlar var"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "I couldn't size your texts exactly as you asked",
+   "Yazıları tam istediğin boyutlarda ayarlayamadım"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "I couldn't add {text} the way you asked",
+   "{text} metnini istediğin gibi ekleyemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "I couldn't size {text} exactly as you asked",
+   "{text} metnini tam istediğin boyutta ayarlayamadım"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Kept {text} exactly as you wrote it and left out the change I couldn't make to it",
+   "{text} metnini yazdığın gibi bıraktım, ona yapamadığım değişikliği eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one explanation that didn't fit its part of the video",
+   "Videonun ilgili kısmına sığmayan bir açıklamayı eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one line I couldn't add to your text",
+   "Yazına ekleyemediğim bir satırı çıkardım"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one text change I couldn't make fit",
+   "Sığdıramadığım bir yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one text change for {text} because I couldn't make it fit",
+   "{text} için sığdıramadığım bir yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out {text} because I couldn't add it as its own line",
+   "{text} metnini ayrı bir satır olarak ekleyemediğim için çıkardım"
+  ],
+  [
    "app/services/finished_style_learning.py",
    "Exclude {font} from automatic {role} text selection.",
    "{head} için otomatik yazı tipi seçiminde {font} kullanılmasın."
@@ -1510,6 +1560,26 @@
    "app/agents/editor_ops_v2/split_full_screen.py",
    "Part of a split screen can't go full screen from chat on this edit.",
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "I couldn't do {text}, so the video shows the rest of your text",
+   "{text} isteğini yapamadım, videoda yazının geri kalanı var"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one text change I couldn't make",
+   "Yapamadığım bir yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out {count} text changes I couldn't make fit",
+   "Sığdıramadığım {count} yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out {count} explanations that didn't fit their part of the video",
+   "Videonun ilgili kısımlarına sığmayan {count} açıklamayı eklemedim"
   ]
  ],
  "retired": [

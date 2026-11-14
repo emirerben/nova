@@ -187,13 +187,29 @@ def test_composer_cannot_replace_approved_copy_or_accept_invalid_segments(
 ):
     transport(monkeypatch, CASE[response_key])
     plan, _, _ = approved_plan(context_caption=False, font_covers=None)
-    with pytest.raises(CreationTextCompositionError):
-        compose_creation_text(
+    before = compile_proposal_execution_plan(plan.snapshot)
+    drops = []
+
+    def run():
+        return compose_creation_text(
             plan.snapshot,
             creator_request="Show each word separately",
             copy_constraints={"guided-title": CASE["candidate"]},
             ctx=CTX,
+            drops=drops,
         )
+
+    if response_key != "rewrite_response":
+        # The parser refuses the empty split, the composer's only op: nothing of the ask was
+        # done, so the pass fails as a whole (KRI-1376 review), as before.
+        with pytest.raises(CreationTextCompositionError):
+            run()
+        return
+    # KRI-1376: the rewrite reaches replay and is dropped; the approved hook renders as approved.
+    rows = compile_proposal_execution_plan(run())["text_elements"]
+    assert rows == before["text_elements"]
+    assert [row["text"] for row in rows if row["id"] == "guided-title"] == [CASE["candidate"]]
+    assert [(drop.action, drop.text) for drop in drops] == [("dropped", CASE["candidate"])]
 
 
 def test_legitimate_sequence_preserves_copy_and_constraints_after_reload(monkeypatch):
@@ -267,13 +283,20 @@ def test_bound_styling_composition_adds_text_only_when_live_brief_requests_it(
                 ctx=CTX,
             )
     else:
-        with pytest.raises(CreationTextCompositionError, match="unrequested text"):
-            compose_creation_text(
-                plan.snapshot,
-                creator_request=CASE["context"],
-                text_requirements=brief.live(),
-                ctx=CTX,
-            )
+        drops = []
+        # KRI-1376: the unrequested line is left out (silently, it was never hers); the rest
+        # renders.
+        result = compose_creation_text(
+            plan.snapshot,
+            creator_request=CASE["context"],
+            text_requirements=brief.live(),
+            ctx=CTX,
+            drops=drops,
+        )
+        assert CASE["context"] not in [
+            row["text"] for row in compile_proposal_execution_plan(result)["text_elements"]
+        ]
+        assert [(drop.reason, drop.note()) for drop in drops] == [("unasked_text", None)]
     assert len(client.calls) == 1
 
 
@@ -309,13 +332,18 @@ def test_closing_copy_and_mixed_emoji_symbols_remain_authoritative(monkeypatch):
             ],
         },
     )
-    with pytest.raises(CreationTextCompositionError):
-        compose_creation_text(
-            plan.snapshot,
-            creator_request="Style the closing",
-            copy_constraints={"guided-closing-title": closing},
-            ctx=CTX,
-        )
+    drops = []
+    composed = compose_creation_text(
+        plan.snapshot,
+        creator_request="Style the closing",
+        copy_constraints={"guided-closing-title": closing},
+        ctx=CTX,
+        drops=drops,
+    )
+    rows = compile_proposal_execution_plan(composed)["text_elements"]
+    assert [row["text"] for row in rows if row["id"] == "guided-closing-title"] == [closing]
+    assert "Wrong closing" not in [row["text"] for row in rows]
+    assert [(drop.reason, drop.text) for drop in drops] == [("copy_changed", closing)]
 
 
 def test_constraints_allow_only_nfc_and_whitespace_normalization(monkeypatch):
