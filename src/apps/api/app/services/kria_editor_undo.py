@@ -20,6 +20,7 @@ keeps a staged chat lane that a newer head returns to the saved value.
 from __future__ import annotations
 
 import copy
+import dataclasses
 from typing import Any
 
 import structlog
@@ -51,6 +52,8 @@ POINT_KEY = "_kria_chat_undo"
 RECORD_KEY = plan_review.restore_result_key()
 MARK = "chat_undo"
 _ROW_LANES = ("text_elements", "caption_cues")
+# Lanes `merge_editor_draft` merges key by key, so restoring one is per key, deletes included.
+_KEYED_LANES = ("caption_meta", "mix")
 # Keys of a commit payload that are not edits (`kria_editor_ops._NOT_EDIT_KEYS` plus Save
 # bookkeeping a compiled payload always carries).
 _NOT_LANES = frozenset(
@@ -70,6 +73,14 @@ _NOT_LANES = frozenset(
 )
 _MISSING = object()
 log = structlog.get_logger()
+
+
+@dataclasses.dataclass(frozen=True)
+class CompiledUndo(CompiledEditorDraft):
+    """An undo's compile. ``draft`` is the editor payload it writes: the merge of ``payload``
+    over the current draft, minus the keys the record deletes. The commit stores it as is."""
+
+    draft: dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 class ChatUndoUnavailable(EditorStateReplyError):
@@ -146,9 +157,14 @@ def _ordered(rows: list[dict[str, Any]], order: list[str]) -> list[dict[str, Any
     return known + rest
 
 
-def _restored(
+def _replay(
     record: dict[str, Any], current: dict[str, Any], base_generation: str
-) -> EditorCommitRequest:
+) -> tuple[EditorCommitRequest, dict[str, Any]]:
+    """The commit that puts ``record`` back over ``current``, and the draft it writes.
+
+    A commit's None means "leave it", so the merge alone cannot take a ``caption_meta`` or
+    ``mix`` key away. A key the record holds as None had no value before the turn, so the
+    draft drops it."""
     lanes: dict[str, Any] = {}
     flat = copy.deepcopy(current)
     for section in plan_review.record_sections(record):
@@ -158,7 +174,40 @@ def _restored(
     for lane, ids in ((record.get(MARK) or {}).get("order") or {}).items():
         if isinstance(lanes.get(lane), list):
             lanes[lane] = _ordered(lanes[lane], ids)
-    return EditorCommitRequest.model_validate({"base_generation": base_generation, **lanes})
+    request = EditorCommitRequest.model_validate({"base_generation": base_generation, **lanes})
+    draft = merge_editor_draft(current, editor_payload_dump(request))
+    for lane in _KEYED_LANES:
+        gone = {k for k, v in (lanes.get(lane) or {}).items() if v is None}
+        if gone and isinstance(draft.get(lane), dict):
+            draft[lane] = {k: v for k, v in draft[lane].items() if k not in gone}
+            if isinstance(draft.get("sections"), dict) and lane in draft["sections"]:
+                draft["sections"] = {**draft["sections"], lane: copy.deepcopy(draft[lane])}
+    return request, draft
+
+
+def _canon(lane: str, value: Any) -> Any:  # noqa: ANN401
+    """``value`` as the Save would persist it: through the commit schema, defaults filled in.
+
+    Pre-turn rows read off the variant lack defaults the replayed (validated) rows carry, so
+    raw equality calls an exact restore different. A value the schema rejects compares raw."""
+    if value is _MISSING:
+        return _MISSING
+    try:
+        dumped = editor_payload_dump(
+            EditorCommitRequest.model_validate({"base_generation": "", lane: value})
+        )
+    except Exception:  # noqa: BLE001 - not a commit value; raw equality decides
+        return _norm(value)
+    return _norm(dumped.get(lane))
+
+
+def _same(lane: str, want: Any, got: Any) -> bool:  # noqa: ANN401
+    """``got`` holds the creator's pre-turn ``want`` (for a keyed lane: every key ``want`` has)."""
+    if want is _MISSING or got is _MISSING:
+        return False
+    if lane in _KEYED_LANES and isinstance(want, dict):
+        got = {k: got.get(k) for k in want} if isinstance(got, dict) else got
+    return _canon(lane, want) == _canon(lane, got)
 
 
 def _visible(job: Any, saved: dict[str, Any], payload: dict[str, Any]) -> Any:  # noqa: ANN401
@@ -205,9 +254,10 @@ def seal(
     """``record`` marked undoable from chat, or None when undoing it would not be exact.
 
     ``prior`` is the flat editor payload the turn was built on, ``written`` the draft it
-    committed and ``before`` the compiler's pre-op lanes. The check replays the undo the way the
-    compile will (restore, validate, dump, merge) over ``written`` and requires every lane the turn
-    changed, and the editor as the copilot sees it, to equal what the creator had before.
+    committed and ``before`` the compiler's pre-op lanes. The check replays the undo exactly as
+    the compile will (``_replay``) over ``written`` and requires every lane the turn changed, as
+    the Save would persist it, and the editor as the copilot sees it, to equal what the creator
+    had before. A turn that changed no lane has nothing to undo.
     """
     if not isinstance(record, dict) or not plan_review.record_sections(record):
         return None
@@ -218,6 +268,8 @@ def seal(
             if k not in prior or _norm(prior[k]) != _norm(v) or k == "remove_music"
         }
     )
+    if all(_same(lane, _pre_turn(lane, prior, before), _lane(written, lane)) for lane in lanes):
+        return None
     order = {
         lane: [str(row.get("id")) for row in pre if isinstance(row, dict)]
         for lane in _ROW_LANES
@@ -225,16 +277,11 @@ def seal(
     }
     marked = {**record, MARK: {"v": 1, "changes": list(changes)[:3], "order": order}}
     try:
-        request = _restored(marked, written, str(written.get("base_generation") or ""))
-        undone = merge_editor_draft(written, editor_payload_dump(request))
+        _, undone = _replay(marked, written, str(written.get("base_generation") or ""))
     except Exception:  # noqa: BLE001 - an unreplayable record is simply not offered
         return None
-    for lane in lanes:
-        want, got = _pre_turn(lane, prior, before), _lane(undone, lane)
-        if lane in ("caption_meta", "mix"):
-            got = {k: (got or {}).get(k) for k in want} if isinstance(got, dict) else got
-        if want is _MISSING or got is _MISSING or _norm(want) != _norm(got):
-            return None
+    if not all(_same(lane, _pre_turn(lane, prior, before), _lane(undone, lane)) for lane in lanes):
+        return None
     try:
         if _visible(job, saved, undone) != _visible(job, saved, prior):
             return None
@@ -395,7 +442,7 @@ def compile_undo(
     point = variant.get(POINT_KEY)
     if not isinstance(point, dict):
         raise ChatUndoUnavailable(unavailable_reply())
-    request = _restored(point["record"], point["current"], variant_render_baseline(variant))
+    request, draft = _replay(point["record"], point["current"], variant_render_baseline(variant))
     data = editor_payload_dump(request)
     lanes = sorted(_edit_lanes(data))
     if not lanes:
@@ -408,12 +455,13 @@ def compile_undo(
     for lane in lanes:
         value = _lane(point["current"], lane)
         before[lane] = None if value is _MISSING else copy.deepcopy(value)
-    return CompiledEditorDraft(
+    return CompiledUndo(
         payload=request,
         changes=[say(en="Undid: {what}", tr="Geri alındı: {what}", what=undone)],
         text_diff=text_diff,
         diff=diff,
         before=before,
+        draft=draft,
     )
 
 

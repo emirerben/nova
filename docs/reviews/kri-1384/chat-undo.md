@@ -54,26 +54,58 @@ Which turns seal is pinned by `src/apps/api/tests/kria/test_chat_undo_seal_table
 every phone probe of the parity guard (88 probes; the 7 in groups a phone cannot run are skipped)
 and seals each record over a clean editor the way `kria_runtime` does.
 
-These seal: text (add, edit, remove, timing, style), captions (text, timing, emphasis, meta), the
-timeline (trim, duration, in point, reorder, split, remove, duplicate, transitions, tilt, crop,
-speed, source gain, replace), split screens, sound effects, picture cards (including their layer
-order), mix and music, the speaker background, its frame and focus, and removing the full-screen
-opening (`remove_full_screen_opening`).
+These seal: text (add, edit, remove, timing, style), captions (text, timing, emphasis, meta,
+the animation default, one line's or all lines' size and position), the timeline (trim,
+duration, in point, reorder, split, remove, duplicate, transitions, tilt, crop, speed, source
+gain, replace), split screens, sound effects, picture cards and picture blocks (including their
+layer order), mix and music, the speaker background, its frame and focus, removing the
+full-screen opening (`remove_full_screen_opening`) and the video's shape (`set_video_shape`:
+orientation and landscape fit). Two more seal on a saved video but not on their probe's data:
+`set_title` on a video that already has a title, and `remove_visual_media` on picture rows as a
+Save stores them. The seal table pins both
+(`test_a_refusal_that_depends_on_the_probe_data_seals_on_a_saved_video`).
 
 These do not, so chat refuses to undo the turn:
 
 | Turn | Why the record cannot put it back exactly |
 | --- | --- |
-| `set_title` | The title lane has no exact pre-turn value in the record. |
-| `remove_visual_media` | The removed picture block does not come back as it was. |
-| `set_caption_meta` (caption animation) | The animation phases are not restored exactly. |
-| `patch_caption_line` | The record restores `caption_meta` by value and cannot delete a key, so the line's `appearance.line_overrides` entry (or the all-lines size and position) stays after the replay. |
-| `set_user_song` | The replayed song lane gains `removed: false`, and the editor it projects differs from the pre-turn one. |
-| `set_layer_order` on a picture block | `visual_blocks` rows come back schema-normalized (version, timing mode, transitions), not equal to the pre-turn rows. On a picture card (`media_overlays`) it seals. |
-| `set_video_shape` | No plan-review section covers `orientation` or `landscape_fit`, so the record is empty for them. |
+| `set_title` on a video with no title yet | The compiler records the old title only from `intro_text`, so the record has no pre-turn title, and a commit cannot clear one (`title: null` means leave it). |
+| `remove_visual_media` on a picture row with no `asset_id` / `src_gcs_path` | The commit schema rejects the pre-turn row, so the record cannot be replayed. Every row a Save stores has both fields. Only the probe's thin fixture row lacks them, and a recorded thread pins that fixture. |
+| `set_user_song` | The record holds the derived song state (`song_state`: volume, start and end as the video plays them), not the creator's own `user_song` section. The replay writes the song's end back as if the creator had set it (`creator_end_s` appears), so the editor differs from the pre-turn one. Undoing it needs the record to keep the creator's section, and the iPhone to report a restored song (#2320 stages the song outside `stagedLaneKeys`, so `restoredChatSections` never names it). |
 
-The last four arrived with KRI-1394 (#2311). Each is a gap in the restore record, not in the undo
-rule. Undoing them needs the record to cover the lane exactly.
+### How the gaps from #2311 were closed
+
+KRI-1394 (#2311) added the ops that measured as not sealing. Each was a gap in the restore record or
+in the seal comparison, not in the undo rule.
+
+- **A restore that deletes a key** (`patch_caption_line`, the caption animation default). A
+  commit's None means "leave it", and `merge_editor_draft` merges `caption_meta` and `mix` key by
+  key, so the record's "this key had no value before" never reached the draft.
+  `kria_editor_undo._replay` now builds the draft the undo writes. That is the merge, minus every
+  keyed-lane key the record holds as None. The commit stores that draft (`CompiledUndo.draft`),
+  and `seal` checks that same draft. A key with a pre-turn value is set back, not deleted, so a
+  creator's own override on another line before the turn stays. A hand edit after the turn to a
+  key the undo restores takes the offer away, because `_untouched` compares every restored key,
+  deleted ones included. A hand edit to another key survives.
+- **Schema defaults** (`set_layer_order` and `remove_visual_media` on picture blocks). Rows read
+  off the variant lack defaults the replayed rows carry. `seal` now compares each lane on both
+  sides through the commit schema (`_canon`), which is how the Save persists a lane. A Save stores
+  validated blocks, and the schema ignores unknown keys. A value the schema rejects compares raw.
+  The copilot-visible editor check stays raw.
+- **Unowned lanes** (`set_video_shape`). `orientation` and `landscape_fit` are stripped from every
+  scoped commit (`repair_payload`) because no plan-review section owns them. That stays. The
+  restore record now carries them under `look` when the data has them, and only an unscoped
+  chat turn's data does.
+- **A turn that changed nothing.** If no lane the turn wrote differs from what the creator had,
+  `seal` returns None, so the receipt never claims an undo that put nothing back.
+
+The iPhone needs no change for these lanes. `caption_meta`, `visual_blocks`, `orientation` and
+`title` are in `DraftSnapshot.stagedLaneKeys`. A newer head at the saved value reaches the editor
+through `restoredChatSections`. A head that still differs from saved in its representation (a
+draft `caption_meta` with `font_set: false`) re-stages the lane wholesale through
+`mergeChatDraft`, so the editor shows the pre-turn content. `landscape_fit` is not a staged lane, so
+the phone never showed the chat's fit change either. An editor state without the chat's value
+refuses the undo (`_untouched`). That staging gap belongs to KRI-1394, not to undo.
 
 An undo turn stores no record, so a second "undo" is refused rather than chained or toggled.
 `repeat_last_edit` stays unsupported (the `redo` parity group): it replays the web client's op log.
@@ -100,6 +132,20 @@ Postgres, real planner, parser, compiler and drafts; only the model is scripted)
 | F12 | The phone drops a lane the creator touched | `testANewerChatHeadThatPutsALaneBackLeavesALaneTheCreatorEditedSinceAlone` |
 | F13 | The phone re-encodes an untouched staged lane | `testAnUntouchedStagedChatLaneIsSentBackAsTheHeadWroteIt` |
 | F14 | The receipt overclaims | the receipt is built from the restored lanes' diff |
+
+The gaps closed after #2311 add these, in `src/apps/api/tests/kria/test_chat_undo_seal_gaps_postgres.py`
+(the parity probe's own variant as a real job, the real runtime, a phone at protocol 50):
+
+| Id | Failure mode | Covered by |
+| --- | --- | --- |
+| U1 | A restore that must take a key away keeps the chat's value | `test_undo_puts_back_exactly_what_the_creator_had[caption line size]`, `[all caption lines]`, `[caption animation default]` |
+| U2 | The delete takes a key the creator wrote after the turn | `test_a_hand_edit_after_the_chat_turn_takes_the_undo_away` (same key, refused); `test_a_hand_edit_to_another_caption_key_survives_the_delete` |
+| U3 | The delete takes what the creator had before the turn | `test_the_undo_keeps_a_caption_override_the_creator_had_before_the_turn` |
+| U4 | Rows read off the variant compare unequal only for schema defaults | `[picture layer order]`; the seal table's saved-rows case for `remove_visual_media` |
+| U5 | Lanes no plan-review section owns are left out of the record | `[orientation]`, `[landscape fit]` |
+| U6 | The seal checks a replay the commit does not write | `seal` and the commit both read `_replay` (`CompiledUndo.draft`) |
+| U7 | A hand edit to the lane after the turn is overwritten | `test_a_hand_edit_after_the_chat_turn_takes_the_undo_away`, all six cases |
+| U8 | A turn that changed nothing is offered and the receipt claims an undo | `seal` refuses a turn with no changed lane (a no-op `set_layer_order` does not even compile) |
 
 ## Evidence
 

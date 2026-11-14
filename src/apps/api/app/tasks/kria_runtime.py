@@ -2731,7 +2731,9 @@ def _complete_draft_turn(
                 intent=arguments.summary,
                 edit_format=str(item.edit_format or "montage"),
                 editor_payload=(
-                    merge_editor_draft(prior_payload, editor_payload_dump(compiled.payload))
+                    compiled.draft
+                    if isinstance(compiled, kria_editor_undo.CompiledUndo)
+                    else merge_editor_draft(prior_payload, editor_payload_dump(compiled.payload))
                     if isinstance(compiled.payload, EditorCommitRequest)
                     else compiled.payload
                 ),
