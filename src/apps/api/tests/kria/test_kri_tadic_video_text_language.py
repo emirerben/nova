@@ -16,6 +16,8 @@ Failure modes covered here, through the real `submit_turn`:
 9. Once restored, a later short reply flips the chat again.
 10. After a real-sentence switch, pasting the lyrics (now the video's text) makes a later short
     reply in the earlier language ("make it pop", "Do it") flip the chat back.
+11. After a switch made by pasted lyrics, the creator's own Turkish sentence leaves the
+    switch-back record in place, so a later "Yes" wrongly takes the chat back to English.
 """
 
 from __future__ import annotations
@@ -202,6 +204,23 @@ async def test_a_short_reply_takes_back_a_chat_only_pasted_lyrics_moved() -> Non
     assert await _turn(user_id, thread_id, "Do it") == "en"
     assert "reply_language_before" not in _state_and_last_reply(thread_id)[0]
     assert await _turn(user_id, thread_id, "Evet") == "en"  # no ping-pong after the restore
+
+
+@pytest.mark.asyncio
+async def test_an_own_turkish_sentence_after_pasted_lyrics_keeps_the_chat_turkish() -> None:
+    user_id, thread_id, _ = _seed_runtime_project()
+    # "Could you paste the lines?" saved before the ask was tagged: the paste switches.
+    assert await _turn(user_id, thread_id, REQUEST, _lyrics_ask(), legacy=True) == "en"
+    assert await _turn(user_id, thread_id, LYRICS) == "tr"
+    _brief_holds(thread_id, LYRICS)
+
+    own_sentence = "Bu sözleri videonun başında büyük göster lütfen"
+    assert await _turn(user_id, thread_id, own_sentence) == "tr"
+    state = _state_and_last_reply(thread_id)[0]
+    assert "reply_language_before" not in state
+    assert "reply_language_switched_by" not in state
+
+    assert await _turn(user_id, thread_id, "Yes") == "tr"
 
 
 @pytest.mark.asyncio

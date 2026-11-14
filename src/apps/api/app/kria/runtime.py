@@ -60,6 +60,7 @@ from app.kria.reply_language import (
     resolve_reply_language,
     say,
     short_reply_in,
+    speaks_in,
     switching_message_id,
     thread_reply_language,
 )
@@ -917,12 +918,31 @@ async def _switched_by_video_text(db: AsyncSession, thread: CreationThread) -> b
     ).scalar_one_or_none()
     if not switching:
         return False
+    return is_video_text(switching, await _video_text_literals(db, thread))
+
+
+async def _video_text_literals(db: AsyncSession, thread: CreationThread) -> list[str]:
+    """The video's text: the latest brief's exact words."""
     try:
         brief = await load_latest_brief(db, thread.id)
     except ValueError:
+        return []
+    return [req.literal for req in brief.live() if req.literal] if brief else []
+
+
+async def _confirms_reply_language(
+    db: AsyncSession, thread: CreationThread, message: str | None, language: str | None
+) -> bool:
+    """True when ``message`` is the creator's own sentence in the chat's current ``language``.
+
+    Read only while a switch-back record is kept. Words typed as the answer to a wording
+    question, or the video's text pasted again, are not the creator's own sentence.
+    """
+    if switching_message_id(thread) is None or not speaks_in(message, language):
         return False
-    literals = [req.literal for req in brief.live() if req.literal] if brief else []
-    return is_video_text(switching, literals)
+    if await _answers_video_text_question(db, thread):
+        return False
+    return not is_video_text(message, await _video_text_literals(db, thread))
 
 
 async def submit_turn(
@@ -1185,8 +1205,19 @@ async def submit_turn(
     if restored:
         # Only pasted video text moved the chat: "Do it" in the earlier language takes it back.
         reply_language = earlier_language
+    # A real sentence in the chat's language ends any switch-back record: a later "Yes" is
+    # then the creator answering in the language they chose, not a way back.
+    confirmed = (
+        not restored
+        and reply_language == previous_language
+        and await _confirms_reply_language(db, thread, body.message, reply_language)
+    )
     remember_reply_language(
-        thread, reply_language, restored=restored, switched_by=body.client_event_id
+        thread,
+        reply_language,
+        restored=restored,
+        switched_by=body.client_event_id,
+        confirmed=confirmed,
     )
     inert_response: tuple[Literal["progress", "question"], str] | None = None
     with reply_language_for(reply_language):

@@ -360,7 +360,12 @@ VIDEO_TEXT_ASK_KEY = "asks_video_text"
 
 
 def asks_for_video_words(reason_code: str | None) -> bool:
-    """True when an ``ask_user`` reason code asks the creator for words to put on the video."""
+    """True when an ``ask_user`` reason code asks the creator for words to put on the video.
+
+    Always False with the own-words switch off, so stored turn plans stay as they were.
+    """
+    if not own_words_enabled():
+        return False
     tokens = set(re.findall(r"[a-z]+", (reason_code or "").lower()))
     return bool(tokens & _VIDEO_WORDS_REASON) and not tokens & _VIDEO_LOOK_REASON
 
@@ -438,6 +443,14 @@ def short_reply_in(message: str | None, language: str | None) -> bool:
         return False
     detected, strength = _detect(message)
     return detected == language and strength < _SWITCH_STRENGTH
+
+
+def speaks_in(message: str | None, language: str | None) -> bool:
+    """True when the creator's own words say ``language`` clearly enough to switch a chat."""
+    if language is None or not own_words_enabled():
+        return False
+    detected, strength = _detect(message)
+    return detected == language and strength >= _SWITCH_STRENGTH
 
 
 def is_video_text(message: str | None, texts: Any) -> bool:
@@ -574,11 +587,14 @@ def remember_reply_language(
     *,
     restored: bool = False,
     switched_by: str | None = None,
+    confirmed: bool = False,
 ) -> None:
     """Store the chat's language on the locked thread row; a no-op when unchanged.
 
     A switch also keeps the language it left and ``switched_by``, the message that made it;
     ``restored`` (going back) forgets both, so a later short reply cannot flip the chat again.
+    ``confirmed`` (the creator wrote their own sentence in the current language) forgets both
+    too: the chat is now theirs in this language, whatever made the switch.
     """
     if language not in _supported() or not enabled():
         return
@@ -586,6 +602,10 @@ def remember_reply_language(
     current = dict(state) if isinstance(state, Mapping) else {}
     before = current.get(STATE_KEY)
     if before == language:
+        if confirmed and (EARLIER_STATE_KEY in current or SWITCHED_BY_STATE_KEY in current):
+            current.pop(EARLIER_STATE_KEY, None)
+            current.pop(SWITCHED_BY_STATE_KEY, None)
+            thread.state = current
         return
     current[STATE_KEY] = language
     current.pop(EARLIER_STATE_KEY, None)
