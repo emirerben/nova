@@ -129,8 +129,6 @@ GAPS: dict[str, str] = {
     "DC1-6": "is_status_question: no German wording for status question (contraction)",
     "D03": "is_help_question: no German wording for help question",
     "D04": "is_paraphrase_only: no German wording for reject paraphrase-only reply",
-    "D10": "delegated_choice: no German wording for delegate choice (you choose)",
-    "D11": "delegated_choice: no German wording for delegate choice (up to you)",
     "D12": "German 'all the videos' is not read as all media (falls back to selected)",
     "D13": "_requests_preserved_clip_order: no German wording for keep clip order",
     "D14": "_explicit_sfx_name: no German wording for named sound effect",
@@ -168,7 +166,6 @@ GAPS: dict[str, str] = {
     "D36": "parse_caption_language_request: no German wording for English captions",
     "D37": "parse_caption_language_request: no German wording for Turkish captions",
     "D37b": "parse_caption_language_request: no German wording for Spanish captions",
-    "D38": "is_filler_token: no German wording for filler vocalization cut",
     "D40": "_adjust_hook_score: no German wording for hook filler penalty",
     "C2-02": (
         "ai_draft_thought_has_unsupported_claim: no German wording for ungrounded caption claim"
@@ -190,7 +187,6 @@ GAPS: dict[str, str] = {
     "D52": "requires_stateful_extraction: no German wording for stateful memory change",
     "D53": "explicitly_temporary: no German wording for temporary style change (one-off wordings)",
     "D54": "_asks_remove: no German wording for remove one named clip",
-    "D55": "title_hold_grounded: no German wording for title hold in words",
 }
 
 # Normalization folds Turkish spellings; German folding has its own test below.

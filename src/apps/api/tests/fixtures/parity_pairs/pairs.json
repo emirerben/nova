@@ -8,7 +8,8 @@
     "`reply_language` is set from app.kria.reply_language.detect_chat_language(message) for agents that take it, as production does for a chat in that language.",
     "`compare` says which structured fields of the parsed output carry the decision; titles typed in each language are compared by presence, verbatim titles (same string in both) by value.",
     "`expect` is the intended decision (a subset of the projection). A pair where both languages miss `expect` is an English gap, not a parity gap.",
-    "`base_fixture` is relative to tests/fixtures/agent_evals/; `base_input` deep-merges over the fixture input (or is the whole input when there is no fixture)."
+    "`base_fixture` is relative to tests/fixtures/agent_evals/; `base_input` deep-merges over the fixture input (or is the whole input when there is no fixture).",
+    "`de` is the same ask in natural German (KRI-1453). German is replayed only from recorded cassettes (`<id>.de.json`) and always checked by the free German dry run (tests/evals/parity/test_model_parity_de.py), with German replies switched on."
   ],
   "agents": {
     "brief_extractor": {
@@ -108,6 +109,7 @@
       "base_fixture": "main_creator/montage_strategy.json",
       "en": "Make it slow and calm, no fast cuts. I want it to feel relaxed.",
       "tr": "yavaş ve sakin olsun, hızlı kesmeler istemiyorum. rahat bir his versin",
+      "de": "Mach es langsam und ruhig, keine schnellen Schnitte. Es soll sich entspannt anfühlen.",
       "compare": {
         "probes": [
           "action.kind",
@@ -127,6 +129,7 @@
       "base_fixture": "main_creator/montage_strategy.json",
       "en": "No music please, just keep the original sound of my clips.",
       "tr": "Müzik koyma lütfen, kliplerin kendi sesi kalsın.",
+      "de": "Bitte keine Musik, behalte einfach den Originalton meiner Clips.",
       "compare": {
         "probes": [
           "action.kind",
@@ -145,6 +148,7 @@
       "base_fixture": "main_creator/montage_strategy.json",
       "en": "Photos should flash by really quickly, the videos can stay on screen longer.",
       "tr": "fotoğraflar çok hızlı geçsin, videolar ekranda daha uzun kalabilir",
+      "de": "Die Fotos sollen ganz schnell vorbeiziehen, die Videos können länger zu sehen sein.",
       "compare": {
         "probes": [
           "action.kind",
@@ -165,6 +169,7 @@
       "base_fixture": "main_creator/sfx_described_buzzer.json",
       "en": "Make a quick edit of the best sports moments. Add a buzzer sound effect every time someone misses.",
       "tr": "En iyi spor anlarından hızlı bir edit yap. Biri her ıskaladığında buzzer sesi ekle.",
+      "de": "Mach einen schnellen Schnitt aus den besten Sportmomenten. Füge jedes Mal einen Buzzer-Soundeffekt hinzu, wenn jemand danebenwirft.",
       "compare": {
         "probes": [
           "action.kind",
@@ -184,6 +189,7 @@
       "base_fixture": "edit_copilot/golden/kria_v2_timeline_speed_up_clip.json",
       "en": "speed up clip 2",
       "tr": "2. klibi hızlandır",
+      "de": "Mach Clip 2 schneller",
       "compare": {
         "probes": [
           "intent"
@@ -215,6 +221,7 @@
       "base_fixture": "edit_copilot/golden/kria_v2_text_delete_all_labels.json",
       "en": "delete all the labels",
       "tr": "bütün etiketleri sil",
+      "de": "Lösch alle Beschriftungen",
       "compare": {
         "probes": [
           "intent"
@@ -256,6 +263,7 @@
       },
       "en": "undo that, I liked it better before",
       "tr": "bunu geri al, önceki hali daha iyiydi",
+      "de": "Mach das rückgängig, vorher hat es mir besser gefallen",
       "compare": {
         "probes": [
           "intent"
@@ -278,6 +286,7 @@
       "base_fixture": "edit_copilot/golden/caption_emphasize_named_entity.json",
       "en": "emphasize Turkey in the captions",
       "tr": "altyazıda Turkey kelimesini vurgula",
+      "de": "Hebe Turkey in den Untertiteln hervor",
       "compare": {
         "probes": [
           "intent"
@@ -311,6 +320,7 @@
       },
       "en": "Make a fun montage of our weekend in Lisbon, but don't use the laundry clip.",
       "tr": "Lizbon hafta sonumuzdan eğlenceli bir montaj yap ama çamaşır klibini kullanma.",
+      "de": "Mach eine lustige Montage von unserem Wochenende in Lissabon, aber nimm nicht den Wäsche-Clip.",
       "compare": {
         "probes": [
           "question?"
@@ -339,6 +349,7 @@
       },
       "en": "Make an 8 second fast montage using all my clips.",
       "tr": "tüm kliplerimi kullanarak 8 saniyelik hızlı bir montaj yap",
+      "de": "Mach eine schnelle 8-Sekunden-Montage mit all meinen Clips.",
       "compare": {
         "probes": [
           "question?"
@@ -367,6 +378,7 @@
       },
       "en": "Put the clips in the order I filmed them.",
       "tr": "klipleri çektiğim sıraya göre diz",
+      "de": "Ordne die Clips in der Reihenfolge, in der ich sie gefilmt habe.",
       "compare": {
         "probes": [
           "question?"
@@ -387,6 +399,7 @@
       "base": "brief_followup",
       "en": "Make the whole video 30 seconds long.",
       "tr": "videonun tamamı 30 saniye olsun",
+      "de": "Das ganze Video soll 30 Sekunden lang sein.",
       "compare": {
         "probes": [
           "request_scope"
@@ -416,6 +429,7 @@
       "base": "brief_followup",
       "en": "It's too long, cut it down to 15 seconds.",
       "tr": "çok uzun olmuş, 15 saniyeye indir",
+      "de": "Das ist zu lang, kürz es auf 15 Sekunden.",
       "compare": {
         "probes": [
           "request_scope"
@@ -445,6 +459,7 @@
       "base": "brief_followup",
       "en": "Keep the clips in the order I filmed them.",
       "tr": "klipleri çektiğim sırada tut",
+      "de": "Lass die Clips in der Reihenfolge, in der ich sie gefilmt habe.",
       "compare": {
         "probes": [
           "request_scope"
@@ -474,6 +489,7 @@
       "base": "brief_followup",
       "en": "End the video on the sunset clip.",
       "tr": "videoyu gün batımı klibiyle bitir",
+      "de": "Lass das Video mit dem Sonnenuntergang-Clip enden.",
       "compare": {
         "probes": [
           "request_scope"
@@ -499,6 +515,7 @@
       "base": "brief_followup",
       "en": "Add captions.",
       "tr": "altyazı ekle",
+      "de": "Füge Untertitel hinzu.",
       "compare": {
         "probes": [
           "request_scope"
@@ -524,6 +541,7 @@
       "base": "brief_followup",
       "en": "Put English captions on it.",
       "tr": "ingilizce altyazı koy",
+      "de": "Mach englische Untertitel drauf.",
       "compare": {
         "probes": [
           "request_scope"
@@ -550,6 +568,7 @@
       "base": "brief_followup",
       "en": "Add a title at the start that says \"Lisbon Diaries\".",
       "tr": "Başa \"Lisbon Diaries\" yazan bir başlık ekle.",
+      "de": "Füge am Anfang einen Titel mit dem Text \"Lisbon Diaries\" hinzu.",
       "compare": {
         "probes": [
           "request_scope"
@@ -581,6 +600,7 @@
       "base": "brief_followup",
       "en": "At the very end, put the text \"See you next summer\".",
       "tr": "En sona \"Seneye görüşürüz\" yazısı koy.",
+      "de": "Ganz am Ende soll der Text \"Bis nächsten Sommer\" stehen.",
       "compare": {
         "probes": [
           "request_scope"
@@ -610,6 +630,7 @@
       "base": "brief_followup",
       "en": "Put a location label on each clip in the bottom left corner.",
       "tr": "her klibin sol alt köşesine konum yazısı ekle",
+      "de": "Setz auf jeden Clip unten links ein Ortsschild.",
       "compare": {
         "probes": [
           "request_scope"
@@ -640,6 +661,7 @@
       "base": "brief_followup",
       "en": "Make the title appear with a typewriter animation.",
       "tr": "başlık daktilo efektiyle yazılarak gelsin",
+      "de": "Der Titel soll mit einer Schreibmaschinen-Animation erscheinen.",
       "compare": {
         "probes": [
           "request_scope"
@@ -664,6 +686,7 @@
       "base": "brief_followup",
       "en": "Change all the text to the Playfair Display font.",
       "tr": "tüm yazıların fontunu Playfair Display yap",
+      "de": "Ändere alle Texte auf die Schriftart Playfair Display.",
       "compare": {
         "probes": [
           "request_scope"
@@ -695,6 +718,7 @@
       "base": "brief_followup",
       "en": "Make all the text #FFD400.",
       "tr": "bütün yazılar #FFD400 renginde olsun",
+      "de": "Mach alle Texte #FFD400.",
       "compare": {
         "probes": [
           "request_scope"
@@ -725,6 +749,7 @@
       "base": "brief_followup",
       "en": "The clips look too dark, brighten them up.",
       "tr": "klipler çok karanlık duruyor, biraz aydınlat",
+      "de": "Die Clips sind zu dunkel, mach sie heller.",
       "compare": {
         "probes": [
           "request_scope"
@@ -751,6 +776,7 @@
       "base": "brief_followup",
       "en": "Don't add any music, keep the original sound from the camera.",
       "tr": "müzik ekleme, kameranın kendi sesi kalsın",
+      "de": "Füge keine Musik hinzu, behalte den Originalton der Kamera.",
       "compare": {
         "probes": [
           "request_scope"
@@ -779,6 +805,7 @@
       "base": "brief_followup",
       "en": "Play a pop sound when I say \"coffee\".",
       "tr": "\"kahve\" dediğimde pop sesi çal",
+      "de": "Spiel einen Pop-Sound ab, wenn ich \"Kaffee\" sage.",
       "compare": {
         "probes": [
           "request_scope"
@@ -805,6 +832,7 @@
       "base": "brief_followup",
       "en": "Show my quote \"Never stop exploring\" as text on screen, don't read it out loud.",
       "tr": "\"Keşfetmeyi asla bırakma\" sözümü ekranda yazı olarak göster, sesli okuma",
+      "de": "Zeig mein Zitat \"Hör nie auf zu entdecken\" als Text auf dem Bildschirm, lies es nicht laut vor.",
       "compare": {
         "probes": [
           "request_scope"
@@ -831,6 +859,7 @@
       "base": "brief_followup",
       "en": "Is my video ready yet?",
       "tr": "videom hazır mı",
+      "de": "Ist mein Video schon fertig?",
       "compare": {
         "probes": [
           "request_scope",
@@ -852,6 +881,7 @@
       "base": "brief_followup",
       "en": "Start over and make the whole video again from scratch.",
       "tr": "baştan başla, videoyu sıfırdan yeniden yap",
+      "de": "Fang von vorne an und mach das ganze Video komplett neu.",
       "compare": {
         "probes": [
           "request_scope",
@@ -886,6 +916,7 @@
       },
       "en": "From now on, always use the Inter font in my videos.",
       "tr": "Bundan sonra videolarımda hep Inter fontunu kullan.",
+      "de": "Verwende ab jetzt in meinen Videos immer die Schriftart Inter.",
       "compare": {
         "probes": [
           "operation",
@@ -908,6 +939,7 @@
       "base": "lisbon_slides",
       "en": "Keep it to just 3 slides.",
       "tr": "sadece 3 slayt olsun",
+      "de": "Bitte nur 3 Folien.",
       "compare": {
         "probes": [
           "len:order"
@@ -925,6 +957,7 @@
       "base": "lisbon_slides",
       "en": "Use the sunset photo as the cover.",
       "tr": "kapak fotoğrafı gün batımı olsun",
+      "de": "Nimm das Sonnenuntergangsfoto als Titelbild.",
       "compare": {
         "probes": [
           "cover_id"

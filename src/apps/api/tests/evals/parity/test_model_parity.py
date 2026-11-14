@@ -142,8 +142,9 @@ def build_input(pair: dict[str, Any], lang: str) -> dict[str, Any]:
         data[field] = message
     if spec.get("reply_language"):
         data.pop("reply_language", None)
-        if detect_chat_language(message) == "tr":
-            data["reply_language"] = "tr"
+        language = detect_chat_language(message)
+        if language in {"tr", "de"}:  # "de" only while German replies are switched on
+            data["reply_language"] = language
     return data
 
 

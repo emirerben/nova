@@ -3112,10 +3112,11 @@ _PENDING_NEGATION_RE = _BilingualPattern(
     r"\b(?:yapma|yapmayin|yapmasin|ekleme|eklemeyin|dokunma|dokunmayin|kullanma|"
     r"kullanmayin|haric|olmadan|disinda|degil|olmasin|istemiyorum|atla|atlayin|gecme)\b",
 )
-# Group 1 is the number. Turkish writes a decimal comma ("2,5 saniye"): callers normalize.
+# Group 1 is the number. Turkish and German write a decimal comma ("2,5 saniye",
+# "2,5 Sekunden"): callers normalize. The German unit rides on the loose (second) pattern.
 _DURATION_ANSWER_RE = _BilingualPattern(
     r"\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
-    r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b)",
+    r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b|sekunde\w*|sek\b)",
 )
 _VAGUE_DURATION_RE = _BilingualPattern(
     r"\b(?:shorter|shorten|shorten(?:ed|ing)?|make\s+.+\s+short)\b",

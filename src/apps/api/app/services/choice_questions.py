@@ -1814,6 +1814,23 @@ _NO_TITLE_ALIASES = (
     "başlık ekleme",
     "başlıksız devam et",
     "başlık istemem",
+    # Typed German declines (KRI-1453; matched in every chat language like Turkish).
+    "nein",
+    "nein danke",
+    "kein titel",
+    "keinen titel",
+    "kein titel bitte",
+    "keinen titel bitte",
+    "ohne titel",
+    "ohne titel weiter",
+    "weiter ohne titel",
+    "überspringen",
+    "überspring",
+    "lass den titel weg",
+    "ich will keinen titel",
+    "ich möchte keinen titel",
+    "brauche keinen titel",
+    "kein titel nötig",
 )
 
 
@@ -4378,6 +4395,41 @@ _TR_ORDINALS: dict[int, tuple[str, ...]] = {
 _TR_BARE_CARDINALS = frozenset({"bir", "iki", "üç", "dört", "beş", "altı"})
 
 
+# German (KRI-1453): the ordinal stems ("zweit" -> "zweite", "die zweite", "zweite
+# Option") and the cardinals, which like Turkish ones count only next to a noun ("Nummer zwei").
+_DE_ORDINAL_STEMS: dict[int, str] = {
+    1: "erst",
+    2: "zweit",
+    3: "dritt",
+    4: "viert",
+    5: "fünft",
+    6: "sechst",
+}
+_DE_CARDINALS: dict[int, tuple[str, ...]] = {
+    1: ("eins",),
+    2: ("zwei",),
+    3: ("drei",),
+    4: ("vier",),
+    5: ("fünf",),
+    6: ("sechs",),
+}
+
+
+def _german_ordinal_names(number: int) -> list[str]:
+    """Typed German ways to name option ``number``: "die zweite", "Nummer 2", "Nr. 2", ..."""
+
+    names = [f"nummer {number}", f"nr {number}", f"variante {number}", f"auswahl {number}"]
+    for word in _DE_CARDINALS.get(number, ()):
+        names += [f"nummer {word}", f"option {word}", f"variante {word}"]
+    stem = _DE_ORDINAL_STEMS.get(number)
+    if stem:
+        for word in (f"{stem}e", f"{stem}er", f"{stem}es", f"{stem}en"):
+            names += [word, f"{word} option", f"{word} variante"]
+            names += [f"{article} {word}" for article in ("die", "der", "das", "den")]
+            names += [f"die {word} option", f"die {word} variante"]
+    return names
+
+
 def _ordinal_names(number: int) -> list[str]:
     """Typed ways to name option ``number``: "ikinci", "2. seçenek", "bir numara", ..."""
 
@@ -4397,7 +4449,7 @@ def _ordinal_names(number: int) -> list[str]:
             names += [f"{word} numara", f"numara {word}", f"seçenek {word}", f"{word} numaralı"]
             continue
         names += [word, f"{word} seçenek", f"{word} şık"]
-    return names
+    return names + _german_ordinal_names(number)
 
 
 def _option_names(
@@ -4485,6 +4537,28 @@ _DELEGATION_PHRASES = frozenset(
         "dilediğin gibi yap",
         "nasıl istersen",
         "ne istersen",
+        # German (KRI-1453). No "egal" / "ist mir egal": like "whatever", a non-answer.
+        "du entscheidest",
+        "entscheide du",
+        "du kannst entscheiden",
+        "du darfst entscheiden",
+        "du wählst",
+        "wähl du",
+        "such du aus",
+        "such du es aus",
+        "deine wahl",
+        "deine entscheidung",
+        "liegt bei dir",
+        "das liegt bei dir",
+        "das überlasse ich dir",
+        "ich überlasse es dir",
+        "überlass ich dir",
+        "überlasse ich dir",
+        "wie du willst",
+        "wie du möchtest",
+        "mach wie du willst",
+        "überrasch mich",
+        "überrasche mich",
     )
 )
 _DELEGATION_LOOSE = frozenset(loose_reply(p) for p in _DELEGATION_PHRASES)
