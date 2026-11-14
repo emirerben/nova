@@ -52,6 +52,15 @@ def prod_profile(monkeypatch):
     return apply_prod_profile(monkeypatch)
 
 
+@pytest.fixture
+def prod_profile_pre_cutover(monkeypatch):
+    """`prod_profile` with the device-only cutover and brief binding held at code defaults."""
+
+    from tests._prod_profile import PRE_CUTOVER_SETTINGS, apply_prod_profile  # noqa: PLC0415
+
+    return apply_prod_profile(monkeypatch, hold_at_default=PRE_CUTOVER_SETTINGS)
+
+
 @pytest.fixture(autouse=True)
 def _fresh_async_engine_pool() -> None:
     """Start every test with an empty pool on the shared async engine.

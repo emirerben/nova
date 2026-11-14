@@ -22,7 +22,7 @@ from app.agents.edit_copilot import EditCopilotAgent
 from app.kria import planner
 from app.routes import generative_jobs as gj
 from app.services.kria_editor_ops import compile_editor_ops
-from tests._prod_profile import apply_prod_profile
+from tests._prod_profile import PRE_CUTOVER_SETTINGS, apply_prod_profile
 from tests.evals.runners.snapshot_variant import build_synthetic_job
 from tests.kria.test_creative_brief import _ASK, _wire_planner
 
@@ -32,7 +32,7 @@ ROWS = json.loads(
 
 
 async def replay_chain(row, monkeypatch):
-    apply_prod_profile(monkeypatch)
+    apply_prod_profile(monkeypatch, hold_at_default=PRE_CUTOVER_SETTINGS)
     variant = copy.deepcopy(row["variant"])
     job = build_synthetic_job(variant)
     for i, slot in enumerate(variant["ai_timeline"]["slots"]):

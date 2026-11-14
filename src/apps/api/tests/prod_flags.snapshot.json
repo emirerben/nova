@@ -158,8 +158,8 @@
       "value": false
     },
     "cloud_render_execution_enabled": {
-      "source": "default",
-      "value": true
+      "source": "decisions-md:2026-11-02",
+      "value": false
     },
     "color_moments_enabled": {
       "source": "default",
@@ -382,8 +382,8 @@
       "value": true
     },
     "ios_device_only_mode": {
-      "source": "default",
-      "value": false
+      "source": "decisions-md:2026-11-02",
+      "value": true
     },
     "ios_native_device_only_enabled": {
       "source": "default",
@@ -402,8 +402,8 @@
       "value": []
     },
     "kria_brief_binding_enabled": {
-      "source": "default",
-      "value": false
+      "source": "job-data:creator_brief_binding-2026-11-14",
+      "value": true
     },
     "kria_brief_binding_user_ids": {
       "source": "default",
@@ -1244,8 +1244,8 @@
       "value": 0
     },
     "speech_cleanup_retakes_enabled": {
-      "source": "default",
-      "value": false
+      "source": "runbook:chat-speech-cleanup-rollout",
+      "value": true
     },
     "speech_cleanup_slate_cut_enabled": {
       "source": "default",
@@ -1453,8 +1453,11 @@
     }
   },
   "sources": {
+    "decisions-md:2026-11-02": "agents/DECISIONS.md [2026-11-02] records the applied sequence IOS_DEVICE_ONLY_MODE=true then CLOUD_RENDER_EXECUTION_ENABLED=false. Production jobs carry assembly_plan.native_device_only=true, which agrees. A repo statement, no secret read.",
     "default": "Code default. Production may override it through a Fly secret that was not read; treat the value as unconfirmed.",
+    "job-data:creator_brief_binding-2026-11-14": "Every sampled production creation job from 2026-11-04 to 2026-11-13 (6 of 6, two accounts) carries assembly_plan.creator_brief_binding, which only the writer cohort produces. Whether production uses the global flag or an allowlist is not known; the replay user is synthetic, so the global flag is the approximation. Read with admin GET /admin/jobs/<id>/debug.",
     "legacy-fly-digest-2026-10-08": "Boolean flags that shared PHONE_RENDERING_ENABLED's Fly secret digest (last re-derived 2026-10-08 into the former hand list in tests/_prod_profile.py). Digests were compared, no value was read. Flags enabled after that date are not recorded here.",
-    "live:phone-render-config": "GET /admin/kria/phone-render-config on the production API (names only, no secret value); re-read on every `refresh --live`."
+    "live:phone-render-config": "GET /admin/kria/phone-render-config on the production API (names only, no secret value); re-read on every `refresh --live`.",
+    "runbook:chat-speech-cleanup-rollout": "docs/runbooks/chat-speech-cleanup-rollout.md says the retake switches have been on in prod since 2026-11-04. A repo statement, no secret read."
   }
 }

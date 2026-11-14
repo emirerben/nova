@@ -114,6 +114,9 @@ def _safe_filename(value: object, *, field: str) -> str:
     return name
 
 
+_SCRATCH_DATABASE = re.compile(r"nova_creator_fidelity_test(?:_[a-z0-9]{1,16})?")
+
+
 def _database_target(database_url: str) -> tuple[str, str]:
     parsed = urlsplit(database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
     host = (parsed.hostname or "").lower()
@@ -122,9 +125,13 @@ def _database_target(database_url: str) -> tuple[str, str]:
         raise ReplaySafetyError("Replay database must be PostgreSQL on localhost")
     if host not in {"localhost", "127.0.0.1", "::1"}:
         raise ReplaySafetyError(f"Refusing non-local replay database host: {host or '<missing>'}")
-    if database != "nova_creator_fidelity_test":
+    if parsed.query:
+        # libpq reads host, hostaddr and service from the query and they override the netloc.
+        raise ReplaySafetyError("Refusing a replay database URL with a query string")
+    if not _SCRATCH_DATABASE.fullmatch(database):
         raise ReplaySafetyError(
             f"Refusing replay database {database!r}; expected nova_creator_fidelity_test"
+            " or nova_creator_fidelity_test_<run id>"
         )
     return host, database
 
@@ -722,6 +729,36 @@ def analyze_replay_media(*, item_id: uuid.UUID) -> dict[str, Any]:
     }
 
 
+class MainCreatorQuestion(ReplaySafetyError):
+    """Planning stopped on a clarifying question; only the creator can answer it."""
+
+    def __init__(self, question: dict[str, Any]) -> None:
+        self.question = question
+        super().__init__(
+            "Main Creator asked a question instead of proposing a plan "
+            f"({question.get('reason_code') or 'no reason code'}): {question.get('message')}"
+        )
+
+
+PREPARING = frozenset({"queued", "analyzing", "resolving"})
+
+
+def _open_question(plan: dict[str, Any]) -> dict[str, Any] | None:
+    """The question the session is waiting on, once clip preparation has stopped feeding it."""
+
+    if (plan.get("preparation") or {}).get("status") in PREPARING:
+        return None
+    events = plan.get("events") or []
+    if not events or events[-1].get("event_type") != "assistant_question":
+        return None
+    payload = events[-1].get("payload") or {}
+    return {
+        key: payload[key]
+        for key in ("message", "reason_code", "options", "choice_question")
+        if payload.get(key)
+    }
+
+
 async def run_creator_planning(
     *,
     item_id: uuid.UUID,
@@ -759,6 +796,9 @@ async def run_creator_planning(
     while not plan.get("pending_plan"):
         if plan.get("status") in {"failed", "cancelled"}:
             raise ReplaySafetyError(f"Main Creator planning ended as {plan['status']}")
+        question = _open_question(plan)
+        if question is not None:
+            raise MainCreatorQuestion(question)
         if time.monotonic() > deadline:
             raise ReplaySafetyError(f"Timed out waiting for a Main Creator plan; last: {plan}")
         await asyncio.sleep(min(max(poll_interval_s, 0.2), 30.0))
@@ -1208,6 +1248,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - receipt must capture driver failures
         receipt["finished_at"] = datetime.now(UTC).isoformat()
         receipt["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        if isinstance(exc, MainCreatorQuestion):
+            receipt["error"]["question"] = exc.question
         try:
             _write_receipt(receipt_path, receipt)
         except OSError:

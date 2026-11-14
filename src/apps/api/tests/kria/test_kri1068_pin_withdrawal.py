@@ -89,7 +89,7 @@ DROPPED = (
 
 
 @pytest.fixture(autouse=True)
-def _flags(prod_profile, monkeypatch: pytest.MonkeyPatch) -> None:
+def _flags(prod_profile_pre_cutover, monkeypatch: pytest.MonkeyPatch) -> None:
     # CLIP_INTENTS_ENABLED is on in prod (CLAUDE.md); the picker and choice gates default on.
     monkeypatch.setattr(settings, "clip_intents_enabled", True)
     monkeypatch.setattr(settings, "kria_clip_selection_questions_enabled", True)

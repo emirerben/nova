@@ -1,50 +1,40 @@
 # KRI-1375 replay proof
 
-Command: `make kria-replay-job JOB=89fefe4d-137a-409c-b846-760161dc5063` at the PR head.
+Evidence for `make kria-replay-job` with live models. Every run reads the job and item debug
+with `scripts/admin.py --prod GET`, copies the footage the job's brief binding recorded
+read-only from the bucket, and runs the Main Creator route and the real worker locally under
+`src/apps/api/tests/prod_flags.snapshot.json`.
 
-Source job (production, 2026-11-10 18:53 UTC): `processing_failed`, failure reason
-`creation_text_failed` ("I couldn't prepare the text while keeping your approved wording").
-Plan item `fac3dbd4-f61b-4c2d-b5c0-a387d18cfa2a`, iPhone creation thread, 15 clips and 2 pool
-images, request asks for a word-by-word middle text plus an English translation at the bottom.
+## Run 3 (pass 2): c7c8fc75, ends on the Main Creator's question
 
-Replay inputs: the job and item debug via `scripts/admin.py --prod GET`, the 17 sources copied
-read-only from the bucket (iPhone analysis proxies; the originals stay on the device), the
-creator request recorded on the job, and `src/apps/api/tests/prod_flags.snapshot.json`.
+Command: `make kria-replay-job JOB=c7c8fc75-3c33-46dc-b957-3a92093100a1` (2026-11-14, 05:52 UTC,
+live Gemini, settled cost about $0.23).
 
-Result (two full runs, 2026-11-13 19:48 and 20:01 UTC, live Gemini models, same outcome both times):
+Source job (production, 2026-10-29): `processing_failed`, `creation_text_failed`, one clip.
+Replayed media: the one clip the brief binding recorded (`bound_to_recorded_media: true`).
 
-| Stage | Outcome |
-| --- | --- |
-| Pool and clip analysis (`nova.video.clip_metadata`) | 17 of 17 ok |
-| Main Creator plan (`nova.creator.main`, gemini-3.1-pro-preview) | ok, plan confirmed |
-| Proposal worker (`nova.plan.semantic_edit_proposal`, gemini-2.5-flash) | `terminal_schema`: `creator caption was dropped` after one schema retry |
-| Replay exit | no job dispatched, no video; `semantic_edit_planning_failed`: "Kria couldn't preserve every requested part of this edit" |
+Result: `outcome: main_creator_question`, exit 1, in about 2 minutes. The Main Creator
+(`nova.creator.main`) did not propose a plan; it asked, reason `clip_intent_unresolved`: "I ticked
+the clips I found for "my Cabildo photo". Tap any others that show it too, or untick one that
+doesn't." In production the creator answered that card in the chat and the job followed; the chat
+turns are not replayed, so the replay stops at the question and prints it. Before this fix the
+same job polled for the full 30 minute timeout and printed "Timed out waiting for a Main Creator
+plan" (pass 1 verifier, two jobs). The failure production hit (`creation_text_failed`) is not
+reproduced by this run.
 
-The replay fails on the same request and the same family as production (the creator's approved
-text is not kept), one stage earlier than the production job (production failed assembling the
-phone plan with "The approved bottom text is not on screen together with the approved middle
-text"). The difference is expected: the replay drives the Main Creator route, not the Kria
-runtime thread turn, and models vary between runs.
+## Earlier runs (pass 1)
 
-Earlier replays on the same job were blocked by the driver, not the product, and were fixed in
-this PR: the replay driver did not wait for the asynchronous planner, passed no request object,
-and dropped the iPhone upload receipts the planner needs (the admin item debug omits them; the
-job's brief binding keeps them).
+Job 89fefe4d (`creation_text_failed`, 2026-11-10, 15 clips) reached the proposal worker and failed
+with `creator caption was dropped`; job fba2c864 (`creation_text_failed`, 2026-11-07, one clip)
+ended `device_plan_ready`. Both ran on the item's current media. Since then the driver takes only
+the media the brief binding recorded: for 89fefe4d that excludes two pool photos added two days
+after the job ran, so the 89fefe4d result is not claimed for the current build. `--fetch-only`
+on 89fefe4d, cecdc8d9 and c7c8fc75 now reports `bound_to_recorded_media: true` with exactly the
+recorded 15, 11 and 1 clips.
 
-Cost of the proof (settled `agent_run` costs across every attempt): about $0.46.
+## Limits
 
-## Second proof: the device-plan success path (job fba2c864)
-
-Command: `make kria-replay-job JOB=fba2c864-cdc1-4e35-ad74-740348f2781e` (2026-11-13 20:59 UTC,
-2 min 15 s, one 11 s clip, live Gemini models, well under $0.05).
-
-Source job (production, 2026-11-07 21:09 UTC): `processing_failed`, `creation_text_failed`.
-Replay result: `outcome: device_plan_ready`. The Main Creator plan was confirmed, the worker built
-and pinned the iPhone render plan (variant `guided_story`, 4.0 s, intro text "The prompt I run at
-the end of every Claude session") and the job sits `awaiting_device`, exit code 0. The plan is
-written to `<run dir>/device-plan.json`. Production failed this request; the replay did not, so the
-failure is not reproduced by this run (model output varies between runs).
-
-An earlier build of the driver hung on exactly this success: `awaiting_device` was not a
-terminal status, so it polled until the 1800 s timeout and printed a null status with a timeout
-reason. `awaiting_device` is now terminal and reported as `device_plan_ready`.
+* A job whose request depends on a chat clarification may end at `main_creator_question`; no
+  replay of the recorded answers exists yet.
+* Library pool assets cannot be fetched until the item debug's `gcs_path` field is deployed.
+* Model output varies between runs; a different result on the same input is data.

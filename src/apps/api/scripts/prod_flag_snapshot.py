@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -147,6 +148,34 @@ def read_live_phone_config() -> dict[str, Any]:
     return json.loads(completed.stdout)
 
 
+CLAIM_SOURCES = ("CLAUDE.md", "agents/DECISIONS.md", "docs/runbooks", "docs/pipelines")
+ON_IN_PROD = re.compile(r"\b(?:ON|on|LIVE|live) in prod(?:uction)?\b")
+FLAG_NAME = re.compile(r"`([A-Z][A-Z0-9_]{3,})`")
+
+
+def documented_on_in_prod() -> dict[str, str]:
+    """Settings the repo's own docs say are ON in production, with the line that says so.
+
+    Matches the "ON in prod" phrasing on a line that names the flag in backticks. Other
+    wordings (an applied ``fly secrets set`` in a decision record) are recorded by hand with
+    ``set``; this catches the common case so a documented value cannot be ignored.
+    """
+
+    names = set(_setting_fields())
+    claims: dict[str, str] = {}
+    for entry in CLAIM_SOURCES:
+        root = REPO_ROOT / entry
+        files = [root] if root.is_file() else sorted(root.glob("*.md"))
+        for path in files:
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if not ON_IN_PROD.search(line):
+                    continue
+                for flag in FLAG_NAME.findall(line):
+                    if flag.lower() in names:
+                        claims.setdefault(flag.lower(), f"{path.relative_to(REPO_ROOT)}:{number}")
+    return claims
+
+
 def problems(snapshot: dict[str, Any]) -> list[str]:
     """Why the committed snapshot no longer describes the code, empty when it does."""
 
@@ -172,6 +201,13 @@ def problems(snapshot: dict[str, Any]) -> list[str]:
             )
         if field.annotation is bool and not isinstance(entry.get("value"), bool):
             found.append(f"{name}: expected a boolean, found {entry.get('value')!r}")
+    for name, where in documented_on_in_prod().items():
+        entry = entries.get(name)
+        if entry and entry.get("value") is not True:
+            found.append(
+                f"{name}: {where} says it is ON in prod, snapshot has {entry.get('value')!r} "
+                f"(source {entry.get('source')!r}); record it with `set {name.upper()}=true`"
+            )
     return found
 
 

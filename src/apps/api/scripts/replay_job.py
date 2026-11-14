@@ -44,7 +44,7 @@ API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = API_ROOT.parents[2]
 SNAPSHOT = API_ROOT / "tests" / "prod_flags.snapshot.json"
 WORK_ROOT = Path("/private/tmp/nova-replay-job")
-SCRATCH_DATABASE = "nova_creator_fidelity_test"
+SCRATCH_DATABASE_PREFIX = "nova_creator_fidelity_test_"
 WORKER_QUEUES = (
     "celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,agent-control,"
     "creator-fidelity-v1"
@@ -204,11 +204,14 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
     sources: list[dict[str, Any]] = []
     seen: set[str] = set()
     user_id = str(job["user_id"])
+    recorded = _recorded_media_ids(job)
     for assignment in item_debug.get("clip_assignments") or []:
         media_id = str(assignment.get("media_id") or "")
         kind = str(assignment.get("kind") or "video")
         object_path = str(assignment.get("gcs_path") or "")
         if not media_id or not object_path or kind not in MEDIA_KINDS or media_id in seen:
+            continue
+        if recorded is not None and _media_key(media_id) not in recorded:
             continue
         seen.add(media_id)
         local = inputs_dir / "media" / media_id
@@ -224,6 +227,8 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
     for asset in item_debug.get("pool_assets") or []:
         kind = str(asset.get("kind") or "")
         if kind not in MEDIA_KINDS or asset.get("status") != "ready":
+            continue
+        if recorded is not None and _media_key(str(asset["id"])) not in recorded:
             continue
         object_path = asset.get("gcs_path")
         generation = asset.get("gcs_generation")
@@ -250,7 +255,10 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
             )
         )
     voiceover_path = item.get("voiceover_gcs_path")
-    if voiceover_path:
+    snapshot = _binding_snapshot(job)
+    job_used_voiceover = bool(snapshot.get("voiceover") or snapshot.get("voiceover_path"))
+    if voiceover_path and (recorded is None or job_used_voiceover):
+        voiceover_path = _owned_object_path(str(voiceover_path), user_id)
         local = inputs_dir / "media" / Path(voiceover_path).name
         storage_copy(bucket, voiceover_path, local)
         sources.append(
@@ -260,7 +268,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         )
     if not sources:
         raise ReplayJobError("The plan item holds no footage in storage to replay")
-    coverage = _check_source_coverage(job, sources)
+    coverage = _check_source_coverage(job, sources, recorded)
 
     manifest = {"job_id": job_id, "creator_request": creator_request, "sources": sources}
     for name, value in (
@@ -280,23 +288,51 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
     }
 
 
-def _check_source_coverage(job: dict[str, Any], sources: list[dict[str, Any]]) -> dict[str, Any]:
-    """Refuse a replay that would run on different inputs than the production job.
+def _media_key(media_id: str) -> str:
+    """Pool assets are recorded as ``asset-<uuid>`` in the brief binding and bare in the debug."""
 
-    The job's brief binding records the media it was approved against. Every visual and clip
-    in it must have a replayed source, and a creator song or voiceover the replay cannot
-    reproduce stops the run: a green replay on partial footage is stand-in evidence.
+    return media_id.removeprefix("asset-")
+
+
+def _binding_snapshot(job: dict[str, Any]) -> dict[str, Any]:
+    plan = job.get("assembly_plan") or {}
+    return ((plan.get("creator_brief_binding") or {}).get("media_snapshot")) or {}
+
+
+def _recorded_media_ids(job: dict[str, Any]) -> set[str] | None:
+    """The clips and visuals the job was approved against, or None when it recorded none.
+
+    The item's pool and clip rows may have changed since the job ran (assets added later),
+    so the replay takes exactly these and nothing else.
     """
 
-    plan = job.get("assembly_plan") or {}
-    snapshot = ((plan.get("creator_brief_binding") or {}).get("media_snapshot")) or {}
+    snapshot = _binding_snapshot(job)
+    rows = [*(snapshot.get("clip_assignments") or []), *(snapshot.get("visuals") or [])]
+    ids = {_media_key(str(row["media_id"])) for row in rows if row.get("media_id")}
+    return ids or None
+
+
+def _check_source_coverage(
+    job: dict[str, Any], sources: list[dict[str, Any]], recorded: set[str] | None
+) -> dict[str, Any]:
+    """Refuse a replay that would run on different inputs than the production job.
+
+    The job's brief binding records the media it was approved against. Every one of them
+    must have a replayed source, and a creator song or voiceover the replay cannot reproduce
+    stops the run: a green replay on partial footage is stand-in evidence. A job without a
+    binding replays everything the item holds, and the coverage says so.
+    """
+
+    snapshot = _binding_snapshot(job)
     visuals = [s for s in sources if s["kind"] in MEDIA_KINDS]
-    expected = len(snapshot.get("visuals") or []) + len(snapshot.get("clip_assignments") or [])
-    if len(visuals) < expected:
-        raise ReplayJobError(
-            f"The job was approved against {expected} visuals and clips but only "
-            f"{len(visuals)} are recoverable; refusing to replay on different footage"
-        )
+    if recorded is not None:
+        missing = sorted(recorded - {_media_key(s["id"]) for s in visuals})
+        if missing:
+            raise ReplayJobError(
+                f"The job was approved against {len(recorded)} visuals and clips but "
+                f"{len(missing)} are not recoverable ({', '.join(missing[:5])}); refusing to "
+                "replay on different footage"
+            )
     if any(snapshot.get(key) for key in ("song_analysis", "song_alignment", "song_generation")):
         raise ReplayJobError(
             "The job used a creator song; replay_creator does not seed songs, so a replay "
@@ -305,7 +341,8 @@ def _check_source_coverage(job: dict[str, Any], sources: list[dict[str, Any]]) -
     if snapshot.get("voiceover") and not any(s["kind"] == "audio" for s in sources):
         raise ReplayJobError("The job recorded a voiceover but the item holds none in storage")
     return {
-        "expected_visuals_and_clips": expected,
+        "bound_to_recorded_media": recorded is not None,
+        "recorded_visuals_and_clips": len(recorded) if recorded is not None else None,
         "replayed_visuals_and_clips": len(visuals),
         "pool_images": sum(1 for s in visuals if s.get("pool") and s["kind"] == "image"),
         "pool_videos": sum(1 for s in visuals if s.get("pool") and s["kind"] == "video"),
@@ -329,11 +366,12 @@ def replay_environment(dotenv: dict[str, str], scratch_url: str, namespace: str)
     return env
 
 
-def scratch_database_url(dotenv: dict[str, str]) -> str:
+def scratch_database_url(dotenv: dict[str, str], database: str) -> str:
     """A local PostgreSQL URL for the scratch database that accepts a connection.
 
     Tries the credentials in ``.env`` first, then the operating-system account (a Homebrew
-    Postgres has no ``postgres`` role). Anything not on localhost is refused.
+    Postgres has no ``postgres`` role). Anything not on localhost is refused, and the derived
+    URL never keeps the ``.env`` query string, which libpq lets override the host.
     """
 
     from sqlalchemy import create_engine, text
@@ -343,10 +381,8 @@ def scratch_database_url(dotenv: dict[str, str]) -> str:
     if (configured.hostname or "").lower() not in {"localhost", "127.0.0.1", "::1"}:
         raise ReplayJobError("DATABASE_URL in .env is not local; refusing to derive a scratch URL")
     host = f"localhost:{configured.port or 5432}"
-    candidates = [configured._replace(path=f"/{SCRATCH_DATABASE}")]
-    candidates.append(
-        urlsplit(f"postgresql://{os.environ.get('USER', '')}@{host}/{SCRATCH_DATABASE}")
-    )
+    candidates = [configured._replace(path=f"/{database}", query="", fragment="")]
+    candidates.append(urlsplit(f"postgresql://{os.environ.get('USER', '')}@{host}/{database}"))
     for candidate in candidates:
         engine = create_engine(urlunsplit(candidate._replace(path="/postgres")))
         try:
@@ -360,14 +396,30 @@ def scratch_database_url(dotenv: dict[str, str]) -> str:
     raise ReplayJobError("No local PostgreSQL role from .env or $USER can connect to `postgres`")
 
 
-def recreate_scratch_database(url: str, env: dict[str, str]) -> None:
-    from sqlalchemy import create_engine, text
+def _scratch_name(url: str) -> str:
+    name = urlsplit(url).path.lstrip("/")
+    if not re.fullmatch(rf"{SCRATCH_DATABASE_PREFIX}[a-z0-9]{{1,16}}", name):
+        raise ReplayJobError(f"Refusing to drop or create database {name!r}")
+    return name
 
-    maintenance = urlsplit(url)._replace(path="/postgres")
-    engine = create_engine(urlunsplit(maintenance), isolation_level="AUTOCOMMIT")
+
+def _maintenance_engine(url: str):  # noqa: ANN202 - sqlalchemy Engine, imported lazily
+    from sqlalchemy import create_engine
+
+    return create_engine(
+        urlunsplit(urlsplit(url)._replace(path="/postgres", query="")),
+        isolation_level="AUTOCOMMIT",
+    )
+
+
+def recreate_scratch_database(url: str, env: dict[str, str]) -> None:
+    from sqlalchemy import text
+
+    name = _scratch_name(url)
+    engine = _maintenance_engine(url)
     with engine.connect() as connection:
-        connection.execute(text(f'DROP DATABASE IF EXISTS "{SCRATCH_DATABASE}" WITH (FORCE)'))
-        connection.execute(text(f'CREATE DATABASE "{SCRATCH_DATABASE}"'))
+        connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        connection.execute(text(f'CREATE DATABASE "{name}"'))
     engine.dispose()
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
@@ -378,6 +430,17 @@ def recreate_scratch_database(url: str, env: dict[str, str]) -> None:
         text=True,
         timeout=900,
     )
+
+
+def drop_scratch_database(url: str) -> None:
+    from sqlalchemy import text
+
+    engine = _maintenance_engine(url)
+    try:
+        with engine.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{_scratch_name(url)}" WITH (FORCE)'))
+    finally:
+        engine.dispose()
 
 
 def start_worker(env: dict[str, str], run_dir: Path, namespace: str) -> subprocess.Popen[bytes]:
@@ -424,9 +487,12 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
         if out.get("field") in {"output_url", "video_path"} and not out.get("missing")
     ]
     error = (receipt.get("error") or {}).get("message")
+    question = (receipt.get("error") or {}).get("question")
     device_plan = receipt.get("device_plan")
     if videos:
         outcome = "video_rendered"
+    elif question:
+        outcome = "main_creator_question"
     elif device_plan and device_plan.get("complete"):
         outcome = "device_plan_ready"
     elif device_plan:
@@ -443,6 +509,7 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
         "error_detail": job.get("error_detail"),
         "video_paths": videos,
         "device_plan": device_plan,
+        "main_creator_question": question,
         "receipt": str(receipt_path),
     }
 
@@ -471,6 +538,7 @@ def main(argv: list[str] | None = None) -> int:
     namespace = f"replay-{job_id[:8]}-{stamp.lower()}"
     dotenv = _load_dotenv(REPO_ROOT / ".env")
     worker: subprocess.Popen[bytes] | None = None
+    scratch_url: str | None = None
     try:
         info = collect_inputs(job_id, inputs_dir, _bucket(args.bucket))
         print(
@@ -482,7 +550,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"inputs: {inputs_dir}")
             return 0
         run_dir.mkdir(parents=True)
-        scratch_url = scratch_database_url(dotenv)
+        scratch_url = scratch_database_url(
+            dotenv, f"{SCRATCH_DATABASE_PREFIX}{uuid.uuid4().hex[:12]}"
+        )
         env = replay_environment(dotenv, scratch_url, namespace)
         recreate_scratch_database(scratch_url, env)
         worker = start_worker(
@@ -525,6 +595,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if worker is not None:
             stop_worker(worker)
+        if scratch_url is not None:
+            try:
+                drop_scratch_database(scratch_url)
+            except Exception as exc:  # noqa: BLE001 - cleanup must not mask the result
+                print(f"scratch database not dropped: {exc}", file=sys.stderr)
 
 
 def _creator_environment(env: dict[str, str], run_dir: Path, inputs_dir: Path) -> dict[str, str]:
