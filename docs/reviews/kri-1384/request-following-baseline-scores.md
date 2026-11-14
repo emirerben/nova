@@ -13,7 +13,7 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 | Conversation threads | 31 | 77 | 52 | 7 | 18 | 68% | 13 |
 | Per-action set | 46 | 46 | 39 | 0 | 7 | 85% | 1 |
 
-Threads measured from recordings: 77. Threads awaiting recordings (not in the KPI): 0.
+Threads measured from recordings: 77. Threads awaiting recordings (not in the KPI): 1.
 
 ## Provenance
 
@@ -85,6 +85,7 @@ Threads measured from recordings: 77. Threads awaiting recordings (not in the KP
 | action_split_screen_full_screen | After two seconds, let the bottom video take over the whole screen. | reaches | ['make_split_full_screen'] | met | parser accepted ['make_split_full_screen'] |
 | action_split_screen_layout | Make the split screen three panels with a thin gap. | reaches | ['update_split_screen'] | met | parser accepted ['update_split_screen'] |
 | action_split_screen_loop_fill | Loop the top clip of the split screen so it fills its panel. | reaches | ['assign_split_panel'] | met | parser accepted ['assign_split_panel'] |
+| action_split_screen_panel_add | In the split screen, play the finish arch clip after the Halden Hill clip on the top panel and keep the Old Mill clip on the bottom. | reaches | no op | unrecorded |  |
 | action_split_screen_panel_order | Swap the top and bottom panels of the split screen. | reaches | ['swap_split_panels'] | met | parser accepted ['swap_split_panels'] |
 | action_split_screen_remove | Remove the split screen. | reaches | ['remove_split_screen'] | met | parser accepted ['remove_split_screen'] |
 | action_split_screen_section_order | Move the split screen to the end of the video. | reaches | ['reorder_clips_by'] | unmet | missing ['move_split_screen']; parser accepted ['reorder_clips_by'] |

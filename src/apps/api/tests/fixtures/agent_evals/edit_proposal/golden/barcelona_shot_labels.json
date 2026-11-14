@@ -70,5 +70,6 @@
     "source": "hand_authored_golden",
     "case": "barcelona_shot_labels",
     "note": "Prod job ac795019: exact creator shot labels must bind verbatim, one per shot."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

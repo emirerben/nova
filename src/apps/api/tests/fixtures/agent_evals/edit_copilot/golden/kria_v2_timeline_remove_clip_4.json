@@ -102,5 +102,6 @@
     "source": "hand_authored_golden",
     "case": "explicit remove",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

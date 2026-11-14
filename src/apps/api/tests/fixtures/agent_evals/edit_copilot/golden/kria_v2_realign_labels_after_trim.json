@@ -232,5 +232,6 @@
     "case": "creator trimmed/extended a clip by hand; labels ~0.53s early -> server-computed realign_labels, never label_each_clip or invented timings",
     "lane": "kria_v2_text",
     "reply_contains": []
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -58,9 +58,16 @@ In Progress on start, In Review when the PR opens, Done when the PR merges into 
 
 ## Fix chains: the second-fix-PR rule
 
-Trigger: a KRI ticket's **second `fix` PR has merged** (counted by `fix`-prefixed commit subjects naming the ticket on `main`). `scripts/preship-check.sh` step 8 warns (never blocks) when the branch's ticket already has two or more.
+Trigger: a KRI ticket's **second `fix` PR has merged**. `scripts/preship-check.sh` step 8 and the `Fix chain` CI check (`.github/workflows/fix-chain.yml`, both running `scripts/ci/fix-chain-check.py`) **block** a third `fix` PR on that ticket until the list below exists.
 
-Before a **third** fix PR on that ticket, write a failure-mode list in the ticket or the PR body. One line per way the feature can still fail, each either:
+How it counts:
+
+- Merge-commit and rebase merges count once per PR, by the PR's own title from the `gh` index, never once per branch commit. A `fix: review nits` commit inside a `feat` PR is not a fix PR.
+- Only merged PRs on `main` whose PR title **or** squash subject starts with `fix` (`fix:`, `fix(scope):`, `hotfix`). `feat`, `test`, `chore`, `docs` and release-metadata PRs never count. The PR being checked is gated on its title only, so a subject edited at merge time can add to a count but never exempts a PR.
+- A fix is charged to the **first** KRI id in its squash subject. A subject with no id is charged to the first id in its PR title or head branch name (PR index from `gh`). A child fix that names its parent second does not count against the parent.
+- The PR being checked is a fix when its title starts with `fix` (locally: the open PR's title via `gh`, or `PR_TITLE=...`; before a PR exists, when a commit on the branch does). The ticket comes from the PR title, else the branch name.
+
+Before a **third** fix PR on that ticket, write a failure-mode list in the PR body (or a changed `docs/` or `plans/` `.md` file); the ticket may keep a copy, but the gate does not read it. One line per way the feature can still fail, each either:
 
 - names the test that already covers it, or
 - is marked `uncovered - adding test X` (and X lands in the same PR).
@@ -73,9 +80,21 @@ Failure modes for KRI-<n> (after fix #2)
 - <shape / input / state> -> <expected outcome> | uncovered - adding <test id>
 ```
 
+The gate accepts the block in the PR body, or in a `docs/` or `plans/` `.md` file changed by the PR. It needs the exact `Failure modes for KRI-<n>` heading for this ticket, at least two rows in the shape above, and no template `<placeholder>` left (a `<` in real text, such as `< 0.1` or `Array<Clip>`, is fine). Text inside `<!-- ... -->` is ignored, because reviewers do not see it. The gate checks the shape, not whether the named test exists: reviewers read the rows.
+
+Not a repeat of the same fault (umbrella ticket, unrelated typo)? Put one line in the PR body:
+
+```
+[skip-fix-chain] <one-line reason, at least 20 characters and 4 distinct words>
+```
+
+The marker must be on its own line in the PR body (not a commit message), short or placeholder reasons are rejected, and CI prints the reason in the job summary with a warning so the reviewer sees it. Using it to dodge the list on a real repeat is the failure this rule exists to stop; the reviewer rejects it.
+
 Why: KRI-736 (editor Save) took five fix PRs in one day because each fix covered only the case that had just broken. A listed matrix, with new cases added as rows rather than new files, is the model (KRI-750). If the list cannot be written, the fix is not understood yet: stop and investigate before the third PR.
 
-Watch item: the next ticket that hits two fix PRs should show this list in its third PR; if it does not, the rule is not working and gets tightened.
+Stale greens: the check runs when a PR is pushed or edited. `.github/workflows/fix-chain-recheck.yml` reruns it on the other open fix PRs for the same ticket whenever a fix PR merges to `main`, so two fix PRs opened side by side cannot both pass as the second. A run that is still in progress when its sibling merges cannot be rerun; re-run `Fix chain` by hand if you merge right after a sibling.
+
+History: the list was a warning (KRI-751) and was written in 4 of 13 cases; KRI-1383 made it blocking.
 
 ## Weekly review (`/roadmap review`)
 

@@ -71,6 +71,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
 )
+from app.tasks.content_plan_build import CREATOR_FAILURE_DETAIL_FIELD
 
 
 def test_creation_thread_router_rejects_unauthenticated_http_requests() -> None:
@@ -4861,16 +4862,53 @@ def test_job_projection_carries_a_human_failure_message_not_the_raw_code() -> No
     assert projection["failure_message"]
     assert projection["failure_message"] != "phone_plan_unsupported"
 
-    # KRI-466: a creator-facing code shows its own error_detail.
-    declined = SimpleNamespace(
+    # KRI-466 / KRI-1456: a failure whose writer stamped a creator-written reason shows it.
+    stamped = SimpleNamespace(
         id=uuid.uuid4(),
         status="processing_failed",
         current_phase=None,
         failure_reason="user_song_plan_declined",
-        error_detail="  Film with the song out loud.  ",
+        error_detail="internal: matcher returned 0 beats for track 42",
+        assembly_plan={
+            "variants": [],
+            CREATOR_FAILURE_DETAIL_FIELD: {
+                "failure_reason": "user_song_plan_declined",
+                "text": "  Film with the song out loud.  ",
+            },
+        },
+    )
+    assert _job_projection(stamped)["failure_message"] == "Film with the song out loud."
+
+    # Without a stamp the creator sees the code's own sentence, never the raw error_detail.
+    unstamped = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="processing_failed",
+        current_phase=None,
+        failure_reason="user_song_plan_declined",
+        error_detail="internal: matcher returned 0 beats for track 42",
         assembly_plan={"variants": []},
     )
-    assert _job_projection(declined)["failure_message"] == "Film with the song out loud."
+    message = _job_projection(unstamped)["failure_message"]
+    assert message
+    assert message != "user_song_plan_declined"
+    assert "matcher" not in message
+
+    # A stamp left by a different failure code is not inherited.
+    other_code = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="processing_failed",
+        current_phase=None,
+        failure_reason="phone_plan_unsupported",
+        error_detail=None,
+        assembly_plan={
+            "variants": [],
+            CREATOR_FAILURE_DETAIL_FIELD: {
+                "failure_reason": "user_song_plan_declined",
+                "text": "Film with the song out loud.",
+            },
+        },
+    )
+    assert _job_projection(other_code)["failure_message"] != "Film with the song out loud."
 
     # A job with no failure carries no message either.
     ok_job = SimpleNamespace(

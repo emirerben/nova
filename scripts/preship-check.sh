@@ -12,8 +12,9 @@
 #      unmapped path is named here instead of discovered in CI (KRI-749)
 #   7. request-to-output evidence: validate the same PR-body contract as CI,
 #      including staged, unstaged and untracked changes
-#   8. fix-chain warning: a 3rd fix PR on one KRI ticket needs a failure-mode
-#      list first (KRI-751; docs/runbooks/linear-workflow.md)
+#   8. fix-chain gate: a 3rd fix PR on one KRI ticket is blocked without a
+#      failure-mode list or a [skip-fix-chain] reason (KRI-751, KRI-1383;
+#      docs/runbooks/linear-workflow.md)
 #
 # Usage: bash scripts/preship-check.sh [--pr-body /path/to/pr-body.md]
 # Default body: PR_EVIDENCE_BODY or .dev/pr-body.md (from the feature worktree).
@@ -189,24 +190,40 @@ else
   info "contract: docs/runbooks/request-to-output-standard.md"
 fi
 
-# ── 8. Fix-chain warning (KRI-751) ───────────────────────────────────────────
-# Offline: counts fix-subject commits already on origin/main for this ticket.
+# ── 8. Fix-chain gate (KRI-751, blocking since KRI-1383) ─────────────────────
+# A 3rd fix PR on one KRI ticket needs a failure-mode list (or a skip marker with
+# a reason). Same script CI runs (.github/workflows/fix-chain.yml). The PR title
+# is PR_TITLE, else the open PR's title from gh; before a PR exists, "is a fix"
+# comes from this branch's commit subjects.
 echo "[8/8] fix-chain check"
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-TICKET="$(echo "$BRANCH" | grep -oiE 'kri-[0-9]+' | head -1 | tr 'a-z' 'A-Z')"
-if [ -z "$TICKET" ]; then
-  info "no KRI-<n> in branch name '$BRANCH' — skipped"
-else
-  # -i grep, then an explicit digit boundary (git's regex has no portable \b).
-  FIXES="$(git log origin/main --format=%s -i --grep="$TICKET" 2>/dev/null \
-    | grep -iE "$TICKET([^0-9]|$)" | grep -icE '^fix' || true)"
-  FIXES="${FIXES:-0}"
-  if [ "$FIXES" -ge 2 ]; then
-    warn "$TICKET already has $FIXES fix PR(s) on main — this would be fix #$((FIXES + 1)). Write the failure-mode list first (each mode: covered by test X, or 'uncovered - adding test X'): docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule"
-  else
-    pass "$TICKET has $FIXES fix PR(s) on main — no fix chain"
+PR_INDEX_FILE=""
+if command -v gh >/dev/null 2>&1; then
+  PR_INDEX_FILE="$(mktemp)"
+  if ! gh pr list --state merged --base main --limit 5000 \
+      --json number,title,headRefName > "$PR_INDEX_FILE" 2>/dev/null; then
+    rm -f "$PR_INDEX_FILE"; PR_INDEX_FILE=""
+  elif [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$PR_INDEX_FILE")" -ge 5000 ]; then
+    warn "merged-PR index hit its 5000-PR limit - older fix PRs may not be counted"
   fi
 fi
+[ -n "$PR_INDEX_FILE" ] || warn "gh unavailable - fix PRs without a KRI id in the squash title are not counted locally (CI counts them)"
+FIX_TITLE="${PR_TITLE:-}"
+if [ -z "$FIX_TITLE" ] && command -v gh >/dev/null 2>&1; then
+  FIX_TITLE="$(gh pr view --json title -q .title 2>/dev/null || true)"
+fi
+FIX_ARGS=(--repo "$REPO" --main-ref origin/main --head HEAD --branch "$BRANCH" --title "$FIX_TITLE" --body-file "$PR_BODY_FILE")
+[ -n "$PR_INDEX_FILE" ] && FIX_ARGS+=(--pr-index "$PR_INDEX_FILE")
+while IFS= read -r f; do
+  case "$f" in *.md) FIX_ARGS+=(--changed-file "$f") ;; esac
+done <<< "$CHANGED"
+if OUT="$(python3 scripts/ci/fix-chain-check.py "${FIX_ARGS[@]}" 2>&1)"; then
+  pass "$OUT"
+else
+  fail "fix-chain gate:"
+  echo "$OUT" | sed 's/^/         /'
+fi
+[ -z "$PR_INDEX_FILE" ] || rm -f "$PR_INDEX_FILE"
 
 echo
 if [ "$FAILS" -gt 0 ]; then

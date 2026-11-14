@@ -967,6 +967,9 @@ _CROSS_MODULE_SOURCES: dict[str, tuple[str, ...]] = {
     "app.tasks.kria_runtime._JOB_FAILURE_MESSAGES_TR": (
         "app.tasks.content_plan_build.JOB_FAILURE_MESSAGES",
     ),
+    "app.tasks.kria_runtime._JOB_FAILURE_REASONS_TR": (
+        "app.tasks.content_plan_build.JOB_FAILURE_REASONS",
+    ),
     "app.tasks.kria_runtime._DISPATCH_REFUSALS_TR": (
         "app.tasks.kria_runtime._SPEECH_CLEANUP_DISPATCH_REFUSALS",
         "app.tasks.kria_runtime._VISUALS_DISPATCH_REFUSALS",

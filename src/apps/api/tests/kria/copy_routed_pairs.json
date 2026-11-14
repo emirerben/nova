@@ -1510,6 +1510,78 @@
    "app/agents/editor_ops_v2/split_full_screen.py",
    "Part of a split screen can't go full screen from chat on this edit.",
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
+  ],
+  [
+   "app/tasks/generative_build.py",
+   "Tell me how you'd like the text instead.",
+   "Metnin bunun yerine nasıl olmasını istediğini söyle."
+  ],
+  [
+   "app/tasks/generative_build.py",
+   "Your text is on the video as you wrote it. I didn't change how it looks because I wasn't sure what you meant. Tell me what you'd like and I'll change it.",
+   "Yazın videoda senin yazdığın gibi duruyor. Ne demek istediğinden emin olamadığım için görünümünü değiştirmedim. Ne istediğini söyle, değiştireyim."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't prepare the text while keeping your approved wording. Your draft and footage are saved.",
+   "Onayladığın yazıyı koruyarak metni hazırlayamadım. Taslağın ve çekimlerin kayıtlı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Our AI took too long to plan this edit, so your video wasn't made. Your edit and footage are saved.",
+   "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Something broke while planning this edit, so your video wasn't made. Your edit and footage are saved.",
+   "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit needs an iPhone rendering feature that's switched off right now. Your edit and footage are saved.",
+   "Bu düzenleme için gereken bir iPhone oluşturma özelliği şu anda kapalı. Düzenlemen ve çekimlerin kayıtlı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Writing the on-screen text for this many clips took longer than our AI allows, so your video wasn't made. Your edit and footage are saved. Fewer clips or less text would help.",
+   "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az klip ya da daha az yazı işe yarar."
+  ]
+ ],
+ "retired": [
+  [
+   "app/agents/clip_intent_planner.py",
+   "label",
+   "etiket"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "group",
+   "grup"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "order",
+   "sıra"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "include",
+   "dahil etme"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "caption",
+   "yazı"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "exclude",
+   "hariç tutma"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "hide_part",
+   "bölüm gizleme"
   ]
  ]
 }

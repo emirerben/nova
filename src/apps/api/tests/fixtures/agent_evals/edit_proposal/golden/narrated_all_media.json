@@ -83,5 +83,6 @@
     "source": "hand_authored_golden",
     "case": "narrated all-media edit with exact photo holds, subsecond clips, and a video longer than three seconds",
     "contract": "Preserve all seven source identities, grouped nine-frame photos, bounded real video windows, and the full 330-frame narration timeline."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

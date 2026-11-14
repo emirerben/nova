@@ -23,5 +23,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Video with no creator-added text overlays — only raw footage. High confidence because absence of text is unambiguous. All style fields should be null / 'none'."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

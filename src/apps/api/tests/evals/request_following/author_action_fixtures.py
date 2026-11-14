@@ -536,6 +536,16 @@ SCENARIOS: list[Scenario] = [
         needs_split=True,
     ),
     Scenario(
+        "split_screen_panel_add",
+        "In the split screen, play the finish arch clip after the Halden Hill clip on the top "
+        "panel and keep the Old Mill clip on the bottom.",
+        [{"op": "add_split_panel_clip", "field": "clip_index"}],
+        [{"op": "add_split_panel_clip", "section_id": "duo", "panel_index": 0, "clip_index": 2}],
+        variant=_split,
+        needs_split=True,
+        note="KRI-1420: A then B on the top panel, C on the bottom, on an existing split.",
+    ),
+    Scenario(
         "split_screen_remove",
         "Remove the split screen.",
         [{"op": "remove_split_screen"}],
@@ -864,6 +874,31 @@ PHONE_OP_PROBES: list[Scenario] = [
         variant=_split,
         needs_split=True,
         patches={"split_collapse_available": lambda *_: True},
+    ),
+    _probe(
+        "split_screen_panel_add",
+        {
+            "op": "add_split_panel_clip",
+            "section_id": "duo",
+            "panel_index": 1,
+            "clip_index": 2,
+            "offset_s": 3.0,
+            "duration_s": 2.0,
+        },
+        variant=_split,
+        needs_split=True,
+    ),
+    _probe(
+        "split_screen_panel_add",
+        {
+            "op": "add_split_panel_clip",
+            "section_id": "duo",
+            "panel_index": 0,
+            "clip_index": 2,
+            "grow_section": False,
+        },
+        variant=_split_room_to_loop,
+        needs_split=True,
     ),
     _probe(
         "split_screen_remove",

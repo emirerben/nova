@@ -1,0 +1,68 @@
+{
+  "fixture_id": "kri_tadic_length",
+  "incident": "prod thread aa36d140 (2026-11-14): a model-chosen 14.005 s on one 14.03 s clip was refused as a lost creator ask on every turn",
+  "source": {
+    "captured_with": [
+      "scripts/admin.py --prod GET creation-threads/<thread>/events",
+      "scripts/admin.py --prod GET creation-threads/<thread>/turns",
+      "scripts/admin.py --prod GET kria/trace?thread_id=<thread>"
+    ],
+    "recorded": [
+      "media: one video, duration_s 14.033333 (id scrubbed)",
+      "format: montage (the creator picked it in the format prompt)",
+      "brief r1: put the creator's pasted song lyrics on the video as text (the lyrics are replaced by a placeholder)",
+      "no creator message names a length (each of the 9 user turns was read; none has seconds or a length word)",
+      "prod reply on 5 turns (Turkish chat): the length sentence below, from approval readiness (policy_problem, requirement r1)"
+    ],
+    "reconstructed": [
+      "strategy: the trace holds no draft row (drafts: []), so the planned strategy is rebuilt from the readiness sentence: target_duration_s 14.005, the one clip, once-only montage, the lyrics as a whole-video pinned text. No server length stamp (no creator length).",
+      "audio_strategy original_audio: the thread has no song or music ask"
+    ]
+  },
+  "observed": {
+    "language": "tr",
+    "policy_problem": "Klipler toplam yaklaşık 14 saniye, bu yüzden video 14.005 saniye olamıyor. Daha sade bir sürüm yapayım mı?"
+  },
+  "media": [
+    {
+      "media_id": "analysis-proxy-tadic-01",
+      "kind": "video",
+      "duration_s": 14.033333
+    }
+  ],
+  "brief": {
+    "version": 2,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "text",
+        "scope": "global",
+        "status": "open",
+        "literal": "Line one of the lyrics, line two of the lyrics",
+        "description": "Add the pasted song lyrics to the video as text.",
+        "facts": {},
+        "source_turn_id": "turn-2"
+      }
+    ]
+  },
+  "strategy": {
+    "edit_format": "montage",
+    "audio_strategy": "original_audio",
+    "media_scope": "selected",
+    "selected_media_ids": ["analysis-proxy-tadic-01"],
+    "video_reuse_policy": "once",
+    "target_duration_s": 14.005,
+    "caption_style": "none",
+    "pinned_texts": [
+      {
+        "text": "Line one of the lyrics, line two of the lyrics",
+        "corner": "bottom_center"
+      }
+    ],
+    "rationale": "(redacted)"
+  },
+  "controls": {
+    "stated_unreachable_s": 20,
+    "stated_within_tolerance": {"stated_s": 14, "clip_s": 13.98}
+  }
+}

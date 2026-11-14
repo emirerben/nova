@@ -33,6 +33,7 @@ from app.services.phone_editor_sources import (
     canonical_source,
     merge_editor_sources,
     phone_editor_source_revision,
+    visual_bytes_ready,
 )
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneSourceBinding
 from app.services.phone_visuals import bind_phone_visual_assets, phone_composable_video
@@ -187,7 +188,7 @@ def _prepare_visual(job_id: str, record: dict[str, Any]) -> tuple[dict[str, Any]
         job = db.get(Job, job_id)
         if asset is None or job is None or str(asset.user_id) != record["user_id"]:
             raise AdmissionError("visual_not_found")
-        if asset.plan_item_id != job.content_plan_item_id or asset.status != "ready":
+        if asset.plan_item_id != job.content_plan_item_id or not visual_bytes_ready(asset):
             raise AdmissionError("visual_not_ready")
         pin = {str(asset.id): (asset.kind, asset.gcs_path, str(asset.gcs_generation or ""))}
     binding = bind_phone_visual_assets(sync_session, job_id=job_id, pins=pin)[0]
@@ -289,7 +290,7 @@ def _recheck_source(
             or record["source_id"] != source["media_id"]
             or asset.user_id != job.user_id
             or asset.plan_item_id != job.content_plan_item_id
-            or asset.status != "ready"
+            or not visual_bytes_ready(asset)
             or asset.kind != source["kind"]
             or asset.gcs_path != source["gcs_path"]
             or str(asset.gcs_generation or "") != source["generation"]

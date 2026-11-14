@@ -49,5 +49,6 @@
   "meta": {
     "source": "hand_authored_adversarial",
     "case": "PERSONA-FOOTAGE CONFLICT (TR) — beauty persona + street-cat footage. Wrong output: 'bu kedi bakış açımı değiştirdi' (tr_degistirdi slop class). Correct: Turkish, lowercase, in-the-moment, footage-only; diacritics intact."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

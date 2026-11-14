@@ -91,7 +91,7 @@ final class KriaSourceWindowPlayer: ObservableObject {
     func show(start: Double, end: Double, rate: Double, scrubbing: Bool) {
         self.start = start
         self.end = max(end, start + 0.05)
-        self.rate = Float(min(max(rate, 0.25), 4))
+        self.rate = Float(min(max(rate, EditorLimits.playbackRate.lowerBound), EditorLimits.playbackRate.upperBound))
         seek(to: start, precise: !scrubbing)
         player.playImmediately(atRate: self.rate)
     }

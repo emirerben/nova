@@ -1352,5 +1352,6 @@
     "case": "word_sequence_exact_length_ignores_stale_reading_time",
     "lane": "kria_v2_text",
     "notes": "KRI-1370: prod thread 147eb928 refused '8 seconds' with 'flash by too fast to read' by repeating a stale server '10.5s' message from history. Reading speed is never the model's call: a stated length over word sequences always emits set_total_duration plus one retime_text_sequence per sequence."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

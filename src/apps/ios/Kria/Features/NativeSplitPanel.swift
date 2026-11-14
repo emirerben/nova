@@ -8,18 +8,18 @@ import UniformTypeIdentifiers
 /// (This clip | Whole video, 2 or 3 panels). Inside a split it fills each empty panel from Gallery or Saved, and
 /// once every panel has footage it offers extend, per-panel add/loop, full screen, the layout count, the Layout area
 /// (gutter, background) and Remove split. Panel heights are set by dragging the dividers in the preview; the timeline
-/// shows the split as one block. A tap on a panel's ghost in the preview arrives here as `addRequest`.
+/// shows the split as one block. A tap on a panel's timeline gap arrives here as `addRequest`.
 struct NativeSplitPanel: View {
     enum Tab: String { case split = "Split" }
 
     @ObservedObject var session: NativeEditorSession
-    /// A ghost tapped in the preview: open the picker for that panel. Consumed (set back to nil) once adopted.
+    /// A timeline gap tapped: open the picker for that panel. Consumed (set back to nil) once adopted.
     @Binding var addRequest: NativeSplitAddRequest?
     let onDone: () -> Void
     @State private var tab = Tab.split
     /// Seeded once from the session (and again when the playhead leaves a split), never while the creator is choosing.
     @State private var scope: NativeSplitScope
-    /// The panel the picker is explicitly aimed at ("Add to Top", a ghost tap). Nil lets the first empty panel lead.
+    /// The panel the picker is explicitly aimed at ("Add to Top", a gap tap). Nil lets the first empty panel lead.
     @State private var target: Int?
     /// Empty panels the creator chose to fill later.
     @State private var skipped = Set<Int>()
@@ -99,7 +99,7 @@ struct NativeSplitPanel: View {
         }
     }
 
-    /// A ghost tap names a section and panel; honour it only while that section is still under the playhead.
+    /// A gap tap names a section and panel; honour it only while that section is still under the playhead.
     private func adoptRequest() {
         guard let request = addRequest else { return }
         addRequest = nil
@@ -243,6 +243,10 @@ struct NativeSplitPanel: View {
                 }
             }
 
+            if let color = session.selectedBlankColor {
+                NativeSplitBlankColorRow(session: session, color: color, sectionBackground: context.section.backgroundColor)
+            }
+
             if session.canExtendSplitToWholeVideo(sectionID: sectionID) {
                 actionRow("Extend split to whole video", icon: "arrow.left.and.right", id: "native-editor-split-extend-whole") {
                     session.extendSplitToWholeVideo(sectionID: sectionID)
@@ -347,6 +351,13 @@ struct NativeSplitPanel: View {
                         session.loopFillSplitPanel(sectionID: sectionID, panel: panel)
                     }
                 }
+                if session.canFillSplitPanelsWithBlank {
+                    actionRow("Fill with blank", icon: "square.fill", id: "native-editor-split-blank-\(panel)",
+                              label: "Fill \(title) with blank", enabled: session.canFillSplitPanelWithBlank(sectionID: sectionID, panel: panel),
+                              reason: reason) {
+                        session.fillSplitPanelWithBlank(sectionID: sectionID, panel: panel)
+                    }
+                }
                 if let reason, !canAdd || !canLoop {
                     Text(reason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -390,7 +401,7 @@ struct NativeSplitPanel: View {
 // MARK: - Fill
 
 /// "Add to Top": the picker for one panel. Without an explicit target it leads with the first empty panel and one tap
-/// fills it, moving on to the next empty one. With an explicit target (a row or a preview ghost) it stays aimed at that
+/// fills it, moving on to the next empty one. With an explicit target (a row or a timeline gap) it stays aimed at that
 /// panel, at the playhead gap or after the panel's last clip, until the pick lands or the creator cancels.
 private struct NativeSplitFillView: View {
     @ObservedObject var session: NativeEditorSession
@@ -429,6 +440,18 @@ private struct NativeSplitFillView: View {
                         .accessibilityIdentifier("native-editor-split-skip")
                 }
             }
+            if session.canFillSplitPanelWithBlank(sectionID: context.sectionID, panel: panel) {
+                let title = NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount)
+                Button {
+                    session.fillSplitPanelWithBlank(sectionID: context.sectionID, panel: panel)
+                    if explicit { finished() }
+                } label: {
+                    Label("Fill with blank", systemImage: "square.fill").lineLimit(1).minimumScaleFactor(0.8)
+                }
+                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
+                .accessibilityLabel("Fill \(title) with blank")
+                .accessibilityIdentifier("native-editor-split-blank-\(panel)")
+            }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 // UI tests fill from the footage already in the edit; the real pickers need Photos and an account.
@@ -458,6 +481,10 @@ struct NativeSplitMediaPicker: View {
     enum Tab: String { case gallery = "Gallery", saved = "Saved" }
     private enum Pick: Hashable { case photo(String), saved(UUID) }
     private typealias Loader = @MainActor () async throws -> URL
+    private typealias Entry = (pick: Pick?, load: Loader)
+    /// Whether the server opens the library. The tab row is drawn from the first frame and Saved waits for this, so the
+    /// grid below never moves under a finger that is already on its way down.
+    private enum Library { case checking, available, unavailable }
 
     @EnvironmentObject private var model: AppModel
     @ObservedObject var session: NativeEditorSession
@@ -466,7 +493,8 @@ struct NativeSplitMediaPicker: View {
     var onFinished: @MainActor () -> Void = {}
     let onAdd: @MainActor (URL) async -> Void
     @State private var tab = Tab.gallery
-    @State private var savedAvailable = false
+    @State private var library = Library.checking
+    @State private var adding: Pick?
     @State private var savedAssets: [SavedMediaAsset] = []
     @State private var savedLoaded = false
     @State private var savedError: String?
@@ -478,6 +506,16 @@ struct NativeSplitMediaPicker: View {
 
     private var api: any KriaAPIClient { model.uploads.libraryAPI }
     private var working: Bool { busy || session.isAddingClip }
+    private var hasLibrary: Bool {
+        #if DEBUG
+        if NativeSplitPickerFixture.isActive { return true }
+        #endif
+        return api.mediaLibraryOwner != nil
+    }
+    private var addingPhotoID: String? {
+        if case .photo(let id) = adding { return id }
+        return nil
+    }
     private var pickedPhotoIDs: [String] {
         var ids: [String] = []
         for pick in picked { if case .photo(let id) = pick { ids.append(id) } }
@@ -490,20 +528,18 @@ struct NativeSplitMediaPicker: View {
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import") {
                 Button("Use sample video") {
                     guard let url = Bundle.main.url(forResource: "istanbul", withExtension: "mp4") else { return }
-                    add([{ url }])
+                    add([(nil, { url })])
                 }
                 .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
                 .accessibilityIdentifier("native-editor-split-import")
             }
             #endif
-            if savedAvailable {
+            if hasLibrary, library != .unavailable {
                 NativeEditorPanelTabs(
                     tabs: [Tab.gallery, .saved], selection: $tab, accessibilityPrefix: "native-editor-split",
-                    identifier: { "native-editor-split-tab-" + $0.rawValue.lowercased() }
+                    identifier: { "native-editor-split-tab-" + $0.rawValue.lowercased() },
+                    isEnabled: { $0 != .saved || library == .available }
                 )
-            }
-            if working {
-                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Adding…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
             }
             switch tab {
             case .gallery: gallery
@@ -514,7 +550,7 @@ struct NativeSplitMediaPicker: View {
                     .accessibilityIdentifier("native-editor-split-source-error")
             }
             if multi, !picked.isEmpty {
-                Button("Add \(picked.count) \(picked.count == 1 ? "clip" : "clips")") { add(picked.map { loader(for: $0) }) }
+                Button("Add \(picked.count) \(picked.count == 1 ? "clip" : "clips")") { add(picked.map { ($0, loader(for: $0)) }) }
                     .buttonStyle(KriaButtonStyle(role: .primary, size: .large, fullWidth: true))
                     .disabled(working)
                     .accessibilityIdentifier("native-editor-split-add-picked")
@@ -530,14 +566,29 @@ struct NativeSplitMediaPicker: View {
     // MARK: Gallery
 
     @ViewBuilder private var gallery: some View {
+        #if DEBUG
+        if NativeSplitPickerFixture.isActive {
+            NativeSplitPickerFixtureGrid(disabled: working, adding: addingPhotoID) { id in choose(.photo(id)) }
+        } else {
+            photoGallery
+        }
+        #else
+        photoGallery
+        #endif
+    }
+
+    @ViewBuilder private var photoGallery: some View {
         if photoStatus == .authorized || photoStatus == .limited {
-            NativeSplitPhotoGrid(picked: pickedPhotoIDs, showsPicks: multi, disabled: working) { id in
+            NativeSplitPhotoGrid(picked: pickedPhotoIDs, showsPicks: multi, disabled: working, adding: addingPhotoID) { id in
                 choose(.photo(id))
             }
         } else {
             // No library access: the system picker still works without it.
             Button { showsSystemPicker = true } label: {
-                Label("Choose from Photos", systemImage: "photo.on.rectangle.angled")
+                HStack(spacing: 8) {
+                    if working { KriaSpinner(size: 18) } else { Image(systemName: "photo.on.rectangle.angled") }
+                    Text(working ? "Adding…" : "Choose from Photos")
+                }
                     .kriaType(.button).foregroundStyle(KriaColor.ink)
                     .frame(maxWidth: .infinity, minHeight: 48)
                     .background(KriaColor.fill, in: Capsule())
@@ -549,7 +600,7 @@ struct NativeSplitMediaPicker: View {
             .onChange(of: systemPicks) { _, items in
                 guard !items.isEmpty else { return }
                 systemPicks = []
-                add(items.map { loader(for: $0) })
+                add(items.map { (nil, loader(for: $0)) })
             }
         }
     }
@@ -587,21 +638,29 @@ struct NativeSplitMediaPicker: View {
                             .modifier(GalleryTileChrome(number: multi ? number : nil, duration: asset.durationSeconds))
                     }
                     .buttonStyle(.plain)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
                     .disabled(working)
                     .accessibilityLabel(asset.displayName)
                     .accessibilityAddTraits(number != nil ? .isSelected : [])
                     .accessibilityIdentifier("native-editor-split-saved-tile-\(asset.id)")
+                    .nativeSplitAdding(adding == .saved(asset.id), identifier: "native-editor-split-adding-saved-\(asset.id)")
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
             }
         }
     }
 
     private func checkSaved() async {
+        #if DEBUG
+        if NativeSplitPickerFixture.isActive {
+            try? await Task.sleep(for: NativeSplitPickerFixture.libraryAnswerDelay)
+            library = .available
+            return
+        }
+        #endif
         let api = api
-        guard api.mediaLibraryOwner != nil, let capabilities = try? await api.creationCapabilities(),
-              capabilities.mediaLibrary == true else { return }
-        savedAvailable = true
+        guard api.mediaLibraryOwner != nil else { library = .unavailable; return }
+        let capabilities = try? await api.creationCapabilities()
+        library = capabilities?.mediaLibrary == true ? .available : .unavailable
     }
 
     private func loadSaved() async {
@@ -646,6 +705,9 @@ struct NativeSplitMediaPicker: View {
     private func loader(for pick: Pick) -> Loader {
         switch pick {
         case .photo(let id):
+            #if DEBUG
+            if NativeSplitPickerFixture.isActive { return { try await NativeSplitPickerFixture.read() } }
+            #endif
             return { try await PhotosLibraryAssetExporter().exportFile(localIdentifier: id) }
         case .saved(let id):
             let api = api
@@ -661,7 +723,7 @@ struct NativeSplitMediaPicker: View {
     private func choose(_ pick: Pick) {
         guard !working else { return }
         if !multi {
-            add([loader(for: pick)])
+            add([(pick, loader(for: pick))])
         } else if let index = picked.firstIndex(of: pick) {
             picked.remove(at: index)
         } else {
@@ -669,17 +731,18 @@ struct NativeSplitMediaPicker: View {
         }
     }
 
-    private func add(_ loaders: [Loader]) {
+    private func add(_ entries: [Entry]) {
         guard !busy else { return }
         busy = true
         session.addClipError = nil
         let onAdd = onAdd
         Task { @MainActor in
-            defer { busy = false; picked = [] }
-            for load in loaders {
+            defer { busy = false; picked = []; adding = nil }
+            for entry in entries {
+                adding = entry.pick
                 let url: URL
                 do {
-                    url = try await load()
+                    url = try await entry.load()
                 } catch {
                     session.addClipError = "This file couldn’t be read. Try another photo or video."
                     return
@@ -697,6 +760,7 @@ private struct NativeSplitPhotoGrid: View {
     let picked: [String]
     let showsPicks: Bool
     let disabled: Bool
+    let adding: String?
     let onTap: (String) -> Void
     @State private var assets: PHFetchResult<PHAsset>?
     @State private var loader = GalleryThumbnailLoader()
@@ -738,11 +802,12 @@ private struct NativeSplitPhotoGrid: View {
                 .modifier(Chrome(showsPicks: showsPicks, number: number, duration: isVideo ? asset.duration : nil))
         }
         .buttonStyle(.plain)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
         .disabled(disabled)
         .accessibilityLabel(isVideo ? "Video, \(GalleryTileChrome.duration(asset.duration))" : "Photo")
         .accessibilityAddTraits(number != nil ? .isSelected : [])
         .accessibilityIdentifier("native-editor-split-gallery-tile-\(index)")
+        .nativeSplitAdding(adding == id, identifier: "native-editor-split-adding-\(index)")
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     /// Multi mode wears the shared pick ring and number; a tap-to-fill grid only shows a video's length.
@@ -764,6 +829,26 @@ private struct NativeSplitPhotoGrid: View {
                             .padding(4)
                     }
                 }
+            }
+        }
+    }
+}
+
+extension View {
+    /// Progress on the tile being read. It sits on the tile, so nothing is inserted above the grid and the grid never
+    /// moves under the finger or slides beneath the scroll edge fade.
+    func nativeSplitAdding(_ isAdding: Bool, identifier: String) -> some View {
+        overlay {
+            if isAdding {
+                VStack(spacing: 4) {
+                    KriaSpinner(size: 20, tint: .white)
+                    Text("Adding…").font(KriaFont.body(11).weight(.semibold)).foregroundStyle(Color.white)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(KriaColor.ink.opacity(0.55))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(identifier)
             }
         }
     }
@@ -816,5 +901,67 @@ struct NativeSplitReplaceSheet: View {
         .padding(.horizontal, 24).padding(.top, 12)
         .background(KriaColor.paper)
         .presentationDetents([.large])
+    }
+}
+
+// MARK: - Block colour
+
+/// The colour of the selected blank block: the section background, five swatches (the speaker background's) and any
+/// colour the system picker offers. Each change is one undo step.
+private struct NativeSplitBlankColorRow: View {
+    @ObservedObject var session: NativeEditorSession
+    let color: String
+    let sectionBackground: String
+
+    private var swatches: [(id: String, name: String, hex: String)] {
+        // The section background is a swatch of its own only when no standard one already is that colour.
+        let standard = NativeBackgroundPanel.colorSwatches
+        return (standard.contains { $0.hex == sectionBackground.uppercased() } ? [] : [("background", "Background", sectionBackground)]) + standard
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Block colour").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                .accessibilityIdentifier("native-editor-split-blank-color-title")
+            HStack(spacing: 6) {
+                ForEach(swatches, id: \.id) { swatch in
+                    let selected = color == swatch.hex.uppercased()
+                    Button {
+                        session.endTransaction()
+                        session.setSelectedBlankColor(swatch.hex)
+                    } label: {
+                        Circle()
+                            .fill(nativeEditorColor(swatch.hex))
+                            .overlay(Circle().stroke(KriaColor.line, lineWidth: 1))
+                            .overlay {
+                                if selected {
+                                    Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(.white).frame(width: 20, height: 20).background(KriaColor.ink, in: Circle())
+                                }
+                            }
+                            .frame(width: 32, height: 32)
+                            .padding(6)
+                            .background(selected ? KriaColor.sage : .clear, in: Circle())
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(swatch.name)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityIdentifier("native-editor-split-blank-color-" + swatch.id)
+                }
+                ColorPicker("Custom colour", selection: Binding(
+                    get: { nativeEditorColor(color) },
+                    set: { picked in
+                        session.beginTransaction()
+                        session.setSelectedBlankColor(nativeEditorHex(picked))
+                    }
+                ), supportsOpacity: false)
+                .labelsHidden()
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityIdentifier("native-editor-split-blank-color-custom")
+                Spacer(minLength: 0)
+            }
+        }
     }
 }

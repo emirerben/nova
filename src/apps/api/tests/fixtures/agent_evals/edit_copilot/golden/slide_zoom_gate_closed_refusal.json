@@ -120,5 +120,6 @@
     "source": "hand_authored_golden",
     "case": "gate closed (tilt open, zoom not): the zoom is refused in a sentence, not applied",
     "lane": "kria-1170-slide-zoom"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

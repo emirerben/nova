@@ -62,5 +62,6 @@
     "source": "hand_authored_golden",
     "case": "A talking clip exists but the creator did not ask to use what they say.",
     "expect": "no_excerpts"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

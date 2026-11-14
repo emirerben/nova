@@ -2251,7 +2251,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
-    from app.tasks.content_plan_build import job_failure_message
+    from app.tasks.content_plan_build import creator_failure_detail, job_failure_message
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
     # the client instead of returning an expired or stale playback URL.
@@ -2273,9 +2273,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
         # A sentence, never the raw taxonomy code -- the failure card used to
         # print `failure_reason` itself verbatim (KRI-163). `failure_reason`
         # stays above for admin/debug consumers that still want the code.
-        "failure_message": job_failure_message(
-            job.failure_reason, getattr(job, "error_detail", None)
-        ),
+        "failure_message": job_failure_message(job.failure_reason, creator_failure_detail(job)),
         "variants": variants,
     }
 

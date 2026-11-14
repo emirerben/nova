@@ -172,7 +172,8 @@
   "meta": {
     "source": "VideoTemplate.recipe_cached",
     "template_id": "010403eb-6c6d-408b-af4d-e68500e3353c",
-    "template_name": "Just Fine \u2014 Sunset Reassurance",
+    "template_name": "Just Fine — Sunset Reassurance",
     "exported_at": "2026-05-10T14:16:43.147484+00:00"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

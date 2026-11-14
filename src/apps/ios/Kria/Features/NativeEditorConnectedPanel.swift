@@ -334,6 +334,7 @@ struct NativeEditorPanelTabs<Tab: Hashable & RawRepresentable>: View where Tab.R
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(value == selection ? KriaColor.paper : .clear, in: Capsule())
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .disabled(!(isEnabled?(value) ?? true))

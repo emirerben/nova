@@ -42,8 +42,10 @@ from app.kria.clip_tilt import ClipTilt
 from app.kria.reply_language import prompt_language_line, say
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
+from app.schemas.editor_window import below_editor_minimum
 from app.services.editor_limits import (
     EDITOR_MAX_TIMELINE_SLOTS,
+    EDITOR_MIN_CLIP_S,
     MAX_EDITOR_OPS,
     MOTION_FPS,
     MOTION_MAX_ACTIVE_FRAMES,
@@ -143,7 +145,10 @@ log = structlog.get_logger()
 # v128 (KRI-1394): make_split_full_screen (SPLIT FULL SCREEN, prompts/edit_copilot_ops/
 # split_full_screen.txt), printed only where a split section can play part full screen from chat,
 # so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v128"
+# v129 (KRI-1420): add_split_panel_clip, a second clip in a split panel from the approved source
+# pool, taught in the SPLIT SCREEN fragment (prompts/edit_copilot_ops/split_screen.txt), printed
+# only where split_screen_available is true, so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v129"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -3661,7 +3666,11 @@ def _sanitize_pending_actions(
                 action["integrity"] = integrity
         if name == "set_media_duration" and "duration_s" in raw:
             duration = _as_float(raw.get("duration_s"))
-            if duration is None or not 0.1 <= duration <= MAX_PROPOSAL_DURATION_S:
+            if (
+                duration is None
+                or below_editor_minimum(duration)
+                or duration > MAX_PROPOSAL_DURATION_S
+            ):
                 continue
             action["duration_s"] = round(duration, 6)
         sanitized.append(action)
@@ -3903,7 +3912,7 @@ def _clean_bulk_operation(
         payload.pop("preset_id", None)
     if name == "set_media_duration":
         duration = _as_float(payload.get("duration_s"))
-        if duration is None or not 0.1 <= duration <= MAX_PROPOSAL_DURATION_S:
+        if duration is None or below_editor_minimum(duration) or duration > MAX_PROPOSAL_DURATION_S:
             state.invalid_value()
             return None
         payload["duration_s"] = round(duration, 6)
@@ -4160,6 +4169,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             effect_catalog=_effect_catalog(),
             caption_font_catalog=_caption_font_catalog(),
             custom_effect_catalog=_custom_effect_catalog(),
+            min_clip_s=f"{EDITOR_MIN_CLIP_S:g}",
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         prompt = _with_scope_fragment(prompt, input.variant_snapshot)
@@ -6262,12 +6272,12 @@ def _coerce_payload(
         start, end = _slot_window(slot) if isinstance(slot, dict) else (None, None)
         if start is not None and end is not None:
             remaining = end - start - out["start_s"]
-            if remaining < 0.1:
+            if below_editor_minimum(remaining):
                 state.invalid_value()
                 return None
     if name == "trim_output_start":
         total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
-        if total_s is not None and total_s - out["start_s"] < 0.1:
+        if total_s is not None and below_editor_minimum(total_s - out["start_s"]):
             state.invalid_value()
             return None
     if name == "remove_music":

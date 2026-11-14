@@ -60,5 +60,6 @@
   "meta": {
     "source": "hand_authored_adversarial",
     "case": "PERSONA-FOOTAGE CONFLICT — fitness persona + midnight-pasta footage. Wrong output glues the discipline theme onto cooking ('what pasta taught me about discipline'). Correct: footage-only, in-the-moment, playful; no lesson bridge."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -109,5 +109,6 @@
     "expect_no_unpositioned_order": true,
     "expect_any": true,
     "expect_question": false
-  }
+  },
+  "prompt_sha": "unpinned"
 }
