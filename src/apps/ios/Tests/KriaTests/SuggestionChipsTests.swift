@@ -96,16 +96,16 @@ final class SuggestionChipsTests: XCTestCase {
     }
 
     func testChipsThatNeedANewerProtocolAreDroppedLocally() throws {
+        let newer = KriaClientProtocolContract.version + 1
         let set = try decode("""
         {"state":"ready","status":"ok","chips":[
          {"id":"a","label":"Add captions","message":"Add captions","rank":1,"requires_protocol":null},
          {"id":"b","label":"Bend the title","message":"Bend the title","rank":2,"requires_protocol":9},
-         {"id":"c","label":"Newer thing","message":"Do the newer thing","rank":3,"requires_protocol":99}]}
+         {"id":"c","label":"Newer thing","message":"Do the newer thing","rank":3,"requires_protocol":\(newer)}]}
         """)
-        XCTAssertEqual(set.chips(forState: "ready").map(\.id), ["a", "b"], "Protocol 99 is above this app")
+        XCTAssertEqual(set.chips(forState: "ready").map(\.id), ["a", "b"], "A chip one protocol ahead is above this app")
         XCTAssertEqual(set.chips(forState: "ready", appProtocol: 8).map(\.id), ["a"])
-        XCTAssertEqual(set.chips(forState: "ready", appProtocol: 99).map(\.id), ["a", "b", "c"])
-        XCTAssertEqual(KriaClientProtocolContract.version, 51, "Update this fixture when the app's protocol moves")
+        XCTAssertEqual(set.chips(forState: "ready", appProtocol: newer).map(\.id), ["a", "b", "c"])
     }
 
     func testCapabilityDefaultsOffWhenKeyIsMissing() throws {

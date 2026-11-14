@@ -72,5 +72,6 @@
     "source": "hand_authored_golden",
     "case": "closed gate on an edit that still has a moment: the snapshot marks the lane REMOVAL ONLY and taking the moment off survives as one op",
     "lane": "color_moments"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

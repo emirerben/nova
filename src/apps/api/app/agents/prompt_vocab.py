@@ -10,6 +10,14 @@ from typing import NamedTuple, get_args
 
 from app.agents._schemas.intent_review import CONFIDENCE_LEVELS, DEFECT_KINDS, VERDICTS
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, TextAnimationPhases
+from app.services.editor_limits import (
+    ANIMATION_SPEED_MAX,
+    ANIMATION_SPEED_MIN,
+    EDITOR_MIN_CLIP_S,
+    MOTION_FPS,
+    PLAYBACK_RATE_MAX,
+    PLAYBACK_RATE_MIN,
+)
 
 
 class PromptVocabulary(NamedTuple):
@@ -31,6 +39,10 @@ def _loops() -> PromptVocabulary:
     return PromptVocabulary(members, ", ".join(members))
 
 
+def _number(value: float) -> PromptVocabulary:
+    return PromptVocabulary((), f"{value:g}")
+
+
 def _plain(members: tuple[str, ...]) -> PromptVocabulary:
     return PromptVocabulary(members, ", ".join(members))
 
@@ -41,6 +53,12 @@ PROMPT_VOCABULARIES: dict[str, PromptVocabulary] = {
     "INTENT_REVIEW_VERDICTS": _plain(VERDICTS),
     "INTENT_REVIEW_DEFECT_KINDS": _plain(DEFECT_KINDS),
     "INTENT_REVIEW_CONFIDENCE": _plain(CONFIDENCE_LEVELS),
+    "EDITOR_MIN_CLIP_S": _number(EDITOR_MIN_CLIP_S),
+    "PLAYBACK_RATE_MIN": _number(PLAYBACK_RATE_MIN),
+    "PLAYBACK_RATE_MAX": _number(PLAYBACK_RATE_MAX),
+    "ANIMATION_SPEED_MIN": _number(ANIMATION_SPEED_MIN),
+    "ANIMATION_SPEED_MAX": _number(ANIMATION_SPEED_MAX),
+    "MOTION_FPS": _number(MOTION_FPS),
 }
 
 # The file each vocabulary is built from (relative to src/apps/api). A prompt whose
@@ -52,6 +70,12 @@ PROMPT_VOCABULARY_SOURCES: dict[str, str] = {
     "INTENT_REVIEW_VERDICTS": "app/agents/_schemas/intent_review.py",
     "INTENT_REVIEW_DEFECT_KINDS": "app/agents/_schemas/intent_review.py",
     "INTENT_REVIEW_CONFIDENCE": "app/agents/_schemas/intent_review.py",
+    "EDITOR_MIN_CLIP_S": "app/services/editor_limits.py",
+    "PLAYBACK_RATE_MIN": "app/services/editor_limits.py",
+    "PLAYBACK_RATE_MAX": "app/services/editor_limits.py",
+    "ANIMATION_SPEED_MIN": "app/services/editor_limits.py",
+    "ANIMATION_SPEED_MAX": "app/services/editor_limits.py",
+    "MOTION_FPS": "app/services/editor_limits.py",
 }
 
 _TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")

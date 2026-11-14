@@ -40,6 +40,7 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "social POV footage \u2192 original 'POV:' second-person hook grounded in THIS clip (strangers becoming friends), in the reference voice (cf. @smeggs_ 'POV: you found people who say yes'); NOT a copy of the exemplar"
-  }
+    "case": "social POV footage → original 'POV:' second-person hook grounded in THIS clip (strangers becoming friends), in the reference voice (cf. @smeggs_ 'POV: you found people who say yes'); NOT a copy of the exemplar"
+  },
+  "prompt_sha": "unpinned"
 }

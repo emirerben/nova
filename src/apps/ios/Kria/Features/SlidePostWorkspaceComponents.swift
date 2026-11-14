@@ -152,7 +152,7 @@ struct SlidePostHeader: View {
                         .font(KriaFont.body(14).weight(.semibold))
                         .lineLimit(1)
                         .fixedSize()
-                case .saving:
+                case .saving, .finishing:
                     ProgressView().tint(KriaColor.ink)
                 }
             }

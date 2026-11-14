@@ -103,5 +103,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Never-coded-for open-vocabulary request: 'name the dish on each food clip'. No dish enum exists anywhere in the codebase -- the same label op + record-grounding rule handles it. m004 has no food at all and is correctly left out entirely; m005's record is too vague to name the dish and goes to needs_vision instead of a guess."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

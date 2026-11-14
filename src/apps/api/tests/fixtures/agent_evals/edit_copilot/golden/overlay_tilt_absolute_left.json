@@ -80,5 +80,6 @@
     "source": "hand_authored_golden",
     "case": "an absolute angle to the left is negative, on the second card",
     "lane": "overlay_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

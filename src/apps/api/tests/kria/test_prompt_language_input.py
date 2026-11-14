@@ -46,7 +46,6 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/_runtime.py::Agent": "abstract base; subclasses are checked",
     "agents/agentic_style_selector.py::AgenticStyleSelectorAgent": "picks a style id",
     "agents/audio_template.py::AudioTemplateAgent": "song structure analysis",
-    "agents/beat_aligner.py::BeatAlignerAgent": "beat timing",
     "agents/clip_metadata.py::ClipMetadataAgent": "machine metadata, never on-screen text",
     "agents/clip_plan_matcher.py::ClipPlanMatcherAgent": "matches clip ids to plan items",
     "agents/clip_router.py::ClipRouterAgent": "assigns clip ids to slots",
@@ -58,11 +57,9 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/lyrics.py::LyricsExtractionAgent": "transcribes lyrics in the song's language",
     "agents/media_moment_relevance.py::MomentRelevanceAgent": "returns moment ids",
     "agents/narration_focus.py::NarrationFocusAgent": "subject counts and frame ids",
-    "agents/output_validator.py::OutputValidatorAgent": "pre-publish technical gate",
     "agents/overlay_placement.py::OverlayPlacementAgent": "overlay positions",
     "agents/phone_typography.py::PhoneTypographyAgent": "font and size choice",
     "agents/sfx_placement.py::SfxPlacementAgent": "sound-effect timing",
-    "agents/shot_ranker.py::ShotRankerAgent": "ranks moments",
     "agents/song_classifier.py::SongClassifierAgent": "labels from a fixed vocabulary",
     "agents/song_sections.py::SongSectionsAgent": "song section timing",
     "agents/source_moment_location.py::SourceMomentLocationAgent": (
@@ -76,7 +73,6 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/text_designer.py::TextDesignerAgent": "label styling",
     "agents/tiktok_analyzer.py::TikTokAnalyzerAgent": "internal analysis fed to prompts",
     "agents/transcript.py::TranscriptAgent": "transcribes speech as spoken",
-    "agents/transition_picker.py::TransitionPickerAgent": "picks transition ids",
     "services/story_idea_research.py::StoryResearchReviewAgent": "approval verdict on ideas",
     "services/story_idea_research.py::StorySourceReviewAgent": "approval verdict on ideas",
 }

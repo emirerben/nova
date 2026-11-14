@@ -45,5 +45,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "original_mute_server_honest"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

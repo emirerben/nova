@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "0615fa49fca9ebae",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "comedy",
-          "vibe_tags": ["silly", "bouncy", "playful"],
+          "vibe_tags": [
+            "silly",
+            "bouncy",
+            "playful"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "cartoon mischief",
@@ -71,7 +76,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "comedy",
-          "vibe_tags": ["quirky", "playful", "bouncy"],
+          "vibe_tags": [
+            "quirky",
+            "playful",
+            "bouncy"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "mockumentary deadpan",
@@ -89,7 +98,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["upbeat", "playful", "glossy"],
+          "vibe_tags": [
+            "upbeat",
+            "playful",
+            "glossy"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "good-mood roll",
@@ -107,7 +120,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "tender", "sentimental"],
+          "vibe_tags": [
+            "wistful",
+            "tender",
+            "sentimental"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "missing-you longing",
@@ -125,7 +142,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "epic", "heroic"],
+          "vibe_tags": [
+            "sweeping",
+            "epic",
+            "heroic"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "trailer-grade triumph",
@@ -138,59 +159,58 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_comedy_silly\", \"score\": 9.0, \"rationale\": \"Slapstick fails (pizza slip, soup phone, cat-swat) and pet chaos (sock dog) are literally what this track's ideal profile names; comedic copy_tone and hard-cut timing line up with the gags.\", \"predicted_strengths\": [\"comedic copy_tone matches the 'wait for it' hook framing\", \"hard-cut transitions land each gag punchline\", \"high energy + fast pacing fits the 3-4s clip lengths\"]}, {\"track_id\": \"track_comedy_quirky\", \"score\": 7.8, \"rationale\": \"Mockumentary-quirky variant gives the same gags a deadpan-pause framing — works especially for the surprised-face selfie clip; slightly lower because the dog-chase and pizza-slip want faster pacing than 'medium'.\", \"predicted_strengths\": [\"deadpan framing flatters the soup-phone reaction\", \"distinct mood from top pick — adds top-K variety within comedy\", \"hard_cut transitions still serve the punchlines\"]}, {\"track_id\": \"track_pop_upbeat\", \"score\": 7.0, \"rationale\": \"Playful upbeat pop works as a non-comedy variant — same daytime antics framing, glossier reading; useful diversity option against two comedy tracks above.\", \"predicted_strengths\": [\"distinct genre from comedy picks — adds variety\", \"playful vibe still serves the gag content\", \"11 slots over 4 clips supports gag-double-cuts\"]}, {\"track_id\": \"track_cinematic_epic\", \"score\": 3.0, \"rationale\": \"Trailer-grade triumphant cinematic frames slapstick gags as heroic — the joke evaporates, the cinematic copy_tone fights the comedic hooks.\", \"predicted_strengths\": [\"only useful as ironic-contrast variant, not a real recommendation\"]}, {\"track_id\": \"track_acoustic_tender\", \"score\": 1.5, \"rationale\": \"Sentimental wistful acoustic over a slapstick reel is the textbook wrong call — it would read either tone-deaf or accidentally cruel against pet chaos and pratfalls.\", \"predicted_strengths\": [\"no real fit — flagged as a known mismatch\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_comedy_silly\",\n      \"score\": 9.5,\n      \"rationale\": \"This track's cartoon mischief vibe perfectly matches the slapstick falls, pet chaos, and exaggerated reactions across all clips.\",\n      \"predicted_strengths\": [\n        \"perfect vibe match for comedic fails\",\n        \"high energy and fast pacing align with clips\"\n      ]\n    },\n    {\n      \"track_id\": \"track_comedy_quirky\",\n      \"score\": 7.8,\n      \"rationale\": \"The quirky, playful mood could enhance the comedic timing of the clips, offering a slightly more understated feel than pure slapstick.\",\n      \"predicted_strengths\": [\n        \"good comedic tone for reactions\",\n        \"playful energy matches clip subjects\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_upbeat\",\n      \"score\": 6.5,\n      \"rationale\": \"While not primarily comedic, its upbeat and playful energy could surprisingly highlight the lighthearted, energetic chaos in the clips.\",\n      \"predicted_strengths\": [\n        \"high energy and fast cuts fit clip pace\",\n        \"playful vibe complements mild antics\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_epic\",\n      \"score\": 2.0,\n      \"rationale\": \"This track's heroic and sweeping mood is a fundamental mismatch for the comedic, everyday fails of the clips.\",\n      \"predicted_strengths\": [\n        \"high energy aligns with clips\",\n        \"transition style compatible\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_tender\",\n      \"score\": 0.5,\n      \"rationale\": \"The sentimental and low-energy vibe of this track is completely at odds with the high-energy, comedic nature of the user's clips.\",\n      \"predicted_strengths\": [\n        \"no predicted strengths\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_comedy_silly",
-        "score": 9.0,
-        "rationale": "Slapstick fails (pizza slip, soup phone, cat-swat) and pet chaos (sock dog) are literally what this track's ideal profile names; comedic copy_tone and hard-cut timing line up with the gags.",
+        "score": 9.5,
+        "rationale": "This track's cartoon mischief vibe perfectly matches the slapstick falls, pet chaos, and exaggerated reactions across all clips.",
         "predicted_strengths": [
-          "comedic copy_tone matches the 'wait for it' hook framing",
-          "hard-cut transitions land each gag punchline",
-          "high energy + fast pacing fits the 3-4s clip lengths"
+          "perfect vibe match for comedic fails",
+          "high energy and fast pacing align with clips"
         ]
       },
       {
         "track_id": "track_comedy_quirky",
         "score": 7.8,
-        "rationale": "Mockumentary-quirky variant gives the same gags a deadpan-pause framing — works especially for the surprised-face selfie clip; slightly lower because the dog-chase and pizza-slip want faster pacing than 'medium'.",
+        "rationale": "The quirky, playful mood could enhance the comedic timing of the clips, offering a slightly more understated feel than pure slapstick.",
         "predicted_strengths": [
-          "deadpan framing flatters the soup-phone reaction",
-          "distinct mood from top pick — adds top-K variety within comedy",
-          "hard_cut transitions still serve the punchlines"
+          "good comedic tone for reactions",
+          "playful energy matches clip subjects"
         ]
       },
       {
         "track_id": "track_pop_upbeat",
-        "score": 7.0,
-        "rationale": "Playful upbeat pop works as a non-comedy variant — same daytime antics framing, glossier reading; useful diversity option against two comedy tracks above.",
+        "score": 6.5,
+        "rationale": "While not primarily comedic, its upbeat and playful energy could surprisingly highlight the lighthearted, energetic chaos in the clips.",
         "predicted_strengths": [
-          "distinct genre from comedy picks — adds variety",
-          "playful vibe still serves the gag content",
-          "11 slots over 4 clips supports gag-double-cuts"
+          "high energy and fast cuts fit clip pace",
+          "playful vibe complements mild antics"
         ]
       },
       {
         "track_id": "track_cinematic_epic",
-        "score": 3.0,
-        "rationale": "Trailer-grade triumphant cinematic frames slapstick gags as heroic — the joke evaporates, the cinematic copy_tone fights the comedic hooks.",
+        "score": 2.0,
+        "rationale": "This track's heroic and sweeping mood is a fundamental mismatch for the comedic, everyday fails of the clips.",
         "predicted_strengths": [
-          "only useful as ironic-contrast variant, not a real recommendation"
+          "high energy aligns with clips",
+          "transition style compatible"
         ]
       },
       {
         "track_id": "track_acoustic_tender",
-        "score": 1.5,
-        "rationale": "Sentimental wistful acoustic over a slapstick reel is the textbook wrong call — it would read either tone-deaf or accidentally cruel against pet chaos and pratfalls.",
+        "score": 0.5,
+        "rationale": "The sentimental and low-energy vibe of this track is completely at odds with the high-energy, comedic nature of the user's clips.",
         "predicted_strengths": [
-          "no real fit — flagged as a known mismatch"
+          "no predicted strengths"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "comedy slapstick reel — comedy tops, sentimental acoustic explicitly ranked very low (case c)"
+    "source": "provider_smoke_capture",
+    "case": "comedy slapstick reel — comedy tops, sentimental acoustic explicitly ranked very low (case c)",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

@@ -430,5 +430,6 @@
     "restart_brief": {
       "cut_restarts": false
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

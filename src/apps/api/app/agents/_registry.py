@@ -102,11 +102,7 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.compose.creative_direction", "app.agents.creative_direction", "CreativeDirectionAgent"),
     # New agents (built on the runtime; no platform plumbing)
     ("nova.layout.text_designer", "app.agents.text_designer", "TextDesignerAgent"),
-    ("nova.video.shot_ranker", "app.agents.shot_ranker", "ShotRankerAgent"),
-    ("nova.layout.transition_picker", "app.agents.transition_picker", "TransitionPickerAgent"),
-    ("nova.audio.beat_aligner", "app.agents.beat_aligner", "BeatAlignerAgent"),
     ("nova.video.clip_router", "app.agents.clip_router", "ClipRouterAgent"),
-    ("nova.qa.output_validator", "app.agents.output_validator", "OutputValidatorAgent"),
     # Layer-2 text-overlay pipeline agents (slices E + F)
     ("nova.compose.text_alignment", "app.agents.text_alignment", "TextAlignmentAgent"),
     (

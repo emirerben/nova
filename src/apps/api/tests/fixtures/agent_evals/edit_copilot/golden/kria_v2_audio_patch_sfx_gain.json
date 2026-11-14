@@ -67,5 +67,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "patch_sfx_gain"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

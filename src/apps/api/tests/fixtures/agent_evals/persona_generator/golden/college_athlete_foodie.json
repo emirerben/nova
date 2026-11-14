@@ -38,5 +38,6 @@
   "meta": {
     "source": "live_capture_2026-05-30b",
     "case": "well-formed questionnaire -> grounded persona; pillars (4) and sample_topics (6) within bounds, all fields non-empty"
-  }
+  },
+  "prompt_sha": "unpinned"
 }
