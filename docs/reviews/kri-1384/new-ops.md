@@ -28,7 +28,7 @@ The change is accepted when these hold:
 | `speaker_full_opening` | 1 | agent_ops | `remove_full_screen_opening {}` |
 | `video_shape` | 1 | agent_ops | `set_video_shape {orientation, landscape_fit}` |
 | `motion_speed` | 1 | agent_unsupported | It sets `motion_scenes[].motion.speed`. A phone edit has no motion scenes: `validate_phone_pilot_recipe` and the authored phone compile refuse them. |
-| `split_screen_full_screen` | 1 | agent_unsupported | The Save sections are chat's (`timeline_slots`, `split_screen_sections`), but the cut is planned on the phone (`NativeEditorSession.splitFullScreenResult`): every panel clip splits at the playhead and one panel's footage becomes full-screen clips grown to fill the lost time. No server op plans that yet. |
+| `split_screen_full_screen` | 1 | agent_ops (later) | `make_split_full_screen {section_id, at_s, side, panel}`, a server port of `splitFullScreenResult` proven equal to the phone's on a shared fixture. See [split-full-screen.md](split-full-screen.md). |
 | `drawing` | 9 | agent_unsupported | New strokes are finger paths a chat request cannot describe. Recolouring, timing, entrance and exit and moving a drawing have no op yet; the snapshot shows drawings read-only. |
 
 ### Unsupported counts
@@ -150,4 +150,5 @@ The five new threads are met. The eight unmet are unchanged: the groups the phon
   `remove_full_screen_opening` compiles to an empty diff like every background op.
 - **Captions kept as text rows** (guided edits) are not offered `patch_caption_line`: lines are
   addressed by cue id.
-- **Lip-sync trim and split to full screen** need their Swift planners ported.
+- **Lip-sync trim** needs its Swift planner ported. Split to full screen was ported later:
+  [split-full-screen.md](split-full-screen.md) takes the original set to 11.

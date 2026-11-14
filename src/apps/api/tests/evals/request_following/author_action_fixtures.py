@@ -569,6 +569,23 @@ SCENARIOS: list[Scenario] = [
         needs_split=True,
     ),
     Scenario(
+        "split_screen_full_screen",
+        "After two seconds, let the bottom video take over the whole screen.",
+        [{"op": "make_split_full_screen", "field": "panel"}],
+        [
+            {
+                "op": "make_split_full_screen",
+                "section_id": "duo",
+                "at_s": 2.0,
+                "side": "from",
+                "panel": 1,
+            }
+        ],
+        variant=_split,
+        needs_split=True,
+        note="Phone edits gained this op in KRI-1394.",
+    ),
+    Scenario(
         "music",
         "Lower the music volume.",
         [{"op": "set_mix"}],
@@ -851,6 +868,12 @@ PHONE_OP_PROBES: list[Scenario] = [
     _probe(
         "split_screen_remove",
         {"op": "remove_split_screen", "section_id": "duo", "keep_panel": 0},
+        variant=_split,
+        needs_split=True,
+    ),
+    _probe(
+        "split_screen_full_screen",
+        {"op": "make_split_full_screen", "section_id": "duo", "at_s": 1.0, "side": "until"},
         variant=_split,
         needs_split=True,
     ),

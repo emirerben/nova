@@ -38,6 +38,8 @@ KRI-1388 moved those seven groups to `agent_unsupported` and renamed four thread
 
 KRI-1394 added five ops and one live-recorded thread each (`action_creator_song`, `action_caption_style_scope`, `action_layer_order`, `action_speaker_full_opening`, `action_video_shape`, prompt `2026-11-13-v126`). All five are met, so the per-action set reads 36 of 44 met, with the same 8 unmet. Evidence: [new-ops.md](new-ops.md).
 
+KRI-1394 then added `make_split_full_screen` and its live-recorded thread `action_split_screen_full_screen` (prompt `2026-11-14-v128`, met), so the per-action set reads 39 of 46 met, with the same 7 unmet. Evidence: [split-full-screen.md](split-full-screen.md).
+
 ## What was measured, and what was not
 
 - **Path.** `EditCopilotAgent` (real prompt, real model) -> `_honest_outcome` -> `compile_editor_ops` (`runner.replay_v1_copilot`). Planner routing in front of the copilot and the repair retry behind it are not in it. Nothing was rendered. Turn time is the wall time of the live model call (retries included), not the 66 to 389 s chat turn: queueing, planner, DB, and render are outside it.

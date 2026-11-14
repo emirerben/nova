@@ -316,6 +316,9 @@ def _copilot_operations():
                     ("start_s", "end_s", "tone"),
                 )
             )
+        if name == "side":
+            # KRI-1394: `make_split_full_screen` plays full screen from or until `at_s`.
+            return enum("from", "until")
         if name == "preset":
             # KRI-1162: the speaker's corner, a name and never numbers (S37).
             return enum(
@@ -330,6 +333,7 @@ def _copilot_operations():
             "hold_frames",
             "text_appearance_version",
             "z",
+            "panel",
         }:
             return integer
         if name in numbers:
@@ -397,6 +401,7 @@ def _copilot_operations():
             "preset_id",
             "quantifier",
             "scope",
+            "section_id",
             "source",
             "strategy",
             "style_from",

@@ -230,14 +230,15 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("assign_split_panel",),
         fields=("duplicate", "offset_s"),
     ),
+    # KRI-1394: the server port of splitFullScreenResult (app/kria/split_full_screen.py), equal to
+    # the phone's on tests/fixtures/split_full_screen.json; at_s is the playhead and panel the
+    # selected clip's panel. Refused on Talking source and narrated edits and where text the phone
+    # re-times lies over the section.
     "split_screen_full_screen": _g(
-        "agent_unsupported",
+        "agent_ops",
         "makeSplitFullScreen",
-        reason="The Save sections it writes (timeline_slots, split_screen_sections) are chat's, "
-        "but the cut is planned on the phone (NativeEditorSession.splitFullScreenResult): every "
-        "panel clip is split at the playhead, one panel's footage becomes full-screen clips "
-        "grown to fill the lost time. No server op plans that yet; chat can shorten a section "
-        "(update_split_screen) or unstack it whole (remove_split_screen).",
+        ("make_split_full_screen",),
+        fields=("section_id", "at_s", "side", "panel"),
     ),
     "split_screen_queries": _g(
         "not_an_edit",

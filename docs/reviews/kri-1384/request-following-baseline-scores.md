@@ -4,21 +4,21 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 
 ## Headline
 
-- **Requirements met: 74%** (90/122; partial 7, unmet 25), over every recorded thread and the per-action set.
+- **Requirements met: 74%** (91/123; partial 7, unmet 25), over every recorded thread and the per-action set.
 - **Replies that overclaimed: 14** (a requirement was missed and the reply never said so: where the requirement names claim terms, the reply names one; otherwise the turn applied ops and the reply has no 'not done' marker. A turn that applied nothing claims nothing).
-- **Turn time: p50 10.9s, p95 28.2s** over 86 recorded copilot calls (wall time of the live model call, retries included; planner routing, queueing and render are not in it).
+- **Turn time: p50 10.9s, p95 28.2s** over 87 recorded copilot calls (wall time of the live model call, retries included; planner routing, queueing and render are not in it).
 
 | Set | Threads | Requirements | Met | Partial | Unmet | Met share | Overclaims |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Conversation threads | 31 | 77 | 52 | 7 | 18 | 68% | 13 |
-| Per-action set | 45 | 45 | 38 | 0 | 7 | 84% | 1 |
+| Per-action set | 46 | 46 | 39 | 0 | 7 | 85% | 1 |
 
-Threads measured from recordings: 76. Threads awaiting recordings (not in the KPI): 0.
+Threads measured from recordings: 77. Threads awaiting recordings (not in the KPI): 0.
 
 ## Provenance
 
 - Recorded model: gemini-3.1-pro-preview.
-- Prompt version of the recordings: 2026-11-11-v122, 2026-11-13-v125, 2026-11-13-v126.
+- Prompt version of the recordings: 2026-11-11-v122, 2026-11-13-v125, 2026-11-13-v126, 2026-11-14-v128.
 - Measured path: `EditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops` (`runner.replay_v1_copilot`). The planner's routing in front of the copilot and the repair retry behind it are not in this path, and nothing was rendered.
 - Snapshots are built by the real `build_editor_snapshot` over a synthetic phone (`render_destination: device`) variant, with the clip facts the chat path hands the copilot. Footage is synthetic (invented places only).
 
@@ -40,7 +40,7 @@ Threads measured from recordings: 76. Threads awaiting recordings (not in the KP
 | readability | 2 | 1 | 0 | 1 | 50% | 1 |
 | restructure | 3 | 1 | 0 | 2 | 33% | 0 |
 | style | 9 | 7 | 0 | 2 | 78% | 0 |
-| action_parity | 45 | 38 | 0 | 7 | 84% | 1 |
+| action_parity | 46 | 39 | 0 | 7 | 85% | 1 |
 
 ## Per-action set (one plain request per `agent_ops` parity group, phone snapshot)
 
@@ -82,6 +82,7 @@ Threads measured from recordings: 76. Threads awaiting recordings (not in the KP
 | action_split_screen_clip_offset | Start the bottom clip of the split screen one second later. | reaches | ['assign_split_panel'] | met | parser accepted ['assign_split_panel'] |
 | action_split_screen_clip_order | In the split screen, play the second clip of the top panel first. | reaches | ['move_split_clip'] | met | parser accepted ['move_split_clip'] |
 | action_split_screen_create | Put the first two clips side by side on one screen. | reaches | ['create_split_screen'] | met | parser accepted ['create_split_screen'] |
+| action_split_screen_full_screen | After two seconds, let the bottom video take over the whole screen. | reaches | ['make_split_full_screen'] | met | parser accepted ['make_split_full_screen'] |
 | action_split_screen_layout | Make the split screen three panels with a thin gap. | reaches | ['update_split_screen'] | met | parser accepted ['update_split_screen'] |
 | action_split_screen_loop_fill | Loop the top clip of the split screen so it fills its panel. | reaches | ['assign_split_panel'] | met | parser accepted ['assign_split_panel'] |
 | action_split_screen_panel_order | Swap the top and bottom panels of the split screen. | reaches | ['swap_split_panels'] | met | parser accepted ['swap_split_panels'] |

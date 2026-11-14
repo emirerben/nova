@@ -803,6 +803,7 @@
     "Optional: shorten the {word} so it ends before the video does.": "İstersen {word} video bitmeden bitecek şekilde kısaltılabilir.",
     "Original camera audio is required by the render contract.": "Oluşturma sözleşmesi kameranın özgün sesini zorunlu tutuyor.",
     "Our AI took too long to plan this edit, so your video wasn't made. Your edit and footage are saved. Try again in a moment.": "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Birazdan tekrar dene.",
+    "Part of a split screen can't go full screen from chat on this edit.": "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum.",
     "Partly": "Kısmen",
     "Partly done.": "Kısmen yapıldı.",
     "Photo and sound pop-ins timed to your words aren't available for this edit yet": "Sözlerine göre çıkan fotoğraf ve ses efektleri bu düzenleme için henüz yok",
