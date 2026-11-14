@@ -2408,7 +2408,6 @@ private struct CreationWorkspaceView: View {
                     recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
                     chooseAnother: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .chooseSource) } : nil,
                     approval: approval,
-                    format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
                     speechCheckTimedOut: speechCheckTimedOut,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
@@ -3601,7 +3600,8 @@ private struct CreationWorkspaceView: View {
             approvalNotice = nil
             return
         }
-        if approval?.approvalID != identifier.uuidString || (approval?.expiresAt ?? .distantPast) <= .now {
+        // The server sends lowercase ids and `uuidString` is uppercase: compare as UUIDs, or every poll re-fetches.
+        if approval.flatMap({ UUID(uuidString: $0.approvalID) }) != identifier || (approval?.expiresAt ?? .distantPast) <= .now {
             let fetched = try await model.api.approval(threadID: project.id, approvalID: identifier)
             let requestStillCurrent = events.contains(where: {
                 $0.id == lastRequest.id && $0.sequence == lastRequest.sequence

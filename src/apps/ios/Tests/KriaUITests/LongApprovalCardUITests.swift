@@ -75,7 +75,11 @@ final class LongApprovalCardUITests: XCTestCase {
         attach(app, "Card settled")
 
         // The whole card, heading to approve button, fits in the visible chat.
-        let heading = app.staticTexts["Here’s the direction I’ll use"]
+        // The heading combines its lines into one accessibility element, so it is found by its label's start.
+        func labelled(_ predicate: String, _ text: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(NSPredicate(format: "label \(predicate) %@", text)).firstMatch
+        }
+        let heading = labelled("BEGINSWITH", "Here’s the direction I’ll use")
         XCTAssertTrue(heading.exists, app.debugDescription)
         let firstLine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Hier ist die einfachere Version")).firstMatch
         XCTAssertTrue(firstLine.exists, "the card shows the draft's summary")
@@ -84,10 +88,9 @@ final class LongApprovalCardUITests: XCTestCase {
                                  "the approval card (\(cardHeight) pt) is taller than the visible chat (\(visible.height) pt)")
 
         // The stock filler is gone: none of it said anything about this draft.
-        XCTAssertFalse(app.staticTexts["Rhythm"].exists)
-        XCTAssertFalse(app.staticTexts["Natural, intentional"].exists)
-        XCTAssertFalse(app.staticTexts["The story, right away"].exists)
-        XCTAssertFalse(app.staticTexts["I’ve shaped a clear creative direction from your footage and what you told me."].exists)
+        for filler in ["Natural, intentional", "The story, right away", "short-form", "Creative direction", "I’ve shaped a clear creative direction"] {
+            XCTAssertFalse(labelled("CONTAINS", filler).exists, "stock filler on the card: \(filler)")
+        }
 
         // Approve is reachable and still works.
         let conversation = app.otherElements["Conversation history"]

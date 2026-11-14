@@ -57,6 +57,7 @@ from app.kria.clip_sound_toggle_ask import (
 )
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import InferredLabel, RequirementReceipt
+from app.kria.copy_catalog import translate
 from app.kria.freeze_ask import (
     asks_freeze_frame,
     freeze_spec,
@@ -66,7 +67,7 @@ from app.kria.freeze_ask import (
 from app.kria.narrated_clip_sound_ask import AFTER_VOICE, ClipSoundAsk, requirement_clip_sound
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.order_replacement_receipts import VerifiedOrderExecution
-from app.kria.reply_language import current_reply_language, say
+from app.kria.reply_language import CATALOG_REPLY_LANGUAGES, current_reply_language, say
 from app.kria.route_disclosure import is_route_decline_reason
 from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
@@ -7816,7 +7817,20 @@ _NEUTRAL_EN = frozenset(
         _NO_CHECKER,
     }
 )
-_NEUTRAL_REASONS = _NEUTRAL_EN | frozenset(_REASON_TR[reason] for reason in _NEUTRAL_EN)
+# A receipt keeps its reason in the chat's language, so every language's text is neutral.
+# KRI-1403: German was missing, and a German approval card wrote "(Das kann ich noch nicht
+# automatisch prüfen)" under "Have a look at these in the video", which English and Turkish
+# leave out.
+_NEUTRAL_REASONS = (
+    _NEUTRAL_EN
+    | frozenset(_REASON_TR[reason] for reason in _NEUTRAL_EN)
+    | frozenset(
+        text
+        for language in sorted(CATALOG_REPLY_LANGUAGES)
+        for reason in _NEUTRAL_EN
+        if (text := translate(language, reason))
+    )
+)
 
 # Reasons that describe what the format the creator chose does with an ask, not a
 # simplification Kria made instead of it: a Talking edit's length follows the take,

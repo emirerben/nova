@@ -1510,6 +1510,16 @@
    "app/agents/editor_ops_v2/split_full_screen.py",
    "Part of a split screen can't go full screen from chat on this edit.",
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "- Left out as agreed: {count} of your asks",
+   "- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "- Left out as agreed: {what}",
+   "- Kararlaştırdığımız gibi çıkarıldı: {what}"
   ]
  ]
 }

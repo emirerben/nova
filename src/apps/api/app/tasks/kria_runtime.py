@@ -1609,6 +1609,32 @@ def _left_out_line(req: BriefRequirement, *, agreed: bool, label: str | None = N
     )
 
 
+def _card_summary(reply: str) -> str:
+    """The approval card's copy of the draft reply (KRI-1403).
+
+    Two or more "Left out as agreed" lines become one line with their count: the creator chose
+    them on the question just before, and the card has to fit on one screen (ylab, build 1977:
+    a 14-line card blanked the chat). The draft reply itself keeps every line.
+    """
+    prefix = say(
+        en="- Left out as agreed: {what}",
+        tr="- Kararlaştırdığımız gibi çıkarıldı: {what}",
+        what="",
+    )
+    lines = reply.split("\n")
+    agreed = [index for index, line in enumerate(lines) if line.startswith(prefix)]
+    if len(agreed) < 2:
+        return reply
+    count = say(
+        en="- Left out as agreed: {count} of your asks",
+        tr="- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin",
+        count=len(agreed),
+    )
+    kept = [line for index, line in enumerate(lines) if index not in agreed[1:]]
+    kept[agreed[0]] = count
+    return "\n".join(kept)
+
+
 # KRI-1236: an ending the simpler version keeps without its arrow. The draft's coverage maps
 # each such id to the facets left out, so the after-render review can say so (the ask stays
 # live, so the superseded-ids rule of `_left_out_lines` never lists it).
@@ -4219,7 +4245,7 @@ def _complete_draft_turn(
             consequence_summary=" ".join(
                 part
                 for part in (
-                    f"Render this draft: {approval_summary}",
+                    f"Render this draft: {_card_summary(approval_summary)}",
                     copy_notice,
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
                     route_notice if route_notice and route_notice not in approval_summary else None,
