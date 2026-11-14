@@ -712,6 +712,7 @@
     "Left out one text change I couldn't make": "Yapamadığım bir yazı değişikliğini eklemedim",
     "Left out one text change I couldn't make fit": "Sığdıramadığım bir yazı değişikliğini eklemedim",
     "Left out one text change for {text} because I couldn't make it fit": "{text} için sığdıramadığım bir yazı değişikliğini eklemedim",
+    "Left out {count} explanations that didn't fit their part of the video": "Videonun ilgili kısımlarına sığmayan {count} açıklamayı eklemedim",
     "Left out {count} text changes I couldn't make fit": "Sığdıramadığım {count} yazı değişikliğini eklemedim",
     "Left out {text} because I couldn't add it as its own line": "{text} metnini ayrı bir satır olarak ekleyemediğim için çıkardım",
     "Left out: {names}.": "Çıkardıklarım: {names}.",

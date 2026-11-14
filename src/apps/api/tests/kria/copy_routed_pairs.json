@@ -1565,6 +1565,11 @@
    "app/services/creation_text_degrade.py",
    "Left out {count} text changes I couldn't make fit",
    "Sığdıramadığım {count} yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out {count} explanations that didn't fit their part of the video",
+   "Videonun ilgili kısımlarına sığmayan {count} açıklamayı eklemedim"
   ]
  ],
  "retired": [

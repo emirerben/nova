@@ -1721,7 +1721,14 @@ def _compose_from_research(
     constraints: Mapping[str, str],
     text_requirements: Sequence[BriefRequirement] | None,
     ctx: RunContext | None,
-) -> tuple[EditCopilotOutput, list[dict], dict[str, str], list[ResearchLayerShape], list[TextDrop]]:
+) -> tuple[
+    EditCopilotOutput,
+    list[dict],
+    list[dict],
+    dict[str, str],
+    list[ResearchLayerShape],
+    list[TextDrop],
+]:
     """Reviewed research writes the words; the text composer only shapes them.
 
     The layers are either ``approved`` before render (KRI-881: replayed by
@@ -1732,7 +1739,8 @@ def _compose_from_research(
     binds a bar already in its snapshot), so the composer shapes the bars in the program's
     ``then`` bundle, with them held as confirmed copy and no way to add or reword text. Returns
     the shaping answer with the layers' ops as ``ops`` (full lane, after ``pinned_ops``), the
-    ``then`` ops, the researched bars' copy constraints, the layer shapes the program
+    ``then`` ops as the composer wrote them, the full lane it shaped (with the layers), the
+    researched bars' copy constraints, the layer shapes the program
     records so every replay keeps them as reviewed, and one ``incomplete`` drop per asked
     layer no reviewed layer fills. A layer the writer reported unmet stays a failure: the
     writer's answer then skipped the evidence checks and the claim review.
@@ -1811,15 +1819,18 @@ def _compose_from_research(
     )
     if shaped.research_request is not None:
         raise CreationTextCompositionError("The text pass asked to research again")
-    second = (
-        _to_full_bar_indexes(shaped.ops, written_lane)
-        if "caption_lane" in shaping_snapshot
-        else shaped.ops
-    )
     shapes = _layer_shapes(layer_rows, layers, text_requirements)
-    # The caller's replay checks the shapes (`_check_research_layers`), the same rule a saved
-    # program meets, and drops a shaping op that breaks one (KRI-1376).
-    return shaped.model_copy(update={"ops": first}), second, researched, shapes, drops
+    # The caller maps the indexes and replays the shapes (`_check_research_layers`) per
+    # candidate, the same rules a saved program meets, so one bad shaping op is dropped alone
+    # (KRI-1376).
+    return (
+        shaped.model_copy(update={"ops": first}),
+        shaped.ops,
+        written_lane,
+        researched,
+        shapes,
+        drops,
+    )
 
 
 _WRITING_OPS = frozenset({"add_text", "rewrite_text", "edit_text"})
@@ -2149,6 +2160,7 @@ def _compose_creation_text(
         output = _run_composer(composer_input, slots=slots, bar_count=len(model_texts), ctx=ctx)
     full_lane_ops = False
     then: list[dict] = []
+    shaping_lane: list[dict] = []
     shapes: list[ResearchLayerShape] = []
     drops: list[TextDrop] = []
     owned = (
@@ -2172,7 +2184,7 @@ def _compose_creation_text(
         and pinned_research is None
         and research_needs_text_layers(text_requirements)
     ):
-        output, then, researched, shapes, uncovered = _compose_from_research(
+        output, then, shaping_lane, researched, shapes, uncovered = _compose_from_research(
             output.research_request,
             approved=approved_layers,
             snapshot=snapshot,
@@ -2259,7 +2271,9 @@ def _compose_creation_text(
         operations, shaped = (list(fixed_ops), list(ops)) if full_lane_ops else (list(ops), [])
         if not asked_only:
             _check_added_text([*operations, *shaped], text_requirements)
-        if caption_lane is not None and not full_lane_ops:
+        if caption_lane is not None and full_lane_ops:
+            shaped = _to_full_bar_indexes(shaped, shaping_lane)
+        elif caption_lane is not None:
             operations = _to_full_bar_indexes(operations, texts_for_model)
         if asked_only:
             operations = _drop_unasked_added_text(
@@ -2299,7 +2313,12 @@ def _compose_creation_text(
     degraded = degrade_text_ops(
         composer_ops,
         program_for,
-        lane=model_texts,
+        # The rows the composer's own ops address, as it saw them (caption rows hidden).
+        lane=(
+            [row for row in shaping_lane if caption_lane is None or not is_caption_text_bar(row)]
+            if full_lane_ops
+            else model_texts
+        ),
         protected=literal_ops(text_requirements),
         text_asked=_may_own_added_text(text_requirements),
     )
@@ -2402,9 +2421,10 @@ def _may_own_added_text(requirements: Sequence[BriefRequirement] | None) -> bool
 
 
 def _meets_a_text_ask(plan: dict, requirements: Sequence[BriefRequirement] | None) -> bool:
-    """Whether her own words for one live text ask are on screen: a row reading her literal, or
-    her sequence shown piece by piece (``text_sequence_shown``). A described ask has no words to
-    find and is never counted.
+    """Whether her own words for one live text ask are on screen: her literal read word for word
+    across the visible rows in screen order (one row, or the stacked lines the planner split it
+    into, prod d6c58d7b), or her sequence shown piece by piece (``text_sequence_shown``). A
+    described ask has no words to find and is never counted.
     """
     from app.text_fold import fold_text  # noqa: PLC0415
 
@@ -2417,15 +2437,25 @@ def _meets_a_text_ask(plan: dict, requirements: Sequence[BriefRequirement] | Non
     )
 
     facts = plan_facts_from_editor_payload(plan)
-    shown = {
-        fold_text(str(row.get("text") or ""))
-        for row in plan.get("text_elements") or []
-        if not row.get("removed") and not is_caption_text_bar(row)
-    }
+    rows = sorted(
+        (
+            (_screen_start(row), index, str(row.get("text") or ""))
+            for index, row in enumerate(plan.get("text_elements") or [])
+            if not row.get("removed") and not is_caption_text_bar(row)
+        ),
+    )
+    screen = tuple(word for _start, _index, text in rows for word in _ask_words(text))
+    folded_rows = {fold_text(text) for _start, _index, text in rows}
+
+    def shown(literal: str) -> bool:
+        words = _ask_words(literal)
+        if not words:
+            return fold_text(literal) in folded_rows
+        width = len(words)
+        return any(screen[k : k + width] == words for k in range(len(screen) - width + 1))
+
     return any(
-        text_sequence_shown(req, facts)
-        if is_text_sequence(req)
-        else fold_text(req.literal or "") in shown
+        text_sequence_shown(req, facts) if is_text_sequence(req) else shown(req.literal or "")
         for req in asks
     )
 
