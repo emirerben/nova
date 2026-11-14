@@ -80,5 +80,6 @@
       }
     ],
     "expect_no_unpositioned_order": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

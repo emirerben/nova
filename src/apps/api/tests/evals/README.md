@@ -115,6 +115,8 @@ pytest tests/evals/ -v
 #      from a debug session.
 ```
 
+A new fixture needs a pin before it passes `test_fixture_prompt_pins.py`: capture it live, or for an exported or hand-written one run `python scripts/stamp_eval_fixtures.py --agent <dir>` after checking the answer fits today's prompt.
+
 ## Fixture format
 
 ```json
@@ -130,6 +132,14 @@ pytest tests/evals/ -v
 
 `raw_text` provenance: the export script serializes the persisted output dict back to JSON and uses that as `raw_text`. Replay re-parses it through the agent's `parse()`. This means replay validates the structural floor but does not validate Gemini's actual JSON-shape compliance — that's why we keep at least one hand-authored `golden/` fixture per agent recorded from a real model response.
 
+## Fixture pins
+
+Each fixture carries `prompt_sha`, a hash of the exact prompt the model was sent when the answer was recorded. Replay hashes the prompt the agent sends today and fails the fixture on a mismatch (`stale fixture ...`), so a prompt edit cannot pass on an answer given to the old prompt. Live captures (`NOVA_EVAL_CAPTURE_DIR`) write the pin themselves. To re-record, run the live command from "Live-mode cost cap" with `NOVA_EVAL_CAPTURE_DIR=<dir>`, then copy `<dir>/<golden|prod_snapshots>/*.json` over the fixture files.
+
+A fixture marked `"prompt_sha": "unpinned"` replays a historical answer through the parser and compiler and is not checked against the prompt. They are listed in `tests/fixtures/agent_evals/unpinned.json`, which may only shrink: `test_fixture_prompt_pins.py` fails on a fixture without a pin and on a stale list entry. If a prompt change cannot change a recorded answer, `python scripts/stamp_eval_fixtures.py --agent <dir>` re-stamps it and the diff shows the decision.
+
+Live re-records need a ledger database with migrations (`DATABASE_URL`, `alembic upgrade head`) and the Gemini key in the environment; `creative_direction` also needs Google Application Default Credentials to fetch its template videos.
+
 ## Iterating on a prompt
 
 Two workflows. The manual one (works on any prompt) and the automatic one (live-only).
@@ -138,7 +148,8 @@ Two workflows. The manual one (works on any prompt) and the automatic one (live-
 
 ```bash
 # 1) Edit the prompt file (e.g., prompts/analyze_clip.txt).
-# 2) Bump prompt_version in the agent's AgentSpec.
+# 2) Bump prompt_version in the agent's AgentSpec (hand-versioned agents).
+#    Replay now fails the agent's pinned fixtures; re-record them (see Fixture pins).
 # 3) Baseline the OLD prompt (replay is fine):
 git stash
 pytest tests/evals/test_clip_metadata_evals.py -v --with-judge | tee /tmp/old.log

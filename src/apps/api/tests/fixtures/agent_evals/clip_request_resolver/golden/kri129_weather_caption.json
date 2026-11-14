@@ -85,5 +85,6 @@
       ]
     },
     "case": "op=\"caption\" with no creator_text (a described caption): membership decided like `group` (m003's indoor birthday party is correctly excluded), and the resolver additionally authors ONE short phrase for the whole chapter from the union of m001+m002's records -- 'rainy' comes from m001's record, 'windy' from m002's; neither clip's record alone contains both words."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

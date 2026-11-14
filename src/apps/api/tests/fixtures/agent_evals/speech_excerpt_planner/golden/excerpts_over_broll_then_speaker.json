@@ -85,5 +85,6 @@
     "source": "hand_authored_golden",
     "case": "Speech over b-roll, cut to the speaker, back to montage.",
     "expect": "excerpts"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

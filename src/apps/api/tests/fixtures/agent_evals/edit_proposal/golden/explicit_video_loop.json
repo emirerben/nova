@@ -22,5 +22,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Explicit loop request permits adjacent overlapping windows of one video"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

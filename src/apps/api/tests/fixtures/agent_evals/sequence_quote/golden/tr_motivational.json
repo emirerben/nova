@@ -15,7 +15,10 @@
     "hero_transcript": "",
     "tone": "kararlı, samimi, motive edici",
     "language": "tr",
-    "content_pillars": ["sabah rutinleri", "disiplin"],
+    "content_pillars": [
+      "sabah rutinleri",
+      "disiplin"
+    ],
     "theme": "kimse izlemiyorken yapılan iş",
     "idea": "gün doğumu koşu montajı",
     "video_duration_s": 7.8
@@ -27,5 +30,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Turkish persona — 7.8s video → target 6 sentences; the quote has exactly 6, 19 total words, every sentence 1-6 words, one quoted span ('sadece şans'), informal first-person voice with Turkish diacritics intact (ş ç ı ö). Grounded in the dawn solo-run footage and the 'work nobody watches' theme."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

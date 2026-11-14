@@ -245,5 +245,6 @@
   "meta": {
     "source": "live_capture_2026-05-30b",
     "case": "market-trained: city-guide persona + event -> 30-day plan reuses mined idea patterns (perfect-day, hidden-gem) adapted to Milan; unique sorted day_index 1..30, pillars rotate, activation week front-loaded"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

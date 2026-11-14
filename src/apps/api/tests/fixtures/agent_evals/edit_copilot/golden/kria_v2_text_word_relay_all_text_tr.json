@@ -257,5 +257,6 @@
       }
     ],
     "notes": "KRI-1077: a designed animation named in chat reaches every text as its wire id."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

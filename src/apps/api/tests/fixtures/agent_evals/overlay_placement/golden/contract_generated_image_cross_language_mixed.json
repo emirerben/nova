@@ -126,5 +126,6 @@
     "pins": "the output contract (a correct answer parses and has this shape) and the prompt content, not model behaviour",
     "case": "A word that translates the title ('kahve' for Coffee) is placed; a sibling drink (Tea) at the same word is omitted.",
     "unproven": "Recorded-response contract. The transcript and timings are synthetic. Whether the real model follows prompt 1.4.0 on this input is NOT measured here; only a live run measures it."
-  }
+  },
+  "prompt_sha": "5f398a5827b5d140"
 }

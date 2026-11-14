@@ -208,5 +208,6 @@
     "case": "TR descriptive captions from stored understanding",
     "lane": "kria-219-capture-time",
     "note": "model-authored wording: structural check only"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -50,5 +50,6 @@
   "meta": {
     "source": "hand-authored golden",
     "purpose": "KRI-845: covers props / actions / visual_quality (prompt_version 2026-10-23.1) on the footage of the cafe clip that holds the only black tray: the prop is named with its colour, the actions keep their direction (picks up, holds out, walks off) and the quality is the crisp-and-steady default. Authored from tests/fixtures/kri845_m1_clip_detail.json (M1_08); the moments follow the prompt's spacing rules (starts 2.0 s apart, span >= 60% of 5.0 s). Hand-authored; no live run was made (no paid calls)."
-  }
+  },
+  "prompt_sha": "37dd541722d4c6ba"
 }

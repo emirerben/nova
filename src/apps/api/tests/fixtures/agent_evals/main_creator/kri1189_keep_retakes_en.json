@@ -423,5 +423,6 @@
       "cut_restarts": false,
       "speech_cleanup": false
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

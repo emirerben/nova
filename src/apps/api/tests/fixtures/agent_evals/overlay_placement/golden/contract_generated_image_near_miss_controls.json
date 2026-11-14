@@ -128,5 +128,6 @@
     "pins": "the output contract (a correct answer parses and has this shape) and the prompt content, not model behaviour",
     "case": "Near misses stay omitted: a Wine image at 'bira' (beer), a Tea image at 'kahve' (coffee), a Map image at 'şehir' (city; a map would need 'harita').",
     "unproven": "Recorded-response contract. The transcript and timings are synthetic. Whether the real model follows prompt 1.4.0 on this input is NOT measured here; only a live run measures it."
-  }
+  },
+  "prompt_sha": "1f9885dcb9c64848"
 }

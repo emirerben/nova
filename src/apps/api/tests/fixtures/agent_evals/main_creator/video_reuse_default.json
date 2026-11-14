@@ -91,5 +91,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "video_reuse_default"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

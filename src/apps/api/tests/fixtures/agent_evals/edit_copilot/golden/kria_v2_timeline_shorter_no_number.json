@@ -112,8 +112,14 @@
     "capability_contract": {
       "intent": "clarify",
       "needs_clarification": true,
-      "reply_contains": ["32 seconds", "20 seconds"],
-      "reply_excludes": ["can't change the length"]
+      "reply_contains": [
+        "32 seconds",
+        "20 seconds"
+      ],
+      "reply_excludes": [
+        "can't change the length"
+      ]
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

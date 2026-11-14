@@ -299,5 +299,6 @@
     "case": "restyle just-added captions: bottom left, smaller, lowercase, no shadow/stroke",
     "lane": "kria-219-capture-time",
     "note": "structural check only; animation (typewriter) is removed, shadow/stroke untouched"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

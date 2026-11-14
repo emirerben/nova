@@ -48,5 +48,6 @@
   "meta": {
     "source": "hand_authored_adversarial",
     "case": "PERSONA-FOOTAGE CONFLICT (the reported prod incident class) — marketing persona + monkey footage. The WRONG output is the persona-glue transformation claim ('the monkey changed my whole marketing perspective'). Correct behavior: drop the unhonorable pillars/theme and write a grounded, in-the-moment hook from the footage alone. persona_coherence rubric scores the drop as 5 (conflict rule)."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

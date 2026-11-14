@@ -5,7 +5,9 @@
     "utterance": "use the staggered slice animation on the title",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["style"],
+      "allowed_op_families": [
+        "style"
+      ],
       "has_narrated_captions": false,
       "text_bars": [
         {
@@ -49,5 +51,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "explicit staggered slice text effect"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

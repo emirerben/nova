@@ -53,23 +53,36 @@
     "expect_intents": [
       {
         "op": "label",
-        "source_quote_keywords": ["label", "sport"]
+        "source_quote_keywords": [
+          "label",
+          "sport"
+        ]
       },
       {
         "op": "group",
-        "source_quote_keywords": ["group", "pub"]
+        "source_quote_keywords": [
+          "group",
+          "pub"
+        ]
       },
       {
         "op": "order",
-        "source_quote_keywords": ["park", "first"],
+        "source_quote_keywords": [
+          "park",
+          "first"
+        ],
         "position": "first"
       },
       {
         "op": "caption",
-        "source_quote_keywords": ["post-match", "pub chapter"],
+        "source_quote_keywords": [
+          "post-match",
+          "pub chapter"
+        ],
         "creator_text": "Post-match"
       }
     ],
     "expect_any": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

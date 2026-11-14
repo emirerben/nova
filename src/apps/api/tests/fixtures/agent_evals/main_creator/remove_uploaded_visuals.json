@@ -85,5 +85,6 @@
   "meta": {
     "source": "regression",
     "manual_visual_removal": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

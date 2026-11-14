@@ -3,7 +3,13 @@
   "prompt_version": "2026-09-08-v7",
   "input": {
     "variant_snapshot": {
-      "allowed_op_families": ["text", "timeline", "effect", "transition", "sfx"],
+      "allowed_op_families": [
+        "text",
+        "timeline",
+        "effect",
+        "transition",
+        "sfx"
+      ],
       "total_duration_s": 10.5,
       "transcript": "Burası dışarıdan sıradan görünüyor ama içeri girince manzara tamamen değişiyor.",
       "text_bars": [
@@ -51,7 +57,11 @@
       "sfx": {
         "placements": [],
         "catalog": [
-          {"id": "door-swish", "name": "Yumuşak geçiş", "duration_s": 0.5}
+          {
+            "id": "door-swish",
+            "name": "Yumuşak geçiş",
+            "duration_s": 0.5
+          }
         ]
       }
     },
@@ -62,5 +72,6 @@
   "meta": {
     "language": "tr",
     "source": "hand_authored_editor_fixture"
-  }
+  },
+  "prompt_sha": "7a0b09f223f31e7d"
 }

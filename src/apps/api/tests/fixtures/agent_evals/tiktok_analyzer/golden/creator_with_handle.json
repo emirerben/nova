@@ -8,7 +8,10 @@
     "videos": [
       {
         "caption": "POV: you finally hit a PR after months of eating in a deficit #powerlifting #gymtok",
-        "hashtags": ["powerlifting", "gymtok"],
+        "hashtags": [
+          "powerlifting",
+          "gymtok"
+        ],
         "view_count": 42000,
         "like_count": 3100,
         "comment_count": 280,
@@ -20,19 +23,25 @@
       },
       {
         "caption": "high protein meals for broke college students — week 2 #mealprep #collegelife",
-        "hashtags": ["mealprep", "collegelife"],
+        "hashtags": [
+          "mealprep",
+          "collegelife"
+        ],
         "view_count": 31000,
         "like_count": 2200,
         "comment_count": 190,
         "repost_count": 620,
-        "engagement_rate": 0.09710,
+        "engagement_rate": 0.0971,
         "view_index": 3.78,
         "duration": 45,
         "upload_date": "20260514"
       },
       {
         "caption": "thrift haul for the gym girl who refuses to pay full price #thrifting #gymoutfit",
-        "hashtags": ["thrifting", "gymoutfit"],
+        "hashtags": [
+          "thrifting",
+          "gymoutfit"
+        ],
         "view_count": 18500,
         "like_count": 1400,
         "comment_count": 95,
@@ -44,19 +53,25 @@
       },
       {
         "caption": "my week in food as a kinesiology major #kinesiology #studentlife",
-        "hashtags": ["kinesiology", "studentlife"],
+        "hashtags": [
+          "kinesiology",
+          "studentlife"
+        ],
         "view_count": 7400,
         "like_count": 580,
         "comment_count": 42,
         "repost_count": 60,
         "engagement_rate": 0.09216,
-        "view_index": 0.90,
+        "view_index": 0.9,
         "duration": 28,
         "upload_date": "20260501"
       },
       {
         "caption": "pack your gym bag with me #gymbag #routine",
-        "hashtags": ["gymbag", "routine"],
+        "hashtags": [
+          "gymbag",
+          "routine"
+        ],
         "view_count": 6200,
         "like_count": 400,
         "comment_count": 28,
@@ -83,9 +98,18 @@
         }
       ],
       "winning_themes": [
-        {"theme": "Powerlifting milestones and PRs", "view_index": 5.12},
-        {"theme": "Budget meal prep for college students", "view_index": 3.78},
-        {"theme": "Thrift gym outfits", "view_index": 2.26}
+        {
+          "theme": "Powerlifting milestones and PRs",
+          "view_index": 5.12
+        },
+        {
+          "theme": "Budget meal prep for college students",
+          "view_index": 3.78
+        },
+        {
+          "theme": "Thrift gym outfits",
+          "view_index": 2.26
+        }
       ],
       "posting_cadence": "Roughly 1-2 videos per week based on upload dates.",
       "audience_signal": "Engagement rates 8-10% across top posts — highly engaged, primarily saves and reposts over comments. Audience is budget-conscious gym beginners.",
@@ -95,5 +119,6 @@
   "meta": {
     "source": "synthetic_2026-06-06",
     "case": "creator with 5 enriched videos; top 2 outperform median 5x and 3.8x; structural checks: summary ≤1200 chars, no @handles/URLs, hook/theme arrays within 6-item cap"
-  }
+  },
+  "prompt_sha": "28500a6e70510f7c"
 }

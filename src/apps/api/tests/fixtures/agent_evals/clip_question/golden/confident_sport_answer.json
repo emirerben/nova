@@ -16,5 +16,6 @@
     "source": "hand_authored_golden",
     "case": "Confident, specific answer grounded in what's visible in the clip.",
     "live_note": "Bucket-relative dev clip; live mode uploads it via the fixture uploader. Replay uses raw_text; live is structural only (the dev clip's real content differs from the recorded answer)."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -32,5 +32,6 @@
       }
     ],
     "expect_any": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

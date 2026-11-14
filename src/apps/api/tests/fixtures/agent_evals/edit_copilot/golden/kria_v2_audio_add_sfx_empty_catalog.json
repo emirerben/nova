@@ -46,5 +46,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "add_sfx_empty_catalog"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

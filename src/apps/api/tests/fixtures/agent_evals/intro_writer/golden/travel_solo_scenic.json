@@ -40,6 +40,7 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "scenic solo-travel arrival \u2192 original, lowercase, second-person aspirational hook grounded in THIS clip (a hiked-in valley view), in the reference voice (cf. @shootyourtrip 'imagine traveling solo in berlin and ending up here'); NOT a copy of the exemplar"
-  }
+    "case": "scenic solo-travel arrival → original, lowercase, second-person aspirational hook grounded in THIS clip (a hiked-in valley view), in the reference voice (cf. @shootyourtrip 'imagine traveling solo in berlin and ending up here'); NOT a copy of the exemplar"
+  },
+  "prompt_sha": "unpinned"
 }

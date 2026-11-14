@@ -70,5 +70,6 @@
   "meta": {
     "source": "legacy_fixture_semantic_projection",
     "case": "Three videos must appear once each, even when longer cuts are needed"
-  }
+  },
+  "prompt_sha": "a8df9eadd70e9be0"
 }

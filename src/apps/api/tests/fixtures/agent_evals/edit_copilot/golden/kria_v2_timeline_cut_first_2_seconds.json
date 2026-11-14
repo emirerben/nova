@@ -102,5 +102,6 @@
     "source": "hand_authored_golden",
     "case": "output trim",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

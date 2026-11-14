@@ -22,10 +22,13 @@
     "text_color": "#FFFFFF",
     "highlight_color": "#7FD1FF",
     "text_anchor": "center",
-    "matched_example_ids": ["travel-aspirational-popin-01"]
+    "matched_example_ids": [
+      "travel-aspirational-popin-01"
+    ]
   },
   "meta": {
     "source": "hand_authored_golden",
     "case": "calm scenic travel → gentle fade-in (not karaoke), matched the travel-aspirational exemplar"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "1c12034960501142",
   "input": {
     "clip_summaries": [
       {
@@ -63,7 +64,12 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["glossy", "anthemic", "neon", "euphoric"],
+          "vibe_tags": [
+            "glossy",
+            "anthemic",
+            "neon",
+            "euphoric"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "main-character night out",
@@ -81,7 +87,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["pulsing", "euphoric", "driving"],
+          "vibe_tags": [
+            "pulsing",
+            "euphoric",
+            "driving"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "dance-floor euphoria",
@@ -99,7 +109,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "confident", "playful"],
+          "vibe_tags": [
+            "swagger",
+            "confident",
+            "playful"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "city-skyline arrival",
@@ -117,7 +131,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "reverent", "patient"],
+          "vibe_tags": [
+            "sweeping",
+            "reverent",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "quiet awe",
@@ -135,7 +153,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["intimate", "wistful", "patient"],
+          "vibe_tags": [
+            "intimate",
+            "wistful",
+            "patient"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "morning calm",
@@ -148,59 +170,57 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_pop_neon\", \"score\": 9.3, \"rationale\": \"Five fast-cut neon nightlife clips at avg energy ~8.6 land squarely inside this track's profile of friend-group montages and strobe-lit dance floors — vibe and pacing line up cleanly.\", \"predicted_strengths\": [\"high-contrast neon grade matches the magenta/cyan footage\", \"whip-pan transitions fit the tracking-shot crosswalk clip\", \"12 slots over 5 clips leaves room for double-cuts on hooks\"]}, {\"track_id\": \"track_electronic_club\", \"score\": 8.6, \"rationale\": \"DJ booth and strobe-lit crowd shots live inside this track's club-floor profile; beat-pulse transitions would land hard on the sparkler ignition and crosswalk run.\", \"predicted_strengths\": [\"distinct genre from pop pick — adds top-K variety\", \"peaks_high energy matches highest-energy DJ-booth clip\", \"beat_pulse transitions sync to fast-cut nightlife\"]}, {\"track_id\": \"track_hiphop_rooftop\", \"score\": 8.0, \"rationale\": \"Rooftop bar and raised-drinks framing fits this track's swagger profile; slightly lower than the top two because high (not peaks_high) energy drops the strobe-club intensity.\", \"predicted_strengths\": [\"third distinct vibe completes top-K\", \"hard_cut transitions match the fast-cut bar footage\", \"slot count of 10 sits comfortably with 5 clips\"]}, {\"track_id\": \"track_cinematic_drone\", \"score\": 3.0, \"rationale\": \"Sweeping reverent suite is mismatched with frenetic strobe-lit nightlife; medium energy and 6 slots would feel under-driven against the avg energy of 8.6.\", \"predicted_strengths\": [\"only useful if user adds wide rooftop establishing shots\"]}, {\"track_id\": \"track_acoustic_living\", \"score\": 1.5, \"rationale\": \"Slow intimate morning-light acoustic is the inverse of a chaotic rooftop night-out reel — wrong energy, wrong pacing, wrong color grade.\", \"predicted_strengths\": [\"no real fit on this clip set\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_pop_neon\",\n      \"score\": 9.7,\n      \"rationale\": \"This track perfectly captures the energetic 'main-character night out' vibe with its neon aesthetic and anthemic feel.\",\n      \"predicted_strengths\": [\n        \"Vibe matches friend-group nightlife montages\",\n        \"High energy aligns with fast-paced clips\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_club\",\n      \"score\": 9.2,\n      \"rationale\": \"The pulsing, euphoric energy and club-focused profile are an excellent fit for the DJ booth and fast-cut scenes.\",\n      \"predicted_strengths\": [\n        \"Strong match for dance-floor and strobe-lit clips\",\n        \"Fast pacing suits frenetic motion\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_rooftop\",\n      \"score\": 8.5,\n      \"rationale\": \"Its confident, playful swagger and rooftop lifestyle profile complement the friends' city adventures and raised drinks.\",\n      \"predicted_strengths\": [\n        \"Good fit for rooftop bar and city street clips\",\n        \"High energy and punchy tone support the fun atmosphere\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_drone\",\n      \"score\": 2.0,\n      \"rationale\": \"This track's sweeping, reverent mood and slow pacing are completely at odds with the high-energy party clips.\",\n      \"predicted_strengths\": [\n        \"Would create a strong contrast for an unexpected edit\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_living\",\n      \"score\": 1.5,\n      \"rationale\": \"The intimate, wistful vibe and low energy of this track are a stark mismatch for the lively, fast-cut nightlife footage.\",\n      \"predicted_strengths\": [\n        \"Potential for ironic juxtaposition\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_pop_neon",
-        "score": 9.3,
-        "rationale": "Five fast-cut neon nightlife clips at avg energy ~8.6 land squarely inside this track's profile of friend-group montages and strobe-lit dance floors — vibe and pacing line up cleanly.",
+        "score": 9.7,
+        "rationale": "This track perfectly captures the energetic 'main-character night out' vibe with its neon aesthetic and anthemic feel.",
         "predicted_strengths": [
-          "high-contrast neon grade matches the magenta/cyan footage",
-          "whip-pan transitions fit the tracking-shot crosswalk clip",
-          "12 slots over 5 clips leaves room for double-cuts on hooks"
+          "Vibe matches friend-group nightlife montages",
+          "High energy aligns with fast-paced clips"
         ]
       },
       {
         "track_id": "track_electronic_club",
-        "score": 8.6,
-        "rationale": "DJ booth and strobe-lit crowd shots live inside this track's club-floor profile; beat-pulse transitions would land hard on the sparkler ignition and crosswalk run.",
+        "score": 9.2,
+        "rationale": "The pulsing, euphoric energy and club-focused profile are an excellent fit for the DJ booth and fast-cut scenes.",
         "predicted_strengths": [
-          "distinct genre from pop pick — adds top-K variety",
-          "peaks_high energy matches highest-energy DJ-booth clip",
-          "beat_pulse transitions sync to fast-cut nightlife"
+          "Strong match for dance-floor and strobe-lit clips",
+          "Fast pacing suits frenetic motion"
         ]
       },
       {
         "track_id": "track_hiphop_rooftop",
-        "score": 8.0,
-        "rationale": "Rooftop bar and raised-drinks framing fits this track's swagger profile; slightly lower than the top two because high (not peaks_high) energy drops the strobe-club intensity.",
+        "score": 8.5,
+        "rationale": "Its confident, playful swagger and rooftop lifestyle profile complement the friends' city adventures and raised drinks.",
         "predicted_strengths": [
-          "third distinct vibe completes top-K",
-          "hard_cut transitions match the fast-cut bar footage",
-          "slot count of 10 sits comfortably with 5 clips"
+          "Good fit for rooftop bar and city street clips",
+          "High energy and punchy tone support the fun atmosphere"
         ]
       },
       {
         "track_id": "track_cinematic_drone",
-        "score": 3.0,
-        "rationale": "Sweeping reverent suite is mismatched with frenetic strobe-lit nightlife; medium energy and 6 slots would feel under-driven against the avg energy of 8.6.",
+        "score": 2.0,
+        "rationale": "This track's sweeping, reverent mood and slow pacing are completely at odds with the high-energy party clips.",
         "predicted_strengths": [
-          "only useful if user adds wide rooftop establishing shots"
+          "Would create a strong contrast for an unexpected edit"
         ]
       },
       {
         "track_id": "track_acoustic_living",
         "score": 1.5,
-        "rationale": "Slow intimate morning-light acoustic is the inverse of a chaotic rooftop night-out reel — wrong energy, wrong pacing, wrong color grade.",
+        "rationale": "The intimate, wistful vibe and low energy of this track are a stark mismatch for the lively, fast-cut nightlife footage.",
         "predicted_strengths": [
-          "no real fit on this clip set"
+          "Potential for ironic juxtaposition"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "high-energy neon rooftop nightlife — pop top, electronic + hip-hop fill diverse top-K, acoustic ranked very low"
+    "source": "provider_smoke_capture",
+    "case": "high-energy neon rooftop nightlife — pop top, electronic + hip-hop fill diverse top-K, acoustic ranked very low",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

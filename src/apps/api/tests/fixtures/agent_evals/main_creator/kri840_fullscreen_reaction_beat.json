@@ -408,5 +408,6 @@
       }
     },
     "notes": "KRI-840: HAND-AUTHORED cassette, NOT live-recorded (no model/API call was made). Don Julio T2: a full-screen photo at a spoken word is a reaction beat with display_mode fullscreen and hold_s for 'a moment' (<= 1.5), never overlay_display; the corner card stays pip (omitted). The brief records display_mode for both asks. Live re-record pending behind the paid-eval approval."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

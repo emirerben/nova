@@ -221,5 +221,6 @@
       "pub"
     ],
     "contract": "KRI-127 Lane P: the chat turn already resolved 'the pub videos' (group, creator_text='post match pub'), 'park clips where nobody is playing' (order first), 'where I talk to the camera' (include), and per-clip sport labels into clip_intents. The planner must honor group/order/include as binding constraints -- app.agents.edit_proposal._validate_clip_intents structurally enforces this in parse() -- and must NOT write the label values into beat thoughts or split them into one beat per clip (labels are rendered by another lane)."
-  }
+  },
+  "prompt_sha": "af23395fd95a813a"
 }

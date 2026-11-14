@@ -52,5 +52,6 @@
       "caption"
     ],
     "expect_question": false
-  }
+  },
+  "prompt_sha": "unpinned"
 }

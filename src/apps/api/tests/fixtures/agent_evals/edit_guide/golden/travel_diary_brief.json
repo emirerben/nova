@@ -19,11 +19,30 @@
       "duration_s": 24
     },
     "media": [
-      {"kind": "image", "source_filename": "gelato.heic", "subject": "ice cream", "description": "a gelato held on a narrow street"},
-      {"kind": "image", "source_filename": "town.heic", "subject": "old town", "description": "colorful facades and stone street"},
-      {"kind": "video", "source_filename": "coast.mov", "subject": "coast", "description": "clear water and a sailboat"}
+      {
+        "kind": "image",
+        "source_filename": "gelato.heic",
+        "subject": "ice cream",
+        "description": "a gelato held on a narrow street"
+      },
+      {
+        "kind": "image",
+        "source_filename": "town.heic",
+        "subject": "old town",
+        "description": "colorful facades and stone street"
+      },
+      {
+        "kind": "video",
+        "source_filename": "coast.mov",
+        "subject": "coast",
+        "description": "clear water and a sailboat"
+      }
     ]
   },
   "raw_text": "{\"reply\":\"I’ll shape this as a slower 30-second travel diary, moving through food, the old town, and the coast with short reflective text. I have enough to plan it.\",\"suggestions\":[\"Plan it now\"],\"brief\":{\"direction\":\"guided_story\",\"goal\":\"Create a reflective travel diary focused on the food, old town architecture, and beaches\",\"pace\":\"relaxed\",\"duration_s\":30},\"ready_to_plan\":true,\"revision\":null}",
-  "meta": {"source": "product_case", "scenario": "natural-language travel brief"}
+  "meta": {
+    "source": "product_case",
+    "scenario": "natural-language travel brief"
+  },
+  "prompt_sha": "13590f9d8db6802b"
 }

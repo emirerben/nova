@@ -22,10 +22,13 @@
     "text_color": "#FFFFFF",
     "highlight_color": "#FFD24A",
     "text_anchor": "center",
-    "matched_example_ids": ["pov-surprise-karaoke-01"]
+    "matched_example_ids": [
+      "pov-surprise-karaoke-01"
+    ]
   },
   "meta": {
     "source": "hand_authored_golden",
     "case": "high-energy POV reveal → karaoke-line jumbo center, matched the pov-surprise exemplar"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

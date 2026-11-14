@@ -100,5 +100,6 @@
   "meta": {
     "source": "legacy_fixture_semantic_projection",
     "case": "Fractional total and reordered chapters retain all three clips without a schema retry"
-  }
+  },
+  "prompt_sha": "4c48357375a32cd3"
 }

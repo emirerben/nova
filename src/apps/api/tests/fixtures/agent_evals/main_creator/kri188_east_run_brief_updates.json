@@ -126,5 +126,6 @@
       ],
       "contract": "with the Creative Brief on, one message that states a title, a per-clip described label and an ordering yields one brief_updates entry per requirement, Turkish text kept verbatim, literal only for creator-written text"
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

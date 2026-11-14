@@ -230,5 +230,6 @@
     "source": "hand_authored_golden",
     "case": "rewrite_labels_just_say_en",
     "lane": "kria_v2_text"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

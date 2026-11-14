@@ -5,7 +5,9 @@
     "utterance": "make the captions bigger, red, with a yellow highlight, thicker stroke, and no shadow",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["caption"],
+      "allowed_op_families": [
+        "caption"
+      ],
       "has_narrated_captions": false,
       "text_bars": [],
       "slots": [
@@ -53,11 +55,15 @@
     ],
     "confidence": 0.9,
     "reply": "Updated the caption size, colors, stroke, and shadow. Save applies it to the video.",
-    "suggestions": ["Use word captions", "Move captions up"],
+    "suggestions": [
+      "Use word captions",
+      "Move captions up"
+    ],
     "needs_clarification": false
   },
   "meta": {
     "source": "hand_authored_golden",
     "case": "caption appearance changes route through set_caption_meta"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

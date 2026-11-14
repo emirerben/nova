@@ -35,14 +35,22 @@
     "expect_intents": [
       {
         "op": "label",
-        "source_quote_keywords": ["label", "dish", "cooking"]
+        "source_quote_keywords": [
+          "label",
+          "dish",
+          "cooking"
+        ]
       },
       {
         "op": "caption",
-        "source_quote_keywords": ["kitchen notes", "ingredients"],
+        "source_quote_keywords": [
+          "kitchen notes",
+          "ingredients"
+        ],
         "creator_text": "Kitchen notes"
       }
     ],
     "expect_any": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

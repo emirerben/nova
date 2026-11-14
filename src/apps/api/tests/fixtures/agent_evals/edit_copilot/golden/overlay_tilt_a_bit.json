@@ -68,5 +68,6 @@
     "source": "hand_authored_golden",
     "case": "tilt the picture a bit: a small clockwise angle, absolute (replaces the card's upright 0)",
     "lane": "overlay_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

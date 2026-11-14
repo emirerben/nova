@@ -12,11 +12,17 @@
     "montage_audio": {
       "preserve_source_audio": true,
       "preview_source_beds": true,
-      "source_media_ids": ["match-a", "match-b"]
+      "source_media_ids": [
+        "match-a",
+        "match-b"
+      ]
     },
     "montage_cadence": {
       "mode": "round_robin",
-      "source_media_ids": ["match-a", "match-b"],
+      "source_media_ids": [
+        "match-a",
+        "match-b"
+      ],
       "cut_duration_s": 1.0,
       "reuse_policy": "no_repeat"
     },
@@ -42,5 +48,6 @@
     "source": "hand_authored_golden",
     "case": "source-aware alternating montage with source text and audio intent",
     "contract": "the specialist owns source windows, alternating order, per-source text, and source-audio intent within the generic fast-montage contract"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

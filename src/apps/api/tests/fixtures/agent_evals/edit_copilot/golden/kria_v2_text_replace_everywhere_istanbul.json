@@ -230,5 +230,6 @@
     "source": "hand_authored_golden",
     "case": "replace_everywhere_istanbul",
     "lane": "kria_v2_text"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

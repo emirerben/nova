@@ -313,5 +313,6 @@
       "elfmeter": null
     },
     "evidence": "Replay proves the parse + structural contract on this answer only; it does NOT prove the live model gives it. Capture a live answer under an approved dev-ledger run before claiming model behaviour."
-  }
+  },
+  "prompt_sha": "20adfe39244b7e19"
 }

@@ -76,5 +76,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "'Find the clip' single-target include intent. Only m002's record explicitly describes the jump; the dock run-up (m001) and the post-jump shake-off (m004) are close but not the jump itself and are correctly left out."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

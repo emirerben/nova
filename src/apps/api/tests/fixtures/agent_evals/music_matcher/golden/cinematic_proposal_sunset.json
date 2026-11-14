@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "128a0224c73d3561",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,12 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "tender", "reverent", "epic"],
+          "vibe_tags": [
+            "sweeping",
+            "tender",
+            "reverent",
+            "epic"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "life-pivot moment",
@@ -71,7 +77,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "patient", "spacious"],
+          "vibe_tags": [
+            "sweeping",
+            "patient",
+            "spacious"
+          ],
           "energy": "medium",
           "pacing": "slow",
           "mood": "open-sky stillness",
@@ -89,7 +99,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["tender", "intimate", "wistful"],
+          "vibe_tags": [
+            "tender",
+            "intimate",
+            "wistful"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "intimate vow",
@@ -107,7 +121,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["anthemic", "hopeful", "warm"],
+          "vibe_tags": [
+            "anthemic",
+            "hopeful",
+            "warm"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "wedding-day joy",
@@ -125,7 +143,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["ambient", "ethereal", "patient"],
+          "vibe_tags": [
+            "ambient",
+            "ethereal",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "atmospheric drift",
@@ -143,7 +165,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "punchy", "confident"],
+          "vibe_tags": [
+            "swagger",
+            "punchy",
+            "confident"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "street attitude",
@@ -156,69 +182,68 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_cinematic_proposal\", \"score\": 9.5, \"rationale\": \"Life-pivot proposal at golden-hour cliff with drone reveal and tearful embrace is the literal content this orchestral cinematic track's profile names; 6 slots over 4 long clips lets each beat breathe.\", \"predicted_strengths\": [\"warm amber grade matches the golden-hour cliff footage\", \"sweeping vibe lifts the drone reveal clip\", \"dissolve transitions support 7-10s long-take clips\"]}, {\"track_id\": \"track_acoustic_vows\", \"score\": 8.4, \"rationale\": \"Intimate-vow acoustic frames the same proposal as a tender personal memory rather than an epic moment; works especially for the kneel and embrace clips.\", \"predicted_strengths\": [\"distinct vibe from cinematic top — adds top-K variety\", \"tender mood serves the candid embrace\", \"warm golden hour grade aligns with the footage\"]}, {\"track_id\": \"track_cinematic_drone\", \"score\": 8.0, \"rationale\": \"Drone-coastal cinematic flatters the cliff-reveal clip specifically; lower than the proposal-suite top pick because its slow pacing under-serves the kneel and embrace beats.\", \"predicted_strengths\": [\"drone reveal clip lives inside this profile\", \"5 slots fits 4 long clips cleanly\", \"warm amber grade aligns with footage\"]}, {\"track_id\": \"track_pop_anthem\", \"score\": 6.8, \"rationale\": \"Wedding-day anthemic pop is celebratory but premature — the proposal beat asks for emotional weight first, celebration second; 11 slots also fights the slow pacing.\", \"predicted_strengths\": [\"hopeful warmth aligns with the post-yes embrace\", \"warm golden hour grade still matches\"]}, {\"track_id\": \"track_electronic_calm\", \"score\": 6.5, \"rationale\": \"Atmospheric ambient electronic works for the drone reveal but the cool-blue grade fights the warm golden-hour footage.\", \"predicted_strengths\": [\"drone reveal pairs with synth ambience\", \"ambient vibe still serves long-take pacing\"]}, {\"track_id\": \"track_hiphop_swagger\", \"score\": 1.5, \"rationale\": \"Street swagger has nothing to do with an intimate cliff-top proposal; wrong vibe across every dimension.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_cinematic_proposal\",\n      \"score\": 9.8,\n      \"rationale\": \"This track is purpose-built for emotional life-pivot moments like proposals, perfectly matching the clips' dramatic and intimate scenes.\",\n      \"predicted_strengths\": [\n        \"Sweeping, reverent vibe fit\",\n        \"Ideal for proposal storytelling\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_vows\",\n      \"score\": 8.9,\n      \"rationale\": \"The intimate and tender acoustic sound beautifully complements the candid emotional reactions and embraces in the clips.\",\n      \"predicted_strengths\": [\n        \"Tender, intimate mood match\",\n        \"Suits handheld emotional moments\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_drone\",\n      \"score\": 8.2,\n      \"rationale\": \"Its sweeping and spacious vibe is excellent for the wide drone shots and scenic cliff views, providing a sense of grandeur.\",\n      \"predicted_strengths\": [\n        \"Enhances wide landscape shots\",\n        \"Patient pacing for slow reveals\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_calm\",\n      \"score\": 7.0,\n      \"rationale\": \"The ambient and ethereal atmospherics could provide a modern, spacious backdrop for the scenic and emotional moments.\",\n      \"predicted_strengths\": [\n        \"Complements drone footage well\",\n        \"Adds a cool, atmospheric layer\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_anthem\",\n      \"score\": 5.5,\n      \"rationale\": \"While celebratory, its high energy might overpower some of the more tender, intimate proposal moments, though it fits the 'yes' reaction.\",\n      \"predicted_strengths\": [\n        \"Uplifting for the celebratory moment\",\n        \"Warm, hopeful mood\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_swagger\",\n      \"score\": 1.0,\n      \"rationale\": \"The track's energetic swagger and street attitude are completely mismatched with the romantic, emotional proposal clips.\",\n      \"predicted_strengths\": [\n        \"Strong mismatch in vibe\",\n        \"Incompatible genre and tone\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_cinematic_proposal",
-        "score": 9.5,
-        "rationale": "Life-pivot proposal at golden-hour cliff with drone reveal and tearful embrace is the literal content this orchestral cinematic track's profile names; 6 slots over 4 long clips lets each beat breathe.",
+        "score": 9.8,
+        "rationale": "This track is purpose-built for emotional life-pivot moments like proposals, perfectly matching the clips' dramatic and intimate scenes.",
         "predicted_strengths": [
-          "warm amber grade matches the golden-hour cliff footage",
-          "sweeping vibe lifts the drone reveal clip",
-          "dissolve transitions support 7-10s long-take clips"
+          "Sweeping, reverent vibe fit",
+          "Ideal for proposal storytelling"
         ]
       },
       {
         "track_id": "track_acoustic_vows",
-        "score": 8.4,
-        "rationale": "Intimate-vow acoustic frames the same proposal as a tender personal memory rather than an epic moment; works especially for the kneel and embrace clips.",
+        "score": 8.9,
+        "rationale": "The intimate and tender acoustic sound beautifully complements the candid emotional reactions and embraces in the clips.",
         "predicted_strengths": [
-          "distinct vibe from cinematic top — adds top-K variety",
-          "tender mood serves the candid embrace",
-          "warm golden hour grade aligns with the footage"
+          "Tender, intimate mood match",
+          "Suits handheld emotional moments"
         ]
       },
       {
         "track_id": "track_cinematic_drone",
-        "score": 8.0,
-        "rationale": "Drone-coastal cinematic flatters the cliff-reveal clip specifically; lower than the proposal-suite top pick because its slow pacing under-serves the kneel and embrace beats.",
+        "score": 8.2,
+        "rationale": "Its sweeping and spacious vibe is excellent for the wide drone shots and scenic cliff views, providing a sense of grandeur.",
         "predicted_strengths": [
-          "drone reveal clip lives inside this profile",
-          "5 slots fits 4 long clips cleanly",
-          "warm amber grade aligns with footage"
-        ]
-      },
-      {
-        "track_id": "track_pop_anthem",
-        "score": 6.8,
-        "rationale": "Wedding-day anthemic pop is celebratory but premature — the proposal beat asks for emotional weight first, celebration second; 11 slots also fights the slow pacing.",
-        "predicted_strengths": [
-          "hopeful warmth aligns with the post-yes embrace",
-          "warm golden hour grade still matches"
+          "Enhances wide landscape shots",
+          "Patient pacing for slow reveals"
         ]
       },
       {
         "track_id": "track_electronic_calm",
-        "score": 6.5,
-        "rationale": "Atmospheric ambient electronic works for the drone reveal but the cool-blue grade fights the warm golden-hour footage.",
+        "score": 7.0,
+        "rationale": "The ambient and ethereal atmospherics could provide a modern, spacious backdrop for the scenic and emotional moments.",
         "predicted_strengths": [
-          "drone reveal pairs with synth ambience",
-          "ambient vibe still serves long-take pacing"
+          "Complements drone footage well",
+          "Adds a cool, atmospheric layer"
+        ]
+      },
+      {
+        "track_id": "track_pop_anthem",
+        "score": 5.5,
+        "rationale": "While celebratory, its high energy might overpower some of the more tender, intimate proposal moments, though it fits the 'yes' reaction.",
+        "predicted_strengths": [
+          "Uplifting for the celebratory moment",
+          "Warm, hopeful mood"
         ]
       },
       {
         "track_id": "track_hiphop_swagger",
-        "score": 1.5,
-        "rationale": "Street swagger has nothing to do with an intimate cliff-top proposal; wrong vibe across every dimension.",
+        "score": 1.0,
+        "rationale": "The track's energetic swagger and street attitude are completely mismatched with the romantic, emotional proposal clips.",
         "predicted_strengths": [
-          "no real fit"
+          "Strong mismatch in vibe",
+          "Incompatible genre and tone"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "cinematic proposal sunset — second cinematic case, acoustic for diversity"
+    "source": "provider_smoke_capture",
+    "case": "cinematic proposal sunset — second cinematic case, acoustic for diversity",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

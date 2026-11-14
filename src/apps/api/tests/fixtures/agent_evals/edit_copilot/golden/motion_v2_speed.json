@@ -5,7 +5,9 @@
     "utterance": "make the Wild Type block twice as fast",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["motion"],
+      "allowed_op_families": [
+        "motion"
+      ],
       "total_duration_s": 10,
       "motion": {
         "available": true,
@@ -17,14 +19,40 @@
             "kind": "text",
             "default_duration_s": 2.5,
             "min_assets": 0,
-            "defaults": {"text": "MAKE IT WILD"},
+            "defaults": {
+              "text": "MAKE IT WILD"
+            },
             "controls": [
-              {"key": "speed", "type": "number", "minimum": 0.25, "maximum": 4, "step": 0.05},
-              {"key": "easing", "type": "enum", "values": ["ease-out-cubic", "ease-in-out-cubic"]},
-              {"key": "hold_frames", "type": "number", "minimum": 0, "maximum": 240, "step": 1}
+              {
+                "key": "speed",
+                "type": "number",
+                "minimum": 0.25,
+                "maximum": 4,
+                "step": 0.05
+              },
+              {
+                "key": "easing",
+                "type": "enum",
+                "values": [
+                  "ease-out-cubic",
+                  "ease-in-out-cubic"
+                ]
+              },
+              {
+                "key": "hold_frames",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 240,
+                "step": 1
+              }
             ],
             "parameters": [
-              {"key": "text", "type": "string", "required": true, "max_length": 80}
+              {
+                "key": "text",
+                "type": "string",
+                "required": true,
+                "max_length": 80
+              }
             ]
           }
         ],
@@ -43,7 +71,9 @@
               "hold_frames": 30
             },
             "intensity": 0.72,
-            "params": {"text": "OLD HOOK"}
+            "params": {
+              "text": "OLD HOOK"
+            }
           }
         ],
         "asset_pool": []
@@ -57,7 +87,9 @@
       {
         "op": "patch_motion_block",
         "motion_id": "motion_1",
-        "patch": {"speed": 2}
+        "patch": {
+          "speed": 2
+        }
       }
     ],
     "confidence": 0.97,
@@ -68,5 +100,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Creator Block Motion v2 speed control uses catalog-backed bounds and existing normalized motion state"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -100,5 +100,6 @@
     "source": "hand_authored_golden",
     "case": "barcelona_legends_more_sources_than_labels",
     "note": "Prod plan item 5016d555 (2026-09-17): 7 exact chapter labels over 5 clips and 6 photos with media_scope=all. The live draft gives each chapter its requested seconds plus the 3.2s title hold (33.2s of beats) and declares 30s; parse must accept it, pin the total to the 30s target, and keep all 11 sources."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

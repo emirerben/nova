@@ -374,5 +374,6 @@
     "source": "local_live_replay_2026-10-01",
     "single_clip_talking_scope": true,
     "notes": "KRI-238: live gemini-3.1-pro-preview answer to 'Add captions' on a one-clip iPhone Talking item (prod thread 467a02c4 shape, prod flags, CLIP_INTENTS off). The model chose media_scope 'all' for the single clip; before the fix that was refused on every attempt and the turn failed. Catalog trimmed to two entries."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

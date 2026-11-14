@@ -226,5 +226,6 @@
     "gate_case": "a",
     "contract": "Contract: the include-all intent resolves to all 12 clips (m001..m012).",
     "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

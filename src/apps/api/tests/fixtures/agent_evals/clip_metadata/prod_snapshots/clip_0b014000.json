@@ -39,5 +39,6 @@
     "moment_count": 3,
     "transcript_len": 16,
     "exported_at": "2026-05-13T04:32:29.354558+00:00"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

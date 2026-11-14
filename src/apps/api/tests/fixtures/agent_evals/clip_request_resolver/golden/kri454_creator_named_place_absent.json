@@ -183,5 +183,6 @@
       ]
     },
     "expect_no_question": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

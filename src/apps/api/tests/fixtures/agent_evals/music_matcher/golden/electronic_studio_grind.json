@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "f25c34f7558149f8",
   "input": {
     "clip_summaries": [
       {
@@ -63,7 +64,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["driving", "focused", "pulsing"],
+          "vibe_tags": [
+            "driving",
+            "focused",
+            "pulsing"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "late-night flow state",
@@ -81,7 +86,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["pulsing", "driving", "industrial"],
+          "vibe_tags": [
+            "pulsing",
+            "driving",
+            "industrial"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "warehouse 3am",
@@ -99,7 +108,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["mellow", "patient", "warm"],
+          "vibe_tags": [
+            "mellow",
+            "patient",
+            "warm"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "bedroom-studio calm",
@@ -117,7 +130,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["reverent", "patient", "tender"],
+          "vibe_tags": [
+            "reverent",
+            "patient",
+            "tender"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "craft reverence",
@@ -135,7 +152,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "intimate", "patient"],
+          "vibe_tags": [
+            "wistful",
+            "intimate",
+            "patient"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "introspective evening",
@@ -148,60 +169,58 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_electronic_studio\", \"score\": 9.1, \"rationale\": \"Studio-process clips with magenta/cyan key lighting and rhythmic mechanical motion are the textbook content this track's profile names — fader pulls, midi-key presses, head-nods to playback.\", \"predicted_strengths\": [\"cool magenta grade matches the studio lighting one-to-one\", \"beat_pulse transitions sync to fader/midi hand motions\", \"11 slots over 5 clips supports detail intercutting\"]}, {\"track_id\": \"track_electronic_techno\", \"score\": 8.0, \"rationale\": \"Same genre at a higher intensity — peaks_high techno gives the same studio content a warehouse-floor variant that hits the head-nod clip harder.\", \"predicted_strengths\": [\"peaks_high energy elevates the head-nod and fader-slide moments\", \"beat_pulse transitions match the rhythmic finger motion\", \"distinct mood from top pick — adds variety even within electronic\"]}, {\"track_id\": \"track_hiphop_lofi\", \"score\": 7.6, \"rationale\": \"Lofi beatmaking profile names vinyl spins and slow fader hand motions directly — adds a warm tungsten lofi variant against the cool magenta picks above.\", \"predicted_strengths\": [\"vinyl-spin clip lands inside this track's profile\", \"distinct vibe and grade from electronic picks — genuine top-K diversity\", \"medium pacing supports a slower-edit alternative\"]}, {\"track_id\": \"track_cinematic_arc\", \"score\": 5.0, \"rationale\": \"Reverent composer-arc cinematic could carry a slow craft-narrative cut but misses the modern electronic production vibe the clips foreground.\", \"predicted_strengths\": [\"could work for a story-driven 'making of' edit\", \"6 slots over 5 clips is comfortable\"]}, {\"track_id\": \"track_acoustic_porch\", \"score\": 2.2, \"rationale\": \"Outdoor wistful folk has no relationship to indoor studio process; slow acoustic would deflate the rhythmic motion in every clip.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_electronic_studio\",\n      \"score\": 9.5,\n      \"rationale\": \"This track perfectly captures the focused, rhythmic, and high-energy studio process depicted in the clips.\",\n      \"predicted_strengths\": [\n        \"driving, focused vibe\",\n        \"high energy and fast pacing\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_lofi\",\n      \"score\": 8.8,\n      \"rationale\": \"The mellow, patient vibe and lofi profile are an excellent fit for the beatmaking and vinyl spinning clips.\",\n      \"predicted_strengths\": [\n        \"warm, calm studio mood\",\n        \"syncs with vinyl and fader motions\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_techno\",\n      \"score\": 8.0,\n      \"rationale\": \"Its intense, industrial pulse matches the mechanical motions and high-energy studio setting, offering a dynamic feel.\",\n      \"predicted_strengths\": [\n        \"pulsing, high-energy beat\",\n        \"industrial studio aesthetic\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_arc\",\n      \"score\": 5.5,\n      \"rationale\": \"While the mood is more reflective, it could offer an interesting, reverent take on the creative process.\",\n      \"predicted_strengths\": [\n        \"highlights craft reverence\",\n        \"patient, thoughtful tone\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_porch\",\n      \"score\": 2.0,\n      \"rationale\": \"The wistful, intimate acoustic vibe clashes with the energetic studio and beatmaking theme of the clips.\",\n      \"predicted_strengths\": [\n        \"introspective mood\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_electronic_studio",
-        "score": 9.1,
-        "rationale": "Studio-process clips with magenta/cyan key lighting and rhythmic mechanical motion are the textbook content this track's profile names — fader pulls, midi-key presses, head-nods to playback.",
+        "score": 9.5,
+        "rationale": "This track perfectly captures the focused, rhythmic, and high-energy studio process depicted in the clips.",
         "predicted_strengths": [
-          "cool magenta grade matches the studio lighting one-to-one",
-          "beat_pulse transitions sync to fader/midi hand motions",
-          "11 slots over 5 clips supports detail intercutting"
+          "driving, focused vibe",
+          "high energy and fast pacing"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_lofi",
+        "score": 8.8,
+        "rationale": "The mellow, patient vibe and lofi profile are an excellent fit for the beatmaking and vinyl spinning clips.",
+        "predicted_strengths": [
+          "warm, calm studio mood",
+          "syncs with vinyl and fader motions"
         ]
       },
       {
         "track_id": "track_electronic_techno",
         "score": 8.0,
-        "rationale": "Same genre at a higher intensity — peaks_high techno gives the same studio content a warehouse-floor variant that hits the head-nod clip harder.",
+        "rationale": "Its intense, industrial pulse matches the mechanical motions and high-energy studio setting, offering a dynamic feel.",
         "predicted_strengths": [
-          "peaks_high energy elevates the head-nod and fader-slide moments",
-          "beat_pulse transitions match the rhythmic finger motion",
-          "distinct mood from top pick — adds variety even within electronic"
-        ]
-      },
-      {
-        "track_id": "track_hiphop_lofi",
-        "score": 7.6,
-        "rationale": "Lofi beatmaking profile names vinyl spins and slow fader hand motions directly — adds a warm tungsten lofi variant against the cool magenta picks above.",
-        "predicted_strengths": [
-          "vinyl-spin clip lands inside this track's profile",
-          "distinct vibe and grade from electronic picks — genuine top-K diversity",
-          "medium pacing supports a slower-edit alternative"
+          "pulsing, high-energy beat",
+          "industrial studio aesthetic"
         ]
       },
       {
         "track_id": "track_cinematic_arc",
-        "score": 5.0,
-        "rationale": "Reverent composer-arc cinematic could carry a slow craft-narrative cut but misses the modern electronic production vibe the clips foreground.",
+        "score": 5.5,
+        "rationale": "While the mood is more reflective, it could offer an interesting, reverent take on the creative process.",
         "predicted_strengths": [
-          "could work for a story-driven 'making of' edit",
-          "6 slots over 5 clips is comfortable"
+          "highlights craft reverence",
+          "patient, thoughtful tone"
         ]
       },
       {
         "track_id": "track_acoustic_porch",
-        "score": 2.2,
-        "rationale": "Outdoor wistful folk has no relationship to indoor studio process; slow acoustic would deflate the rhythmic motion in every clip.",
+        "score": 2.0,
+        "rationale": "The wistful, intimate acoustic vibe clashes with the energetic studio and beatmaking theme of the clips.",
         "predicted_strengths": [
-          "no real fit"
+          "introspective mood"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "electronic studio process — two electronic tracks compete, lofi hip-hop fills variety slot"
+    "source": "provider_smoke_capture",
+    "case": "electronic studio process — two electronic tracks compete, lofi hip-hop fills variety slot",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

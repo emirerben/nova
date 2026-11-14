@@ -135,5 +135,6 @@
     "source": "hand_authored_golden",
     "case": "relative ask after a tilt: the model sends rotation_delta_deg (adds), never rotation_deg (replaces)",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }
