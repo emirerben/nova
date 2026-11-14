@@ -3637,6 +3637,7 @@
         "src/apps/api/app/pipeline/phone_initial_split_screen.py",
         "src/apps/api/app/services/initial_split_screen.py",
         "src/apps/api/app/services/split_screen_editor.py",
+        "src/apps/api/prompts/edit_copilot_ops/split_blank.txt",
         "src/apps/api/prompts/edit_copilot_ops/split_screen.txt",
         "src/apps/api/prompts/main_creator_split_screen.txt",
         "src/apps/api/tests/fixtures/split_screen_timeline.json",
