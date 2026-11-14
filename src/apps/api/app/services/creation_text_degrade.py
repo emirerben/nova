@@ -18,6 +18,7 @@ Every drop is a ``TextDrop``: the note the creator reads and the admin trace eve
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, get_args
@@ -74,11 +75,12 @@ class TextDrop:
     # refused are missing, so the note does not call them part of her request.
     asked: bool = True
 
-    def note(self) -> str | None:
+    def note(self, count: int = 1) -> str | None:
         """The "What Kria changed" line, in the bound reply language; None = nothing to say.
 
         A line no text ask could own was never the creator's, so dropping it is silent, as
-        ``_drop_unasked_added_text`` already is.
+        ``_drop_unasked_added_text`` already is. ``count``: how many drops share this note when
+        it names no words (``text_drop_notes``); a note that quotes words ignores it.
         """
         from app.pipeline.phone_plan_repair import _quoted  # noqa: PLC0415
 
@@ -119,11 +121,23 @@ class TextDrop:
                 tr="Yazıları tam istediğin boyutlarda ayarlayamadım",
             )
         if self.reason == "editorial_unmet":
+            if count > 1:
+                return say(
+                    en="Left out {count} explanations that didn't fit their part of the video",
+                    tr="Videonun ilgili kısımlarına sığmayan {count} açıklamayı eklemedim",
+                    count=count,
+                )
             return say(
                 en="Left out one explanation that didn't fit its part of the video",
                 tr="Videonun ilgili kısmına sığmayan bir açıklamayı eklemedim",
             )
         if quoted is None:
+            if count > 1:
+                return say(
+                    en="Left out {count} text changes I couldn't make fit",
+                    tr="Sığdıramadığım {count} yazı değişikliğini eklemedim",
+                    count=count,
+                )
             return say(
                 en="Left out one text change I couldn't make fit",
                 tr="Sığdıramadığım bir yazı değişikliğini eklemedim",
@@ -169,24 +183,24 @@ _FIT_LINES = 3
 
 
 def text_drop_notes(drops: Sequence[TextDrop]) -> list[str]:
-    """Each drop's note once, in order, in the caller's bound reply language."""
-    fit = [
+    """Each drop's note once, in order, in the caller's bound reply language.
+
+    Drops whose note names no words and reads the same share one counted line ("Left out 2
+    explanations ..."), so two left-out beats are never said as one.
+    """
+    fit = {
         index
         for index, drop in enumerate(drops)
         if drop.reason in _FIT_REASONS and drop.action == "dropped"
-    ]
+    }
+    if len(fit) > _FIT_LINES:
+        unnamed = TextDrop(reason="replay_failed", action="dropped")
+        drops = [unnamed if index in fit else drop for index, drop in enumerate(drops)]
+    singles = [drop.note() for drop in drops]
+    counts = Counter(singles)
     notes: list[str] = []
-    for index, drop in enumerate(drops):
-        if len(fit) <= _FIT_LINES or index not in fit:
-            note = drop.note()
-        elif index == fit[0]:
-            note = say(
-                en="Left out {count} text changes I couldn't make fit",
-                tr="Sığdıramadığım {count} yazı değişikliğini eklemedim",
-                count=len(fit),
-            )
-        else:
-            continue
+    for drop, single in zip(drops, singles, strict=True):
+        note = drop.note(count=counts[single]) if single else None
         if note and note[:160] not in notes:
             notes.append(note[:160])
     return notes
