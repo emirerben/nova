@@ -920,7 +920,7 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "Your draft and footage are saved. Try generating this edit again."
     ),
     # KRI-466: the creator's song could not be lined up; `error_detail` carries the
-    # specific, actionable copy (see CREATOR_FACING_DETAIL_CODES).
+    # specific, actionable copy (see CREATOR_FAILURE_DETAIL_FIELD).
     "user_song_plan_declined": (
         "I couldn't line your clips up with your song. Film with the song playing out "
         "loud, or sing along clearly, then try again."
@@ -1032,19 +1032,76 @@ DEFAULT_JOB_FAILURE_MESSAGE = (
 )
 
 
-# Failure codes whose `Job.error_detail` is written for the creator (not a stack
-# trace), so chat/route surfaces show it instead of the generic sentence.
-CREATOR_FACING_DETAIL_CODES = {"user_song_plan_declined", "silent_audio_declined"}
+# The sentences above that end by inviting a retry, without that invitation: for a failure whose
+# recovery is not a retry (the render has no program to run again), so the copy never offers what
+# the card does not (KRI-1456). A code listed here has its full sentence in the table above.
+JOB_FAILURE_REASONS: dict[str, str] = {
+    "creation_text_failed": (
+        "I couldn't prepare the text while keeping your approved wording. "
+        "Your draft and footage are saved."
+    ),
+    "phone_capability_unavailable": (
+        "This edit needs an iPhone rendering feature that's switched off right now. "
+        "Your edit and footage are saved."
+    ),
+    "creation_text_timeout": (
+        "Writing the on-screen text for this many clips took longer than our AI allows, so "
+        "your video wasn't made. Your edit and footage are saved. Fewer clips or less text "
+        "would help."
+    ),
+    "plan_ai_timeout": (
+        "Our AI took too long to plan this edit, so your video wasn't made. "
+        "Your edit and footage are saved."
+    ),
+    "phone_plan_failed": (
+        "Something broke while planning this edit, so your video wasn't made. "
+        "Your edit and footage are saved."
+    ),
+}
+
+
+# `Job.assembly_plan` key holding the reason a failure carries in words written for the creator
+# ({"failure_reason": code, "text": sentence}). `error_detail` is not that: several writers put
+# exception text and internal names there. Only a writer that holds text it authored for the
+# creator stamps this, so a reader needs no list of codes whose detail it may trust.
+CREATOR_FAILURE_DETAIL_FIELD = "creator_failure_detail"
 _CREATOR_DETAIL_MAX_CHARS = 500
 
 
-def job_failure_message(failure_reason: str | None, detail: str | None = None) -> str | None:
-    """`humanize_job_failure_reason`, preferring creator-facing `error_detail` for the
-    codes in `CREATOR_FACING_DETAIL_CODES`."""
-    if failure_reason in CREATOR_FACING_DETAIL_CODES and isinstance(detail, str):
-        trimmed = detail.strip()[:_CREATOR_DETAIL_MAX_CHARS].strip()
+def creator_failure_detail(job: Any) -> str | None:
+    """The creator-facing reason ``job``'s failure carries, if its writer authored one.
+
+    Stamped with the failure code it belongs to, so a later failure of the same job with
+    another code never inherits it.
+    """
+    plan = getattr(job, "assembly_plan", None)
+    row = plan.get(CREATOR_FAILURE_DETAIL_FIELD) if isinstance(plan, dict) else None
+    if not isinstance(row, dict) or row.get("failure_reason") != getattr(
+        job, "failure_reason", None
+    ):
+        return None
+    text = row.get("text")
+    if not isinstance(text, str):
+        return None
+    return text.strip()[:_CREATOR_DETAIL_MAX_CHARS].strip() or None
+
+
+def job_failure_message(
+    failure_reason: str | None, creator_detail: str | None = None, *, retry: bool = True
+) -> str | None:
+    """`humanize_job_failure_reason`, preferring ``creator_detail`` for any code.
+
+    ``creator_detail`` is text written for the creator (`creator_failure_detail`, or an
+    exception's own ``creator_detail``), never a raw ``error_detail``. ``retry=False`` is for a
+    failure whose recovery is not a retry: the code's sentence then leaves out its invitation
+    to try again (`JOB_FAILURE_REASONS`).
+    """
+    if isinstance(creator_detail, str):
+        trimmed = creator_detail.strip()[:_CREATOR_DETAIL_MAX_CHARS].strip()
         if trimmed:
             return trimmed
+    if not retry and failure_reason in JOB_FAILURE_REASONS:
+        return JOB_FAILURE_REASONS[failure_reason]
     return humanize_job_failure_reason(failure_reason)
 
 

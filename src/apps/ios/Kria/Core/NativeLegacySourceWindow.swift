@@ -1,8 +1,11 @@
 import Foundation
+import KriaMediaEngine
 
 /// Compatibility for duration-only slots whose final source frame was rounded onto the 30fps clock.
 /// The caller must try ordinary fit/reanchoring first and supply the resolved original's duration.
 enum NativeLegacySourceWindow {
+    private static let fps = Double(EditorLimits.outputFPS)
+
     static func hasNoEndpoint(_ slot: EditorTimelineSlot) -> Bool {
         slot.raw["source_end_s"] == nil || slot.raw["source_end_s"] == .null
     }
@@ -14,7 +17,7 @@ enum NativeLegacySourceWindow {
         guard hasNoEndpoint(slot), slot.raw["native_source_span_s"] == nil,
               (slot.raw["freeze_hold_s"]?.numberValue ?? 0) == 0,
               let duration = slot.durationS, duration.isFinite, duration > 0 else { return false }
-        return abs((duration * 30).rounded(.toNearestOrEven) / 30 - duration) <= 0.000_001
+        return abs((duration * fps).rounded(.toNearestOrEven) / fps - duration) <= 0.000_001
             && abs((duration * 1_000).rounded() / 1_000 - duration) > 0.000_001
     }
 
@@ -24,7 +27,7 @@ enum NativeLegacySourceWindow {
         let span = sourceDuration - start
         let moving = span / rate
         let padding = duration - moving
-        let rounded = (moving * 30).rounded(.toNearestOrEven) / 30
+        let rounded = (moving * fps).rounded(.toNearestOrEven) / fps
         guard padding > 0, padding <= 1.0 / 60 + 0.000_001,
               abs(rounded - duration) <= 0.000_001 else { return nil }
         return span

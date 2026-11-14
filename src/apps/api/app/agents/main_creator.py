@@ -85,6 +85,7 @@ MAIN_CREATOR_PROMPT_SOURCES = (
     "app/agents/main_creator.py",
     "app/agents/prompt_vocab.py",
     "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/services/editor_limits.py",  # {{PLAYBACK_RATE_MIN}} {{PLAYBACK_RATE_MAX}}
     "app/agents/_writing_context.py",
     "app/kria/reply_language.py",
     "app/kria/brief.py",
@@ -1156,7 +1157,8 @@ in their words, or null>", "hold_s": 2.0 or null}}; a photo at a SPOKEN word is 
 timed_card. Play footage faster or
 slower ("speed the river shots up 2x", "slow motion on the pour", "klipleri 2 kat hızlandır",
 "time-lapse") => a `style` requirement with {"playback_rate": 2}: source seconds per output
-second, 2 = twice as fast, 0.5 = half speed, between 0.25 and 4; "slow motion" / "ağır çekim"
+second, 2 = twice as fast, 0.5 = half speed, between {{PLAYBACK_RATE_MIN}} and \
+{{PLAYBACK_RATE_MAX}}; "slow motion" / "ağır çekim"
 with no number = 0.5, "speed up" / "time-lapse" with no number = 2. Scope it `clip:<media_id>`
 when the creator names one attached clip, else "global" with the creator's words for the footage
 kept in `description` ("the river shots"); the server picks the clips from those words. Never

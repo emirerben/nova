@@ -1,4 +1,4 @@
-"""KRI-1421: a blank block fills a split panel with a flat colour (protocol 51).
+"""KRI-1421: a blank block fills a split panel with a flat colour (client protocol gate).
 
 Ways this can fail, and the test that catches each:
 * a blank placed outside a split panel, with a `clip_index`, with a bad colour, or overlapping a
@@ -9,7 +9,7 @@ Ways this can fail, and the test that catches each:
   authored Save test runs the real recipe compile;
 * the colour or kind is dropped on Save, reopen or the recipe (pydantic ignores unknown keys);
 * a section made only of blanks reaches the device (nothing to play);
-* a build below 51 saves over, polls or renders a timeline that holds a blank and loses it;
+* a build below the gate saves over, polls or renders a timeline that holds a blank and loses it;
 * the recipe asks for `splitBlankPanel` when no blank is drawn, or omits it when one is;
 * the token is unverified and the blank still ships.
 """
@@ -78,10 +78,6 @@ def verified(monkeypatch, *features):
         "phone_render_verified_features",
         [*settings.phone_render_verified_features, *features],
     )
-
-
-def test_the_protocol_is_the_next_free_number():
-    assert SPLIT_BLANK_PANEL_PROTOCOL == 51
 
 
 def test_layout_gives_a_blank_its_own_window_and_exports_it_with_the_section():
@@ -344,8 +340,10 @@ def test_save_without_a_blank_still_refuses_a_clip_row_with_no_source(monkeypatc
         gj.TimelineSlotEdit(in_s=0, duration_s=2)
 
 
-@pytest.mark.parametrize("protocol", [48, 50])
-def test_a_build_below_51_cannot_save_a_blank(monkeypatch, protocol):
+@pytest.mark.parametrize(
+    "protocol", [SPLIT_BLANK_PANEL_PROTOCOL - 3, SPLIT_BLANK_PANEL_PROTOCOL - 1]
+)
+def test_a_build_below_the_blank_protocol_cannot_save_a_blank(monkeypatch, protocol):
     from app.routes import generative_jobs as gj
 
     job, _ = authored(monkeypatch, "splitBlankPanel")
@@ -356,39 +354,41 @@ def test_a_build_below_51_cannot_save_a_blank(monkeypatch, protocol):
     assert error.value.detail == {
         "code": "client_update_required",
         "feature": "split_blank_panel",
-        "minimum_client_protocol": 51,
+        "minimum_client_protocol": SPLIT_BLANK_PANEL_PROTOCOL,
     }
 
 
-def test_a_build_below_51_cannot_save_over_a_saved_blank_and_51_can(monkeypatch):
+def test_a_build_below_the_blank_protocol_cannot_save_over_a_saved_blank_and_the_protocol_can(
+    monkeypatch,
+):
     from app.routes import generative_jobs as gj
     from app.services.split_screen_editor import require_split_screen_commit
 
     job, _ = authored(monkeypatch, "splitBlankPanel")
-    set_client_protocol(51)
+    set_client_protocol(SPLIT_BLANK_PANEL_PROTOCOL)
     gj.prepare_editor_commit(job, "original_text", payload())
     saved = job.assembly_plan["variants"][0]
-    set_client_protocol(50)
+    set_client_protocol(SPLIT_BLANK_PANEL_PROTOCOL - 1)
     with pytest.raises(HTTPException) as error:
         require_split_screen_commit(saved, gj.EditorCommitRequest(text_elements=[]))
     assert error.value.detail["feature"] == "split_blank_panel"
-    set_client_protocol(51)
+    set_client_protocol(SPLIT_BLANK_PANEL_PROTOCOL)
     require_split_screen_commit(saved, gj.EditorCommitRequest(text_elements=[]))
 
 
-def test_a_build_below_51_is_refused_a_timeline_that_holds_a_blank(monkeypatch):
+def test_a_build_below_the_blank_protocol_is_refused_a_timeline_that_holds_a_blank(monkeypatch):
     from app.routes import generative_jobs as gj
 
     job, _ = authored(monkeypatch, "splitBlankPanel")
     gj.prepare_editor_commit(job, "original_text", payload())
-    set_client_protocol(50)
+    set_client_protocol(SPLIT_BLANK_PANEL_PROTOCOL - 1)
     with pytest.raises(HTTPException) as error:
         gj.dispatch_get_timeline(
             job, "original_text", sign_url=lambda *_: "https://example.test/media"
         )
     assert error.value.status_code == 426
     assert error.value.detail["feature"] == "split_blank_panel"
-    set_client_protocol(51)
+    set_client_protocol(SPLIT_BLANK_PANEL_PROTOCOL)
     gj.dispatch_get_timeline(job, "original_text", sign_url=lambda *_: "https://example.test/media")
 
 
@@ -396,7 +396,7 @@ def test_a_blank_is_refused_while_the_token_is_unverified(monkeypatch):
     from app.routes import generative_jobs as gj
 
     job, _ = authored(monkeypatch)
-    set_client_protocol(51)
+    set_client_protocol(SPLIT_BLANK_PANEL_PROTOCOL)
     with pytest.raises(HTTPException) as error:
         gj.prepare_editor_commit(job, "original_text", payload())
     assert (error.value.status_code, error.value.detail) == (
@@ -405,7 +405,7 @@ def test_a_blank_is_refused_while_the_token_is_unverified(monkeypatch):
     )
 
 
-def test_device_render_426_names_the_blank_for_a_build_below_51(monkeypatch):
+def test_device_render_426_names_the_blank_for_a_build_below_the_blank_protocol(monkeypatch):
     from app.routes import generative_jobs as gj
     from app.routes.device_render import _client_update_detail
     from app.services.device_render import device_status
@@ -413,7 +413,10 @@ def test_device_render_426_names_the_blank_for_a_build_below_51(monkeypatch):
     job, _ = authored(monkeypatch, "splitBlankPanel")
     gj.prepare_editor_commit(job, "original_text", payload())
     status = device_status(job, "original_text")
-    expectations = {50: ("split_blank_panel", 51), 51: None}
+    expectations = {
+        SPLIT_BLANK_PANEL_PROTOCOL - 1: ("split_blank_panel", SPLIT_BLANK_PANEL_PROTOCOL),
+        SPLIT_BLANK_PANEL_PROTOCOL: None,
+    }
     for protocol, expected in expectations.items():
         set_client_protocol(protocol)
         detail = _client_update_detail(job, {}, status)
@@ -432,7 +435,7 @@ def test_phone_pilot_refuses_a_blank_recipe_until_the_token_is_verified(monkeypa
     assert error.value.capability == "splitBlankPanel"
 
 
-@pytest.mark.parametrize("protocol", [50, 51])
+@pytest.mark.parametrize("protocol", [SPLIT_BLANK_PANEL_PROTOCOL - 1, SPLIT_BLANK_PANEL_PROTOCOL])
 def test_the_editor_offers_the_blank_only_to_builds_that_draw_it(monkeypatch, protocol):
     from app.routes import generative_jobs as gj
 
@@ -440,7 +443,7 @@ def test_the_editor_offers_the_blank_only_to_builds_that_draw_it(monkeypatch, pr
     variant["render_destination"] = "device"
     set_client_protocol(protocol)
     offered = gj._editor_capabilities(job, variant).get("split_blank_panel") is True
-    assert offered is (protocol >= 51)
+    assert offered is (protocol >= SPLIT_BLANK_PANEL_PROTOCOL)
     clear_request_context()
     assert gj._editor_capabilities(job, variant).get("split_blank_panel") is not True
 
@@ -503,7 +506,7 @@ def test_an_unrelated_chat_edit_keeps_a_blank_the_ai_cannot_place_itself(monkeyp
     )
     monkeypatch.setattr(editor, "split_screen_available", lambda *args: True)
     verified(monkeypatch, "splitScreen", "splitBlankPanel")
-    token = bind_sending_build(51)
+    token = bind_sending_build(SPLIT_BLANK_PANEL_PROTOCOL)
     try:
         job = _job(variant)
         snapshot = editor.build_editor_snapshot(job, variant)
