@@ -185,7 +185,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - `IOS_DEVICE_ONLY_MODE` / `KRIA_MINIMUM_CLIENT_PROTOCOL` / `CLOUD_RENDER_EXECUTION_ENABLED` — defaults `false` / `2` / `true`. Staged cutover; API and workers must share the flags. Runbook: `docs/runbooks/ios-device-only-runtime.md`; narrative: DECISIONS.md "CLAUDE.md flag detail".
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
 - `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED` — default `false` (KRI-1039); on ⇒ asks the ops can express are composed. Guards: `test_compose_unmet_flag_off_is_byte_identical`, `test_ios_editor_actions_have_agent_ops`.
-- `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
+- `EDIT_WIDE_LOOKS_ENABLED` — code default off; prod matched an on secret's digest 2026-10-08 (snapshot); rollout: `docs/pipelines/generative.md`.
 - `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`). Rollout/rollback: `docs/pipelines/clip-understanding.md`.
 - `CLIP_EXPOSURE_FACT_ENABLED` — default `false` (KRI-680); measured brightness in clip records. `docs/pipelines/clip-understanding.md`.
 - `EDIT_PROPOSAL_SEMANTIC_ENABLED` — `false`; requires 0107 + v8 on API/workers. See `docs/pipelines/guided-edit.md`.

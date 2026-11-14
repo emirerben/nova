@@ -91,20 +91,15 @@ def load_fixture() -> dict[str, Any]:
 
 
 def _flags() -> contextlib.ExitStack:
+    """The production settings snapshot (`tests/prod_flags.snapshot.json`), patched in."""
     from app.config import settings
+    from tests._prod_profile import prod_setting_overrides
 
     stack = contextlib.ExitStack()
     for name, value in {
-        "kria_runtime_v2_enabled": True,
-        "phone_rendering_enabled": True,
-        "kria_creative_brief_enabled": True,
-        "kria_creative_brief_user_ids": [],
-        "kria_brief_binding_enabled": True,
-        "kria_brief_binding_user_ids": [],
-        "kria_choice_questions_enabled": True,
-        "kria_plan_authority_enabled": True,
+        **prod_setting_overrides(),
+        # Offline harness: background clip understanding would call a model.
         "kria_clip_understanding_enabled": False,
-        "clip_intents_enabled": True,
     }.items():
         stack.enter_context(patch.object(settings, name, value))
     return stack

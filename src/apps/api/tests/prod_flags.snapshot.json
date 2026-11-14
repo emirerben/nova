@@ -334,7 +334,7 @@
       "value": true
     },
     "edit_wide_looks_enabled": {
-      "source": "legacy-fly-digest-2026-10-08",
+      "source": "reconciled:edit-wide-looks-2026-11-14",
       "value": true
     },
     "editorial_sequence_enabled": {
@@ -1627,6 +1627,7 @@
     "job-data:no-semantic-planner-2026-11-14": "No nova.plan.semantic_edit_proposal or nova.plan.edit_proposal agent run appears in GET /admin/plan-items/<id>/proposal-trace for the 30 plan items behind the 60 most recent production content-plan jobs (2026-10-28..2026-11-14, 11 failed and 40+ finished jobs), and CLAUDE.md lists EDIT_PROPOSAL_SEMANTIC_ENABLED as false. Supersedes the 2026-10-08 Fly digest comparison, which read it as on (changed since, or never reached on this route).",
     "legacy-fly-digest-2026-10-08": "Boolean flags that shared PHONE_RENDERING_ENABLED's Fly secret digest (last re-derived 2026-10-08 into the former hand list in tests/_prod_profile.py). Digests were compared, no value was read. Flags enabled after that date are not recorded here.",
     "live:phone-render-config": "GET /admin/kria/phone-render-config on the production API (names only, no secret value); re-read on every `refresh --live`.",
+    "reconciled:edit-wide-looks-2026-11-14": "CLAUDE.md lists EDIT_WIDE_LOOKS_ENABLED as off, but that line was written when the feature shipped dark (#857, 2026-08-18) and describes the code default. On 2026-10-08 the Fly secret shared PHONE_RENDERING_ENABLED's digest (an equal value, true). No later record turns it off, so the newer production observation is kept. A doc line outranks an observation only when it records a change applied after it (as the 2026-11-14 job data does for EDIT_PROPOSAL_SEMANTIC_ENABLED).",
     "runbook:chat-speech-cleanup-rollout": "docs/runbooks/chat-speech-cleanup-rollout.md says the retake switches have been on in prod since 2026-11-04. A repo statement, no secret read."
   }
 }

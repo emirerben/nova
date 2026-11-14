@@ -5,6 +5,53 @@ with `scripts/admin.py --prod GET`, copies the footage the job's brief binding r
 read-only from the bucket, and runs the Main Creator route and the real worker locally under
 `src/apps/api/tests/prod_flags.snapshot.json`.
 
+## Run 5 (pass 3): e7bf7099, the creator's three messages, turn by turn
+
+Command: `make kria-replay-job JOB=e7bf7099-7006-4d3f-9f05-c8daeb83546d` (2026-11-14, 13:27 UTC,
+live Gemini, settled cost $0.2157 from the scratch database's agent runs: Main Creator $0.077 and
+$0.093, `nova.research.public_facts` $0.037, three flash agents $0.008).
+
+Source job (production, 2026-11-14 07:04): `processing_failed`, `creation_text_failed` ("I
+couldn't prepare the text while keeping your approved wording"), one clip, a runtime-v2 chat with
+three creator messages: (1) "Find the lyrics to the song ... and add it as text to this video",
+answered by a question; (2) the lyrics themselves, approved, whose render (job d6c58d7b) failed
+`creation_text_failed`; (3) "Fix it", approved, whose render is e7bf7099 and failed the same way.
+Pass 2's verifier replayed this job through the Main Creator with the compiled request and got a
+capacity question production never asked.
+
+What the replay did (`turns` in the receipt):
+
+* Message 1 under client protocol 49: no plan, the reply says the lyrics could not be sourced
+  (production asked whether to paste them). The replay's Main Creator went to
+  `nova.research.public_facts`, which failed `terminal_schema`; production's did not (see Gaps).
+* Message 2: `draft_applied` and `approval_requested`, as in production. The replay approved it;
+  the job (68387484) ended `awaiting_device` with `creator_client_protocol: 49` stamped by the
+  runtime, production's own value, and one pinned `guided_story` variant (4.0 s). Its recipe
+  carries the six lyric lines verbatim as six text layers ("Vazgeçmem dünyalatı" ... "Seninle
+  Fenerbahçe"). Production's render of the same message failed to compose that text.
+* Message 3 ("Fix it") was queued behind message 2's turn, which observes its device job until a
+  phone renders it. The run was stopped by hand at that point (receipt `interrupted`); the scratch
+  database, the Redis keys and the worker were gone afterwards.
+
+Result: production's failure does not reproduce on this head at the first render of the same
+message: the replay plans the lyrics where production failed. e7bf7099 itself, the "Fix it"
+retry, is not reached, because what it answered no longer happens. That run motivated the stop
+rule now in the replay: after an earlier approved render that did not fail where production's
+did, or that waits for a phone, the replay stops and reports that render (`stopped_early`,
+`compared_production_render` d6c58d7b). The run itself predates the stop rule and its summary
+printed `diverged_from_production` from the turn-1 research failure; a rerun of the same job with
+the rule would end `device_plan_ready` at message 2, and was not made to keep under the $0.35
+cap of this round. The free keyless rerun on the final code (no model keys) reproduces the turn
+flow up to message 2, where it ends `diverged_from_production` because the keyless Main Creator
+cannot plan, which is the divergence path working.
+
+Gaps:
+
+* Production's Main Creator runs on `gpt-6.1-sol` (its agent runs, 2026-11-14); the snapshot and
+  the replay run the code default `gemini-3.1-pro-preview`. That is the likely cause of message
+  1's different route (research instead of a question). Not fixed here; see the runbook.
+* No phone rendered the device plan.
+
 ## Run 4 (pass 2, round 2): b5dadbce, device plan on this head
 
 Command: `make kria-replay-job JOB=b5dadbce-02bb-4299-8522-16c230d3d9aa` (2026-11-14, 07:28 UTC,
@@ -68,8 +115,9 @@ recorded 15, 11 and 1 clips.
 
 ## Limits
 
-* A job whose request depends on a chat clarification may end at `main_creator_question`; no
-  replay of the recorded answers exists yet.
+* Runs 1 to 4 replayed chat jobs through the Main Creator with the compiled request; run 5 and
+  later replay the creator's messages turn by turn. A job whose request depended on a chat
+  clarification could end at `main_creator_question` on that older route.
 * Library pool assets cannot be fetched until the item debug's `gcs_path` field is deployed
   (3d28fa04 and 4620fd7c are refused for that reason). The binding match for rows without media
   ids was checked on the real 4620fd7c debug (1 clip by duration, 7 pool visuals by kind) but not
@@ -79,6 +127,4 @@ recorded 15, 11 and 1 clips.
   this job failed before any agent ran, and the one successful guided item sampled (dde0488b) used
   the deterministic `prepared_collection_story` path, so whether production's successful guided
   items skip that agent is not established. `route_comparison` prints it for every run.
-* Kria runtime thread turns before the creation request (draft, questions, approval wording) are
-  not replayed; only the Main Creator start/confirm controllers and the worker are.
 * Model output varies between runs; a different result on the same input is data.
