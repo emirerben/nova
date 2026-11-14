@@ -271,7 +271,10 @@ def register_backdrop_visuals(
     The device draws a backdrop from a recipe asset it downloads like any pool visual, so the
     pinned ``PhoneVisualBinding`` becomes a ``VisualRenderAsset`` in the manifest and a
     ``MediaAsset`` beside the clips. A backdrop whose visual the job never pinned fails the
-    compile closed (the Save pins it first), never a recipe the device cannot read.
+    compile closed (the Save pins it first), never a recipe the device cannot read. The
+    reject names the clip but is never degraded: the guided worker binds only the visuals its
+    timeline shows (``phone_visuals._timeline_visuals``), so a missing one here can be a
+    background the creator did pin.
     """
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
 
@@ -284,6 +287,9 @@ def register_backdrop_visuals(
             raise UnsupportedPhonePlan(
                 "a media backdrop needs a photo or video pinned to this video",
                 capability="clipBackdropMedia",
+                reason="backdrop_unbound",
+                lane="moment",
+                item_id=clip.id,
             )
         asset = visual.render_asset()
         manifest[asset.id] = asset

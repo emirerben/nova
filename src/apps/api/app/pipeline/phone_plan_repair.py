@@ -99,7 +99,14 @@ def _repair_sequence_effects(plan) -> tuple[Any, list[str]]:  # noqa: ANN001
         return plan, []
     return (
         plan.model_copy(update={"text_elements": elements}),
-        ["Swapped a text animation your iPhone can't play yet for a simple fade-in"],
+        [_swapped_animation_note()],
+    )
+
+
+def _swapped_animation_note() -> str:
+    return say(
+        en="Swapped a text animation your iPhone can't play yet for a simple fade-in",
+        tr="iPhone'unun henüz oynatamadığı bir yazı animasyonunu basit bir belirmeyle değiştirdim",
     )
 
 
@@ -132,9 +139,15 @@ def _repair_unqualified_fonts(plan, exc: PhoneFontUnqualified) -> tuple[Any, lis
             elements.append(element.model_copy(update=updates) if updates else element)
         lanes[lane] = elements
     if refaced:
-        notes.append(f"Changed a text font to {default_family} so it renders on your iPhone")
+        notes.append(
+            say(
+                en="Changed a text font to {font} so it renders on your iPhone",
+                tr="Bir yazının yazı tipini iPhone'unda görünsün diye {font} yaptım",
+                font=default_family,
+            )
+        )
     if reanimated:
-        notes.append("Swapped a text animation your iPhone can't play yet for a simple fade-in")
+        notes.append(_swapped_animation_note())
     if not notes:
         return plan, []
     return plan.model_copy(update=lanes), notes
@@ -166,9 +179,19 @@ def _repair_text_past_timeline(plan) -> tuple[Any, list[str]]:  # noqa: ANN001
         lanes[lane] = elements
     notes: list[str] = []
     if clamped:
-        notes.append("Ended a text that ran past the end of your video with the video")
+        notes.append(
+            say(
+                en="Ended a text that ran past the end of your video with the video",
+                tr="Videonun sonunu aşan bir yazıyı videoyla birlikte bitirdim",
+            )
+        )
     if dropped:
-        notes.append("Left out a text that started after your video ends")
+        notes.append(
+            say(
+                en="Left out a text that started after your video ends",
+                tr="Videon bittikten sonra başlayan bir yazıyı çıkardım",
+            )
+        )
     if not notes:
         return plan, []
     return plan.model_copy(update=lanes), notes
@@ -483,6 +506,14 @@ def _place_added_contract_text(plan, element):  # noqa: ANN001
     )
 
 
+def _added_on_clip_note(literal: str) -> str:
+    return say(
+        en="Added your text {text} on its clip",
+        tr="{text} yazını kendi klibine ekledim",
+        text=_quoted(literal),
+    )
+
+
 def _shrunk_notes(before, after, recoveries: list | None) -> list[str]:  # noqa: ANN001
     if after.size_px == before.size_px:
         return []
@@ -549,7 +580,13 @@ def repair_plan_for_contract(  # noqa: ANN001
             start = 0.0 if requirement.role == "opening" else element.start_s
             end = min(total, max(element.end_s - element.start_s + start, start + hold))
             texts[same[0]] = element.model_copy(update={"start_s": start, "end_s": end})
-            notes.append(f"Kept your text {_quoted(literal)} on screen longer")
+            notes.append(
+                say(
+                    en="Kept your text {text} on screen longer",
+                    tr="{text} yazını ekranda daha uzun tuttum",
+                    text=_quoted(literal),
+                )
+            )
         elif (
             requirement.role in {"opening", "any"}
             and title
@@ -563,7 +600,13 @@ def repair_plan_for_contract(  # noqa: ANN001
             )
             texts = [e for i, e in enumerate(texts) if i not in title]
             texts.insert(title[0], replacement)
-            notes.append(f"Used your title {_quoted(literal)} exactly as you wrote it")
+            notes.append(
+                say(
+                    en="Used your title {text} exactly as you wrote it",
+                    tr="{text} başlığını tam yazdığın gibi kullandım",
+                    text=_quoted(literal),
+                )
+            )
         elif requirement.role not in PLACED_WITHOUT_PLAN:
             anchor = _clip_anchor(current, requirement, frame_s)
             if anchor is None:
@@ -596,10 +639,16 @@ def repair_plan_for_contract(  # noqa: ANN001
                     }
                 )
                 placed.append(texts[stray].id)
-                notes.append(f"Moved your text {_quoted(literal)} onto its clip")
+                notes.append(
+                    say(
+                        en="Moved your text {text} onto its clip",
+                        tr="{text} yazını kendi klibine taşıdım",
+                        text=_quoted(literal),
+                    )
+                )
             elif label is not None:
                 texts[label] = texts[label].model_copy(update={"text": literal, "text_case": None})
-                notes.append(f"Added your text {_quoted(literal)} on its clip")
+                notes.append(_added_on_clip_note(literal))
             else:
                 added += 1
                 texts.append(
@@ -615,7 +664,7 @@ def repair_plan_for_contract(  # noqa: ANN001
                     )
                 )
                 placed.append(texts[-1].id)
-                notes.append(f"Added your text {_quoted(literal)} on its clip")
+                notes.append(_added_on_clip_note(literal))
         else:
             added += 1
             closing = requirement.role == "closing"
@@ -631,7 +680,13 @@ def repair_plan_for_contract(  # noqa: ANN001
                 y_frac=min(0.7, _TITLE_Y + _STACK_STEP_Y * (added if title else added - 1)),
             )
             texts.append(_place_added_contract_text(current, element))
-            notes.append(f"Added your text {_quoted(literal)} on screen")
+            notes.append(
+                say(
+                    en="Added your text {text} on screen",
+                    tr="{text} yazını ekrana ekledim",
+                    text=_quoted(literal),
+                )
+            )
             notes.extend(_shrunk_notes(element, texts[-1], recoveries))
         current = current.model_copy(update={"text_elements": texts})
     for done, element_id in enumerate(placed):
@@ -835,11 +890,14 @@ def validate_proposal_phone_compiles(snapshot, assignments, **compile_kwargs: An
     """Dry-run the phone compiler over a freshly planned proposal (KRI-286).
 
     compile_execution_plan -> bind_phone_sources -> compile_phone_guided_plan ->
-    validate_phone_pilot_recipe, with the deterministic repairs applied. Returns
-    the repair notes (``[]`` when the plan is already expressible, or when it
-    cannot be dry-run: the dispatch gate stays the authority there). Raises
-    ``PhoneProposalRejected`` for a plan the phone cannot render and no repair
-    fixes; the caller falls back to the deterministic plan. This is an advisory
+    validate_phone_pilot_recipe, with the deterministic repairs and degrades applied.
+    Returns their notes (``[]`` when the plan is already expressible, or when it
+    cannot be dry-run: the dispatch gate stays the authority there). A row the
+    worker would degrade (a look, a zoom, a transition after the last clip) is a
+    note here too, so the creator approves the model's draft with that note on the
+    card instead of the deterministic fallback (KRI-1376). Raises
+    ``PhoneProposalRejected`` for a plan the phone cannot render and neither a
+    repair nor a degrade fixes; the caller falls back to the deterministic plan. This is an advisory
     planning-time check: ONLY ``PhoneProposalRejected`` ever escapes; an
     unverified device capability (a rollout decision the dispatch gate and the
     worker own) and any unexpected error are logged and return ``[]``.
@@ -847,9 +905,9 @@ def validate_proposal_phone_compiles(snapshot, assignments, **compile_kwargs: An
     ``compile_kwargs`` (e.g. ``landscape_fit``) go to ``compile_phone_guided_plan``
     verbatim so the dry run matches the worker's call.
 
-    The repairs are NOT persisted on the proposal: approval recompiles from the
-    snapshot and the worker re-applies the same deterministic repairs
-    (``compile_phone_guided_with_repairs``). The notes just tell the creator.
+    The repairs and degrades are NOT persisted on the proposal: approval recompiles
+    from the snapshot and the worker re-applies the same deterministic ones
+    (``compile_phone_guided_repaired``). The notes just tell the creator.
     """
     try:
         return _validate_proposal_phone_compiles(snapshot, assignments, compile_kwargs)

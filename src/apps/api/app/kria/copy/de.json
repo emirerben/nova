@@ -2083,6 +2083,15 @@
     "their {parts}": "{parts}",
     "zoom": "Zoom",
     "{count} photos": "{count} Fotos",
-    "{rest} and {last}": "{rest} und {last}"
+    "{rest} and {last}": "{rest} und {last}",
+    "Added your text {text} on its clip": "Deinen Text {text} auf seinem Clip eingefügt",
+    "Added your text {text} on screen": "Deinen Text {text} ins Bild gesetzt",
+    "Changed a text font to {font} so it renders on your iPhone": "Die Schriftart eines Textes auf {font} geändert, damit er auf deinem iPhone angezeigt wird",
+    "Ended a text that ran past the end of your video with the video": "Einen Text, der über das Ende deines Videos hinauslief, mit dem Video enden lassen",
+    "Kept your text {text} on screen longer": "Deinen Text {text} länger im Bild gelassen",
+    "Left out a text that started after your video ends": "Einen Text weggelassen, der erst nach dem Ende deines Videos begann",
+    "Moved your text {text} onto its clip": "Deinen Text {text} auf seinen Clip verschoben",
+    "Swapped a text animation your iPhone can't play yet for a simple fade-in": "Eine Textanimation, die dein iPhone noch nicht abspielen kann, durch ein einfaches Einblenden ersetzt",
+    "Used your title {text} exactly as you wrote it": "Deinen Titel {text} genau so verwendet, wie du ihn geschrieben hast"
   }
 }
