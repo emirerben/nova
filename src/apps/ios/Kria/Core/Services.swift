@@ -3345,7 +3345,8 @@ extension DraftSnapshot {
         ("mix", .mix, ["mix"]), ("music_track_id", .music, ["music_track_id", "music_window"]),
         ("music_window", .music, ["music_track_id", "music_window"]), ("remove_music", .music, ["music_track_id", "music_window"]),
         ("background_music", .backgroundMusic, ["background_music"]), ("lyrics", .lyrics, ["lyrics"]),
-        ("orientation", .orientation, ["orientation"]), ("sound_effects", .soundEffects, ["sound_effects"]),
+        ("orientation", .orientation, ["orientation"]), ("landscape_fit", .landscapeFit, ["landscape_fit"]),
+        ("sound_effects", .soundEffects, ["sound_effects"]),
         ("media_overlays", .mediaOverlays, ["media_overlays"]), ("visual_blocks", .visualBlocks, ["visual_blocks"]),
         ("motion_scenes", .motionScenes, ["motion_scenes", "motion_runtime_hash"]),
         ("camera_effects", .cameraEffects, ["camera_effects"]),
@@ -3394,6 +3395,10 @@ extension DraftSnapshot {
         var sections = baseSections
         var changed: Set<EditorSection> = []
         var restored: Set<EditorSection> = []
+        // A video rendered before it stored its fit reports the saved fit only through its capability
+        // (`EditorDocument.effectiveLandscapeFit`), so a head writing that value puts the lane back.
+        let reportedFit = Self.object(Self.object(base["editor_capabilities"])?["landscape_fit"])?["value"]
+        func saved(_ key: String) -> JSONValue? { baseSections[key] ?? (key == "landscape_fit" ? reportedFit : nil) }
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
             let removesMusic = lane.section == .music && draftPayload["remove_music"] == .bool(true)
@@ -3415,7 +3420,7 @@ extension DraftSnapshot {
                     else if let value = draftValue(key) { candidate[key] = value }
                 }
             }
-            let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
+            let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(saved($0)) }
                 || (removesMusic && candidate["music"] != baseSections["music"])
             guard differs else { restored.insert(lane.section); continue }
             sections = candidate; changed.insert(lane.section)
