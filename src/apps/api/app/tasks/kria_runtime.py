@@ -117,6 +117,7 @@ from app.kria.request_budget import creator_request_text_sync, request_over_budg
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     Disclosure,
+    approval_card_disclosures,
     approval_card_text,
     card_disclosures,
     card_text,
@@ -4227,6 +4228,8 @@ def _complete_draft_turn(
         db.add(render_execution)
         db.flush()
         copy_notice = _restored_copy_notice(db, thread.id, planned)
+        card_shown = approval_card_disclosures(route_disclosures)
+        card_notice = card_text(card_shown) if card_shown else None
         approval = CreatorAgentApproval(
             creator_id=thread.creator_id,
             thread_id=thread.id,
@@ -4252,6 +4255,9 @@ def _complete_draft_turn(
                     + approval_card_text(_card_summary(approval_summary), route_disclosures),
                     copy_notice,
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
+                    card_notice
+                    if card_notice and route_notice and route_notice not in approval_summary
+                    else None,
                 )
                 if part
             ),

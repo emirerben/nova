@@ -34,9 +34,13 @@ the card, and show the draft and the card together.
 ## Fix
 
 - iOS `DirectionStage`: the summary is 15 pt chat text; the stock subtitle, label and fixed rows are gone.
-- API, card only (`approval_card_text`, `_card_summary`): the heads-up block keeps only the research line (plan
-  notes stay in the draft reply and on the approval's `not_applied` record); two or more "Left out as agreed" lines
-  become one count line.
+- API, card only (`approval_card_disclosures` / `approval_card_text`, `_card_summary`): the heads-up block leaves
+  out lines about the planner's own plan fields (`PLANNER_OWNED_FIELDS`: hook idea, story structure, pacing,
+  direction); a creator's related ask has its own receipt line, and lines about the creator's asks (for example
+  "I can't make this video the length you asked for") stay. The draft reply and the approval's `not_applied`
+  record keep every line. Behind the existing `KRIA_HEADSUP_ASKED_ONLY_ENABLED` switch (default on): off keeps
+  the card byte-identical to before (`test_switch_off_names_the_planners_direction_as_before`). Two or more
+  "Left out as agreed" lines become one count line.
 - API `brief_checks._NEUTRAL_REASONS`: every catalog language's "can't check automatically" reasons are neutral,
   like English and Turkish.
 - iOS `refreshDelta`: a delta that brings an open approval request reads the approval first and merges the events
