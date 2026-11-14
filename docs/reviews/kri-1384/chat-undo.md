@@ -59,8 +59,10 @@ the animation default, one line's or all lines' size and position), the timeline
 duration, in point, reorder, split, remove, duplicate, transitions, tilt, crop, speed, source
 gain, replace), split screens, sound effects, picture cards and picture blocks (including their
 layer order), mix and music, the speaker background, its frame and focus, removing the
-full-screen opening (`remove_full_screen_opening`) and the video's shape (`set_video_shape`:
-orientation and landscape fit). Two more seal on a saved video but not on their probe's data:
+full-screen opening (`remove_full_screen_opening`), the video's shape (`set_video_shape`:
+orientation and landscape fit) and the creator's own song (`set_user_song`: volume, window and
+removal, and a lip-sync song's volume and removal). A lip-sync song's window has nothing to undo:
+chat refuses to move it, so the turn never compiles. Two more seal on a saved video but not on their probe's data:
 `set_title` on a video that already has a title, and `remove_visual_media` on picture rows as a
 Save stores them. The seal table pins both
 (`test_a_refusal_that_depends_on_the_probe_data_seals_on_a_saved_video`).
@@ -71,7 +73,6 @@ These do not, so chat refuses to undo the turn:
 | --- | --- |
 | `set_title` on a video with no title yet | The compiler records the old title only from `intro_text`, so the record has no pre-turn title, and a commit cannot clear one (`title: null` means leave it). |
 | `remove_visual_media` on a picture row with no `asset_id` / `src_gcs_path` | The commit schema rejects the pre-turn row, so the record cannot be replayed. Every row a Save stores has both fields. Only the probe's thin fixture row lacks them, and a recorded thread pins that fixture. |
-| `set_user_song` | The record holds the derived song state (`song_state`: volume, start and end as the video plays them), not the creator's own `user_song` section. The replay writes the song's end back as if the creator had set it (`creator_end_s` appears), so the editor differs from the pre-turn one. Undoing it needs the record to keep the creator's section, and the iPhone to report a restored song (#2320 stages the song outside `stagedLaneKeys`, so `restoredChatSections` never names it). |
 
 ### How the gaps from #2311 were closed
 
@@ -96,23 +97,55 @@ in the seal comparison, not in the undo rule.
   scoped commit (`repair_payload`) because no plan-review section owns them. That stays. The
   restore record now carries them under `look` when the data has them, and only an unscoped
   chat turn's data does.
+- **The creator's song** (`set_user_song`, closed after #2320). The record held the song as it
+  plays (`song_state`: the plan's volume, start and end), not the creator's own `user_song`
+  section, so the replay wrote the plan's end back as if the creator had set it
+  (`creator_end_s`). The compiler's pre-turn lane (`_before_lanes`) is now the creator's unsaved
+  section as they had it, or `{}` when they had none. The merge keeps every chat song key and never
+  un-removes the song (`removed: false` is not an edit), so `_replay` writes the record's section
+  in place of the chat's. Through the commit schema that is `{removed: false}` plus the creator's
+  own fields. A hand edit to the song after the turn takes the offer away, because `_untouched`
+  compares the whole section. Plan review's section restore reads the same record. Its draft holds
+  only the restored lanes, so the creator's section is also what it should put back there.
 - **A turn that changed nothing.** If no lane the turn wrote differs from what the creator had,
   `seal` returns None, so the receipt never claims an undo that put nothing back.
 
-The iPhone needs no change for these lanes. `caption_meta`, `visual_blocks`, `orientation` and
-`title` are in `DraftSnapshot.stagedLaneKeys`. A newer head at the saved value reaches the editor
-through `restoredChatSections`. A head that still differs from saved in its representation (a
-draft `caption_meta` with `font_set: false`) re-stages the lane wholesale through
-`mergeChatDraft`, so the editor shows the pre-turn content. `landscape_fit` is not a staged lane, so
-the phone never showed the chat's fit change either. An editor state without the chat's value
-refuses the undo (`_untouched`). That staging gap belongs to KRI-1394, not to undo.
+The iPhone needs no change for most of these lanes. `caption_meta`, `visual_blocks`,
+`orientation`, `landscape_fit` and `title` are in `DraftSnapshot.stagedLaneKeys`. A newer head at
+the saved value reaches the editor through `restoredChatSections`. A head that still differs from
+saved in its representation (a draft `caption_meta` with `font_set: false`) re-stages the lane
+wholesale through `mergeChatDraft`, so the editor shows the pre-turn content.
 
-When `set_user_song` is made to seal, the restored draft must keep a flat `user_song` key. An
-empty value or `{removed: false}` means the song is put back. The iPhone staging in #2320 reads
-only that flat key, so a restore that drops it never reaches an open editor. `_replay` keeps every
-key the merge carries, so a restored `user_song` stays present. The undo E2E for the song must
-assert the key on the restored payload. Today the turn is refused
-(`test_a_song_change_is_not_undone_from_chat`), and the chat turn's own draft carries the flat key.
+`landscape_fit` was not a staged lane until this change. A chat head whose only flat key was
+`landscape_fit` read as a committed snapshot, so an open editor took the chat's fit as the saved
+value: shown, but not an unsaved edit, never sent back with the next turn, and never saved. With
+no fit in the editor state the server refused the undo (`_untouched`). It is staged now, like
+`orientation`. A video that stores no fit reports it only through its capability, so `chatLanes`
+compares the lane against that reported value. Without that, an undo head writing the saved
+`"fill"` reads as a new change, and an editor with a hand edit elsewhere keeps the chat's `"fit"`.
+
+The server needs no change for the fit. The editor state now carries the staged value, so
+`_untouched` holds, and the `[landscape fit]` E2E cases (restore, and the hand-edit refusal, both
+with the phone sending the lane) pass unchanged.
+
+iPhone tests, in `ChatDraftStagingTests` (iPhone 17 Pro simulator, iOS 26.5):
+
+- `testAChatFitChangeOpensAsAnUnsavedEditThatTheNextTurnCarriesAndSaves` (stored and reported fit)
+- `testANewerChatHeadThatPutsTheFitBackReachesTheLiveEditor` (stored and reported fit)
+- `testANewerChatHeadThatPutsTheFitBackKeepsTheCreatorsEditElsewhere`
+- `testAChatHeadWithOnlyAFitEditIsNotACommittedSnapshot`
+
+Before the change: 4 tests, 15 failures (the suite's other 120 passed). For example
+`exportEditorState` lanes had no `landscape_fit` (`nil` is not `"fit"`) and Save sent
+`landscapeFit: nil`. With only the `stagedLaneKeys` entry, 2 failures remained, both in the
+reported-fit hand-edit case (`"fit"` is not `"fill"`). With the reported-value comparison, all 124
+pass, and `NativeEditorSessionTests`, `VideoShapeTests`, `NativeEditorMergeTests` and
+`EditorDocumentTests` with them ran 546 tests, 0 failures.
+
+The restored song draft keeps a flat `user_song` key, `{removed: false}` when the creator had no
+song edit. The iPhone staging in #2320 reads only that flat key and counts a readable empty one as
+"put back", so a restore that dropped it would never reach an open editor. The song E2E asserts
+the key on the restored payload (U12).
 
 An undo turn stores no record, so a second "undo" is refused rather than chained or toggled.
 `repeat_last_edit` stays unsupported (the `redo` parity group): it replays the web client's op log.
@@ -151,9 +184,14 @@ The gaps closed after #2311 add these, in `src/apps/api/tests/kria/test_chat_und
 | U4 | Rows read off the variant compare unequal only for schema defaults | `[picture layer order]`; the seal table's saved-rows case for `remove_visual_media` |
 | U5 | Lanes no plan-review section owns are left out of the record | `[orientation]`, `[landscape fit]` |
 | U6 | The seal checks a replay the commit does not write | `seal` and the commit both read `_replay` (`CompiledUndo.draft`) |
-| U7 | A hand edit to the lane after the turn is overwritten | `test_a_hand_edit_after_the_chat_turn_takes_the_undo_away`, all six cases |
+| U7 | A hand edit to the lane after the turn is overwritten | `test_a_hand_edit_after_the_chat_turn_takes_the_undo_away`, the six cases above |
 | U8 | A turn that changed nothing is offered and the receipt claims an undo | `seal` refuses a turn with no changed lane (a no-op `set_layer_order` does not even compile) |
-| U9 | A song change is half undone or the phone never sees it | `test_a_song_change_is_not_undone_from_chat` (refused, nothing written, the chat draft carries the flat `user_song` key) |
+| U9 | The record holds the song as it plays, so the undo pins the song's end as the creator's | `test_chat_undo_seal_table.py` (all four `set_user_song` probes seal) |
+| U10 | Restoring "no song edit" keeps the chat's volume or window | `test_undo_puts_back_exactly_what_the_creator_had[song volume]`, `[song window]`, `[lip-sync song volume]` |
+| U11 | Restoring after a removal keeps the song removed | `[song removal]` |
+| U12 | The restored draft drops the flat `user_song` key the phone reads | `test_a_song_undo_leaves_the_flat_section_the_phone_reads_as_put_back` (`{removed: false}`, all four cases) |
+| U13 | The undo loses the creator's own song edit from before the turn | `test_a_song_undo_keeps_the_song_edit_the_creator_had_before_the_turn` |
+| U14 | A hand edit to the song after the turn is overwritten | `test_a_hand_edit_after_the_chat_turn_takes_the_undo_away`, the four song cases |
 
 ## Evidence
 
