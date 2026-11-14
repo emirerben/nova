@@ -29,6 +29,12 @@ enum AttachmentOrigin: Equatable {
     case composerTray
 }
 
+/// One opening of the Add media camera, and whether it starts with the script on.
+struct CameraLaunch: Identifiable {
+    let id = UUID()
+    let startsWithScript: Bool
+}
+
 struct AttachmentSheet: View {
     let projectID: UUID
     let maximumClipCount: Int
@@ -88,10 +94,12 @@ struct AttachmentSheet: View {
     @StateObject private var songPreview = CreationVoiceRecorder()
     @State private var uploadingSong = false
     @State private var songUploadError: String?
-    @State private var showsTeleprompter = false
-    @State private var cameraStartsWithScript = false
+    /// The open camera. The script choice travels inside it because the cover read a separate flag stale and built
+    /// the camera without the script after Use script (KRI-1379).
+    @State private var camera: CameraLaunch?
     @State private var showsScriptEntry = false
-    @State private var openCameraAfterScript = false
+    /// The camera the script sheet asked for. It opens once that sheet has finished closing.
+    @State private var cameraAfterScript: CameraLaunch?
     @State private var pickerLaunch: FootageSourceKind?
     @State private var voiceoverPickerLaunch: FootageSourceKind?
     @State private var launched = false
@@ -300,27 +308,26 @@ struct AttachmentSheet: View {
             }
             // The camera is a full-screen cover, which also makes this content disappear. Only a real dismissal
             // stops the overlay requests; coming back picks up any that a stop did cancel.
-            .onDisappear { if !showsTeleprompter { overlaySet.stopWork() } }
+            .onDisappear { if camera == nil { overlaySet.stopWork() } }
             .onAppear { overlaySet.resumeWork() }
             .sheet(isPresented: $showsScriptEntry, onDismiss: {
                 // The camera waits for the script sheet to finish closing.
-                if openCameraAfterScript { openCameraAfterScript = false; showsTeleprompter = true }
+                if let next = cameraAfterScript { cameraAfterScript = nil; camera = next }
             }) {
                 if let accountID = auth.localStorageIdentity {
                     TeleprompterScriptEntrySheet(accountID: accountID, projectID: projectID) { useScript in
-                        cameraStartsWithScript = useScript
-                        openCameraAfterScript = true
+                        cameraAfterScript = CameraLaunch(startsWithScript: useScript)
                         showsScriptEntry = false
                     }
                 }
             }
-            .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: {
+            .fullScreenCover(item: $camera, onDismiss: {
                 Task { await refresh() }
                 let backToChat = launchOrigin == .composerTray && !cameraKeptTake
                 launchOrigin = .addMedia
                 cameraKeptTake = false
                 if rerecordTarget != nil || backToChat { dismiss() }
-            }) {
+            }) { launch in
                 if let accountID = auth.localStorageIdentity {
                     TeleprompterScreen(accountID: accountID, projectID: projectID,
                         admissionMessage: teleprompterAdmission,
@@ -332,14 +339,14 @@ struct AttachmentSheet: View {
                         speakerBackgroundEnabled: speakerBackgroundAvailable,
                         backgroundIntake: useCameraBackground,
                         backgroundStatement: stateSpeakerBackground,
-                        startsWithScript: cameraStartsWithScript,
+                        startsWithScript: launch.startsWithScript,
                         reportDiagnostic: { report in Task { try? await model.api.reportRecorderDiagnostic(report) } })
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
                 }
             }
             .opacity(rerecordTarget == nil ? 1 : 0)
             .accessibilityHidden(rerecordTarget != nil)
-            .onAppear { if rerecordTarget != nil { showsTeleprompter = true } }
+            .onAppear { if rerecordTarget != nil { camera = CameraLaunch(startsWithScript: false) } }
             .interactiveDismissDisabled(recorder.isRecording || recorder.hasRecording)
             .confirmationDialog("Stop and discard this recording?", isPresented: $confirmsCancellingRecording, titleVisibility: .visible) {
                 Button("Discard recording", role: .destructive) { recorder.discard() }
@@ -494,9 +501,7 @@ struct AttachmentSheet: View {
 
     private func openCamera(withScript: Bool) {
         guard auth.localStorageIdentity != nil else { return }
-        cameraStartsWithScript = withScript
-        // The cover reads `cameraStartsWithScript` when it is built, so let that change land first.
-        Task { @MainActor in showsTeleprompter = true }
+        camera = CameraLaunch(startsWithScript: withScript)
     }
 
     /// The clip a take recorded here replaces: the one the creator chose from the ready video, or, when the edit is

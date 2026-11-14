@@ -49,7 +49,8 @@ elif name == 'xcodebuild':
         bundle = pathlib.Path(args[args.index('-resultBundlePath') + 1])
         bundle.mkdir()
         (bundle / 'args.json').write_text(json.dumps(args))
-        sys.exit(25 if mode == 'test_failure' else 0)
+        overran = mode.startswith('overrun') and (bundle.name == 'ui.xcresult' or mode == 'overrun_twice')
+        sys.exit(65 if overran else 25 if mode == 'test_failure' else 0)
     elif args[-1] == 'build':
         sys.exit(26 if mode == 'build_only_failure' else 0)
 elif name == 'xcrun':
@@ -63,8 +64,16 @@ elif name == 'xcrun':
             tests = selected
         if mode == 'empty_results':
             tests = []
-        print(json.dumps({'testNodes': [{'nodeType': 'UI test bundle', 'name': 'KriaUITests', 'children': [
-            {'nodeType': 'Test Case', 'nodeIdentifier': t.removeprefix('KriaUITests/') + '()', 'result': 'Passed'} for t in tests]}]}))
+        cases = [{'nodeType': 'Test Case', 'nodeIdentifier': t.removeprefix('KriaUITests/') + '()', 'result': 'Passed'} for t in tests]
+        if mode.startswith('overrun') and cases and (bundle.name == 'ui.xcresult' or mode == 'overrun_twice'):
+            cases[0].update(result='Failed', children=[
+                {'nodeType': 'Failure Message', 'name': 'Test exceeded execution time allowance of 3 minutes'}])
+        if mode == 'overrun_and_failure' and bundle.name == 'ui.xcresult' and len(cases) > 1:
+            cases[1].update(result='Failed', children=[
+                {'nodeType': 'Repetition', 'name': name, 'result': 'Failed', 'children': [
+                    {'nodeType': 'Failure Message', 'name': 'Example.swift:9: XCTAssertTrue failed'}]}
+                for name in ('First Run', 'Retry 1', 'Retry 2')])
+        print(json.dumps({'testNodes': [{'nodeType': 'UI test bundle', 'name': 'KriaUITests', 'children': cases}]}))
     elif args[:3] == ['simctl', 'list', 'devices']:
         if mode == 'list_failure':
             sys.exit(27)
@@ -412,6 +421,55 @@ class VerifyShellTests(unittest.TestCase):
         self.assertNotIn("-test-iterations", unit_call)
         self.assertIn("-retry-tests-on-failure", ui_call)
         self.assertEqual(ui_call[ui_call.index("-test-iterations") + 1], "3")
+
+    def ui_runs(self):
+        return [call for call in self.calls if call[-1] == "test-without-building"]
+
+    def overran_first(self, group="smoke"):
+        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
+        return sorted(data["groups"][group])[0]
+
+    def test_a_test_past_the_time_allowance_gets_one_rerun(self):
+        # xcodebuild never retries a test that runs past its allowance, so one
+        # stall turned a whole shard red (KRI-1379).
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        result = self.run_verify("overrun", suite="ui", groups="smoke")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        first, rerun = self.ui_runs()
+        self.assertEqual(
+            Path(rerun[rerun.index("-resultBundlePath") + 1]).name, "ui-rerun.xcresult"
+        )
+        self.assertEqual(
+            [arg for arg in rerun if arg.startswith("-only-testing:")],
+            [f"-only-testing:{self.overran_first()}"],
+        )
+        for flag in ("-default-test-execution-time-allowance", "-test-iterations"):
+            self.assertEqual(rerun[rerun.index(flag) + 1], first[first.index(flag) + 1])
+        result_dir = next((self.root / "test-results/ios").glob("ui.*"))
+        flaky = json.loads((result_dir / "flaky-tests.json").read_text())
+        self.assertEqual([test["identifier"] for test in flaky], [self.overran_first()])
+        self.assertIn("Verified 5 selected UI tests passed.", result.stdout)
+
+    def test_a_rerun_that_runs_past_the_allowance_again_stays_red(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        result = self.run_verify("overrun_twice", suite="ui", groups="smoke")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.ui_runs()), 2)
+
+    def test_a_real_failure_is_never_rerun_or_excused(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        result = self.run_verify("overrun_and_failure", suite="ui", groups="smoke")
+        self.assertNotEqual(result.returncode, 0)
+        rerun = self.ui_runs()[1]
+        self.assertEqual(
+            [arg for arg in rerun if arg.startswith("-only-testing:")],
+            [f"-only-testing:{self.overran_first()}"],
+        )
+
+    def test_a_red_run_without_an_overrun_is_not_rerun(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        self.assertEqual(self.run_verify("test_failure", suite="ui").returncode, 25)
+        self.assertEqual(len(self.ui_runs()), 1)
 
     def test_ui_failure_still_runs_verify_and_writes_diagnostics(self):
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)

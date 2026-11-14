@@ -77,29 +77,57 @@ run_ui() {
   # before the macOS job deadline instead of cancelling the release gate.
   # One slide-canvas test requests 300s for a slow Xcode idle wait; all other
   # tests retain the 180s default.
+  local attempt=(
+    "${COMMON_ARGS[@]}"
+    -destination "platform=iOS Simulator,id=$SIMULATOR_ID"
+    -parallel-testing-enabled NO
+    -test-timeouts-enabled YES
+    -default-test-execution-time-allowance 180
+    -maximum-test-execution-time-allowance 300
+    -retry-tests-on-failure -test-iterations 3
+  )
   local xcodebuild_status=0
-  timed "UI execution ($label)" xcodebuild "${COMMON_ARGS[@]}" \
-    -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
-    -parallel-testing-enabled NO "${filters[@]}" \
-    -test-timeouts-enabled YES \
-    -default-test-execution-time-allowance 180 \
-    -maximum-test-execution-time-allowance 300 \
-    -retry-tests-on-failure -test-iterations 3 \
+  timed "UI execution ($label)" xcodebuild "${attempt[@]}" "${filters[@]}" \
     -resultBundlePath "$RESULT_DIR/ui.xcresult" test-without-building 2>&1 | tee "$RESULT_DIR/ui.log" \
     || xcodebuild_status=$?
+  # xcodebuild restarts the runner after a test runs past its allowance and never
+  # retries that test, so one stall turned a whole shard red. Each such test gets
+  # one more run with the same settings; any other failure stays failed (KRI-1379).
+  local overruns=""
+  local rerun_status=0
+  local verify_bundles=("$RESULT_DIR/ui.xcresult")
+  if [[ "$xcodebuild_status" -ne 0 && -e "$RESULT_DIR/ui.xcresult" ]]; then
+    overruns="$(python3 "$REPO_ROOT/scripts/ios/ui_tests.py" overruns "$groups" "$RESULT_DIR/ui.xcresult")" \
+      || overruns=""
+  fi
+  if [[ -n "$overruns" ]]; then
+    local rerun_filters=()
+    while IFS= read -r argument; do rerun_filters+=("$argument"); done <<< "$overruns"
+    printf 'Rerunning tests that ran past the time allowance:\n%s\n' "$overruns" | tee -a "$RESULT_DIR/selection.log"
+    timed "UI rerun past the time allowance ($label)" xcodebuild "${attempt[@]}" "${rerun_filters[@]}" \
+      -resultBundlePath "$RESULT_DIR/ui-rerun.xcresult" test-without-building 2>&1 | tee "$RESULT_DIR/ui-rerun.log" \
+      || rerun_status=$?
+    if [[ -e "$RESULT_DIR/ui-rerun.xcresult" ]]; then
+      verify_bundles+=("$RESULT_DIR/ui-rerun.xcresult")
+    else
+      rerun_status=1
+    fi
+  fi
   # Always verify when a result bundle exists, even after a red xcodebuild, so
   # the coverage line and flaky report are produced on exactly the runs where
   # they matter. Without this, `set -e` would abort the function on the line
   # above and verify (and its diagnostics) would never run on a red UI phase.
   local verify_status=0
   if [[ -e "$RESULT_DIR/ui.xcresult" ]]; then
-    python3 "$REPO_ROOT/scripts/ios/ui_tests.py" verify "$groups" "$RESULT_DIR/ui.xcresult" \
+    python3 "$REPO_ROOT/scripts/ios/ui_tests.py" verify "$groups" "${verify_bundles[@]}" \
       | tee -a "$RESULT_DIR/selection.log" || verify_status=$?
   else
     verify_status=1
   fi
-  # Fail-closed: both signals must be green for the phase to pass.
-  if [[ "$xcodebuild_status" -ne 0 ]]; then
+  # Fail-closed: both signals must be green for the phase to pass. A clean rerun
+  # of every overrun replaces only the first run's exit status; verify still
+  # requires every other selected test to have passed.
+  if [[ "$xcodebuild_status" -ne 0 ]] && [[ -z "$overruns" || "$rerun_status" -ne 0 ]]; then
     return "$xcodebuild_status"
   fi
   return "$verify_status"

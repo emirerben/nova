@@ -285,7 +285,62 @@ def result_tests(report):
     }
 
 
-def flaky_tests(report):
+TIME_ALLOWANCE_FAILURE = "exceeded execution time allowance"
+
+
+def _failure_messages(node):
+    """A Test Case's failure messages, whether xcodebuild retried it (Repetition children) or not."""
+    messages = []
+    for child in node.get("children", []):
+        if child.get("nodeType") == "Failure Message":
+            messages.append(child.get("name", ""))
+        elif child.get("nodeType") == "Repetition" and child.get("result") != "Passed":
+            messages += [
+                message.get("name", "")
+                for message in child.get("children", [])
+                if message.get("nodeType") == "Failure Message"
+            ]
+    return messages
+
+
+def overrun_tests(report):
+    """Test Cases that failed only by running past the execution time allowance.
+
+    xcodebuild restarts the runner and never retries such a test, so it gets one
+    attempt where -retry-tests-on-failure gives every other failure three.
+    verify.sh reruns exactly these once (KRI-1379).
+    """
+    overruns = []
+    for identifier, node in _iter_test_cases(report):
+        messages = _failure_messages(node)
+        if (
+            node.get("result") != "Passed"
+            and messages
+            and all(TIME_ALLOWANCE_FAILURE in message for message in messages)
+        ):
+            overruns.append(identifier)
+    return sorted(overruns)
+
+
+def merged_results(report, rerun=None):
+    """Results of the run, with each overrun replaced by its rerun.
+
+    A rerun may only stand in for a test that ran past its allowance: anything
+    else in it means the rerun selection was wrong, so it is refused.
+    """
+    results = result_tests(report)
+    if rerun is None:
+        return results
+    rerun_results = result_tests(rerun)
+    stray = rerun_results.keys() - set(overrun_tests(report))
+    if stray:
+        raise ValueError(
+            f"Rerun ran tests that did not run past the time allowance: {sorted(stray)}"
+        )
+    return results | rerun_results
+
+
+def flaky_tests(report, rerun=None):
     """Test Cases whose rollup passed but needed at least one retry.
 
     With -retry-tests-on-failure, a Test Case that eventually passed still
@@ -320,6 +375,25 @@ def flaky_tests(report):
                 "failure_messages": messages,
             }
         )
+    if rerun is not None:
+        overruns = set(overrun_tests(report))
+        first_run = dict(_iter_test_cases(report))
+        for identifier, node in _iter_test_cases(rerun):
+            if identifier not in overruns or node.get("result") != "Passed":
+                continue
+            repetitions = [
+                child
+                for child in node.get("children", [])
+                if child.get("nodeType") == "Repetition"
+            ]
+            flaky.append(
+                {
+                    "identifier": identifier,
+                    "attempts": 1 + (len(repetitions) or 1),
+                    "failure_messages": _failure_messages(first_run[identifier])
+                    + _failure_messages(node),
+                }
+            )
     return flaky
 
 
@@ -366,8 +440,8 @@ def report_flaky(flaky, bundle_path):
         print(f"Note: failed to write flaky-test report: {error}")
 
 
-def verify_results(report, expected):
-    actual = result_tests(report)
+def verify_results(report, expected, rerun=None):
+    actual = merged_results(report, rerun)
     missing = expected - actual.keys()
     unsuccessful = {
         test for test in expected & actual.keys() if actual[test] != "Passed"
@@ -444,6 +518,24 @@ def shard_tests(tests, spec, durations=None, overhead=UNIT_OVERHEAD_SECONDS):
     return set(members[index - 1])
 
 
+def load_report(bundle):
+    result = subprocess.check_output(
+        [
+            "xcrun",
+            "xcresulttool",
+            "get",
+            "test-results",
+            "tests",
+            "--path",
+            bundle,
+            "--compact",
+        ]
+    )
+    report = json.loads(result)
+    Path(bundle + ".tests.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
 def main():
     command, value = sys.argv[1:3]
     expected = expected_tests(value)
@@ -462,30 +554,25 @@ def main():
             print("-only-testing:KriaUITests")
         else:
             print("\n".join(f"-only-testing:{test}" for test in sorted(expected)))
+    elif command == "overruns":
+        report = load_report(sys.argv[3])
+        print(
+            "\n".join(
+                f"-only-testing:{test}"
+                for test in overrun_tests(report)
+                if test in expected
+            )
+        )
     elif command == "verify":
         bundle_path = Path(sys.argv[3])
-        result = subprocess.check_output(
-            [
-                "xcrun",
-                "xcresulttool",
-                "get",
-                "test-results",
-                "tests",
-                "--path",
-                sys.argv[3],
-                "--compact",
-            ]
-        )
-        report = json.loads(result)
-        Path(sys.argv[3] + ".tests.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        report = load_report(sys.argv[3])
+        rerun = load_report(sys.argv[4]) if len(sys.argv) > 4 else None
         # Compute and report flaky tests before verify_results can raise on a
         # coverage mismatch, so the report exists on red runs too.
-        report_flaky(flaky_tests(report), bundle_path)
-        print(verify_results(report, expected))
+        report_flaky(flaky_tests(report, rerun), bundle_path)
+        print(verify_results(report, expected, rerun))
     else:
-        raise ValueError("Expected args or verify")
+        raise ValueError("Expected args, overruns or verify")
 
 
 if __name__ == "__main__":

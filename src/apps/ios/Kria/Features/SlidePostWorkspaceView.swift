@@ -3,6 +3,12 @@ import KriaMediaEngine
 import SwiftUI
 import UIKit
 
+/// One opening of the slide post's AI sheet, and whether chat edit was on when it opened.
+struct SlidePostConversation: Identifiable {
+    let id = UUID()
+    let chatEnabled: Bool
+}
+
 /// Native workspace for a connected photo-and-video post. There is exactly ONE layout (the rich
 /// editor: header, preview with the AI button, strip ending in "+ Add", tool dock). It never depends
 /// on a fetched capability, so it can't silently fall back to another screen. The creation chat only
@@ -27,9 +33,9 @@ struct SlidePostWorkspaceView: View {
     /// The running Save to Photos / Share flow; cancelled when the editor goes away so it cannot keep polling
     /// (and prompt for Photos) from a screen the user already left.
     @State private var exportTask: Task<Void, Never>?
-    @State private var showsConversation = false
-    /// Chat-edit staging as decided when the AI sheet opened; it never flips while the sheet is up.
-    @State private var aiChatEnabled = false
+    /// The open AI sheet. Chat-edit staging is decided when it opens and travels inside it, so it never flips while
+    /// the sheet is up and the sheet never reads a separate flag stale (KRI-1379).
+    @State private var aiSheet: SlidePostConversation?
     @State private var pendingUploads: [UploadRecoveryRecord] = []
     @State private var uploadFailures: [UploadFailure] = []
     @State private var uploadInFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
@@ -129,7 +135,7 @@ struct SlidePostWorkspaceView: View {
     private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)-\(session.isRendering)-\(session.needsSubmissionObservation)-\(session.needsStateObservation)" }
     /// The selected video plays only while the app is active and nothing covers the preview (a sheet, an export).
     private var videoPlaybackAllowed: Bool {
-        scenePhase == .active && !showsConversation && !showsAttachments && !showsCaption && !showsSize
+        scenePhase == .active && aiSheet == nil && !showsAttachments && !showsCaption && !showsSize
             && !exporter.isSharing && !exporter.isBusy
     }
 
@@ -164,10 +170,10 @@ struct SlidePostWorkspaceView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $showsConversation) {
+        .sheet(item: $aiSheet) { sheet in
             SlidePostAISheet(
                 session: session, api: model.api, itemID: itemID,
-                chatEnabled: aiChatEnabled,
+                chatEnabled: sheet.chatEnabled,
                 canRequestProposal: canRequestProposal,
                 uploadGuidance: proposalGuidance,
                 dictationEnabled: effectiveCapabilities?.voiceDictationEnabled == true
@@ -205,8 +211,8 @@ struct SlidePostWorkspaceView: View {
             if phase == .active { session.startObserving(); Task { await refresh() } }
             else { session.stopObserving() }
         }
-        .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
-        .onChange(of: conversationCloseID) { _, _ in showsConversation = false }
+        .onChange(of: conversationAcceptedID) { _, _ in aiSheet = nil }
+        .onChange(of: conversationCloseID) { _, _ in aiSheet = nil }
         .onChange(of: videoPlaybackAllowed, initial: true) { _, allowed in videoPlayback.setAllowed(allowed) }
         .onChange(of: mode) { _, next in if next != .browse { session.selectedStickerID = nil } }
         // Media that finishes importing joins the post by itself; it waits out saves and AI edits.
@@ -610,7 +616,7 @@ struct SlidePostWorkspaceView: View {
 
     /// The editor's AI entry (same sparkles button as the video editor's preview), the page's only way into Kria chat.
     private var aiButton: some View {
-        KriaAIButton(identifier: "slidepost-openkria") { aiChatEnabled = chatEditOn; showsConversation = true }
+        KriaAIButton(identifier: "slidepost-openkria") { aiSheet = SlidePostConversation(chatEnabled: chatEditOn) }
     }
 
     private func richPreview(_ draft: SlidePostDraft, size: CGSize) -> some View {

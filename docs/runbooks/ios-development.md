@@ -912,6 +912,16 @@ in three places: a `::warning` GitHub annotation on the run, a
 `main` green; they are a safety net, not the fix. Every flaky warning still
 needs its own Linear issue to find and fix the underlying flake.
 
+A test that runs past its execution time allowance is the one failure
+`-retry-tests-on-failure` never retries: `xcodebuild` restarts the runner and
+moves on. `run_ui` therefore asks `ui_tests.py overruns` for every test whose
+only failure is the time allowance and reruns exactly those once, with the same
+settings, into `ui-rerun.xcresult`. `verify` then takes both bundles. A rerun
+result counts only for a test that ran past its allowance, and every other
+selected test must still have passed in the first bundle. A rerun that passes is
+reported as flaky like any other pass-on-retry (KRI-1379,
+`docs/reviews/kri-1379-nightly-ui-tests.md` section 4).
+
 Local repro, at a much higher iteration count than CI so the failure actually
 reproduces:
 
