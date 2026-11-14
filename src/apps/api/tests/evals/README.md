@@ -2,7 +2,7 @@
 
 Per-agent quality eval harness. Phase 1 covers the original Big 3 (`template_recipe`, `clip_metadata`, `creative_direction`); Phase 2 extends to the three additional in-pipeline agents (`transcript`, `platform_copy`, `audio_template`); the auto-music work then adds `song_classifier` (Phase 1 of auto-music) and `music_matcher` (Phase 2 of auto-music), taking the eval-covered Big set to 5.
 
-The other Phase 2 agent classes that exist in `app/agents/` (`text_designer`, `transition_picker`, `clip_router`, `shot_ranker`) are not yet wired into the pipeline — their evals will land alongside the PR that wires each into the runtime.
+The other Phase 2 agent classes that exist in `app/agents/` (`text_designer`, `clip_router`) are not yet wired into the pipeline — their evals will land alongside the PR that wires each into the runtime.
 
 ## Run modes
 
@@ -178,7 +178,7 @@ How it works:
 
 Constraints:
 - Live-mode only. Replay's `raw_text` was recorded under the prod prompt; comparing it against a candidate prompt is meaningless. The harness errors clearly if `--shadow-prompts-dir` is set without `--eval-mode=live`.
-- Inline-prompt agents (`platform_copy`, `text_designer`, `transition_picker`, `clip_router`, `shot_ranker`) build their prompts from input rather than loading a file — shadow has no effect for those.
+- Inline-prompt agents (`platform_copy`, `text_designer`, `clip_router`) build their prompts from input rather than loading a file — shadow has no effect for those.
 
 ## Live-mode cost cap
 
