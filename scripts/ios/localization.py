@@ -235,7 +235,7 @@ LOCALIZING_CALLEES = {
     "Stepper", "ContentUnavailableView", "LabeledContent", "DisclosureGroup", "ShareLink", "NavigationLink",
     "LocalizedStringKey", "LocalizedStringResource", "navigationTitle", "accessibilityLabel", "accessibilityHint",
     "accessibilityValue", "help", "alert", "confirmationDialog", "badge", "searchable", "accessibilityAction",
-    "accessibilityInputLabels", "prompt", "Tab", "ProgressView",
+    "accessibilityInputLabels", "prompt", "Tab", "ProgressView", "ColorPicker", "DatePicker",
 }
 # Callees and argument labels whose string is never shown to people.
 NON_UI_CALLEES = {
@@ -252,7 +252,7 @@ NON_UI_CALLEES = {
 NON_UI_LABELS = {
     "systemImage", "systemName", "forKey", "forResource", "withExtension", "identifier", "named", "name",
     "verbatim", "rawValue", "key", "category", "subsystem", "forHTTPHeaderField", "contentType", "fileExtension",
-    "suiteName", "queue", "label", "path", "mimeType", "filename", "id", "debugName", "route", "event", "kind",
+    "suiteName", "queue", "path", "mimeType", "filename", "id", "debugName", "route", "event", "kind",
     "type", "code", "reason", "action", "actionID", "format", "of", "with", "separator", "prefix", "suffix",
     "comment", "table", "tableName", "bundle",
 }

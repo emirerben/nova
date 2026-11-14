@@ -243,6 +243,10 @@ struct NativeSplitPanel: View {
                 }
             }
 
+            if let color = session.selectedBlankColor {
+                NativeSplitBlankColorRow(session: session, color: color, sectionBackground: context.section.backgroundColor)
+            }
+
             if session.canExtendSplitToWholeVideo(sectionID: sectionID) {
                 actionRow(String(localized: "Extend split to whole video"), icon: "arrow.left.and.right", id: "native-editor-split-extend-whole") {
                     session.extendSplitToWholeVideo(sectionID: sectionID)
@@ -347,6 +351,13 @@ struct NativeSplitPanel: View {
                         session.loopFillSplitPanel(sectionID: sectionID, panel: panel)
                     }
                 }
+                if session.canFillSplitPanelsWithBlank {
+                    actionRow(String(localized: "Fill with blank"), icon: "square.fill", id: "native-editor-split-blank-\(panel)",
+                              label: String(localized: "Fill \(title) with blank"), enabled: session.canFillSplitPanelWithBlank(sectionID: sectionID, panel: panel),
+                              reason: reason) {
+                        session.fillSplitPanelWithBlank(sectionID: sectionID, panel: panel)
+                    }
+                }
                 if let reason, !canAdd || !canLoop {
                     Text(reason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -428,6 +439,18 @@ private struct NativeSplitFillView: View {
                         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
                         .accessibilityIdentifier("native-editor-split-skip")
                 }
+            }
+            if session.canFillSplitPanelWithBlank(sectionID: context.sectionID, panel: panel) {
+                let title = NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount)
+                Button {
+                    session.fillSplitPanelWithBlank(sectionID: context.sectionID, panel: panel)
+                    if explicit { finished() }
+                } label: {
+                    Label("Fill with blank", systemImage: "square.fill").lineLimit(1).minimumScaleFactor(0.8)
+                }
+                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
+                .accessibilityLabel("Fill \(title) with blank")
+                .accessibilityIdentifier("native-editor-split-blank-\(panel)")
             }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
@@ -878,5 +901,67 @@ struct NativeSplitReplaceSheet: View {
         .padding(.horizontal, 24).padding(.top, 12)
         .background(KriaColor.paper)
         .presentationDetents([.large])
+    }
+}
+
+// MARK: - Block colour
+
+/// The colour of the selected blank block: the section background, five swatches (the speaker background's) and any
+/// colour the system picker offers. Each change is one undo step.
+private struct NativeSplitBlankColorRow: View {
+    @ObservedObject var session: NativeEditorSession
+    let color: String
+    let sectionBackground: String
+
+    private var swatches: [(id: String, name: String, hex: String)] {
+        // The section background is a swatch of its own only when no standard one already is that colour.
+        let standard = NativeBackgroundPanel.colorSwatches
+        return (standard.contains { $0.hex == sectionBackground.uppercased() } ? [] : [("background", "Background", sectionBackground)]) + standard
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Block colour").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                .accessibilityIdentifier("native-editor-split-blank-color-title")
+            HStack(spacing: 6) {
+                ForEach(swatches, id: \.id) { swatch in
+                    let selected = color == swatch.hex.uppercased()
+                    Button {
+                        session.endTransaction()
+                        session.setSelectedBlankColor(swatch.hex)
+                    } label: {
+                        Circle()
+                            .fill(nativeEditorColor(swatch.hex))
+                            .overlay(Circle().stroke(KriaColor.line, lineWidth: 1))
+                            .overlay {
+                                if selected {
+                                    Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(.white).frame(width: 20, height: 20).background(KriaColor.ink, in: Circle())
+                                }
+                            }
+                            .frame(width: 32, height: 32)
+                            .padding(6)
+                            .background(selected ? KriaColor.sage : .clear, in: Circle())
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(swatch.name)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityIdentifier("native-editor-split-blank-color-" + swatch.id)
+                }
+                ColorPicker("Custom colour", selection: Binding(
+                    get: { nativeEditorColor(color) },
+                    set: { picked in
+                        session.beginTransaction()
+                        session.setSelectedBlankColor(nativeEditorHex(picked))
+                    }
+                ), supportsOpacity: false)
+                .labelsHidden()
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityIdentifier("native-editor-split-blank-color-custom")
+                Spacer(minLength: 0)
+            }
+        }
     }
 }

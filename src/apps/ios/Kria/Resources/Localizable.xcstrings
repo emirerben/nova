@@ -3757,6 +3757,22 @@
         }
       }
     },
+    "A blank block has to stay inside a split panel. Undo your last change and try again. Your edits are still here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein leerer Block muss in einem Split-Panel bleiben. Mach deine letzte Änderung rückgängig und versuch es nochmal. Deine Änderungen sind noch da."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Boş blok bölünmüş bir panelin içinde kalmalı. Son değişikliğini geri al ve tekrar dene. Düzenlemelerin hâlâ burada."
+          }
+        }
+      }
+    },
     "A camera recording is already starting. Try again after it finishes." : {
       "localizations" : {
         "de" : {
@@ -7831,6 +7847,22 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Boş"
+          }
+        }
+      }
+    },
+    "Block colour" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Blockfarbe"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Blok rengi"
           }
         }
       }
@@ -15930,6 +15962,22 @@
         }
       }
     },
+    "Fill %@ with blank" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ leer füllen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ panelini boş doldur"
+          }
+        }
+      }
+    },
     "Fill frame" : {
       "comment" : "Crop mode: crop so the media fills the whole frame",
       "localizations" : {
@@ -15991,6 +16039,22 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Bir klipla doldur"
+          }
+        }
+      }
+    },
+    "Fill with blank" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leer füllen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Boş doldur"
           }
         }
       }

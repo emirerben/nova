@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.219.0] - 2026-11-14
+
+### Changed
+- feat(ios): fill a split panel with a blank block (KRI-1421) (#2338) <!-- release-pr: 2338 -->
+
+## [0.88.218.0] - 2026-11-14
+
+### Changed
+- fix(kria): a "yes" reply keeps the caption quoted from earlier messages (KRI-1445) (#2340) <!-- release-pr: 2340 -->
+
+## [0.88.217.0] - 2026-11-14
+
+### Changed
+- fix(api): admit a picked photo once its bytes are verified (KRI-1419) (#2332) <!-- release-pr: 2332 -->
+
+## [0.88.216.0] - 2026-11-14
+
+### Changed
+- fix(api): the AI can put several clips in one split-screen panel (KRI-1420) (#2327) <!-- release-pr: 2327 -->
+
 ## [0.88.215.0] - 2026-11-14
 
 ### Changed

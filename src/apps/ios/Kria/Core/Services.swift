@@ -1428,7 +1428,12 @@ enum KriaClientProtocolContract {
     /// 50 (KRI-1384): a newer chat head that puts a staged lane back to the saved value (chat "undo that")
     /// returns that lane to the saved document when the creator has not touched it since. The server offers
     /// chat undo only to this protocol (`chat_undo_min_client_protocol`).
-    static let version = 50
+    ///
+    /// 51 (KRI-1421): decodes, draws and edits a split panel's blank block (`media_kind: "blank"` + `color`, no `clip_index`)
+    /// and the `splitBlankPanel` capability. The server offers `editor_capabilities.split_blank_panel` only to this protocol
+    /// (and only with `splitBlankPanel` verified) and answers 426 `client_update_required` (`split_blank_panel`) to an older
+    /// build that saves, polls the timeline of, or renders an edit that holds one.
+    static let version = 51
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2326,6 +2331,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_TOO_LONG": String(localized: "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here."),
             "TIMELINE_BEATS_EXHAUSTED": String(localized: "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here."),
             "TIMELINE_INVALID_PARENT": timeline,
+            "TIMELINE_BLANK_OUTSIDE_SPLIT": String(localized: "A blank block has to stay inside a split panel. Undo your last change and try again. Your edits are still here."),
             "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": String(localized: "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here."),
             "authored_seconds_required": timeline,
             "split_screen_unavailable": String(localized: "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here."),
