@@ -4397,6 +4397,41 @@ _TR_ORDINALS: dict[int, tuple[str, ...]] = {
 _TR_BARE_CARDINALS = frozenset({"bir", "iki", "üç", "dört", "beş", "altı"})
 
 
+# German (KRI-1453): the ordinal stems ("zweit" -> "zweite", "die zweite", "zweite
+# Option") and the cardinals, which like Turkish ones count only next to a noun ("Nummer zwei").
+_DE_ORDINAL_STEMS: dict[int, str] = {
+    1: "erst",
+    2: "zweit",
+    3: "dritt",
+    4: "viert",
+    5: "fünft",
+    6: "sechst",
+}
+_DE_CARDINALS: dict[int, tuple[str, ...]] = {
+    1: ("eins",),
+    2: ("zwei",),
+    3: ("drei",),
+    4: ("vier",),
+    5: ("fünf",),
+    6: ("sechs",),
+}
+
+
+def _german_ordinal_names(number: int) -> list[str]:
+    """Typed German ways to name option ``number``: "die zweite", "Nummer 2", "Nr. 2", ..."""
+
+    names = [f"nummer {number}", f"nr {number}", f"variante {number}", f"auswahl {number}"]
+    for word in _DE_CARDINALS.get(number, ()):
+        names += [f"nummer {word}", f"option {word}", f"variante {word}"]
+    stem = _DE_ORDINAL_STEMS.get(number)
+    if stem:
+        for word in (f"{stem}e", f"{stem}er", f"{stem}es", f"{stem}en"):
+            names += [word, f"{word} option", f"{word} variante"]
+            names += [f"{article} {word}" for article in ("die", "der", "das", "den")]
+            names += [f"die {word} option", f"die {word} variante"]
+    return names
+
+
 def _ordinal_names(number: int) -> list[str]:
     """Typed ways to name option ``number``: "ikinci", "2. seçenek", "bir numara", ..."""
 
@@ -4419,6 +4454,32 @@ def _ordinal_names(number: int) -> list[str]:
     return names
 
 
+# KRI-1453: typed German answers, matched by option key at read time. They stay out of the
+# stored question (its aliases are the EN/TR server contract, pinned by test_copy_routing).
+_GERMAN_TITLE_DECLINES = (
+    "kein titel",
+    "keinen titel",
+    "kein titel bitte",
+    "keinen titel bitte",
+    "ohne titel",
+    "ohne titel weiter",
+    "weiter ohne titel",
+    "überspringen",
+    "überspring",
+    "lass den titel weg",
+    "ich will keinen titel",
+    "ich möchte keinen titel",
+    "brauche keinen titel",
+    "kein titel nötig",
+)
+_GERMAN_KEY_ALIASES: dict[str, tuple[str, ...]] = {
+    OPT_NO_TITLE: ("nein", "nein danke", *_GERMAN_TITLE_DECLINES),
+    # creative_copy_decisions.OPT_CANCEL. No bare "nein": to "Hast du eine Idee?" it means
+    # "I don't have one" (so write it), like Turkish "yok".
+    "cancel": _GERMAN_TITLE_DECLINES,
+}
+
+
 def _option_names(
     number: int, option: Mapping[str, Any], *, ordinals: bool = True, names_only: bool = False
 ) -> list[str]:
@@ -4431,16 +4492,18 @@ def _option_names(
     """
 
     label = _RECOMMENDED_TAG.sub("", str(option.get("label") or ""))
+    german = _GERMAN_KEY_ALIASES.get(str(option.get("key")), ())
     if names_only:
-        return [label, *(str(a) for a in option.get("aliases") or [])]
+        return [label, *(str(a) for a in option.get("aliases") or []), *german]
     return [
         str(option["key"]),
         label,
         str(number),
         f"option {number}",
         f"number {number}",
-        *(_ordinal_names(number) if ordinals else ()),
+        *(_ordinal_names(number) + _german_ordinal_names(number) if ordinals else ()),
         *(str(a) for a in option.get("aliases") or []),
+        *german,
     ]
 
 
@@ -4504,6 +4567,28 @@ _DELEGATION_PHRASES = frozenset(
         "dilediğin gibi yap",
         "nasıl istersen",
         "ne istersen",
+        # German (KRI-1453). No "egal" / "ist mir egal": like "whatever", a non-answer.
+        "du entscheidest",
+        "entscheide du",
+        "du kannst entscheiden",
+        "du darfst entscheiden",
+        "du wählst",
+        "wähl du",
+        "such du aus",
+        "such du es aus",
+        "deine wahl",
+        "deine entscheidung",
+        "liegt bei dir",
+        "das liegt bei dir",
+        "das überlasse ich dir",
+        "ich überlasse es dir",
+        "überlass ich dir",
+        "überlasse ich dir",
+        "wie du willst",
+        "wie du möchtest",
+        "mach wie du willst",
+        "überrasch mich",
+        "überrasche mich",
     )
 )
 _DELEGATION_LOOSE = frozenset(loose_reply(p) for p in _DELEGATION_PHRASES)

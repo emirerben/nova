@@ -4177,7 +4177,23 @@ _TR_HOLD_WORDS = {
     "dokuz": 9.0,
     "on": 10.0,
 }
-_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS}
+# German (KRI-1453), with and without umlauts ("fünf"/"funf"). It shares the Turkish
+# words' pattern below, so each stays paired with a non-English seconds unit.
+_DE_HOLD_WORDS = {
+    "eine": 1.0,
+    "einer": 1.0,
+    "zwei": 2.0,
+    "drei": 3.0,
+    "vier": 4.0,
+    "fünf": 5.0,
+    "funf": 5.0,
+    "sechs": 6.0,
+    "sieben": 7.0,
+    "acht": 8.0,
+    "neun": 9.0,
+    "zehn": 10.0,
+}
+_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS, **_DE_HOLD_WORDS}
 
 
 def _words(table: dict[str, float]) -> str:
@@ -4200,8 +4216,8 @@ _HOLD_SECONDS = (
         r"(?:\s+|\s*-\s*)(?:secs?|seconds?)" + _TAIL_HALF
     ),
     re.compile(
-        rf"(?<![\w.:])(?P<num>{_words(_TR_HOLD_WORDS)})(?:\s+(?P<half>bu[çc]uk))?"
-        r"\s+(?:saniye\w*|sn)(?!\w)(?P<tail>)"
+        rf"(?<![\w.:])(?P<num>{_words({**_TR_HOLD_WORDS, **_DE_HOLD_WORDS})})"
+        r"(?:\s+(?P<half>bu[çc]uk))?\s+(?:saniye\w*|sn|sekunden?|sek)(?!\w)(?P<tail>)"
     ),
 )
 # Half-second phrases with no leading number.
