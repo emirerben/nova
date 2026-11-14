@@ -1811,12 +1811,12 @@ def test_bad_blank_arguments_are_refused_when_parsed(blank_document):
         {"panel_index": True},
         {"duration_s": 0.05},
         {"offset_s": -1},
-        {"clip_index": 2},
-        {"transition_after": "crossfade"},
-        {"playback_rate": 2},
     ):
         assert parse_editor_operation({**base, **wrong}, snapshot, _ParseState(0.99)) is None, wrong
     assert parse_editor_operation(base, snapshot, _ParseState(0.99)) is not None
+    sourced = {"clip_index": 2, "transition_after": "crossfade", "playback_rate": 2, "muted": True}
+    kept = parse_editor_operation({**base, **sourced}, snapshot, _ParseState(0.99))
+    assert not set(sourced) & set(kept)
 
 
 @pytest.mark.parametrize(
@@ -1893,7 +1893,6 @@ def test_recolouring_refuses_a_real_clip_a_removed_blank_and_a_bad_colour(blank_
         {"slot_index": blank, "color": "#FFF"},
         {"slot_index": blank},
         {"slot_index": True, "color": "#FF0000"},
-        {"slot_index": blank, "color": "#FF0000", "duration_s": 3},
     ):
         raw = {"op": "set_split_blank_color", **wrong}
         assert parse_editor_operation(raw, snapshot, _ParseState(0.99)) is None, wrong
@@ -1912,7 +1911,7 @@ def test_recolouring_refuses_a_real_clip_a_removed_blank_and_a_bad_colour(blank_
 
 def test_recolouring_follows_the_same_closed_capability(document, monkeypatch):
     job, variant = document
-    variant, section = _blank_stack(job, variant)
+    variant, section = _blank_stack(job, variant, duration_s=4)
     variant["user_timeline"]["slots"].append(
         {
             "slot_id": "kept",
@@ -1941,9 +1940,9 @@ def test_recolouring_follows_the_same_closed_capability(document, monkeypatch):
     [
         {"op": "update_split_screen", "gutter": 0.02},
         {"op": "update_split_screen", "background_color": "#abcdef"},
-        {"op": "edit_text", "bar_index": 0, "text": "Fresh hook"},
+        {"op": "set_clip_duration", "slot_index": 0, "duration_s": 1.5},
     ],
-    ids=["gutter", "background", "text"],
+    ids=["gutter", "background", "clip-length"],
 )
 def test_an_unrelated_chat_edit_keeps_every_blank_exactly(blank_document, raw):
     job, variant = blank_document
@@ -2003,9 +2002,10 @@ def test_a_chat_blank_survives_the_real_save_and_recipe_compile(monkeypatch):
             parsed = parse_editor_operation(raw, snapshot, _ParseState(0.99))
             assert parsed is not None, raw
             draft = editor.compile_editor_ops(job, variant, [parsed])
-            gj.prepare_editor_commit(job, "original_text", draft.payload)
+            save = draft.payload.model_copy(update={"editor_state_version": 2})
+            gj.prepare_editor_commit(job, "original_text", save)
             variant = job.assembly_plan["variants"][0]
-            return draft.payload
+            return save
 
         stacked = chat({"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2})
         section = stacked.split_screen_sections[0].id

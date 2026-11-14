@@ -43,6 +43,8 @@
     "A Talking edit keeps your whole take, so its length follows your clip": "Ein Talking-Edit behält deinen ganzen Take, deshalb richtet sich die Länge nach deinem Clip",
     "A Talking video can't do this, so it stays as filmed": "Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt",
     "A Talking video can't show text at a word you say yet": "Ein Talking-Video kann noch keinen Text bei einem Wort zeigen, das du sagst",
+    "A blank block in a split screen is not available on this edit yet.": "In diesem Edit ist ein leerer Block im Split-Screen noch nicht verfügbar.",
+    "A blank block in a split screen needs the latest Kria update.": "Für einen leeren Block im Split-Screen brauchst du das neueste Kria-Update.",
     "A clip can zoom between 0.5x and 3x, so I kept it inside that.": "Ein Clip kann zwischen 0,5x und 3x gezoomt werden, deshalb habe ich es in diesem Bereich gehalten.",
     "A few things didn't match your request: {joined}. I prepared fixes in your draft. Approve them to render, or undo them.": "Ein paar Dinge passten nicht zu deiner Anfrage: {joined}. Ich habe Korrekturen in deinem Entwurf vorbereitet. Gib sie frei, um das Video zu erstellen, oder mach sie rückgängig.",
     "A freeze holds the frame where a shot ends, so I can't hold the opening frame, and it plays normally. Tell me the second of the clip to freeze on, like \"freeze at 2 seconds\"": "Ein Standbild hält das Bild am Ende einer Einstellung, deshalb kann ich das erste Bild nicht anhalten, und es läuft normal. Sag mir, bei welcher Sekunde des Clips das Standbild sein soll, z. B. \"Standbild bei 2 Sekunden\"",

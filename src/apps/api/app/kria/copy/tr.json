@@ -43,6 +43,8 @@
     "A Talking edit keeps your whole take, so its length follows your clip": "Konuşmalı düzenleme çekimini baştan sona korur, o yüzden uzunluğu klibini izler",
     "A Talking video can't do this, so it stays as filmed": "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır",
     "A Talking video can't show text at a word you say yet": "Konuşmalı video söylediğin bir kelimede yazı gösteremiyor",
+    "A blank block in a split screen is not available on this edit yet.": "Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor.",
+    "A blank block in a split screen needs the latest Kria update.": "Bölünmüş ekranda boş blok için Kria'nın son sürümü gerekiyor.",
     "A clip can zoom between 0.5x and 3x, so I kept it inside that.": "Bir klip 0,5x ile 3x arasında yakınlaştırılabilir; bu aralığın içinde tuttum.",
     "A few things didn't match your request: {joined}. I prepared fixes in your draft. Approve them to render, or undo them.": "Birkaç şey isteğinle uyuşmadı: {joined}. Taslağında düzeltmeler hazırladım. Oluşturmak için onayla ya da geri al.",
     "A freeze holds the frame where a shot ends, so I can't hold the opening frame, and it plays normally. Tell me the second of the clip to freeze on, like \"freeze at 2 seconds\"": "Donma bir çekimin bittiği karede olur, o yüzden açılış karesini tutamıyorum ve normal oynuyor. Klibin hangi saniyesinde donsun, yaz; örneğin \"2. saniyede dondur\"",

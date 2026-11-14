@@ -1510,6 +1510,16 @@
    "app/agents/editor_ops_v2/split_full_screen.py",
    "Part of a split screen can't go full screen from chat on this edit.",
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
+  ],
+  [
+   "app/agents/editor_ops_v2/split_screen.py",
+   "A blank block in a split screen needs the latest Kria update.",
+   "Bölünmüş ekranda boş blok için Kria'nın son sürümü gerekiyor."
+  ],
+  [
+   "app/agents/editor_ops_v2/split_screen.py",
+   "A blank block in a split screen is not available on this edit yet.",
+   "Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor."
   ]
  ],
  "retired": [
