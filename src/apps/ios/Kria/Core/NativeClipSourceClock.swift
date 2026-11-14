@@ -1,4 +1,5 @@
 import Foundation
+import KriaMediaEngine
 
 /// Source seconds and output seconds remain independent across rate changes and held tails.
 struct NativeClipSourceClock {
@@ -26,7 +27,7 @@ struct NativeClipSourceClock {
         result.end = max(result.start, start + min(upper, movingDuration) * rate)
         result.hold = max(0, upper - max(lower, movingDuration))
         if result.end - result.start < 0.000001, result.hold > 0, let frame {
-            result.end = frame; result.start = max(0, frame - 1.0 / 30); result.rate = 1
+            result.end = frame; result.start = max(0, frame - 1.0 / Double(EditorLimits.outputFPS)); result.rate = 1
             result.hold = max(0, upper - lower - result.movingDuration)
         }
         return result

@@ -14,6 +14,8 @@ from app.kria.split_screen import (
     layout_split_timeline,
     sync_collapsed_section_durations,
 )
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
+from app.services.editor_limits import EDITOR_MIN_CLIP_S
 
 
 class SectionCommand(BaseModel):
@@ -26,7 +28,7 @@ class CreateSection(SectionCommand):
     start_s: float | None = Field(default=None, ge=0, le=1800)
     end_s: float | None = Field(default=None, gt=0, le=1800)
     full_length: bool = False
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
     panel_weights: list[float] | None = None
     gutter: float = Field(default=0, ge=0, le=0.1)
     background_color: str = Field(default="#000000", pattern=r"^#[0-9a-fA-F]{6}$")
@@ -35,7 +37,7 @@ class CreateSection(SectionCommand):
 
 class UpdateSection(SectionCommand):
     section_id: str
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
     panel_count: Literal[2, 3] | None = None
     panel_weights: list[float] | None = None
     gutter: float | None = Field(default=None, ge=0, le=0.1)
@@ -56,7 +58,7 @@ class AddPanelClip(SectionCommand):
     panel_index: int = Field(ge=0, le=2, strict=True)
     clip_index: int = Field(ge=0, strict=True)
     offset_s: float | None = Field(default=None, ge=0, le=1800)
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
     grow_section: bool = True
 
 
@@ -213,8 +215,11 @@ def validate_state(state: Any) -> None:
 
 
 def _bound_duration(row: dict, room: float, editor: Any) -> None:
-    if room < 0.1:
-        raise ValueError("The section leaves less than 0.1 seconds for this clip")
+    if below_editor_minimum(room):
+        raise ValueError(
+            f"The section leaves less than {EDITOR_MIN_CLIP_S:g} seconds for this clip"
+        )
+    room = snap_to_editor_minimum(room)
     duration = editor._slot_duration(row)
     if duration <= room + 1e-6:
         return
@@ -260,7 +265,7 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                 source = editor.copy_source_occurrence(rows[0])
                 span = editor._slot_duration(source)
                 start, end = command.get("start_s", 0), command.get("end_s", span)
-                if end > span or end - start < 0.1:
+                if end > span or below_editor_minimum(end - start):
                     raise ValueError("The split section must fit inside the selected clip")
                 from app.kria.clip_source_clock import slice_source_window
 
@@ -435,7 +440,7 @@ def _add_panel_clip(state: Any, section: dict, members: list[dict], command: dic
         raise ValueError("The panel does not exist")
     photo = source["kind"] == "image"
     native = _ADDED_PHOTO_S if photo else source.get("duration_s")
-    if native is None or native < 0.1:
+    if native is None or below_editor_minimum(native):
         raise ValueError("The selected video needs an approved measured duration")
     length = command.get("duration_s", native)
     if not photo:
@@ -454,8 +459,9 @@ def _add_panel_clip(state: Any, section: dict, members: list[dict], command: dic
         section["duration_s"] = max(section["duration_s"], offset + length)
     else:
         length = min(length, section["duration_s"] - offset)
-        if length < 0.1:
+        if below_editor_minimum(length):
             raise ValueError("This panel is full. Shorten a clip in it to make room.")
+        length = snap_to_editor_minimum(length)
     row = {
         "slot_id": str(uuid4()),
         "clip_index": command["clip_index"],
@@ -543,7 +549,7 @@ def _apply_occurrence(state: Any, op: dict) -> None:
             if photo and speaker:
                 raise ValueError("Use default framing before replacing this speaker with a photo")
             duration = source.get("duration_s")
-            if not photo and (duration is None or duration < 0.1):
+            if not photo and (duration is None or below_editor_minimum(duration)):
                 raise ValueError("The selected video needs an approved measured duration")
             for key in (
                 "asset_id",
@@ -801,26 +807,31 @@ def _keep_output_window(state: Any, start: float, end: float) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError
 
     starts, sections, total = layout_split_timeline(state.slots, state.split_screen_sections)
-    if start < 0 or end > total + 1e-6 or end - start < 0.1:
-        raise KriaEditorOpError("The output trim must leave at least 0.1 seconds")
+    if start < 0 or end > total + 1e-6 or below_editor_minimum(end - start):
+        raise KriaEditorOpError(
+            f"The output trim must leave at least {EDITOR_MIN_CLIP_S:g} seconds"
+        )
     windows = {s.id: (max(start, s.start), min(end, s.end)) for s in sections}
     for row, row_start in zip(
         (r for r in state.slots if not r.get("removed")), starts, strict=True
     ):
         row_end = row_start + float(row["duration_s"])
         left, right = max(start, row_start), min(end, row_end)
-        if right - left < 0.1 - 1e-6:
+        if below_editor_minimum(right - left):
             row["removed"] = True
             continue
         row.update(slice_source_window(row, left - row_start, right - row_start))
+        row["duration_s"] = snap_to_editor_minimum(float(row["duration_s"]))
         if row.get("split_section_id"):
             row["split_offset_s"] = left - windows[row["split_section_id"]][0]
     state.split_screen_sections[:] = [
-        s for s in state.split_screen_sections if windows[s["id"]][1] - windows[s["id"]][0] >= 0.1
+        s
+        for s in state.split_screen_sections
+        if not below_editor_minimum(windows[s["id"]][1] - windows[s["id"]][0])
     ]
     for section in state.split_screen_sections:
         low, high = windows[section["id"]]
-        section["duration_s"] = high - low
+        section["duration_s"] = snap_to_editor_minimum(high - low)
         if not any(
             not r.get("removed") and r.get("split_section_id") == section["id"] for r in state.slots
         ):
@@ -887,10 +898,12 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
     if strategy == "trim_tail":
         desired = lengths[:]
         desired[-1] += target - total
-    if min(desired) < 0.1:
+    if below_editor_minimum(min(desired)):
         raise KriaEditorOpError(
-            "The requested length leaves a timeline unit shorter than 0.1 seconds"
+            "The requested length leaves a timeline unit shorter than "
+            f"{EDITOR_MIN_CLIP_S:g} seconds"
         )
+    desired = [snap_to_editor_minimum(value) for value in desired]
     for _ in range(6):
         for index, ((section, rows), (old_section, old_rows)) in enumerate(
             zip(units, original, strict=True)
@@ -902,10 +915,12 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
                 for row, old in zip(rows, old_rows, strict=True):
                     offset = float(old["split_offset_s"]) * factor
                     wanted = min(float(old["duration_s"]) * factor, duration - offset)
-                    if wanted < 0.1 - 1e-6:
+                    if below_editor_minimum(wanted):
                         raise KriaEditorOpError(
-                            "The requested length leaves a panel clip shorter than 0.1 seconds"
+                            "The requested length leaves a panel clip shorter than "
+                            f"{EDITOR_MIN_CLIP_S:g} seconds"
                         )
+                    wanted = snap_to_editor_minimum(wanted)
                     row.update(resize_source_window(old, wanted))
                     row["split_offset_s"] = offset
             else:
@@ -920,8 +935,9 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
             break
         index = adjustable[-1]
         desired[index] += target - reached
-        if desired[index] < 0.1:
+        if below_editor_minimum(desired[index]):
             break
+        desired[index] = snap_to_editor_minimum(desired[index])
     raise KriaEditorOpError("The requested duration cannot fit the available source footage")
 
 

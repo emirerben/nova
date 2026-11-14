@@ -26,6 +26,13 @@ from app.agents.editor_ops_v2 import OpSpec
 from app.kria.clip_tilt import MAX_ZOOM, MIN_ZOOM, ClipTilt, clamp_zoom, wrap_degrees
 from app.kria.recipes import ClipBackdrop
 from app.kria.reply_language import say
+from app.schemas.editor_window import below_editor_minimum
+from app.services.editor_limits import (
+    EDITOR_MIN_CLIP_S,
+    MOTION_FPS,
+    PLAYBACK_RATE_MAX,
+    PLAYBACK_RATE_MIN,
+)
 
 # Mirrors src/apps/ios/Kria/Core/NativeEditorDocument.swift NativeEditorWireContract.
 LOOK_PRESETS = (
@@ -39,10 +46,7 @@ LOOK_PRESETS = (
 TRANSITIONS = ("cut", "crossfade", "dip_to_black", "flash")
 TRANSITION_MIN_S = 0.1
 TRANSITION_MAX_S = 0.3
-RATE_MIN, RATE_MAX = 0.25, 4.0
-MIN_CLIP_S = 0.1
 MIN_RETARGET_CLIP_S = 0.3
-_FPS = 30.0
 _TOL_S = 0.05
 _PATCH_KEYS = frozenset(
     {
@@ -283,11 +287,11 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
     clean: dict[str, Any] = {}
     for key, value in patch.items():
         if key == "duration_s":
-            cleaned: Any = _num(value, MIN_CLIP_S, _max_total_s())
+            cleaned: Any = _num(value, EDITOR_MIN_CLIP_S, _max_total_s())
         elif key == "in_s":
             cleaned = _num(value, 0.0, 36000.0)
         elif key == "playback_rate":
-            cleaned = _num(value, RATE_MIN, RATE_MAX)
+            cleaned = _num(value, PLAYBACK_RATE_MIN, PLAYBACK_RATE_MAX)
         elif key == "transition_duration_s":
             cleaned = _num(value, TRANSITION_MIN_S, TRANSITION_MAX_S)
         elif key == "look_preset":
@@ -604,7 +608,7 @@ def _err(message: str):
 
 
 def _frame(value: float) -> float:
-    return round(round(value * _FPS) / _FPS, 6)
+    return round(round(value * MOTION_FPS) / MOTION_FPS, 6)
 
 
 def _is_image(row: dict[str, Any]) -> bool:
@@ -686,8 +690,8 @@ def _fit_window(
     if duration <= room + 1e-9:
         return in_s, duration
     if not slide:
-        return in_s, math.floor(room * _FPS) / _FPS
-    duration = min(duration, math.floor((source - floor) / rate * _FPS) / _FPS)
+        return in_s, math.floor(room * MOTION_FPS) / MOTION_FPS
+    duration = min(duration, math.floor((source - floor) / rate * MOTION_FPS) / MOTION_FPS)
     return max(floor, source - duration * rate), duration
 
 
@@ -858,7 +862,7 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                     # that outgrows the footage after its start reaches back into the footage
                     # before it.
                     slide = "in_s" not in patch and "playback_rate" not in patch
-                    if not slide and (float(source) - in_s) / rate < MIN_CLIP_S:
+                    if not slide and below_editor_minimum((float(source) - in_s) / rate):
                         raise _err("That start point leaves too little footage in the clip")
                     new_in, duration = _fit_window(
                         float(source),
@@ -870,8 +874,8 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                     )
                     if new_in != in_s:
                         row["in_s"] = round(new_in, 3)
-                if duration < MIN_CLIP_S:
-                    raise _err("A clip cannot be shorter than 0.1 seconds")
+                if below_editor_minimum(duration):
+                    raise _err(f"A clip cannot be shorter than {EDITOR_MIN_CLIP_S:g} seconds")
                 row["duration_beats"] = None
                 row["duration_s"] = round(duration, 6 if "source_end_s" in row else 3)
                 if "source_end_s" in row and (
@@ -977,7 +981,7 @@ def _bounds(
         # footage after the start: a longer clip slides its start earlier (``_fit_window``).
         rate = ops._slot_rate(row)
         floor = _slide_floor(rows, row, ops) if rows else 0.0
-        high = min(high, math.floor((float(source) - floor) / rate * _FPS) / _FPS)
+        high = min(high, math.floor((float(source) - floor) / rate * MOTION_FPS) / MOTION_FPS)
     return low, max(low, high)
 
 

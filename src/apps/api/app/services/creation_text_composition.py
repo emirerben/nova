@@ -32,11 +32,13 @@ from app.agents.edit_copilot import (
     _font_catalog,
     _format_snapshot,
 )
+from app.agents.prompt_vocab import render_vocab_tokens
 from app.kria.brief import BriefRequirement
 from app.kria.text_sequence import is_text_sequence
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.research import PreparedResearch
 from app.schemas.text_composition import ResearchLayerShape, TextCompositionProgram
+from app.services.editor_limits import FRAME_S
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
 log = structlog.get_logger()
@@ -55,11 +57,15 @@ CREATION_TEXT_COMPOSER_PROMPT_SOURCES: tuple[str, ...] = (
     "app/agents/prompt_vocab.py",
     "app/agents/_schemas/text_animation_phases.py",
     "app/agents/_schemas/text_element.py",
+    "app/services/editor_limits.py",
     "assets/fonts/font-registry.json",
     "prompts/edit_copilot_ops/text.txt",
 )
+# {{MOTION_FPS}} comes from motion-limits.json, which is outside the fingerprinted tree in the prod
+# image, so its rendered value is hashed in directly.
+CREATION_TEXT_COMPOSER_PROMPT_EXTRA = render_vocab_tokens("{{MOTION_FPS}}")
 CREATION_TEXT_COMPOSER_PROMPT_VERSION = prompt_fingerprint(
-    "ct", CREATION_TEXT_COMPOSER_PROMPT_SOURCES
+    "ct", CREATION_TEXT_COMPOSER_PROMPT_SOURCES, extra=CREATION_TEXT_COMPOSER_PROMPT_EXTRA
 )
 
 # Same flash model `main_creator` / `brief_extractor` already fall back to.
@@ -80,7 +86,8 @@ _TEXT_OPS = frozenset(
         "realign_labels",
     }
 )
-_INSTRUCTIONS = """CREATION TEXT COMPOSITION
+_INSTRUCTIONS = render_vocab_tokens(
+    """CREATION TEXT COMPOSITION
 If the creator asks for web research, fact checking or verified facts in any language,
 return research_request: {topic: public topic without URLs/private details,
 request_quote: exact creator words requesting research}, intent="describe", a short
@@ -105,7 +112,7 @@ THAT bar, never add another text for it. When the brief also has a title text wi
 wording, or a second sequence, that title keeps the opening bar and each sequence's exact words
 sit in their own bar (on a clip, or the clip a clip-scoped sequence names): split the bar
 holding them.
-Give every piece at least one video frame (1/30 s): when the bar is
+Give every piece at least one video frame (1/{{MOTION_FPS}} s): when the bar is
 shorter than that per piece, first lengthen it with set_texts_timing (about 0.45 s per word is a
 comfortable default, never a requirement; never past total_duration_s). Preserve the combined
 wording and choose readable timing inside the requested clip. Apply timing and shared style
@@ -146,6 +153,7 @@ unmet request if the planned timing cannot support the requested explanation.
 When a current text brief is present, add independent text only when a live non-title
 text requirement requests it. A title styling request never authorizes another caption.
 """
+)
 
 
 _RESEARCHED_COPY_INSTRUCTIONS = """RESEARCHED COPY
@@ -1093,10 +1101,10 @@ def _check_editorial_text(snapshot: EditProposalSnapshot, plan: dict) -> None:
             if not str(row.get("id", "")).startswith("guided-title")
             and not is_caption_text_bar(row)
             and str(row.get("text", "")).strip()
-            and float(row.get("start_s", 0)) >= start - 1 / 30
-            and float(row.get("end_s", 0)) <= end + 1 / 30
+            and float(row.get("start_s", 0)) >= start - FRAME_S
+            and float(row.get("end_s", 0)) <= end + FRAME_S
             and float(row.get("end_s", 0)) - float(row.get("start_s", 0))
-            >= min_display_s(len(str(row["text"]))) - 1 / 30
+            >= min_display_s(len(str(row["text"]))) - FRAME_S
         ]
         if not explanation:
             raise CreationTextCompositionError(
@@ -1504,7 +1512,7 @@ def _shared_span(owned: list[_ServerTimedSequence], total: float) -> tuple[float
     (`_check_research_layers`); each one's pieces share the span equally. Words that cannot be
     read one at a time inside the video are reported, never squeezed into flicker.
     """
-    from app.services.sequence_pacing import MIN_TEXT_PIECE_S  # noqa: PLC0415
+    from app.services.editor_limits import MIN_TEXT_PIECE_S  # noqa: PLC0415
 
     longest = max(len(item.words) for item in owned)
     needed = longest * MIN_TEXT_PIECE_S
@@ -1841,7 +1849,7 @@ def _layer_name(shape: ResearchLayerShape, *, lead: bool = True) -> str:
     return f"The approved{where} text" if lead else f"the approved{where} text"
 
 
-_FRAME_S = 1 / 30
+_FRAME_S = FRAME_S
 
 
 def _compose_creation_text(

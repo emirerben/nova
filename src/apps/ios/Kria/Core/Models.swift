@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import KriaMediaEngine
 
 enum ProjectStatus: String, Codable, Sendable { case draft, rendering, ready, failed }
 enum UploadState: String, Codable, Sendable { case queued, uploading, uploaded, failed }
@@ -377,7 +378,7 @@ extension EditorDraft {
             }) ?? [:]
             value["slot_id"] = .string(clip.slotID ?? value["slot_id"]?.stringValue ?? clip.id.uuidString)
             let preservedIndex = clip.sourceClipIndex ?? Self.integer(value["clip_index"]) ?? index
-            let editedDuration = max(0.1, clip.end - clip.start)
+            let editedDuration = max(EditorLimits.minClipSeconds, clip.end - clip.start)
             let sourceWindowChanged = Self.number(value["in_s"]).map { abs($0 - clip.trimIn) > 0.000_001 } ?? true
             let durationChanged = Self.number(value["duration_s"]).map { abs($0 - editedDuration) > 0.000_001 } ?? true
             value["clip_index"] = .number(Double(preservedIndex)); value["in_s"] = .number(clip.trimIn); value["duration_s"] = .number(editedDuration)

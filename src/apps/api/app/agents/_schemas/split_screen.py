@@ -2,13 +2,15 @@
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.services.editor_limits import EDITOR_MIN_CLIP_S
+
 
 class SplitPanelClip(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     media_id: str = Field(min_length=1, max_length=160)
     source_start_s: float | None = Field(default=None, ge=0, le=36000)
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
 
 
 class SplitPanelSource(BaseModel):
@@ -40,7 +42,7 @@ class InitialSplitScreen(BaseModel):
 
     panels: list[SplitPanelSource] = Field(min_length=2, max_length=3)
     start_s: float | None = Field(default=None, ge=0, le=1800)
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
     panel_weights: list[float] | None = None
     gutter: float = Field(default=0, ge=0, le=0.1)
     background_color: str = Field(default="#000000", pattern=r"^#[0-9a-fA-F]{6}$")

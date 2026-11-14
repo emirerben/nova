@@ -1196,7 +1196,7 @@ enum EditorOpenIntent { case warm, open }
         }
     }
 
-    private let minimumClipDuration: TimeInterval = 0.1
+    private let minimumClipDuration: TimeInterval = EditorLimits.minClipSeconds
     private let historyLimit = 100
     private var undoStack: [EditorDocument] = [] {
         didSet { undoHistoryVersion &+= 1 }
@@ -6185,7 +6185,7 @@ enum EditorOpenIntent { case warm, open }
         guard canEditSection(.text), speed.isFinite else { return }
         mutateText(id: id) {
             var phases = Self.textPhases(for: $0)
-            phases["speed"] = .number(min(3, max(0.25, speed)))
+            phases["speed"] = .number(TextAnimationPhases.clampedSpeed(speed))
             $0.raw["animation_phases"] = .object(phases)
         }
     }
@@ -8449,7 +8449,7 @@ enum EditorOpenIntent { case warm, open }
     func setCaptionAnimationSpeed(_ scope: CaptionAnimationScope, speed: Double) {
         guard speed.isFinite else { return }
         var phases = captionAnimationPhases(scope)
-        phases["speed"] = .number(min(3, max(0.25, speed)))
+        phases["speed"] = .number(TextAnimationPhases.clampedSpeed(speed))
         writeCaptionPhases(scope, phases)
     }
 

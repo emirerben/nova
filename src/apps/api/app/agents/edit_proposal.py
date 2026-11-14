@@ -57,6 +57,7 @@ from app.schemas.edit_proposal import (
     uses_quick_photo_long_video_timing,
 )
 from app.services import story_shapes
+from app.services.editor_limits import MOTION_FPS
 
 _SENSORY_CLAIM = re.compile(
     r"\b(?:delicious|tasty|flavorful|refreshing|favorite)\b",
@@ -1857,7 +1858,7 @@ def _quantize_quick_mixed_cuts_to_frames(
     ):
         return raw_cuts
     media_by_id = {media.media_id: media for media in input.media}
-    fps = 30
+    fps = MOTION_FPS
     target_frames = max(1, int(round(_effective_target_duration_s(input) * fps)))
     typed: list[_RawFastMontageCut] = []
     for raw_cut in raw_cuts:

@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import KriaMediaEngine
 
 /// A value-only timeline projection. It is safe to rebuild from a document
 /// snapshot and contains no playback or SwiftUI state.
@@ -328,10 +329,10 @@ enum NativeEditorInteraction {
             // millisecond or to the 30fps frame clock, accumulates caption drift.
             // KRI-689: every other timeline follows the server's layout clock, 30fps
             // once a source-window marker is present, else milliseconds.
-            let minimum = slot.id?.hasPrefix("native-phone-talking-source") == true ? 0.001 : 0.1
+            let minimum = slot.id?.hasPrefix("native-phone-talking-source") == true ? 0.001 : EditorLimits.minClipSeconds
             let rawDuration = speech
                 ? max(minimum, slot.durationS ?? minimum)
-                : sourcePreservingOutputDuration(slot) ?? max(0.1, slot.durationS ?? 0.1)
+                : sourcePreservingOutputDuration(slot) ?? max(EditorLimits.minClipSeconds, slot.durationS ?? EditorLimits.minClipSeconds)
             let duration = usesSourceFrameClock ? roundedFrame(rawDuration) : rawDuration
             if let id = slot.splitSectionID, let section = splitSections.first(where: { $0.id == id }) {
                 let start: Double
@@ -457,7 +458,7 @@ enum NativeEditorInteraction {
     }
 
     private static func roundedFrame(_ value: TimeInterval) -> TimeInterval {
-        (value * 30).rounded(.toNearestOrEven) / 30
+        (value * Double(EditorLimits.outputFPS)).rounded(.toNearestOrEven) / Double(EditorLimits.outputFPS)
     }
 
     /// `source_end_s` opts a slot into the exact source-window contract. The
@@ -469,7 +470,7 @@ enum NativeEditorInteraction {
               rate.isFinite, rate > 0 else { return nil }
         let duration = (sourceEnd - sourceStart) / rate
         guard duration.isFinite else { return nil }
-        return renderedClock ? max(0.1, duration) : max(0.1, (duration * 30).rounded(.toNearestOrEven) / 30)
+        return renderedClock ? max(EditorLimits.minClipSeconds, duration) : max(EditorLimits.minClipSeconds, roundedFrame(duration))
     }
 
     private static func sourcePreservingOutputDuration(_ slot: EditorTimelineSlot) -> TimeInterval? {

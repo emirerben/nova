@@ -6,7 +6,7 @@ extension NativeEditorSession {
     /// span is captured before replacing the rate, so 2x -> .5x is absolute
     /// (not a compounded fourfold edit) and reset restores the same footage.
     func setFootagePlaybackRate(_ selection: EditorSelection, rate: Double) {
-        guard rate.isFinite, (0.25...4).contains(rate), let section = footageSection(selection) else { return }
+        guard rate.isFinite, EditorLimits.playbackRate.contains(rate), let section = footageSection(selection) else { return }
         guard selection.kind != .clip || speedBlockedReason(for: selection) == nil else { return }
         // Reset changes the output clock too; a closed device capability must
         // preserve a saved speed until the server permits retiming again.
@@ -41,7 +41,7 @@ extension NativeEditorSession {
                 let limit = document.clips.filter { $0.id != found.slot.id && $0.splitSectionID == id && $0.splitPanelIndex == found.slot.splitPanelIndex && $0.splitOffsetS > found.slot.splitOffsetS }.map(\.splitOffsetS).min() ?? section.durationS
                 if clock.duration > limit - found.slot.splitOffsetS { clock = clock.sliced(from: 0, to: limit - found.slot.splitOffsetS) }
             }
-            guard clock.duration >= 0.1 else { return false }
+            guard clock.duration >= EditorLimits.minClipSeconds else { return false }
             transactDocument(section: .timeline) { $0.clips[index] = clock.applying(to: $0.clips[index]) }
             return true
         }
@@ -50,10 +50,10 @@ extension NativeEditorSession {
         let nativeSpan = found.slot.raw["native_source_span_s"]?.numberValue
         let derivedSpan = outputDuration * effectiveSourceRate(slot: found.slot, clip: found.clip)
         let sourceSpan = sourceEnd.map { $0 - found.slot.inS } ?? nativeSpan ?? derivedSpan
-        guard sourceSpan.isFinite, sourceSpan >= 0.1 else { return false }
+        guard sourceSpan.isFinite, sourceSpan >= EditorLimits.minClipSeconds else { return false }
         let sourceEndValue = found.slot.inS + sourceSpan
         let exactNewDuration = sourceSpan / rate
-        guard exactNewDuration.isFinite, exactNewDuration >= 0.1,
+        guard exactNewDuration.isFinite, exactNewDuration >= EditorLimits.minClipSeconds,
               let requestedDuration = NativeEditorInteraction.sourcePreservingOutputDuration(
             sourceStart: found.slot.inS, sourceEnd: sourceEndValue, rate: rate,
             renderedClock: found.slot.raw["timing_mode"]?.stringValue == "rendered"
@@ -66,7 +66,7 @@ extension NativeEditorSession {
                     && $0.splitOffsetS > found.slot.splitOffsetS
             }.map(\.splitOffsetS).min() ?? section.durationS
             newDuration = min(newDuration, nextStart - found.slot.splitOffsetS)
-            guard newDuration >= 0.1 else { return false }
+            guard newDuration >= EditorLimits.minClipSeconds else { return false }
         }
         let existingRate = found.slot.raw["playback_rate"]?.numberValue ?? 1
         let existingSourceEnd = found.slot.raw["source_end_s"]?.numberValue

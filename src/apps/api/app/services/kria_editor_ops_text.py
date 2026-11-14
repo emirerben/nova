@@ -29,6 +29,7 @@ from typing import Any
 
 from app.kria.spoken_text_ask import SPOKEN_TEXT_ELEMENT_PREFIX
 from app.schemas.guided_edit_revision import MAX_GUIDED_EDITOR_TEXT_ELEMENTS
+from app.services.editor_limits import FRAME_S, MIN_TEXT_PIECE_S, TEXT_PIECE_TOLERANCE_S
 from app.services.kria_editor_ops import (
     _ALLOWED_FONTS,
     _CLIP_LABEL_BAR_PREFIX,
@@ -41,7 +42,6 @@ from app.services.kria_editor_ops import (
     _slot_duration,
     is_caption_text_bar,
 )
-from app.services.sequence_pacing import MIN_TEXT_PIECE_S
 from app.text_fold import capitalize
 
 MAX_TEXT_CHARS = 500
@@ -721,11 +721,6 @@ def _sequence_canonical(value: str) -> str:
 _SEQUENCE_WEIGHT_PAD = 2
 # Share of the source window the cumulative build-up takes; the full sentence holds the rest.
 _CUMULATIVE_BUILD_SHARE = 0.75
-# A piece on screen for less than this is a flicker, not a word. An op authored with `weight`
-# (the compose path) lengthens its window to honor it, up to the end of the video.
-# Window edges are rounded to the microsecond (`_sequence_edges`), so a piece sized to exactly
-# the floor can measure a microsecond short. Below the floor means short by more than that.
-_PIECE_TOLERANCE_S = 2e-6
 
 
 def _sequence_windows(
@@ -837,7 +832,7 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     )
     if "weight" in op:
         smallest = min(w_end - w_start for w_start, w_end in windows)
-        if smallest < MIN_TEXT_PIECE_S - _PIECE_TOLERANCE_S:
+        if smallest < MIN_TEXT_PIECE_S - TEXT_PIECE_TOLERANCE_S:
             # Edges scale linearly with the window, so the end that gives every piece its
             # minimum is exact (rounded UP to the millisecond, so the re-rounded edges still
             # clear it); the video's length (and the next sibling text) is the ceiling.
@@ -866,7 +861,7 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
             )
             if (
                 min(w_end - w_start for w_start, w_end in windows)
-                < MIN_TEXT_PIECE_S - _PIECE_TOLERANCE_S
+                < MIN_TEXT_PIECE_S - TEXT_PIECE_TOLERANCE_S
             ):
                 raise KriaEditorOpError(
                     f"Showing that text in {len(clean_segments)} pieces needs about "
@@ -1048,7 +1043,7 @@ def _sequence_order(row: dict[str, Any], source: str) -> tuple[int, ...]:
     return tuple(int(part) for part in parts[1:])
 
 
-_TOGETHER_S = 1 / 30
+_TOGETHER_S = FRAME_S
 
 
 def _sequences_shown_together(
@@ -1158,14 +1153,15 @@ def validate_sequence_collisions(rows: list[dict[str, Any]], before: list[dict[s
                     overlap = min(
                         float(left.get("end_s") or 0), float(right.get("end_s") or 0)
                     ) - max(float(left.get("start_s") or 0), float(right.get("start_s") or 0))
-                    if overlap > _PIECE_TOLERANCE_S:
+                    if overlap > TEXT_PIECE_TOLERANCE_S:
                         key = (source, *sorted((str(left.get("id")), str(right.get("id")))))
                         overlaps[key] = overlap
         return overlaps
 
     original = collisions(before)
     if any(
-        value > original.get(key, 0) + _PIECE_TOLERANCE_S for key, value in collisions(rows).items()
+        value > original.get(key, 0) + TEXT_PIECE_TOLERANCE_S
+        for key, value in collisions(rows).items()
     ):
         raise KriaEditorOpError(
             "Those sequential words would overlap in the same "

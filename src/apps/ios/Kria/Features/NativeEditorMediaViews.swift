@@ -3620,7 +3620,7 @@ private struct NativeClipSurface: View {
     /// it first. Ordinary clips show handles only while selected.
     var showsEndHandle = false
 
-    private let minimumDuration: TimeInterval = 0.1
+    private let minimumDuration: TimeInterval = EditorLimits.minClipSeconds
 
     private var duration: TimeInterval {
         NativeClipBlockGeometry.windowDuration(clip, minimum: minimumDuration)
@@ -3933,7 +3933,7 @@ struct NativeTrimHandleGeometry: Equatable {
 }
 
 enum NativeClipBlockGeometry {
-    static func windowDuration(_ clip: EditorClip, minimum: TimeInterval = 0.1) -> TimeInterval {
+    static func windowDuration(_ clip: EditorClip, minimum: TimeInterval = EditorLimits.minClipSeconds) -> TimeInterval {
         let window = clip.end - clip.start
         return max(minimum, window.isFinite && window > 0 ? window : minimum)
     }

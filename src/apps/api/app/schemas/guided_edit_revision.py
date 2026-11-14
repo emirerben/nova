@@ -19,7 +19,12 @@ from app.kria.clip_tilt_row import canonical_row_tilt
 from app.pipeline.look_presets import normalize_look_adjustments, normalize_look_preset
 from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA, MAX_PROPOSAL_DURATION_S
 from app.schemas.editor_window import EDITOR_MIN_CLIP_S, below_editor_minimum
-from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS, MOTION_FPS
+from app.services.editor_limits import (
+    EDITOR_MAX_TIMELINE_SLOTS,
+    MOTION_FPS,
+    PLAYBACK_RATE_MAX,
+    PLAYBACK_RATE_MIN,
+)
 
 MAX_GUIDED_EDITOR_SEGMENTS = EDITOR_MAX_TIMELINE_SLOTS
 MAX_GUIDED_EDITOR_DURATION_S = float(MAX_PROPOSAL_DURATION_S)
@@ -99,7 +104,10 @@ class GuidedEditorSegment(BaseModel):
     # Omitted when upright with a blank backdrop so every revision keeps its state hash.
     tilt: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
     playback_rate: float | None = Field(
-        default=None, ge=0.25, le=4.0, exclude_if=lambda value: value is None
+        default=None,
+        ge=PLAYBACK_RATE_MIN,
+        le=PLAYBACK_RATE_MAX,
+        exclude_if=lambda value: value is None,
     )
     # Opt-in source-selection authority; omission preserves legacy fixed-window hashes.
     preserve_source_window: bool | None = Field(default=None, exclude_if=lambda value: not value)
@@ -137,7 +145,9 @@ class GuidedEditorSegment(BaseModel):
         if self.output_end_s is not None and self.output_end_s <= self.output_start_s:
             raise ValueError("segment output window must be ordered")
         if below_editor_minimum(self.duration_s, MIN_GUIDED_EDITOR_SEGMENT_S):
-            raise ValueError("segment duration is below the 0.1s editor floor")
+            raise ValueError(
+                f"segment duration is below the {MIN_GUIDED_EDITOR_SEGMENT_S:g}s editor floor"
+            )
         if self.transition_duration_s < 0.1:
             object.__setattr__(self, "transition_after", "cut")
             object.__setattr__(self, "transition_duration_s", 0.0)

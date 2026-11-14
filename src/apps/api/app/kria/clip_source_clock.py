@@ -6,6 +6,14 @@ import copy
 import math
 from dataclasses import dataclass
 
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
+from app.services.editor_limits import (
+    EDITOR_MIN_CLIP_S,
+    FRAME_S,
+    PLAYBACK_RATE_MAX,
+    PLAYBACK_RATE_MIN,
+)
+
 
 @dataclass(frozen=True)
 class SourceWindow:
@@ -40,8 +48,10 @@ def source_window(row: dict) -> SourceWindow:
 def slice_source_window(row: dict, start: float, end: float) -> dict:
     clock = source_window(row)
     duration = clock.moving + clock.hold
-    if start < 0 or end > duration + 1e-6 or end - start < 0.1 - 1e-6:
-        raise ValueError("A source slice must fit the clip and last at least 0.1 seconds")
+    if start < 0 or end > duration + 1e-6 or below_editor_minimum(end - start):
+        raise ValueError(
+            f"A source slice must fit the clip and last at least {EDITOR_MIN_CLIP_S:g} seconds"
+        )
     result = copy.deepcopy(row)
     moving = max(0.0, min(end, clock.moving) - min(start, clock.moving))
     hold = max(0.0, end - start - moving)
@@ -52,9 +62,13 @@ def slice_source_window(row: dict, start: float, end: float) -> dict:
         frame = clock.frame
         if frame is None or frame <= 0:
             raise ValueError("The held frame needs a positive source sample endpoint")
-        source_start, source_end, rate = max(0.0, frame - 1 / 30), frame, 1.0
+        source_start, source_end, rate = max(0.0, frame - FRAME_S), frame, 1.0
         hold = end - start - (source_end - source_start)
-    result.update(in_s=source_start, duration_s=end - start, duration_beats=None)
+    result.update(
+        in_s=source_start,
+        duration_s=snap_to_editor_minimum(end - start),
+        duration_beats=None,
+    )
     if "source_end_s" in row or clock.hold:
         result["source_end_s"] = source_end
     if "playback_rate" in row or clock.hold:
@@ -66,8 +80,10 @@ def slice_source_window(row: dict, start: float, end: float) -> dict:
 
 
 def retime_source_window(row: dict, rate: float) -> dict:
-    if not math.isfinite(rate) or not 0.25 <= rate <= 4:
-        raise ValueError("Playback rate must be between 0.25 and 4")
+    if not math.isfinite(rate) or not PLAYBACK_RATE_MIN <= rate <= PLAYBACK_RATE_MAX:
+        raise ValueError(
+            f"Playback rate must be between {PLAYBACK_RATE_MIN:g} and {PLAYBACK_RATE_MAX:g}"
+        )
     clock = source_window(row)
     result = copy.deepcopy(row)
     result.update(
@@ -88,8 +104,9 @@ def resize_source_window(row: dict, duration: float) -> dict:
         and row.get("source_duration_s") is not None
     ):
         duration = min(duration, (float(row["source_duration_s"]) - clock.start) / clock.rate)
-    if duration < 0.1:
+    if below_editor_minimum(duration):
         raise ValueError("There is not enough source footage")
+    duration = snap_to_editor_minimum(duration)
     if duration <= current:
         return slice_source_window(row, 0, duration)
     result = copy.deepcopy(row)
@@ -100,8 +117,9 @@ def resize_source_window(row: dict, duration: float) -> dict:
         return result
     if row.get("media_kind") != "image" and row.get("source_duration_s") is not None:
         duration = min(duration, (float(row["source_duration_s"]) - clock.start) / clock.rate)
-    if duration < 0.1:
+    if below_editor_minimum(duration):
         raise ValueError("There is not enough source footage")
+    duration = snap_to_editor_minimum(duration)
     result.update(duration_s=duration, duration_beats=None)
     if "source_end_s" in row:
         result["source_end_s"] = clock.start + duration * clock.rate

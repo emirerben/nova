@@ -211,7 +211,7 @@ enum NativeTextAnimationPreviewMath {
             visibleText: TextAnimationPhases.visiblePrefix(previewText, progress: value.revealProgress))
     }
 
-    static func normalizedSpeed(_ speed: Double) -> Double { min(3, max(0.25, speed.isFinite ? speed : 1)) }
+    static func normalizedSpeed(_ speed: Double) -> Double { TextAnimationPhases.clampedSpeed(speed.isFinite ? speed : 1) }
     private static func edge(_ value: String) -> TextAnimationPhases.Edge { TextAnimationPhases.Edge(rawValue: value) ?? .none }
     private static func loop(_ value: String) -> TextAnimationPhases.Loop { TextAnimationPhases.Loop(rawValue: value) ?? .none }
     static let stableSample = NativeTextAnimationPreviewSample(alpha: 1, scale: 1, xTranslate: 0, yTranslate: 0, visibleText: previewText)

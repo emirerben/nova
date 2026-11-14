@@ -42,6 +42,7 @@ BRIEF_EXTRACTOR_PROMPT_SOURCES = (
     "app/kria/brief.py",
     "app/agents/prompt_vocab.py",
     "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/services/editor_limits.py",  # {{PLAYBACK_RATE_MIN}} {{PLAYBACK_RATE_MAX}}
     "prompts/brief_extractor.txt",
 )
 BRIEF_EXTRACTOR_PROMPT_VERSION = prompt_fingerprint("be", BRIEF_EXTRACTOR_PROMPT_SOURCES)

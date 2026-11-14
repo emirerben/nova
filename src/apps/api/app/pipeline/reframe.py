@@ -42,6 +42,7 @@ from app.pipeline.canvas import Canvas
 from app.pipeline.cut_grid import FrameGrid, keep_segment_frames
 from app.pipeline.probe import probe_video
 from app.pipeline.text_overlay import FONTS_DIR
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 
 log = structlog.get_logger()
 
@@ -66,11 +67,13 @@ class ReframeError(Exception):
 
 
 def _atempo_filter(speed_factor: float) -> str:
-    """Return pitch-preserving FFmpeg tempo filters for 0.25x–4x playback."""
+    """Return pitch-preserving FFmpeg tempo filters for an editor clip's playback rate."""
 
     remaining = float(speed_factor)
-    if not 0.25 <= remaining <= 4.0:
-        raise ReframeError("speed_factor must be between 0.25 and 4")
+    if not PLAYBACK_RATE_MIN <= remaining <= PLAYBACK_RATE_MAX:
+        raise ReframeError(
+            f"speed_factor must be between {PLAYBACK_RATE_MIN:g} and {PLAYBACK_RATE_MAX:g}"
+        )
     factors: list[float] = []
     while remaining < 0.5:
         factors.append(0.5)
