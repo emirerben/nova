@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.220.0] - 2026-11-14
+
+### Changed
+- fix(kria): a length the creator never stated never blocks the video (KRI-1446) (#2339) <!-- release-pr: 2339 -->
+
 ## [0.88.219.0] - 2026-11-14
 
 ### Changed
