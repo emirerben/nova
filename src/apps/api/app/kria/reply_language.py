@@ -366,7 +366,7 @@ def asks_for_video_words(reason_code: str | None) -> bool:
     """
     if not own_words_enabled():
         return False
-    tokens = set(re.findall(r"[a-z]+", (reason_code or "").lower()))
+    tokens = set(re.findall(r"[a-z]+", (reason_code or "").lower()))  # kri667: server reason code
     return bool(tokens & _VIDEO_WORDS_REASON) and not tokens & _VIDEO_LOOK_REASON
 
 
