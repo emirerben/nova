@@ -312,11 +312,14 @@ def test_codemod_kept_every_en_tr_pair() -> None:
         converted[rel] = new if new is not None else text
     before = _pair_counts(build.harvest(converted))
     after = _pair_counts(_harvest())
-    assert {k: v for k, v in (before - after).items()} == {}
+    # A sentence the chat stopped saying on purpose is listed, never silently lost.
+    retired = {tuple(row) for row in _json(_ROUTED_PAIRS).get("retired", [])}
+    assert {k: v for k, v in (before - after).items() if k not in retired} == {}
     routed = {tuple(row) for row in _json(_ROUTED_PAIRS)["pairs"]}
     added = set(after - before)
     assert added - routed == set(), "new pairs: route copy through say() or pin them"
-    assert {(en, tr) for _f, en, tr in before} <= {(en, tr) for _f, en, tr in after}
+    kept = {(en, tr) for row in before if row not in retired for _f, en, tr in [row]}
+    assert kept <= {(en, tr) for _f, en, tr in after}
 
 
 # ---------------------------------------------------------------- (d) pseudo language

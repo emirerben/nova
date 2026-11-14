@@ -474,6 +474,8 @@
       "KriaUITests/SplitFlowGapsUITests/testSavedTabIsDrawnFromTheFirstFrameSoTheGridNeverMovesUnderTheFinger",
       "KriaUITests/SplitFlowGapsUITests/testAddingShowsOnTheTappedTileInsteadOfInsertingARowAboveTheGrid",
       "KriaUITests/SplitFlowGapsUITests/testGapInAPanelLaneOpensTheAddFlow",
+      "KriaUITests/SplitBlankUITests/testFillAnEmptyPanelWithBlankAndRecolourIt",
+      "KriaUITests/SplitBlankUITests/testFillWithBlankIsAbsentUntilTheServerOffersIt",
       "KriaUITests/NativeEditorPlaybackAdmissionUITests/testPlayingTitleUpdateSettlesThroughTheRealSurfaceAndCompositor",
       "KriaUITests/OverlayEditVerifyUITests/testText",
       "KriaUITests/OverlayEditVerifyUITests/testCaption",
