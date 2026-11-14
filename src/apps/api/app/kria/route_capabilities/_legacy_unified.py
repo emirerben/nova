@@ -30,6 +30,26 @@ def _list(values: Iterable[object]) -> str:
     return ", ".join(_clip(v, 40) for v in values if str(v or "").strip())
 
 
+# German reads these value names in German (KRI-1408); English and Turkish keep the English
+# words this card always showed.
+_VALUE_NAMES: dict[str, tuple[str, str]] = {
+    "relaxed": ("relaxed", "relaxed"),
+    "balanced": ("balanced", "balanced"),
+    "guided_story": ("guided story", "guided story"),
+    "text_explainer": ("text explainer", "text explainer"),
+    "native": ("native", "native"),
+    "day_vlog": ("day vlog", "day vlog"),
+    "single_hero": ("single hero", "single hero"),
+}
+
+
+def _value_name(value: object) -> str:
+    key = str(value)
+    if key in _VALUE_NAMES:
+        return say(en=_VALUE_NAMES[key][0], tr=_VALUE_NAMES[key][1])
+    return key.replace("_", " ")
+
+
 def _hook(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not str(value or "").strip():
         return None
@@ -76,7 +96,7 @@ def _pacing(value: Any, strategy: Mapping[str, Any]) -> str | None:
             "the cuts follow a fast pace"
         ),
         tr=("{str_value_replace} tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda"),
-        str_value_replace=str(value).replace("_", " "),
+        str_value_replace=_value_name(value),
     )
 
 
@@ -92,7 +112,7 @@ def _direction(value: Any, _s: Mapping[str, Any]) -> str | None:
             "{str_value_replace} yönü bu videoda henüz uygulanmıyor: "
             "hızlı bir montaj olarak kesiliyor"
         ),
-        str_value_replace=str(value).replace("_", " "),
+        str_value_replace=_value_name(value),
     )
 
 
@@ -125,7 +145,7 @@ def _archetype(value: Any, _s: Mapping[str, Any]) -> str | None:
     return say(
         en="I can't use the {str_value_replace} story archetype on this video yet",
         tr="{str_value_replace} hikâye kalıbını bu videoda henüz kullanamıyorum",
-        str_value_replace=str(value).replace("_", " "),
+        str_value_replace=_value_name(value),
     )
 
 

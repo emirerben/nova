@@ -16,6 +16,7 @@ from typing import Any
 
 from app.kria.brief import BriefRequirement
 from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._lines import direction_line, pacing_line, stated_length
 from app.kria.route_capabilities._types import (
     Applied,
     AskDecline,
@@ -82,18 +83,16 @@ FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
     "pacing": NotApplied(
-        lines.pacing_line(
+        pacing_line(
             lines.pace_not_followed, "the video follows your speech", "video konuşmanı izliyor"
         )
     ),
     "direction": NotApplied(
-        lines.direction_line(
-            "fast_montage", "the video follows your speech", "video konuşmanı izliyor"
-        )
+        direction_line("fast_montage", "the video follows your speech", "video konuşmanı izliyor")
     ),
     "caption_style": NotApplied(lines.captions_always_on),
     "target_duration_s": NotApplied(
-        lines.stated_length("its length follows your speech", "uzunluğu konuşmanı takip ediyor")
+        stated_length("its length follows your speech", "uzunluğu konuşmanı takip ediyor")
     ),
     "title_animation": NotApplied(WithAsks(_title_animation)),
     "label_position": NotApplied(lines.label_position),

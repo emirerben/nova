@@ -2972,6 +2972,23 @@ async def _load_status_reconciliation_rows(
     return item, session, job
 
 
+# A job's live phase as the status line names it. Turkish never shows it (its line leaves the
+# phase out), so its half repeats the English.
+_PHASE_NAMES: dict[str, tuple[str, str]] = {
+    "queued": ("queued", "queued"),
+    "download_clips": ("download clips", "download clips"),
+    "analyze_clips": ("analyze clips", "analyze clips"),
+    "match_clips": ("match clips", "match clips"),
+    "match_song": ("match song", "match song"),
+    "assemble": ("assemble", "assemble"),
+    "mix_audio": ("mix audio", "mix audio"),
+    "generate_copy": ("generate copy", "generate copy"),
+    "render_variants": ("render variants", "render variants"),
+    "upload": ("upload", "upload"),
+    "finalize": ("finalize", "finalize"),
+}
+
+
 def _status_message(
     *, thread: CreationThread, session: CreatorAgentSession | None, job: Job | None
 ) -> str:
@@ -2981,7 +2998,12 @@ def _status_message(
             tr="Videon sırada. Takipteyim, başlayınca bu sohbete yazacağım.",
         )
     if job is not None and job.status not in PLAN_ITEM_JOB_TERMINAL:
-        phase = str(job.current_phase or "").replace("_", " ").strip()
+        raw_phase = str(job.current_phase or "")
+        if raw_phase in _PHASE_NAMES:
+            # German reads a known phase in German (KRI-1408).
+            phase = say(en=_PHASE_NAMES[raw_phase][0], tr=_PHASE_NAMES[raw_phase][1])
+        else:
+            phase = raw_phase.replace("_", " ").strip()
         # The phase is an English pipeline name, so the Turkish line leaves it out.
         if phase:
             return say(

@@ -465,7 +465,8 @@ def genre_record(genres: Sequence[AskedGenre], track: Any | None) -> dict[str, A
 
 
 def _join(names: Sequence[str], last: str) -> str:
-    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} {last} {names[-1]}"
+    """``last`` is the spaced joiner (" or ")."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])}{last}{names[-1]}"
 
 
 def _a(name: str) -> str:
@@ -492,22 +493,29 @@ def music_genre_notice(section: Mapping[str, Any] | None) -> str | None:
     artist = str(section.get("artist") or "").strip()
     if section.get("status") != "selected" or not title:
         # No song came back: the matcher may simply have failed, so don't blame the library.
+        # German needs no article and its own "or" (KRI-1408).
         return say(
-            en="I couldn't suggest {a_names_0} {join_names} track this time.",
+            en=(
+                "I couldn't suggest an {join_names} track this time."
+                if _a(names[0]) == "an"
+                else "I couldn't suggest a {join_names} track this time."
+            ),
             tr="Bu sefer bir {join_names_2} şarkısı öneremedim.",
-            a_names_0=_a(names[0]),
-            join_names=_join(names, "or"),
-            join_names_2=_join(names, "ya da"),
+            join_names=_join(names, say(en=" or ", tr=" ya da ")),
+            join_names_2=_join(names, " ya da "),
         )
-    song_en = f"“{title}” by {artist}" if artist else f"“{title}”"
-    song_tr = f"“{title}” ({artist})" if artist else f"“{title}”"
+    song = (
+        say(en="“{title}” by {artist}", tr="“{title}” ({artist})", title=title, artist=artist)
+        if artist
+        else say(en="“{title}”", tr="“{title}”", title=title)
+    )
     if section[GENRE_FIT]:
         return say(
             en="For the {genre} song you asked for, I suggest {song_en}. Add it when you post.",
             tr="{song_tr}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin.",
             genre=genre,
-            song_en=song_en,
-            song_tr=song_tr,
+            song_en=song,
+            song_tr=song,
         )
     return say(
         en=(
@@ -518,8 +526,8 @@ def music_genre_notice(section: Mapping[str, Any] | None) -> str | None:
             "Elimde {join_names_2} şarkısı yok. En yakını {song_tr}. "
             "Beğenirsen paylaşırken ekleyebilirsin."
         ),
-        join_names=_join(names, "or"),
-        song_en=song_en,
-        join_names_2=_join(names, "ya da"),
-        song_tr=song_tr,
+        join_names=_join(names, say(en=" or ", tr=" ya da ")),
+        song_en=song,
+        join_names_2=_join(names, " ya da "),
+        song_tr=song,
     )

@@ -801,10 +801,11 @@ def _moment_count_notice(
     else:
         return None
     return say(
-        en="I could fit {planned} {v1}, not {count}.",
+        en="I could fit {planned} moment, not {count}."
+        if planned == 1
+        else "I could fit {planned} moments, not {count}.",
         tr="{count} değil, {planned} an sığdırabildim.",
         planned=planned,
-        v1="moment" if planned == 1 else "moments",
         count=count,
     )
 

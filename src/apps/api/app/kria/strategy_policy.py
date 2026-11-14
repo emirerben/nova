@@ -144,13 +144,15 @@ def _guided_voiceover_downgrade_notice(manifest: ResolvedCreatorManifest) -> str
 def _asked_media_left_out_notice(kind: str | None, ask: str) -> str:
     """KRI-594: a photo or video the creator's brief asks for, named in their own words."""
 
-    noun_en, noun_tr = ("photo", "fotoğraf") if kind == "image" else ("video", "video")
+    photo = kind == "image"
     return say(
-        en='This version leaves out the {noun_en} you asked for: "{ask}".',
-        tr='Bu sürümde istediğin {noun_tr} yok: "{ask}".',
-        noun_en=noun_en,
+        en='This version leaves out the photo you asked for: "{ask}".'
+        if photo
+        else 'This version leaves out the video you asked for: "{ask}".',
+        tr='Bu sürümde istediğin fotoğraf yok: "{ask}".'
+        if photo
+        else 'Bu sürümde istediğin video yok: "{ask}".',
         ask=ask,
-        noun_tr=noun_tr,
     )
 
 
@@ -991,26 +993,29 @@ def _length_reason(
             )
         several = len(numbers) > 1
         which = _join_numbers(numbers)
+        # Whole sentences per count: German inflects around the clip word (KRI-1362).
         return say(
             en=(
-                "Only {v1} {which} "
-                "{v2} in this edit and "
-                "{v3} about {possible:g} seconds, "
+                "Only clips {which} are in this edit and together they run about "
+                "{possible:g} seconds, so the video can't be {wanted:g} seconds."
+            )
+            if several
+            else (
+                "Only clip {which} is in this edit and it runs about {possible:g} seconds, "
                 "so the video can't be {wanted:g} seconds."
             ),
             tr=(
-                "Bu düzenlemede yalnızca {which}. {v4} var ve "
-                "{v5}yaklaşık {possible:g} saniye sürüyor, bu "
-                "yüzden video {wanted:g} saniye olamıyor."
+                "Bu düzenlemede yalnızca {which}. klipler var ve birlikte yaklaşık "
+                "{possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
+            )
+            if several
+            else (
+                "Bu düzenlemede yalnızca {which}. klip var ve yaklaşık {possible:g} saniye "
+                "sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
             ),
-            v1="clips" if several else "clip",
             which=which,
-            v2="are" if several else "is",
-            v3="together they run" if several else "it runs",
             possible=possible,
             wanted=wanted,
-            v4="klipler" if several else "klip",
-            v5="birlikte " if several else "",
         )
     return say(
         en=(
@@ -1052,20 +1057,22 @@ def _lost_in_words(
             which = _join_numbers(numbers)
             reasons.append(
                 say(
-                    en="{v1} {which} can't be in this edit.",
-                    tr="{which}. {v2} bu düzenlemeye giremiyor.",
-                    v1="Clips" if several else "Clip",
+                    en="Clips {which} can't be in this edit."
+                    if several
+                    else "Clip {which} can't be in this edit.",
+                    tr="{which}. klipler bu düzenlemeye giremiyor."
+                    if several
+                    else "{which}. klip bu düzenlemeye giremiyor.",
                     which=which,
-                    v2="klipler" if several else "klip",
                 )
             )
             agreed.append(
                 say(
-                    en="I left out {v1} {which}.",
-                    tr="{which}. {v2} dışarıda bıraktım.",
-                    v1="clips" if several else "clip",
+                    en="I left out clips {which}." if several else "I left out clip {which}.",
+                    tr="{which}. klipleri dışarıda bıraktım."
+                    if several
+                    else "{which}. klibi dışarıda bıraktım.",
                     which=which,
-                    v2="klipleri" if several else "klibi",
                 )
             )
         elif field == "target_duration_s":
@@ -1187,7 +1194,12 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
             return RefusedStrategy(
                 question=say(
                     en=(
-                        'You picked {clips} clip{v1}, so "{pin_text}" '
+                        'You picked {clips} clip, so "{pin_text}" '
+                        "can't go on clip {pin_clip}. Which clip should it be on?"
+                    )
+                    if clips == 1
+                    else (
+                        'You picked {clips} clips, so "{pin_text}" '
                         "can't go on clip {pin_clip}. Which clip should it be on?"
                     ),
                     tr=(
@@ -1195,7 +1207,6 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
                         "konamaz. Hangi klibe koyayım?"
                     ),
                     clips=clips,
-                    v1="" if clips == 1 else "s",
                     pin_text=pin.text,
                     pin_clip=pin.clip,
                 ),

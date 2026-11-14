@@ -50,137 +50,458 @@
 | Your voiceover | Dein Voiceover |
 | No music | Keine Musik |
 
-## Needs a code change for German grammar (125 lines)
+## Grammar fixed in code (KRI-1408)
 
-In these lines the code puts English words, English plural endings or English grammar into a `{...}` value, so the German can't come out right whatever the translation says: the creator will see English bits or odd grammar. Each needs a follow-up code change (pass a translated value or split the sentence per language). The German drafts are the best possible meanwhile.
+The 125 lines this sheet listed as "needs a code change" (English plural endings, verbs, pronouns
+or English words glued into a `{...}` value) were rewritten in KRI-1408: each sentence is now a
+whole sentence per case (one clip / several clips, top / middle / bottom, first / last, ...), and
+values that carried English text (language names, positions, format and pace names, song names,
+lists joined with "and"/"or") now go through the catalog too. German "ich" mid-sentence (after
+"; ") is lowercase, and long replies are shortened on a whole word.
 
-| English key | German draft | Why |
-|---|---|---|
-| ·If you want a fresh version built from your whole request, reply "redo" and I'll render it again. | ·Wenn du eine neue Version aus deiner ganzen Anfrage möchtest, schreib "nochmal", dann erstelle ich das Video neu. | asks for a typed reply; the server knows "redo"/"yeniden yap", not the German "nochmal" (add a German alias) |
-| Added the filming hour to {count} clip{v1}. | Aufnahmezeit zu {count} Clip{v1} hinzugefügt. | `{v1}` is the English plural "s" |
-| Aligned {who} to the {side} | {who} nach {side} ausgerichtet | `{side}` holds an English side name |
-| Changed the background behind {who}: {v1} | Hintergrund hinter {who} geändert: {v1} | `{v1}` is English (`behind_en` or "plain") |
-| Changed the {v1} of {who} | {v1} von {who} geändert | `{v1}` is the English property name |
-| Clip{v1} {names} {v2}'t look like "{words}" from what I saw, so I didn't put that wording on {v3}. Tell me what {v4}, or ask me to describe what I see. | Clip{v1} {names} sehen nach dem, was ich gesehen habe, nicht nach "{words}" aus, deshalb habe ich diesen Text nicht daraufgesetzt. Sag mir, was zu sehen ist, oder bitte mich zu beschreiben, was ich sehe. ({v2} / {v3} / {v4}) | `{v1}`..`{v4}` hold English bits ("s", "don"/"doesn", "it"/"them", "it shows"); the draft parks them in brackets at the end, which shows English words |
-| Cropped the {clips_n} to fill the vertical frame | {clips_n} zugeschnitten, damit sie das Hochformat füllen | `{clips_n}` is built from an English f-string ("3 sideways clips") that is not in the catalog |
-| Cropped the {clips_n} to fill the vertical frame{follows} | {clips_n} zugeschnitten, damit sie das Hochformat füllen{follows} | `{clips_n}` is built from an English f-string ("3 sideways clips") that is not in the catalog |
-| Cropped {cropped} of {clips_n} to vertical; kept black bars on {barred} because the face moves too far for one vertical crop to keep it | {cropped} von {clips_n} ins Hochformat zugeschnitten; bei {barred} bleiben schwarze Balken, weil sich das Gesicht zu weit bewegt, als dass ein Hochformat-Ausschnitt es halten könnte | `{clips_n}` is built from an English f-string ("3 sideways clips") that is not in the catalog |
-| Each {word} plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Gruppe ({word}) läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. | `{word}` is an English grouping noun (the Turkish uses `{tr_word}`) |
-| Edited {plural_len_entry_targets} | {plural_len_entry_targets} bearbeitet | the count phrase ("2 captions") is built from an f-string that is not in the catalog, so it stays English |
-| Filming hour on {len_timed} of {total} clips; {missing} {v1} no filming time. | Aufnahmezeit bei {len_timed} von {total} Clips; bei {missing} fehlt sie ({v1}). | `{v1}` holds "has"/"have" |
-| For the {genre} song you asked for, I suggest {song_en}. Add it when you post. | Für den gewünschten {genre}-Song schlage ich {song_en} vor. Füg ihn beim Posten hinzu. | `{song_en}` is an English sentence piece |
-| Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds {v1} {seconds}s | Hält das Bild {seconds} s an, {where}, nicht die gewünschten {requested:g} s: ein Standbild dauert {v1} {seconds} s | `{v1}` holds "at most"/"at least" |
-| Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it {v1} than {previous:g}s | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich es {v1} als {previous:g} s gemacht | `{v1}` holds "longer"/"shorter" |
-| Group by {word}, chronological inside each {word} | Nach {word} gruppieren, innerhalb jeder Gruppe ({word}) chronologisch | `{word}` is an English grouping noun |
-| How short should the {v1} be? | Wie kurz soll {v1} sein? | `{v1}` is an English referent or "clips" |
-| I can't make this video the length you asked for yet: {instead_en} | Ich kann dieses Video noch nicht in der gewünschten Länge erstellen: {instead_en} | `{instead_en}` is English |
-| I can't use the {str_value_replace} story archetype on this video yet | Ich kann das Story-Muster {str_value_replace} in diesem Video noch nicht nutzen | `{str_value_replace}` is an English value name |
-| I could fit {planned} {v1}, not {count}. | Ich konnte {planned} {v1} unterbringen, nicht {count}. | `{v1}` holds "moment"/"moments" |
-| I couldn't leave out {v1}, so {v2} still in the video. | Ich konnte {v1} nicht weglassen, deshalb {v2} noch im Video. | `{v1}` is English text, `{v2}` holds "it is"/"they are" |
-| I couldn't suggest {a_names_0} {join_names} track this time. | Diesmal konnte ich keinen Song vorschlagen ({a_names_0} {join_names}). | `{a_names_0}` is the English article "a"/"an" and `{join_names}` uses English "or" |
-| I cut this as a fast montage instead of a {label_en}: {v1}. | Ich habe das als schnelle Montage statt als {label_en} geschnitten: {v1}. | `{label_en}` and `{v1}` are English |
-| I didn't caption clip{v1} {join_skipped}. | Clip{v1} {join_skipped} habe ich keinen Untertitel hinzugefügt. | `{v1}` is the English plural "s" |
-| I don't have any {join_names} tracks. The closest I have is {song_en}. Add it when you post if you like it. | Ich habe keine {join_names}-Songs. Am nächsten kommt {song_en}. Füg ihn beim Posten hinzu, wenn er dir gefällt. | `{join_names}` is joined with English "or"; `{song_en}` is English |
-| I left out clip{plural} {join_unseen}: I can't tell what {v1}. Tell me and I'll add {v2}. | Clip{plural} {join_unseen} habe ich weggelassen: Ich erkenne nicht, was {v1}. Sag es mir, dann füge ich {v2} hinzu. | `{plural}` is the English "s"; `{v1}`/`{v2}` hold "it shows"/"they show", "it"/"them" |
-| I left out {v1} because {v2} too short to use. | Ich habe {v1} weggelassen, weil {v2} zu kurz zum Verwenden ist. | `{v1}` is English text, `{v2}` holds "it is"/"they are" |
-| I left out {v1} {which}. | Ich habe {v1} {which} weggelassen. | `{v1}` holds "clip"/"clips" |
-| I matched {by_lyrics} take{v1} by your singing. | Ich habe {by_lyrics} Take{v1} anhand deines Gesangs zugeordnet. | `{v1}` is the English plural "s" |
-| I prepared a {pacing} {edit_format} draft around the available footage. | Ich habe einen {pacing}-{edit_format}-Entwurf aus deinem vorhandenen Material vorbereitet. | `{pacing}`/`{edit_format}` hold English words |
-| I prepared {count} reversible editor change{suffix}. | Ich habe {count} rückgängig machbare Änderung{suffix} im Editor vorbereitet. | `{suffix}` is the English plural "s" |
-| I ticked the {v1} clip you filmed for "{category_get}". | Ich habe den {v1}-Clip angehakt, den du für "{category_get}" gefilmt hast. | `{v1}` holds "first"/"last" |
-| I used {every}{len_used} clips, including the {len_short} short {v1} | Ich habe {every}{len_used} Clips verwendet, darunter {len_short} kurze {v1} | `{every}` and `{v1}` ("one"/"ones") are English words |
-| I'll cut this as a fast montage instead of a {label_en}: {v1} | Ich schneide das als schnelle Montage statt als {label_en}: {v1} | `{label_en}` and `{v1}` are English |
-| I'll spell {and_names_names} the way you wrote {v1} and check {v1} in the finished video | Ich schreibe {and_names_names} so, wie du {v1} geschrieben hast, und prüfe {v1} im fertigen Video | `{v1}` holds "it"/"them" |
-| I'm still checking some of your clips against that request. Reply "go ahead" in a moment and I'll pick up where I left off. No need to send the whole request again. | Ich prüfe noch einige deiner Clips für diese Anfrage. Antworte gleich mit "weiter", dann mache ich da weiter, wo ich aufgehört habe. Du musst nicht die ganze Anfrage nochmal schicken. | asks for a typed reply; "weiter" needs adding as a German alias |
-| Keep it strictly chronological; {word}s may interleave | Streng chronologisch lassen; Gruppen nach {word} dürfen sich mischen | `{word}` is an English noun plus English plural "s" (draft avoids the "s") |
-| Kept black bars on the {clips_n}, so nothing is cropped | Schwarze Balken bei {clips_n} beibehalten, damit nichts abgeschnitten wird | `{clips_n}` is built from an English f-string ("3 sideways clips") that is not in the catalog |
-| Kria is rendering your video ({phase}). I’ll update this chat when it’s ready. | Kria erstellt gerade dein Video ({phase}). Ich melde mich in diesem Chat, sobald es fertig ist. | `{phase}` is an English pipeline phase name (Turkish leaves it out; German must keep the field) |
-| Labelled {count} clip{v1}. | {count} Clip{v1} beschriftet. | `{v1}` is the English plural "s" |
-| Lined up {who} on the {horizontal} | {who} an {horizontal} ausgerichtet | `{horizontal}` holds an English position |
-| Made {who} {word_en} ({old:g}→{new:g}px) | {who} {word_en} gemacht ({old:g}→{new:g}px) | `{word_en}` is English |
-| Moved the captions to the {vertical} | Untertitel nach {vertical} verschoben | `{vertical}` holds an English position |
-| Moved {who} to the {named} | {who} nach {named} verschoben | `{named}` holds "top"/"middle"/"bottom" in English |
-| No filming time for clip{plural} {join_untimed}. | Keine Aufnahmezeit für Clip{plural} {join_untimed}. | `{plural}` is the English plural "s" |
-| Only {v1} {which} {v2} in this edit and {v3} about {possible:g} seconds, so the video can't be {wanted:g} seconds. | In diesem Edit {v1} nur {which} {v2} und {v3} etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. | `{v1}`..`{v3}` hold "clip(s)", "is/are" and English verbs |
-| Optional: move the {word} to the {en_anchor} so it's easier to read. | Optional: Verschieb {word} nach {en_anchor}, damit es leichter lesbar ist. | `{en_anchor}` is English |
-| Set {who} to {case_en_get_str_common} | {who} → {case_en_get_str_common} | `{case_en_get_str_common}` is English |
-| Speech cleanup cut what it heard as {joined_en} ({seconds:.1f} s). | Die Sprachbereinigung hat geschnitten, was sie als {joined_en} gehört hat ({seconds:.1f} s). | `{joined_en}` is English |
-| Speech cleanup cut what it heard as {joined_en}. | Die Sprachbereinigung hat geschnitten, was sie als {joined_en} gehört hat. | `{joined_en}` is English |
-| That part can't make a {asked_s}-second edit without changing {lines_en}. | Mit diesem Teil kann ich keinen {asked_s}-Sekunden-Edit machen, ohne {lines_en} zu ändern. | `{lines_en}` is English |
-| That part runs longer than {asked_s} seconds, and I can't shorten it without changing {lines_en}. | Dieser Teil ist länger als {asked_s} Sekunden, und ich kann ihn nicht kürzen, ohne {lines_en} zu ändern. | `{lines_en}` is English |
-| That {source} cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem {source} kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | `{source}` is an English noun (Turkish uses `{source_tr}`) |
-| That {source} cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem {source} kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | `{source}` is an English noun |
-| The captions show up to {drawn_words} words at a time, not {en_n}. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht {en_n}. | `{en_n}` may be an English number word |
-| The captions sit {v1} than you asked so they stay off your face. | Die Untertitel sitzen {v1} als gewünscht, damit sie nicht über deinem Gesicht liegen. | `{v1}` holds "lower"/"higher" |
-| The captions won't be held to {en_n} words at a time. | Die Untertitel werden nicht auf {en_n} Wörter auf einmal begrenzt. | `{en_n}` may be an English number word |
-| The selected {natural_owner} runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter {natural_owner}. | Der ausgewählte {natural_owner} dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren {natural_owner}. | `{natural_owner}` is an English noun; German article/gender can't follow it |
-| The selected {natural_owner} runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Der ausgewählte {natural_owner} dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | `{natural_owner}` is an English noun |
-| The video has {len_lengths} {moments}, not {ask_count} | Das Video hat {len_lengths} {moments}, nicht {ask_count} | `{moments}` holds "moment"/"moments" |
-| The {str_value_replace} direction isn't applied on this video yet: it is cut as a fast montage | Die Richtung {str_value_replace} wird bei diesem Video noch nicht angewendet: Es wird als schnelle Montage geschnitten | `{str_value_replace}` is an English value name |
-| The {str_value_replace} pacing isn't applied on this video yet: the cuts follow a fast pace | Das Tempo {str_value_replace} wird bei diesem Video noch nicht angewendet: Die Schnitte folgen einem schnellen Tempo | `{str_value_replace}` is an English value name |
-| The {words_value} direction isn't applied on this video yet: {instead_en} | Die Richtung {words_value} wird bei diesem Video noch nicht angewendet: {instead_en} | `{words_value}` and `{instead_en}` are English |
-| The {words_value} pacing isn't applied on this video yet: {instead_en} | Das Tempo {words_value} wird bei diesem Video noch nicht angewendet: {instead_en} | `{words_value}` and `{instead_en}` are English |
-| This draft is about {round_s_facts_duration_s}s{outro}; you asked for {asked_en}. | Dieser Entwurf ist etwa {round_s_facts_duration_s} s{outro} lang; du wolltest {asked_en}. | `{asked_en}` is English |
-| This draft is ordered by {basis_replace}, not the order you asked for. | Dieser Entwurf ist nach {basis_replace} geordnet, nicht in der gewünschten Reihenfolge. | `{basis_replace}` is the English basis name |
-| This version leaves out the {noun_en} you asked for: "{ask}". | In dieser Version fehlt das, was du dir gewünscht hast ({noun_en}): "{ask}". | `{noun_en}` is English |
-| This {facts_edit_format_replace} edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Edit ({facts_edit_format_replace}) kürzt dein Material; ein Talking-Edit behält den ganzen Take. | `{facts_edit_format_replace}` is the English format name |
-| Updated {v1}. | {v1} aktualisiert. | `{v1}` is English when it comes from plan_blocks (`en`) |
-| Use the supported trim for this {source}. | Die unterstützte Kürzung für diesen {source} verwenden. | `{source}` is an English noun |
-| With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing {lines_en}. | Mit dem Standard-Ende dauert dieser Teil {asked_s} Sekunden oder länger, und ich kann ihn nicht kürzen, ohne {lines_en} zu ändern. | `{lines_en}` is English |
-| You asked for a chronological video and for the clips grouped by {word}. | Du wolltest ein chronologisches Video und die Clips nach {word} gruppiert. | `{word}` is an English grouping noun |
-| You can tell me which clip shows it, or reply "skip it" and I'll {then}. | Du kannst mir sagen, in welchem Clip es vorkommt, oder "überspringen" antworten, dann {then}. | asks for a typed reply; "überspringen" needs adding to the no-line aliases |
-| You chose black bars, so the {clips_n} keep them | Du hast schwarze Balken gewählt, deshalb behalten {clips_n} sie | `{clips_n}` is built from an English f-string ("3 sideways clips") that is not in the catalog |
-| You chose crop, so the {clips_n} are cropped to fill the frame | Du hast Zuschneiden gewählt, deshalb werden {clips_n} so zugeschnitten, dass sie das Bild füllen | `{clips_n}` is built from an English f-string ("3 sideways clips") that is not in the catalog |
-| You picked {clips} clip{v1}, so "{pin_text}" can't go on clip {pin_clip}. Which clip should it be on? | Du hast {clips} Clip{v1} ausgewählt, deshalb kann "{pin_text}" nicht auf Clip {pin_clip}. Auf welchen Clip soll es? | `{v1}` is the English plural "s" |
-| You're {corner_0} over your background, so you don't fill the frame. | Du bist {corner_0} über deinem Hintergrund, deshalb füllst du das Bild nicht aus. | `{corner_0}` is an English corner name |
-| Your brief says "{said}", but the available {source} is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber das verfügbare {source} ist {capacity_s} Sekunden lang. | `{source}` is an English noun; German article/gender can't follow it |
-| the {v1} clip you {v2} | der {v1} Clip, den du {v2} | `{v1}` holds "first"/"last", `{v2}` "filmed"/"added" |
-| {and_names_absent} {v1}'t appear in the captions, so I couldn't check {v2} spelling. | {and_names_absent} {v1} nicht in den Untertiteln vor, deshalb konnte ich die Schreibweise von {v2} nicht prüfen. | `{v1}` holds "doesn"/"don", `{v2}` "its"/"their" |
-| {and_names_spelled} {v1} spelled as you wrote {v2}. | {and_names_spelled} {v1} so geschrieben, wie du {v2} geschrieben hast. | `{v1}` holds "is"/"are", `{v2}` "it"/"them" |
-| {bed_still_plays} at full volume alongside your voice; {fix_en} | {bed_still_plays} in voller Lautstärke neben deiner Stimme; {fix_en} | `{bed_still_plays}` is an English constant, `{fix_en}` English |
-| {bed_still_plays} softly under your voice{about_en}; {fix_en} | {bed_still_plays} leise unter deiner Stimme{about_en}; {fix_en} | `{bed_still_plays}`, `{about_en}`, `{fix_en}` are English |
-| {candidate_intro} Unfortunately {after_connector_candidate_reason} The most I can do is: {only_label}. Reply "{only_label}" to go with that, or change your request. | {candidate_intro} Leider {after_connector_candidate_reason} Das Beste, was ich machen kann: {only_label}. Antworte mit "{only_label}", wenn das für dich passt, oder ändere deine Anfrage. | the reason is lowercased by `_after_connector` (breaks German nouns) and German needs the verb right after "Leider" |
-| {candidate_intro} Unfortunately {after_connector_candidate_reason} Which do you prefer? | {candidate_intro} Leider {after_connector_candidate_reason} Was gefällt dir besser? | same as above: `_after_connector` lowercasing and German word order after "Leider" |
-| {count} take{v1} later in the song than a 2-minute video can hold. | {count} Take{v1} später im Song, als in ein 2-Minuten-Video passt. | `{v1}` holds " sits"/"s sit" (English verb) |
-| {count} take{v1} no usable singing or words, so {v2} in as short muted clip{v3}. Trim or remove {v4} in the editor. | {count} Take{v1} keinen brauchbaren Gesang und keine brauchbaren Worte, deshalb {v2} als kurze stumme Clips{v3}. Kürze oder entferne {v4} im Editor. | `{v1}`..`{v4}` hold English verbs, pronouns and plural "s" |
-| {count} take{v1} placed by my best guess and may be slightly off; check {v2} in the editor. | {count} Take{v1} nach bestem Wissen platziert und könnte leicht daneben liegen; prüf {v2} im Editor. | `{v1}`/`{v2}` hold " is"/"s are" and "it"/"them" |
-| {edit_format} format | Format: {edit_format} | `{edit_format}` holds an English word |
-| {en_label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}" | {en_label}-Clips laufen von {start:.1f} s bis {end:.1f} s, unter: "{excerpt}" | `{en_label}` is English |
-| {freeze_needs_frame} ({start}–{end}s into the clip) but not the exact frame to hold, so it plays normally. Tell me the second to freeze on, like "freeze at {middle} seconds" | {freeze_needs_frame} ({start}–{end} s im Clip), aber nicht das genaue Bild zum Einfrieren, deshalb läuft er normal. Sag mir die Sekunde zum Einfrieren, zum Beispiel "bei {middle} Sekunden einfrieren" | `{freeze_needs_frame}` is an English constant, not looked up in the catalog |
-| {label} outlines {outline} in future videos. | {label}: Kontur {outline} in künftigen Videos. | `{label}` comes from Python `capitalize()`, which lowercases German nouns ("Alle texte") |
-| {label} shadows {state} in future videos. | {label}: Schatten {state} in künftigen Videos. | `{label}` comes from Python `capitalize()`, which lowercases German nouns |
-| {len_off} of {len_rows} texts don't have the requested {names_en} yet | {len_off} von {len_rows} Texten haben die gewünschte Eigenschaft {names_en} noch nicht | `{names_en}` is English |
-| {len_off} of {total} text{v1} didn't end up reading exactly “{req_literal}”. | {len_off} von {total} Text{v1} lautet am Ende nicht genau „{req_literal}“. | `{v1}` is the English plural "s" |
-| {missed} {verb} where you asked. | {missed} {verb} nicht dort, wo du es wolltest. | `{verb}` holds "isn't"/"aren't" |
-| {moment_not_in_clip}: {v1} | {moment_not_in_clip}: {v1} | both are English constants/text, not looked up in the catalog |
-| {named_cut_still_in}: "{quote}" ({v1}) | {named_cut_still_in}: "{quote}" ({v1}) | `{named_cut_still_in}` and `{v1}` are English constants/text |
-| {n} clip{v1} had no capture time, so I kept {v2} attachment order. | {n} Clip{v1} hatte keine Aufnahmezeit, deshalb habe ich {v2} Reihenfolge beim Hinzufügen beibehalten. | `{v1}` is the English "s", `{v2}` holds "its"/"their" |
-| {n} clip{v1} too short for its text to stay on screen long enough to read. | {n} Clip{v1} zu kurz, als dass der Text lang genug zum Lesen zu sehen wäre. | `{v1}` holds " is"/"s are" |
-| {pacing} pacing | Tempo: {pacing} | `{pacing}` holds an English word |
-| {prefix}; {en_tail} and you asked for {asked_en} | {prefix}; {en_tail}, und du wolltest {asked_en} | `{en_tail}`/`{asked_en}` are English |
-| {sentence_case_words} is clip {v1} of {len_steps}, not the {spot} one. | {sentence_case_words} ist Clip {v1} von {len_steps}, nicht der {spot}. | `{spot}` holds "first"/"last" |
-| {subject_en} about {kept_s} seconds of your take: {span_en}. | {subject_en} etwa {kept_s} Sekunden deines Takes: {span_en}. | `{subject_en}` and `{span_en}` are English |
-| {subject} {plays} at {speed} | {subject} {plays} mit {speed} | `{subject}`/`{plays}` are English |
-| {subject} {plays} at {speed}, as you asked later | {subject} {plays} mit {speed}, wie du es später wolltest | `{subject}`/`{plays}` are English |
-| {subject} {plays} at {speed}, not the {requested:g}x you asked for: a clip plays {v1} {speed} | {subject} {plays} mit {speed}, nicht mit den gewünschten {requested:g}x: Ein Clip kann höchstens {v1} {speed} laufen | `{subject}`/`{plays}`/`{v1}` are English |
-| {subject} {plays} at {speed}, not the {requested:g}x you asked for: the clip ran out of footage | {subject} {plays} mit {speed}, nicht mit den gewünschten {requested:g}x: Dem Clip ist das Material ausgegangen | `{subject}`/`{plays}` are English |
-| {talking_spoken_text_pinned}{word} you picked, at {clock} in your take; if I can't find that one, it won't appear | {talking_spoken_text_pinned}{word}, das du gewählt hast, bei {clock} in deinem Take; finde ich es nicht, erscheint es nicht | `{talking_spoken_text_pinned}` is an English constant |
-| {talking_window_plan}from {at_start} on, if I find that line; if not, it opens at the start | {talking_window_plan}ab {at_start}, wenn ich diesen Satz finde; sonst beginnt es von vorn | `{talking_window_plan}` is an English constant |
-| {talking_window_plan}from {at_start} to right after {at_end}, if I find those lines | {talking_window_plan}von {at_start} bis kurz nach {at_end}, wenn ich diese Sätze finde | `{talking_window_plan}` is an English constant |
-| {talking_window_plan}up to right after {at_end}, if I find that line; if not, it runs to the end | {talking_window_plan}bis kurz nach {at_end}, wenn ich diesen Satz finde; sonst läuft es bis zum Ende | `{talking_window_plan}` is an English constant |
-| {unnamed} of your recordings never {v1}. | {unnamed} deiner Aufnahmen {v1} nie. | `{v1}` holds "shows"/"show" |
-| {v1} clip you {v2} | {v1} Clip, den du {v2} | `{v1}` holds "first"/"last", `{v2}` "filmed"/"added" |
-| {v1} on {joined_en} | {v1} auf {joined_en} | `{v1}` holds "Pop-in"/"Pop-ins", `{joined_en}` English text |
-| {v1} {v2} | {v1} {v2} | both pieces are English text (`creator_render_contract`) |
-| {v1} {which} can't be in this edit. | {v1} {which} kann nicht in diesem Edit sein. | `{v1}` holds "Clip"/"Clips" |
-| {v1}, then you're {corner_0} when you start on your first recording. | {v1}, dann bist du {corner_0}, wenn du bei deiner ersten Aufnahme anfängst. | `{v1}` is English text and `{corner_0}` an English corner name |
-| {v1}, then your background takes the screen. | {v1}, dann übernimmt dein Hintergrund den Bildschirm. | `{v1}` is English text |
-| {v1}, then {corner_0}. | {v1}, dann {corner_0}. | `{v1}` is English text and `{corner_0}` an English corner name |
-| {v1}; {repeats} more repeated the label before, so I left {v2} off. | {v1}; {repeats} weitere wiederholten das vorige Label, deshalb habe ich {v2} weggelassen. | `{v2}` holds "it"/"them" |
-| {verb_0} {plural_len_entry_targets} | {verb_0} {plural_len_entry_targets} | `{verb_0}` is the English verb and the count phrase is built in English |
-| {verb_0} {v1} | {verb_0} {v1} | `{verb_0}` is the English verb and `{v1}` an English "N nouns" phrase |
-| {what} is in {count} stretches | {what} ist in {count} Abschnitte geteilt | `{what}` is the English name cut out of an English sentence |
-| {words} ({spot}) | {words} ({spot}) | `{spot}` holds "first"/"last"/"then" in English (the Turkish line uses a separate field) |
+Lines to review first: the 387 new lines and 45 reworded lines below.
+
+### New lines (387)
+
+| English | German | Turkish (for context) | OK? |
+|---|---|---|---|
+| "{other}" for {name} | "{other}" statt {name} | {name} yerine "{other}" |  |
+| "{trigger}" at {at_s:.1f} s | „{trigger}“ bei {at_s:.1f} s | "{trigger}" {at_s:.1f} sn'de |  |
+| Added the filming hour to {count} clip. | Aufnahmezeit bei {count} Clip ergänzt. | {count} klibe çekim saatini ekledim. |  |
+| Added the filming hour to {count} clips. | Aufnahmezeit bei {count} Clips ergänzt. | {count} klibe çekim saatini ekledim. |  |
+| Added {what} | {what} hinzugefügt | {what} eklendi |  |
+| Aligned {who} to the center | {who} zentriert | {who} ortaya hizalandı |  |
+| Aligned {who} to the left | {who} linksbündig ausgerichtet | {who} sola hizalandı |  |
+| Aligned {who} to the right | {who} rechtsbündig ausgerichtet | {who} sağa hizalandı |  |
+| Arabic | Arabisch | (language name, no Turkish key) |  |
+| Balanced pacing | Tempo: Ausgewogen | Tempo: Dengeli |  |
+| Changed the Bend of {who} | {who}: Biegung geändert | {who} için Kavis değişti |  |
+| Changed the animation speed of {who} | {who}: Animationstempo geändert | {who} için animasyon hızı değişti |  |
+| Changed the background behind {who}: blurred background | {who}: unscharfer Hintergrund | {who} arka planı değişti: bulanık arka plan |  |
+| Changed the background behind {who}: photo or video behind it | {who}: Foto oder Video als Hintergrund | {who} arka planı değişti: arkasında fotoğraf ya da video |  |
+| Changed the background behind {who}: plain | {who}: schlichter Hintergrund | {who} arka planı değişti: düz |  |
+| Changed the background behind {who}: {kind} background | {who}: Hintergrund {kind} | {who} arka planı değişti: {kind} arka plan |  |
+| Changed the background of {who} | {who}: Hintergrund geändert | {who} için arka plan değişti |  |
+| Changed the behind-subject look of {who} | {who}: Hinter-dem-Motiv-Effekt geändert | {who} için özne arkası görünümü değişti |  |
+| Changed the exit animation of {who} | {who}: Ausgangsanimation geändert | {who} için çıkış animasyonu değişti |  |
+| Changed the highlight colour of {who} | {who}: Hervorhebungsfarbe geändert | {who} için vurgu rengi değişti |  |
+| Changed the letter spacing of {who} | {who}: Zeichenabstand geändert | {who} için harf aralığı değişti |  |
+| Changed the line spacing of {who} | {who}: Zeilenabstand geändert | {who} için satır aralığı değişti |  |
+| Changed the looping animation of {who} | {who}: Schleifenanimation geändert | {who} için döngü animasyonu değişti |  |
+| Changed the outline of {who} | {who}: Kontur geändert | {who} için kontur değişti |  |
+| Changed the rotation of {who} | {who}: Drehung geändert | {who} için dönüş değişti |  |
+| Changed the shadow of {who} | {who}: Schatten geändert | {who} için gölge değişti |  |
+| Changed the text width of {who} | {who}: Textbreite geändert | {who} için yazı genişliği değişti |  |
+| Changed {what} | {what} geändert | {what} değişti |  |
+| Clip {names} doesn't look like "{words}" from what I saw, so I didn't put that wording on it. Tell me what it is, or ask me to describe what I see. | Clip {names} sieht nach dem, was ich gesehen habe, nicht nach "{words}" aus, deshalb habe ich diesen Text nicht daraufgesetzt. Sag mir, was darin zu sehen ist, oder bitte mich, zu beschreiben, was ich sehe. | Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste. |  |
+| Clip {n} | Clip {n} | {n}. klip |  |
+| Clip {which} can't be in this edit. | Clip {which} kann nicht in diesem Edit sein. | {which}. klip bu düzenlemeye giremiyor. |  |
+| Clips {head} and {last} | Clips {head} und {last} | {v1} klipler |  |
+| Clips {names} don't look like "{words}" from what I saw, so I didn't put that wording on them. Tell me what they are, or ask me to describe what I see. | Die Clips {names} sehen nach dem, was ich gesehen habe, nicht nach "{words}" aus, deshalb habe ich diesen Text nicht daraufgesetzt. Sag mir, was darin zu sehen ist, oder bitte mich, zu beschreiben, was ich sehe. | Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste. |  |
+| Clips {which} can't be in this edit. | Die Clips {which} können nicht in diesem Edit sein. | {which}. klipler bu düzenlemeye giremiyor. |  |
+| Danish | Dänisch | (language name, no Turkish key) |  |
+| Day Vlog format | Format: Tagesvlog | Format: Günlük vlog |  |
+| Dutch | Niederländisch | (language name, no Turkish key) |  |
+| Each group plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Gruppe läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. | Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur. |  |
+| Each sport plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Sportart läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. | Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur. |  |
+| English | Englisch | (language name, no Turkish key) |  |
+| Every video clip | Jeder Videoclip | Her video klibi |  |
+| Fast pacing | Tempo: Schnell | Tempo: Hızlı |  |
+| Filming hour on {len_timed} of {total} clips; {missing} has no filming time. | Die Aufnahmeuhrzeit steht bei {len_timed} von {total} Clips; {missing} hat keine Aufnahmezeit. | Çekim saati {total} klibin {len_timed} tanesinde var; {missing} klibin çekim saati yok. |  |
+| Filming hour on {len_timed} of {total} clips; {missing} have no filming time. | Die Aufnahmeuhrzeit steht bei {len_timed} von {total} Clips; {missing} haben keine Aufnahmezeit. | Çekim saati {total} klibin {len_timed} tanesinde var; {missing} klibin çekim saati yok. |  |
+| Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds at least {seconds}s | Hält das Bild {seconds} s an, {where}, nicht die gewünschten {requested:g} s: ein Standbild dauert mindestens {seconds} s | Kare {seconds} sn donuyor, {where_tr}, istediğin {requested:g} sn değil: bir donma en {v2} {seconds} sn sürebiliyor |  |
+| Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds at most {seconds}s | Hält das Bild {seconds} s an, {where}, nicht die gewünschten {requested:g} s: ein Standbild dauert höchstens {seconds} s | Kare {seconds} sn donuyor, {where_tr}, istediğin {requested:g} sn değil: bir donma en {v2} {seconds} sn sürebiliyor |  |
+| Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it longer than {previous:g}s | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich es länger als {previous:g} s gemacht | Kare {seconds} sn donuyor, {where_tr}; süre söylemediğin için {previous:g} sn'den {v2} tuttum |  |
+| Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it shorter than {previous:g}s | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich es kürzer als {previous:g} s gemacht | Kare {seconds} sn donuyor, {where_tr}; süre söylemediğin için {previous:g} sn'den {v2} tuttum |  |
+| French | Französisch | (language name, no Turkish key) |  |
+| German | Deutsch | (language name, no Turkish key) |  |
+| Greek | Griechisch | (language name, no Turkish key) |  |
+| Group by group, chronological inside each group | In Gruppen ordnen, innerhalb jeder Gruppe chronologisch | Her {tr_word} bir blok olsun; blok içinde kronolojik sırala |  |
+| Group by sport, chronological inside each sport | Nach Sportart gruppieren, innerhalb jeder Sportart chronologisch | Her {tr_word} bir blok olsun; blok içinde kronolojik sırala |  |
+| How short should the clips be? | Wie kurz sollen die Clips sein? | Klipler ne kadar kısa olsun? |  |
+| How short should the images be? | Wie kurz sollen die Bilder sein? | Görseller ne kadar kısa olsun? |  |
+| How short should the videos be? | Wie kurz sollen die Videos sein? | Videolar ne kadar kısa olsun? |  |
+| I can't cut a line out of a video made of several takes yet | aus einem Video aus mehreren Takes kann ich noch keinen Satz herausschneiden | birkaç çekimden oluşan bir videodan henüz satır kesemiyorum |  |
+| I can't tell yet which clip is the talking one | ich weiß noch nicht, in welchem Clip du sprichst | hangi klibin konuşma klibi olduğunu henüz bilmiyorum |  |
+| I could fit {planned} moment, not {count}. | Ich konnte {planned} Moment unterbringen, nicht {count}. | {count} değil, {planned} an sığdırabildim. |  |
+| I could fit {planned} moments, not {count}. | Ich konnte {planned} Momente unterbringen, nicht {count}. | {count} değil, {planned} an sığdırabildim. |  |
+| I couldn't confirm the part of the clip that plays shows the moment you named: {moments} | Ich konnte nicht bestätigen, dass der abgespielte Teil des Clips den Moment zeigt, den du genannt hast: {moments} | {v2}: {moments} |  |
+| I couldn't find it in your take | ich habe es in deinem Take nicht gefunden | çekiminde bulamadım |  |
+| I couldn't find the one you picked in your take | ich habe die Stelle, die du gewählt hast, in deinem Take nicht gefunden | seçtiğin anı çekiminde bulamadım |  |
+| I couldn't leave out clip {numbers}, so it is still in the video. | Ich konnte Clip {numbers} nicht weglassen, deshalb ist er noch im Video. | {clips_tr} çıkaramadım, o yüzden videoda duruyor. |  |
+| I couldn't leave out clips {numbers}, so they are still in the video. | Ich konnte die Clips {numbers} nicht weglassen, deshalb sind sie noch im Video. | {clips_tr} çıkaramadım, o yüzden videoda duruyorlar. |  |
+| I couldn't suggest a {join_names} track this time. | Diesmal konnte ich dir keinen Song im Stil {join_names} vorschlagen. | Bu sefer bir {join_names_2} şarkısı öneremedim. |  |
+| I couldn't suggest an {join_names} track this time. | Diesmal konnte ich dir keinen Song im Stil {join_names} vorschlagen. | Bu sefer bir {join_names_2} şarkısı öneremedim. |  |
+| I cut this as a fast montage instead of a guided story: {v1}. | Ich habe das als schnelle Montage statt als geführte Story geschnitten: {v1}. | Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}. |  |
+| I cut this as a fast montage instead of a text explainer: {v1}. | Ich habe das als schnelle Montage statt als Text-Erklärvideo geschnitten: {v1}. | Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}. |  |
+| I didn't caption clip {join_skipped}. | Clip {join_skipped} habe ich nicht untertitelt. | Klip {join_skipped} için yazı eklemedim. |  |
+| I didn't caption clips {join_skipped}. | Die Clips {join_skipped} habe ich nicht untertitelt. | Klip {join_skipped} için yazı eklemedim. |  |
+| I found that moment ({start}–{end}s into the clip) but not the exact frame to hold, so it plays normally. Tell me the second to freeze on, like "freeze at {middle} seconds" | Ich habe diesen Moment gefunden ({start}–{end} s im Clip), aber nicht das genaue Bild zum Anhalten, deshalb läuft er normal. Sag mir, bei welcher Sekunde das Bild stehen soll, zum Beispiel „bei {middle} Sekunden einfrieren“ | {v1} (klibin {start}–{end}. saniyeleri) ama tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede donsun, söyle; örneğin "{middle}. saniyede dondur" |  |
+| I left out clip {join_unseen}: I can't tell what it shows. Tell me and I'll add it. | Clip {join_unseen} habe ich weggelassen: Ich erkenne nicht, was er zeigt. Sag es mir, dann ergänze ich ihn. | Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. Söylersen ekleyeyim. |  |
+| I left out clip {numbers} because it is too short to use. | Ich habe Clip {numbers} weggelassen, weil er zu kurz ist, um ihn zu verwenden. | {clips_tr} kullanılamayacak kadar kısa olduğu için çıkardım. |  |
+| I left out clip {which}. | Ich habe Clip {which} weggelassen. | {which}. klibi dışarıda bıraktım. |  |
+| I left out clips {join_unseen}: I can't tell what they show. Tell me and I'll add them. | Die Clips {join_unseen} habe ich weggelassen: Ich erkenne nicht, was sie zeigen. Sag es mir, dann ergänze ich sie. | Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. Söylersen ekleyeyim. |  |
+| I left out clips {numbers} because they are too short to use. | Ich habe die Clips {numbers} weggelassen, weil sie zu kurz sind, um sie zu verwenden. | {clips_tr} kullanılamayacak kadar kısa oldukları için çıkardım. |  |
+| I left out clips {which}. | Ich habe die Clips {which} weggelassen. | {which}. klipleri dışarıda bıraktım. |  |
+| I matched {by_lyrics} take by your singing. | Ich habe {by_lyrics} Take anhand deines Gesangs zugeordnet. | {by_lyrics} çekimi söylediğin sözlere göre eşleştirdim. |  |
+| I matched {by_lyrics} takes by your singing. | Ich habe {by_lyrics} Takes anhand deines Gesangs zugeordnet. | {by_lyrics} çekimi söylediğin sözlere göre eşleştirdim. |  |
+| I prepared {count} reversible editor change. | Ich habe {count} Änderung im Editor vorbereitet, die du rückgängig machen kannst. | Editörde {count} geri alınabilir değişiklik hazırladım. |  |
+| I prepared {count} reversible editor changes. | Ich habe {count} Änderungen im Editor vorbereitet, die du rückgängig machen kannst. | Editörde {count} geri alınabilir değişiklik hazırladım. |  |
+| I ticked the first clip you filmed for "{category_get}". | Ich habe für "{category_get}" den ersten Clip angehakt, den du gefilmt hast. | "{category_get}" için çektiğin ilk klibi işaretledim. |  |
+| I ticked the last clip you filmed for "{category_get}". | Ich habe für "{category_get}" den letzten Clip angehakt, den du gefilmt hast. | "{category_get}" için çektiğin son klibi işaretledim. |  |
+| I used all {len_used} clips, including the {len_short} short one | Ich habe alle {len_used} Clips verwendet, auch {len_short} kurzen Clip | {len_used} klibin hepsini kullandım, {len_short} kısa klip de dahil |  |
+| I used all {len_used} clips, including the {len_short} short ones | Ich habe alle {len_used} Clips verwendet, auch die {len_short} kurzen | {len_used} klibin hepsini kullandım, {len_short} kısa klip de dahil |  |
+| I used {len_used} clips, including the {len_short} short one | Ich habe {len_used} Clips verwendet, auch {len_short} kurzen Clip | {len_used} klibin tamamını kullandım, {len_short} kısa klip de dahil |  |
+| I used {len_used} clips, including the {len_short} short ones | Ich habe {len_used} Clips verwendet, auch die {len_short} kurzen | {len_used} klibin tamamını kullandım, {len_short} kısa klip de dahil |  |
+| I'll cut this as a fast montage instead of a guided story: {v1} | Ich schneide das als schnelle Montage statt als geführte Story: {v1} | Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2} |  |
+| I'll cut this as a fast montage instead of a text explainer: {v1} | Ich schneide das als schnelle Montage statt als Text-Erklärvideo: {v1} | Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2} |  |
+| I'll keep your take from {at_start} on, if I find that line; if not, it opens at the start | Ich behalte deinen Take ab {at_start}, wenn ich diesen Satz finde; sonst beginnt das Video am Anfang | {v1}{at_start} cümlesinden sonrasını korurum, o cümleyi bulursam; bulamazsam video baştan açılır |  |
+| I'll keep your take from {at_start} to right after {at_end}, if I find those lines | Ich behalte deinen Take von {at_start} bis kurz nach {at_end}, wenn ich diese Sätze finde | {v1}{at_start} cümlesinden {at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, bu cümleleri bulursam |  |
+| I'll keep your take up to right after {at_end}, if I find that line; if not, it runs to the end | Ich behalte deinen Take bis kurz nach {at_end}, wenn ich diesen Satz finde; sonst läuft das Video bis zum Ende | {v1}{at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, o cümleyi bulursam; bulamazsam video sonuna kadar sürer |  |
+| I'll show it on the {word} you picked, at {clock} in your take; if I can't find that one, it won't appear | Ich zeige ihn bei dem von dir gewählten {word}, bei {clock} in deinem Take; finde ich diese Stelle nicht, erscheint er nicht | {v1}{word} anında, çekiminin {clock} noktasında gösteririm; o anı bulamazsam yazı çıkmaz |  |
+| I'll spell {and_names_names} the way you wrote it and check it in the finished video | ich schreibe {and_names_names} so, wie du es geschrieben hast, und prüfe es im fertigen Video | şunu senin yazdığın gibi yazıp bitmiş videoda kontrol edeceğim: {and_names_names} |  |
+| I'll spell {and_names_names} the way you wrote them and check them in the finished video | ich schreibe {and_names_names} so, wie du sie geschrieben hast, und prüfe sie im fertigen Video | şunları senin yazdığın gibi yazıp bitmiş videoda kontrol edeceğim: {and_names_names} |  |
+| Italian | Italienisch | (language name, no Turkish key) |  |
+| Keep it strictly chronological; groups may interleave | Streng chronologisch lassen; die Gruppen dürfen sich mischen | Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir |  |
+| Keep it strictly chronological; sports may interleave | Streng chronologisch lassen; die Sportarten dürfen sich mischen | Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir |  |
+| Korean | Koreanisch | (language name, no Turkish key) |  |
+| Labelled {count} clip. | {count} Clip beschriftet. | {count} klibe etiket ekledim. |  |
+| Labelled {count} clips. | {count} Clips beschriftet. | {count} klibe etiket ekledim. |  |
+| Lined up {who} on the center | {who} in die Mitte gerückt | {who} ortaya hizalandı |  |
+| Lined up {who} on the left | {who} nach links gerückt | {who} sola hizalandı |  |
+| Lined up {who} on the right | {who} nach rechts gerückt | {who} sağa hizalandı |  |
+| Made {who} bigger ({old:g}→{new:g}px) | {who} vergrößert ({old:g}→{new:g}px) | {who} büyüttüm ({old:g}→{new:g}px) |  |
+| Made {who} smaller ({old:g}→{new:g}px) | {who} verkleinert ({old:g}→{new:g}px) | {who} küçülttüm ({old:g}→{new:g}px) |  |
+| Montage format | Format: Montage | Format: Montaj |  |
+| Moved the captions to the bottom | Untertitel nach unten verschoben | Altyazılar alt konuma taşındı |  |
+| Moved the captions to the middle | Untertitel in die Mitte verschoben | Altyazılar orta konuma taşındı |  |
+| Moved the captions to the top | Untertitel nach oben verschoben | Altyazılar üst konuma taşındı |  |
+| Moved {who} to the bottom | {who} nach unten verschoben | {who} alt konuma taşındı |  |
+| Moved {who} to the middle | {who} in die Mitte verschoben | {who} orta konuma taşındı |  |
+| Moved {who} to the top | {who} nach oben verschoben | {who} üst konuma taşındı |  |
+| Narrated Planned format | Format: Mit Voiceover | Format: Seslendirmeli |  |
+| Narrated Ready format | Format: Mit Voiceover | Format: Seslendirmeli |  |
+| Narrated format | Format: Mit Voiceover | Format: Seslendirmeli |  |
+| No filming time for clip {join_untimed}. | Keine Aufnahmezeit für Clip {join_untimed}. | Klip {join_untimed} için çekim saati yok. |  |
+| No filming time for clips {join_untimed}. | Keine Aufnahmezeit für die Clips {join_untimed}. | Klip {join_untimed} için çekim saati yok. |  |
+| None of the {total} clips got its own text in this draft. | Keiner der {total} Clips hat in diesem Entwurf einen eigenen Text bekommen. | Bu taslakta {total} klibin hiçbirine kendi yazısı gelmedi. |  |
+| Only clip {which} is in this edit and it runs about {possible:g} seconds, so the video can't be {wanted:g} seconds. | In diesem Edit ist nur Clip {which}, und er dauert etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. | Bu düzenlemede yalnızca {which}. klip var ve yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor. |  |
+| Only clips {which} are in this edit and together they run about {possible:g} seconds, so the video can't be {wanted:g} seconds. | In diesem Edit sind nur die Clips {which}, und zusammen dauern sie etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. | Bu düzenlemede yalnızca {which}. klipler var ve birlikte yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor. |  |
+| Optional: move the {word} to the bottom so it's easier to read. | Optional: {word} nach unten verschieben, damit der Text besser lesbar ist. | İstersen {word} daha kolay okunsun diye alta taşınabilir. |  |
+| Optional: move the {word} to the middle so it's easier to read. | Optional: {word} in die Mitte verschieben, damit der Text besser lesbar ist. | İstersen {word} daha kolay okunsun diye ortaya taşınabilir. |  |
+| Optional: move the {word} to the top so it's easier to read. | Optional: {word} nach oben verschieben, damit der Text besser lesbar ist. | İstersen {word} daha kolay okunsun diye üste taşınabilir. |  |
+| Pop-in on {joined} | Pop-in: {joined} | {join_parts_tr}{tail_tr} çıkıyor |  |
+| Pop-ins on {joined} | Pop-ins: {joined} | {join_parts_tr}{tail_tr} çıkıyor |  |
+| Portuguese | Portugiesisch | (language name, no Turkish key) |  |
+| Relaxed pacing | Tempo: Entspannt | Tempo: Sakin |  |
+| Removed {what} | {what} entfernt | {what} kaldırıldı |  |
+| Serbian | Serbisch | (language name, no Turkish key) |  |
+| Set {who} to Title Case | {who}: Jedes Wort beginnt jetzt groß | {who} → Baş Harfler Büyük |  |
+| Set {who} to UPPERCASE | {who} in GROSSBUCHSTABEN gesetzt | {who} → BÜYÜK HARF |  |
+| Set {who} to a new case | {who}: Schreibweise geändert | {who} → yeni harf biçimi |  |
+| Set {who} to its original case | {who} wieder in der ursprünglichen Schreibweise | {who} → özgün harf |  |
+| Set {who} to lowercase | {who} in kleinbuchstaben gesetzt | {who} → küçük harf |  |
+| Single Hero format | Format: Hauptclip | Format: Tek kahraman klip |  |
+| Slides format | Format: Folien | Format: Slayt |  |
+| Spanish | Spanisch | (language name, no Turkish key) |  |
+| Speech cleanup cut what it heard as {joined} ({seconds:.1f} s). | Die Sprachbereinigung hat geschnitten, was sie dafür hielt: {joined} ({seconds:.1f} s). | Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr} ({seconds_tr} sn). |  |
+| Speech cleanup cut what it heard as {joined}. | Die Sprachbereinigung hat geschnitten, was sie dafür hielt: {joined}. | Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr}. |  |
+| Still in your video: "{quote}" ({v1}) | Noch in deinem Video: „{quote}“ ({v1}) | {v2}: "{quote}" ({v1}) |  |
+| Subtitled format | Format: Mit Untertiteln | Format: Altyazılı |  |
+| Talking Head format | Format: Talking Head | Format: Kameraya konuşma |  |
+| Text landed on {count} of {total} clips. | Text ist auf {count} von {total} Clips gelandet. | Yazı {total} klibin {count} tanesine geldi. |  |
+| Text on {count} clips. | Text auf {count} Clips. | {count} klipte yazı var. |  |
+| That footage cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Material kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That footage cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Material kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
+| That part can't make a {asked_s}-second edit without changing that line. | Aus diesem Teil kann ich keinen {asked_s}-Sekunden-Edit machen, ohne diesen Satz zu ändern. | {lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That part can't make a {asked_s}-second edit without changing those lines. | Aus diesem Teil kann ich keinen {asked_s}-Sekunden-Edit machen, ohne diese Sätze zu ändern. | {lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That part runs longer than {asked_s} seconds, and I can't shorten it without changing that line. | Dieser Teil ist länger als {asked_s} Sekunden, und ich kann ihn nicht kürzen, ohne diesen Satz zu ändern. | O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam. |  |
+| That part runs longer than {asked_s} seconds, and I can't shorten it without changing those lines. | Dieser Teil ist länger als {asked_s} Sekunden, und ich kann ihn nicht kürzen, ohne diese Sätze zu ändern. | O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam. |  |
+| That song cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Song kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That song cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Song kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
+| That spoken take cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem gesprochenen Take kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That spoken take cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem gesprochenen Take kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
+| That voiceover with the selected footage cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Voiceover und dem ausgewählten Material kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That voiceover with the selected footage cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Voiceover und dem ausgewählten Material kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
+| The captions show up to {drawn_words} words at a time, not one. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht nur eines. | Altyazılar aynı anda bir değil, en fazla {drawn_words} kelime gösteriyor. |  |
+| The captions show up to {drawn_words} words at a time, not three. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht drei. | Altyazılar aynı anda üç değil, en fazla {drawn_words} kelime gösteriyor. |  |
+| The captions show up to {drawn_words} words at a time, not two. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht zwei. | Altyazılar aynı anda iki değil, en fazla {drawn_words} kelime gösteriyor. |  |
+| The captions sit higher than you asked so they stay off your face. | Die Untertitel sitzen höher als gewünscht, damit sie nicht über deinem Gesicht liegen. | Altyazılar yüzüne gelmesin diye istediğinden daha yukarıda duruyor. |  |
+| The captions sit lower than you asked so they stay off your face. | Die Untertitel sitzen tiefer als gewünscht, damit sie nicht über deinem Gesicht liegen. | Altyazılar yüzüne gelmesin diye istediğinden daha aşağıda duruyor. |  |
+| The captions won't be held to one words at a time. | Die Untertitel werden nicht auf ein Wort auf einmal begrenzt. | Altyazılar aynı anda bir kelimeyle sınırlı kalmayacak. |  |
+| The captions won't be held to three words at a time. | Die Untertitel werden nicht auf drei Wörter auf einmal begrenzt. | Altyazılar aynı anda üç kelimeyle sınırlı kalmayacak. |  |
+| The captions won't be held to two words at a time. | Die Untertitel werden nicht auf zwei Wörter auf einmal begrenzt. | Altyazılar aynı anda iki kelimeyle sınırlı kalmayacak. |  |
+| The captions write {wrong_spellings}. You can fix that in the editor. | In den Untertiteln steht {wrong_spellings}. Das kannst du im Editor korrigieren. | Altyazılarda {wrong_spellings} yazıyor. Bunu editörde düzeltebilirsin. |  |
+| The footage sound still plays at full volume alongside your voice; {fix} | Der Originalton läuft noch in voller Lautstärke neben deiner Stimme; {fix} | {v1}, sesinle aynı seviyede; {fix} |  |
+| The footage sound still plays softly under your voice (about {pct}%); {fix} | Der Originalton läuft noch leise unter deiner Stimme (etwa {pct} %); {fix} | {v1}, sesinin altında kısık{about_tr}; {fix} |  |
+| The footage sound still plays softly under your voice; {fix} | Der Originalton läuft noch leise unter deiner Stimme; {fix} | {v1}, sesinin altında kısık{about_tr}; {fix} |  |
+| The selected footage runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter footage. | Das ausgewählte Material dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm kürzeres Material. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected footage runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Das ausgewählte Material dauert {natural_duration:g} Sekunden, reicht ohne Wiederholung aber nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
+| The selected song runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter song. | Der ausgewählte Song dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren Song. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected song runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Der ausgewählte Song dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
+| The selected take runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter take. | Der ausgewählte Take dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren Take. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected take runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Der ausgewählte Take dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
+| The selected voiceover runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter voiceover. | Das ausgewählte Voiceover dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm ein kürzeres Voiceover. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected voiceover runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Das ausgewählte Voiceover dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
+| The video has {len_lengths} moment, not {ask_count} | Das Video hat {len_lengths} Moment, nicht {ask_count} | Videoda {ask_count} değil {len_lengths} an var |  |
+| The video has {len_lengths} moments, not {ask_count} | Das Video hat {len_lengths} Momente, nicht {ask_count} | Videoda {ask_count} değil {len_lengths} an var |  |
+| This day vlog edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Tagesvlog-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (günlük vlog) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This draft is about {round_s_facts_duration_s}s{outro}; you asked for at most {asked}s. | Dieser Entwurf ist etwa {round_s_facts_duration_s} s lang{outro}; du wolltest höchstens {asked} s. | Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen {asked_tr} istedin. |  |
+| This draft is about {round_s_facts_duration_s}s{outro}; you asked for {asked}s. | Dieser Entwurf ist etwa {round_s_facts_duration_s} s lang{outro}; du wolltest {asked} s. | Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen {asked_tr} istedin. |  |
+| This draft is ordered by attachment order, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge, in der du die Clips hinzugefügt hast, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: klipleri eklediğin sıra. |  |
+| This draft is ordered by attachment, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge, in der du die Clips hinzugefügt hast, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: klipleri eklediğin sıra. |  |
+| This draft is ordered by confirmed, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge, die du bestätigt hast, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: onayladığın sıra. |  |
+| This draft is ordered by creator order, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge, die du angegeben hast, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: senin verdiğin sıra. |  |
+| This draft is ordered by editor, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge im Editor, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: editördeki sıra. |  |
+| This draft is ordered by song time, not the order you asked for. | Dieser Entwurf ist nach der Zeit im Song geordnet, nicht in der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: şarkının zamanı. |  |
+| This montage edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Montage-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (montaj) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This narrated edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Voiceover-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This narrated planned edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Voiceover-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This narrated ready edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Voiceover-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This single hero edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Edit rund um einen Hauptclip kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (tek kahraman) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This slides edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Slideshow-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (slayt) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This talking head edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Talking-Head-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (konuşmalı) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This version leaves out the photo you asked for: "{ask}". | In dieser Version fehlt das Foto, das du dir gewünscht hast: "{ask}". | Bu sürümde istediğin fotoğraf yok: "{ask}". |  |
+| This version leaves out the video you asked for: "{ask}". | In dieser Version fehlt das Video, das du dir gewünscht hast: "{ask}". | Bu sürümde istediğin video yok: "{ask}". |  |
+| Turkish | Türkisch | (language name, no Turkish key) |  |
+| Use the supported trim for this footage. | Nutzt die unterstützte Kürzung für dieses Material. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
+| Use the supported trim for this song. | Nutzt die unterstützte Kürzung für diesen Song. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
+| Use the supported trim for this spoken take. | Nutzt die unterstützte Kürzung für diesen gesprochenen Take. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
+| Use the supported trim for this voiceover with the selected footage. | Nutzt die unterstützte Kürzung für dieses Voiceover mit dem ausgewählten Material. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
+| With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing that line. | Mit dem Standard-Ende dauert dieser Teil {asked_s} Sekunden oder länger, und ich kann ihn nicht kürzen, ohne diesen Satz zu ändern. | Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve {lines_tr} değiştirmeden kısaltamam. |  |
+| With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing those lines. | Mit dem Standard-Ende dauert dieser Teil {asked_s} Sekunden oder länger, und ich kann ihn nicht kürzen, ohne diese Sätze zu ändern. | Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve {lines_tr} değiştirmeden kısaltamam. |  |
+| You asked for a chronological video and for the clips grouped by group. | Du wolltest ein chronologisches Video und die Clips in Gruppen sortiert. | Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin. |  |
+| You asked for a chronological video and for the clips grouped by sport. | Du wolltest ein chronologisches Video und die Clips nach Sportart gruppiert. | Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin. |  |
+| You picked {clips} clip, so "{pin_text}" can't go on clip {pin_clip}. Which clip should it be on? | Du hast {clips} Clip ausgewählt, deshalb kann "{pin_text}" nicht auf Clip {pin_clip} kommen. Auf welchen Clip soll es stattdessen? | {clips} klip seçtin, o yüzden "{pin_text}" {pin_clip}. klibe konamaz. Hangi klibe koyayım? |  |
+| You picked {clips} clips, so "{pin_text}" can't go on clip {pin_clip}. Which clip should it be on? | Du hast {clips} Clips ausgewählt, deshalb kann "{pin_text}" nicht auf Clip {pin_clip} kommen. Auf welchen Clip soll es stattdessen? | {clips} klip seçtin, o yüzden "{pin_text}" {pin_clip}. klibe konamaz. Hangi klibe koyayım? |  |
+| You'll start full screen in your own room, then you're {corner_0} when you start on your first recording. | Du startest im Vollbild in deinem eigenen Raum, dann bist du {corner_0}, sobald deine erste Aufnahme beginnt. | {v2}, sonra ilk kaydına geçince {corner_1}sın. |  |
+| You'll start full screen in your own room, then your background takes the screen. | Du startest im Vollbild in deinem eigenen Raum, dann übernimmt dein Hintergrund den Bildschirm. | {v2}, sonra arka plan ekranı alıyor. |  |
+| You'll start full screen in your own room, then {corner_0}. | Du startest im Vollbild in deinem eigenen Raum, danach bist du {corner_0}. | {v2}, sonra {corner_1}sın. |  |
+| You're full screen in your own take for the first {seconds} s, then your background takes the screen. | Du bist in den ersten {seconds} s deines eigenen Takes im Vollbild, dann übernimmt dein Hintergrund den Bildschirm. | {v2}, sonra arka plan ekranı alıyor. |  |
+| You're full screen in your own take for the first {seconds} s, then {corner_0}. | Du bist in den ersten {seconds} s deines eigenen Takes im Vollbild, danach bist du {corner_0}. | {v2}, sonra {corner_1}sın. |  |
+| Your brief says "{said}", but the available footage is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber das verfügbare Material reicht für {capacity_s} Sekunden. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
+| Your brief says "{said}", but the available song is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber der verfügbare Song dauert {capacity_s} Sekunden. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
+| Your brief says "{said}", but the available spoken take is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber der verfügbare gesprochene Take dauert {capacity_s} Sekunden. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
+| Your brief says "{said}", but the available voiceover with the selected footage is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber das verfügbare Voiceover mit dem ausgewählten Material dauert {capacity_s} Sekunden. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
+| Your clips and photos have no filming time, so I can't put them in the order you filmed. | Keiner deiner Clips und Fotos hat eine Aufnahmezeit, deshalb kann ich sie nicht in die Reihenfolge deiner Aufnahmen bringen. | Kliplerinin ve fotoğraflarının hiçbiri için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum. |  |
+| Your end line keeps about {kept_s} seconds of your take: from the start to right after {end}. | Dein Schlusssatz behält etwa {kept_s} Sekunden deines Takes: vom Anfang bis kurz nach {end}. | Bitiş cümlen çekiminin yaklaşık {kept_s} saniyesini tutuyor: baştan {end} cümlesinin hemen sonrasına kadar. |  |
+| Your start and end lines keep about {kept_s} seconds of your take: from {start} to right after {end}. | Dein Startsatz und dein Schlusssatz behalten etwa {kept_s} Sekunden deines Takes: von {start} bis kurz nach {end}. | Başlangıç ve bitiş cümlelerin çekiminin yaklaşık {kept_s} saniyesini tutuyor: {start} cümlesinden {end} cümlesinin hemen sonrasına kadar. |  |
+| Your start line keeps about {kept_s} seconds of your take: from {start} to the end. | Dein Startsatz behält etwa {kept_s} Sekunden deines Takes: von {start} bis zum Ende. | Başlangıç cümlen çekiminin yaklaşık {kept_s} saniyesini tutuyor: {start} cümlesinden sona kadar. |  |
+| a fast montage keeps its short cuts | Eine schnelle Montage behält ihre kurzen Schnitte | hızlı montaj kısa kesimlerini koruyor |  |
+| a slide post shows each slide for its own time | Ein Slide-Post zeigt jede Slide so lange, wie sie selbst dauert | slayt gönderisi her slaytı kendi süresince gösteriyor |  |
+| a slide post shows your slides in order | Ein Slide-Post zeigt deine Slides der Reihe nach | slayt gönderisi slaytlarını sırayla gösteriyor |  |
+| a slide post's length follows its slides | Die Länge eines Slide-Posts richtet sich nach seinen Slides | slayt gönderisinin uzunluğu slaytlarına bağlı |  |
+| analyze clips | Clips analysieren | analyze clips |  |
+| assemble | Zusammensetzen | assemble |  |
+| at most {asked}s | höchstens {asked} s | en fazla {asked} saniye |  |
+| at the second you picked ({at}s into the clip) | an der Sekunde, die du gewählt hast ({at} s im Clip) | seçtiğin saniyede (klibin {at}. saniyesi) |  |
+| balanced | ausgewogen | balanced |  |
+| cutting it out of your voiceover failed | das Herausschneiden aus deinem Voiceover ist fehlgeschlagen | seslendirmenden kesmek başarısız oldu |  |
+| cutting it would leave too little video | wenn ich es schneide, bleibt zu wenig Video übrig | kesersem çok az video kalırdı |  |
+| day vlog | Tagesvlog | day vlog |  |
+| download clips | Clips laden | download clips |  |
+| fast | schnell | fast |  |
+| fast montage | schnelle Montage | fast montage |  |
+| finalize | Fertigstellen | finalize |  |
+| first clip you added | ersten Clip, den du hinzugefügt hast | eklediğin ilk klip |  |
+| first clip you filmed | ersten Clip, den du gefilmt hast | çektiğin ilk klip |  |
+| generate copy | Texte schreiben | generate copy |  |
+| guided story | geführte Story | guided story |  |
+| it is cut around the spoken lines | Es wird rund um die gesprochenen Sätze geschnitten | konuşulan cümlelerin etrafında kesiliyor |  |
+| it is cut as a fast montage | Es wird als schnelle Montage geschnitten | hızlı bir montaj olarak kesiliyor |  |
+| it is cut as a montage under your voiceover | Es wird als Montage unter deinem Voiceover geschnitten | seslendirmenin altında bir montaj olarak kesiliyor |  |
+| it is cut to your song | Es wird passend zu deinem Song geschnitten | şarkına göre kesiliyor |  |
+| its length follows your song | Die Länge richtet sich nach deinem Song | uzunluğu şarkını takip ediyor |  |
+| its length follows your speech | Die Länge richtet sich nach dem, was du sagst | uzunluğu konuşmanı takip ediyor |  |
+| its length follows your voiceover | Die Länge richtet sich nach deinem Voiceover | uzunluğu seslendirmeni takip ediyor |  |
+| last clip you added | letzten Clip, den du hinzugefügt hast | eklediğin son klip |  |
+| last clip you filmed | letzten Clip, den du gefilmt hast | çektiğin son klip |  |
+| match clips | Clips zuordnen | match clips |  |
+| match song | Song auswählen | match song |  |
+| mix audio | Ton mischen | mix audio |  |
+| montage | Montage | montage |  |
+| narrated | mit Voiceover | narrated |  |
+| narrated planned | mit Voiceover | narrated planned |  |
+| narrated ready | mit Voiceover | narrated ready |  |
+| native | nativ | native |  |
+| on that moment ({at}s into the clip) | bei diesem Moment ({at} s im Clip) | o anda (klibin {at}. saniyesi) |  |
+| on that moment ({at}s into the clip; you left the exact frame to me) | bei diesem Moment ({at} s im Clip; das genaue Bild hast du mir überlassen) | o anda (klibin {at}. saniyesi; tam kareyi bana bıraktın) |  |
+| on the last frame of the last shot | auf dem letzten Bild der letzten Einstellung | son çekimin son karesinde |  |
+| on the moment you picked, at its middle ({at}s into the clip) | in der Mitte des Moments, den du gewählt hast ({at} s im Clip) | seçtiğin anın ortasında (klibin {at}. saniyesi) |  |
+| photo {number} | Foto {number} | {number}. fotoğraf |  |
+| queued | Warteschlange | queued |  |
+| relaxed | entspannt | relaxed |  |
+| render variants | Varianten erstellen | render variants |  |
+| single hero | Hauptclip | single hero |  |
+| slides | Folien | slides |  |
+| small in a corner | klein in einer Ecke | köşede küçük |  |
+| small in the bottom-left corner | klein in der unteren linken Ecke | sol alt köşede küçük |  |
+| small in the bottom-right corner | klein in der unteren rechten Ecke | sağ alt köşede küçük |  |
+| small in the top-left corner | klein in der oberen linken Ecke | sol üst köşede küçük |  |
+| small in the top-right corner | klein in der oberen rechten Ecke | sağ üst köşede küçük |  |
+| subtitled | mit Untertiteln | subtitled |  |
+| talking head | Talking Head | talking head |  |
+| tell me to mute it and I'll take it out | sag mir, dass ich ihn stummschalten soll, dann nehme ich ihn raus | kapatmamı söylersen çıkarırım |  |
+| text explainer | Text-Erklärvideo | text explainer |  |
+| that part is about {kept}s | dieser Teil ist etwa {kept} s lang | o kısım yaklaşık {kept} saniye |  |
+| the clips can't each be held long enough for it within the length you asked for | In der gewünschten Länge kann ich nicht jeden Clip lange genug dafür zeigen | klipler, istediğin süre içinde bunun için yeterince uzun tutulamıyor |  |
+| the clips' own spoken lines are kept whole, which only the fast-montage layout guarantees | Die gesprochenen Sätze in den Clips bleiben ganz, und das garantiert nur das Layout der schnellen Montage | kliplerin kendi konuşmaları bütün tutuluyor, bunu sadece hızlı montaj düzeni garanti ediyor |  |
+| the cuts between spoken lines keep a fixed length | Die Schnitte zwischen den gesprochenen Sätzen haben eine feste Länge | konuşmalar arasındaki kesimler sabit uzunlukta |  |
+| the cuts follow a fast pace | Die Schnitte folgen einem schnellen Tempo | kesimler hızlı tempoda |  |
+| the cuts follow your voiceover | Die Schnitte folgen deinem Voiceover | kesimler seslendirmeni izliyor |  |
+| the cuts keep their usual length | Die Schnitte behalten ihre übliche Länge | kesimler her zamanki uzunluğunda |  |
+| the first clip you added | dem ersten Clip, den du hinzugefügt hast | eklediğin ilk klip |  |
+| the first clip you filmed | dem ersten Clip, den du gefilmt hast | çektiğin ilk klip |  |
+| the footage doesn't fit that layout | Das Material passt nicht zu diesem Layout | görüntüler bu düzene uymuyor |  |
+| the last clip you added | dem letzten Clip, den du hinzugefügt hast | eklediğin son klip |  |
+| the last clip you filmed | dem letzten Clip, den du gefilmt hast | çektiğin son klip |  |
+| the plan has no story outline to build chapters from | Der Plan hat keine Story-Gliederung, aus der ich Kapitel bauen könnte | bölümleri oluşturacak bir hikâye taslağı yok |  |
+| the same clip plays more than once, which only the fast-montage layout allows | Derselbe Clip läuft mehr als einmal, und das erlaubt nur das Layout der schnellen Montage | aynı klip birden fazla kez oynuyor, buna sadece hızlı montaj düzeni izin veriyor |  |
+| the story text couldn't be placed on it | Der Story-Text ließ sich nicht darauf platzieren | hikâye yazısı buna yerleştirilemedi |  |
+| the talking clip is {take}s | der Clip, in dem du sprichst, ist {take} s lang | konuşma klibi {take} saniye |  |
+| the video follows your speech | Das Video folgt dem, was du sagst | video konuşmanı izliyor |  |
+| the video follows your voiceover | Das Video folgt deinem Voiceover | video seslendirmeni izliyor |  |
+| there are too many clips to lay out as story chapters | Es sind zu viele Clips, um sie als Story-Kapitel anzuordnen | bölümlere ayırmak için çok fazla klip var |  |
+| this edit has no control to turn it down yet | in diesem Edit gibt es noch keine Einstellung, um ihn leiser zu machen | bu düzenlemede onu kısacak bir ayar henüz yok |  |
+| this editor can only restage it as a fast montage, so nothing changed. A different direction needs a fresh edit | Dieser Editor kann es nur als schnelle Montage neu aufbauen, deshalb hat sich nichts geändert. Für eine andere Richtung brauchst du einen neuen Edit | bu editör onu yalnızca hızlı bir montaj olarak yeniden kurabiliyor, o yüzden hiçbir şey değişmedi. Başka bir yön için yeni bir düzenleme gerekiyor |  |
+| turn it down in the editor under Sounds > Original audio, or tell me to mute it | stell ihn im Editor unter „Sounds > Original audio“ leiser oder sag mir, dass ich ihn stummschalten soll | editörde Sesler > Orijinal ses bölümünden kıs ya da bana kapatmamı söyle |  |
+| upload | Hochladen | upload |  |
+| you asked for a freeze frame or a speed change, which only the fast-montage layout plays | Du wolltest ein Standbild oder ein anderes Tempo, und das spielt nur das Layout der schnellen Montage ab | dondurulmuş kare ya da hız değişimi istedin, bunu sadece hızlı montaj düzeni oynatıyor |  |
+| you asked for curved text, which only the fast-montage layout draws | Du wolltest gebogenen Text, und den zeichnet nur das Layout der schnellen Montage | kavisli yazı istedin, bunu sadece hızlı montaj düzeni çiziyor |  |
+| you asked for text on individual clips, which only the fast-montage layout places | Du wolltest Text auf einzelnen Clips, und den setzt nur das Layout der schnellen Montage | tek tek kliplere yazı istedin, bunu sadece hızlı montaj düzeni yerleştirebiliyor |  |
+| you asked me to keep a part of a clip out, which only the fast-montage layout can guarantee | Du wolltest, dass ich einen Teil eines Clips weglasse, und das kann nur das Layout der schnellen Montage garantieren | bir klibin bir bölümünü dışarıda tutmamı istedin, bunu sadece hızlı montaj düzeni garanti edebiliyor |  |
+| you don't say it that many times | so oft sagst du es nicht | bunu o kadar çok kez söylemiyorsun |  |
+| you named exact moments, which only the fast-montage layout plays as given | Du hast genaue Momente genannt, und die spielt nur das Layout der schnellen Montage genau so ab | belirli anları sen seçtin, bunları sadece hızlı montaj düzeni olduğu gibi oynatıyor |  |
+| you say it in more than one take, so I left it in; tell me which take to cut it from | du sagst es in mehr als einem Take, deshalb habe ich es drin gelassen; sag mir, aus welchem Take ich es schneiden soll | bunu birden fazla çekimde söylüyorsun, o yüzden dokunmadım; hangi çekimden keseyim söyle |  |
+| you say it more than once, so tell me which one to cut: the first, second or last | du sagst es mehr als einmal, also sag mir, welches ich schneiden soll: das erste, das zweite oder das letzte | bunu birden fazla kez söylüyorsun, hangisini keseyim söyle: ilkini, ikincisini ya da sonuncusunu |  |
+| you set exact timing for photos or cuts, which only the fast-montage layout keeps | Du hast genaue Zeiten für Fotos oder Schnitte festgelegt, und die hält nur das Layout der schnellen Montage ein | fotoğraflar ya da kesimler için net süre verdin, bunu sadece hızlı montaj düzeni koruyor |  |
+| your iPhone build can't draw the crossfades that layout uses yet | Deine iPhone-Version kann die Überblendungen dieses Layouts noch nicht zeichnen | iPhone sürümün o düzenin kullandığı geçişleri henüz çizemiyor |  |
+| your own song sets the cut points, which only the fast-montage layout follows | Dein eigener Song bestimmt die Schnittpunkte, und denen folgt nur das Layout der schnellen Montage | kendi şarkın kesim noktalarını belirliyor, bunu sadece hızlı montaj düzeni izliyor |  |
+| your phone can't draw that layout for this footage | Dein Handy kann dieses Layout für dieses Material nicht zeichnen | telefonun bu görüntüler için o düzeni çizemiyor |  |
+| your song sets where the cuts fall | Dein Song bestimmt, wo die Schnitte liegen | kesimlerin yerini şarkın belirliyor |  |
+| your take has no word timings to find it in | dein Take hat keine Wortzeiten, in denen ich es finden könnte | çekiminde onu bulacak kelime zamanlaması yok |  |
+| your take is {take}s | dein Take ist {take} s lang | çekimin {take} saniye |  |
+| {and_names_absent} doesn't appear in the captions, so I couldn't check its spelling. | {and_names_absent} kommt in den Untertiteln nicht vor, deshalb konnte ich die Schreibweise nicht prüfen. | Altyazılarda {and_names_absent} geçmiyor, o yüzden yazımını kontrol edemedim. |  |
+| {and_names_absent} don't appear in the captions, so I couldn't check their spelling. | {and_names_absent} kommen in den Untertiteln nicht vor, deshalb konnte ich die Schreibweise nicht prüfen. | Altyazılarda {and_names_absent} geçmiyor, o yüzden yazımlarını kontrol edemedim. |  |
+| {and_names_spelled} are spelled as you wrote them. | {and_names_spelled} sind so geschrieben, wie du sie geschrieben hast. | {and_names_spelled} yazdığın gibi yazılmış. |  |
+| {and_names_spelled} is spelled as you wrote it. | {and_names_spelled} ist so geschrieben, wie du es geschrieben hast. | {and_names_spelled} yazdığın gibi yazılmış. |  |
+| {asked}s | {asked} s | {asked} saniye |  |
+| {count} camera effect | {count} Kameraeffekt | {count} {noun_tr} |  |
+| {count} camera effects | {count} Kameraeffekte | {count} {noun_tr} |  |
+| {count} caption | {count} Untertitel | {count} {noun_tr} |  |
+| {count} captions | {count} Untertitel | {count} {noun_tr} |  |
+| {count} clip | {count} Clip | {count} {noun_tr} |  |
+| {count} clips | {count} Clips | {count} {noun_tr} |  |
+| {count} filler sound | {count} Füllgeräusch | {count} dolgu sesi |  |
+| {count} filler sounds | {count} Füllgeräusche | {count} dolgu sesi |  |
+| {count} label | {count} Label | {count} {noun_tr} |  |
+| {count} labels | {count} Labels | {count} {noun_tr} |  |
+| {count} long pause | {count} lange Pause | {count} uzun duraklama |  |
+| {count} long pauses | {count} lange Pausen | {count} uzun duraklama |  |
+| {count} pause | {count} Pause | {count} duraklama |  |
+| {count} pauses | {count} Pausen | {count} duraklama |  |
+| {count} picture | {count} Bild | {count} {noun_tr} |  |
+| {count} pictures | {count} Bilder | {count} {noun_tr} |  |
+| {count} restarted sentence | {count} neu begonnener Satz | {count} baştan başlanan cümle |  |
+| {count} restarted sentences | {count} neu begonnene Sätze | {count} baştan başlanan cümle |  |
+| {count} sound effect | {count} Soundeffekt | {count} {noun_tr} |  |
+| {count} sound effects | {count} Soundeffekte | {count} {noun_tr} |  |
+| {count} take has no usable singing or words, so it is in as short muted clip. Trim or remove it in the editor. | {count} Take enthält keinen brauchbaren Gesang und keine brauchbaren Worte, deshalb habe ich ihn als kurzen stummen Clip eingefügt. Kürze oder entferne ihn im Editor. | {count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve sessiz klip olarak eklendi. Editörde kısaltabilir veya kaldırabilirsin. |  |
+| {count} take is placed by my best guess and may be slightly off; check it in the editor. | {count} Take habe ich nach bester Schätzung platziert, er könnte etwas danebenliegen; prüf ihn im Editor. | {count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et. |  |
+| {count} take sits later in the song than a 2-minute video can hold. | {count} Take liegt so spät im Song, dass er nicht mehr in ein 2-Minuten-Video passt. | {count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor. |  |
+| {count} takes are placed by my best guess and may be slightly off; check them in the editor. | {count} Takes habe ich nach bester Schätzung platziert, sie könnten etwas danebenliegen; prüf sie im Editor. | {count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et. |  |
+| {count} takes have no usable singing or words, so they are in as short muted clips. Trim or remove them in the editor. | {count} Takes enthalten keinen brauchbaren Gesang und keine brauchbaren Worte, deshalb habe ich sie als kurze stumme Clips eingefügt. Kürze oder entferne sie im Editor. | {count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve sessiz klip olarak eklendi. Editörde kısaltabilir veya kaldırabilirsin. |  |
+| {count} takes sit later in the song than a 2-minute video can hold. | {count} Takes liegen so spät im Song, dass sie nicht mehr in ein 2-Minuten-Video passen. | {count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor. |  |
+| {count} text | {count} Text | {count} {noun_tr} |  |
+| {count} texts | {count} Texte | {count} {noun_tr} |  |
+| {label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}" | {label}: Die Clips laufen von {start:.1f} s bis {end:.1f} s, während du sagst: „{excerpt}“ | {tr_label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, şu sözlerle: "{excerpt}" |  |
+| {len_off} of {len_rows} texts don't have the requested {names} yet | Bei {len_off} von {len_rows} Texten fehlt noch der gewünschte Stil ({names}) | {len_rows} metinden {len_off} tanesinde istenen {names} henüz yok |  |
+| {len_off} of {total} text didn't end up reading exactly “{req_literal}”. | Bei {len_off} von {total} Text steht am Ende nicht genau „{req_literal}“. | {total} yazının {len_off} tanesi tam olarak “{req_literal}” olmadı. |  |
+| {len_off} of {total} texts didn't end up reading exactly “{req_literal}”. | Bei {len_off} von {total} Texten steht am Ende nicht genau „{req_literal}“. | {total} yazının {len_off} tanesi tam olarak “{req_literal}” olmadı. |  |
+| {missed} aren't where you asked. | {missed} sind nicht dort, wo du sie wolltest. | {missed} istediğin yerde değil. |  |
+| {missed} isn't where you asked. | {missed} ist nicht dort, wo du es wolltest. | {missed} istediğin yerde değil. |  |
+| {more} more | {more} weitere | {more} tane daha |  |
+| {names} has no filming time, so I can't put it in the order you filmed. | Bei {names} fehlt die Aufnahmezeit, deshalb kann ich nicht nach der Reihenfolge deiner Aufnahmen sortieren. | {names_tr} için çekim saati yok, o yüzden onu çektiğin sıraya koyamıyorum. |  |
+| {names} have no filming time, so I can't put them in the order you filmed. | Bei {names} fehlt die Aufnahmezeit, deshalb kann ich sie nicht in die Reihenfolge deiner Aufnahmen bringen. | {names_tr} için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum. |  |
+| {n} clip had no capture time, so I kept its attachment order. | {n} Clip hatte keine Aufnahmezeit, deshalb habe ich ihn an der Stelle gelassen, an der du ihn hinzugefügt hast. | {n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım. |  |
+| {n} clip is too short for its text to stay on screen long enough to read. | {n} Clip ist zu kurz, als dass sein Text lange genug zum Lesen zu sehen wäre. | {n} klip, yazısının okunacak kadar ekranda kalması için çok kısa. |  |
+| {n} clips are too short for its text to stay on screen long enough to read. | {n} Clips sind zu kurz, als dass ihr Text lange genug zum Lesen zu sehen wäre. | {n} klip, yazısının okunacak kadar ekranda kalması için çok kısa. |  |
+| {n} clips had no capture time, so I kept their attachment order. | {n} Clips hatten keine Aufnahmezeit, deshalb habe ich sie in der Reihenfolge gelassen, in der du sie hinzugefügt hast. | {n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım. |  |
+| {n} sideways clip | {n} Querformat-Clip | {n} yatay klip |  |
+| {n} sideways clips | {n} Querformat-Clips | {n} yatay klip |  |
+| {prefix}; {tail} and you asked for {asked} | {prefix}; {tail}, und du wolltest {asked} | {v1}; {tr_tail}, sen {asked_tr} istedin |  |
+| {sentence_case_words} is clip {v1} of {len_steps}, not the first one. | {sentence_case_words} ist Clip {v1} von {len_steps}, nicht der erste. | {capitalize_words_strip} {len_steps} klipten {v1}. sırada, {v2} değil. |  |
+| {sentence_case_words} is clip {v1} of {len_steps}, not the last one. | {sentence_case_words} ist Clip {v1} von {len_steps}, nicht der letzte. | {capitalize_words_strip} {len_steps} klipten {v1}. sırada, {v2} değil. |  |
+| {subject} play at {speed} | {subject} laufen mit {speed} | {subject_tr} {speed} hızda oynuyor |  |
+| {subject} play at {speed}, as you asked later | {subject} laufen mit {speed}, wie du es später wolltest | {subject_tr} sonra istediğin gibi {speed} hızda oynuyor |  |
+| {subject} play at {speed}, not the {requested:g}x you asked for: a clip plays at least {speed} | {subject} laufen mit {speed}, nicht mit den gewünschten {requested:g}x: ein Clip läuft mindestens mit {speed} | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en az {speed} hızda oynayabiliyor |  |
+| {subject} play at {speed}, not the {requested:g}x you asked for: a clip plays at most {speed} | {subject} laufen mit {speed}, nicht mit den gewünschten {requested:g}x: ein Clip läuft höchstens mit {speed} | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en fazla {speed} hızda oynayabiliyor |  |
+| {subject} play at {speed}, not the {requested:g}x you asked for: the clip ran out of footage | {subject} laufen mit {speed}, nicht mit den gewünschten {requested:g}x: dem Clip ist das Material ausgegangen | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: klibin görüntüsü yetmedi |  |
+| {subject} plays at {speed} | {subject} läuft mit {speed} | {subject_tr} {speed} hızda oynuyor |  |
+| {subject} plays at {speed}, as you asked later | {subject} läuft mit {speed}, wie du es später wolltest | {subject_tr} sonra istediğin gibi {speed} hızda oynuyor |  |
+| {subject} plays at {speed}, not the {requested:g}x you asked for: a clip plays at least {speed} | {subject} läuft mit {speed}, nicht mit den gewünschten {requested:g}x: ein Clip läuft mindestens mit {speed} | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en az {speed} hızda oynayabiliyor |  |
+| {subject} plays at {speed}, not the {requested:g}x you asked for: a clip plays at most {speed} | {subject} läuft mit {speed}, nicht mit den gewünschten {requested:g}x: ein Clip läuft höchstens mit {speed} | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en fazla {speed} hızda oynayabiliyor |  |
+| {subject} plays at {speed}, not the {requested:g}x you asked for: the clip ran out of footage | {subject} läuft mit {speed}, nicht mit den gewünschten {requested:g}x: dem Clip ist das Material ausgegangen | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: klibin görüntüsü yetmedi |  |
+| {unnamed} of your recordings never show. | {unnamed} deiner Aufnahmen sind nie zu sehen. | Kayıtlarından {unnamed} tanesi hiç görünmüyor. |  |
+| {unnamed} of your recordings never shows. | {unnamed} deiner Aufnahmen ist nie zu sehen. | Kayıtlarından {unnamed} tanesi hiç görünmüyor. |  |
+| {v1}; {repeats} more repeated the label before, so I left it off. | {v1}; {repeats} weiterer Clip wiederholte das vorherige Label, deshalb habe ich es dort weggelassen. | {v1}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım. |  |
+| {v1}; {repeats} more repeated the label before, so I left them off. | {v1}; {repeats} weitere Clips wiederholten das vorherige Label, deshalb habe ich es dort weggelassen. | {v1}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım. |  |
+| {words} (clip {n}) | {words} (Clip {n}) | {words} ({n}. klip) |  |
+| {words} (first) | {words} (zuerst) | {words} (ilk) |  |
+| {words} (last) | {words} (zuletzt) | {words} (son) |  |
+| {words} (then) | {words} (danach) | {words} (sonra) |  |
+| “{title}” | „{title}“ | “{title}” |  |
+| “{title}” by {artist} | „{title}“ von {artist} | “{title}” ({artist}) |  |
+
+### Reworded lines (45)
+
+| English | German (new) | German (before) | OK? |
+|---|---|---|---|
+| Changed the alignment of {who} | {who}: Ausrichtung geändert | Ausrichtung von {who} geändert |  |
+| Changed the colour of {who} | {who}: Farbe geändert | Farbe von {who} geändert |  |
+| Changed the entrance animation on {who} | {who}: Eingangsanimation geändert | Eingangsanimation von {who} geändert |  |
+| Changed the length of {who} | {who}: Länge geändert | Länge von {who} geändert |  |
+| Changed the look of {who} | {who}: Look geändert | Look von {who} geändert |  |
+| Changed the source volume of {who} | {who}: Originallautstärke geändert | Originallautstärke von {who} geändert |  |
+| Changed the speed of {who} | {who}: Tempo geändert | Tempo von {who} geändert |  |
+| Changed the tilt of {who} | {who}: Neigung geändert | Neigung von {who} geändert |  |
+| Changed the zoom of {who} | {who}: Zoom geändert | Zoom von {who} geändert |  |
+| Changed the {v1} of {who} | {who}: {v1} geändert | {v1} von {who} geändert |  |
+| Colour → {shown} on {who} | {who}: Farbe → {shown} | Farbe → {shown} bei {who} |  |
+| Cropped the {clips_n} to fill the vertical frame | {clips_n} bildfüllend ins Hochformat zugeschnitten | {clips_n} zugeschnitten, damit sie das Hochformat füllen |  |
+| Cropped the {clips_n} to fill the vertical frame{follows} | {clips_n} bildfüllend ins Hochformat zugeschnitten{follows} | {clips_n} zugeschnitten, damit sie das Hochformat füllen{follows} |  |
+| Cropped {cropped} of {clips_n} to vertical; kept black bars on {barred} because the face moves too far for one vertical crop to keep it | {cropped} von {clips_n} ins Hochformat zugeschnitten; bei {barred} bleiben schwarze Balken, weil sich das Gesicht zu weit bewegt, als dass ein einziger Hochformat-Ausschnitt es halten könnte | {cropped} von {clips_n} ins Hochformat zugeschnitten; bei {barred} bleiben schwarze Balken, weil sich das Gesicht zu weit bewegt, als dass ein Hochformat-Ausschnitt es halten könnte |  |
+| Each {word} plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Gruppe nach „{word}“ läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. | Jede Gruppe ({word}) läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. |  |
+| Font → {font_display_first} on {who} | {who}: Schrift → {font_display_first} | Schrift → {font_display_first} bei {who} |  |
+| For the {genre} song you asked for, I suggest {song_en}. Add it when you post. | Für den gewünschten Song im Stil {genre} schlage ich dir {song_en} vor. Füg ihn beim Posten hinzu. | Für den gewünschten {genre}-Song schlage ich {song_en} vor. Füg ihn beim Posten hinzu. |  |
+| Group by {word}, chronological inside each {word} | Nach „{word}“ gruppieren, chronologisch innerhalb jeder „{word}“-Gruppe | Nach {word} gruppieren, innerhalb jeder Gruppe ({word}) chronologisch |  |
+| I can't make this video the length you asked for yet: {instead_en} | Ich kann dieses Video noch nicht in der gewünschten Länge machen: {instead_en} | Ich kann dieses Video noch nicht in der gewünschten Länge erstellen: {instead_en} |  |
+| I can't use the {str_value_replace} story archetype on this video yet | Das Story-Muster „{str_value_replace}“ kann ich bei diesem Video noch nicht nutzen | Ich kann das Story-Muster {str_value_replace} in diesem Video noch nicht nutzen |  |
+| I can't use the {words_value} story archetype on this video yet | Das Story-Muster „{words_value}“ kann ich bei diesem Video noch nicht nutzen | Ich kann das Story-Muster {words_value} in diesem Video noch nicht nutzen |  |
+| I don't have any {join_names} tracks. The closest I have is {song_en}. Add it when you post if you like it. | Ich habe keine Songs im Stil {join_names}. Am nächsten kommt {song_en}. Füg ihn beim Posten hinzu, wenn er dir gefällt. | Ich habe keine {join_names}-Songs. Am nächsten kommt {song_en}. Füg ihn beim Posten hinzu, wenn er dir gefällt. |  |
+| I prepared a {pacing} {edit_format} draft around the available footage. | Ich habe aus deinem vorhandenen Material einen Entwurf vorbereitet (Tempo: {pacing}, Format: {edit_format}). | Ich habe einen {pacing}-{edit_format}-Entwurf aus deinem vorhandenen Material vorbereitet. |  |
+| Keep it strictly chronological; {word}s may interleave | Streng chronologisch lassen; die Gruppen nach „{word}“ dürfen sich mischen | Streng chronologisch lassen; Gruppen nach {word} dürfen sich mischen |  |
+| Kept black bars on the {clips_n}, so nothing is cropped | Schwarze Balken bei {clips_n} beibehalten, also ist nichts abgeschnitten | Schwarze Balken bei {clips_n} beibehalten, damit nichts abgeschnitten wird |  |
+| Kria is rendering your video ({phase}). I’ll update this chat when it’s ready. | Kria erstellt gerade dein Video (Schritt: {phase}). Ich melde mich in diesem Chat, sobald es fertig ist. | Kria erstellt gerade dein Video ({phase}). Ich melde mich in diesem Chat, sobald es fertig ist. |  |
+| Removed the entrance animation from {who} | {who}: Eingangsanimation entfernt | Eingangsanimation von {who} entfernt |  |
+| Reset the zoom of {who} | {who}: Zoom zurückgesetzt | Zoom von {who} zurückgesetzt |  |
+| Resized {who} | {who}: Größe geändert | Größe von {who} geändert |  |
+| The selected {natural_owner} runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter {natural_owner}. | Die ausgewählte Quelle ({natural_owner}) dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm eine kürzere Quelle ({natural_owner}). | Der ausgewählte {natural_owner} dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren {natural_owner}. |  |
+| The selected {natural_owner} runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Die ausgewählte Quelle ({natural_owner}) dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Der ausgewählte {natural_owner} dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. |  |
+| The {str_value_replace} direction isn't applied on this video yet: it is cut as a fast montage | Die Richtung „{str_value_replace}“ wird bei diesem Video noch nicht umgesetzt: Es wird als schnelle Montage geschnitten | Die Richtung {str_value_replace} wird bei diesem Video noch nicht angewendet: Es wird als schnelle Montage geschnitten |  |
+| The {str_value_replace} pacing isn't applied on this video yet: the cuts follow a fast pace | Das Tempo „{str_value_replace}“ wird bei diesem Video noch nicht umgesetzt: Die Schnitte folgen einem schnellen Tempo | Das Tempo {str_value_replace} wird bei diesem Video noch nicht angewendet: Die Schnitte folgen einem schnellen Tempo |  |
+| The {words_value} direction isn't applied on this video yet: {instead_en} | Die Richtung „{words_value}“ wird bei diesem Video noch nicht umgesetzt: {instead_en} | Die Richtung {words_value} wird bei diesem Video noch nicht angewendet: {instead_en} |  |
+| The {words_value} pacing isn't applied on this video yet: {instead_en} | Das Tempo „{words_value}“ wird bei diesem Video noch nicht umgesetzt: {instead_en} | Das Tempo {words_value} wird bei diesem Video noch nicht angewendet: {instead_en} |  |
+| You asked for a chronological video and for the clips grouped by {word}. | Du wolltest ein chronologisches Video und die Clips nach „{word}“ gruppiert. | Du wolltest ein chronologisches Video und die Clips nach {word} gruppiert. |  |
+| You can tell me which clip shows it, or reply "skip it" and I'll {then}. | Du kannst mir sagen, in welchem Clip es zu sehen ist, oder mit "überspringen" antworten, dann {then}. | Du kannst mir sagen, in welchem Clip es vorkommt, oder "überspringen" antworten, dann {then}. |  |
+| You chose black bars, so the {clips_n} keep them | Du hast schwarze Balken gewählt, deshalb bleiben sie bei {clips_n} | Du hast schwarze Balken gewählt, deshalb behalten {clips_n} sie |  |
+| You chose crop, so the {clips_n} are cropped to fill the frame | Du hast Zuschneiden gewählt, deshalb habe ich {clips_n} bildfüllend zugeschnitten | Du hast Zuschneiden gewählt, deshalb werden {clips_n} so zugeschnitten, dass sie das Bild füllen |  |
+| You're {corner_0} over your background, so you don't fill the frame. | Du bist {corner_0} vor deinem Hintergrund zu sehen, deshalb füllst du das Bild nicht aus. | Du bist {corner_0} über deinem Hintergrund, deshalb füllst du das Bild nicht aus. |  |
+| clips stay in the order you filmed them, so· | die Clips bleiben in der Reihenfolge, in der du sie gefilmt hast, deshalb gilt:· | die Clips bleiben in der Reihenfolge, in der du sie gefilmt hast, deshalb· |  |
+| you chose strictly chronological order, so· | du hast eine streng chronologische Reihenfolge gewählt, deshalb gilt:· | du hast eine streng chronologische Reihenfolge gewählt, deshalb· |  |
+| {candidate_intro} Unfortunately {after_connector_candidate_reason} The most I can do is: {only_label}. Reply "{only_label}" to go with that, or change your request. | {candidate_intro} Leider gibt es einen Haken: {after_connector_candidate_reason} Das Beste, was ich machen kann: {only_label}. Antworte mit "{only_label}", wenn das für dich passt, oder ändere deine Anfrage. | {candidate_intro} Leider {after_connector_candidate_reason} Das Beste, was ich machen kann: {only_label}. Antworte mit "{only_label}", wenn das für dich passt, oder ändere deine Anfrage. |  |
+| {candidate_intro} Unfortunately {after_connector_candidate_reason} Which do you prefer? | {candidate_intro} Leider gibt es einen Haken: {after_connector_candidate_reason} Was ist dir lieber? | {candidate_intro} Leider {after_connector_candidate_reason} Was gefällt dir besser? |  |
+| {what} is in {count} stretches | {what} liegt in {count} getrennten Abschnitten | {what} ist in {count} Abschnitte geteilt |  |
 
 ## Unsure (26 lines)
 
@@ -227,7 +548,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | text | Text | app/kria/intent_review_copy.py:23 "yazı"; app/kria/intent_review_copy.py:23 "Yazı" | Turkish has mid-sentence and sentence-start forms; German "Text" is a noun, so one form fits both. |
 | title | Titel | app/kria/intent_review_copy.py:21 "başlık"; app/kria/intent_review_copy.py:21 "Başlık"; app/kria/plan_review.py:251 "başlık"; app/services/finished_style_learning.py:623 "başlık" | Turkish has mid-sentence and sentence-start forms; German "Titel" fits both. |
 
-## All lines (1677)
+## All lines (2036)
 
 `·` marks a leading or trailing space. Tick **OK?** when a line is right, or write the fix in `de.json`.
 
@@ -251,9 +572,11 @@ These English keys have different Turkish wordings in different places (`conflic
 | ·or· | ·oder· | ·ya da· |  |
 | "{line}" doesn't fit whole in the video's length, so part of it is cut | "{line}" passt nicht ganz in die Länge des Videos, deshalb wird ein Teil abgeschnitten | "{line}" videonun süresine tam sığmıyor, bu yüzden bir kısmı kesiliyor |  |
 | "{line}" is said in more than one clip; tell me which clip you mean | "{line}" wird in mehr als einem Clip gesagt; sag mir, welchen Clip du meinst | "{line}" birden fazla klipte söyleniyor; hangi klibi kastettiğini söyle |  |
+| "{other}" for {name} | "{other}" statt {name} | {name} yerine "{other}" |  |
 | "{quote}" is said too early in that clip to come after your voice | "{quote}" wird in dem Clip zu früh gesagt, um nach deiner Stimme zu kommen | "{quote}" o klipte seslendirmeden sonra gelemeyecek kadar erken söyleniyor |  |
 | "{shown}" is too long to fit on one line in a corner (about {pinned_text_max_chars} characters at most). Can you shorten it? | "{shown}" ist zu lang für eine Zeile in der Ecke (höchstens etwa {pinned_text_max_chars} Zeichen). Kannst du es kürzen? | "{shown}" köşede tek satıra sığmayacak kadar uzun (en fazla yaklaşık {pinned_text_max_chars} karakter). Kısaltır mısın? |  |
 | "{text}" shows as the opening title for the first few seconds. Talking edits can't keep text on screen the whole time yet. | "{text}" erscheint in den ersten Sekunden als Titel am Anfang. Talking-Edits können Text noch nicht die ganze Zeit auf dem Bildschirm halten. | "{text}" ilk birkaç saniye açılış başlığı olarak görünüyor. Konuşmalı düzenlemeler yazıyı henüz videonun tamamında ekranda tutamıyor. |  |
+| "{trigger}" at {at_s:.1f} s | „{trigger}“ bei {at_s:.1f} s | "{trigger}" {at_s:.1f} sn'de |  |
 | "{trigger}" is a video, and only a photo or sticker can sit above the title | "{trigger}" ist ein Video, und über dem Titel kann nur ein Foto oder Sticker stehen | "{trigger}" bir video; başlığın üstüne yalnızca fotoğraf ya da çıkartma konur |  |
 | , and· | ·und· | ·ve· |  |
 | , ending on {pins_last} | , zum Schluss {pins_last} | , {pins_last} ile bitirerek |  |
@@ -278,6 +601,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | A clip can zoom between 0.5x and 3x, so I kept it inside that. | Ein Clip kann zwischen 0,5x und 3x gezoomt werden, deshalb habe ich es in diesem Bereich gehalten. | Bir klip 0,5x ile 3x arasında yakınlaştırılabilir; bu aralığın içinde tuttum. |  |
 | A few things didn't match your request: {joined}. I prepared fixes in your draft. Approve them to render, or undo them. | Ein paar Dinge passten nicht zu deiner Anfrage: {joined}. Ich habe Korrekturen in deinem Entwurf vorbereitet. Gib sie frei, um das Video zu erstellen, oder mach sie rückgängig. | Birkaç şey isteğinle uyuşmadı: {joined}. Taslağında düzeltmeler hazırladım. Oluşturmak için onayla ya da geri al. |  |
 | A freeze holds the frame where a shot ends, so I can't hold the opening frame, and it plays normally. Tell me the second of the clip to freeze on, like "freeze at 2 seconds" | Ein Standbild hält das Bild am Ende einer Einstellung, deshalb kann ich das erste Bild nicht anhalten, und es läuft normal. Sag mir, bei welcher Sekunde des Clips das Standbild sein soll, z. B. "Standbild bei 2 Sekunden" | Donma bir çekimin bittiği karede olur, o yüzden açılış karesini tutamıyorum ve normal oynuyor. Klibin hangi saniyesinde donsun, yaz; örneğin "2. saniyede dondur" |  |
+| A full-screen picture covers the video, so it has no place in front of or behind the pictures on top. | Ein Vollbild-Bild bedeckt das ganze Video, deshalb hat es keinen Platz vor oder hinter den Bildern darüber. | Tam ekran görsel videonun tamamını kaplar; üstteki görsellerin önünde ya da arkasında bir yeri yok. |  |
 | A later request changed this | Eine spätere Anfrage hat das geändert | Sonraki bir istek bunu değiştirdi |  |
 | A lip-sync edit follows your song, so I'm not timing it to a recorded voiceover. | Ein Lip-Sync-Edit folgt deinem Song, deshalb richte ich ihn nicht nach einem aufgenommenen Voiceover aus. | Dudak senkronlu düzenleme şarkını izler, o yüzden kaydedilmiş seslendirmeye göre zamanlamıyorum. |  |
 | A lip-sync edit follows your song, so I'm not using a day-vlog or single-hero shape. | Ein Lip-Sync-Edit folgt deinem Song, deshalb nutze ich keinen Tagesvlog- oder Hauptclip-Aufbau. | Dudak senkronlu düzenleme şarkını izler, o yüzden günlük vlog ya da tek kahraman kurgusu kullanmıyorum. |  |
@@ -309,12 +633,17 @@ These English keys have different Turkish wordings in different places (`conflic
 | Add the song you lip-synced to and I'll caption its lyrics. | Füg den Song hinzu, zu dem du Lip-Sync gemacht hast, dann setze ich den Songtext als Untertitel. | Dudak senkronu yaptığın şarkıyı ekle, sözlerini altyazı olarak ekleyeyim. |  |
 | Add your song first and I'll use it. | Füg zuerst deinen Song hinzu, dann nutze ich ihn. | Önce şarkını ekle, ben de onu kullanayım. |  |
 | Added a shadow to the captions | Schatten zu den Untertiteln hinzugefügt | Altyazılara gölge eklendi |  |
-| Added the filming hour to {count} clip{v1}. | Aufnahmezeit zu {count} Clip{v1} hinzugefügt. | {count} klibe çekim saatini ekledim. |  |
+| Added the filming hour to {count} clip. | Aufnahmezeit bei {count} Clip ergänzt. | {count} klibe çekim saatini ekledim. |  |
+| Added the filming hour to {count} clips. | Aufnahmezeit bei {count} Clips ergänzt. | {count} klibe çekim saatini ekledim. |  |
+| Added {what} | {what} hinzugefügt | {what} eklendi |  |
 | Added {who} | {who} hinzugefügt | {who} eklendi |  |
 | Adding it would make the video longer than the length you asked for | Wenn ich es hinzufüge, wird das Video länger als gewünscht | Eklersem video istediğin süreden uzun olur |  |
 | Adding that media isn't available for on-device edits yet, so I left the video as it was. | Dieses Medium hinzuzufügen ist bei Edits auf dem Gerät noch nicht möglich, deshalb habe ich das Video so gelassen, wie es war. | Bu medyayı eklemek cihaz üzerindeki düzenlemelerde henüz kullanılamıyor, o yüzden videoyu olduğu gibi bıraktım. |  |
 | Aiming the recordings isn't available yet, so they're centred. | Die Aufnahmen auszurichten ist noch nicht verfügbar, deshalb sind sie mittig. | Kayıtları istediğin yöne çevirmek henüz kullanılamıyor; şimdilik ortalı duruyorlar. |  |
 | Aiming the recordings needs the latest Kria app, so they're centred. | Um die Aufnahmen auszurichten, brauchst du die neueste Kria-App, deshalb sind sie mittig. | Kayıtları istediğin yöne çevirmek için Kria uygulamasının son sürümü gerekiyor; şimdilik ortalı duruyorlar. |  |
+| Aligned {who} to the center | {who} zentriert | {who} ortaya hizalandı |  |
+| Aligned {who} to the left | {who} linksbündig ausgerichtet | {who} sola hizalandı |  |
+| Aligned {who} to the right | {who} rechtsbündig ausgerichtet | {who} sağa hizalandı |  |
 | Aligned {who} to the {side} | {who} nach {side} ausgerichtet | {who} {side_tr_get_side_side} hizalandı |  |
 | All selected text already has that appearance; no changes were staged. | Alle ausgewählten Texte sehen schon so aus; es wurde nichts geändert. | Seçili yazıların hepsi zaten bu görünümde; hiçbir şey değişmedi. |  |
 | All your clips are already vertical, so they fill the frame | Alle deine Clips sind schon im Hochformat, deshalb füllen sie das Bild | Kliplerinin hepsi zaten dikey, o yüzden ekranı dolduruyorlar |  |
@@ -329,6 +658,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | Applied noise reduction; engine and speech are not independently isolated | Rauschunterdrückung angewendet; Motor und Sprache sind nicht unabhängig voneinander getrennt | Gürültü azaltma uygulandı; motor sesiyle konuşma birbirinden bağımsız ayrılmadı |  |
 | Applied the speech cut | Sprachschnitt angewendet | Konuşma kesimi uygulandı |  |
 | Applied your edit | Deine Änderung übernommen | Düzenlemeni uyguladım |  |
+| Arabic | Arabisch |  |  |
 | As agreed earlier: {note} | Wie vorher besprochen: {note} | Daha önce anlaştığımız gibi: {note} |  |
 | As you asked, I dropped "{words}" | Wie gewünscht habe ich "{words}" weggelassen | İstediğin gibi "{words}" kısmını çıkardım |  |
 | As you chose | Wie du es gewählt hast | Senin seçimin |  |
@@ -343,6 +673,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | Ask me to make the edit again from your latest request. | Bitte mich, den Edit nach deiner letzten Anfrage neu zu machen. | Düzenlemeyi son isteğine göre yeniden yapmamı iste. |  |
 | Automatic music matching is turned off right now. Try again later. | Die automatische Musikauswahl ist gerade ausgeschaltet. Versuch es später nochmal. | Otomatik müzik eşleştirme şu anda kapalı. Daha sonra tekrar dene. |  |
 | Background | Hintergrund | Arka plan |  |
+| Balanced pacing | Tempo: Ausgewogen | Tempo: Dengeli |  |
 | Before approval, this edit format cannot prepare sourced research text. I can show you sourced facts in a standard montage instead, or keep this format without the facts if you choose. | Vor der Freigabe kann dieses Edit-Format keinen Text mit belegten Recherche-Fakten vorbereiten. Ich kann dir die belegten Fakten stattdessen in einer normalen Montage zeigen oder dieses Format ohne die Fakten behalten, wie du möchtest. | Bu kurgu türü onaydan önce kaynaklı araştırma metni hazırlayamıyor. İstersen kaynaklı bilgileri standart bir montajda gösterebilirim ya da bu türü bilgiler olmadan koruyabilirim. |  |
 | Behind a tilted clip I can show a plain background, a blurred copy of the clip, one colour (like #112233), or a photo or video from this video's Visuals. | Hinter einem geneigten Clip kann ich einen einfachen Hintergrund, eine unscharfe Kopie des Clips, eine einzelne Farbe (z. B. #112233) oder ein Foto oder Video aus den Visuals dieses Videos zeigen. | Eğik klibin arkasında düz bir arka plan, klibin bulanık bir kopyası, tek bir renk (örneğin #112233) ya da bu videonun görsellerinden bir fotoğraf ya da video gösterebilirim. |  |
 | Both listens heard the same words, so I didn't find an unclear word | Beide Durchgänge haben dieselben Wörter verstanden, deshalb habe ich kein unklares Wort gefunden | İki dinleme de aynı kelimeleri duydu, o yüzden belirsiz bir kelime bulmadım |  |
@@ -357,26 +688,49 @@ These English keys have different Turkish wordings in different places (`conflic
 | Change it | Ändern | Değiştir |  |
 | Change it to {quoted} | In {quoted} ändern | {quoted} olarak değiştir |  |
 | Change my request | Meine Anfrage ändern | İsteğimi değiştir |  |
-| Changed the alignment of {who} | Ausrichtung von {who} geändert | {who} hizalaması değişti |  |
-| Changed the background behind {who}: {v1} | Hintergrund hinter {who} geändert: {v1} | {who} arka planı değişti: {v2} |  |
+| Changed how sideways clips fill the frame | Geändert, wie seitlich gedrehte Clips das Bild füllen | Yan çekilmiş kliplerin kareyi doldurma biçimi değişti |  |
+| Changed the Bend of {who} | {who}: Biegung geändert | {who} için Kavis değişti |  |
+| Changed the alignment of {who} | {who}: Ausrichtung geändert | {who} hizalaması değişti |  |
+| Changed the animation speed of {who} | {who}: Animationstempo geändert | {who} için animasyon hızı değişti |  |
+| Changed the background behind {who}: blurred background | {who}: unscharfer Hintergrund | {who} arka planı değişti: bulanık arka plan |  |
+| Changed the background behind {who}: photo or video behind it | {who}: Foto oder Video als Hintergrund | {who} arka planı değişti: arkasında fotoğraf ya da video |  |
+| Changed the background behind {who}: plain | {who}: schlichter Hintergrund | {who} arka planı değişti: düz |  |
+| Changed the background behind {who}: {kind} background | {who}: Hintergrund {kind} | {who} arka planı değişti: {kind} arka plan |  |
+| Changed the background of {who} | {who}: Hintergrund geändert | {who} için arka plan değişti |  |
+| Changed the behind-subject look of {who} | {who}: Hinter-dem-Motiv-Effekt geändert | {who} için özne arkası görünümü değişti |  |
 | Changed the caption animation | Untertitel-Animation geändert | Altyazı animasyonu değişti |  |
 | Changed the caption colour | Untertitel-Farbe geändert | Altyazı rengi değişti |  |
 | Changed the caption font to {after} | Untertitel-Schrift auf {after} geändert | Altyazı yazı tipi {after} oldu |  |
 | Changed the caption highlight colour | Hervorhebungsfarbe der Untertitel geändert | Altyazı vurgu rengi değişti |  |
 | Changed the caption outline | Untertitel-Kontur geändert | Altyazı konturu değişti |  |
 | Changed the caption size | Untertitel-Größe geändert | Altyazı boyutu değişti |  |
-| Changed the colour of {who} | Farbe von {who} geändert | {who} rengi değişti |  |
-| Changed the entrance animation on {who} | Eingangsanimation von {who} geändert | {who} için giriş animasyonu değişti |  |
-| Changed the length of {who} | Länge von {who} geändert | {who} süresi değişti |  |
-| Changed the look of {who} | Look von {who} geändert | {who} görünümü değişti |  |
+| Changed the colour of {who} | {who}: Farbe geändert | {who} rengi değişti |  |
+| Changed the entrance animation on {who} | {who}: Eingangsanimation geändert | {who} için giriş animasyonu değişti |  |
+| Changed the exit animation of {who} | {who}: Ausgangsanimation geändert | {who} için çıkış animasyonu değişti |  |
+| Changed the highlight colour of {who} | {who}: Hervorhebungsfarbe geändert | {who} için vurgu rengi değişti |  |
+| Changed the length of {who} | {who}: Länge geändert | {who} süresi değişti |  |
+| Changed the letter spacing of {who} | {who}: Zeichenabstand geändert | {who} için harf aralığı değişti |  |
+| Changed the line spacing of {who} | {who}: Zeilenabstand geändert | {who} için satır aralığı değişti |  |
+| Changed the look of {who} | {who}: Look geändert | {who} görünümü değişti |  |
+| Changed the looping animation of {who} | {who}: Schleifenanimation geändert | {who} için döngü animasyonu değişti |  |
 | Changed the music | Musik geändert | Müzik değişti |  |
-| Changed the source volume of {who} | Originallautstärke von {who} geändert | {who} kaynak ses düzeyi değişti |  |
-| Changed the speed of {who} | Tempo von {who} geändert | {who} hızı değişti |  |
-| Changed the tilt of {who} | Neigung von {who} geändert | {who} eğimi değişti |  |
-| Changed the zoom of {who} | Zoom von {who} geändert | {who} yakınlaştırması değişti |  |
-| Changed the {v1} of {who} | {v1} von {who} geändert | {who} için {v2} değişti |  |
+| Changed the outline of {who} | {who}: Kontur geändert | {who} için kontur değişti |  |
+| Changed the rotation of {who} | {who}: Drehung geändert | {who} için dönüş değişti |  |
+| Changed the shadow of {who} | {who}: Schatten geändert | {who} için gölge değişti |  |
+| Changed the source volume of {who} | {who}: Originallautstärke geändert | {who} kaynak ses düzeyi değişti |  |
+| Changed the speed of {who} | {who}: Tempo geändert | {who} hızı değişti |  |
+| Changed the text width of {who} | {who}: Textbreite geändert | {who} için yazı genişliği değişti |  |
+| Changed the tilt of {who} | {who}: Neigung geändert | {who} eğimi değişti |  |
+| Changed the video's shape | Das Format des Videos geändert | Videonun biçimi değişti |  |
+| Changed the volume of your song | Die Lautstärke deines Songs geändert | Şarkının ses düzeyi değişti |  |
+| Changed the zoom of {who} | {who}: Zoom geändert | {who} yakınlaştırması değişti |  |
+| Changed the {v1} of {who} | {who}: {v1} geändert | {who} için {v2} değişti |  |
+| Changed where the captions sit | Die Position der Untertitel geändert | Altyazıların yeri değişti |  |
+| Changed where your song plays | Geändert, welcher Teil deines Songs läuft | Şarkının çalan kısmı değişti |  |
+| Changed which picture is on top | Geändert, welches Bild oben liegt | Hangi görselin üstte olduğu değişti |  |
 | Changed {name_replace} | {name_replace} geändert | {name_replace} değişti |  |
 | Changed {v1} to {v2} | {v1} in {v2} geändert | {v1} yazısını {v2} yaptım |  |
+| Changed {what} | {what} geändert | {what} değişti |  |
 | Changing the wording needs your confirmation. Should I keep the exact original words and adjust only their timing? | Den Wortlaut zu ändern braucht deine Bestätigung. Soll ich die Original-Wörter genau so lassen und nur das Timing anpassen? | Metni değiştirmek için onayın gerekiyor. Aynı kelimeleri koruyup yalnızca zamanlamalarını ayarlayayım mı? |  |
 | Check before recording, I couldn't confirm these from your clips: {listed}. | Prüf das vor der Aufnahme, ich konnte das anhand deiner Clips nicht bestätigen: {listed}. | Kaydetmeden önce kontrol et, bunları kliplerinden doğrulayamadım: {listed}. |  |
 | Checked in the video. | Im Video geprüft. | Videoda kontrol edildi. |  |
@@ -396,13 +750,18 @@ These English keys have different Turkish wordings in different places (`conflic
 | Cleaning up speech isn't available for this iPhone edit yet. Tap Refresh project and choose to keep the original speech. | Die Sprachbereinigung ist für diesen iPhone-Edit noch nicht verfügbar. Tipp auf „Refresh project“ und wähl, die Originalsprache zu behalten. | Konuşma temizleme bu iPhone düzenlemesi için henüz kullanılamıyor. "Refresh project" düğmesine dokun ve özgün konuşmayı korumayı seç. |  |
 | Cleaning up the audio didn't finish. Try again, or turn off speech cleanup. | Die Tonbereinigung wurde nicht fertig. Versuch es nochmal oder schalte die Sprachbereinigung aus. | Sesi temizleme tamamlanmadı. Tekrar dene ya da konuşma temizlemeyi kapat. |  |
 | Clip {index} | Clip {index} | {index}. klip |  |
+| Clip {names} doesn't look like "{words}" from what I saw, so I didn't put that wording on it. Tell me what it is, or ask me to describe what I see. | Clip {names} sieht nach dem, was ich gesehen habe, nicht nach "{words}" aus, deshalb habe ich diesen Text nicht daraufgesetzt. Sag mir, was darin zu sehen ist, oder bitte mich, zu beschreiben, was ich sehe. | Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste. |  |
 | Clip {number} isn't in this video, so nothing plays at a different speed | Clip {number} ist nicht in diesem Video, deshalb läuft nichts in einem anderen Tempo | {number}. klip bu videoda yok, bu yüzden hiçbir yerin hızı değişmiyor |  |
+| Clip {n} | Clip {n} | {n}. klip |  |
+| Clip {which} can't be in this edit. | Clip {which} kann nicht in diesem Edit sein. | {which}. klip bu düzenlemeye giremiyor. |  |
 | Clips play in the exact order you filmed them. | Die Clips laufen genau in der Reihenfolge, in der du sie gefilmt hast. | Klipler tam olarak çektiğin sırayla oynar. |  |
 | Clips shown full screen play their own sound, with your voice muted under them | Clips im Vollbild spielen ihren eigenen Ton, deine Stimme ist darunter stummgeschaltet | Tam ekran gösterilen klipler kendi sesiyle çalıyor, senin sesin altta kapalı |  |
 | Clips shown full screen where you talk about them play their own sound, with your voice muted under them. A clip nothing you say matches stays silent, and I'll tell you which | Clips, die im Vollbild gezeigt werden, wenn du über sie sprichst, spielen ihren eigenen Ton, deine Stimme ist darunter stummgeschaltet. Ein Clip, zu dem nichts passt, was du sagst, bleibt stumm, und ich sag dir, welcher | Hakkında konuştuğun yerde tam ekran gösterilen klipler kendi sesiyle çalar, senin sesin altta kapalı kalır. Anlattığın hiçbir şeyle eşleşmeyen klip sessiz kalır, hangisi olduğunu söylerim |  |
 | Clips without one stay where they are. | Clips ohne Aufnahmezeit bleiben, wo sie sind. | Çekim saati olmayan klipler yerinde kalıyor. |  |
-| Clip{v1} {names} {v2}'t look like "{words}" from what I saw, so I didn't put that wording on {v3}. Tell me what {v4}, or ask me to describe what I see. | Clip{v1} {names} sehen nach dem, was ich gesehen habe, nicht nach "{words}" aus, deshalb habe ich diesen Text nicht daraufgesetzt. Sag mir, was zu sehen ist, oder bitte mich zu beschreiben, was ich sehe. ({v2} / {v3} / {v4}) | Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste. |  |
-| Colour → {shown} on {who} | Farbe → {shown} bei {who} | {who} için renk → {shown} |  |
+| Clips {head} and {last} | Clips {head} und {last} | {v1} klipler |  |
+| Clips {names} don't look like "{words}" from what I saw, so I didn't put that wording on them. Tell me what they are, or ask me to describe what I see. | Die Clips {names} sehen nach dem, was ich gesehen habe, nicht nach "{words}" aus, deshalb habe ich diesen Text nicht daraufgesetzt. Sag mir, was darin zu sehen ist, oder bitte mich, zu beschreiben, was ich sehe. | Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste. |  |
+| Clips {which} can't be in this edit. | Die Clips {which} können nicht in diesem Edit sein. | {which}. klipler bu düzenlemeye giremiyor. |  |
+| Colour → {shown} on {who} | {who}: Farbe → {shown} | {who} için renk → {shown} |  |
 | Continue without a fixed order | Ohne feste Reihenfolge weiter | Sabit bir sıra olmadan devam et |  |
 | Continue without a title | Ohne Titel weiter | Başlıksız devam et |  |
 | Couldn't | Ging nicht | Yapamadım |  |
@@ -433,10 +792,13 @@ These English keys have different Turkish wordings in different places (`conflic
 | Couldn't use that colour for your background; kept your own background. Try white, black, green, blue, red, yellow or grey. | Konnte diese Farbe nicht für deinen Hintergrund nutzen; dein eigener Hintergrund bleibt. Probier Weiß, Schwarz, Grün, Blau, Rot, Gelb oder Grau. | Bu rengi arka planın için kullanamadım; kendi arka planını bıraktım. Beyaz, siyah, yeşil, mavi, kırmızı, sarı ya da gri dene. |  |
 | Couldn't use the background you picked in the camera: it is no longer in this edit's photos and videos; kept your own background. | Konnte den Hintergrund, den du in der Kamera gewählt hast, nicht nutzen: Er gehört nicht mehr zu den Fotos und Videos dieses Edits; dein eigener Hintergrund bleibt. | Kamerada seçtiğin arka planı kullanamadım: artık bu düzenlemenin fotoğraf ve videoları arasında değil; kendi arka planını bıraktım. |  |
 | Couldn't verify that exact spoken phrase occurrence was cut | Ich konnte nicht bestätigen, dass genau diese gesprochene Stelle herausgeschnitten wurde | O konuşulan ifadenin tam o tekrarının kesildiğini doğrulayamadım |  |
-| Cropped the {clips_n} to fill the vertical frame | {clips_n} zugeschnitten, damit sie das Hochformat füllen | {clips_n} dikey ekranı dolduracak şekilde kırpıldı |  |
-| Cropped the {clips_n} to fill the vertical frame{follows} | {clips_n} zugeschnitten, damit sie das Hochformat füllen{follows} | {clips_n} dikey ekranı dolduracak şekilde kırpıldı{follows} |  |
-| Cropped {cropped} of {clips_n} to vertical; kept black bars on {barred} because the face moves too far for one vertical crop to keep it | {cropped} von {clips_n} ins Hochformat zugeschnitten; bei {barred} bleiben schwarze Balken, weil sich das Gesicht zu weit bewegt, als dass ein Hochformat-Ausschnitt es halten könnte | {clips_n} içinden {cropped} tanesi dikey kırpıldı; {barred} tanesinde yüz tek bir dikey kadraja sığmayacak kadar hareket ettiği için siyah bant kaldı |  |
+| Cropped the {clips_n} to fill the vertical frame | {clips_n} bildfüllend ins Hochformat zugeschnitten | {clips_n} dikey ekranı dolduracak şekilde kırpıldı |  |
+| Cropped the {clips_n} to fill the vertical frame{follows} | {clips_n} bildfüllend ins Hochformat zugeschnitten{follows} | {clips_n} dikey ekranı dolduracak şekilde kırpıldı{follows} |  |
+| Cropped {cropped} of {clips_n} to vertical; kept black bars on {barred} because the face moves too far for one vertical crop to keep it | {cropped} von {clips_n} ins Hochformat zugeschnitten; bei {barred} bleiben schwarze Balken, weil sich das Gesicht zu weit bewegt, als dass ein einziger Hochformat-Ausschnitt es halten könnte | {clips_n} içinden {cropped} tanesi dikey kırpıldı; {barred} tanesinde yüz tek bir dikey kadraja sığmayacak kadar hareket ettiği için siyah bant kaldı |  |
 | Cut "{quote}" ({round_s_removed}s) | "{quote}" herausgeschnitten ({round_s_removed} s) | "{quote}" kesildi ({round_s_removed} sn) |  |
+| Cut "{quote}" ({round_s_removed}s, take {take_index}) | "{quote}" herausgeschnitten ({round_s_removed} s, Take {take_index}) | "{quote}" kesildi ({round_s_removed} sn, {take_index}. çekim) |  |
+| Danish | Dänisch |  |  |
+| Day Vlog format | Format: Tagesvlog | Format: Günlük vlog |  |
 | Day vlog | Tagesvlog | Günlük vlog |  |
 | Dictation must be an audio recording | Ein Diktat muss eine Audioaufnahme sein | Dikte bir ses kaydı olmalı |  |
 | Do you have an idea, or would you like me to write one? | Hast du eine Idee, oder soll ich eine schreiben? | Aklında bir fikir var mı, yoksa ben mi yazayım? |  |
@@ -445,43 +807,58 @@ These English keys have different Turkish wordings in different places (`conflic
 | Done | Erledigt | Yapıldı |  |
 | Done. | Erledigt. | Yapıldı. |  |
 | Done:· | Erledigt:· | Yapıldı:· |  |
+| Dutch | Niederländisch |  |  |
 | Each clip plays in a pause of your talk, at the end of the sentence where you talk about it. If I can't tell which sentence a clip is about it still plays, at my best guess, and I'll say so. A clip you surely never talk about is left out, I'll name it and offer to put it in anyway | Jeder Clip läuft in einer Pause deiner Rede, am Ende des Satzes, in dem du über ihn sprichst. Wenn ich nicht erkennen kann, zu welchem Satz ein Clip gehört, läuft er trotzdem an der Stelle, die ich am wahrscheinlichsten halte, und ich sag dir das. Ein Clip, über den du ganz sicher nie sprichst, wird weggelassen; ich nenne ihn und biete an, ihn trotzdem einzufügen | Her klip konuşmanda, onu anlattığın cümlenin sonunda bir duraklamada oynar. Hangi cümlenin ilgili olduğunu çıkaramazsam yine de en iyi tahminimde oynar ve bunu söylerim. Kesinlikle hakkında konuşmadığın klip dışarıda kalır, adını söyler ve yine de koymayı öneririm |  |
-| Each {word} plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Gruppe ({word}) läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. | Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur. |  |
+| Each group plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Gruppe läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. | Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur. |  |
+| Each sport plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Sportart läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. | Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur. |  |
+| Each {word} plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Gruppe nach „{word}“ läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. | Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur. |  |
 | Edited {plural_len_entry_targets} | {plural_len_entry_targets} bearbeitet | {plural_len_entry_targets} düzenlendi |  |
 | End the edit when your voice ends ({voice_s} seconds) | Edit beenden, wenn deine Stimme endet ({voice_s} Sekunden) | Sesin bittiğinde bitir ({voice_s} saniye) |  |
+| Ending on a full-screen colour with your text isn't available on your iPhone yet | Ein Ende mit einem Vollbild in einer Farbe und deinem Text gibt es auf deinem iPhone noch nicht | Videoyu yazılı tam ekran bir renkle bitirmek iPhone'unda henüz kullanılamıyor |  |
 | Ending on another of your clips needs a Talking edit with several clips, which isn't available yet | Mit einem anderen deiner Clips zu enden braucht einen Talking-Edit mit mehreren Clips, und den gibt es noch nicht | Başka bir klibinle bitirmek için birden çok klipli konuşmalı düzenleme gerekiyor, o da henüz yok |  |
 | Ends right after “{part_unheard}” is said. | Endet direkt nachdem „{part_unheard}“ gesagt wurde. | “{part_unheard}” dendiği yerin hemen ardından biter. |  |
 | Engine noise reduction is only available for a single-source Talking edit | Motorgeräusch-Reduzierung gibt es nur für einen Talking-Edit mit einer einzigen Quelle | Motor gürültüsünü azaltma yalnızca tek klipli Konuşmalı düzenlemede yapılabiliyor |  |
 | Engine noise reduction isn't available for this edit | Motorgeräusch-Reduzierung ist für diesen Edit nicht verfügbar | Motor gürültüsü azaltma bu düzenlemede kullanılamıyor |  |
+| English | Englisch |  |  |
 | Every clip gets at least {floor_s:g} seconds, so all {count} stay in. | Jeder Clip bekommt mindestens {floor_s:g} Sekunden, so bleiben alle {count} drin. | Her klip en az {floor_s:g} saniye görünür, böylece {count} klibin hepsi kalır. |  |
 | Every clip's own sound plays softly under your voice, not just this one | Der Originalton jedes Clips läuft leise unter deiner Stimme, nicht nur bei diesem | Her klibin kendi sesi seslendirmenin altında kısık çalıyor, yalnızca bu klibinki değil |  |
 | Every photo plays the length you gave it, with the footage around it. | Jedes Foto läuft so lange, wie du es festgelegt hast, mit dem Material drumherum. | Her fotoğraf verdiğin süre kadar kalır, çekimler de etrafında oynar. |  |
 | Every time | Jedes Mal | Her seferinde |  |
+| Every video clip | Jeder Videoclip | Her video klibi |  |
 | Every voice in your take gets captions, off-camera ones too | Jede Stimme in deinem Take bekommt Untertitel, auch die außerhalb des Bildes | Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de |  |
 | Everything else is unchanged. | Alles andere ist unverändert. | Geri kalan her şey aynı. |  |
 | Exclude {font} from automatic {role} text selection. | {font} bei der automatischen Schriftwahl für {role} ausschließen. | {head} için otomatik yazı tipi seçiminde {font} kullanılmasın. |  |
 | Extend it to {shown} seconds | Auf {shown} Sekunden verlängern | Süreyi {shown} saniyeye uzat |  |
+| Fast pacing | Tempo: Schnell | Tempo: Hızlı |  |
 | Favor {font} when automatically choosing {role} fonts. | {font} bei der automatischen Schriftwahl für {role} bevorzugen. | {head} için yazı tipi otomatik seçilirken {font} tercih edilsin. |  |
-| Filming hour on {len_timed} of {total} clips; {missing} {v1} no filming time. | Aufnahmezeit bei {len_timed} von {total} Clips; bei {missing} fehlt sie ({v1}). | Çekim saati {total} klibin {len_timed} tanesinde var; {missing} klibin çekim saati yok. |  |
+| Filming hour on {len_timed} of {total} clips; {missing} has no filming time. | Die Aufnahmeuhrzeit steht bei {len_timed} von {total} Clips; {missing} hat keine Aufnahmezeit. | Çekim saati {total} klibin {len_timed} tanesinde var; {missing} klibin çekim saati yok. |  |
+| Filming hour on {len_timed} of {total} clips; {missing} have no filming time. | Die Aufnahmeuhrzeit steht bei {len_timed} von {total} Clips; {missing} haben keine Aufnahmezeit. | Çekim saati {total} klibin {len_timed} tanesinde var; {missing} klibin çekim saati yok. |  |
 | Fix undone in your draft. | Korrektur in deinem Entwurf rückgängig gemacht. | Düzeltme taslağında geri alındı. |  |
 | Fix waiting for your approval. | Korrektur wartet auf deine Freigabe. | Düzeltme onayını bekliyor. |  |
 | Fixed and checked again. | Korrigiert und nochmal geprüft. | Düzeltildi ve tekrar kontrol edildi. |  |
 | Fixed, but not confirmed. | Korrigiert, aber nicht bestätigt. | Düzeltildi ama doğrulanamadı. |  |
-| Font → {font_display_first} on {who} | Schrift → {font_display_first} bei {who} | {who} için yazı tipi → {font_display_first} |  |
+| Font → {font_display_first} on {who} | {who}: Schrift → {font_display_first} | {who} için yazı tipi → {font_display_first} |  |
 | For the title, tell me the words or say "continue without a title". | Sag mir für den Titel die Wörter oder schreib "Ohne Titel weiter". | Başlık için kelimeleri söyle ya da "başlık olmasın" yaz. |  |
-| For the {genre} song you asked for, I suggest {song_en}. Add it when you post. | Für den gewünschten {genre}-Song schlage ich {song_en} vor. Füg ihn beim Posten hinzu. | {song_tr}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin. |  |
+| For the {genre} song you asked for, I suggest {song_en}. Add it when you post. | Für den gewünschten Song im Stil {genre} schlage ich dir {song_en} vor. Füg ihn beim Posten hinzu. | {song_tr}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin. |  |
 | For {names}, the photo shows as a small card in the corner, not full screen | Bei {names} erscheint das Foto als kleine Karte in der Ecke, nicht im Vollbild | {names} için fotoğraf tam ekran değil, köşede küçük bir kart olarak çıkıyor |  |
 | For {names}, the photo shows full screen, not as a small card in the corner | Bei {names} erscheint das Foto im Vollbild, nicht als kleine Karte in der Ecke | {names} için fotoğraf köşede küçük bir kart değil, tam ekran çıkıyor |  |
 | Freezes the frame for {seconds}s {where} | Hält das Bild {seconds} s an, {where} | Kare {seconds} sn donuyor, {where_tr} |  |
 | Freezes the frame for {seconds}s {where}, as you asked later | Hält das Bild {seconds} s an, {where}, wie du später gewünscht hast | Kare {seconds} sn donuyor, {where_tr}, sonra istediğin gibi |  |
-| Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds {v1} {seconds}s | Hält das Bild {seconds} s an, {where}, nicht die gewünschten {requested:g} s: ein Standbild dauert {v1} {seconds} s | Kare {seconds} sn donuyor, {where_tr}, istediğin {requested:g} sn değil: bir donma en {v2} {seconds} sn sürebiliyor |  |
+| Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds at least {seconds}s | Hält das Bild {seconds} s an, {where}, nicht die gewünschten {requested:g} s: ein Standbild dauert mindestens {seconds} s | Kare {seconds} sn donuyor, {where_tr}, istediğin {requested:g} sn değil: bir donma en {v2} {seconds} sn sürebiliyor |  |
+| Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds at most {seconds}s | Hält das Bild {seconds} s an, {where}, nicht die gewünschten {requested:g} s: ein Standbild dauert höchstens {seconds} s | Kare {seconds} sn donuyor, {where_tr}, istediğin {requested:g} sn değil: bir donma en {v2} {seconds} sn sürebiliyor |  |
 | Freezes the frame for {seconds}s {where}; you didn't say how long, so I held it for one second | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich eine Sekunde genommen | Kare {seconds} sn donuyor, {where_tr}; süre söylemediğin için bir saniye tuttum |  |
-| Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it {v1} than {previous:g}s | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich es {v1} als {previous:g} s gemacht | Kare {seconds} sn donuyor, {where_tr}; süre söylemediğin için {previous:g} sn'den {v2} tuttum |  |
+| Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it longer than {previous:g}s | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich es länger als {previous:g} s gemacht | Kare {seconds} sn donuyor, {where_tr}; süre söylemediğin için {previous:g} sn'den {v2} tuttum |  |
+| Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it shorter than {previous:g}s | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich es kürzer als {previous:g} s gemacht | Kare {seconds} sn donuyor, {where_tr}; süre söylemediğin için {previous:g} sn'den {v2} tuttum |  |
+| French | Französisch |  |  |
 | Full screen isn't available for this edit yet, so "{name}" shows as a small card in the corner instead. | Vollbild gibt es für diesen Edit noch nicht, deshalb erscheint "{name}" stattdessen als kleine Karte in der Ecke. | Bu düzenlemede tam ekran henüz yok; "{name}" köşede küçük bir kart olarak çıkacak. |  |
 | Full-screen Visuals aren't available for this edit. | Visuals im Vollbild sind für diesen Edit nicht verfügbar. | Tam ekran Visuals bu düzenleme için yok. |  |
 | Full-screen overlays on an already-rendered iPhone edit need a fresh edit — they can't be switched on in place. | Vollbild-Einblendungen in einem schon erstellten iPhone-Edit brauchen einen neuen Edit – sie lassen sich nicht direkt einschalten. | Hazır bir iPhone düzenlemesinde görselleri tam ekran yapmak için yeni bir düzenleme gerekiyor — mevcut düzenlemede açılamıyor. |  |
+| German | Deutsch |  |  |
 | Got it. What else should we change? | Alles klar. Was sollen wir noch ändern? | Tamam. Başka neyi değiştirelim? |  |
-| Group by {word}, chronological inside each {word} | Nach {word} gruppieren, innerhalb jeder Gruppe ({word}) chronologisch | Her {tr_word} bir blok olsun; blok içinde kronolojik sırala |  |
+| Greek | Griechisch |  |  |
+| Group by group, chronological inside each group | In Gruppen ordnen, innerhalb jeder Gruppe chronologisch | Her {tr_word} bir blok olsun; blok içinde kronolojik sırala |  |
+| Group by sport, chronological inside each sport | Nach Sportart gruppieren, innerhalb jeder Sportart chronologisch | Her {tr_word} bir blok olsun; blok içinde kronolojik sırala |  |
+| Group by {word}, chronological inside each {word} | Nach „{word}“ gruppieren, chronologisch innerhalb jeder „{word}“-Gruppe | Her {tr_word} bir blok olsun; blok içinde kronolojik sırala |  |
 | Have a look | Schau mal nach | Bir göz at |  |
 | Have a look at these in the video. | Schau dir diese Stellen im Video an. | Bunlara videoda bir göz at. |  |
 | Have a look at these in the video: | Schau dir diese Stellen im Video an: | Bunlara videoda bir göz at: |  |
@@ -494,7 +871,11 @@ These English keys have different Turkish wordings in different places (`conflic
 | How long should the video be? | Wie lang soll das Video sein? | Video ne kadar uzun olsun? |  |
 | How many seconds at the end of {name} show {what}? I'll end that clip just before them, or tell me to leave the whole clip out. | Wie viele Sekunden am Ende von {name} zeigen {what}? Dann beende ich den Clip kurz davor, oder sag mir, dass ich den ganzen Clip weglassen soll. | {name} klibinin sonundaki kaç saniyede {what} görünüyor? Klibi hemen öncesinde bitiririm; ya da klibin tamamını çıkarmamı söyle. |  |
 | How many seconds at the start of {name} show {what}? I'll start that clip right after them, or tell me to leave the whole clip out. | Wie viele Sekunden am Anfang von {name} zeigen {what}? Dann starte ich den Clip direkt danach, oder sag mir, dass ich den ganzen Clip weglassen soll. | {name} klibinin başındaki kaç saniyede {what} görünüyor? Klibi hemen sonrasından başlatırım; ya da klibin tamamını çıkarmamı söyle. |  |
+| How short should the clips be? | Wie kurz sollen die Clips sein? | Klipler ne kadar kısa olsun? |  |
+| How short should the images be? | Wie kurz sollen die Bilder sein? | Görseller ne kadar kısa olsun? |  |
+| How short should the videos be? | Wie kurz sollen die Videos sein? | Videolar ne kadar kısa olsun? |  |
 | How short should the {v1} be? | Wie kurz soll {v1} sein? | {v2} ne kadar kısa olsun? |  |
+| I accepted the omissions listed on your simpler-version card. | Ich habe die Auslassungen von deiner Karte für die einfachere Version akzeptiert. | Daha basit sürüm kartında belirtilen çıkarmaları onayladım. |  |
 | I added it on only {placed} of the {heard} times you said "{trigger}" | Ich habe es nur bei {placed} der {heard} Male hinzugefügt, bei denen du "{trigger}" gesagt hast | "{trigger}" dediğin {heard} yerden yalnızca {placed} tanesine ekleyebildim |  |
 | I applied that to the captions you added in chat (free texts, not clip labels). | Das habe ich auf die Texte angewendet, die du im Chat hinzugefügt hast (freie Texte, keine Clip-Labels). | Bunu sohbette eklediğin yazılara uyguladım (klip etiketlerine değil, serbest yazılara). |  |
 | I can apply at most {max_intents} clip instructions at a time, so {overflow} more weren't included | Ich kann höchstens {max_intents} Clip-Anweisungen auf einmal umsetzen, deshalb sind {overflow} weitere nicht dabei | Bir seferde en fazla {max_intents} klip talimatı uygulayabiliyorum, bu yüzden {overflow} talimat daha eklenmedi |  |
@@ -550,6 +931,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | I can't confirm {text} still has the light fill and dark outline I chose for the footage: {why} | Ich kann nicht bestätigen, dass {text} noch die helle Füllung und die dunkle Kontur hat, die ich für das Material gewählt habe: {why} | {text} yazısında görüntü için seçtiğim açık dolgu ve koyu kenar çizgisi duruyor mu, doğrulayamıyorum: {why} |  |
 | I can't crossfade between clips on this video yet, so each clip cuts straight to the next | Ich kann in diesem Video noch nicht zwischen Clips überblenden, deshalb springt jeder Clip direkt zum nächsten | Bu videoda klipler arasında henüz yumuşak geçiş yapamıyorum, o yüzden her klip bir sonrakine doğrudan kesiliyor |  |
 | I can't curve text in this edit on your iPhone yet, so it stays straight | Ich kann Text in diesem Edit auf deinem iPhone noch nicht biegen, deshalb bleibt er gerade | Bu düzenlemede iPhone'unda yazıyı henüz kavisli yapamıyorum, o yüzden düz kalıyor |  |
+| I can't cut a line out of a video made of several takes yet | aus einem Video aus mehreren Takes kann ich noch keinen Satz herausschneiden | birkaç çekimden oluşan bir videodan henüz satır kesemiyorum |  |
 | I can't cut anything out of a video made of several takes yet, so the pauses and lines you asked me to cut stay in | Ich kann aus einem Video aus mehreren Takes noch nichts herausschneiden, deshalb bleiben die Pausen und Zeilen, die ich schneiden sollte, drin | Birkaç çekimden oluşan bir videodan henüz bir şey kesemiyorum, o yüzden kesmemi istediğin duraklamalar ve satırlar kalıyor |  |
 | I can't cut one exact line out of a video made of several takes yet, so it stays in | Ich kann aus einem Video aus mehreren Takes noch keine einzelne Zeile herausschneiden, deshalb bleibt sie drin | Birkaç çekimden oluşan bir videodan henüz tek bir satırı kesemiyorum, o yüzden kalıyor |  |
 | I can't cut out one exact line yet or confirm it's gone, so it may still be in your video | Ich kann eine bestimmte Zeile noch nicht genau herausschneiden oder bestätigen, dass sie weg ist, deshalb ist sie vielleicht noch in deinem Video | belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, o yüzden videoda kalmış olabilir |  |
@@ -571,7 +953,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage | Ich kann den gewünschten Wechselschnitt in diesem Edit nicht genau beibehalten, deshalb wird er wie eine normale Montage geschnitten | Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor |  |
 | I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing | Ich kann das gewünschte Foto- und Video-Timing in diesem Edit nicht beibehalten, deshalb nutzt er das Standard-Timing | Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor |  |
 | I can't make this length without showing the part of a clip you asked me to leave out. Ask for a different length, or leave that clip out. | Ich kann diese Länge nicht erreichen, ohne den Teil eines Clips zu zeigen, den ich weglassen sollte. Wünsch dir eine andere Länge oder lass diesen Clip weg. | Gösterme dediğin klip bölümünü göstermeden bu uzunluğu yapamıyorum. Başka bir uzunluk iste ya da o klibi dışarıda bırak. |  |
-| I can't make this video the length you asked for yet: {instead_en} | Ich kann dieses Video noch nicht in der gewünschten Länge erstellen: {instead_en} | Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead_tr} |  |
+| I can't make this video the length you asked for yet: {instead_en} | Ich kann dieses Video noch nicht in der gewünschten Länge machen: {instead_en} | Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead_tr} |  |
 | I can't make this yet: | Das kann ich noch nicht: | Bunu henüz yapamıyorum: |  |
 | I can't make {language} captions yet, so they'll be in the language that's spoken | Ich kann noch keine Untertitel auf {language} erstellen, deshalb sind sie in der gesprochenen Sprache | Altyazıları şimdilik {language} yapamıyorum, konuşulan dilde olacaklar |  |
 | I can't move the title to the spot you asked for on this video yet, so it stays where the layout puts it | Ich kann den Titel in diesem Video noch nicht an die gewünschte Stelle verschieben, deshalb bleibt er dort, wo das Layout ihn hinsetzt | Bu videoda başlığı henüz istediğin yere taşıyamıyorum, o yüzden düzenin koyduğu yerde kalıyor |  |
@@ -591,14 +973,16 @@ These English keys have different Turkish wordings in different places (`conflic
 | I can't tell which clips these moments came from | Ich kann nicht sagen, aus welchen Clips diese Momente stammen | Bu anların hangi kliplerden geldiğini söyleyemiyorum |  |
 | I can't tell which of your clips are the long takes | Ich kann nicht sagen, welche deiner Clips die langen Takes sind | Hangi kliplerin uzun çekim olduğunu söyleyemiyorum |  |
 | I can't tell who's speaking, so it shows the first time anyone says that word | Ich kann nicht erkennen, wer spricht, deshalb erscheint es, wenn das Wort zum ersten Mal jemand sagt | Kimin konuştuğunu ayırt edemiyorum, o yüzden yazı o kelime ilk söylendiğinde çıkıyor |  |
+| I can't tell yet which clip is the talking one | ich weiß noch nicht, in welchem Clip du sprichst | hangi klibin konuşma klibi olduğunu henüz bilmiyorum |  |
 | I can't tilt a picture on this edit yet. | Ich kann in diesem Edit noch kein Bild neigen. | Bu videoda bir görseli henüz eğemiyorum. |  |
 | I can't tilt clips on this edit. | Ich kann in diesem Edit keine Clips neigen. | Bu videoda klipleri eğemiyorum. |  |
 | I can't turn captions off on this kind of edit yet, so the video will have captions | Ich kann bei dieser Art von Edit die Untertitel noch nicht ausschalten, deshalb hat das Video Untertitel | Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak |  |
 | I can't turn off just part of a clip on your iPhone yet, so a clip that is only partly in that stretch keeps its sound | Ich kann auf deinem iPhone noch nicht nur einen Teil eines Clips stummschalten, deshalb behält ein Clip, der nur teilweise in diesem Abschnitt liegt, seinen Ton | iPhone'unda bir klibin sadece bir kısmının sesini henüz kapatamıyorum, o yüzden o aralıkta kısmen kalan klip sesini koruyor |  |
+| I can't undo that from chat: the edit changed after my last change, or that change can't be put back exactly. Nothing was changed. Use Undo in the editor, or tell me what to change back. | Das kann ich im Chat nicht rückgängig machen: Der Edit hat sich nach meiner letzten Änderung geändert, oder diese Änderung lässt sich nicht exakt zurücksetzen. Es wurde nichts geändert. Nutz „Rückgängig“ im Editor oder sag mir, was ich zurücksetzen soll. | Bunu sohbetten geri alamıyorum: son değişikliğimden sonra düzenleme değişti ya da o değişiklik tam olarak geri getirilemiyor. Hiçbir şey değişmedi. Editördeki Geri Al'ı kullan ya da neyi eski haline getireyim, söyle. |  |
 | I can't use the opening hook idea ("{clip_value}") on this video yet, so it won't be shown as text | Ich kann die Hook-Idee für den Anfang ("{clip_value}") in diesem Video noch nicht nutzen, deshalb wird sie nicht als Text angezeigt | Açılış kanca fikrini ("{clip_value}") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek |  |
 | I can't use the planned overlay display on this video yet, so it won't be shown | Ich kann die geplante Einblendung in diesem Video noch nicht nutzen, deshalb wird sie nicht angezeigt | Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek |  |
-| I can't use the {str_value_replace} story archetype on this video yet | Ich kann das Story-Muster {str_value_replace} in diesem Video noch nicht nutzen | {str_value_replace} hikâye kalıbını bu videoda henüz kullanamıyorum |  |
-| I can't use the {words_value} story archetype on this video yet | Ich kann das Story-Muster {words_value} in diesem Video noch nicht nutzen | {words_value} hikâye kalıbını bu videoda henüz kullanamıyorum |  |
+| I can't use the {str_value_replace} story archetype on this video yet | Das Story-Muster „{str_value_replace}“ kann ich bei diesem Video noch nicht nutzen | {str_value_replace} hikâye kalıbını bu videoda henüz kullanamıyorum |  |
+| I can't use the {words_value} story archetype on this video yet | Das Story-Muster „{words_value}“ kann ich bei diesem Video noch nicht nutzen | {words_value} hikâye kalıbını bu videoda henüz kullanamıyorum |  |
 | I can't verify per-clip text on an editor edit. | Ich kann Text pro Clip in einem Editor-Edit nicht prüfen. | Editör düzenlemesinde klip başına yazıyı doğrulayamıyorum. |  |
 | I can't verify text for that target clip in this draft. | Ich kann den Text für diesen Clip in diesem Entwurf nicht prüfen. | Bu taslakta o klibin yazısını doğrulayamıyorum. |  |
 | I can't verify this one automatically yet. | Das kann ich noch nicht automatisch prüfen. | Bunu henüz otomatik olarak doğrulayamıyorum. |  |
@@ -616,7 +1000,8 @@ These English keys have different Turkish wordings in different places (`conflic
 | I checked the finished video. Something may not match your request. I didn't change anything. | Ich habe das fertige Video geprüft. Etwas passt vielleicht nicht zu deiner Anfrage. Ich habe nichts geändert. | Bitmiş videoyu kontrol ettim. Bir şey isteğinle uyuşmuyor olabilir. Hiçbir şeyi değiştirmedim. |  |
 | I checked the new video: the fix worked. You can still undo it. | Ich habe das neue Video geprüft: die Korrektur hat funktioniert. Du kannst sie weiterhin rückgängig machen. | Yeni videoyu kontrol ettim: düzeltme işe yaradı. İstersen hâlâ geri alabilirsin. |  |
 | I confirmed where my clips go on the song timeline. | Ich habe bestätigt, wo meine Clips im Song liegen. | Kliplerimin şarkıda nereye geleceğini onayladım. |  |
-| I could fit {planned} {v1}, not {count}. | Ich konnte {planned} {v1} unterbringen, nicht {count}. | {count} değil, {planned} an sığdırabildim. |  |
+| I could fit {planned} moment, not {count}. | Ich konnte {planned} Moment unterbringen, nicht {count}. | {count} değil, {planned} an sığdırabildim. |  |
+| I could fit {planned} moments, not {count}. | Ich konnte {planned} Momente unterbringen, nicht {count}. | {count} değil, {planned} an sığdırabildim. |  |
 | I could only find the speaker's face in part of the clip, not enough to fit one vertical crop around it | Ich konnte das Gesicht der sprechenden Person nur in einem Teil des Clips finden, zu wenig für einen Hochformat-Ausschnitt darum herum | Konuşan kişinin yüzünü klibin yalnızca bir kısmında bulabildim, tek bir dikey kadrajı ona göre ayarlamaya yetmedi |  |
 | I couldn't add it at the end | Ich konnte es am Ende nicht hinzufügen | Sona ekleyemedim |  |
 | I couldn't apply it | Ich konnte es nicht anwenden | uygulayamadım |  |
@@ -634,6 +1019,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | I couldn't confirm the clips are in a random order. | Ich konnte nicht bestätigen, dass die Clips in zufälliger Reihenfolge liegen. | Kliplerin rastgele sırada olduğunu doğrulayamadım. |  |
 | I couldn't confirm the order your edit used. | Ich konnte die Reihenfolge, die dein Edit nutzt, nicht bestätigen. | Düzenlemenin kullandığı sırayı doğrulayamadım. |  |
 | I couldn't confirm the part of the clip that plays shows the moment you named | Ich konnte nicht bestätigen, dass der abgespielte Teil des Clips den Moment zeigt, den du genannt hast | Oynayan klip parçasının söylediğin anı gösterdiğini doğrulayamadım |  |
+| I couldn't confirm the part of the clip that plays shows the moment you named: {moments} | Ich konnte nicht bestätigen, dass der abgespielte Teil des Clips den Moment zeigt, den du genannt hast: {moments} | {v2}: {moments} |  |
 | I couldn't do that one | Das eine konnte ich nicht machen | Bunu yapamadım |  |
 | I couldn't do that. | Das konnte ich nicht machen. | Bunu yapamadım. |  |
 | I couldn't do those. | Die konnte ich nicht machen. | Bunları yapamadım. |  |
@@ -644,6 +1030,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | I couldn't find any clips for "{label}" | Ich konnte keine Clips für "{label}" finden | Şunun için klip bulamadım: "{label}" |  |
 | I couldn't find clear speech in your clips to build this edit. | Ich habe in deinen Clips keine klare Sprache gefunden, um diesen Edit zu bauen. | Bu düzenlemeyi kurmak için kliplerinde net bir konuşma bulamadım. |  |
 | I couldn't find every moment you named in your clip, so I can't confirm the ones playing are those moments | Ich konnte nicht jeden Moment, den du genannt hast, in deinem Clip finden, deshalb kann ich nicht bestätigen, dass die abgespielten diese Momente sind | Saydığın her anı klipte bulamadım, o yüzden oynayanların o anlar olduğunu doğrulayamıyorum |  |
+| I couldn't find it in your take | ich habe es in deinem Take nicht gefunden | çekiminde bulamadım |  |
 | I couldn't find that clip among your clips | Ich konnte diesen Clip unter deinen Clips nicht finden | O klibi kliplerin arasında bulamadım |  |
 | I couldn't find that moment in clip {number}, so it plays at normal speed. I can slow down all of clip {number} instead | Ich konnte diesen Moment in Clip {number} nicht finden, deshalb läuft er im normalen Tempo. Ich kann stattdessen den ganzen Clip {number} verlangsamen | O anı {number}. klipte bulamadım, bu yüzden normal hızda oynuyor. İstersen {number}. klibin tamamını yavaşlatabilirim |  |
 | I couldn't find that spoken phrase in the original audio | Ich konnte diese gesprochene Stelle im Originalton nicht finden | O konuşulan ifadeyi orijinal seste bulamadım |  |
@@ -651,6 +1038,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | I couldn't find the closing badge you named | Ich konnte das Abschluss-Badge, das du genannt hast, nicht finden | Söylediğin kapanış rozetini bulamadım |  |
 | I couldn't find the closing photo you named | Ich konnte das Abschlussfoto, das du genannt hast, nicht finden | Söylediğin kapanış fotoğrafını bulamadım |  |
 | I couldn't find the moment you say “{quote}” in your clips, so the video can't end exactly on it. | Ich konnte den Moment, in dem du „{quote}“ sagst, in deinen Clips nicht finden, deshalb kann das Video nicht genau dort enden. | Kliplerinde “{quote}” dediğin anı bulamadım, bu yüzden video tam o anda bitemiyor. |  |
+| I couldn't find the one you picked in your take | ich habe die Stelle, die du gewählt hast, in deinem Take nicht gefunden | seçtiğin anı çekiminde bulamadım |  |
 | I couldn't find the photo or sticker for "{trigger}" | Ich konnte das Foto oder den Sticker für "{trigger}" nicht finden | "{trigger}" için fotoğraf ya da çıkartma bulamadım |  |
 | I couldn't find the photo or sticker for {names_unresolved} | Ich konnte das Foto oder den Sticker für {names_unresolved} nicht finden | Şunlar için fotoğraf ya da çıkartma bulamadım: {names_unresolved} |  |
 | I couldn't find the photo or sticker for {name}. | Ich konnte das Foto oder den Sticker für {name} nicht finden. | {name} için fotoğraf ya da çıkartma bulamadım. |  |
@@ -673,7 +1061,8 @@ These English keys have different Turkish wordings in different places (`conflic
 | I couldn't keep something you asked for in this edit. | Ich konnte etwas, das du dir gewünscht hast, in diesem Edit nicht umsetzen. | İstediğin bir şeyi bu düzenlemede koruyamadım. |  |
 | I couldn't keep the clip order you asked for. | Ich konnte die gewünschte Clip-Reihenfolge nicht beibehalten. | İstediğin klip sırasını koruyamadım. |  |
 | I couldn't keep the speaker's face in one vertical crop | Ich konnte das Gesicht der sprechenden Person nicht in einem Hochformat-Ausschnitt halten | Konuşan kişinin yüzünü tek bir dikey kadrajda tutamadım |  |
-| I couldn't leave out {v1}, so {v2} still in the video. | Ich konnte {v1} nicht weglassen, deshalb {v2} noch im Video. | {v3} çıkaramadım, o yüzden videoda {v4}. |  |
+| I couldn't leave out clip {numbers}, so it is still in the video. | Ich konnte Clip {numbers} nicht weglassen, deshalb ist er noch im Video. | {clips_tr} çıkaramadım, o yüzden videoda duruyor. |  |
+| I couldn't leave out clips {numbers}, so they are still in the video. | Ich konnte die Clips {numbers} nicht weglassen, deshalb sind sie noch im Video. | {clips_tr} çıkaramadım, o yüzden videoda duruyorlar. |  |
 | I couldn't line each clip up with the words you say, so the clips play in order and share your voiceover evenly | Ich konnte nicht jeden Clip zu deinen Worten zuordnen, deshalb laufen die Clips der Reihe nach und teilen sich dein Voiceover gleichmäßig | Her klibi söylediğin kelimelerle eşleştiremedim, bu yüzden klipler sırayla oynuyor ve seslendirmeni eşit paylaşıyor |  |
 | I couldn't line your clips up with your song. Film with the song playing out loud, or sing along clearly, then try again. | Ich konnte deine Clips nicht auf deinen Song abstimmen. Filme, während der Song laut läuft, oder sing deutlich mit, und versuch es dann nochmal. | Çekimlerini şarkınla hizalayamadım. Şarkı yüksek sesle çalarken çekim yap ya da sözleri net söyleyerek eşlik et, sonra tekrar dene. |  |
 | I couldn't locate the unclear word reliably. Which caption word or line do you mean, and where is it in the clip? Give its time and the wording, or identify the part to leave out. | Ich konnte das unklare Wort nicht sicher finden. Welches Untertitel-Wort oder welche Zeile meinst du, und wo im Clip ist es? Gib mir die Zeit und den Wortlaut oder sag mir, welcher Teil wegfallen soll. | Anlaşılmayan kelimenin yerini güvenle bulamıyorum. Hangi altyazı kelimesini ya da cümlesini kastediyorsun ve klibin neresinde? Zamanını ve yazılacak kelimeleri ya da çıkarılacak kısmı söyle. |  |
@@ -685,6 +1074,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | I couldn't match that request to your clips automatically — can you tell me which clips you mean? | Ich konnte diese Anfrage nicht automatisch deinen Clips zuordnen – kannst du mir sagen, welche Clips du meinst? | Bu isteği kliplerinle otomatik olarak eşleştiremedim. Hangi klipleri kastettiğini söyler misin? |  |
 | I couldn't match the narration to the actions reliably. Your draft is saved. Should I try again or use a simpler clip sequence? | Ich konnte die Erzählung nicht sicher den Szenen zuordnen. Dein Entwurf ist gespeichert. Soll ich es nochmal versuchen oder eine einfachere Clip-Reihenfolge nehmen? | Seslendirmeyi kliplerle güvenilir bir şekilde eşleştiremedim. Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa daha basit bir klip sırası mı kullanayım? |  |
 | I couldn't match your description to the clips, so they stay in the order you attached them. | Ich konnte deine Beschreibung nicht den Clips zuordnen, deshalb bleiben sie in der Reihenfolge, in der du sie hinzugefügt hast. | Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı. |  |
+| I couldn't measure the quiet parts of some of your takes, so I didn't shorten their shorter pauses | Ich konnte die leisen Stellen in einigen deiner Takes nicht messen, deshalb habe ich dort die kürzeren Pausen nicht gekürzt | Bazı çekimlerindeki sessiz kısımları ölçemedim, o yüzden onların kısa duraklamalarını kısaltmadım |  |
 | I couldn't measure the quiet parts of your take, so I didn't shorten the shorter pauses | Ich konnte die leisen Stellen in deinem Take nicht messen, deshalb habe ich die kürzeren Pausen nicht gekürzt | Çekimindeki sessiz kısımları ölçemedim, o yüzden kısa duraklamaları kısaltmadım |  |
 | I couldn't open your current edit to change it in place. Try again, or ask me for a new version. | Ich konnte deinen aktuellen Edit nicht öffnen, um ihn direkt zu ändern. Versuch es nochmal oder bitte mich um eine neue Version. | Şu anki düzenlemeni açıp yerinde değiştiremedim. Tekrar dene ya da benden yeni bir sürüm iste. |  |
 | I couldn't open your current video to update it. Try again in a moment. | Ich konnte dein aktuelles Video nicht öffnen, um es zu aktualisieren. Versuch es gleich nochmal. | Şu anki videonu güncellemek için açamadım. Birazdan tekrar dene. |  |
@@ -710,13 +1100,15 @@ These English keys have different Turkish wordings in different places (`conflic
 | I couldn't set the letter case to {value!r}; the options are none, upper, lower, title | Ich konnte die Groß-/Kleinschreibung nicht auf {value!r} setzen; die Optionen sind none, upper, lower, title | Harf biçimini {value!r} yapamadım; seçenekler: none, upper, lower, title |  |
 | I couldn't set up showing your other clips full screen over your talk this time. Send the request again, or tell me which clip should cover which part, and I'll try once more. | Ich konnte diesmal nicht einrichten, deine anderen Clips im Vollbild über deine Rede zu legen. Schick die Anfrage nochmal oder sag mir, welcher Clip welchen Teil abdecken soll, dann versuche ich es nochmal. | Diğer kliplerini konuşmanın üzerinde tam ekran göstermeyi bu sefer hazırlayamadım. İsteği tekrar gönder ya da hangi klibin hangi kısmı kaplayacağını söyle, bir kez daha deneyeyim. |  |
 | I couldn't start the render. Your draft is still saved, so you can retry without repeating the edit. | Ich konnte das Video nicht starten. Dein Entwurf ist weiterhin gespeichert, du kannst es also erneut versuchen, ohne den Edit zu wiederholen. | Videoyu başlatamadım. Taslağın hâlâ kayıtlı, düzenlemeyi baştan anlatmadan tekrar deneyebilirsin. |  |
-| I couldn't suggest {a_names_0} {join_names} track this time. | Diesmal konnte ich keinen Song vorschlagen ({a_names_0} {join_names}). | Bu sefer bir {join_names_2} şarkısı öneremedim. |  |
+| I couldn't suggest a {join_names} track this time. | Diesmal konnte ich dir keinen Song im Stil {join_names} vorschlagen. | Bu sefer bir {join_names_2} şarkısı öneremedim. |  |
+| I couldn't suggest an {join_names} track this time. | Diesmal konnte ich dir keinen Song im Stil {join_names} vorschlagen. | Bu sefer bir {join_names_2} şarkısı öneremedim. |  |
 | I couldn't tell by meaning which sentence {clip} is about, so I matched it by its words | Ich konnte dem Sinn nach nicht erkennen, um welchen Satz es bei {clip} geht, deshalb habe ich es über die Wörter zugeordnet | {clip} için hangi cümlenin ilgili olduğunu anlamdan çıkaramadım, kelimelerinden eşledim |  |
 | I couldn't tell exactly where "{quote}" is said in that clip | Ich konnte nicht genau erkennen, wo in diesem Clip "{quote}" gesagt wird | "{quote}" sözünün o klipte tam nerede söylendiğini anlayamadım |  |
 | I couldn't tell if these are "{work_intent_attribute}" | Ich konnte nicht erkennen, ob diese "{work_intent_attribute}" sind | Şunların "{work_intent_attribute}" olup olmadığını anlayamadım |  |
 | I couldn't tell the {work_intent_attribute} | Ich konnte {work_intent_attribute} nicht erkennen | Anlayamadım: {work_intent_attribute} |  |
 | I couldn't tell which clip "{literal}" goes on, so I can't confirm that text. | Ich konnte nicht erkennen, auf welchen Clip "{literal}" gehört, deshalb kann ich diesen Text nicht bestätigen. | "{literal}" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı doğrulayamıyorum. |  |
 | I couldn't tell which clip "{words}" means, so I can't confirm the order. | Ich konnte nicht erkennen, welchen Clip du mit "{words}" meinst, deshalb kann ich die Reihenfolge nicht bestätigen. | "{words}" derken hangi klibi kastettiğini anlayamadım, o yüzden sırayı doğrulayamıyorum. |  |
+| I couldn't tell which clip is on screen when you say {v1} | Ich konnte nicht erkennen, welcher Clip im Bild ist, wenn du {v1} sagst | {v1} dediğinde ekranda hangi klibin olduğunu anlayamadım |  |
 | I couldn't tell which clip you meant for the speed change, so the clips play at normal speed. Tell me which clip | Ich konnte nicht erkennen, welchen Clip du für die Tempoänderung meinst, deshalb laufen die Clips in normalem Tempo. Sag mir, welcher Clip | Hız değişikliği için hangi klibi kastettiğini anlayamadım, o yüzden klipler normal hızda oynuyor. Hangi klip olduğunu yaz |  |
 | I couldn't tell which clips | Ich konnte nicht erkennen, welche Clips gemeint sind | Hangi kliplerden söz ettiğini anlayamadım |  |
 | I couldn't tell which clips "{words}" means, so I can't confirm the order. | Ich konnte nicht erkennen, welche Clips du mit "{words}" meinst, deshalb kann ich die Reihenfolge nicht bestätigen. | "{words}" derken hangi klipleri kastettiğini anlayamadım, o yüzden sırayı doğrulayamıyorum. |  |
@@ -735,12 +1127,16 @@ These English keys have different Turkish wordings in different places (`conflic
 | I couldn't turn that into a plan this time. | Ich konnte daraus diesmal keinen Plan machen. | Bu sefer bunu bir plana dönüştüremedim. |  |
 | I couldn't write a script from your clips right now. Ask me again, or record or import your own voiceover and I'll plan the edit around it. | Ich konnte gerade kein Skript aus deinen Clips schreiben. Frag mich nochmal oder nimm dein eigenes Voiceover auf oder importier es, dann plane ich den Edit darum herum. | Şu anda kliplerinden bir metin yazamadım. Tekrar sor ya da kendi seslendirmeni kaydet veya içe aktar, düzenlemeyi ona göre planlayayım. |  |
 | I couldn't zoom into all of your recordings, so small text may stay small. | Ich konnte nicht in alle deine Aufnahmen hineinzoomen, deshalb bleibt kleiner Text vielleicht klein. | Kayıtların hepsine yakınlaşamadım, küçük yazılar küçük kalabilir. |  |
+| I couldn't {action}: {why}. | {action} hat nicht geklappt: {why}. | {action} mümkün olmadı: {why}. |  |
 | I couldn’t apply that uploaded Visuals removal. Nothing was changed. I can remove supported uploaded image and video Visuals; please identify the ones you want removed. | Ich konnte das Entfernen der hochgeladenen Visuals nicht anwenden. Es wurde nichts geändert. Ich kann hochgeladene Bild- und Video-Visuals entfernen; sag mir bitte, welche weg sollen. | Görselleri kaldırma isteğini uygulayamadım. Hiçbir şey değişmedi. Yüklediğin fotoğraf ve videoları kaldırabilirim; hangilerini kaldırmamı istediğini söyle. |  |
 | I couldn’t safely save that Visuals removal. The edit is unchanged. | Ich konnte das Entfernen der Visuals nicht sicher speichern. Der Edit ist unverändert. | Görselleri kaldırma işlemini güvenle kaydedemedim. Kurgu aynı kaldı. |  |
+| I cut this as a fast montage instead of a guided story: {v1}. | Ich habe das als schnelle Montage statt als geführte Story geschnitten: {v1}. | Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}. |  |
+| I cut this as a fast montage instead of a text explainer: {v1}. | Ich habe das als schnelle Montage statt als Text-Erklärvideo geschnitten: {v1}. | Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}. |  |
 | I cut this as a fast montage instead of a {label_en}: {v1}. | Ich habe das als schnelle Montage statt als {label_en} geschnitten: {v1}. | Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}. |  |
 | I did {completed} of your {total} asks. | Ich habe {completed} von deinen {total} Wünschen umgesetzt. | {total} isteğinden {completed} tanesini yaptım. |  |
 | I didn't add a title because no creator text or grounded brief facts were available. | Ich habe keinen Titel hinzugefügt, weil weder ein Text von dir noch belegbare Fakten aus deinem Briefing vorlagen. | Başlık eklemedim, çünkü kullanabileceğim bir yazın ya da isteğinde dayanabileceğim bir bilgi yoktu. |  |
-| I didn't caption clip{v1} {join_skipped}. | Clip{v1} {join_skipped} habe ich keinen Untertitel hinzugefügt. | Klip {join_skipped} için yazı eklemedim. |  |
+| I didn't caption clip {join_skipped}. | Clip {join_skipped} habe ich nicht untertitelt. | Klip {join_skipped} için yazı eklemedim. |  |
+| I didn't caption clips {join_skipped}. | Die Clips {join_skipped} habe ich nicht untertitelt. | Klip {join_skipped} için yazı eklemedim. |  |
 | I didn't hear where that part starts, so the label isn't in | Ich habe nicht gehört, wo dieser Teil beginnt, deshalb ist das Label nicht drin | O bölümün nerede başladığını duymadım, o yüzden etiket yok |  |
 | I didn't hear you say that in your talk, and nothing you say is about the clip, so I left it out | Ich habe nicht gehört, dass du das in deiner Rede sagst, und nichts von dem, was du sagst, passt zum Clip, deshalb habe ich ihn weggelassen | Konuşmanda bunu söylediğini duymadım ve anlattığın hiçbir şey klibe uymuyor, o yüzden dışarıda bıraktım |  |
 | I didn't hear you say the words you named for {clip}, so it plays where you talk about it | Ich habe nicht gehört, dass du die Wörter sagst, die du für {clip} genannt hast, deshalb läuft er dort, wo du darüber sprichst | {clip} için söylediğin sözleri duymadım, o yüzden onu anlattığın yerde oynatıyorum |  |
@@ -749,7 +1145,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | I don't have a "{clip_value}" animation for the title yet, so it won't be used | Ich habe noch keine "{clip_value}"-Animation für den Titel, deshalb wird sie nicht verwendet | Başlık için henüz "{clip_value}" animasyonum yok, o yüzden kullanılmayacak |  |
 | I don't have a font called {value!r} | Ich habe keine Schriftart namens {value!r} | {value!r} adında bir yazı tipim yok |  |
 | I don't have a way to do that here | Dafür habe ich hier keine Möglichkeit | bunu burada yapmanın bir yolu yok |  |
-| I don't have any {join_names} tracks. The closest I have is {song_en}. Add it when you post if you like it. | Ich habe keine {join_names}-Songs. Am nächsten kommt {song_en}. Füg ihn beim Posten hinzu, wenn er dir gefällt. | Elimde {join_names_2} şarkısı yok. En yakını {song_tr}. Beğenirsen paylaşırken ekleyebilirsin. |  |
+| I don't have any {join_names} tracks. The closest I have is {song_en}. Add it when you post if you like it. | Ich habe keine Songs im Stil {join_names}. Am nächsten kommt {song_en}. Füg ihn beim Posten hinzu, wenn er dir gefällt. | Elimde {join_names_2} şarkısı yok. En yakını {song_tr}. Beğenirsen paylaşırken ekleyebilirsin. |  |
 | I ended the edit where your voice ends. | Ich habe den Edit dort beendet, wo deine Stimme endet. | Düzenlemeyi sesinin bittiği yerde bitirdim. |  |
 | I extended it so every clip stays on screen long enough to be seen. | Ich habe es verlängert, damit jeder Clip lang genug zu sehen ist. | Süreyi uzattım, böylece her klip görülecek kadar ekranda kalıyor. |  |
 | I found more than one matching phrase, so tell me which occurrence to cut | Ich habe mehr als eine passende Stelle gefunden, sag mir also, welche ich schneiden soll | Birden fazla eşleşen ifade buldum; hangisini kesmem gerektiğini söyle |  |
@@ -758,6 +1154,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | I found no clips of it | Ich habe keine Clips davon gefunden | Bununla ilgili klip bulamadım |  |
 | I found repeated trigger words for {words}. Tell me first, last, or which occurrence. | Ich habe die Auslösewörter für {words} mehrfach gefunden. Sag mir: das erste, das letzte oder welches Mal. | {words} için beklenen sözler tekrarlanıyor. İlk, son ya da hangi tekrar olduğunu söyle. |  |
 | I found that moment | Ich habe diesen Moment gefunden | O anı buldum |  |
+| I found that moment ({start}–{end}s into the clip) but not the exact frame to hold, so it plays normally. Tell me the second to freeze on, like "freeze at {middle} seconds" | Ich habe diesen Moment gefunden ({start}–{end} s im Clip), aber nicht das genaue Bild zum Anhalten, deshalb läuft er normal. Sag mir, bei welcher Sekunde das Bild stehen soll, zum Beispiel „bei {middle} Sekunden einfrieren“ | {v1} (klibin {start}–{end}. saniyeleri) ama tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede donsun, söyle; örneğin "{middle}. saniyede dondur" |  |
 | I found where you say “{quote}”, but couldn't fit it as the ending with your other clips, so the video won't end exactly on it. | Ich habe gefunden, wo du „{quote}“ sagst, konnte es aber nicht als Ende mit deinen anderen Clips unterbringen, deshalb endet das Video nicht genau dort. | “{quote}” dediğin anı buldum ama diğer kliplerle birlikte sona yerleştiremedim, bu yüzden video tam o anda bitmeyecek. |  |
 | I found {found} of your {total} moments in the clip. Put them in order and show me where each one is, and I'll cut exactly those. | Ich habe {found} von deinen {total} Momenten im Clip gefunden. Bring sie in die richtige Reihenfolge und zeig mir, wo jeder ist, dann schneide ich genau diese. | Saydığın {total} andan {found} tanesini klipte buldum. Onları sıraya koy ve her birinin nerede olduğunu göster, tam olarak onları keseyim. |  |
 | I found {line} but cutting to it would leave too little video, so the video still opens at the beginning of your take | Ich habe {line} gefunden, aber ein Schnitt dorthin würde zu wenig Video übrig lassen, deshalb beginnt das Video weiterhin am Anfang deines Takes | {line} cümlesini buldum ama oraya kesmek çok az video bırakırdı, bu yüzden video hâlâ çekimin başından açılıyor |  |
@@ -774,12 +1171,15 @@ These English keys have different Turkish wordings in different places (`conflic
 | I kept your length and used fewer clips, spread evenly through your footage. | Ich habe deine Länge beibehalten und weniger Clips verwendet, gleichmäßig über dein Material verteilt. | Süreni korudum ve daha az klip kullandım; klipleri çekimlerine eşit aralıklarla dağıttım. |  |
 | I kept your length: the last seconds play without voice. | Ich habe deine Länge beibehalten: Die letzten Sekunden laufen ohne Stimme. | Süreni korudum: son saniyeler sesin olmadan oynuyor. |  |
 | I kept your length: the photos you timed play at the edit's own pace. | Ich habe deine Länge beibehalten: Die Fotos, für die du eine Dauer festgelegt hast, laufen im eigenen Tempo des Edits. | Süreni korudum: süre verdiğin fotoğraflar düzenlemenin kendi hızında oynuyor. |  |
-| I left out clip{plural} {join_unseen}: I can't tell what {v1}. Tell me and I'll add {v2}. | Clip{plural} {join_unseen} habe ich weggelassen: Ich erkenne nicht, was {v1}. Sag es mir, dann füge ich {v2} hinzu. | Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. Söylersen ekleyeyim. |  |
+| I left out clip {join_unseen}: I can't tell what it shows. Tell me and I'll add it. | Clip {join_unseen} habe ich weggelassen: Ich erkenne nicht, was er zeigt. Sag es mir, dann ergänze ich ihn. | Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. Söylersen ekleyeyim. |  |
+| I left out clip {numbers} because it is too short to use. | Ich habe Clip {numbers} weggelassen, weil er zu kurz ist, um ihn zu verwenden. | {clips_tr} kullanılamayacak kadar kısa olduğu için çıkardım. |  |
+| I left out clip {which}. | Ich habe Clip {which} weggelassen. | {which}. klibi dışarıda bıraktım. |  |
+| I left out clips {join_unseen}: I can't tell what they show. Tell me and I'll add them. | Die Clips {join_unseen} habe ich weggelassen: Ich erkenne nicht, was sie zeigen. Sag es mir, dann ergänze ich sie. | Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. Söylersen ekleyeyim. |  |
+| I left out clips {numbers} because they are too short to use. | Ich habe die Clips {numbers} weggelassen, weil sie zu kurz sind, um sie zu verwenden. | {clips_tr} kullanılamayacak kadar kısa oldukları için çıkardım. |  |
+| I left out clips {which}. | Ich habe die Clips {which} weggelassen. | {which}. klipleri dışarıda bıraktım. |  |
 | I left out on-screen text that wasn't in your words. | Ich habe Text auf dem Bildschirm weggelassen, der nicht in deinen Worten vorkam. | Senin sözlerinde olmayan ekran yazısını eklemedim. |  |
 | I left out the word I couldn't make out | Ich habe das Wort weggelassen, das ich nicht verstanden habe | Anlayamadığım kelimeyi çıkardım |  |
 | I left out {omitted} based on your clip answer. | Ich habe {omitted} wegen deiner Clip-Antwort weggelassen. | Klip yanıtına göre {omitted} bölümünü çıkardım. |  |
-| I left out {v1} because {v2} too short to use. | Ich habe {v1} weggelassen, weil {v2} zu kurz zum Verwenden ist. | {v3} kullanılamayacak kadar kısa {v4} için çıkardım. |  |
-| I left out {v1} {which}. | Ich habe {v1} {which} weggelassen. | {which}. {v2} dışarıda bıraktım. |  |
 | I left the title off because you didn't give me its words. Tell me what it should say and I'll add it | Ich habe den Titel weggelassen, weil du mir keinen Text dafür gegeben hast. Sag mir, was er sagen soll, dann füge ich ihn hinzu | Başlığı koymadım çünkü kelimelerini vermedin. Ne yazmasını istediğini söyle, ekleyeyim |  |
 | I left those clips out. | Ich habe diese Clips weggelassen. | O klipleri dışarıda bıraktım. |  |
 | I left {phrase} alone. | Ich habe {phrase} in Ruhe gelassen. | {phrase_capitalize} bölümüne dokunmadım. |  |
@@ -788,7 +1188,8 @@ These English keys have different Turkish wordings in different places (`conflic
 | I made it {possible:g} seconds instead of {wanted:g}. | Ich habe es {possible:g} Sekunden lang gemacht statt {wanted:g}. | {wanted:g} saniye yerine {possible:g} saniyelik yaptım. |  |
 | I made that change in the editor. Part of your request needs a fresh edit, not an in-place tweak: tell me to redo it and I'll re-plan around your full request. | Ich habe diese Änderung im Editor gemacht. Ein Teil deiner Anfrage braucht einen neuen Edit statt einer direkten Anpassung: Sag mir, dass ich es neu machen soll, dann plane ich alles passend zu deiner ganzen Anfrage neu. | Bu değişikliği editörde yaptım. İsteğinin bir kısmı yerinde bir ayar değil, yeni bir düzenleme gerektiriyor: baştan yapmamı söylersen tüm isteğine göre planı yeniden kurarım. |  |
 | I marked the {label} on a frame. | Ich habe {label} auf einem Bild markiert. | {label} bir karede işaretledim. |  |
-| I matched {by_lyrics} take{v1} by your singing. | Ich habe {by_lyrics} Take{v1} anhand deines Gesangs zugeordnet. | {by_lyrics} çekimi söylediğin sözlere göre eşleştirdim. |  |
+| I matched {by_lyrics} take by your singing. | Ich habe {by_lyrics} Take anhand deines Gesangs zugeordnet. | {by_lyrics} çekimi söylediğin sözlere göre eşleştirdim. |  |
+| I matched {by_lyrics} takes by your singing. | Ich habe {by_lyrics} Takes anhand deines Gesangs zugeordnet. | {by_lyrics} çekimi söylediğin sözlere göre eşleştirdim. |  |
 | I matched {clip} to your sentences by their words, the meaning check was unavailable | Ich habe {clip} über die Wörter deinen Sätzen zugeordnet, die Prüfung nach Sinn war nicht verfügbar | {clip} klibini cümlelerinle kelimelerinden eşledim, anlam kontrolü çalışmadı |  |
 | I need a saved request and its source evidence before offering this render. | Ich brauche eine gespeicherte Anfrage und die zugehörigen Belege, bevor ich dieses Video anbieten kann. | Bu oluşturmayı sunmadan önce kayıtlı istek ve kaynak kanıtları gerekiyor. |  |
 | I need capture times for every selected clip to verify chronological order. | Um die chronologische Reihenfolge zu prüfen, brauche ich die Aufnahmezeit jedes ausgewählten Clips. | Çekim sırasını doğrulamak için seçilen her klibin çekim zamanını bilmem gerekiyor. |  |
@@ -804,10 +1205,11 @@ These English keys have different Turkish wordings in different places (`conflic
 | I never heard {names} in your voice | Ich habe {names} in deiner Stimme nie gehört | Sesinde {names} sözünü duymadım |  |
 | I never heard {unheard_0}, so that recording never shows. | Ich habe {unheard_0} nie gehört, deshalb erscheint diese Aufnahme nie. | {unheard_0} sözünü hiç duymadım, o yüzden o kayıt hiç görünmüyor. |  |
 | I prepared a simpler draft. | Ich habe einen einfacheren Entwurf vorbereitet. | Daha sade bir taslak hazırladım. |  |
-| I prepared a {pacing} {edit_format} draft around the available footage. | Ich habe einen {pacing}-{edit_format}-Entwurf aus deinem vorhandenen Material vorbereitet. | Elindeki çekimlere göre bir taslak hazırladım. |  |
+| I prepared a {pacing} {edit_format} draft around the available footage. | Ich habe aus deinem vorhandenen Material einen Entwurf vorbereitet (Tempo: {pacing}, Format: {edit_format}). | Elindeki çekimlere göre bir taslak hazırladım. |  |
 | I prepared the supported changes.· | Ich habe die unterstützten Änderungen vorbereitet.· | Desteklenen değişiklikleri hazırladım.· |  |
 | I prepared this edit for the editor to validate and stage. | Ich habe diesen Edit vorbereitet, damit der Editor ihn prüft und übernimmt. | Bu düzenlemeyi hazırladım, editör kontrol edip uygulayacak. |  |
-| I prepared {count} reversible editor change{suffix}. | Ich habe {count} rückgängig machbare Änderung{suffix} im Editor vorbereitet. | Editörde {count} geri alınabilir değişiklik hazırladım. |  |
+| I prepared {count} reversible editor change. | Ich habe {count} Änderung im Editor vorbereitet, die du rückgängig machen kannst. | Editörde {count} geri alınabilir değişiklik hazırladım. |  |
+| I prepared {count} reversible editor changes. | Ich habe {count} Änderungen im Editor vorbereitet, die du rückgängig machen kannst. | Editörde {count} geri alınabilir değişiklik hazırladım. |  |
 | I put {phrase} back to how it was. | Ich habe {phrase} wieder so gemacht, wie es war. | {phrase_capitalize} önceki hâline döndürüldü. |  |
 | I restored the previous draft. Nothing was rendered. | Ich habe den vorherigen Entwurf wiederhergestellt. Es wurde kein Video erstellt. | Önceki taslağı geri getirdim. Yeni bir video oluşturulmadı. |  |
 | I saved that direction and will apply it when this cut is ready. | Ich habe diese Richtung gespeichert und wende sie an, sobald dieser Schnitt fertig ist. | Bu yönlendirmeyi kaydettim, bu kurgu hazır olunca uygulayacağım. |  |
@@ -820,13 +1222,18 @@ These English keys have different Turkish wordings in different places (`conflic
 | I still need to know which part of {name} to leave out. | Ich muss noch wissen, welchen Teil von {name} ich weglassen soll. | {name} içinde hangi bölümü göstermeyeceğimi hâlâ bilmem gerekiyor. |  |
 | I tapped the clips you asked about. | Ich habe die Clips angetippt, nach denen du gefragt hast. | Sorduğun klipleri seçtim. |  |
 | I ticked the clips I found for {shown}{more}. Tap any others that show it too, or untick one that doesn't. | Ich habe die Clips angehakt, die ich für {shown}{more} gefunden habe. Tipp auf weitere, die es auch zeigen, oder nimm bei einem den Haken raus, der es nicht zeigt. | {shown}{more} için bulduğum klipleri işaretledim. Bunu gösteren başka klip varsa ona da dokun, göstermeyenin işaretini kaldır. |  |
-| I ticked the {v1} clip you filmed for "{category_get}". | Ich habe den {v1}-Clip angehakt, den du für "{category_get}" gefilmt hast. | "{category_get}" için çektiğin {v2} klibi işaretledim. |  |
+| I ticked the first clip you filmed for "{category_get}". | Ich habe für "{category_get}" den ersten Clip angehakt, den du gefilmt hast. | "{category_get}" için çektiğin ilk klibi işaretledim. |  |
+| I ticked the last clip you filmed for "{category_get}". | Ich habe für "{category_get}" den letzten Clip angehakt, den du gefilmt hast. | "{category_get}" için çektiğin son klibi işaretledim. |  |
 | I told you which part of the song I filmed. | Ich habe dir gesagt, zu welchem Teil des Songs ich gefilmt habe. | Şarkının hangi kısmını çektiğimi söyledim. |  |
 | I translated the {language_name_translated} speech into {rendered_name} captions. | Ich habe die {language_name_translated} Sprache in {rendered_name} Untertitel übersetzt. | {language_name_translated} konuşmayı {rendered_name} altyazıya çevirdim. |  |
 | I turned off {label} | Ich habe {label} ausgeschaltet | {v1}{v2} kapattım |  |
 | I understood {kept} of your clip instructions | Ich habe {kept} deiner Clip-Anweisungen verstanden | Klip talimatlarından {kept} tanesini anladım |  |
+| I undid my last change ({what}). Save when you're happy with it. | Ich habe meine letzte Änderung rückgängig gemacht ({what}). Speichere, wenn du zufrieden bist. | Son değişikliğimi geri aldım ({what}). Memnun kaldığında kaydet. |  |
 | I used a plain default title because none was given. | Ich habe einen schlichten Standardtitel verwendet, weil keiner angegeben war. | Başlık vermediğin için sade bir varsayılan başlık kullandım. |  |
-| I used {every}{len_used} clips, including the {len_short} short {v1} | Ich habe {every}{len_used} Clips verwendet, darunter {len_short} kurze {v1} | {len_used} klibin {v2} kullandım, {len_short} kısa klip de dahil |  |
+| I used all {len_used} clips, including the {len_short} short one | Ich habe alle {len_used} Clips verwendet, auch {len_short} kurzen Clip | {len_used} klibin hepsini kullandım, {len_short} kısa klip de dahil |  |
+| I used all {len_used} clips, including the {len_short} short ones | Ich habe alle {len_used} Clips verwendet, auch die {len_short} kurzen | {len_used} klibin hepsini kullandım, {len_short} kısa klip de dahil |  |
+| I used {len_used} clips, including the {len_short} short one | Ich habe {len_used} Clips verwendet, auch {len_short} kurzen Clip | {len_used} klibin tamamını kullandım, {len_short} kısa klip de dahil |  |
+| I used {len_used} clips, including the {len_short} short ones | Ich habe {len_used} Clips verwendet, auch die {len_short} kurzen | {len_used} klibin tamamını kullandım, {len_short} kısa klip de dahil |  |
 | I will make this edit from the clips that are still attached. | Ich erstelle diesen Edit aus den Clips, die noch angehängt sind. | Bu düzenlemeyi hâlâ bağlı olan kliplerle yapacağım. |  |
 | I will wait for your updated footage before making this edit. | Ich warte auf dein aktualisiertes Material, bevor ich diesen Edit erstelle. | Bu düzenlemeyi yapmadan önce güncel çekimlerini bekleyeceğim. |  |
 | I won't promise or check a particular order; the clips still play in a sensible sequence. | Ich verspreche oder prüfe keine bestimmte Reihenfolge; die Clips laufen trotzdem in einer sinnvollen Abfolge. | Belirli bir sıra vaat etmem ya da kontrol etmem; klipler yine de mantıklı bir sırayla oynar. |  |
@@ -838,20 +1245,29 @@ These English keys have different Turkish wordings in different places (`conflic
 | I'll check where the video starts on the finished video. | Ich prüfe am fertigen Video, wo es beginnt. | Videonun nereden başladığını video hazır olunca kontrol edeceğim. |  |
 | I'll crop the sideways clips to fill the vertical frame, keeping faces in it, and check it on the finished video | Ich schneide die Querformat-Clips so zu, dass sie das Hochformat füllen, halte die Gesichter im Bild und prüfe es am fertigen Video | Yatay klipleri dikey ekranı dolduracak şekilde kırpacağım, yüzleri kadrajda tutacağım ve bitmiş videoda kontrol edeceğim |  |
 | I'll cut the line you named out of your take if I find it said once, and tell you after | Ich schneide die Zeile, die du genannt hast, aus deinem Take, wenn ich sie genau einmal finde, und sage dir danach Bescheid | Söylediğin cümleyi çekiminde bir kez geçiyorsa keseceğim ve sonra sana söyleyeceğim |  |
+| I'll cut this as a fast montage instead of a guided story: {v1} | Ich schneide das als schnelle Montage statt als geführte Story: {v1} | Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2} |  |
+| I'll cut this as a fast montage instead of a text explainer: {v1} | Ich schneide das als schnelle Montage statt als Text-Erklärvideo: {v1} | Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2} |  |
 | I'll cut this as a fast montage instead of a {label_en}: {v1} | Ich schneide das als schnelle Montage statt als {label_en}: {v1} | Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2} |  |
 | I'll draw a curly arrow next to your ending text | Ich zeichne einen geschwungenen Pfeil neben deinen Schlusstext | Kapanış yazının yanına kıvrımlı bir ok çizeceğim |  |
+| I'll end the video on that colour screen with your text, after your last word | Ich beende das Video nach deinem letzten Wort mit diesem Farbbild und deinem Text | Son sözünden sonra videoyu o renkli ekranla ve yazınla bitireceğim |  |
 | I'll keep the sideways clips whole with black bars and check it on the finished video | Ich lasse die Querformat-Clips ganz mit schwarzen Balken und prüfe es am fertigen Video | Yatay klipleri siyah bantlarla bütün bırakacağım ve bitmiş videoda kontrol edeceğim |  |
 | I'll keep your take· | Ich behalte deinen Take· | Çekiminin· |  |
+| I'll keep your take from {at_start} on, if I find that line; if not, it opens at the start | Ich behalte deinen Take ab {at_start}, wenn ich diesen Satz finde; sonst beginnt das Video am Anfang | {v1}{at_start} cümlesinden sonrasını korurum, o cümleyi bulursam; bulamazsam video baştan açılır |  |
+| I'll keep your take from {at_start} to right after {at_end}, if I find those lines | Ich behalte deinen Take von {at_start} bis kurz nach {at_end}, wenn ich diese Sätze finde | {v1}{at_start} cümlesinden {at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, bu cümleleri bulursam |  |
+| I'll keep your take up to right after {at_end}, if I find that line; if not, it runs to the end | Ich behalte deinen Take bis kurz nach {at_end}, wenn ich diesen Satz finde; sonst läuft das Video bis zum Ende | {v1}{at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, o cümleyi bulursam; bulamazsam video sonuna kadar sürer |  |
 | I'll leave out the word I couldn't make out | Ich lasse das Wort weg, das ich nicht verstanden habe | Anlayamadığım kelimeyi çıkarırım |  |
 | I'll place that text on the matching words in your recording. If they repeat, I'll need the occurrence you mean. | Ich setze den Text auf die passenden Wörter in deiner Aufnahme. Wenn sie sich wiederholen, muss ich wissen, welches Mal du meinst. | Yazıyı kaydındaki eşleşen sözlerde göstereceğim. Sözler tekrarlanırsa hangi tekrarı istediğini bilmem gerekecek. |  |
 | I'll put it above your title when the video is made; if there's no room without covering your face or captions, I'll tell you | Ich setze es über deinen Titel, wenn das Video erstellt wird; wenn kein Platz ist, ohne dein Gesicht oder die Untertitel zu verdecken, sage ich es dir | Video yapılınca onu başlığının üstüne koyacağım; yüzünü ya da altyazılarını kapatmadan yer yoksa sana söyleyeceğim |  |
 | I'll show it on the· | Ich zeige ihn bei· | Yazıyı seçtiğin· |  |
+| I'll show it on the {word} you picked, at {clock} in your take; if I can't find that one, it won't appear | Ich zeige ihn bei dem von dir gewählten {word}, bei {clock} in deinem Take; finde ich diese Stelle nicht, erscheint er nicht | {v1}{word} anında, çekiminin {clock} noktasında gösteririm; o anı bulamazsam yazı çıkmaz |  |
 | I'll show it the first time that word is said in your take; I can't tell who's speaking, so it may appear when someone else says it | Ich zeige ihn, wenn das Wort in deinem Take zum ersten Mal gesagt wird; ich erkenne nicht, wer spricht, deshalb kann er auch erscheinen, wenn jemand anderes es sagt | Yazıyı çekiminde o kelime ilk söylendiğinde gösteririm; kimin konuştuğunu ayırt edemiyorum, o yüzden başka biri söylediğinde çıkabilir |  |
 | I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear | Ich zeige ihn in dem Moment, in dem du das Wort in deinem Take sagst; wenn ich das Wort nicht höre, erscheint er nicht | Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz |  |
+| I'll show it when I hear those words in your voiceover | Ich zeige es, sobald ich diese Worte in deinem Voiceover höre | Seslendirmende o sözleri duyduğumda gösteririm |  |
 | I'll show it when that part of your talk starts; if I don't hear where it starts, it won't appear | Ich zeige ihn, wenn dieser Teil deiner Rede beginnt; wenn ich nicht höre, wo er beginnt, erscheint er nicht | Konuşmanda o bölüm başladığında gösteririm; nerede başladığını duymazsam çıkmaz |  |
 | I'll show these words one at a time when I prepare the video, then check. | Ich zeige diese Wörter nacheinander, wenn ich das Video vorbereite, und prüfe es danach. | Bu kelimeleri videoyu hazırlarken tek tek göstereceğim, sonra kontrol ederim. |  |
 | I'll show your Visuals as cards when you talk about them; one you never talk about won't appear | Ich zeige deine Visuals als Karten, wenn du darüber sprichst; eines, über das du nie sprichst, erscheint nicht | Görsellerini onlardan bahsettiğin anda kart olarak gösteririm; hiç bahsetmediğin görsel çıkmaz |  |
-| I'll spell {and_names_names} the way you wrote {v1} and check {v1} in the finished video | Ich schreibe {and_names_names} so, wie du {v1} geschrieben hast, und prüfe {v1} im fertigen Video | {v2} senin yazdığın gibi yazıp bitmiş videoda kontrol edeceğim: {and_names_names} |  |
+| I'll spell {and_names_names} the way you wrote it and check it in the finished video | ich schreibe {and_names_names} so, wie du es geschrieben hast, und prüfe es im fertigen Video | şunu senin yazdığın gibi yazıp bitmiş videoda kontrol edeceğim: {and_names_names} |  |
+| I'll spell {and_names_names} the way you wrote them and check them in the finished video | ich schreibe {and_names_names} so, wie du sie geschrieben hast, und prüfe sie im fertigen Video | şunları senin yazdığın gibi yazıp bitmiş videoda kontrol edeceğim: {and_names_names} |  |
 | I'll start the video at that line if I find it in your take; if not, it opens at the start | Ich starte das Video an dieser Zeile, wenn ich sie in deinem Take finde; wenn nicht, beginnt es am Anfang | Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır |  |
 | I'll use your song as the background music for this edit. | Ich nutze deinen Song als Hintergrundmusik für diesen Edit. | Şarkını bu düzenlemede arka plan müziği olarak kullanacağım. |  |
 | I'll write the word you gave me | Ich schreibe das Wort, das du mir gegeben hast | Verdiğin kelimeyi yazarım |  |
@@ -891,13 +1307,16 @@ These English keys have different Turkish wordings in different places (`conflic
 | It looks only for pauses and filler sounds, so a sentence you restarted stays in. | Es sucht nur nach Pausen und Fülllauten, deshalb bleibt ein Satz, den du neu angesetzt hast, drin. | Yalnızca duraklamaları ve dolgu seslerini arar; baştan başladığın bir cümle videoda kalır. |  |
 | It never cuts to you talking | Es schneidet nie zu dir beim Sprechen | Hiçbir yerde konuşurken sana geçmiyor |  |
 | It would sit too close to the previous clip you asked to play | Es läge zu nah an dem vorherigen Clip, den du abspielen wolltest | İstediğin önceki klibe çok yakın olurdu |  |
+| Italian | Italienisch |  |  |
 | I’d try “{candidate}”. Does this wording work? | Ich würde „{candidate}“ probieren. Passt dir dieser Wortlaut? | Şunu deneyebilirim: “{candidate}”. Bu ifade sana uyar mı? |  |
 | I’m working on the edit plan. Your project is saved. | Ich arbeite am Edit-Plan. Dein Projekt ist gespeichert. | Düzenleme planı üzerinde çalışıyorum. Projen kaydedildi. |  |
 | I’ve refreshed your project status. | Ich habe den Status deines Projekts aktualisiert. | Projenin durumunu güncelledim. |  |
 | I’ve saved your request. I’m analyzing your clips and will continue automatically. | Ich habe deine Anfrage gespeichert. Ich analysiere deine Clips und mache automatisch weiter. | İsteğini kaydettim. Kliplerini inceliyorum, bitince kendiliğinden devam edeceğim. |  |
 | Keep about {clean_seconds_new} seconds (the part your lines keep, instead of {clean_seconds_old}) | Etwa {clean_seconds_new} Sekunden behalten (der Teil, den deine Zeilen behalten, statt {clean_seconds_old}) | Yaklaşık {clean_seconds_new} saniye olsun ({clean_seconds_old} saniye yerine, cümlelerinin tuttuğu kısım) |  |
 | Keep it | So lassen | Böyle kalsın |  |
-| Keep it strictly chronological; {word}s may interleave | Streng chronologisch lassen; Gruppen nach {word} dürfen sich mischen | Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir |  |
+| Keep it strictly chronological; groups may interleave | Streng chronologisch lassen; die Gruppen dürfen sich mischen | Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir |  |
+| Keep it strictly chronological; sports may interleave | Streng chronologisch lassen; die Sportarten dürfen sich mischen | Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir |  |
+| Keep it strictly chronological; {word}s may interleave | Streng chronologisch lassen; die Gruppen nach „{word}“ dürfen sich mischen | Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir |  |
 | Keep the video at {exc_minimum_duration_s:g}s | Video bei {exc_minimum_duration_s:g} s lassen | Videoyu {exc_minimum_duration_s:g} saniye tut |  |
 | Keep those {kept_s} seconds | Diese {kept_s} Sekunden behalten | O {kept_s} saniyeyi kullan |  |
 | Keep {asked_s} seconds, the last {v1} seconds play without voice | {asked_s} Sekunden behalten, die letzten {v1} Sekunden laufen ohne Stimme | {asked_s} saniye kalsın, son {v1} saniye sessiz oynasın |  |
@@ -907,42 +1326,58 @@ These English keys have different Turkish wordings in different places (`conflic
 | Keep {clean_seconds_new} seconds (extended from {clean_seconds_old} so every clip can be seen) | {clean_seconds_new} Sekunden behalten (verlängert von {clean_seconds_old}, damit jeder Clip zu sehen ist) | {clean_seconds_new} saniye olsun ({clean_seconds_old} saniyeden uzatıldı, böylece her klip görülebiliyor) |  |
 | Keep {clean_seconds_new} seconds (so every timed photo fits) | {clean_seconds_new} Sekunden behalten (damit jedes Foto mit festgelegter Dauer passt) | {clean_seconds_new} saniye olsun (süre verilen her fotoğraf sığsın diye) |  |
 | Keep {clean_seconds_new} seconds (the available source length, instead of {clean_seconds_old}) | {clean_seconds_new} Sekunden behalten (die verfügbare Länge des Materials, statt {clean_seconds_old}) | {clean_seconds_new} saniye olsun ({clean_seconds_old} saniye yerine, eldeki çekimlerin uzunluğu) |  |
-| Kept black bars on the {clips_n}, so nothing is cropped | Schwarze Balken bei {clips_n} beibehalten, damit nichts abgeschnitten wird | {clips_n} siyah bantlarla bütün kaldı, hiçbir şey kırpılmadı |  |
+| Kept black bars on the {clips_n}, so nothing is cropped | Schwarze Balken bei {clips_n} beibehalten, also ist nichts abgeschnitten | {clips_n} siyah bantlarla bütün kaldı, hiçbir şey kırpılmadı |  |
+| Korean | Koreanisch |  |  |
 | Kria is preparing the render from your confirmed direction. | Kria bereitet das Video nach deiner bestätigten Richtung vor. | Kria onayladığın yöne göre videoyu hazırlamaya başlıyor. |  |
-| Kria is rendering your video ({phase}). I’ll update this chat when it’s ready. | Kria erstellt gerade dein Video ({phase}). Ich melde mich in diesem Chat, sobald es fertig ist. | Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım. |  |
+| Kria is rendering your video ({phase}). I’ll update this chat when it’s ready. | Kria erstellt gerade dein Video (Schritt: {phase}). Ich melde mich in diesem Chat, sobald es fertig ist. | Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım. |  |
 | Kria is rendering your video. I’ll update this chat when it’s ready. | Kria erstellt dein Video. Ich melde mich in diesem Chat, sobald es fertig ist. | Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım. |  |
 | Kria is still working on the confirmed cut. I’ll update this chat when it’s ready. | Kria arbeitet noch am bestätigten Schnitt. Ich melde mich in diesem Chat, sobald er fertig ist. | Kria onayladığın kurgu üzerinde çalışmaya devam ediyor. Hazır olunca bu sohbete yazacağım. |  |
 | Kria's AI is at its limit | Krias KI ist am Limit | Kria'nın yapay zekâsı sınırda |  |
 | Kria's AI service has reached its usage limit for now, so your video wasn't made. Your edit and footage are saved. Trying again right away won't help; try again later. | Krias KI-Dienst hat sein Nutzungslimit vorerst erreicht, deshalb wurde dein Video nicht erstellt. Dein Edit und dein Material sind gespeichert. Sofort nochmal versuchen hilft nicht; versuch es später nochmal. | Kria'nın yapay zekâ hizmeti şimdilik kullanım sınırına ulaştı, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Hemen tekrar denemek işe yaramaz; daha sonra tekrar dene. |  |
-| Labelled {count} clip{v1}. | {count} Clip{v1} beschriftet. | {count} klibe etiket ekledim. |  |
+| Labelled {count} clip. | {count} Clip beschriftet. | {count} klibe etiket ekledim. |  |
+| Labelled {count} clips. | {count} Clips beschriftet. | {count} klibe etiket ekledim. |  |
 | Leave it out | Weglassen | Çıkar |  |
 | Leave those clips out | Diese Clips weglassen | O klipleri dışarıda bırak |  |
 | Leaves out: {listed} | Lässt weg: {listed} | Çıkarılacak: {listed} |  |
 | Left out: {names}. | Weggelassen: {names}. | Çıkardıklarım: {names}. |  |
 | Let's finish choosing the wording before preparing the edit. | Lass uns erst den Wortlaut fertig auswählen, bevor ich den Edit vorbereite. | Düzenlemeyi hazırlamadan önce ekrandaki yazıyı netleştirelim. |  |
 | Let's review the edit plan with your saved wording before changing this video. | Lass uns den Edit-Plan mit deinem gespeicherten Wortlaut durchgehen, bevor ich dieses Video ändere. | Bu videoyu değiştirmeden önce düzenleme planını kaydettiğin yazıyla birlikte gözden geçirelim. |  |
-| Lined up {who} on the {horizontal} | {who} an {horizontal} ausgerichtet | {who} {v1} hizalandı |  |
+| Lined up {who} on the center | {who} in die Mitte gerückt | {who} ortaya hizalandı |  |
+| Lined up {who} on the left | {who} nach links gerückt | {who} sola hizalandı |  |
+| Lined up {who} on the right | {who} nach rechts gerückt | {who} sağa hizalandı |  |
 | Lip-sync | Lip-Sync | Dudak senkronu |  |
+| Lip-sync keeps the song where you filmed it. | Lip-Sync lässt den Song dort, wo du gefilmt hast. | Dudak senkronu şarkıyı çektiğin yerde tutar. |  |
 | Longer: each clip stays on screen a little longer. | Länger: Jeder Clip bleibt etwas länger im Bild. | Daha uzun: her klip ekranda biraz daha uzun kalır. |  |
-| Made {who} {word_en} ({old:g}→{new:g}px) | {who} {word_en} gemacht ({old:g}→{new:g}px) | {who} {word_tr} ({old:g}→{new:g}px) |  |
+| Made {who} bigger ({old:g}→{new:g}px) | {who} vergrößert ({old:g}→{new:g}px) | {who} büyüttüm ({old:g}→{new:g}px) |  |
+| Made {who} smaller ({old:g}→{new:g}px) | {who} verkleinert ({old:g}→{new:g}px) | {who} küçülttüm ({old:g}→{new:g}px) |  |
 | Make it without these | Ohne diese erstellen | Bunlar olmadan hazırla |  |
 | Make it {shown} seconds | {shown} Sekunden lang machen | Videoyu {shown} saniye yap |  |
 | Mark the {label} on one frame so I can keep the text off it. Or tell me the text can go anywhere. | Markier {label} auf einem Bild, damit ich den Text davon fernhalten kann. Oder sag mir, dass der Text überall stehen darf. | Yazıyı uzak tutabilmem için {label} bir karede işaretle. Ya da yazının her yere gelebileceğini söyle. |  |
 | Mark {named} on a frame so I can keep the text off it | Markier {named} auf einem Bild, damit ich den Text davon fernhalten kann | Yazıyı uzak tutabilmem için {named_tr} bir karede işaretle |  |
 | Matching your footage to music didn't finish. Try again. | Die Abstimmung deines Materials auf Musik wurde nicht fertig. Versuch es nochmal. | Çekimlerini müzikle eşleştirme tamamlanmadı. Tekrar dene. |  |
 | May not match in the video. Nothing changed. | Stimmt im Video vielleicht nicht überein. Nichts wurde geändert. | Videoda uyuşmuyor olabilir. Hiçbir şey değişmedi. |  |
+| Montage format | Format: Montage | Format: Montaj |  |
 | More than one clip says {quote}, so I couldn't tell which to keep whole | Mehr als ein Clip sagt {quote}, deshalb konnte ich nicht erkennen, welchen ich ganz lassen soll | {quote} birden fazla klipte geçiyor, hangisini bütün bırakacağımı anlayamadım |  |
 | More than one of your clips has someone talking. | In mehr als einem deiner Clips spricht jemand. | Birden fazla klibinde biri konuşuyor. |  |
 | More than one of your clips shows {shown}{more}. For each one, keep the clip to use ticked and untick the others. | Mehr als einer deiner Clips zeigt {shown}{more}. Lass bei jedem den Clip angehakt, der verwendet werden soll, und nimm bei den anderen den Haken raus. | Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klibi işaretli bırak, diğerlerinin işaretini kaldır. |  |
-| Moved the captions to the {vertical} | Untertitel nach {vertical} verschoben | Altyazılar {spot_tr} konuma taşındı |  |
+| Moved the captions to the bottom | Untertitel nach unten verschoben | Altyazılar alt konuma taşındı |  |
+| Moved the captions to the middle | Untertitel in die Mitte verschoben | Altyazılar orta konuma taşındı |  |
+| Moved the captions to the top | Untertitel nach oben verschoben | Altyazılar üst konuma taşındı |  |
 | Moved {who} | {who} verschoben | {who} taşındı |  |
+| Moved {who} to the bottom | {who} nach unten verschoben | {who} alt konuma taşındı |  |
+| Moved {who} to the middle | {who} in die Mitte verschoben | {who} orta konuma taşındı |  |
+| Moved {who} to the top | {who} nach oben verschoben | {who} üst konuma taşındı |  |
 | Moved {who} to the {named} | {who} nach {named} verschoben | {who} {spot_tr} konuma taşındı |  |
 | Music under your voiceover isn't available on this iPhone yet, so the video plays your voice without music | Musik unter deinem Voiceover ist auf diesem iPhone noch nicht verfügbar, deshalb läuft das Video mit deiner Stimme ohne Musik | Seslendirmenin altına müzik bu iPhone'da henüz eklenemiyor, o yüzden video müziksiz, sadece sesinle oynayacak |  |
+| Narrated Planned format | Format: Mit Voiceover | Format: Seslendirmeli |  |
+| Narrated Ready format | Format: Mit Voiceover | Format: Seslendirmeli |  |
+| Narrated format | Format: Mit Voiceover | Format: Seslendirmeli |  |
 | Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera. | Erzählen über mehrere Clips gibt es auf dem iPhone noch nicht. Nimm ein Voiceover auf oder behalte einen Clip, in dem du in die Kamera sprichst. | Birden fazla klip üzerinde anlatım iPhone'da henüz yok. Bir seslendirme kaydet ya da kameraya konuşma için tek klip kullan. |  |
 | Narration labels must be resolved against the recorded voiceover. | Die Erzähl-Labels müssen anhand des aufgenommenen Voiceovers zugeordnet werden. | Anlatım etiketleri kaydedilen seslendirmeye göre çözülmeli. |  |
 | No clip got its own text in this draft. | In diesem Entwurf hat kein Clip einen eigenen Text bekommen. | Bu taslakta hiçbir klibe kendi yazısı gelmedi. |  |
 | No clip's own sound plays under your voice | Kein Clip-Originalton läuft unter deiner Stimme | Hiçbir klibin kendi sesi seslendirmenin altında çalmıyor |  |
-| No filming time for clip{plural} {join_untimed}. | Keine Aufnahmezeit für Clip{plural} {join_untimed}. | Klip {join_untimed} için çekim saati yok. |  |
+| No filming time for clip {join_untimed}. | Keine Aufnahmezeit für Clip {join_untimed}. | Klip {join_untimed} için çekim saati yok. |  |
+| No filming time for clips {join_untimed}. | Keine Aufnahmezeit für die Clips {join_untimed}. | Klip {join_untimed} için çekim saati yok. |  |
 | No freeze | Kein Standbild | Donma olmasın |  |
 | No freeze, as you chose | Kein Standbild, wie du es gewählt hast | Seçtiğin gibi donma yok |  |
 | No matching music was found for this edit. Try again, or pick a track yourself. | Für diesen Edit wurde keine passende Musik gefunden. Versuch es nochmal oder wähl selbst einen Track aus. | Bu düzenleme için uygun müzik bulunamadı. Tekrar dene ya da müziği kendin seç. |  |
@@ -952,14 +1387,19 @@ These English keys have different Turkish wordings in different places (`conflic
 | No phone font can draw "{characters}". Remove it or change "{text}". | Keine Schriftart auf dem Handy kann "{characters}" darstellen. Entferne es oder ändere "{text}". | "{characters}" hiçbir telefon yazı tipiyle yazılamıyor. Onu çıkar ya da "{text}" metnini değiştir. |  |
 | No pop-in for {names_missing} | Keine Einblendung für {names_missing} | Şunlar için çıkan görsel yok: {names_missing} |  |
 | No recording for {names_join_none_for}, so the one before stays on. | Keine Aufnahme für {names_join_none_for}, deshalb bleibt die vorherige im Bild. | {names_join_none_for} için kayıt yok, o yüzden öncekisi ekranda kalıyor. |  |
+| No title, as asked. | Kein Titel, wie gewünscht. | İstediğin gibi başlık yok. |  |
 | No two clips in the edit come from the same video file | Keine zwei Clips im Edit stammen aus derselben Videodatei | Düzenlemedeki hiçbir klip aynı video dosyasından gelmiyor |  |
 | No, something's wrong | Nein, etwas stimmt nicht | Hayır, bir şey yanlış |  |
 | None of the pop-ins plays a sound | Keine der Einblendungen spielt einen Ton ab | Çıkan görsellerin hiçbiri ses çalmıyor |  |
 | None of the pop-ins shows a photo or sticker | Keine der Einblendungen zeigt ein Foto oder einen Sticker | Çıkan görsellerin hiçbiri fotoğraf ya da çıkartma göstermiyor |  |
+| None of the {total} clips got its own text in this draft. | Keiner der {total} Clips hat in diesem Entwurf einen eigenen Text bekommen. | Bu taslakta {total} klibin hiçbirine kendi yazısı gelmedi. |  |
 | None of these — keep it from the start | Keins davon – von Anfang an behalten | Hiçbiri — baştan başlasın |  |
 | None of these — keep it to the end | Keins davon – bis zum Ende behalten | Hiçbiri — sona kadar sürsün |  |
 | None of what you say is about it, so I left it out | Nichts von dem, was du sagst, handelt davon, deshalb habe ich es weggelassen | Anlattığın hiçbir şey onunla ilgili değil, o yüzden dışarıda bıraktım |  |
 | None of your Visuals showed as a card | Keines deiner Visuals wurde als Karte gezeigt | Görsellerinin hiçbiri kart olarak çıkmadı |  |
+| None of your clips has sound, so I can't keep the camera audio. Want me to use music instead? | Keiner deiner Clips hat Ton, deshalb kann ich den Kameraton nicht behalten. Soll ich stattdessen Musik nehmen? | Kliplerinin hiçbirinde ses yok, o yüzden kamera sesini koruyamam. Onun yerine müzik kullanayım mı? |  |
+| None of your clips has sound, so this edit doesn't use camera audio. | Keiner deiner Clips hat Ton, deshalb nutzt dieser Edit keinen Kameraton. | Kliplerinin hiçbirinde ses yok, o yüzden bu düzenleme kamera sesini kullanmıyor. |  |
+| None of your clips has sound. | Keiner deiner Clips hat Ton. | Kliplerinin hiçbirinde ses yok. |  |
 | None of your clips is too short to use. | Keiner deiner Clips ist zu kurz zum Verwenden. | Kliplerinden hiçbiri kullanılamayacak kadar kısa değil. |  |
 | None of your clips show "{label}" | Keiner deiner Clips zeigt "{label}" | Kliplerinin hiçbirinde "{label}" yok |  |
 | None of your clips show "{words}" | Keiner deiner Clips zeigt "{words}" | Kliplerinin hiçbirinde "{words}" yok |  |
@@ -978,6 +1418,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | Nothing was changed. | Es wurde nichts geändert. | Hiçbir şey değişmedi. |  |
 | Nothing was published. | Es wurde nichts veröffentlicht. | Yeni bir video oluşturulmadı. |  |
 | On-device rendering isn't available for this account right now, so I left the video as it was. | Das Erstellen auf dem Gerät ist für dieses Konto gerade nicht verfügbar, deshalb habe ich das Video so gelassen, wie es war. | Cihaz üzerinde video oluşturma bu hesapta şu anda kullanılamıyor, o yüzden videoyu olduğu gibi bıraktım. |  |
+| One caption line can't be sized or moved on its own from chat on this edit. | In diesem Edit kann ich eine einzelne Untertitelzeile nicht per Chat einzeln vergrößern oder verschieben. | Bu düzenlemede tek bir altyazı satırını sohbetten ayrı boyutlandıramıyorum ya da taşıyamıyorum. |  |
 | One of those lines changed, so I left your video as it was. Refresh and try again. | Eine dieser Zeilen hat sich geändert, deshalb habe ich dein Video so gelassen, wie es war. Aktualisier und versuch es nochmal. | Satırlardan biri değişmiş, o yüzden videonu olduğu gibi bıraktım. Yenileyip tekrar dene. |  |
 | One of your clips couldn't be downloaded. Reattach it and try again. | Einer deiner Clips konnte nicht heruntergeladen werden. Häng ihn nochmal an und versuch es erneut. | Kliplerinden biri indirilemedi. Yeniden ekle ve tekrar dene. |  |
 | One of your clips couldn't be used (it may be corrupted or unsupported). Try a different clip. | Einer deiner Clips konnte nicht verwendet werden (er ist vielleicht beschädigt oder wird nicht unterstützt). Probier einen anderen Clip. | Kliplerinden biri kullanılamadı (bozuk ya da desteklenmiyor olabilir). Farklı bir klip dene. |  |
@@ -987,10 +1428,13 @@ These English keys have different Turkish wordings in different places (`conflic
 | One render | Ein Video | Tek bir video |  |
 | One stays on for {longest:.0f} s, but you asked for a change about every {cadence:g} s: there are only {shown} photos or videos for this talk and none repeats. Add more for faster changes. | Eins bleibt {longest:.0f} s im Bild, aber du wolltest etwa alle {cadence:g} s einen Wechsel: Für diese Rede gibt es nur {shown} Fotos oder Videos, und keins wiederholt sich. Füg mehr hinzu für schnellere Wechsel. | Biri {longest:.0f} sn ekranda kalıyor ama yaklaşık {cadence:g} saniyede bir değişmesini istedin: bu konuşma için yalnızca {shown} fotoğraf ya da video var ve hiçbiri tekrar etmiyor. Daha hızlı değişmesi için daha fazlasını ekle. |  |
 | One thing didn't match your request: {issues_0}. I prepared a fix in your draft. Approve it to render, or undo it. | Eine Sache stimmte nicht mit deiner Anfrage überein: {issues_0}. Ich habe in deinem Entwurf eine Korrektur vorbereitet. Gib sie frei, um das Video zu erstellen, oder mach sie rückgängig. | Bir şey isteğinle uyuşmadı: {issues_0}. Taslağında bir düzeltme hazırladım. Oluşturmak için onayla ya da geri al. |  |
+| Only a talking-to-camera edit made on your iPhone can end on a full-screen colour with your text | Nur ein Talking-Edit, das auf deinem iPhone erstellt wird, kann mit einem Vollbild in einer Farbe und deinem Text enden | Videoyu yazılı tam ekran bir renkle yalnızca iPhone'unda yapılan kameraya konuşma düzenlemesi bitirebilir |  |
 | Only a talking-to-camera edit made on your iPhone can put a photo or video behind you | Nur ein Edit, in dem du in die Kamera sprichst und der auf deinem iPhone erstellt wird, kann ein Foto oder Video hinter dich legen | Arkana fotoğraf ya da video yalnızca iPhone'da hazırlanan konuşmalı düzenlemede konabilir |  |
 | Only a talking-to-camera edit made on your iPhone can put a plain colour behind you | Nur ein Edit, in dem du in die Kamera sprichst und der auf deinem iPhone erstellt wird, kann eine einfarbige Fläche hinter dich legen | Arkana düz renk yalnızca iPhone'da hazırlanan konuşmalı düzenlemede konabilir |  |
 | Only a talking-to-camera edit on your iPhone can end on another video | Nur ein Edit auf deinem iPhone, in dem du in die Kamera sprichst, kann mit einem anderen Video enden | Başka bir videoyla yalnızca iPhone'daki konuşmalı düzenleme bitebilir |  |
 | Only a talking-to-camera edit on your iPhone can pause your talk for a clip | Nur ein Edit auf deinem iPhone, in dem du in die Kamera sprichst, kann deine Rede für einen Clip pausieren | Konuşmayı bir klip için yalnızca iPhone'daki konuşmalı düzenleme durdurabilir |  |
+| Only clip {which} is in this edit and it runs about {possible:g} seconds, so the video can't be {wanted:g} seconds. | In diesem Edit ist nur Clip {which}, und er dauert etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. | Bu düzenlemede yalnızca {which}. klip var ve yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor. |  |
+| Only clips {which} are in this edit and together they run about {possible:g} seconds, so the video can't be {wanted:g} seconds. | In diesem Edit sind nur die Clips {which}, und zusammen dauern sie etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. | Bu düzenlemede yalnızca {which}. klipler var ve birlikte yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor. |  |
 | Only one clip can play on after your voice | Nur ein Clip kann nach deiner Stimme weiterlaufen | Seslendirmeden sonra yalnızca tek bir klip devam edebilir |  |
 | Only one of your own clips can pause the talk, not a video from Visuals yet | Nur einer deiner eigenen Clips kann die Rede pausieren, noch kein Video aus Visuals | Konuşmayı yalnızca kendi kliplerinden biri durdurabilir, Visuals videosu değil |  |
 | Only one photo or video is attached, so it stays behind you for the whole video | Es ist nur ein Foto oder Video angehängt, deshalb bleibt es das ganze Video über hinter dir | Yalnızca bir fotoğraf ya da video ekli, o yüzden bütün video boyunca arkanda duruyor |  |
@@ -1001,16 +1445,18 @@ These English keys have different Turkish wordings in different places (`conflic
 | Only {len_numbers} of your {own_count} clips are in this edit and together they run about {possible:g} seconds, so the video can't be {wanted:g} seconds. | Nur {len_numbers} deiner {own_count} Clips sind in diesem Edit und zusammen laufen sie etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. | Bu düzenlemede {own_count} klipten yalnızca {len_numbers} tanesi var ve birlikte yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor. |  |
 | Only {shown} of your {asked} photos or videos take turns behind you; I couldn't use the rest. | Nur {shown} deiner {asked} Fotos oder Videos wechseln sich hinter dir ab; den Rest konnte ich nicht verwenden. | {asked} fotoğraf ya da videodan yalnızca {shown} tanesi arkanda sırayla değişiyor; gerisini kullanamadım. |  |
 | Only {shown} of your {asked} photos or videos take turns over the colour; I couldn't use the rest. | Nur {shown} deiner {asked} Fotos oder Videos wechseln sich über der Farbe ab; den Rest konnte ich nicht verwenden. | {asked} fotoğraf ya da videodan yalnızca {shown} tanesi rengin üstünde sırayla değişiyor; gerisini kullanamadım. |  |
-| Only {v1} {which} {v2} in this edit and {v3} about {possible:g} seconds, so the video can't be {wanted:g} seconds. | In diesem Edit {v1} nur {which} {v2} und {v3} etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. | Bu düzenlemede yalnızca {which}. {v4} var ve {v5}yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor. |  |
 | Open the specific video version you want to edit, then ask me again. | Öffne die Videoversion, die du bearbeiten möchtest, und frag mich dann nochmal. | Düzenlemek istediğin video sürümünü aç, sonra bana tekrar sor. |  |
 | Open the video version you want to edit, then ask me to remove its uploaded Visuals. | Öffne die Videoversion, die du bearbeiten möchtest, und bitte mich dann, die hochgeladenen Visuals zu entfernen. | Düzenlemek istediğin video sürümünü aç, sonra yüklediğin görselleri kaldırmamı iste. |  |
 | Open with {strongest}; it gives the story an immediate visual point of view. | Starte mit {strongest}; so bekommt die Story sofort eine klare visuelle Perspektive. | {strongest} ile aç; hikâye ilk andan net bir görsel bakış açısı kazanır. |  |
 | Opens where “{part_unheard}” is said. | Beginnt dort, wo „{part_unheard}“ gesagt wird. | “{part_unheard}” denen yerden açılır. |  |
-| Optional: move the {word} to the {en_anchor} so it's easier to read. | Optional: Verschieb {word} nach {en_anchor}, damit es leichter lesbar ist. | İstersen {word} daha kolay okunsun diye {tr_anchor} taşınabilir. |  |
+| Optional: move the {word} to the bottom so it's easier to read. | Optional: {word} nach unten verschieben, damit der Text besser lesbar ist. | İstersen {word} daha kolay okunsun diye alta taşınabilir. |  |
+| Optional: move the {word} to the middle so it's easier to read. | Optional: {word} in die Mitte verschieben, damit der Text besser lesbar ist. | İstersen {word} daha kolay okunsun diye ortaya taşınabilir. |  |
+| Optional: move the {word} to the top so it's easier to read. | Optional: {word} nach oben verschieben, damit der Text besser lesbar ist. | İstersen {word} daha kolay okunsun diye üste taşınabilir. |  |
 | Optional: put your exact wording back on the {word}. | Optional: Setz deinen genauen Wortlaut wieder auf {word}. | İstersen {word} tam yazdığın hâline döndürülebilir. |  |
 | Optional: shorten the {word} so it ends before the video does. | Optional: Kürz {word}, damit es endet, bevor das Video endet. | İstersen {word} video bitmeden bitecek şekilde kısaltılabilir. |  |
 | Original camera audio is required by the render contract. | Der Originalton der Kamera ist für die Videoerstellung vorgeschrieben. | Oluşturma sözleşmesi kameranın özgün sesini zorunlu tutuyor. |  |
 | Our AI took too long to plan this edit, so your video wasn't made. Your edit and footage are saved. Try again in a moment. | Unsere KI hat zu lange gebraucht, um diesen Edit zu planen, deshalb wurde dein Video nicht erstellt. Dein Edit und dein Material sind gespeichert. Versuch es gleich nochmal. | Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Birazdan tekrar dene. |  |
+| Part of a split screen can't go full screen from chat on this edit. | In diesem Edit kann ich einen Teil des Split-Screens nicht per Chat auf Vollbild stellen. | Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum. |  |
 | Partly | Teilweise | Kısmen |  |
 | Partly done. | Teilweise erledigt. | Kısmen yapıldı. |  |
 | Photo and sound pop-ins timed to your words aren't available for this edit yet | Foto- und Ton-Einblendungen, die auf deine Worte abgestimmt sind, gibt es für diesen Edit noch nicht | Sözlerine göre çıkan fotoğraf ve ses efektleri bu düzenleme için henüz yok |  |
@@ -1031,6 +1477,9 @@ These English keys have different Turkish wordings in different places (`conflic
 | Please restate the complete clip instructions in a shorter message so I can preserve all of them. | Schreib die kompletten Clip-Anweisungen bitte in einer kürzeren Nachricht nochmal, damit ich keine verliere. | Klip talimatlarının hepsini daha kısa bir mesajda yeniden yazar mısın? Hiçbirini kaçırmak istemiyorum. |  |
 | Please shorten this Visuals request to 2,000 characters so I can apply it safely. | Kürz diese Visuals-Anfrage bitte auf 2.000 Zeichen, damit ich sie sicher anwenden kann. | Bu görsel isteğini güvenle uygulayabilmem için 2.000 karakterin altına kısaltır mısın? |  |
 | Please shorten this request to 2,000 characters so I can apply it safely. | Kürz diese Anfrage bitte auf 2.000 Zeichen, damit ich sie sicher anwenden kann. | Bu isteği güvenle uygulayabilmem için 2.000 karakterin altına kısaltır mısın? |  |
+| Pop-in on {joined} | Pop-in: {joined} | {join_parts_tr}{tail_tr} çıkıyor |  |
+| Pop-ins on {joined} | Pop-ins: {joined} | {join_parts_tr}{tail_tr} çıkıyor |  |
+| Portuguese | Portugiesisch |  |  |
 | Prepared adjusted text timing while preserving the original wording and appearance. | Angepasstes Text-Timing vorbereitet; Wortlaut und Aussehen sind unverändert geblieben. | Özgün kelimeleri ve görünümü koruyarak yazı zamanlaması taslağını hazırladım. |  |
 | Prepared the timing-only draft with the original wording unchanged. I removed unrequested copy changes from the proposed edit. | Entwurf nur mit geändertem Timing vorbereitet, der ursprüngliche Wortlaut ist unverändert. Ich habe ungewollte Textänderungen aus dem vorgeschlagenen Edit entfernt. | Özgün kelimeleri değiştirmeden yalnızca zamanlama taslağını hazırladım. İstenmeyen metin değişikliklerini önerilen düzenlemeden çıkardım. |  |
 | Preserve the current word timings | Aktuelle Wort-Timings beibehalten | Mevcut kelime zamanlamalarını koru |  |
@@ -1048,20 +1497,23 @@ These English keys have different Turkish wordings in different places (`conflic
 | Record your voice for this edit, or ask for a different format. | Nimm für diesen Edit deine Stimme auf oder wünsch dir ein anderes Format. | Bu düzenleme için sesini kaydet ya da farklı bir format iste. |  |
 | Recording is empty | Die Aufnahme ist leer | Kayıt boş |  |
 | Recording is too long — keep it under two minutes | Die Aufnahme ist zu lang – halt sie unter zwei Minuten | Kayıt çok uzun, iki dakikanın altında tut |  |
+| Relaxed pacing | Tempo: Entspannt | Tempo: Sakin |  |
 | Remembered for future videos. | Für künftige Videos gemerkt. | Bunu sonraki videoların için aklımda tutacağım. |  |
 | Removed the caption animation | Untertitel-Animation entfernt | Altyazı animasyonu kaldırıldı |  |
 | Removed the caption outline | Untertitel-Kontur entfernt | Altyazı konturu kaldırıldı |  |
 | Removed the caption shadow | Untertitel-Schatten entfernt | Altyazı gölgesi kaldırıldı |  |
-| Removed the entrance animation from {who} | Eingangsanimation von {who} entfernt | {who} için giriş animasyonu kaldırıldı |  |
+| Removed the entrance animation from {who} | {who}: Eingangsanimation entfernt | {who} için giriş animasyonu kaldırıldı |  |
 | Removed the music | Musik entfernt | Müzik kaldırıldı |  |
 | Removed the requested uploaded Visuals from the saved edit. Text, captions, footage and audio are unchanged. | Die gewünschten hochgeladenen Visuals wurden aus dem gespeicherten Edit entfernt. Text, Untertitel, Material und Ton sind unverändert. | İstediğin yüklenmiş görselleri kayıtlı kurgudan kaldırdım. Yazılar, altyazılar, görüntüler ve ses aynı kaldı. |  |
 | Removed visual items | Visuelle Elemente entfernt | Görsel öğeler kaldırıldı |  |
+| Removed your song | Deinen Song entfernt | Şarkın kaldırıldı |  |
+| Removed {what} | {what} entfernt | {what} kaldırıldı |  |
 | Removed {who} | {who} entfernt | {who} kaldırıldı |  |
 | Rendering is unavailable for this edit right now. | Das Erstellen des Videos ist für diesen Edit gerade nicht verfügbar. | Bu düzenleme şu anda oluşturulamıyor. |  |
 | Rendering ran out of memory — your clips are heavy. Try fewer or shorter clips. | Beim Erstellen des Videos ging der Speicher aus – deine Clips sind sehr groß. Probier weniger oder kürzere Clips. | Video hazırlanırken bellek yetmedi; kliplerin çok ağır. Daha az ya da daha kısa klip dene. |  |
 | Reordered the clips | Clips neu angeordnet | Klipler yeniden sıralandı |  |
-| Reset the zoom of {who} | Zoom von {who} zurückgesetzt | {who} yakınlaştırması sıfırlandı |  |
-| Resized {who} | Größe von {who} geändert | {who} yeniden boyutlandı |  |
+| Reset the zoom of {who} | {who}: Zoom zurückgesetzt | {who} yakınlaştırması sıfırlandı |  |
+| Resized {who} | {who}: Größe geändert | {who} yeniden boyutlandı |  |
 | Restored your exact wording on the {word}. | Dein genauer Wortlaut bei {word} ist wiederhergestellt. | {role_at_start_role} tam yazdığın hâline döndü. |  |
 | Retime text to {closest:g}s | Text auf {closest:g} s verteilen | Yazıları {closest:g} saniyeye yay |  |
 | Retime text to {exc_requested_duration_s:g}s | Text auf {exc_requested_duration_s:g} s verteilen | Yazıları {exc_requested_duration_s:g} saniyeye yay |  |
@@ -1069,12 +1521,18 @@ These English keys have different Turkish wordings in different places (`conflic
 | Retimed {len_ids} words in sequence from {start:g}s to {end:g}s. | {len_ids} Wörter der Reihe nach von {start:g} s bis {end:g} s verteilt. | {len_ids} kelimeyi {start:g} ile {end:g} saniye arasında sırayla yaydım. |  |
 | Retimed {who} | Timing geändert: {who} | {who} zamanlaması değişti |  |
 | Retimed {who} ({span_first_before} → {span_first_after}) | Timing geändert: {who} ({span_first_before} → {span_first_after}) | {who} zamanlaması değişti ({span_first_before} → {span_first_after}) |  |
+| Review the restored text for {update_description}: "{update_literal}" | Prüf den wiederhergestellten Text für {update_description}: "{update_literal}" | Geri yüklenen metni gözden geçir ({update_description}): "{update_literal}" |  |
 | Rewrote {who} | Neu geschrieben: {who} | {who} yeniden yazıldı |  |
 | Save your edits first, then I can cut the silences. | Speichere erst deine Änderungen, dann kann ich die Pausen schneiden. | Önce düzenlemelerini kaydet, sonra sessiz kısımları kesebilirim. |  |
 | Save your edits first, then tap this suggestion again. Nothing was changed. | Speichere erst deine Änderungen und tipp dann nochmal auf diesen Vorschlag. Es wurde nichts geändert. | Önce düzenlemelerini kaydet, sonra bu öneriye tekrar dokun. Hiçbir şey değişmedi. |  |
 | Saving your upload didn't finish. Try again. | Das Speichern deines Uploads wurde nicht fertig. Versuch es nochmal. | Yüklemen kaydedilemedi. Tekrar dene. |  |
+| Serbian | Serbisch |  |  |
 | Set the video to {end:g}s while preserving the text timing. | Das Video auf {end:g} s setzen und das Timing der Texte beibehalten. | Yazıların zamanlamasını koruyarak videoyu {end:g} saniye yap. |  |
-| Set {who} to {case_en_get_str_common} | {who} → {case_en_get_str_common} | {who} → {case_tr_get_str_common} |  |
+| Set {who} to Title Case | {who}: Jedes Wort beginnt jetzt groß | {who} → Baş Harfler Büyük |  |
+| Set {who} to UPPERCASE | {who} in GROSSBUCHSTABEN gesetzt | {who} → BÜYÜK HARF |  |
+| Set {who} to a new case | {who}: Schreibweise geändert | {who} → yeni harf biçimi |  |
+| Set {who} to its original case | {who} wieder in der ursprünglichen Schreibweise | {who} → özgün harf |  |
+| Set {who} to lowercase | {who} in kleinbuchstaben gesetzt | {who} → küçük harf |  |
 | Set {who} to {common:g}s | {who} auf {common:g} s gesetzt | {who} {common:g} sn yapıldı |  |
 | Shortened the {word} so it ends before the video does. | {word} gekürzt, damit es vor dem Ende des Videos aufhört. | {role_at_start_role} video bitmeden bitecek şekilde kısaldı. |  |
 | Should I make a simpler version? | Soll ich eine einfachere Version machen? | Daha sade bir sürüm yapayım mı? |  |
@@ -1082,7 +1540,9 @@ These English keys have different Turkish wordings in different places (`conflic
 | Shown:· | Gezeigt:· | Gösterildi:· |  |
 | Simpler version with the agreed omissions. | Einfachere Version mit den besprochenen Auslassungen. | Kararlaştırılan eksiklerle daha basit sürüm. |  |
 | Simpler video with the supported edits. | Einfacheres Video mit den unterstützten Änderungen. | Desteklenen düzenlemelerle daha basit video. |  |
+| Single Hero format | Format: Hauptclip | Format: Tek kahraman klip |  |
 | Single-hero | Hauptclip | Tek kahraman |  |
+| Slides format | Format: Folien | Format: Slayt |  |
 | Small card of {name} at {card_at_s:.1f} s for {hold:.1f} s | Kleine Karte von {name} bei {card_at_s:.1f} s für {hold:.1f} s | {name} {card_at_s:.1f} sn'de {hold:.1f} sn küçük kart olarak |  |
 | Small card of {name} during the clip you named for {hold:.1f} s | Kleine Karte von {name} während des genannten Clips für {hold:.1f} s | {name} söylediğin klipte {hold:.1f} sn küçük kart olarak |  |
 | Small cards at an exact time aren't available for this edit yet | Kleine Karten zu einer genauen Zeit gibt es für diesen Edit noch nicht | Tam zamanlı küçük kartlar bu düzenleme için henüz yok |  |
@@ -1104,10 +1564,11 @@ These English keys have different Turkish wordings in different places (`conflic
 | Source | Quelle | Kaynak |  |
 | Sourced on-screen explanations (shown only if you approve this draft): | Erklärungen mit Quellen auf dem Bildschirm (nur wenn du diesen Entwurf freigibst): | Kaynaklı ekran açıklamaları (yalnızca bu taslağı onaylarsan eklenir): |  |
 | Sources could not be confirmed before approval: {prepared_reason} | Die Quellen konnten vor der Freigabe nicht bestätigt werden: {prepared_reason} | Kaynaklar onaydan önce doğrulanamadı: {prepared_reason} |  |
+| Spanish | Spanisch |  |  |
 | Speech cleanup cut only the long pauses, so shorter pauses stay | Die Sprachbereinigung hat nur die langen Pausen geschnitten, kürzere Pausen bleiben | Konuşma temizliği yalnızca uzun duraklamaları kesti, daha kısa duraklamalar kalıyor |  |
 | Speech cleanup cut the long pauses | Die Sprachbereinigung hat die langen Pausen geschnitten | Konuşma temizliği uzun duraklamaları kesti |  |
-| Speech cleanup cut what it heard as {joined_en} ({seconds:.1f} s). | Die Sprachbereinigung hat geschnitten, was sie als {joined_en} gehört hat ({seconds:.1f} s). | Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr} ({seconds_tr} sn). |  |
-| Speech cleanup cut what it heard as {joined_en}. | Die Sprachbereinigung hat geschnitten, was sie als {joined_en} gehört hat. | Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr}. |  |
+| Speech cleanup cut what it heard as {joined} ({seconds:.1f} s). | Die Sprachbereinigung hat geschnitten, was sie dafür hielt: {joined} ({seconds:.1f} s). | Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr} ({seconds_tr} sn). |  |
+| Speech cleanup cut what it heard as {joined}. | Die Sprachbereinigung hat geschnitten, was sie dafür hielt: {joined}. | Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr}. |  |
 | Speech cleanup cut your pauses tight, but | Die Sprachbereinigung hat deine Pausen eng geschnitten, aber | Konuşma temizliği duraklamaları sıkılaştırdı ama |  |
 | Speech cleanup cuts every pause down to about 0.3 s, and I'll tell you after if any stay longer | Die Sprachbereinigung kürzt jede Pause auf etwa 0,3 s, und ich sage dir danach, ob welche länger bleiben | Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır, daha uzun kalan olursa sonra sana söylerim |  |
 | Speech cleanup cuts only the long pauses in this kind of video, so shorter pauses stay | Die Sprachbereinigung schneidet bei dieser Art Video nur die langen Pausen, kürzere Pausen bleiben | Konuşma temizliği bu tür videoda yalnızca uzun duraklamaları keser, daha kısa duraklamalar kalır |  |
@@ -1121,14 +1582,19 @@ These English keys have different Turkish wordings in different places (`conflic
 | Speech cleanup was off, so I couldn't cut the start and the video opens at the beginning of your take | Die Sprachbereinigung war aus, deshalb konnte ich den Anfang nicht schneiden und das Video beginnt am Anfang deines Takes | Konuşma temizliği kapalıydı, o yüzden başı kesemedim ve video çekimin başından açılıyor |  |
 | Started {who} earlier in its footage | {who} beginnt jetzt früher im Material | {who} görüntüde daha erken başlıyor |  |
 | Still in your video | Noch in deinem Video | Videonda hâlâ var |  |
+| Still in your video: "{quote}" ({v1}) | Noch in deinem Video: „{quote}“ ({v1}) | {v2}: "{quote}" ({v1}) |  |
 | Stopped using that preference for future videos. | Diese Vorliebe nutze ich für künftige Videos nicht mehr. | Bu tercihi sonraki videolarında artık kullanmayacağım. |  |
 | Stopped. Working on your newer message instead. | Gestoppt. Ich arbeite stattdessen an deiner neueren Nachricht. | Durdurdum. Bunun yerine yeni mesajın üzerinde çalışıyorum. |  |
 | Straightened {who} | Gerade gerichtet: {who} | {who} düzeltildi |  |
+| Subtitled format | Format: Mit Untertiteln | Format: Altyazılı |  |
+| Taking away the full-screen opening isn't available on this edit yet. | Den Vollbild-Anfang zu entfernen ist in diesem Edit noch nicht möglich. | Tam ekran açılışı kaldırmak bu düzenlemede henüz yok. |  |
+| Talking Head format | Format: Talking Head | Format: Kameraya konuşma |  |
 | Talking edits caption what you say, so I didn't add separate labels or captions to individual clips. | Talking-Edits zeigen das, was du sagst, als Untertitel, deshalb habe ich einzelnen Clips keine eigenen Labels oder Untertitel hinzugefügt. | Konuşmalı düzenlemeler söylediklerini altyazıya çevirir, o yüzden tek tek kliplere ayrı etiket ya da altyazı eklemedim. |  |
 | Talking edits show your words as captions, so I can't add a title on top yet. Should I make it without the title? | Talking-Edits zeigen deine Worte als Untertitel, deshalb kann ich oben noch keinen Titel einfügen. Soll ich es ohne Titel machen? | Konuşmalı düzenlemeler sözlerini altyazı olarak gösterir, o yüzden üstüne henüz başlık ekleyemiyorum. Başlıksız yapayım mı? |  |
 | Talking-to-camera videos render on your iPhone with exactly one clip. Remove the extra clips (or add one) and try again. No fallback edit was rendered. | Videos, in denen du in die Kamera sprichst, werden auf deinem iPhone mit genau einem Clip erstellt. Entferne die zusätzlichen Clips (oder füg einen hinzu) und versuch es nochmal. Es wurde kein Ersatz-Edit erstellt. | Kameraya konuşma videoları iPhone'unda tam olarak tek klipten oluşturulur. Fazla klipleri kaldır (ya da bir klip ekle) ve tekrar dene. Yedek bir düzenleme oluşturulmadı. |  |
 | Talking-to-camera videos render on your iPhone with up to {max_clips} clips. Remove the extra clips and try again. No fallback edit was rendered. | Videos, in denen du in die Kamera sprichst, werden auf deinem iPhone mit bis zu {max_clips} Clips erstellt. Entferne die zusätzlichen Clips und versuch es nochmal. Es wurde kein Ersatz-Edit erstellt. | Kameraya konuşma videoları iPhone'unda en fazla {max_clips} klipten oluşturulur. Fazla klipleri kaldır ve tekrar dene. Yedek bir düzenleme oluşturulmadı. |  |
 | Tap an option, or tell me in your own words. | Tipp auf eine Option oder sag es mir in deinen eigenen Worten. | Bir seçeneğe dokun ya da kendi sözlerinle anlat. |  |
+| Tell me the colour as a name like red or a code like #FF0000 | Nenn mir die Farbe als Namen wie Rot oder als Code wie #FF0000 | Rengi kırmızı gibi bir adla ya da #FF0000 gibi bir kodla söyle |  |
 | Tell me the words for the title, or say "continue without a title". | Sag mir den Text für den Titel oder schreib "Ohne Titel weiter". | Başlığın kelimelerini söyle ya da "başlık olmasın" yaz. |  |
 | Tell me to redo it and I'll make a new version from what you already approved. | Sag mir, dass ich es nochmal machen soll, dann erstelle ich aus deiner Freigabe eine neue Version. | Baştan yapmamı söylersen onayladığın isteğe göre yeni bir sürüm hazırlarım. |  |
 | Tell me what to change and I'll prepare it again. | Sag mir, was ich ändern soll, dann bereite ich es nochmal vor. | Neyi değiştirmemi istediğini söyle, yeniden hazırlayayım. |  |
@@ -1137,6 +1603,8 @@ These English keys have different Turkish wordings in different places (`conflic
 | Tell me which clip you mean, and I'll make a new draft. | Sag mir, welchen Clip du meinst, dann mache ich einen neuen Entwurf. | Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım. |  |
 | Tell me which length you want. | Sag mir, welche Länge du möchtest. | Hangi uzunluğu istediğini söyle. |  |
 | Tell me which option you want and I'll continue. | Sag mir, welche Option du möchtest, dann mache ich weiter. | Hangi seçeneği istediğini söyle, devam edeyim. |  |
+| Text landed on {count} of {total} clips. | Text ist auf {count} von {total} Clips gelandet. | Yazı {total} klibin {count} tanesine geldi. |  |
+| Text on {count} clips. | Text auf {count} Clips. | {count} klipte yazı var. |  |
 | That approval expired before it was decided, so nothing was rendered. Tell me what you want and I'll prepare it again. | Diese Freigabe ist abgelaufen, bevor entschieden wurde, deshalb wurde kein Video erstellt. Sag mir, was du willst, dann bereite ich es nochmal vor. | Bu onay karara bağlanmadan süresi doldu, o yüzden hiçbir video oluşturulmadı. Ne istediğini söyle, yeniden hazırlayayım. |  |
 | That approval was prepared for an earlier version of the video, so I cancelled it. Nothing was rendered; tell me what you want and I'll prepare it again. | Diese Freigabe war für eine frühere Version des Videos vorbereitet, deshalb habe ich sie abgebrochen. Es wurde kein Video erstellt; sag mir, was du willst, dann bereite ich es nochmal vor. | Bu onay videonun eski bir sürümü için hazırlanmıştı, o yüzden iptal ettim. Hiçbir video oluşturulmadı; ne istediğini söyle, yeniden hazırlayayım. |  |
 | That change can't be rendered on your iPhone yet, so I left the video as it was. | Diese Änderung kann auf deinem iPhone noch nicht umgesetzt werden, deshalb habe ich das Video so gelassen, wie es war. | Bu değişiklik iPhone'unda henüz yapılamıyor, o yüzden videoyu olduğu gibi bıraktım. |  |
@@ -1166,6 +1634,8 @@ These English keys have different Turkish wordings in different places (`conflic
 | That edit was not applied. | Diese Änderung wurde nicht übernommen. | Bu düzenleme uygulanmadı. |  |
 | That exact text isn't in this draft. | Genau dieser Text ist in diesem Entwurf nicht drin. | Bu tam yazı bu taslakta yok. |  |
 | That exact text isn't in this edit. | Genau dieser Text ist in diesem Edit nicht drin. | Bu tam yazı bu düzenlemede yok. |  |
+| That footage cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Material kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That footage cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Material kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
 | That is a photo, not a clip with sound | Das ist ein Foto, kein Clip mit Ton | Bu bir fotoğraf, sesli bir klip değil |  |
 | That is a photo, not a video, so it has no sound of its own | Das ist ein Foto, kein Video, deshalb hat es keinen eigenen Ton | Bu bir fotoğraf, video değil; kendi sesi yok |  |
 | That is more changes than I can apply in one go, so I left the video as it was. Ask for it in smaller steps, or for all of one kind of change at once (for example every font). | Das sind mehr Änderungen, als ich auf einmal umsetzen kann, deshalb habe ich das Video so gelassen, wie es war. Wünsch es dir in kleineren Schritten oder alle Änderungen einer Art auf einmal (zum Beispiel alle Schriften). | Bu, tek seferde uygulayabileceğimden fazla değişiklik; o yüzden videoyu olduğu gibi bıraktım. Daha küçük adımlarla iste ya da aynı türden tüm değişiklikleri tek seferde iste (örneğin tüm yazı tipleri). |  |
@@ -1181,18 +1651,25 @@ These English keys have different Turkish wordings in different places (`conflic
 | That line runs past the end of that clip, so I couldn't play it whole | Dieser Satz geht über das Ende des Clips hinaus, deshalb konnte ich ihn nicht ganz abspielen | Bu cümle o klibin sonundan taşıyor, o yüzden tam çalamadım |  |
 | That moment is in the first seconds, which stay on you | Dieser Moment liegt in den ersten Sekunden, und die bleiben bei dir | O an ilk saniyelerde; o saniyeler sende kalır |  |
 | That moment plays normally, without a freeze. | Dieser Moment läuft normal, ohne Standbild. | O an normal oynar, donmadan. |  |
-| That part can't make a {asked_s}-second edit without changing {lines_en}. | Mit diesem Teil kann ich keinen {asked_s}-Sekunden-Edit machen, ohne {lines_en} zu ändern. | {lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
-| That part runs longer than {asked_s} seconds, and I can't shorten it without changing {lines_en}. | Dieser Teil ist länger als {asked_s} Sekunden, und ich kann ihn nicht kürzen, ohne {lines_en} zu ändern. | O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam. |  |
+| That part can't make a {asked_s}-second edit without changing that line. | Aus diesem Teil kann ich keinen {asked_s}-Sekunden-Edit machen, ohne diesen Satz zu ändern. | {lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That part can't make a {asked_s}-second edit without changing those lines. | Aus diesem Teil kann ich keinen {asked_s}-Sekunden-Edit machen, ohne diese Sätze zu ändern. | {lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That part runs longer than {asked_s} seconds, and I can't shorten it without changing that line. | Dieser Teil ist länger als {asked_s} Sekunden, und ich kann ihn nicht kürzen, ohne diesen Satz zu ändern. | O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam. |  |
+| That part runs longer than {asked_s} seconds, and I can't shorten it without changing those lines. | Dieser Teil ist länger als {asked_s} Sekunden, und ich kann ihn nicht kürzen, ohne diese Sätze zu ändern. | O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam. |  |
 | That part starts too close to the end to show the label | Dieser Teil beginnt zu nah am Ende, um das Label zu zeigen | O bölüm sona çok yakın başlıyor, etiketi gösteremedim |  |
 | That phrase is too short to cut without removing the whole take | Diese Stelle ist zu kurz, um sie zu schneiden, ohne den ganzen Take zu entfernen | Bu ifade, çekimin tamamını kaldırmadan kesilemeyecek kadar kısa |  |
 | That render didn't finish. Your approved draft is still saved, so you can retry without rebuilding the edit. | Das Video wurde nicht fertig. Dein freigegebener Entwurf ist noch gespeichert, du kannst es also nochmal versuchen, ohne den Edit neu aufzubauen. | Bu video tamamlanamadı. Onayladığın taslak hâlâ kayıtlı, düzenlemeyi baştan kurmadan tekrar deneyebilirsin. |  |
 | That render didn't finish. Your confirmed plan is saved. | Das Video wurde nicht fertig. Dein bestätigter Plan ist gespeichert. | Bu video tamamlanamadı. Onayladığın plan kayıtlı. |  |
 | That render has settled. I’ve refreshed the project status for you. | Dieses Video ist abgeschlossen. Ich habe den Projektstatus für dich aktualisiert. | O video işlemi sona erdi. Projenin durumunu senin için güncelledim. |  |
 | That sequence cannot be safely edited in this version. | Diese Abfolge lässt sich in dieser Version nicht sicher bearbeiten. | Bu sürümde bu dizi güvenle düzenlenemiyor. |  |
+| That song cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Song kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That song cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Song kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
+| That spoken take cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem gesprochenen Take kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That spoken take cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem gesprochenen Take kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
+| That voiceover with the selected footage cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Voiceover und dem ausgewählten Material kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
+| That voiceover with the selected footage cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Voiceover und dem ausgewählten Material kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
+| That would change the wording you approved, so I left it as it is. | Das würde den Wortlaut ändern, den du freigegeben hast, deshalb habe ich es so gelassen, wie es ist. | Bu, onayladığın yazıyı değiştirirdi; o yüzden olduğu gibi bıraktım. |  |
 | That would change which clips keep their sound in the edit you approved; approve the change and I'll rebuild it | Damit würde sich ändern, welche Clips in dem freigegebenen Edit ihren Ton behalten; gib die Änderung frei, dann baue ich ihn neu | Bu, onayladığın düzenlemede hangi kliplerin sesini koruduğunu değiştirirdi; değişikliği onaylarsan yeniden hazırlarım |  |
 | That would change {phrase}, which you did not flag. Flag it and try again. | Damit würde {phrase} geändert, das du nicht markiert hast. Markier es und versuch es nochmal. | Bu, işaretlemediğin {phrase} bölümünü değiştirirdi. Onu da işaretleyip tekrar dene. |  |
-| That {source} cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem {source} kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam. |  |
-| That {source} cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem {source} kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. | kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam. |  |
 | That's the same message I just finished, so I didn't plan it again. | Das ist dieselbe Nachricht, die ich gerade fertig bearbeitet habe, deshalb habe ich nicht nochmal geplant. | Bu, az önce bitirdiğim mesajın aynısı; o yüzden yeniden planlamadım. |  |
 | That's the same message I'm already working on, so I won't start it twice. Your project is saved. | Das ist dieselbe Nachricht, an der ich schon arbeite, deshalb starte ich sie nicht doppelt. Dein Projekt ist gespeichert. | Bu, üzerinde zaten çalıştığım mesajın aynısı; o yüzden iki kez başlatmıyorum. Projen kaydedildi. |  |
 | That's the same message as the draft waiting for you. Review the pinned approval before I start the render. | Das ist dieselbe Nachricht wie beim Entwurf, der auf dich wartet. Sieh dir die angeheftete Freigabe an, bevor ich das Video erstelle. | Bu, onayını bekleyen taslağın mesajıyla aynısı. Videoyu oluşturmaya başlamadan önce sabitlenen onayı incele. |  |
@@ -1204,10 +1681,18 @@ These English keys have different Turkish wordings in different places (`conflic
 | The captions are in {language_name_rendered}, translated from the {language_name_translated_from} speech. | Die Untertitel sind auf {language_name_rendered}, übersetzt aus der Sprache {language_name_translated_from}. | Altyazılar {language_name_rendered}, {language_name_translated_from} konuşmadan çevrildi. |  |
 | The captions are in {language_name_rendered}. | Die Untertitel sind auf {language_name_rendered}. | Altyazılar {language_name_rendered}. |  |
 | The captions no longer look the way you asked. | Die Untertitel sehen nicht mehr so aus, wie du es wolltest. | Altyazılar artık istediğin gibi görünmüyor. |  |
+| The captions show up to {drawn_words} words at a time, not one. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht nur eines. | Altyazılar aynı anda bir değil, en fazla {drawn_words} kelime gösteriyor. |  |
+| The captions show up to {drawn_words} words at a time, not three. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht drei. | Altyazılar aynı anda üç değil, en fazla {drawn_words} kelime gösteriyor. |  |
+| The captions show up to {drawn_words} words at a time, not two. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht zwei. | Altyazılar aynı anda iki değil, en fazla {drawn_words} kelime gösteriyor. |  |
 | The captions show up to {drawn_words} words at a time, not {en_n}. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht {en_n}. | Altyazılar aynı anda {tr_n} değil, en fazla {drawn_words} kelime gösteriyor. |  |
-| The captions sit {v1} than you asked so they stay off your face. | Die Untertitel sitzen {v1} als gewünscht, damit sie nicht über deinem Gesicht liegen. | Altyazılar yüzüne gelmesin diye istediğinden daha {v2} duruyor. |  |
+| The captions sit higher than you asked so they stay off your face. | Die Untertitel sitzen höher als gewünscht, damit sie nicht über deinem Gesicht liegen. | Altyazılar yüzüne gelmesin diye istediğinden daha yukarıda duruyor. |  |
+| The captions sit lower than you asked so they stay off your face. | Die Untertitel sitzen tiefer als gewünscht, damit sie nicht über deinem Gesicht liegen. | Altyazılar yüzüne gelmesin diye istediğinden daha aşağıda duruyor. |  |
 | The captions skip that word. | Die Untertitel lassen dieses Wort aus. | Altyazılar o kelimeyi atlar. |  |
+| The captions won't be held to one words at a time. | Die Untertitel werden nicht auf ein Wort auf einmal begrenzt. | Altyazılar aynı anda bir kelimeyle sınırlı kalmayacak. |  |
+| The captions won't be held to three words at a time. | Die Untertitel werden nicht auf drei Wörter auf einmal begrenzt. | Altyazılar aynı anda üç kelimeyle sınırlı kalmayacak. |  |
+| The captions won't be held to two words at a time. | Die Untertitel werden nicht auf zwei Wörter auf einmal begrenzt. | Altyazılar aynı anda iki kelimeyle sınırlı kalmayacak. |  |
 | The captions won't be held to {en_n} words at a time. | Die Untertitel werden nicht auf {en_n} Wörter auf einmal begrenzt. | Altyazılar aynı anda {tr_n} kelimeyle sınırlı kalmayacak. |  |
+| The captions write {wrong_spellings}. You can fix that in the editor. | In den Untertiteln steht {wrong_spellings}. Das kannst du im Editor korrigieren. | Altyazılarda {wrong_spellings} yazıyor. Bunu editörde düzeltebilirsin. |  |
 | The clip changed since you marked {named}; mark it again | Der Clip hat sich geändert, seit du {named} markiert hast; markier es nochmal | {named_tr} işaretlediğinden beri klip değişti; tekrar işaretle |  |
 | The clip the small card of {name} should follow isn't in this edit | Der Clip, dem die kleine Karte von {name} folgen soll, ist nicht in diesem Edit | {name} küçük kartının takip edeceği klip bu düzenlemede yok |  |
 | The clip where you say {quote} closes the video. | Der Clip, in dem du {quote} sagst, beendet das Video. | {quote} dediğin klip videoyu kapatıyor. |  |
@@ -1228,8 +1713,10 @@ These English keys have different Turkish wordings in different places (`conflic
 | The draft already starts at {removed_trim_start:g} seconds, so I didn't change it. | Der Entwurf beginnt schon bei {removed_trim_start:g} Sekunden, deshalb habe ich nichts geändert. | Taslak zaten {removed_trim_start:g} saniyede başlıyor, o yüzden bir şey değiştirmedim. |  |
 | The draft changed during the timing review. Your current preview is unchanged; review the current draft first. | Der Entwurf hat sich während der Timing-Prüfung geändert. Deine aktuelle Vorschau ist unverändert; sieh dir zuerst den aktuellen Entwurf an. | Zamanlama incelemesi sırasında taslak değişti. Mevcut önizlemen değişmedi; önce güncel taslağı gözden geçir. |  |
 | The earlier story outline is saved for review and is not part of this plan. | Der frühere Story-Entwurf ist zur Ansicht gespeichert und nicht Teil dieses Plans. | Önceki hikâye taslağı inceleme için saklandı ve bu planın parçası değil. |  |
+| The end screen doesn't show all of your words | Das Endbild zeigt nicht deinen ganzen Text | Son ekran yazının tamamını göstermiyor |  |
 | The exported video didn't arrive intact, so it wasn't published. Your approved edit is saved. Retry the same edit. | Das exportierte Video ist nicht vollständig angekommen, deshalb wurde es nicht veröffentlicht. Dein freigegebener Edit ist gespeichert. Versuch denselben Edit nochmal. | Dışa aktarılan video eksiksiz ulaşmadığı için yayınlanmadı. Onayladığın düzenleme kayıtlı. Aynı düzenlemeyi yeniden dene. |  |
 | The finished video doesn't end on that video | Das fertige Video endet nicht mit diesem Video | Biten video o videoyla bitmiyor |  |
+| The finished video doesn't end on your colour screen | Das fertige Video endet nicht mit deinem Farbbild | Bitmiş video senin renkli ekranınla bitmiyor |  |
 | The finished video doesn't have a photo or video behind you | Im fertigen Video ist hinter dir kein Foto oder Video | Biten videoda arkanda fotoğraf ya da video yok |  |
 | The finished video doesn't have a plain colour behind you | Im fertigen Video ist hinter dir keine einfarbige Fläche | Biten videoda arkanda düz renk yok |  |
 | The finished video doesn't play that clip in your talk | Das fertige Video spielt diesen Clip nicht in deiner Rede ab | Biten videoda o klip konuşmanın içinde oynamıyor |  |
@@ -1246,6 +1733,9 @@ These English keys have different Turkish wordings in different places (`conflic
 | The footage sound plays at about {pct}% alongside your voice, not far under it | Der Originalton läuft mit etwa {pct} % neben deiner Stimme, nicht weit darunter | Çekim sesi sesinin yanında yaklaşık %{pct} seviyesinde çalıyor, pek altında değil |  |
 | The footage sound plays at full volume alongside your voice | Der Originalton läuft in voller Lautstärke neben deiner Stimme | Çekim sesi sesinle aynı seviyede, tam sesle çalıyor |  |
 | The footage sound still plays | Der Originalton läuft noch | Çekim sesi hâlâ çalıyor |  |
+| The footage sound still plays at full volume alongside your voice; {fix} | Der Originalton läuft noch in voller Lautstärke neben deiner Stimme; {fix} | {v1}, sesinle aynı seviyede; {fix} |  |
+| The footage sound still plays softly under your voice (about {pct}%); {fix} | Der Originalton läuft noch leise unter deiner Stimme (etwa {pct} %); {fix} | {v1}, sesinin altında kısık{about_tr}; {fix} |  |
+| The footage sound still plays softly under your voice; {fix} | Der Originalton läuft noch leise unter deiner Stimme; {fix} | {v1}, sesinin altında kısık{about_tr}; {fix} |  |
 | The full-screen photo followed by its video has not been verified | Das Vollbild-Foto mit dem anschließenden Video wurde nicht geprüft | Tam ekran fotoğrafın ardından videonun geldiği doğrulanmadı |  |
 | The label on the video reads {shown}, not your exact words | Das Label im Video lautet {shown}, nicht genau deine Worte | Videodaki etiket {shown} yazıyor, tam senin yazdığın gibi değil |  |
 | The labels are place names, not the hour each clip was filmed. | Die Labels sind Ortsnamen, nicht die Uhrzeit, zu der der Clip gefilmt wurde. | Etiketler yer adı, klibin çekildiği saat değil. |  |
@@ -1289,10 +1779,18 @@ These English keys have different Turkish wordings in different places (`conflic
 | The saved edit's rendering evidence changed. Ask me to prepare it again. | Die Render-Nachweise des gespeicherten Edits haben sich geändert. Sag mir, dass ich ihn nochmal vorbereiten soll. | Kayıtlı düzenlemenin oluşturma kanıtları değişti. Yeniden hazırlamamı iste. |  |
 | The selected clips add up to less than 3 seconds without reuse. Add footage so they reach at least 3 seconds. | Die ausgewählten Clips ergeben ohne Wiederholung weniger als 3 Sekunden. Füg Material hinzu, damit sie mindestens 3 Sekunden erreichen. | Seçili klipler tekrar olmadan en az 3 saniye sağlayabilsin diye çekim ekle. |  |
 | The selected footage cannot meet the included-clip constraints. | Das ausgewählte Material kann die Vorgaben für die enthaltenen Clips nicht erfüllen. | Seçili çekimler, dahil edilen kliplerin koşullarını karşılayamıyor. |  |
+| The selected footage runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter footage. | Das ausgewählte Material dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm kürzeres Material. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected footage runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Das ausgewählte Material dauert {natural_duration:g} Sekunden, reicht ohne Wiederholung aber nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
 | The selected idea's execution or sources changed. Review the idea again. | Die Umsetzung oder die Quellen der ausgewählten Idee haben sich geändert. Sieh dir die Idee nochmal an. | Seçilen fikrin düzeni veya kaynakları değişti. Fikri yeniden gözden geçir. |  |
 | The selected order conflicts with the single-hero composition. Choose the hero first, followed by its supporting clips. | Die gewählte Reihenfolge passt nicht zum Aufbau mit einem Hauptclip. Wähl zuerst den Hauptclip, danach die Clips, die ihn unterstützen. | Seçili sıra tek ana klipli kurguyla çelişiyor. Önce ana klibi, ardından destekleyen klipleri seç. |  |
-| The selected {natural_owner} runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter {natural_owner}. | Der ausgewählte {natural_owner} dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren {natural_owner}. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
-| The selected {natural_owner} runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Der ausgewählte {natural_owner} dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
+| The selected song runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter song. | Der ausgewählte Song dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren Song. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected song runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Der ausgewählte Song dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
+| The selected take runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter take. | Der ausgewählte Take dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren Take. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected take runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Der ausgewählte Take dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
+| The selected voiceover runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter voiceover. | Das ausgewählte Voiceover dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm ein kürzeres Voiceover. | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected voiceover runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Das ausgewählte Voiceover dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
+| The selected {natural_owner} runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter {natural_owner}. | Die ausgewählte Quelle ({natural_owner}) dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm eine kürzere Quelle ({natural_owner}). | Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan. |  |
+| The selected {natural_owner} runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Die ausgewählte Quelle ({natural_owner}) dauert {natural_duration:g} Sekunden, aber das Material reicht ohne Wiederholung nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. | Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle. |  |
 | The sentence it belongs to is the last thing you say, so there is nowhere to pause after it | Der Satz, zu dem es gehört, ist das Letzte, was du sagst, deshalb gibt es danach keine Stelle für eine Pause | Ait olduğu cümle söylediğin son şey, arkasından durabileceğim bir yer yok |  |
 | The separate parts of your brief produced conflicting plans. | Die einzelnen Teile deiner Anfrage haben widersprüchliche Pläne ergeben. | İsteğinin ayrı bölümleri birbiriyle çelişen planlar çıkardı. |  |
 | The shortest length where every clip stays on screen long enough to be seen. | Die kürzeste Länge, bei der jeder Clip lang genug zu sehen ist. | Her klibin görülecek kadar ekranda kaldığı en kısa süre. |  |
@@ -1319,7 +1817,8 @@ These English keys have different Turkish wordings in different places (`conflic
 | The video ends on “{quote}”, in its own sound | Das Video endet mit „{quote}“, mit eigenem Ton | Video “{quote}” cümlesiyle, klibin kendi sesiyle bitiyor |  |
 | The video fills the vertical frame and follows the speaker's face, but their face isn't in view for about {absent:.0f} s of the clip | Das Video füllt das Hochformat und folgt dem Gesicht der sprechenden Person, aber das Gesicht ist etwa {absent:.0f} s des Clips nicht im Bild | Video dikey ekranı dolduruyor ve konuşan kişinin yüzünü takip ediyor, ama klibin yaklaşık {absent:.0f} sn'sinde konuşan kişinin yüzü görünmüyor |  |
 | The video fills the vertical frame and the speaker's face stays in it throughout | Das Video füllt das Hochformat und das Gesicht der sprechenden Person bleibt die ganze Zeit im Bild | Video dikey ekranı dolduruyor ve konuşan kişinin yüzü baştan sona kadrajda kalıyor |  |
-| The video has {len_lengths} {moments}, not {ask_count} | Das Video hat {len_lengths} {moments}, nicht {ask_count} | Videoda {ask_count} değil {len_lengths} an var |  |
+| The video has {len_lengths} moment, not {ask_count} | Das Video hat {len_lengths} Moment, nicht {ask_count} | Videoda {ask_count} değil {len_lengths} an var |  |
+| The video has {len_lengths} moments, not {ask_count} | Das Video hat {len_lengths} Momente, nicht {ask_count} | Videoda {ask_count} değil {len_lengths} an var |  |
 | The video is exactly as long as your voice. | Das Video ist genau so lang wie deine Stimme. | Video tam olarak sesin kadar uzun olur. |  |
 | The video is made without an opening title. | Das Video wird ohne Titel am Anfang erstellt. | Video açılış başlığı olmadan hazırlanır. |  |
 | The video keeps the clips' own sound, with nothing laid over it | Das Video behält den eigenen Ton der Clips, ohne dass etwas darübergelegt wird | Video kliplerin kendi sesini koruyor, üstüne başka ses eklenmedi |  |
@@ -1329,15 +1828,17 @@ These English keys have different Turkish wordings in different places (`conflic
 | The video still runs to the end of your take. | Das Video läuft weiterhin bis zum Ende deines Takes. | Video yine çekimin sonuna kadar sürer. |  |
 | The video would be longer than the 30 minutes your iPhone can build | Das Video wäre länger als die 30 Minuten, die dein iPhone erstellen kann | Video, iPhone'unun hazırlayabildiği 30 dakikadan uzun olurdu |  |
 | The video you wanted at the end plays only there, not also on a spoken word. | Das Video, das du am Ende wolltest, läuft nur dort und nicht zusätzlich bei einem gesprochenen Wort. | Sonda istediğin video sadece orada oynuyor, söylediğin bir kelimede ayrıca çıkmıyor. |  |
+| The video's shape can't be changed from chat on this edit. | Das Format des Videos kann in diesem Edit nicht per Chat geändert werden. | Bu düzenlemede videonun biçimini sohbetten değiştiremiyorum. |  |
 | The word order is unavailable. Which sequence should I use? | Die Wortreihenfolge ist nicht verfügbar. Welche Abfolge soll ich nehmen? | Kelime sırası bulunamadı. Hangi diziyi kullanayım? |  |
-| The {str_value_replace} direction isn't applied on this video yet: it is cut as a fast montage | Die Richtung {str_value_replace} wird bei diesem Video noch nicht angewendet: Es wird als schnelle Montage geschnitten | {str_value_replace} yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor |  |
-| The {str_value_replace} pacing isn't applied on this video yet: the cuts follow a fast pace | Das Tempo {str_value_replace} wird bei diesem Video noch nicht angewendet: Die Schnitte folgen einem schnellen Tempo | {str_value_replace} tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda |  |
+| The {str_value_replace} direction isn't applied on this video yet: it is cut as a fast montage | Die Richtung „{str_value_replace}“ wird bei diesem Video noch nicht umgesetzt: Es wird als schnelle Montage geschnitten | {str_value_replace} yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor |  |
+| The {str_value_replace} pacing isn't applied on this video yet: the cuts follow a fast pace | Das Tempo „{str_value_replace}“ wird bei diesem Video noch nicht umgesetzt: Die Schnitte folgen einem schnellen Tempo | {str_value_replace} tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda |  |
 | The {variant_id_replace} cut is ready. The approved render finished; review the opening, pacing, and text, then tell me what you want changed. | {variant_id_replace} ist fertig. Das freigegebene Video ist erstellt; sieh dir den Anfang, das Tempo und die Texte an und sag mir dann, was du ändern willst. | {v1} hazır. Onayladığın video tamamlandı; açılışı, temposunu ve yazıları incele, sonra neyi değiştirmek istediğini söyle. |  |
-| The {words_value} direction isn't applied on this video yet: {instead_en} | Die Richtung {words_value} wird bei diesem Video noch nicht angewendet: {instead_en} | {words_value} yönü bu videoda henüz uygulanmıyor: {instead_tr} |  |
-| The {words_value} pacing isn't applied on this video yet: {instead_en} | Das Tempo {words_value} wird bei diesem Video noch nicht angewendet: {instead_en} | {words_value} tempo bu videoda henüz uygulanmıyor: {instead_tr} |  |
+| The {words_value} direction isn't applied on this video yet: {instead_en} | Die Richtung „{words_value}“ wird bei diesem Video noch nicht umgesetzt: {instead_en} | {words_value} yönü bu videoda henüz uygulanmıyor: {instead_tr} |  |
+| The {words_value} pacing isn't applied on this video yet: {instead_en} | Das Tempo „{words_value}“ wird bei diesem Video noch nicht umgesetzt: {instead_en} | {words_value} tempo bu videoda henüz uygulanmıyor: {instead_tr} |  |
 | The {word} you picked was cut out of your video, so {text} isn't shown | {word}, das du gewählt hast, wurde aus deinem Video herausgeschnitten, deshalb wird {text} nicht gezeigt | Seçtiğin {word} anı videodan kesildi, o yüzden {text} yazısı çıkmadı |  |
 | There are no fast cuts between your lines | Zwischen deinen Sätzen gibt es keine schnellen Schnitte | Cümlelerin arasında hızlı kesimler yok |  |
 | There are too many clips for each to appear for at least 0.1 seconds within 120 seconds. Choose fewer clips. | Es sind zu viele Clips, als dass jeder innerhalb von 120 Sekunden mindestens 0,1 Sekunden zu sehen wäre. Wähl weniger Clips. | Her biri 120 saniye içinde en az 0,1 saniye görünebilsin diye daha az klip seç. |  |
+| There is no full-screen opening of you to take away. | Es gibt keinen Vollbild-Anfang von dir, den ich entfernen könnte. | Kaldırılacak tam ekran bir açılışın yok. |  |
 | There is no photo or video to put behind you. Attach the photos or videos first, in Visuals | Es gibt kein Foto oder Video, das hinter dich gelegt werden kann. Hänge die Fotos oder Videos zuerst in Visuals an | Arkana koyacak fotoğraf ya da video yok. Önce fotoğrafları ya da videoları Visuals'tan ekle |  |
 | There is nothing said in your talk to place it after | In deiner Rede wird nichts gesagt, wonach ich es platzieren könnte | Konuşmanda onu arkasına koyabileceğim bir cümle yok |  |
 | There isn't a box behind the captions. | Hinter den Untertiteln ist kein Kasten. | Altyazıların arkasında kutu yok. |  |
@@ -1346,12 +1847,14 @@ These English keys have different Turkish wordings in different places (`conflic
 | There wasn't room above your title for "{trigger}" without covering your captions | Über deinem Titel war kein Platz für "{trigger}", ohne deine Untertitel zu verdecken | Altyazıları kapatmadan başlığın üstünde "{trigger}" için yer yoktu |  |
 | There wasn't room above your title for "{trigger}" without covering your face | Über deinem Titel war kein Platz für "{trigger}", ohne dein Gesicht zu verdecken | Yüzünü kapatmadan başlığın üstünde "{trigger}" için yer yoktu |  |
 | There were no Visuals to show as cards. | Es gab keine Visuals, die als Karten gezeigt werden konnten. | Kart olarak gösterilecek görsel yoktu. |  |
+| There's background sound in some of your takes, so I only cut the long pauses in those | In einigen deiner Takes sind Hintergrundgeräusche, deshalb habe ich dort nur die langen Pausen geschnitten | Çekimlerinin bazılarında arka plan sesi var, o yüzden onlarda yalnızca uzun duraklamaları kestim |  |
 | There's background sound in your take, so I only cut the long pauses | In deinem Take sind Hintergrundgeräusche, deshalb habe ich nur die langen Pausen geschnitten | Çekiminde arka plan sesi var, o yüzden yalnızca uzun duraklamaları kestim |  |
 | There's no opening title to put "{trigger}" above | Es gibt keinen Titel am Anfang, über den ich "{trigger}" setzen könnte | "{trigger}" görselini koyacak bir açılış başlığı yok |  |
 | There’s no edit running right now. Your latest project state is saved. | Gerade läuft kein Edit. Dein letzter Projektstand ist gespeichert. | Şu anda devam eden bir düzenleme yok. Projenin son hâli kaydedildi. |  |
 | These words need at least {exc_minimum_duration_s:g}s of reading time. May I use a longer video, or would you like to shorten the text? Nothing was changed. | Diese Wörter brauchen mindestens {exc_minimum_duration_s:g} s Lesezeit. Darf ich ein längeres Video nehmen, oder möchtest du den Text kürzen? Es wurde nichts geändert. | Bu yazılar en az {exc_minimum_duration_s:g} saniye okuma süresi gerektiriyor. Daha uzun bir video kullanayım mı, yoksa metni kısaltmak ister misin? Hiçbir şey değişmedi. |  |
 | This approval expired. Ask Kria to prepare it again. | Diese Freigabe ist abgelaufen. Bitte Kria, sie nochmal vorzubereiten. | Bu onayın süresi doldu. Kria'dan yeniden hazırlamasını iste. |  |
 | This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under 5 minutes) and try again. No fallback edit was rendered. | Dieser Clip ist zu lang für ein Video auf deinem iPhone, in dem du in die Kamera sprichst. Nimm einen kürzeren Clip (unter 5 Minuten) und versuch es nochmal. Es wurde kein Ersatz-Edit erstellt. | Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı. |  |
+| This day vlog edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Tagesvlog-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (günlük vlog) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
 | This draft doesn't end on that video | Dieser Entwurf endet nicht mit diesem Video | Bu taslak o videoyla bitmiyor |  |
 | This draft doesn't end on the photo you asked for | Dieser Entwurf endet nicht mit dem Foto, das du wolltest | Bu taslak istediğin fotoğrafla bitmiyor |  |
 | This draft doesn't end the way you asked | Dieser Entwurf endet nicht so, wie du es wolltest | Bu taslak istediğin gibi bitmiyor |  |
@@ -1363,8 +1866,16 @@ These English keys have different Turkish wordings in different places (`conflic
 | This draft doesn't use your song. | Dieser Entwurf nutzt deinen Song nicht. | Bu taslak şarkını kullanmıyor. |  |
 | This draft ends on that video but muted, not with its own sound | Dieser Entwurf endet mit diesem Video, aber stumm, nicht mit eigenem Ton | Bu taslak o videoyla bitiyor ama sessiz, kendi sesiyle değil |  |
 | This draft ends on that video with its own sound, not muted | Dieser Entwurf endet mit diesem Video mit eigenem Ton, nicht stumm | Bu taslak o videoyla kendi sesiyle bitiyor, sessiz değil |  |
+| This draft has a title, but you asked for none. | Dieser Entwurf hat einen Titel, aber du wolltest keinen. | Bu taslakta başlık var, ama başlık istemedin. |  |
 | This draft has no pop-ins timed to your words | Dieser Entwurf hat keine Einblendungen, die zu deinen Worten getimt sind | Bu taslakta sözlerine göre çıkan görsel yok |  |
-| This draft is about {round_s_facts_duration_s}s{outro}; you asked for {asked_en}. | Dieser Entwurf ist etwa {round_s_facts_duration_s} s{outro} lang; du wolltest {asked_en}. | Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen {asked_tr} istedin. |  |
+| This draft is about {round_s_facts_duration_s}s{outro}; you asked for at most {asked}s. | Dieser Entwurf ist etwa {round_s_facts_duration_s} s lang{outro}; du wolltest höchstens {asked} s. | Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen {asked_tr} istedin. |  |
+| This draft is about {round_s_facts_duration_s}s{outro}; you asked for {asked}s. | Dieser Entwurf ist etwa {round_s_facts_duration_s} s lang{outro}; du wolltest {asked} s. | Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen {asked_tr} istedin. |  |
+| This draft is ordered by attachment order, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge, in der du die Clips hinzugefügt hast, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: klipleri eklediğin sıra. |  |
+| This draft is ordered by attachment, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge, in der du die Clips hinzugefügt hast, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: klipleri eklediğin sıra. |  |
+| This draft is ordered by confirmed, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge, die du bestätigt hast, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: onayladığın sıra. |  |
+| This draft is ordered by creator order, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge, die du angegeben hast, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: senin verdiğin sıra. |  |
+| This draft is ordered by editor, not the order you asked for. | Dieser Entwurf folgt der Reihenfolge im Editor, nicht der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: editördeki sıra. |  |
+| This draft is ordered by song time, not the order you asked for. | Dieser Entwurf ist nach der Zeit im Song geordnet, nicht in der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: şarkının zamanı. |  |
 | This draft is ordered by {basis_replace}, not the order you asked for. | Dieser Entwurf ist nach {basis_replace} geordnet, nicht in der gewünschten Reihenfolge. | Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: {basis_tr_get_basis_basis_replace}. |  |
 | This draft keeps {shown} s of your {total} s clip, so it's cut. | Dieser Entwurf behält {shown} s von deinem {total} s langen Clip, er ist also gekürzt. | Bu taslak {total} sn'lik klibinin {shown} sn'sini tutuyor, yani klip kesiliyor. |  |
 | This draft plays your song in the background; your clips aren't matched to its words. | Dieser Entwurf spielt deinen Song im Hintergrund; deine Clips sind nicht auf seinen Text abgestimmt. | Bu taslak şarkını arka planda çalıyor; klipler sözlerine göre yerleştirilmedi. |  |
@@ -1399,6 +1910,10 @@ These English keys have different Turkish wordings in different places (`conflic
 | This kind of edit can't show this text yet. | Diese Art von Edit kann diesen Text noch nicht zeigen. | Bu tür düzenleme bu yazıyı henüz gösteremiyor. |  |
 | This kind of edit can't show {missing} yet. Should I make everything else and leave that text out? | Diese Art von Edit kann {missing} noch nicht zeigen. Soll ich alles andere machen und diesen Text weglassen? | Bu tür düzenleme {missing_tr} henüz gösteremiyor. Geri kalan her şeyi yapıp o yazıyı dışarıda bırakayım mı? |  |
 | This kind of video can't render on your iPhone right now. Choose a format that renders on this iPhone (Montage, or Talking to camera / Narrated where available). No fallback edit was rendered. | Diese Art von Video lässt sich gerade nicht auf deinem iPhone erstellen. Wähl ein Format, das auf diesem iPhone erstellt wird (Montage oder, wo verfügbar, In die Kamera sprechen / Narrated). Es wurde kein Ersatz-Edit erstellt. | Bu tür bir video şu anda iPhone'unda oluşturulamıyor. iPhone'da oluşturulabilen bir format seç (Montaj, ya da uygun olduğunda Kameraya konuşma / Seslendirmeli). Yedek bir düzenleme oluşturulmadı. |  |
+| This montage edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Montage-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (montaj) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This narrated edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Voiceover-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This narrated planned edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Voiceover-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This narrated ready edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Voiceover-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
 | This phone can't play the title animation ({words_value}) yet, so the title fades in instead | Dieses Handy kann die Titelanimation ({words_value}) noch nicht abspielen, deshalb wird der Titel stattdessen eingeblendet | Bu telefon başlık animasyonunu ({words_value}) henüz oynatamıyor, o yüzden başlık onun yerine yavaşça beliriyor |  |
 | This photo isn't in the video. | Dieses Foto ist nicht im Video. | Bu fotoğraf videoda yok. |  |
 | This photo plays {round_s_rendered}s; you asked for {asked:g}s. | Dieses Foto läuft {round_s_rendered} s; du wolltest {asked:g} s. | Bu fotoğraf {round_s_rendered} saniye görünüyor; sen {asked:g} saniye istedin. |  |
@@ -1412,12 +1927,16 @@ These English keys have different Turkish wordings in different places (`conflic
 | This render was cancelled. | Dieses Video wurde abgebrochen. | Bu video iptal edildi. |  |
 | This renderer can't combine the confirmed soundtracks. | Dieser Renderer kann die bestätigten Tonspuren nicht kombinieren. | Bu video hazırlama yolu onayladığın sesleri birleştiremiyor. |  |
 | This renderer would change the proposed edit. I need to prepare the supported version first. | Dieser Renderer würde den vorgeschlagenen Edit ändern. Ich muss zuerst die unterstützte Version vorbereiten. | Bu oluşturucu önerilen düzenlemeyi değiştirir. Önce desteklenen sürümü hazırlamam gerekiyor. |  |
+| This single hero edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Edit rund um einen Hauptclip kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (tek kahraman) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
+| This slides edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Slideshow-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (slayt) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
 | This speech check also found restarted sentences. Update the app to review that cleanup choice, or keep the original speech. | Diese Sprachprüfung hat auch neu begonnene Sätze gefunden. Aktualisiere die App, um diese Bereinigung zu prüfen, oder behalte die Originalsprache. | Bu konuşma kontrolü yeniden başlatılan cümleler de buldu. Bu temizleme seçimini incelemek için uygulamayı güncelle ya da özgün konuşmayı koru. |  |
 | This suggestion no longer fits your edit. Nothing was changed, and I'm refreshing the ideas. | Dieser Vorschlag passt nicht mehr zu deinem Edit. Es wurde nichts geändert, und ich erneuere die Ideen. | Bu öneri artık düzenlemene uymuyor. Hiçbir şey değişmedi, önerileri yeniliyorum. |  |
+| This talking head edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Talking-Head-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. | Bu düzenleme (konuşmalı) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur. |  |
 | This template has a configuration problem. Try a different one. | Diese Vorlage hat ein Konfigurationsproblem. Probier eine andere. | Bu şablonda bir yapılandırma sorunu var. Farklı bir tane dene. |  |
 | This template is missing assets it needs. Try a different one. | Dieser Vorlage fehlen Dateien, die sie braucht. Probier eine andere. | Bu şablonun ihtiyaç duyduğu dosyalar eksik. Farklı bir tane dene. |  |
 | This text follows its narration or source timing; its timing was not changed. | Dieser Text folgt dem Timing seines Voiceovers oder seiner Quelle; sein Timing wurde nicht geändert. | Bu yazı seslendirmeyi ya da kaynağın zamanlamasını izliyor; zamanlaması değişmedi. |  |
-| This version leaves out the {noun_en} you asked for: "{ask}". | In dieser Version fehlt das, was du dir gewünscht hast ({noun_en}): "{ask}". | Bu sürümde istediğin {noun_tr} yok: "{ask}". |  |
+| This version leaves out the photo you asked for: "{ask}". | In dieser Version fehlt das Foto, das du dir gewünscht hast: "{ask}". | Bu sürümde istediğin fotoğraf yok: "{ask}". |  |
+| This version leaves out the video you asked for: "{ask}". | In dieser Version fehlt das Video, das du dir gewünscht hast: "{ask}". | Bu sürümde istediğin video yok: "{ask}". |  |
 | This video didn't record how it framed the sideways clips, so I can't check it | Dieses Video hat nicht gespeichert, wie es die Querformat-Clips eingerahmt hat, deshalb kann ich das nicht prüfen | Bu video yatay klipleri nasıl kadrajladığını kaydetmedi, o yüzden kontrol edemiyorum |  |
 | This video didn't record how it framed the speaker, so I can't check it. | Dieses Video hat nicht gespeichert, wie es die sprechende Person eingerahmt hat, deshalb kann ich das nicht prüfen. | Bu video konuşan kişiyi nasıl kadrajladığını kaydetmedi, o yüzden kontrol edemiyorum. |  |
 | This video didn't record where it starts and ends, so I can't check it. | Dieses Video hat nicht gespeichert, wo es anfängt und endet, deshalb kann ich das nicht prüfen. | Bu video nerede başlayıp bittiğini kaydetmedi, o yüzden kontrol edemiyorum. |  |
@@ -1442,11 +1961,14 @@ These English keys have different Turkish wordings in different places (`conflic
 | Trimmed {who} | Gekürzt: {who} | {who} kırpıldı |  |
 | Try a different clip of you talking, or ask for a montage. | Probier einen anderen Clip, in dem du sprichst, oder wünsch dir eine Montage. | Konuştuğun başka bir klibi dene ya da bir montaj iste. |  |
 | Try again, or tell me the most important change first. | Versuch es nochmal oder sag mir zuerst die wichtigste Änderung. | Tekrar dene ya da önce en önemli değişikliği söyle. |  |
+| Turkish | Türkisch |  |  |
 | Turned the captions off | Untertitel ausgeschaltet | Altyazılar kapatıldı |  |
 | Turned the captions on | Untertitel eingeschaltet | Altyazılar açıldı |  |
 | Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit | Den Clip-Ton pro Clip oder pro Sekunden an- oder auszuschalten geht bei einer Montage auf deinem iPhone, nicht in diesem Edit | Klip sesini klip ya da saniye bazında açıp kapatmak yalnızca iPhone'unda yapılan montajda çalışıyor, bu düzenlemede değil |  |
 | Two of your clips show "{label}". Which one should I use for it? Keep that one ticked and untick the other. | Zwei deiner Clips zeigen "{label}". Welchen soll ich dafür nehmen? Lass ihn angehakt und nimm den Haken beim anderen weg. | "{label}" iki klibinde de görünüyor. Hangisini kullanayım? Onu işaretli bırak, diğerinin işaretini kaldır. |  |
 | Two people on camera are too far apart for one vertical crop to hold both | Zwei Personen vor der Kamera sind zu weit auseinander für einen einzigen Hochformat-Ausschnitt | Kameradaki iki kişi tek bir dikey kadraja sığmayacak kadar birbirinden uzak |  |
+| Undid: {what} | Rückgängig gemacht: {what} | Geri alındı: {what} |  |
+| Undo has to be its own request. Nothing was changed. | Rückgängig machen muss eine eigene Anfrage sein. Es wurde nichts geändert. | Geri alma ayrı bir istek olmalı. Hiçbir şey değişmedi. |  |
 | Updated split-screen layout and panels | Split-Screen-Layout und Felder aktualisiert | Bölünmüş ekran düzeni ve paneller güncellendi |  |
 | Updated the captions | Untertitel aktualisiert | Altyazılar güncellendi |  |
 | Updated the edit. | Edit aktualisiert. | Düzenlemeyi güncelledim. |  |
@@ -1462,7 +1984,10 @@ These English keys have different Turkish wordings in different places (`conflic
 | Use the available {capacity_s} seconds | Die verfügbaren {capacity_s} Sekunden nehmen | Mevcut {capacity_s} saniyeyi kullan |  |
 | Use the order I give you | Reihenfolge nehmen, die ich dir gebe | Sırayı ben vereyim |  |
 | Use the order you added the clips | Reihenfolge nehmen, in der du die Clips hinzugefügt hast | Klipleri eklediğin sırayı kullan |  |
-| Use the supported trim for this {source}. | Die unterstützte Kürzung für diesen {source} verwenden. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
+| Use the supported trim for this footage. | Nutzt die unterstützte Kürzung für dieses Material. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
+| Use the supported trim for this song. | Nutzt die unterstützte Kürzung für diesen Song. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
+| Use the supported trim for this spoken take. | Nutzt die unterstützte Kürzung für diesen gesprochenen Take. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
+| Use the supported trim for this voiceover with the selected footage. | Nutzt die unterstützte Kürzung für dieses Voiceover mit dem ausgewählten Material. | Bu {source_tr} için desteklenen kırpmayı kullanır. |  |
 | Use this recording's voice under the other clips. | Die Stimme dieser Aufnahme unter den anderen Clips nutzen. | Bu kaydın sesini diğer kliplerin altında kullan. |  |
 | Use {color} for {role} text in future videos. | In künftigen Videos {color} für {role} verwenden. | Gelecek videolarda {role} için {color} rengi kullanılsın. |  |
 | Uses {kept} of your {count} clips, spread evenly through your footage; the others are left out. | Nutzt {kept} deiner {count} Clips, gleichmäßig über dein Material verteilt; die anderen fallen weg. | {count} klibinden {kept} tanesini kullanır, çekimlerine eşit aralıklarla dağıtır; diğerleri dışarıda kalır. |  |
@@ -1470,6 +1995,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | Video length {plan_intent_target_s:g}s | Videolänge {plan_intent_target_s:g} s | Video süresi {plan_intent_target_s:g} saniye |  |
 | Videos can't show as small cards in this edit yet, so {name} is left out | Videos können in diesem Edit noch nicht als kleine Karten erscheinen, deshalb ist {name} weggelassen | Bu düzenlemede videolar henüz küçük kart olarak çıkamıyor, {name} koymadım |  |
 | Videos can't show as small cards in this edit yet; left that card out. | Videos können in diesem Edit noch nicht als kleine Karten erscheinen; habe die Karte weggelassen. | Bu düzenlemede videolar henüz küçük kart olarak çıkamıyor; o kartı koymadım. |  |
+| Want me to use music instead? | Soll ich stattdessen Musik nehmen? | Onun yerine müzik kullanayım mı? |  |
 | We couldn't read that recording — try again | Wir konnten diese Aufnahme nicht lesen, versuch es nochmal | Bu kaydı okuyamadık, tekrar dene |  |
 | We couldn't understand that recording — try again | Wir konnten diese Aufnahme nicht verstehen, versuch es nochmal | Bu kaydı anlayamadık, tekrar dene |  |
 | What are we making? Pick a format and we’ll shape it together. | Was machen wir? Wähl ein Format und wir gestalten es zusammen. | Ne yapıyoruz? Bir format seç, birlikte şekillendirelim. |  |
@@ -1479,6 +2005,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | What would you like me to revise? | Was soll ich überarbeiten? | Neyi değiştirmemi istersin? |  |
 | What would you like? | Was möchtest du? | Ne yapmamı istersin? |  |
 | When several of your clips talk, photos on your words can only show full screen, so this one won't show | Wenn in mehreren deiner Clips gesprochen wird, können Fotos bei deinen Worten nur im Vollbild erscheinen, deshalb wird dieses nicht gezeigt | Birkaç klibinde konuştuğunda sözlerine göre çıkan fotoğraflar yalnızca tam ekran gösterilebiliyor, o yüzden bu gösterilmeyecek |  |
+| When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s) | Wenn du {v1} sagst, ist Clip {v2} von {len_steps} im Bild ({step_start_s:.1f}–{step_end_s:.1f} s) | {v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn) |  |
 | Which clip or part of the edit should I work on first? | An welchem Clip oder Teil des Edits soll ich zuerst arbeiten? | Önce düzenlemenin hangi klibi ya da bölümü üzerinde çalışayım? |  |
 | Which clips should I use for that part? | Welche Clips soll ich für diesen Teil nehmen? | Bu bölüm için hangi klipleri kullanayım? |  |
 | Which complete word sequence should I retime? | Welche vollständige Wortfolge soll ich neu timen? | Hangi kelime dizisinin tamamını yeniden zamanlayayım? |  |
@@ -1495,7 +2022,8 @@ These English keys have different Turkish wordings in different places (`conflic
 | Will do at render | Passiert beim Erstellen des Videos | Videoda yapılacak |  |
 | Will locate the requested occurrence in the original speech before cutting; no guess | Ich suche die gewünschte Stelle im Originalton, bevor ich schneide; ich rate nicht | Kesmeden önce istediğin tekrarı orijinal konuşmada bulacağım; tahmin etmeyeceğim |  |
 | Will reduce steady engine noise before rendering; engine and speech are not independently isolated | Ich verringere das gleichmäßige Motorgeräusch, bevor das Video erstellt wird; Motor und Sprache lassen sich nicht getrennt voneinander herauslösen | Renderdan önce sabit motor gürültüsünü azaltacağım; motor sesiyle konuşmayı birbirinden bağımsız ayıramam |  |
-| With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing {lines_en}. | Mit dem Standard-Ende dauert dieser Teil {asked_s} Sekunden oder länger, und ich kann ihn nicht kürzen, ohne {lines_en} zu ändern. | Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve {lines_tr} değiştirmeden kısaltamam. |  |
+| With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing that line. | Mit dem Standard-Ende dauert dieser Teil {asked_s} Sekunden oder länger, und ich kann ihn nicht kürzen, ohne diesen Satz zu ändern. | Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve {lines_tr} değiştirmeden kısaltamam. |  |
+| With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing those lines. | Mit dem Standard-Ende dauert dieser Teil {asked_s} Sekunden oder länger, und ich kann ihn nicht kürzen, ohne diese Sätze zu ändern. | Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve {lines_tr} değiştirmeden kısaltamam. |  |
 | With these clips, the closest supported length is {closest:g}s. Use that length, or choose different clips? Nothing was changed. | Mit diesen Clips ist {closest:g} s die nächste unterstützte Länge. Soll ich diese Länge nehmen, oder wählst du andere Clips? Es wurde nichts geändert. | Bu kliplerle desteklenen en yakın süre {closest:g} saniye. Bu süreyi mi kullanayım, yoksa farklı klipler mi seçelim? Hiçbir şey değişmedi. |  |
 | Words from your voiceover can't be shown on the clips in this edit yet, so I left those labels out. | Wörter aus deinem Voiceover können in diesem Edit noch nicht auf den Clips angezeigt werden, deshalb habe ich diese Labels weggelassen. | Seslendirmendeki sözler bu düzenlemede henüz kliplerin üzerinde gösterilemiyor, o yüzden bu etiketleri koymadım. |  |
 | Write this in the captions. | Schreib das in die Untertitel. | Bunu altyazıya yaz. |  |
@@ -1504,7 +2032,9 @@ These English keys have different Turkish wordings in different places (`conflic
 | Yes, build it | Ja, erstellen | Evet, oluştur |  |
 | You asked for "{text}" when {speaker} says "{trigger}". "{trigger}" is said {times} time in the part of your take I'm keeping, and I can't tell who is speaking. | Du wolltest "{text}", wenn {speaker} "{trigger}" sagt. "{trigger}" wird in dem Teil deines Takes, den ich behalte, {times} Mal gesagt, und ich kann nicht erkennen, wer spricht. | "{trigger}" denildiğinde "{text}" yazısını istedin. Koruduğum kısımda "{trigger}" {times} kez geçiyor ve kimin konuştuğunu ayırt edemiyorum. |  |
 | You asked for "{text}" when {speaker} says "{trigger}". "{trigger}" is said {times} times in the part of your take I'm keeping, and I can't tell who is speaking. | Du wolltest "{text}", wenn {speaker} "{trigger}" sagt. "{trigger}" wird in dem Teil deines Takes, den ich behalte, {times} Mal gesagt, und ich kann nicht erkennen, wer spricht. | "{trigger}" denildiğinde "{text}" yazısını istedin. Koruduğum kısımda "{trigger}" {times} kez geçiyor ve kimin konuştuğunu ayırt edemiyorum. |  |
-| You asked for a chronological video and for the clips grouped by {word}. | Du wolltest ein chronologisches Video und die Clips nach {word} gruppiert. | Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin. |  |
+| You asked for a chronological video and for the clips grouped by group. | Du wolltest ein chronologisches Video und die Clips in Gruppen sortiert. | Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin. |  |
+| You asked for a chronological video and for the clips grouped by sport. | Du wolltest ein chronologisches Video und die Clips nach Sportart gruppiert. | Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin. |  |
+| You asked for a chronological video and for the clips grouped by {word}. | Du wolltest ein chronologisches Video und die Clips nach „{word}“ gruppiert. | Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin. |  |
 | You asked for a title on the opening, but you didn't tell me the words, and I don't write on-screen text for you. | Du wolltest einen Titel am Anfang, hast mir aber nicht gesagt, was draufstehen soll, und Text für den Bildschirm schreibe ich nicht für dich. | Açılışa bir başlık istedin ama yazılacak kelimeleri söylemedin; ekrandaki yazıları senin yerine yazmıyorum. |  |
 | You asked for a video under {maximum_s:g} seconds including its ending; this video is {actual_s:g} seconds. | Du wolltest ein Video unter {maximum_s:g} Sekunden inklusive Ende; dieses Video hat {actual_s:g} Sekunden. | Kapanış dahil {maximum_s:g} saniyenin altında bir video istedin; bu video {actual_s:g} saniye. |  |
 | You asked for the clips in a specific order that follows when they were filmed. | Du wolltest die Clips in einer bestimmten Reihenfolge, die sich danach richtet, wann sie gefilmt wurden. | Klipleri çekildikleri zamana göre belirli bir sırayla istedin. |  |
@@ -1517,15 +2047,15 @@ These English keys have different Turkish wordings in different places (`conflic
 | You asked to leave that clip out of the edit | Du wolltest diesen Clip aus dem Edit weglassen | O klibi düzenlemeden çıkarmamı istemiştin |  |
 | You asked to leave that text out. Let's update the plan before rendering. | Du wolltest diesen Text weglassen. Lass uns den Plan anpassen, bevor ich das Video erstelle. | O yazının olmamasını istedin. Videoyu oluşturmadan önce planı güncelleyelim. |  |
 | You can preview the draft or undo it. | Du kannst dir den Entwurf ansehen oder ihn rückgängig machen. | Taslağı önizleyebilir veya geri alabilirsin. |  |
-| You can tell me which clip shows it, or reply "skip it" and I'll {then}. | Du kannst mir sagen, in welchem Clip es vorkommt, oder "überspringen" antworten, dann {then}. | Hangi klipte olduğunu söyleyebilirsin ya da "boşver" yaz, {then}. |  |
+| You can tell me which clip shows it, or reply "skip it" and I'll {then}. | Du kannst mir sagen, in welchem Clip es zu sehen ist, oder mit "überspringen" antworten, dann {then}. | Hangi klipte olduğunu söyleyebilirsin ya da "boşver" yaz, {then}. |  |
 | You changed the cut in the editor, so that clip no longer plays like this | Du hast den Schnitt im Editor geändert, deshalb läuft dieser Clip nicht mehr so | Editörde kesimi değiştirdin, o yüzden o klip artık böyle çalmıyor |  |
 | You changed the edit after I placed the text, so I can't confirm it still stays off {named} | Du hast den Edit geändert, nachdem ich den Text platziert hatte, deshalb kann ich nicht bestätigen, dass er immer noch nicht auf {named} liegt | Yazıyı yerleştirdikten sonra düzenlemeyi değiştirdin; hâlâ {named_tr} üstünde olmadığını doğrulayamıyorum |  |
 | You chose a landscape video, so the clips fill a wide frame, not a vertical one | Du hast ein Querformat-Video gewählt, deshalb füllen die Clips ein breites Bild statt eines Hochformats | Yatay video seçtin, o yüzden klipler dikey değil geniş bir kadrajı dolduruyor |  |
 | You chose a landscape video, so there was no vertical framing to do and your clip shows in the full wide frame | Du hast ein Querformat-Video gewählt, deshalb gab es keinen Hochformat-Ausschnitt anzupassen und dein Clip ist im vollen breiten Bild zu sehen | Yatay video seçtin, o yüzden yapılacak bir dikey kadraj yoktu ve klibin geniş kadrajda tam görünüyor |  |
 | You chose black bars in the editor, so the whole frame shows | Du hast im Editor schwarze Balken gewählt, deshalb ist das ganze Bild zu sehen | Editörde siyah bantları seçtin, o yüzden görüntünün tamamı görünüyor |  |
-| You chose black bars, so the {clips_n} keep them | Du hast schwarze Balken gewählt, deshalb behalten {clips_n} sie | Siyah bantları seçtin, o yüzden {clips_n} bantlı kaldı |  |
+| You chose black bars, so the {clips_n} keep them | Du hast schwarze Balken gewählt, deshalb bleiben sie bei {clips_n} | Siyah bantları seçtin, o yüzden {clips_n} bantlı kaldı |  |
 | You chose crop in the editor, so the video is cropped to the middle and the speaker's face can leave the frame | Du hast im Editor Zuschneiden gewählt, deshalb wird das Video auf die Mitte zugeschnitten und das Gesicht der sprechenden Person kann aus dem Bild rutschen | Editörde kırpmayı seçtin, o yüzden video ortadan kırpıldı ve konuşan kişinin yüzü kadrajdan çıkabilir |  |
-| You chose crop, so the {clips_n} are cropped to fill the frame | Du hast Zuschneiden gewählt, deshalb werden {clips_n} so zugeschnitten, dass sie das Bild füllen | Kırpmayı seçtin, o yüzden {clips_n} ekranı dolduracak şekilde kırpıldı |  |
+| You chose crop, so the {clips_n} are cropped to fill the frame | Du hast Zuschneiden gewählt, deshalb habe ich {clips_n} bildfüllend zugeschnitten | Kırpmayı seçtin, o yüzden {clips_n} ekranı dolduracak şekilde kırpıldı |  |
 | You didn't pick a clip for "{label}" | Du hast keinen Clip für "{label}" ausgewählt | "{label}" için bir klip seçmedin |  |
 | You didn't pick a clip for "{words}" | Du hast keinen Clip für "{words}" ausgewählt | "{words}" için bir klip seçmedin |  |
 | You didn't say what order the clips in {quoted} should play in. Tell me the order, or say any order is fine. | Du hast nicht gesagt, in welcher Reihenfolge die Clips in {quoted} laufen sollen. Sag mir die Reihenfolge oder sag, dass jede Reihenfolge okay ist. | {quoted} içindeki kliplerin hangi sırayla oynayacağını söylemedin. Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle. |  |
@@ -1537,28 +2067,39 @@ These English keys have different Turkish wordings in different places (`conflic
 | You never talk about {ref}, so I left it out | Du sprichst nie über {ref}, deshalb habe ich es weggelassen | {ref} hakkında hiç konuşmuyorsun, o yüzden dışarıda bıraktım |  |
 | You picked Lip-sync, so I'll sync your takes to your song, placing each one where it fits the music. | Du hast Lip-Sync gewählt, deshalb synchronisiere ich deine Takes mit deinem Song und setze jeden dorthin, wo er zur Musik passt. | Dudak senkronu seçtin, o yüzden çekimlerini şarkına senkronluyorum; her birini müziğe uyduğu yere koyuyorum. |  |
 | You picked only photos. A montage needs at least one of your video clips too. Pick a clip, or add footage. | Du hast nur Fotos ausgewählt. Für eine Montage brauche ich auch mindestens einen deiner Videoclips. Wähl einen Clip aus oder füg Material hinzu. | Yalnızca fotoğraf seçtin. Bir montaj için videolarından en az biri de gerekiyor. Bir klip seç ya da çekim ekle. |  |
-| You picked {clips} clip{v1}, so "{pin_text}" can't go on clip {pin_clip}. Which clip should it be on? | Du hast {clips} Clip{v1} ausgewählt, deshalb kann "{pin_text}" nicht auf Clip {pin_clip}. Auf welchen Clip soll es? | {clips} klip seçtin, o yüzden "{pin_text}" {pin_clip}. klibe konamaz. Hangi klibe koyayım? |  |
+| You picked {clips} clip, so "{pin_text}" can't go on clip {pin_clip}. Which clip should it be on? | Du hast {clips} Clip ausgewählt, deshalb kann "{pin_text}" nicht auf Clip {pin_clip} kommen. Auf welchen Clip soll es stattdessen? | {clips} klip seçtin, o yüzden "{pin_text}" {pin_clip}. klibe konamaz. Hangi klibe koyayım? |  |
+| You picked {clips} clips, so "{pin_text}" can't go on clip {pin_clip}. Which clip should it be on? | Du hast {clips} Clips ausgewählt, deshalb kann "{pin_text}" nicht auf Clip {pin_clip} kommen. Auf welchen Clip soll es stattdessen? | {clips} klip seçtin, o yüzden "{pin_text}" {pin_clip}. klibe konamaz. Hangi klibe koyayım? |  |
 | You say {line} only before your start line, so the video runs to the end of your take | Du sagst {line} nur vor deinem Startsatz, deshalb läuft das Video bis zum Ende deines Takes | {line} cümlesini yalnızca başlangıç cümlenden önce söylüyorsun, bu yüzden video çekimin sonuna kadar sürüyor |  |
 | You say {word} right at the end, so there was no time to show {text} | Du sagst {word} ganz am Ende, deshalb war keine Zeit mehr, {text} zu zeigen | {word} en sonda söylüyorsun, o yüzden {text} yazısına yer kalmadı |  |
 | You stay full size, not small in a corner. | Du bleibst in voller Größe, nicht klein in einer Ecke. | Tam boyutta kalıyorsun, köşede küçük değilsin. |  |
 | You stay full size, not small in a corner; your iPhone can't do that yet | Du bleibst in voller Größe, nicht klein in einer Ecke; dein iPhone kann das noch nicht | Tam boyutta kalıyorsun, köşede küçük değilsin; iPhone'un bunu henüz yapamıyor |  |
 | You swapped in a new take, so I cancelled the plan I had prepared for the old one. Nothing was rendered. Tell me what you want and I'll plan it again with your new take. | Du hast einen neuen Take eingesetzt, deshalb habe ich den Plan für den alten verworfen. Es wurde kein Video erstellt. Sag mir, was du möchtest, und ich plane es mit deinem neuen Take neu. | Yeni çekimini ekledin, o yüzden eski çekim için hazırladığım planı iptal ettim. Hiçbir video oluşturulmadı. Ne istediğini söyle, yeni çekiminle yeniden planlayayım. |  |
 | You tell me the order of the clips. | Du sagst mir die Reihenfolge der Clips. | Klip sırasını sen söylersin. |  |
+| You'll start full screen in your own room, then you're {corner_0} when you start on your first recording. | Du startest im Vollbild in deinem eigenen Raum, dann bist du {corner_0}, sobald deine erste Aufnahme beginnt. | {v2}, sonra ilk kaydına geçince {corner_1}sın. |  |
+| You'll start full screen in your own room, then your background takes the screen. | Du startest im Vollbild in deinem eigenen Raum, dann übernimmt dein Hintergrund den Bildschirm. | {v2}, sonra arka plan ekranı alıyor. |  |
+| You'll start full screen in your own room, then {corner_0}. | Du startest im Vollbild in deinem eigenen Raum, danach bist du {corner_0}. | {v2}, sonra {corner_1}sın. |  |
 | You're full screen for the whole video: there's no photo or video behind you to move into. | Du bist das ganze Video über im Vollbild: Es gibt kein Foto oder Video hinter dir, in das du wechseln könntest. | Videonun tamamında tam ekransın: geçeceğin bir arka plan fotoğrafı ya da videosu yok. |  |
-| You're {corner_0} over your background, so you don't fill the frame. | Du bist {corner_0} über deinem Hintergrund, deshalb füllst du das Bild nicht aus. | Arka planın üstünde {corner_1}sın, o yüzden kadrajı doldurmuyorsun. |  |
+| You're full screen in your own take for the first {seconds} s, then your background takes the screen. | Du bist in den ersten {seconds} s deines eigenen Takes im Vollbild, dann übernimmt dein Hintergrund den Bildschirm. | {v2}, sonra arka plan ekranı alıyor. |  |
+| You're full screen in your own take for the first {seconds} s, then {corner_0}. | Du bist in den ersten {seconds} s deines eigenen Takes im Vollbild, danach bist du {corner_0}. | {v2}, sonra {corner_1}sın. |  |
+| You're {corner_0} over your background, so you don't fill the frame. | Du bist {corner_0} vor deinem Hintergrund zu sehen, deshalb füllst du das Bild nicht aus. | Arka planın üstünde {corner_1}sın, o yüzden kadrajı doldurmuyorsun. |  |
 | Your Visuals change was saved, but rendering could not start. Retry the render to update the exported video. | Deine Visuals-Änderung wurde gespeichert, aber das Video konnte nicht erstellt werden. Versuch es nochmal, um das exportierte Video zu aktualisieren. | Görsel değişikliğin kaydedildi ama video hazırlanmaya başlayamadı. Dışa aktarılan videoyu güncellemek için yeniden dene. |  |
 | Your Visuals play full screen, but spread evenly across the talk, not timed to the word you said | Deine Visuals laufen im Vollbild, sind aber gleichmäßig über die Rede verteilt und nicht auf das Wort abgestimmt, das du gesagt hast | Görsellerin tam ekran çıkıyor ama konuşmaya eşit aralıklarla dağılıyor, söylediğin kelimeye göre zamanlanmıyor |  |
 | Your approved render is in progress. Your draft is saved. | Dein freigegebenes Video wird gerade erstellt. Dein Entwurf ist gespeichert. | Onayladığın video hazırlanıyor. Taslağın kaydedildi. |  |
 | Your brief says "{said}" and the photos you timed take {clean_seconds_held} seconds. | In deiner Anfrage steht "{said}", und die Fotos, die du getimt hast, dauern {clean_seconds_held} Sekunden. | İsteğinde "{said}" yazıyor ve süre verdiğin fotoğraflar {clean_seconds_held} saniye tutuyor. |  |
 | Your brief says "{said}" and this edit uses {count} clips. | In deiner Anfrage steht "{said}", und dieser Edit nutzt {count} Clips. | İsteğinde "{said}" yazıyor ama bu düzenlemede {count} klip var. |  |
 | Your brief says "{said}" and your voice runs {voice_s} seconds. | In deiner Anfrage steht "{said}", und deine Stimme läuft {voice_s} Sekunden. | İsteğinde "{said}" yazıyor ve sesin {voice_s} saniye sürüyor. |  |
-| Your brief says "{said}", but the available {source} is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber das verfügbare {source} ist {capacity_s} Sekunden lang. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
+| Your brief says "{said}", but the available footage is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber das verfügbare Material reicht für {capacity_s} Sekunden. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
+| Your brief says "{said}", but the available song is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber der verfügbare Song dauert {capacity_s} Sekunden. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
+| Your brief says "{said}", but the available spoken take is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber der verfügbare gesprochene Take dauert {capacity_s} Sekunden. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
+| Your brief says "{said}", but the available voiceover with the selected footage is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber das verfügbare Voiceover mit dem ausgewählten Material dauert {capacity_s} Sekunden. | İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye. |  |
 | Your change was saved, but rendering could not start. Retry the render to update the exported video. | Deine Änderung wurde gespeichert, aber das Video konnte nicht erstellt werden. Versuch es nochmal, um das exportierte Video zu aktualisieren. | Değişikliğin kaydedildi ama video hazırlanmaya başlayamadı. Dışa aktarılan videoyu güncellemek için yeniden dene. |  |
 | Your chosen clip differs from the source type you requested. Please confirm the source type or change the clip choice. | Der gewählte Clip passt nicht zur gewünschten Quellenart. Bestätige bitte die Quellenart oder ändere die Clip-Auswahl. | Seçtiğin klip istediğin kaynak türünden farklı. Lütfen kaynak türünü onayla veya klip seçimini değiştir. |  |
 | Your clip is already vertical, so it fills the frame | Dein Clip ist schon im Hochformat, deshalb füllt er das Bild | Klibin zaten dikey, o yüzden ekranı dolduruyor |  |
 | Your clips add up to about {possible:g} seconds, so the video can't be {wanted:g} seconds. | Deine Clips ergeben zusammen etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. | Klipler toplam yaklaşık {possible:g} saniye, bu yüzden video {wanted:g} saniye olamıyor. |  |
+| Your clips and photos have no filming time, so I can't put them in the order you filmed. | Keiner deiner Clips und Fotos hat eine Aufnahmezeit, deshalb kann ich sie nicht in die Reihenfolge deiner Aufnahmen bringen. | Kliplerinin ve fotoğraflarının hiçbiri için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum. |  |
 | Your clips are in filming order, but {join_said}. | Deine Clips liegen in Aufnahmereihenfolge, aber {join_said}. | Klipler çekim sırasında, ama {join_said}. |  |
 | Your clips changed while I was planning. Your draft is unchanged; please ask again using the current clips. | Deine Clips haben sich geändert, während ich geplant habe. Dein Entwurf ist unverändert; frag bitte nochmal mit den aktuellen Clips. | Ben planlarken kliplerin değişti. Taslağın değişmedi; lütfen güncel kliplerle tekrar iste. |  |
+| Your clips follow your voice, so once the video is made I'll check what's on screen when you say those words | Deine Clips folgen deiner Stimme. Sobald das Video fertig ist, prüfe ich, was auf dem Bildschirm zu sehen ist, wenn du diese Worte sagst | Klipler sesini takip ediyor, video hazır olunca o sözleri söylediğinde ekranda ne olduğunu kontrol edeceğim |  |
 | Your clips keep their own sound, so your narration plays in the video. | Deine Clips behalten ihren eigenen Ton, deshalb ist deine Erzählung im Video zu hören. | Kliplerin kendi sesini koruyorum, yani anlatımın videoda duyulacak. |  |
 | Your clips were filmed starting at {saw_first} and ending at {saw_last}, the reverse of the route you gave ({short_start} → {short_end}). I kept filming order; tell me if you want your route order instead. | Deine Clips wurden von {saw_first} bis {saw_last} gefilmt, also genau andersherum als die Route, die du genannt hast ({short_start} → {short_end}). Ich habe die Aufnahmereihenfolge beibehalten; sag mir, wenn du stattdessen deine Routenreihenfolge willst. | Klipler şöyle çekilmiş: başlangıç {saw_first}, bitiş {saw_last}. Bu, verdiğin rotanın ({short_start} → {short_end}) tersi. Çekim sırasını korudum; rota sırasını istersen söyle. |  |
 | Your complete brief exceeds the clip planner's 12,000-character limit. | Deine komplette Anfrage überschreitet das Limit des Clip-Planers von 12.000 Zeichen. | Tüm isteğin, klip planlayıcının 12.000 karakterlik sınırını aşıyor. |  |
@@ -1571,11 +2112,15 @@ These English keys have different Turkish wordings in different places (`conflic
 | Your draft is saved. Should I try again or simplify this request? | Dein Entwurf ist gespeichert. Soll ich es nochmal versuchen oder die Anfrage vereinfachen? | Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi? |  |
 | Your edit instructions are too long for me to match safely. Please start a new request with the key clip directions. | Deine Edit-Anweisungen sind zu lang, als dass ich sie sicher zuordnen könnte. Starte bitte eine neue Anfrage mit den wichtigsten Clip-Angaben. | Düzenleme talimatların, kliplerle güvenle eşleştirmem için çok uzun. Lütfen önemli klip yönlendirmelerini içeren yeni bir istek başlat. |  |
 | Your edit is still rendering — give it a moment, then ask again. | Dein Edit wird noch erstellt. Gib ihm einen Moment und frag dann nochmal. | Düzenlemen hâlâ hazırlanıyor, biraz bekle ve sonra tekrar iste. |  |
+| Your end line keeps about {kept_s} seconds of your take: from the start to right after {end}. | Dein Schlusssatz behält etwa {kept_s} Sekunden deines Takes: vom Anfang bis kurz nach {end}. | Bitiş cümlen çekiminin yaklaşık {kept_s} saniyesini tutuyor: baştan {end} cümlesinin hemen sonrasına kadar. |  |
+| Your end-screen words are too long to fit on one screen; shorten them | Dein Text für das Endbild ist zu lang für ein Bild; kürz ihn bitte | Son ekran yazın tek bir ekrana sığmayacak kadar uzun; kısalt |  |
+| Your end-screen words have a character I can't draw on the card | In deinem Text für das Endbild ist ein Zeichen, das ich nicht darstellen kann | Son ekran yazında kartta çizemediğim bir karakter var |  |
 | Your finished video couldn't be saved. Try again. | Dein fertiges Video konnte nicht gespeichert werden. Versuch es nochmal. | Hazır videon kaydedilemedi. Tekrar dene. |  |
 | Your footage sound is muted under your voice | Der Ton deines Materials ist unter deiner Stimme stumm | Çekim sesi sesinin altında kapalı |  |
 | Your footage sound plays under your voice | Der Ton deines Materials läuft unter deiner Stimme | Çekim sesi sesinin altında çalıyor |  |
 | Your footage sound sits under your voice at about {pct}% volume | Der Ton deines Materials liegt mit etwa {pct}% Lautstärke unter deiner Stimme | Çekim sesi, sesinin altında yaklaşık %{pct} seviyesinde |  |
 | Your full edit request is too long to preserve safely. Nothing was changed; please start a new request with the key directions. | Deine komplette Edit-Anfrage ist zu lang, um sie sicher zu übernehmen. Es wurde nichts geändert; starte bitte eine neue Anfrage mit den wichtigsten Angaben. | Tam düzenleme isteğin güvenle korumak için çok uzun. Hiçbir şey değişmedi; önemli yönergelerle yeni bir istek başlat. |  |
+| Your iPhone app is too old to end on a full-screen colour with your text; update it first | Deine iPhone-App ist zu alt für ein Ende mit Farbbild und Text; aktualisier sie zuerst | iPhone uygulaman videoyu yazılı tam ekran bir renkle bitirmek için çok eski; önce güncelle |  |
 | Your iPhone app is too old to put a photo or video behind you; update it first | Deine iPhone-App ist zu alt, um ein Foto oder Video hinter dich zu legen; aktualisiere sie zuerst | iPhone uygulaman arkana fotoğraf ya da video koymak için çok eski; önce güncelle |  |
 | Your iPhone app is too old to put a plain colour behind you; update it first | Deine iPhone-App ist zu alt, um eine einfarbige Fläche hinter dich zu legen; aktualisiere sie zuerst | iPhone uygulaman arkana düz renk koymak için çok eski; önce güncelle |  |
 | Your iPhone couldn't build that clip's own sound, so the video plays without it | Dein iPhone konnte den eigenen Ton dieses Clips nicht aufbauen, deshalb läuft das Video ohne ihn | iPhone'un o klibin kendi sesini oluşturamadı, o yüzden video o ses olmadan çalıyor |  |
@@ -1593,13 +2138,19 @@ These English keys have different Turkish wordings in different places (`conflic
 | Your line shows only for the first {shown} s of the {length} s video, not the whole video. | Dein Text ist nur in den ersten {shown} s des {length}-s-Videos zu sehen, nicht im ganzen Video. | Yazın {length} sn'lik videonun yalnızca ilk {shown} sn'sinde görünüyor, videonun tamamında değil. |  |
 | Your moments can't all get their own part of this clip at this length. Ask for a different length, or name fewer moments. | Nicht alle deine Momente bekommen bei dieser Länge einen eigenen Abschnitt in diesem Clip. Wünsch dir eine andere Länge oder nenne weniger Momente. | Saydığın anların hepsi bu uzunlukta klipte kendi yerini alamıyor. Başka bir uzunluk iste ya da daha az an say. |  |
 | Your own song can only be used in videos made on your iPhone right now. Ask for this edit without your song. No fallback edit was rendered. | Dein eigener Song kann gerade nur in Videos genutzt werden, die auf deinem iPhone erstellt werden. Wünsch dir diesen Edit ohne deinen Song. Es wurde kein Ersatz-Edit erstellt. | Kendi şarkın şu anda yalnızca iPhone'unda hazırlanan videolarda kullanılabiliyor. Bu düzenlemeyi şarkın olmadan iste. Yedek bir düzenleme oluşturulmadı. |  |
+| Your own song can't be changed from chat on this edit. | Deinen eigenen Song kann ich in diesem Edit nicht per Chat ändern. | Bu düzenlemede kendi şarkını sohbetten değiştiremiyorum. |  |
 | Your own song only works on edits that render on your iPhone. Should I make this with licensed music instead? | Dein eigener Song funktioniert nur bei Edits, die auf deinem iPhone erstellt werden. Soll ich das stattdessen mit lizenzierter Musik machen? | Kendi şarkın sadece iPhone'unda hazırlanan düzenlemelerde çalışıyor. Bunu lisanslı müzikle yapayım mı? |  |
 | Your recordings are zoomed in on their text. | Deine Aufnahmen sind auf ihren Text herangezoomt. | Kayıtlar yazılarına yakınlaştırıldı. |  |
 | Your render is queued. I’ll keep watching it and update this chat when it starts. | Dein Video steht in der Warteschlange. Ich behalte es im Blick und schreibe hier im Chat, sobald es startet. | Videon sırada. Takipteyim, başlayınca bu sohbete yazacağım. |  |
 | Your saved request is too large for this update. Your video is unchanged. | Deine gespeicherte Anfrage ist zu groß für dieses Update. Dein Video ist unverändert. | Kayıtlı isteğin bu güncelleme için çok büyük. Videon değişmedi. |  |
 | Your saved request is too large or unavailable for this editor step. Your draft is unchanged. Which clip or part should I work on first? | Deine gespeicherte Anfrage ist für diesen Editor-Schritt zu groß oder nicht verfügbar. Dein Entwurf ist unverändert. An welchem Clip oder Teil soll ich zuerst arbeiten? | Kayıtlı isteğin bu düzenleme adımı için çok büyük ya da şu an ulaşılamıyor. Taslağın değişmedi. Önce hangi klip ya da bölüm üzerinde çalışayım? |  |
 | Your song | Dein Song | Şarkın |  |
+| Your song is already taken off this edit. | Dein Song ist in diesem Edit schon entfernt. | Şarkın bu düzenlemeden zaten kaldırıldı. |  |
 | Your source clips changed after this draft was approved. Your draft is saved; please make a fresh plan before rendering. | Deine Quellclips haben sich geändert, nachdem dieser Entwurf freigegeben wurde. Dein Entwurf ist gespeichert; lass bitte einen neuen Plan erstellen, bevor das Video erstellt wird. | Bu taslak onaylandıktan sonra kaynak kliplerin değişti. Taslağın kayıtlı; videoyu oluşturmadan önce lütfen yeni bir plan hazırlat. |  |
+| Your start and end lines keep about {kept_s} seconds of your take: from {start} to right after {end}. | Dein Startsatz und dein Schlusssatz behalten etwa {kept_s} Sekunden deines Takes: von {start} bis kurz nach {end}. | Başlangıç ve bitiş cümlelerin çekiminin yaklaşık {kept_s} saniyesini tutuyor: {start} cümlesinden {end} cümlesinin hemen sonrasına kadar. |  |
+| Your start line keeps about {kept_s} seconds of your take: from {start} to the end. | Dein Startsatz behält etwa {kept_s} Sekunden deines Takes: von {start} bis zum Ende. | Başlangıç cümlen çekiminin yaklaşık {kept_s} saniyesini tutuyor: {start} cümlesinden sona kadar. |  |
+| Your text colour wouldn't be readable on that background, so the text is black. | Deine Textfarbe wäre auf diesem Hintergrund nicht lesbar, deshalb ist der Text schwarz. | Yazı rengin o arka planda okunmazdı, o yüzden yazı siyah. |  |
+| Your text colour wouldn't be readable on that background, so the text is white. | Deine Textfarbe wäre auf diesem Hintergrund nicht lesbar, deshalb ist der Text weiß. | Yazı rengin o arka planda okunmazdı, o yüzden yazı beyaz. |  |
 | Your text covers your face: I found no spot clear of it | Dein Text verdeckt dein Gesicht: Ich habe keine Stelle gefunden, an der es frei bleibt | Yazın yüzünün üstünde kalıyor: yüzünü açıkta bırakan bir yer bulamadım |  |
 | Your text ends at {exc_required_duration_s:g}s, beyond the requested {exc_requested_duration_s:g}s. Keep the video at least {exc_minimum_duration_s:g}s, or allow me to adjust the text timing? Nothing was changed. | Dein Text endet bei {exc_required_duration_s:g} s, also nach den gewünschten {exc_requested_duration_s:g} s. Soll das Video mindestens {exc_minimum_duration_s:g} s lang bleiben, oder darf ich das Timing des Textes anpassen? Es wurde nichts geändert. | Yazıların {exc_required_duration_s:g}. saniyede bitiyor. Videoyu en az {exc_minimum_duration_s:g} saniye mi tutayım, yoksa yazıların zamanlamasını değiştirebilir miyim? Hiçbir şey değişmedi. |  |
 | Your video changed — reopen the editor and try again. | Dein Video hat sich geändert. Öffne den Editor neu und versuch es nochmal. | Videon değişti. Editörü yeniden açıp tekrar dene. |  |
@@ -1615,30 +2166,40 @@ These English keys have different Turkish wordings in different places (`conflic
 | Your words never play over the other footage | Deine Worte laufen nie über dem anderen Material | Sözlerin diğer çekimlerin üzerinde hiç çalmıyor |  |
 | Zoomed {who} to {zoom} | {who} auf {zoom} herangezoomt | {who} {zoom} yakınlaştırıldı |  |
 | a Visual | ein Visual | bir görsel |  |
+| a fast montage keeps its short cuts | Eine schnelle Montage behält ihre kurzen Schnitte | hızlı montaj kısa kesimlerini koruyor |  |
 | a label on each shot | ein Label auf jeder Einstellung | her çekimdeki etiket |  |
 | a moment | ein Moment | bir an |  |
+| a slide post shows each slide for its own time | Ein Slide-Post zeigt jede Slide so lange, wie sie selbst dauert | slayt gönderisi her slaytı kendi süresince gösteriyor |  |
+| a slide post shows your slides in order | Ein Slide-Post zeigt deine Slides der Reihe nach | slayt gönderisi slaytlarını sırayla gösteriyor |  |
+| a slide post's length follows its slides | Die Länge eines Slide-Posts richtet sich nach seinen Slides | slayt gönderisinin uzunluğu slaytlarına bağlı |  |
 | a video can't be a card on your iPhone yet | ein Video kann auf deinem iPhone noch keine Karte sein | video henüz iPhone'da kart olamıyor |  |
 | add that effect | diesen Effekt hinzufügen | o efekti eklemek |  |
 | alignment | Ausrichtung | hizalama |  |
 | all {count} texts | alle {count} Texte | {count} yazının hepsi |  |
 | all_text | alle Texte | tüm yazılar |  |
 | an instruction | eine Anweisung | bir talimat |  |
+| analyze clips | Clips analysieren | analyze clips |  |
 | animated text isn't available on this phone build yet, so the text will appear without animation | animierter Text ist in dieser App-Version auf dem Handy noch nicht verfügbar, deshalb erscheint der Text ohne Animation | animasyonlu yazı bu telefon sürümünde henüz yok, bu yüzden yazı animasyonsuz görünecek |  |
+| assemble | Zusammensetzen | assemble |  |
+| at most {asked}s | höchstens {asked} s | en fazla {asked} saniye |  |
+| at the second you picked ({at}s into the clip) | an der Sekunde, die du gewählt hast ({at} s im Clip) | seçtiğin saniyede (klibin {at}. saniyesi) |  |
+| balanced | ausgewogen | balanced |  |
 | both texts | beide Texte | iki yazı |  |
 | bottom | unten | alt |  |
 | bottom left | unten links | sol alt |  |
 | bottom right | unten rechts | sağ alt |  |
-| caption | Untertitel | yazı |  |
+| caption | Untertitel | altyazı |  |
 | captions | Untertitel | altyazılar |  |
 | change the backgrounds behind you | die Hintergründe hinter dir ändern | arkandaki arka planları değiştirmek |  |
 | change the edit direction | die Richtung des Edits ändern | kurgunun yönünü değiştirmek |  |
+| change {target} | {target} ändern | {target} için değişiklik yapmak |  |
 | clip | Clip | klip |  |
 | clip {number} | Clip {number} | {number}. klip |  |
 | clip {ordered_0} | Clip {ordered_0} | klip {ordered_0} |  |
 | clip {tail} | Clip {tail} | {tail}. klip |  |
 | clip {videos} | Clip {videos} | klip {videos} |  |
 | clips | Clips | klipler |  |
-| clips stay in the order you filmed them, so· | die Clips bleiben in der Reihenfolge, in der du sie gefilmt hast, deshalb· | klipler çektiğin sırada kalıyor, o yüzden· |  |
+| clips stay in the order you filmed them, so· | die Clips bleiben in der Reihenfolge, in der du sie gefilmt hast, deshalb gilt:· | klipler çektiğin sırada kalıyor, o yüzden· |  |
 | clips {head} and {tail} | Clips {head} und {tail} | {head_tr} ve {tail}. klipler |  |
 | clips {labels} and {more} more | Clips {labels} und {more} weitere | klip {labels} ve {more} klip daha |  |
 | clips {v1} and {v2} | Clips {v1} und {v2} | klip {v1} ve {v2} |  |
@@ -1646,33 +2207,53 @@ These English keys have different Turkish wordings in different places (`conflic
 | couldn't be placed | konnte nicht platziert werden | yerleştirilemedi |  |
 | crossfades between clips | weiche Übergänge zwischen den Clips | klipler arası yumuşak geçiş |  |
 | curved | gebogen | kavisli |  |
+| cutting it out of your voiceover failed | das Herausschneiden aus deinem Voiceover ist fehlgeschlagen | seslendirmenden kesmek başarısız oldu |  |
+| cutting it would leave too little video | wenn ich es schneide, bleibt zu wenig Video übrig | kesersem çok az video kalırdı |  |
+| day vlog | Tagesvlog | day vlog |  |
+| download clips | Clips laden | download clips |  |
 | end with {last} | mit {last} enden | {last} ile bitir |  |
 | entrance animation | Eingangsanimation | giriş animasyonu |  |
 | every clip already has its label | jeder Clip hat schon sein Label | Her klibin etiketi zaten var. |  |
-| exclude | Weglassen | hariç tutma |  |
+| exclude | Weglassen |  |  |
+| fast | schnell | fast |  |
+| fast montage | schnelle Montage | fast montage |  |
+| finalize | Fertigstellen | finalize |  |
 | first | zuerst | ilk |  |
+| first clip you added | ersten Clip, den du hinzugefügt hast | eklediğin ilk klip |  |
+| first clip you filmed | ersten Clip, den du gefilmt hast | çektiğin ilk klip |  |
 | font | Schriftart | yazı tipi |  |
 | full-screen Visuals | Vollbild-Visuals | tam ekran Visuals |  |
-| group | Gruppe | grup |  |
+| generate copy | Texte schreiben | generate copy |  |
+| group | Gruppe |  |  |
 | group by {what} | nach {what} gruppieren | gruplama: {what} |  |
-| hide_part | Teil ausblenden | bölüm gizleme |  |
+| guided story | geführte Story | guided story |  |
+| hide_part | Teil ausblenden |  |  |
 | how long your title stays | wie lange dein Titel stehen bleibt | başlığının ekranda kalma süresi |  |
 | in the order the clips were added | in der Reihenfolge, in der die Clips hinzugefügt wurden | klipleri eklediğin sırayla |  |
 | in the order you filmed them | in der Reihenfolge, in der du sie gefilmt hast | çektiğin sırayla |  |
-| include | Einbeziehen | dahil etme |  |
+| include | Einbeziehen |  |  |
 | it has a hidden control character a label can't show | es enthält ein verstecktes Steuerzeichen, das ein Label nicht anzeigen kann | etiketin gösteremeyeceği gizli bir kontrol karakteri var |  |
 | it has nothing to show | es gibt nichts anzuzeigen | gösterilecek bir şey yok |  |
+| it is cut around the spoken lines | Es wird rund um die gesprochenen Sätze geschnitten | konuşulan cümlelerin etrafında kesiliyor |  |
+| it is cut as a fast montage | Es wird als schnelle Montage geschnitten | hızlı bir montaj olarak kesiliyor |  |
+| it is cut as a montage under your voiceover | Es wird als Montage unter deinem Voiceover geschnitten | seslendirmenin altında bir montaj olarak kesiliyor |  |
+| it is cut to your song | Es wird passend zu deinem Song geschnitten | şarkına göre kesiliyor |  |
 | it isn't on the finished video | es ist nicht im fertigen Video | bitmiş videoda yok |  |
 | it only fit the opening seconds, which stay clear | es passte nur in die ersten Sekunden, und die bleiben frei | yalnızca boş kalan açılışa uyuyordu |  |
 | it runs past the {creator_label_max_lines} lines a clip label holds | es ist länger als die {creator_label_max_lines} Zeilen, die ein Clip-Label fasst | klip etiketinin {creator_label_max_lines} satırına sığmıyor |  |
 | its clips are already in an earlier group | seine Clips sind schon in einer früheren Gruppe | klipleri zaten önceki bir grupta |  |
 | its clips are already placed at another spot | seine Clips sind schon an einer anderen Stelle | klipleri zaten başka bir yerde |  |
 | its colours changed after I placed it | die Farben haben sich geändert, nachdem ich es platziert hatte | renkleri yerleştirdikten sonra değişti |  |
+| its length follows your song | Die Länge richtet sich nach deinem Song | uzunluğu şarkını takip ediyor |  |
+| its length follows your speech | Die Länge richtet sich nach dem, was du sagst | uzunluğu konuşmanı takip ediyor |  |
+| its length follows your voiceover | Die Länge richtet sich nach deinem Voiceover | uzunluğu seslendirmeni takip ediyor |  |
 | its moment was cut out | sein Moment wurde herausgeschnitten | anı kesildi |  |
 | its outline no longer stands out from the fill | die Kontur hebt sich nicht mehr von der Füllung ab | kenar çizgisi artık dolgudan ayrışmıyor |  |
 | label | Label | etiket |  |
 | label the clips | die Clips beschriften | kliplere etiket vermek |  |
 | last | zuletzt | son |  |
+| last clip you added | letzten Clip, den du hinzugefügt hast | eklediğin son klip |  |
+| last clip you filmed | letzten Clip, den du gefilmt hast | çektiğin son klip |  |
 | leave it out | lasse ich es weg | onu çıkarayım |  |
 | leave it out and end on {clip} | lasse ich es weg und beende das Video mit {clip} | onu çıkarıp videoyu {clip}te bitireyim |  |
 | leave it out and start with {clip} | lasse ich es weg und beginne das Video mit {clip} | onu çıkarıp videoya {clip} ile başlayayım |  |
@@ -1680,9 +2261,17 @@ These English keys have different Turkish wordings in different places (`conflic
 | look | Look | görünüm |  |
 | lyric | Songtext | şarkı sözü |  |
 | make you small in a corner | dich klein in eine Ecke setzen | seni köşede küçültmek |  |
+| match clips | Clips zuordnen | match clips |  |
+| match song | Song auswählen | match song |  |
 | middle | Mitte | orta |  |
+| mix audio | Ton mischen | mix audio |  |
+| montage | Montage | montage |  |
 | music | Musik | müzik |  |
 | music under your voiceover | Musik unter deinem Voiceover | seslendirmenin altındaki müzik |  |
+| narrated | mit Voiceover | narrated |  |
+| narrated planned | mit Voiceover | narrated planned |  |
+| narrated ready | mit Voiceover | narrated ready |  |
+| native | nativ | native |  |
 | no clip got one | kein Clip hat eins bekommen | hiçbir klibe gelmedi |  |
 | no room without covering a face or the captions | kein Platz, ohne ein Gesicht oder die Untertitel zu verdecken | yüzü ya da altyazıyı kapatmadan yer yoktu |  |
 | no spoken moment | kein passender gesprochener Moment | konuşmanda uygun an yoktu |  |
@@ -1691,11 +2280,17 @@ These English keys have different Turkish wordings in different places (`conflic
 | none of your clips have a filming time | keiner deiner Clips hat eine Aufnahmezeit | hiçbir klibinde çekim saati yok |  |
 | off | aus | kapalı |  |
 | on | an | açık |  |
+| on that moment ({at}s into the clip) | bei diesem Moment ({at} s im Clip) | o anda (klibin {at}. saniyesi) |  |
+| on that moment ({at}s into the clip; you left the exact frame to me) | bei diesem Moment ({at} s im Clip; das genaue Bild hast du mir überlassen) | o anda (klibin {at}. saniyesi; tam kareyi bana bıraktın) |  |
+| on the last frame of the last shot | auf dem letzten Bild der letzten Einstellung | son çekimin son karesinde |  |
+| on the moment you picked, at its middle ({at}s into the clip) | in der Mitte des Moments, den du gewählt hast ({at} s im Clip) | seçtiğin anın ortasında (klibin {at}. saniyesi) |  |
 | one clip | ein Clip | bir klip |  |
 | one featured hero clip | ein hervorgehobener Haupt-Clip | öne çıkan ana klip |  |
 | only one recording can be the voice that plays under the rest. | nur eine Aufnahme kann die Stimme sein, die unter den anderen läuft. | diğerlerinin altında yalnızca bir kayıt ses olarak çalabilir. |  |
-| order | Reihenfolge | sıra |  |
+| order | Reihenfolge |  |  |
+| other changes | andere Änderungen | diğer değişiklikler |  |
 | overlays | Einblendungen | katmanlar |  |
+| photo {number} | Foto {number} | {number}. fotoğraf |  |
 | photo {photos} | Foto {photos} | fotoğraf {photos} |  |
 | pinned | angehefteter Text | sabit yazı |  |
 | pinned text | angehefteter Text | sabit yazı |  |
@@ -1703,8 +2298,18 @@ These English keys have different Turkish wordings in different places (`conflic
 | put that behind you | das hinter dich legen | onu arkana koymak |  |
 | put that colour behind you | diese Farbe hinter dich legen | o rengi arkana koymak |  |
 | put you back full screen | dich wieder ins Vollbild setzen | seni tekrar tam ekran yapmak |  |
+| queued | Warteschlange | queued |  |
+| relaxed | entspannt | relaxed |  |
 | remove the background behind you | den Hintergrund hinter dir entfernen | arkandaki arka planı kaldırmak |  |
 | removed in the editor | im Editor entfernt | editörde kaldırıldı |  |
+| render variants | Varianten erstellen | render variants |  |
+| single hero | Hauptclip | single hero |  |
+| slides | Folien | slides |  |
+| small in a corner | klein in einer Ecke | köşede küçük |  |
+| small in the bottom-left corner | klein in der unteren linken Ecke | sol alt köşede küçük |  |
+| small in the bottom-right corner | klein in der unteren rechten Ecke | sağ alt köşede küçük |  |
+| small in the top-left corner | klein in der oberen linken Ecke | sol üst köşede küçük |  |
+| small in the top-right corner | klein in der oberen rechten Ecke | sağ üst köşede küçük |  |
 | so I didn't pick a clip to end on. Tell me which clip to end on if you have one in mind. | deshalb habe ich keinen Clip als Ende ausgewählt. Sag mir, mit welchem Clip das Video enden soll, falls du einen im Kopf hast. | o yüzden sona özel bir klip koymadım. Aklında bir klip varsa hangisiyle bitireyim söyle. |  |
 | so I didn't pick a clip to start with. Tell me which clip to start with if you have one in mind. | deshalb habe ich keinen Clip als Anfang ausgewählt. Sag mir, mit welchem Clip das Video beginnen soll, falls du einen im Kopf hast. | o yüzden başa özel bir klip koymadım. Aklında bir klip varsa hangisiyle başlayayım söyle. |  |
 | so the video ends on the {clip}. Tell me which clip to end on if you'd like a different one. | deshalb endet das Video mit dem {clip}. Sag mir, mit welchem Clip es enden soll, wenn du einen anderen möchtest. | o yüzden video {clip}te bitiyor. Başka bir klipte bitmesini istersen hangisi olduğunu söyle. |  |
@@ -1715,27 +2320,43 @@ These English keys have different Turkish wordings in different places (`conflic
 | start with {first} | mit {first} beginnen | {first} ile başla |  |
 | start with {first}; end with {last} | mit {first} beginnen; mit {last} enden | {first} ile başla; {last} ile bitir |  |
 | starting full screen isn't available on iPhone yet | im Vollbild zu starten ist auf dem iPhone noch nicht möglich | tam ekran başlamak iPhone'da henüz yok |  |
+| subtitled | mit Untertiteln | subtitled |  |
+| talking head | Talking Head | talking head |  |
+| tell me to mute it and I'll take it out | sag mir, dass ich ihn stummschalten soll, dann nehme ich ihn raus | kapatmamı söylersen çıkarırım |  |
 | text | Text | yazı |  |
+| text explainer | Text-Erklärvideo | text explainer |  |
 | text for {what} | Text für {what} | {what} için yazı |  |
 | that clip | dieser Clip | o klip |  |
 | that isn't something I can change in this edit yet | das kann ich in diesem Edit noch nicht ändern | bu düzenlemede bunu henüz değiştiremiyorum |  |
 | that part | dieser Teil | o bölüm |  |
+| that part is about {kept}s | dieser Teil ist etwa {kept} s lang | o kısım yaklaşık {kept} saniye |  |
 | that word | dieses Wort | o kelimeyi |  |
 | that would only change sections you did not flag | das würde nur Abschnitte ändern, die du nicht markiert hast | bu yalnızca işaretlemediğin bölümleri değiştirirdi |  |
 | the arrow next to your ending ("{req_literal}") | der Pfeil neben deinem Ende ("{req_literal}") | kapanış yazının yanındaki ok ("{req_literal}") |  |
 | the caption style | der Untertitel-Stil | altyazı stili |  |
 | the captions | die Untertitel | altyazılar |  |
 | the clip label position | die Position der Clip-Labels | klip etiketi konumu |  |
+| the clips can't each be held long enough for it within the length you asked for | In der gewünschten Länge kann ich nicht jeden Clip lange genug dafür zeigen | klipler, istediğin süre içinde bunun için yeterince uzun tutulamıyor |  |
 | the clips did not end up there | die Clips sind dort nicht gelandet | klipler oraya gelmedi |  |
+| the clips' own spoken lines are kept whole, which only the fast-montage layout guarantees | Die gesprochenen Sätze in den Clips bleiben ganz, und das garantiert nur das Layout der schnellen Montage | kliplerin kendi konuşmaları bütün tutuluyor, bunu sadece hızlı montaj düzeni garanti ediyor |  |
 | the closing badge | das Abschluss-Badge | kapanış rozeti |  |
 | the closing title | der Abschlusstitel | kapanış başlığı |  |
 | the closing visual | das Abschluss-Visual | kapanış görseli |  |
 | the complete all-selection can no longer be verified; refresh and try again | die vollständige "Alle"-Auswahl lässt sich nicht mehr prüfen; aktualisiere und versuch es nochmal | "Hepsi" seçiminin tamamı artık doğrulanamıyor; yenile ve tekrar dene. |  |
 | the complete all-selection changed after Kria read it; refresh and try again | die vollständige "Alle"-Auswahl hat sich geändert, nachdem Kria sie gelesen hat; aktualisiere und versuch es nochmal | Kria okuduktan sonra "hepsi" seçimi değişti; yenile ve tekrar dene. |  |
+| the cuts between spoken lines keep a fixed length | Die Schnitte zwischen den gesprochenen Sätzen haben eine feste Länge | konuşmalar arasındaki kesimler sabit uzunlukta |  |
+| the cuts follow a fast pace | Die Schnitte folgen einem schnellen Tempo | kesimler hızlı tempoda |  |
+| the cuts follow your voiceover | Die Schnitte folgen deinem Voiceover | kesimler seslendirmeni izliyor |  |
+| the cuts keep their usual length | Die Schnitte behalten ihre übliche Länge | kesimler her zamanki uzunluğunda |  |
 | the edit changed since I looked, so I skipped it | der Edit hat sich geändert, seit ich nachgesehen habe, deshalb habe ich es übersprungen | ben bakarken düzenleme değişti, bu yüzden atladım |  |
 | the exact voiceover plan | der genaue Voiceover-Plan | seslendirme planın |  |
+| the first clip you added | dem ersten Clip, den du hinzugefügt hast | eklediğin ilk klip |  |
+| the first clip you filmed | dem ersten Clip, den du gefilmt hast | çektiğin ilk klip |  |
 | the footage brightness change | die Helligkeitsänderung des Materials | çekimin parlaklık değişikliği |  |
+| the footage doesn't fit that layout | Das Material passt nicht zu diesem Layout | görüntüler bu düzene uymuyor |  |
 | the guided editor revision changed after Kria read it; refresh and try again | die Version des geführten Editors hat sich geändert, nachdem Kria sie gelesen hat; aktualisiere und versuch es nochmal | Kria okuduktan sonra editördeki düzenleme sürümü değişti; yenile ve tekrar dene. |  |
+| the last clip you added | dem letzten Clip, den du hinzugefügt hast | eklediğin son klip |  |
+| the last clip you filmed | dem letzten Clip, den du gefilmt hast | çektiğin son klip |  |
 | the length you asked for | die gewünschte Länge | istediğin uzunluk |  |
 | the music | die Musik | müzik |  |
 | the opening hook idea | die Idee für den Einstiegs-Hook | açılış kanca fikri |  |
@@ -1744,17 +2365,21 @@ These English keys have different Turkish wordings in different places (`conflic
 | the overlay display | die geplante Einblendungs-Anzeige | katman gösterimi |  |
 | the photo | das Foto | fotoğraf |  |
 | the photo and video timing | das Timing von Foto und Video | fotoğraf ve video zamanlaman |  |
+| the plan has no story outline to build chapters from | Der Plan hat keine Story-Gliederung, aus der ich Kapitel bauen könnte | bölümleri oluşturacak bir hikâye taslağı yok |  |
 | the planned direction | die geplante Richtung | planlanan yön |  |
 | the planned music or voiceover | die geplante Musik oder das geplante Voiceover | planlanan müzik ya da seslendirme |  |
 | the planned pacing | das geplante Tempo | planlanan tempo |  |
 | the planned story structure | die geplante Story-Struktur | planlanan hikâye yapısı |  |
 | the planned text color | die geplante Textfarbe | planlanan yazı rengi |  |
 | the planned text font | die geplante Textschrift | planlanan yazı tipi |  |
+| the same clip plays more than once, which only the fast-montage layout allows | Derselbe Clip läuft mehr als einmal, und das erlaubt nur das Layout der schnellen Montage | aynı klip birden fazla kez oynuyor, buna sadece hızlı montaj düzeni izin veriyor |  |
 | the saved all-selection proof is incomplete; refresh and try again | der gespeicherte Nachweis der "Alle"-Auswahl ist unvollständig; aktualisiere und versuch es nochmal | Kaydedilen "hepsi" seçimi eksik; yenile ve tekrar dene. |  |
 | the sentence {clip} belongs to ends in the first seconds, so it plays after the next one | der Satz, zu dem {clip} gehört, endet in den ersten Sekunden, deshalb läuft er nach dem nächsten | {clip} için ilgili cümle ilk saniyelerde bitiyor, o yüzden bir sonrakinden sonra oynuyor |  |
 | the sound effects | die Soundeffekte | ses efektleri |  |
 | the source pool changed after Kria read it; refresh and try again | die Quellen haben sich geändert, nachdem Kria sie gelesen hat; aktualisiere und versuch es nochmal | Kria okuduktan sonra kaynaklar değişti; yenile ve tekrar dene. |  |
 | the story archetype | der Story-Typ | hikâye kalıbı |  |
+| the story text couldn't be placed on it | Der Story-Text ließ sich nicht darauf platzieren | hikâye yazısı buna yerleştirilemedi |  |
+| the talking clip is {take}s | der Clip, in dem du sprichst, ist {take} s lang | konuşma klibi {take} saniye |  |
 | the text animation | die Text-Animation | yazı animasyonunu |  |
 | the text will animate in as it appears; I'll check it in the finished video | der Text wird beim Erscheinen animiert eingeblendet; ich prüfe das im fertigen Video | yazı belirirken animasyonlu girecek; bitmiş videoda kontrol edeceğim |  |
 | the text will play the {label} entrance; I'll check it in the finished video | der Text wird mit der Eingangsanimation {label} abgespielt; ich prüfe das im fertigen Video | yazı {label} girişiyle oynayacak; bitmiş videoda kontrol edeceğim |  |
@@ -1764,50 +2389,73 @@ These English keys have different Turkish wordings in different places (`conflic
 | the treatments | die Effekte | efektler |  |
 | the value wasn't one I can apply | diesen Wert kann ich nicht anwenden | bu değeri uygulayamıyorum |  |
 | the video | das Video | video |  |
+| the video follows your speech | Das Video folgt dem, was du sagst | video konuşmanı izliyor |  |
+| the video follows your voiceover | Das Video folgt deinem Voiceover | video seslendirmeni izliyor |  |
 | the visuals timed to your words | die Visuals, die auf deine Worte abgestimmt sind | sözlerine göre zamanlanan görseller |  |
 | the {name} clip | der Clip {name} | {name} klibi |  |
 | the {sorted_names_0} animation | die Animation {sorted_names_0} | {sorted_names_0} animasyonunu |  |
-| the {v1} clip you {v2} | der {v1} Clip, den du {v2} | {v3} {v4} klip |  |
 | the {what} name on its clips | der Name {what} auf seinen Clips | kliplerindeki {what} adı |  |
 | the {word} isn't your exact wording | {word} entspricht nicht genau deinem Wortlaut | {word} tam olarak yazdığın gibi değil |  |
 | the {word} runs past the end of the video | {word} läuft über das Ende des Videos hinaus | {word} videonun sonundan taşıyor |  |
 | then | danach | sonra |  |
+| there are too many clips to lay out as story chapters | Es sind zu viele Clips, um sie als Story-Kapitel anzuordnen | bölümlere ayırmak için çok fazla klip var |  |
 | these aren't where you asked: {join_facts_sequence_unmet} | diese liegen nicht dort, wo du sie wolltest: {join_facts_sequence_unmet} | bunlar istediğin yerde değil: {join_facts_sequence_unmet} |  |
 | they'll be in {language} | sie sind auf {language} | altyazılar {language} olacak |  |
 | they'll be in {language}, and I'll check that in the finished video | sie sind auf {language}, und das prüfe ich im fertigen Video | altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim |  |
+| this edit has no control to turn it down yet | in diesem Edit gibt es noch keine Einstellung, um ihn leiser zu machen | bu düzenlemede onu kısacak bir ayar henüz yok |  |
+| this editor can only restage it as a fast montage, so nothing changed. A different direction needs a fresh edit | Dieser Editor kann es nur als schnelle Montage neu aufbauen, deshalb hat sich nichts geändert. Für eine andere Richtung brauchst du einen neuen Edit | bu editör onu yalnızca hızlı bir montaj olarak yeniden kurabiliyor, o yüzden hiçbir şey değişmedi. Başka bir yön için yeni bir düzenleme gerekiyor |  |
 | title | Titel | başlık |  |
 | top | oben | üst |  |
 | top left | oben links | sol üst |  |
 | top right | oben rechts | sağ üst |  |
+| turn it down in the editor under Sounds > Original audio, or tell me to mute it | stell ihn im Editor unter „Sounds > Original audio“ leiser oder sag mir, dass ich ihn stummschalten soll | editörde Sesler > Orijinal ses bölümünden kıs ya da bana kapatmamı söyle |  |
 | update the Kria app to start full screen | aktualisiere die Kria-App, um im Vollbild zu starten | tam ekran başlamak için Kria uygulamasını güncelle |  |
+| upload | Hochladen | upload |  |
 | words light up as they're spoken | Wörter leuchten auf, während sie gesprochen werden | kelimeler söylendikçe yanıyor |  |
 | write out the words to spell and I'll spell them your way | schreib die Wörter auf, auf die ich bei der Schreibweise achten soll, dann schreibe ich sie so, wie du es willst | yazımına dikkat edeceğim kelimeleri tek tek yaz, senin yazdığın gibi yazayım |  |
+| you asked for a freeze frame or a speed change, which only the fast-montage layout plays | Du wolltest ein Standbild oder ein anderes Tempo, und das spielt nur das Layout der schnellen Montage ab | dondurulmuş kare ya da hız değişimi istedin, bunu sadece hızlı montaj düzeni oynatıyor |  |
+| you asked for curved text, which only the fast-montage layout draws | Du wolltest gebogenen Text, und den zeichnet nur das Layout der schnellen Montage | kavisli yazı istedin, bunu sadece hızlı montaj düzeni çiziyor |  |
+| you asked for text on individual clips, which only the fast-montage layout places | Du wolltest Text auf einzelnen Clips, und den setzt nur das Layout der schnellen Montage | tek tek kliplere yazı istedin, bunu sadece hızlı montaj düzeni yerleştirebiliyor |  |
+| you asked me to keep a part of a clip out, which only the fast-montage layout can guarantee | Du wolltest, dass ich einen Teil eines Clips weglasse, und das kann nur das Layout der schnellen Montage garantieren | bir klibin bir bölümünü dışarıda tutmamı istedin, bunu sadece hızlı montaj düzeni garanti edebiliyor |  |
 | you chose grouping first, each group in the order you filmed it | du hast zuerst die Gruppierung gewählt, jede Gruppe in der Reihenfolge, in der du sie gefilmt hast | önce gruplamayı seçtin, her grup çektiğin sırada |  |
 | you chose grouping first, so it's in filming order inside each group | du hast zuerst die Gruppierung gewählt, deshalb liegen sie innerhalb jeder Gruppe in Aufnahmereihenfolge | önce gruplamayı seçtin, o yüzden her grubun içinde çekim sırasında |  |
-| you chose strictly chronological order, so· | du hast eine streng chronologische Reihenfolge gewählt, deshalb· | kesin kronolojik sırayı seçtin, o yüzden· |  |
+| you chose strictly chronological order, so· | du hast eine streng chronologische Reihenfolge gewählt, deshalb gilt:· | kesin kronolojik sırayı seçtin, o yüzden· |  |
 | you didn't say what order its clips play in | du hast nicht gesagt, in welcher Reihenfolge seine Clips laufen | kliplerinin hangi sırayla oynayacağını söylemedin |  |
+| you don't say it that many times | so oft sagst du es nicht | bunu o kadar çok kez söylemiyorsun |  |
 | you let me pick this moment, so I chose it myself | du hast mir diesen Moment überlassen, also habe ich ihn selbst gewählt | bu anı seçmeyi bana bıraktın, ben seçtim |  |
+| you named exact moments, which only the fast-montage layout plays as given | Du hast genaue Momente genannt, und die spielt nur das Layout der schnellen Montage genau so ab | belirli anları sen seçtin, bunları sadece hızlı montaj düzeni olduğu gibi oynatıyor |  |
+| you say it in more than one take, so I left it in; tell me which take to cut it from | du sagst es in mehr als einem Take, deshalb habe ich es drin gelassen; sag mir, aus welchem Take ich es schneiden soll | bunu birden fazla çekimde söylüyorsun, o yüzden dokunmadım; hangi çekimden keseyim söyle |  |
+| you say it more than once, so tell me which one to cut: the first, second or last | du sagst es mehr als einmal, also sag mir, welches ich schneiden soll: das erste, das zweite oder das letzte | bunu birden fazla kez söylüyorsun, hangisini keseyim söyle: ilkini, ikincisini ya da sonuncusunu |  |
+| you set exact timing for photos or cuts, which only the fast-montage layout keeps | Du hast genaue Zeiten für Fotos oder Schnitte festgelegt, und die hält nur das Layout der schnellen Montage ein | fotoğraflar ya da kesimler için net süre verdin, bunu sadece hızlı montaj düzeni koruyor |  |
 | you told me this moment isn't in your clips | du hast mir gesagt, dass dieser Moment nicht in deinen Clips ist | bu anın kliplerinde olmadığını söyledin |  |
 | your clip instructions | deine Clip-Anweisungen | klip talimatların |  |
 | your clip labels | deine Clip-Labels | klip etiketlerin |  |
 | your closing title | dein Abschlusstitel | kapanış başlığın |  |
+| your iPhone build can't draw the crossfades that layout uses yet | Deine iPhone-Version kann die Überblendungen dieses Layouts noch nicht zeichnen | iPhone sürümün o düzenin kullandığı geçişleri henüz çizemiyor |  |
+| your last change | deine letzte Änderung | son değişikliğin |  |
 | your no-captions choice | deine Entscheidung gegen Untertitel | altyazısız isteğin |  |
 | your on-screen texts | deine Texte auf dem Bildschirm | ekran yazıların |  |
 | your opening title | dein Anfangstitel | açılış başlığın |  |
+| your own song sets the cut points, which only the fast-montage layout follows | Dein eigener Song bestimmt die Schnittpunkte, und denen folgt nur das Layout der schnellen Montage | kendi şarkın kesim noktalarını belirliyor, bunu sadece hızlı montaj düzeni izliyor |  |
+| your phone can't draw that layout for this footage | Dein Handy kann dieses Layout für dieses Material nicht zeichnen | telefonun bu görüntüler için o düzeni çizemiyor |  |
+| your song sets where the cuts fall | Dein Song bestimmt, wo die Schnitte liegen | kesimlerin yerini şarkın belirliyor |  |
+| your take has no word timings to find it in | dein Take hat keine Wortzeiten, in denen ich es finden könnte | çekiminde onu bulacak kelime zamanlaması yok |  |
 | your take is too short to start full screen and still move into the corner | dein Take ist zu kurz, um im Vollbild zu starten und dann noch in die Ecke zu wechseln | çekimin tam ekran başlayıp köşeye geçmek için fazla kısa |  |
+| your take is {take}s | dein Take ist {take} s lang | çekimin {take} saniye |  |
 | your voice can't fill the whole video. | deine Stimme kann nicht das ganze Video füllen. | sesin videonun tamamını dolduramıyor. |  |
 | your {names} clips were filmed mixed together, so I can't do both. | deine {names}-Clips wurden durcheinander gefilmt, deshalb kann ich nicht beides machen. | {names} klipleri birbirine karışık çekilmiş, bu yüzden ikisini birden yapamıyorum. |  |
-| {and_names_absent} {v1}'t appear in the captions, so I couldn't check {v2} spelling. | {and_names_absent} {v1} nicht in den Untertiteln vor, deshalb konnte ich die Schreibweise von {v2} nicht prüfen. | Altyazılarda {and_names_absent} geçmiyor, o yüzden {v3} kontrol edemedim. |  |
-| {and_names_spelled} {v1} spelled as you wrote {v2}. | {and_names_spelled} {v1} so geschrieben, wie du {v2} geschrieben hast. | {and_names_spelled} yazdığın gibi yazılmış. |  |
+| {and_names_absent} doesn't appear in the captions, so I couldn't check its spelling. | {and_names_absent} kommt in den Untertiteln nicht vor, deshalb konnte ich die Schreibweise nicht prüfen. | Altyazılarda {and_names_absent} geçmiyor, o yüzden yazımını kontrol edemedim. |  |
+| {and_names_absent} don't appear in the captions, so I couldn't check their spelling. | {and_names_absent} kommen in den Untertiteln nicht vor, deshalb konnte ich die Schreibweise nicht prüfen. | Altyazılarda {and_names_absent} geçmiyor, o yüzden yazımlarını kontrol edemedim. |  |
+| {and_names_spelled} are spelled as you wrote them. | {and_names_spelled} sind so geschrieben, wie du sie geschrieben hast. | {and_names_spelled} yazdığın gibi yazılmış. |  |
+| {and_names_spelled} is spelled as you wrote it. | {and_names_spelled} ist so geschrieben, wie du es geschrieben hast. | {and_names_spelled} yazdığın gibi yazılmış. |  |
 | {asked_s} seconds | {asked_s} Sekunden | {asked_s} saniye |  |
 | {asked} seconds | {asked} Sekunden | {asked} saniye |  |
+| {asked}s | {asked} s | {asked} saniye |  |
 | {at} is past the end of the video ({end:.1f} s), so the small card of {name} isn't shown | {at} liegt nach dem Ende des Videos ({end:.1f} s), deshalb wird die kleine Karte von {name} nicht gezeigt | {at} videonun sonundan sonra ({end:.1f} sn), o yüzden {name} küçük kartı gösterilmiyor |  |
 | {at} is past the end of the video, so the small card of {name} isn't shown | {at} liegt nach dem Ende des Videos, deshalb wird die kleine Karte von {name} nicht gezeigt | {at} videonun sonundan sonra, o yüzden {name} küçük kartı gösterilmiyor |  |
-| {bed_still_plays} at full volume alongside your voice; {fix_en} | {bed_still_plays} in voller Lautstärke neben deiner Stimme; {fix_en} | {v1}, sesinle aynı seviyede; {fix_tr} |  |
-| {bed_still_plays} softly under your voice{about_en}; {fix_en} | {bed_still_plays} leise unter deiner Stimme{about_en}; {fix_en} | {v1}, sesinin altında kısık{about_tr}; {fix_tr} |  |
 | {candidate_intro} Type the words you want and I'll use them exactly, or reply "{options_0_label}". | {candidate_intro} Schreib die Wörter, die du möchtest, und ich nehme sie genau so, oder antworte mit "{options_0_label}". | {candidate_intro} İstediğin kelimeleri yaz, aynen kullanırım; ya da "{options_0_label}" yaz. |  |
-| {candidate_intro} Unfortunately {after_connector_candidate_reason} The most I can do is: {only_label}. Reply "{only_label}" to go with that, or change your request. | {candidate_intro} Leider {after_connector_candidate_reason} Das Beste, was ich machen kann: {only_label}. Antworte mit "{only_label}", wenn das für dich passt, oder ändere deine Anfrage. | {candidate_intro} Maalesef {after_connector_candidate_reason} Yapabileceğim en fazla şu: {only_label}. Bunu istiyorsan "{only_label}" yaz ya da isteğini değiştir. |  |
-| {candidate_intro} Unfortunately {after_connector_candidate_reason} Which do you prefer? | {candidate_intro} Leider {after_connector_candidate_reason} Was gefällt dir besser? | {candidate_intro} Maalesef {after_connector_candidate_reason} Hangisini tercih edersin? |  |
+| {candidate_intro} Unfortunately {after_connector_candidate_reason} The most I can do is: {only_label}. Reply "{only_label}" to go with that, or change your request. | {candidate_intro} Leider gibt es einen Haken: {after_connector_candidate_reason} Das Beste, was ich machen kann: {only_label}. Antworte mit "{only_label}", wenn das für dich passt, oder ändere deine Anfrage. | {candidate_intro} Maalesef {after_connector_candidate_reason} Yapabileceğim en fazla şu: {only_label}. Bunu istiyorsan "{only_label}" yaz ya da isteğini değiştir. |  |
+| {candidate_intro} Unfortunately {after_connector_candidate_reason} Which do you prefer? | {candidate_intro} Leider gibt es einen Haken: {after_connector_candidate_reason} Was ist dir lieber? | {candidate_intro} Maalesef {after_connector_candidate_reason} Hangisini tercih edersin? |  |
 | {candidate_intro} {candidate_reason} I can make it {only_label}. Reply "{only_label}" to go with that, or change your request. | {candidate_intro} {candidate_reason} Ich kann es so machen: {only_label}. Antworte mit "{only_label}", wenn das für dich passt, oder ändere deine Anfrage. | {candidate_intro} {candidate_reason} Şunu yapabilirim: {only_label}. Bunu istiyorsan "{only_label}" yaz ya da isteğini değiştir. |  |
 | {clip_plays_on_met}, but I can't hear "{quote}" in it yet | {clip_plays_on_met}, aber ich kann "{quote}" darin noch nicht hören | {v1}, ama "{quote}" sözünü henüz duyamıyorum |  |
 | {clip_plays_on_met}, so "{line}" is heard | {clip_plays_on_met}, deshalb ist "{line}" zu hören | {v1}, böylece "{line}" duyuluyor |  |
@@ -1818,20 +2466,44 @@ These English keys have different Turkish wordings in different places (`conflic
 | {clip} plays right next to another, as you asked | {clip} läuft direkt neben einem anderen, wie du es wolltest | {clip} başka bir klibin hemen yanında oynuyor, istediğin gibi |  |
 | {conflict_intro} {conflict_reason} I won't guess, so I haven't made an edit yet. To go ahead, reply {ways}.{unchanged} | {conflict_intro} {conflict_reason} Ich rate nicht, deshalb habe ich noch nichts geschnitten. Um weiterzumachen, antworte mit {ways}.{unchanged} | {conflict_intro} {conflict_reason} Tahmin yürütmeyeceğim, o yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways_tr}.{unchanged} |  |
 | {count} Visuals | {count} Visuals | {count} görsel |  |
+| {count} camera effect | {count} Kameraeffekt | {count} {noun_tr} |  |
+| {count} camera effects | {count} Kameraeffekte | {count} {noun_tr} |  |
+| {count} caption | {count} Untertitel | {count} {noun_tr} |  |
+| {count} captions | {count} Untertitel | {count} {noun_tr} |  |
+| {count} clip | {count} Clip | {count} {noun_tr} |  |
+| {count} clips | {count} Clips | {count} {noun_tr} |  |
 | {count} clips can't each stay on screen long enough to be seen in {asked} seconds (each needs about {floor_s:g} seconds). | {count} Clips können in {asked} Sekunden nicht jeweils lang genug zu sehen sein (jeder braucht etwa {floor_s:g} Sekunden). | {asked} saniyede {count} klibin her biri görülecek kadar ekranda kalamaz (her birine yaklaşık {floor_s:g} saniye lazım). |  |
 | {count} clips need at least {clean_seconds_lo_s} seconds to each be seen. | {count} Clips brauchen mindestens {clean_seconds_lo_s} Sekunden, damit jeder zu sehen ist. | {count} klibin her birinin görülmesi için en az {clean_seconds_lo_s} saniye gerekir. |  |
+| {count} filler sound | {count} Füllgeräusch | {count} dolgu sesi |  |
+| {count} filler sounds | {count} Füllgeräusche | {count} dolgu sesi |  |
+| {count} label | {count} Label | {count} {noun_tr} |  |
+| {count} labels | {count} Labels | {count} {noun_tr} |  |
+| {count} long pause | {count} lange Pause | {count} uzun duraklama |  |
+| {count} long pauses | {count} lange Pausen | {count} uzun duraklama |  |
 | {count} of your clips show "{label}". Which one should I use for it? Keep that one ticked and untick the others. | "{label}" ist in {count} deiner Clips zu sehen. Welchen soll ich dafür nehmen? Lass ihn angehakt und nimm bei den anderen den Haken raus. | "{label}" {count} klibinde görünüyor. Hangisini kullanayım? Onu işaretli bırak, diğerlerinin işaretini kaldır. |  |
-| {count} take{v1} later in the song than a 2-minute video can hold. | {count} Take{v1} später im Song, als in ein 2-Minuten-Video passt. | {count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor. |  |
-| {count} take{v1} no usable singing or words, so {v2} in as short muted clip{v3}. Trim or remove {v4} in the editor. | {count} Take{v1} keinen brauchbaren Gesang und keine brauchbaren Worte, deshalb {v2} als kurze stumme Clips{v3}. Kürze oder entferne {v4} im Editor. | {count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve sessiz klip olarak eklendi. Editörde kısaltabilir veya kaldırabilirsin. |  |
-| {count} take{v1} placed by my best guess and may be slightly off; check {v2} in the editor. | {count} Take{v1} nach bestem Wissen platziert und könnte leicht daneben liegen; prüf {v2} im Editor. | {count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et. |  |
+| {count} pause | {count} Pause | {count} duraklama |  |
+| {count} pauses | {count} Pausen | {count} duraklama |  |
+| {count} picture | {count} Bild | {count} {noun_tr} |  |
+| {count} pictures | {count} Bilder | {count} {noun_tr} |  |
+| {count} restarted sentence | {count} neu begonnener Satz | {count} baştan başlanan cümle |  |
+| {count} restarted sentences | {count} neu begonnene Sätze | {count} baştan başlanan cümle |  |
+| {count} sound effect | {count} Soundeffekt | {count} {noun_tr} |  |
+| {count} sound effects | {count} Soundeffekte | {count} {noun_tr} |  |
+| {count} take has no usable singing or words, so it is in as short muted clip. Trim or remove it in the editor. | {count} Take enthält keinen brauchbaren Gesang und keine brauchbaren Worte, deshalb habe ich ihn als kurzen stummen Clip eingefügt. Kürze oder entferne ihn im Editor. | {count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve sessiz klip olarak eklendi. Editörde kısaltabilir veya kaldırabilirsin. |  |
+| {count} take is placed by my best guess and may be slightly off; check it in the editor. | {count} Take habe ich nach bester Schätzung platziert, er könnte etwas danebenliegen; prüf ihn im Editor. | {count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et. |  |
+| {count} take sits later in the song than a 2-minute video can hold. | {count} Take liegt so spät im Song, dass er nicht mehr in ein 2-Minuten-Video passt. | {count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor. |  |
+| {count} takes are placed by my best guess and may be slightly off; check them in the editor. | {count} Takes habe ich nach bester Schätzung platziert, sie könnten etwas danebenliegen; prüf sie im Editor. | {count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et. |  |
+| {count} takes have no usable singing or words, so they are in as short muted clips. Trim or remove them in the editor. | {count} Takes enthalten keinen brauchbaren Gesang und keine brauchbaren Worte, deshalb habe ich sie als kurze stumme Clips eingefügt. Kürze oder entferne sie im Editor. | {count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve sessiz klip olarak eklendi. Editörde kısaltabilir veya kaldırabilirsin. |  |
+| {count} takes sit later in the song than a 2-minute video can hold. | {count} Takes liegen so spät im Song, dass sie nicht mehr in ein 2-Minuten-Video passen. | {count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor. |  |
+| {count} text | {count} Text | {count} {noun_tr} |  |
+| {count} texts | {count} Texte | {count} {noun_tr} |  |
 | {detail} Your complete request is saved and your draft is unchanged. {follow_up} | {detail} Deine komplette Anfrage ist gespeichert und dein Entwurf ist unverändert. {follow_up} | {detail} Tüm isteğin kaydedildi ve taslağın değişmedi. {follow_up} |  |
 | {edit_format} format | Format: {edit_format} | Format: {v1} |  |
-| {en_label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}" | {en_label}-Clips laufen von {start:.1f} s bis {end:.1f} s, unter: "{excerpt}" | {tr_label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, şu sözlerle: "{excerpt}" |  |
-| {freeze_needs_frame} ({start}–{end}s into the clip) but not the exact frame to hold, so it plays normally. Tell me the second to freeze on, like "freeze at {middle} seconds" | {freeze_needs_frame} ({start}–{end} s im Clip), aber nicht das genaue Bild zum Einfrieren, deshalb läuft er normal. Sag mir die Sekunde zum Einfrieren, zum Beispiel "bei {middle} Sekunden einfrieren" | {v1} (klibin {start}–{end}. saniyeleri) ama tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede donsun, söyle; örneğin "{middle}. saniyede dondur" |  |
 | {head} and {v1} | {head} und {v1} | {head} ve {v1} |  |
 | {head}, so I left out "{literal}". Tell me which clip it goes on if you still want it. | {head}, deshalb habe ich "{literal}" weggelassen. Sag mir, auf welchen Clip es soll, falls du es trotzdem willst. | {head}, o yüzden "{literal}" yazısını koymadım. Yine de istersen hangi klibe gideceğini söyle. |  |
 | {hidden} Visuals | {hidden} Visuals | {hidden} görsel |  |
 | {label_0} {before}{level_first_after}{unit} | {label_0} {before}{level_first_after}{unit} | {label_1} {before}{level_first_after}{unit} |  |
+| {label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}" | {label}: Die Clips laufen von {start:.1f} s bis {end:.1f} s, während du sagst: „{excerpt}“ | {tr_label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, şu sözlerle: "{excerpt}" |  |
 | {label} outlines {outline} in future videos. | {label}: Kontur {outline} in künftigen Videos. | Gelecek videolarda {role} için kenar çizgisi {outline} olsun. |  |
 | {label} shadows {state} in future videos. | {label}: Schatten {state} in künftigen Videos. | Gelecek videolarda {role} için gölge {state} olsun. |  |
 | {left_out} more of your labels can't be clip labels either. | {left_out} weitere deiner Labels können auch keine Clip-Labels sein. | {left_out} etiketin daha klip etiketi olamıyor. |  |
@@ -1839,19 +2511,26 @@ These English keys have different Turkish wordings in different places (`conflic
 | {len_lengths} moments, the longest {longest:.1f} s | {len_lengths} Momente, der längste {longest:.1f} s | {len_lengths} an, en uzunu {longest:.1f} sn |  |
 | {len_missing} of your {many} clips have no filming time | {len_missing} deiner {many} Clips haben keine Aufnahmezeit | {many} klibinden {len_missing} tanesinde çekim saati yok |  |
 | {len_off} of {len_rows} clips aren't {seconds:g}s ({shown}) | {len_off} von {len_rows} Clips sind nicht {seconds:g} s lang ({shown}) | {len_rows} klipten {len_off} tanesi {seconds:g} sn değil ({shown}) |  |
-| {len_off} of {len_rows} texts don't have the requested {names_en} yet | {len_off} von {len_rows} Texten haben die gewünschte Eigenschaft {names_en} noch nicht | {len_rows} metinden {len_off} tanesinde istenen {names_tr} henüz yok |  |
-| {len_off} of {total} text{v1} didn't end up reading exactly “{req_literal}”. | {len_off} von {total} Text{v1} lautet am Ende nicht genau „{req_literal}“. | {total} yazının {len_off} tanesi tam olarak “{req_literal}” olmadı. |  |
+| {len_off} of {len_rows} texts don't have the requested {names} yet | Bei {len_off} von {len_rows} Texten fehlt noch der gewünschte Stil ({names}) | {len_rows} metinden {len_off} tanesinde istenen {names} henüz yok |  |
+| {len_off} of {total} text didn't end up reading exactly “{req_literal}”. | Bei {len_off} von {total} Text steht am Ende nicht genau „{req_literal}“. | {total} yazının {len_off} tanesi tam olarak “{req_literal}” olmadı. |  |
+| {len_off} of {total} texts didn't end up reading exactly “{req_literal}”. | Bei {len_off} von {total} Texten steht am Ende nicht genau „{req_literal}“. | {total} yazının {len_off} tanesi tam olarak “{req_literal}” olmadı. |  |
 | {len_ok} of {len_rows} of those clips play in your talk:· | {len_ok} von {len_rows} dieser Clips laufen in deiner Rede:· | O kliplerin {len_rows} taneden {len_ok} tanesi konuşmanda oynuyor:· |  |
-| {missed} {verb} where you asked. | {missed} {verb} nicht dort, wo du es wolltest. | {missed} istediğin yerde değil. |  |
-| {moment_not_in_clip}: {v1} | {moment_not_in_clip}: {v1} | {v2}: {v3} |  |
-| {named_cut_still_in}: "{quote}" ({v1}) | {named_cut_still_in}: "{quote}" ({v1}) | {v2}: "{quote}" ({v3}) |  |
+| {missed} aren't where you asked. | {missed} sind nicht dort, wo du sie wolltest. | {missed} istediğin yerde değil. |  |
+| {missed} isn't where you asked. | {missed} ist nicht dort, wo du es wolltest. | {missed} istediğin yerde değil. |  |
+| {more} more | {more} weitere | {more} tane daha |  |
 | {names_overlap} would have landed on another pop-in at the same moment | {names_overlap} wäre im selben Moment auf einer anderen Einblendung gelandet | {names_overlap} aynı anda başka bir görselin üstüne denk gelirdi |  |
+| {names} has no filming time, so I can't put it in the order you filmed. | Bei {names} fehlt die Aufnahmezeit, deshalb kann ich nicht nach der Reihenfolge deiner Aufnahmen sortieren. | {names_tr} için çekim saati yok, o yüzden onu çektiğin sıraya koyamıyorum. |  |
+| {names} have no filming time, so I can't put them in the order you filmed. | Bei {names} fehlt die Aufnahmezeit, deshalb kann ich sie nicht in die Reihenfolge deiner Aufnahmen bringen. | {names_tr} için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum. |  |
 | {names} shown above your title | {names} über deinem Titel gezeigt | {names} başlığının üstünde çıkıyor |  |
 | {name} is only {seconds_round_length} seconds long, so leaving out {seconds_intent_part_s} seconds leaves nothing of it to show. Should I leave the whole clip out? | {name} ist nur {seconds_round_length} Sekunden lang, wenn ich {seconds_intent_part_s} Sekunden weglasse, bleibt nichts zum Zeigen übrig. Soll ich den ganzen Clip weglassen? | {name} yalnızca {seconds_round_length} saniye; {seconds_intent_part_s} saniyesini çıkarınca gösterecek bir şey kalmıyor. Klibin tamamını çıkarayım mı? |  |
 | {name} isn't above your title in this video. | {name} ist in diesem Video nicht über deinem Titel. | {name} bu videoda başlığının üstünde değil. |  |
 | {note} (You left it to me, so I went with it.) | {note} (Du hast es mir überlassen, deshalb habe ich das genommen.) | {note} (Kararı bana bıraktığın için bunu seçtim.) |  |
-| {n} clip{v1} had no capture time, so I kept {v2} attachment order. | {n} Clip{v1} hatte keine Aufnahmezeit, deshalb habe ich {v2} Reihenfolge beim Hinzufügen beibehalten. | {n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım. |  |
-| {n} clip{v1} too short for its text to stay on screen long enough to read. | {n} Clip{v1} zu kurz, als dass der Text lang genug zum Lesen zu sehen wäre. | {n} klip, yazısının okunacak kadar ekranda kalması için çok kısa. |  |
+| {n} clip had no capture time, so I kept its attachment order. | {n} Clip hatte keine Aufnahmezeit, deshalb habe ich ihn an der Stelle gelassen, an der du ihn hinzugefügt hast. | {n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım. |  |
+| {n} clip is too short for its text to stay on screen long enough to read. | {n} Clip ist zu kurz, als dass sein Text lange genug zum Lesen zu sehen wäre. | {n} klip, yazısının okunacak kadar ekranda kalması için çok kısa. |  |
+| {n} clips are too short for its text to stay on screen long enough to read. | {n} Clips sind zu kurz, als dass ihr Text lange genug zum Lesen zu sehen wäre. | {n} klip, yazısının okunacak kadar ekranda kalması için çok kısa. |  |
+| {n} clips had no capture time, so I kept their attachment order. | {n} Clips hatten keine Aufnahmezeit, deshalb habe ich sie in der Reihenfolge gelassen, in der du sie hinzugefügt hast. | {n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım. |  |
+| {n} sideways clip | {n} Querformat-Clip | {n} yatay klip |  |
+| {n} sideways clips | {n} Querformat-Clips | {n} yatay klip |  |
 | {pacing} pacing | Tempo: {pacing} | Tempo: {v1} |  |
 | {phrase} for {where} | {phrase} ({where}) | {phrase} ({where}) |  |
 | {phrase}, but that isn't what you asked for | {phrase}, aber das ist nicht, was du wolltest | {phrase}, ama istediğin bu değil |  |
@@ -1859,7 +2538,7 @@ These English keys have different Turkish wordings in different places (`conflic
 | {prefix} at {times} in the video | {prefix} bei {times} im Video | {prefix} (videoda {times}) |  |
 | {prefix}, “{text}”, around {times} in your clip | {prefix}, „{text}“, um {times} in deinem Clip | {prefix}: “{text}” (klibinde yaklaşık {times}) |  |
 | {prefix}, “{text}”, at {times} in the video | {prefix}, „{text}“, bei {times} im Video | {prefix}: “{text}” (videoda {times}) |  |
-| {prefix}; {en_tail} and you asked for {asked_en} | {prefix}; {en_tail}, und du wolltest {asked_en} | {v1}; {tr_tail}, sen {asked_tr} istedin |  |
+| {prefix}; {tail} and you asked for {asked} | {prefix}; {tail}, und du wolltest {asked} | {v1}; {tr_tail}, sen {asked_tr} istedin |  |
 | {quoted_text} can't be a clip label: {reasons}. | {quoted_text} kann kein Clip-Label sein: {reasons}. | {quoted_text} klip etiketi olamaz: {reasons}. |  |
 | {quotes} is in the cut, but the clips' own sound is off | {quotes} ist im Schnitt, aber der eigene Ton der Clips ist aus | {quotes} kesitte var ama kliplerin kendi sesi kapalı |  |
 | {quotes} plays whole, in the clip's own sound | {quotes} läuft komplett, im eigenen Ton des Clips | {quotes} baştan sona, klibin kendi sesiyle çalıyor |  |
@@ -1867,74 +2546,47 @@ These English keys have different Turkish wordings in different places (`conflic
 | {refusal_0}.· | {refusal_0}.· | {refusal_1}.· |  |
 | {req_description} (none of your clips show {missing}) | {req_description} (in keinem deiner Clips ist {missing} zu sehen) | {req_description} (kliplerinde {missing} yok) |  |
 | {req_description} (without {missing}) | {req_description} (ohne {missing}) | {req_description} ({missing} olmadan) |  |
+| {rest} other changes weren't applied. | {rest} weitere Änderungen wurden nicht übernommen. | {rest} değişiklik daha uygulanmadı. |  |
 | {seconds} seconds | {seconds} Sekunden | {seconds} saniye |  |
 | {sentence_case_ref} would make the video {minutes} minutes long and your iPhone builds at most 30, so I left it out | {sentence_case_ref} würde das Video {minutes} Minuten lang machen, und dein iPhone erstellt höchstens 30, deshalb habe ich es weggelassen | {sentence_case_ref} videoyu {minutes} dakikaya çıkarırdı, iPhone'un en fazla 30 dakika hazırlar, o yüzden dışarıda bıraktım |  |
-| {sentence_case_words} is clip {v1} of {len_steps}, not the {spot} one. | {sentence_case_words} ist Clip {v1} von {len_steps}, nicht der {spot}. | {capitalize_words_strip} {len_steps} klipten {v1}. sırada, {v2} değil. |  |
+| {sentence_case_words} is clip {v1} of {len_steps}, not the first one. | {sentence_case_words} ist Clip {v1} von {len_steps}, nicht der erste. | {capitalize_words_strip} {len_steps} klipten {v1}. sırada, {v2} değil. |  |
+| {sentence_case_words} is clip {v1} of {len_steps}, not the last one. | {sentence_case_words} ist Clip {v1} von {len_steps}, nicht der letzte. | {capitalize_words_strip} {len_steps} klipten {v1}. sırada, {v2} değil. |  |
 | {shape} shape needs music; kept a regular montage. | Der Aufbau {shape} braucht Musik; ich habe eine normale Montage gemacht. | {shape} kurgusu için müzik gerekiyor; normal bir montaj yaptım. |  |
 | {shown} and {extra} more | {shown} und {extra} weitere | {shown} ve {extra} tane daha |  |
 | {some}, so I can't put them in that order. | {some}, deshalb kann ich sie nicht in diese Reihenfolge bringen. | {some}, bu yüzden onları o sıraya koyamıyorum. |  |
-| {subject_en} about {kept_s} seconds of your take: {span_en}. | {subject_en} etwa {kept_s} Sekunden deines Takes: {span_en}. | {subject_tr} çekiminin yaklaşık {kept_s} saniyesini tutuyor: {span_tr}. |  |
-| {subject} {plays} at {speed} | {subject} {plays} mit {speed} | {subject_tr} {speed} hızda oynuyor |  |
-| {subject} {plays} at {speed}, as you asked later | {subject} {plays} mit {speed}, wie du es später wolltest | {subject_tr} sonra istediğin gibi {speed} hızda oynuyor |  |
-| {subject} {plays} at {speed}, not the {requested:g}x you asked for: a clip plays {v1} {speed} | {subject} {plays} mit {speed}, nicht mit den gewünschten {requested:g}x: Ein Clip kann höchstens {v1} {speed} laufen | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en {v2} {speed} hızda oynayabiliyor |  |
-| {subject} {plays} at {speed}, not the {requested:g}x you asked for: the clip ran out of footage | {subject} {plays} mit {speed}, nicht mit den gewünschten {requested:g}x: Dem Clip ist das Material ausgegangen | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: klibin görüntüsü yetmedi |  |
+| {subject} play at {speed} | {subject} laufen mit {speed} | {subject_tr} {speed} hızda oynuyor |  |
+| {subject} play at {speed}, as you asked later | {subject} laufen mit {speed}, wie du es später wolltest | {subject_tr} sonra istediğin gibi {speed} hızda oynuyor |  |
+| {subject} play at {speed}, not the {requested:g}x you asked for: a clip plays at least {speed} | {subject} laufen mit {speed}, nicht mit den gewünschten {requested:g}x: ein Clip läuft mindestens mit {speed} | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en az {speed} hızda oynayabiliyor |  |
+| {subject} play at {speed}, not the {requested:g}x you asked for: a clip plays at most {speed} | {subject} laufen mit {speed}, nicht mit den gewünschten {requested:g}x: ein Clip läuft höchstens mit {speed} | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en fazla {speed} hızda oynayabiliyor |  |
+| {subject} play at {speed}, not the {requested:g}x you asked for: the clip ran out of footage | {subject} laufen mit {speed}, nicht mit den gewünschten {requested:g}x: dem Clip ist das Material ausgegangen | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: klibin görüntüsü yetmedi |  |
+| {subject} plays at {speed} | {subject} läuft mit {speed} | {subject_tr} {speed} hızda oynuyor |  |
+| {subject} plays at {speed}, as you asked later | {subject} läuft mit {speed}, wie du es später wolltest | {subject_tr} sonra istediğin gibi {speed} hızda oynuyor |  |
+| {subject} plays at {speed}, not the {requested:g}x you asked for: a clip plays at least {speed} | {subject} läuft mit {speed}, nicht mit den gewünschten {requested:g}x: ein Clip läuft mindestens mit {speed} | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en az {speed} hızda oynayabiliyor |  |
+| {subject} plays at {speed}, not the {requested:g}x you asked for: a clip plays at most {speed} | {subject} läuft mit {speed}, nicht mit den gewünschten {requested:g}x: ein Clip läuft höchstens mit {speed} | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en fazla {speed} hızda oynayabiliyor |  |
+| {subject} plays at {speed}, not the {requested:g}x you asked for: the clip ran out of footage | {subject} läuft mit {speed}, nicht mit den gewünschten {requested:g}x: dem Clip ist das Material ausgegangen | {subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: klibin görüntüsü yetmedi |  |
 | {sum_fails} of {len_rows} don't have the requested {label_0} | {sum_fails} von {len_rows} haben die gewünschte Eigenschaft {label_0} nicht | {len_rows} yazıdan {sum_fails} tanesinde istenen {label_1} yok |  |
 | {summary} ({seconds}) | {summary} ({seconds}) | {summary} ({seconds}) |  |
 | {summary} I found no clips of {join_unplaced}, so I can't place them where you asked. | {summary} Ich habe keine Clips von {join_unplaced} gefunden, deshalb kann ich sie nicht dort platzieren, wo du es wolltest. | {summary} {join_unplaced} ile ilgili klip bulamadım, bu yüzden onları istediğin yere yerleştiremiyorum. |  |
 | {summary}; "{line}" plays whole | {summary}; "{line}" läuft komplett | {summary}; "{line}" baştan sona duyulacak |  |
 | {summary}; "{line}" plays whole ({span} of that clip) | {summary}; "{line}" läuft komplett ({span} dieses Clips) | {summary}; "{line}" baştan sona duyuluyor (o klibin {span} kısmı) |  |
-| {talking_spoken_text_pinned}{word} you picked, at {clock} in your take; if I can't find that one, it won't appear | {talking_spoken_text_pinned}{word}, das du gewählt hast, bei {clock} in deinem Take; finde ich es nicht, erscheint es nicht | {v1}{word} anında, çekiminin {clock} noktasında gösteririm; o anı bulamazsam yazı çıkmaz |  |
-| {talking_window_plan}from {at_start} on, if I find that line; if not, it opens at the start | {talking_window_plan}ab {at_start}, wenn ich diesen Satz finde; sonst beginnt es von vorn | {v1}{at_start} cümlesinden sonrasını korurum, o cümleyi bulursam; bulamazsam video baştan açılır |  |
-| {talking_window_plan}from {at_start} to right after {at_end}, if I find those lines | {talking_window_plan}von {at_start} bis kurz nach {at_end}, wenn ich diese Sätze finde | {v1}{at_start} cümlesinden {at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, bu cümleleri bulursam |  |
-| {talking_window_plan}up to right after {at_end}, if I find that line; if not, it runs to the end | {talking_window_plan}bis kurz nach {at_end}, wenn ich diesen Satz finde; sonst läuft es bis zum Ende | {v1}{at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, o cümleyi bulursam; bulamazsam video sonuna kadar sürer |  |
 | {text} falls outside the picture, in the black bars; I couldn't find a spot on the footage | {text} liegt außerhalb des Bildes, in den schwarzen Balken; ich habe keine Stelle im Material gefunden | {text} görüntünün dışında, siyah bantlara düşüyor; görüntü üzerinde bir yer bulamadım |  |
 | {text} is longer than fits on screen, so the video shows “{fact_cut_to}” | {text} ist länger, als auf den Bildschirm passt, deshalb zeigt das Video „{fact_cut_to}“ | {text} ekrana sığmayacak kadar uzun, o yüzden videoda “{fact_cut_to}” görünüyor |  |
 | {text} isn't on the video | {text} ist nicht im Video | {text} videoda yok |  |
 | {text} lands on a face; I couldn't find a spot clear of it | {text} liegt auf einem Gesicht; ich habe keine Stelle gefunden, an der es frei bleibt | {text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım |  |
 | {text} stays on screen for {held:g} s, not the {asked:g} s you asked for | {text} bleibt {held:g} s auf dem Bildschirm, nicht die gewünschten {asked:g} s | {text} ekranda istediğin {asked:g} sn yerine {held:g} sn kalıyor |  |
-| {unnamed} of your recordings never {v1}. | {unnamed} deiner Aufnahmen {v1} nie. | Kayıtlarından {unnamed} tanesi hiç görünmüyor. |  |
+| {unnamed} of your recordings never show. | {unnamed} deiner Aufnahmen sind nie zu sehen. | Kayıtlarından {unnamed} tanesi hiç görünmüyor. |  |
+| {unnamed} of your recordings never shows. | {unnamed} deiner Aufnahmen ist nie zu sehen. | Kayıtlarından {unnamed} tanesi hiç görünmüyor. |  |
 | {v1} and {v2} | {v1} und {v2} | {v1} ve {v2} |  |
-| {v1} clip you {v2} | {v1} Clip, den du {v2} | {v3} {v4} klip |  |
-| {v1} on {joined_en} | {v1} auf {joined_en} | {join_parts_tr}{tail_tr} çıkıyor |  |
-| {v1} {v2} | {v1} {v2} | {v3} {v4} |  |
-| {v1} {which} can't be in this edit. | {v1} {which} kann nicht in diesem Edit sein. | {which}. {v2} bu düzenlemeye giremiyor. |  |
-| {v1}, then you're {corner_0} when you start on your first recording. | {v1}, dann bist du {corner_0}, wenn du bei deiner ersten Aufnahme anfängst. | {v2}, sonra ilk kaydına geçince {corner_1}sın. |  |
-| {v1}, then your background takes the screen. | {v1}, dann übernimmt dein Hintergrund den Bildschirm. | {v2}, sonra arka plan ekranı alıyor. |  |
-| {v1}, then {corner_0}. | {v1}, dann {corner_0}. | {v2}, sonra {corner_1}sın. |  |
 | {v1}. | {v1}. | {v2}. |  |
-| {v1}; {repeats} more repeated the label before, so I left {v2} off. | {v1}; {repeats} weitere wiederholten das vorige Label, deshalb habe ich {v2} weggelassen. | {v1}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım. |  |
+| {v1}; {repeats} more repeated the label before, so I left it off. | {v1}; {repeats} weiterer Clip wiederholte das vorherige Label, deshalb habe ich es dort weggelassen. | {v1}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım. |  |
+| {v1}; {repeats} more repeated the label before, so I left them off. | {v1}; {repeats} weitere Clips wiederholten das vorherige Label, deshalb habe ich es dort weggelassen. | {v1}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım. |  |
 | {v1}; {why}. | {v1}; {why}. | {v2}; {why}. |  |
-| {verb_0} {plural_len_entry_targets} | {verb_0} {plural_len_entry_targets} | {plural_len_entry_targets} {verb_1} |  |
-| {verb_0} {v1} | {verb_0} {v1} | {v1} {verb_1} |  |
-| {what} is in {count} stretches | {what} ist in {count} Abschnitte geteilt | {what} {count} parçaya bölünüyor |  |
+| {what} is in {count} stretches | {what} liegt in {count} getrennten Abschnitten | {what} {count} parçaya bölünüyor |  |
 | {why_capitalize}. | {why_capitalize}. | {why}. |  |
-| {words} ({spot}) | {words} ({spot}) | {words} ({v1}) |  |
+| {words} (clip {n}) | {words} (Clip {n}) | {words} ({n}. klip) |  |
+| {words} (first) | {words} (zuerst) | {words} (ilk) |  |
+| {words} (last) | {words} (zuletzt) | {words} (son) |  |
+| {words} (then) | {words} (danach) | {words} (sonra) |  |
 | “{state_candidate}” — does this wording work? | „{state_candidate}“ – passt dir dieser Wortlaut? | “{state_candidate}” — bu ifade sana uyar mı? |  |
-
-## Added after merging main (2026-11-10)
-
-| English | German | Turkish | OK? |
-| --- | --- | --- | --- |
-| Ending on a full-screen colour with your text isn't available on your iPhone yet | Ein Ende mit einem Vollbild in einer Farbe und deinem Text gibt es auf deinem iPhone noch nicht | Videoyu yazılı tam ekran bir renkle bitirmek iPhone'unda henüz kullanılamıyor | |
-| I'll end the video on that colour screen with your text, after your last word | Ich beende das Video nach deinem letzten Wort mit diesem Farbbild und deinem Text | Son sözünden sonra videoyu o renkli ekranla ve yazınla bitireceğim | |
-| Only a talking-to-camera edit made on your iPhone can end on a full-screen colour with your text | Nur ein Talking-Edit, das auf deinem iPhone erstellt wird, kann mit einem Vollbild in einer Farbe und deinem Text enden | Videoyu yazılı tam ekran bir renkle yalnızca iPhone'unda yapılan kameraya konuşma düzenlemesi bitirebilir | |
-| Review the restored text for {update_description}: "{update_literal}" | Prüf den wiederhergestellten Text für {update_description}: "{update_literal}" | Geri yüklenen metni gözden geçir ({update_description}): "{update_literal}" | |
-| Tell me the colour as a name like red or a code like #FF0000 | Nenn mir die Farbe als Namen wie Rot oder als Code wie #FF0000 | Rengi kırmızı gibi bir adla ya da #FF0000 gibi bir kodla söyle | |
-| The end screen doesn't show all of your words | Das Endbild zeigt nicht deinen ganzen Text | Son ekran yazının tamamını göstermiyor | |
-| The finished video doesn't end on your colour screen | Das fertige Video endet nicht mit deinem Farbbild | Bitmiş video senin renkli ekranınla bitmiyor | |
-| Your end-screen words are too long to fit on one screen; shorten them | Dein Text für das Endbild ist zu lang für ein Bild; kürz ihn bitte | Son ekran yazın tek bir ekrana sığmayacak kadar uzun; kısalt | |
-| Your end-screen words have a character I can't draw on the card | In deinem Text für das Endbild ist ein Zeichen, das ich nicht darstellen kann | Son ekran yazında kartta çizemediğim bir karakter var | |
-| Your iPhone app is too old to end on a full-screen colour with your text; update it first | Deine iPhone-App ist zu alt für ein Ende mit Farbbild und Text; aktualisier sie zuerst | iPhone uygulaman videoyu yazılı tam ekran bir renkle bitirmek için çok eski; önce güncelle | |
-| Your text colour wouldn't be readable on that background, so the text is black. | Deine Textfarbe wäre auf diesem Hintergrund nicht lesbar, deshalb ist der Text schwarz. | Yazı rengin o arka planda okunmazdı, o yüzden yazı siyah. | |
-| Your text colour wouldn't be readable on that background, so the text is white. | Deine Textfarbe wäre auf diesem Hintergrund nicht lesbar, deshalb ist der Text weiß. | Yazı rengin o arka planda okunmazdı, o yüzden yazı beyaz. | |
-
-## Added after merging main (2026-11-11, from #2266)
-
-| English | German | Turkish | OK? |
-| --- | --- | --- | --- |
-| I'll show it when I hear those words in your voiceover | Ich zeige es, sobald ich diese Worte in deinem Voiceover höre | Seslendirmende o sözleri duyduğumda gösteririm | |
-| No title, as asked. | Kein Titel, wie gewünscht. | İstediğin gibi başlık yok. | |
-| This draft has a title, but you asked for none. | Dieser Entwurf hat einen Titel, aber du wolltest keinen. | Bu taslakta başlık var, ama başlık istemedin. | |
-| Your clips follow your voice, so once the video is made I'll check what's on screen when you say those words | Deine Clips folgen deiner Stimme. Sobald das Video fertig ist, prüfe ich, was auf dem Bildschirm zu sehen ist, wenn du diese Worte sagst | Klipler sesini takip ediyor, video hazır olunca o sözleri söylediğinde ekranda ne olduğunu kontrol edeceğim | |
-| When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s) | Wenn du {v1} sagst, ist Clip {v2} von {len_steps} im Bild ({step_start_s:.1f}–{step_end_s:.1f} s) | {v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn) | |
-| I couldn't tell which clip is on screen when you say {v1} | Ich konnte nicht erkennen, welcher Clip im Bild ist, wenn du {v1} sagst | {v1} dediğinde ekranda hangi klibin olduğunu anlayamadım | |
+| “{title}” | „{title}“ | “{title}” |  |
+| “{title}” by {artist} | „{title}“ von {artist} | “{title}” ({artist}) |  |

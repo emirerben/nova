@@ -127,6 +127,7 @@ from app.kria.route_disclosure import (
     with_route_declines,
 )
 from app.kria.select_asks import exclusion_facts, only_video_ask
+from app.kria.text_trim import trim_at_word
 from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
@@ -1111,6 +1112,42 @@ _EDIT_FORMAT_TR = {
     "slides": "Slayt",
 }
 
+# Whole chips and words per machine value, so German never shows the English value (KRI-1362).
+_PACING_CHIPS = {
+    "relaxed": ("Relaxed pacing", "Tempo: Sakin"),
+    "balanced": ("Balanced pacing", "Tempo: Dengeli"),
+    "fast": ("Fast pacing", "Tempo: Hızlı"),
+}
+_EDIT_FORMAT_CHIPS = {
+    "montage": ("Montage format", "Format: Montaj"),
+    "talking_head": ("Talking Head format", "Format: Kameraya konuşma"),
+    "day_vlog": ("Day Vlog format", "Format: Günlük vlog"),
+    "single_hero": ("Single Hero format", "Format: Tek kahraman klip"),
+    "subtitled": ("Subtitled format", "Format: Altyazılı"),
+    "narrated": ("Narrated format", "Format: Seslendirmeli"),
+    "narrated_planned": ("Narrated Planned format", "Format: Seslendirmeli"),
+    "narrated_ready": ("Narrated Ready format", "Format: Seslendirmeli"),
+    "slides": ("Slides format", "Format: Slayt"),
+}
+# The Turkish summary leaves these words out, so their Turkish side is the English word (the same
+# keys as `route_capabilities._lines._VALUE_NAMES`, one translation each).
+_PACING_WORDS = {
+    "relaxed": ("relaxed", "relaxed"),
+    "balanced": ("balanced", "balanced"),
+    "fast": ("fast", "fast"),
+}
+_EDIT_FORMAT_WORDS = {
+    "montage": ("montage", "montage"),
+    "talking_head": ("talking head", "talking head"),
+    "day_vlog": ("day vlog", "day vlog"),
+    "single_hero": ("single hero", "single hero"),
+    "subtitled": ("subtitled", "subtitled"),
+    "narrated": ("narrated", "narrated"),
+    "narrated_planned": ("narrated planned", "narrated planned"),
+    "narrated_ready": ("narrated ready", "narrated ready"),
+    "slides": ("slides", "slides"),
+}
+
 
 def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
     """The card's chips. With ``route`` (the draft's render route) a pace the route does not
@@ -1121,23 +1158,30 @@ def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
     pacing = strategy.pacing.replace("_", " ").title()
     edit_format = strategy.edit_format.replace("_", " ").title()
     pace_shown = route is None or not asked_only() or not route_ignores(route, "pacing")
-    values = [
-        arguments.summary,
-        say(
+    if strategy.pacing in _PACING_CHIPS:
+        pacing_chip = say(
+            en=_PACING_CHIPS[strategy.pacing][0], tr=_PACING_CHIPS[strategy.pacing][1]
+        )
+    else:
+        pacing_chip = say(
             en="{pacing} pacing",
             tr="Tempo: {v1}",
             pacing=pacing,
             v1=_PACING_TR.get(strategy.pacing, pacing),
         )
-        if pace_shown
-        else None,
-        say(
+    if strategy.edit_format in _EDIT_FORMAT_CHIPS:
+        format_chip = say(
+            en=_EDIT_FORMAT_CHIPS[strategy.edit_format][0],
+            tr=_EDIT_FORMAT_CHIPS[strategy.edit_format][1],
+        )
+    else:
+        format_chip = say(
             en="{edit_format} format",
             tr="Format: {v1}",
             edit_format=edit_format,
             v1=_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format),
-        ),
-    ]
+        )
+    values = [arguments.summary, pacing_chip if pace_shown else None, format_chip]
     return list(dict.fromkeys(value for value in values if value))[:3]
 
 
@@ -1207,17 +1251,32 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
         ):
             if intent.tool_name == "draft.apply_editor_ops":
                 count = len(arguments.get("operations") or [])
-                suffix = "s" if count != 1 else ""
                 arguments["summary"] = say(
-                    en="I prepared {count} reversible editor change{suffix}.",
+                    en=(
+                        "I prepared {count} reversible editor change."
+                        if count == 1
+                        else "I prepared {count} reversible editor changes."
+                    ),
                     tr="Editörde {count} geri alınabilir değişiklik hazırladım.",
                     count=count,
-                    suffix=suffix,
                 )
             else:
                 strategy = arguments.get("strategy") or {}
-                pacing = str(strategy.get("pacing") or "focused").replace("_", " ")
-                edit_format = str(strategy.get("edit_format") or "video").replace("_", " ")
+                raw_pacing = str(strategy.get("pacing") or "focused")
+                raw_format = str(strategy.get("edit_format") or "video")
+                pacing = (
+                    say(en=_PACING_WORDS[raw_pacing][0], tr=_PACING_WORDS[raw_pacing][1])
+                    if raw_pacing in _PACING_WORDS
+                    else raw_pacing.replace("_", " ")
+                )
+                edit_format = (
+                    say(
+                        en=_EDIT_FORMAT_WORDS[raw_format][0],
+                        tr=_EDIT_FORMAT_WORDS[raw_format][1],
+                    )
+                    if raw_format in _EDIT_FORMAT_WORDS
+                    else raw_format.replace("_", " ")
+                )
                 arguments["summary"] = say(
                     en="I prepared a {pacing} {edit_format} draft around the available footage.",
                     # The pace and format words are machine values (English), so the
@@ -1587,7 +1646,7 @@ def _fit_reply(
         fitted = card_text_within(disclosures, room - len(head) - 1)
         body = f"{head}\n{fitted}" if head else fitted
     if len(body) > room:
-        body = body[: max(0, room - 1)].rstrip() + "…"
+        body = trim_at_word(body, max(0, room))
     return f"{body}\n{tail}"
 
 
@@ -8353,10 +8412,11 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    "{count} take{v1} no usable singing or "
-                    "words, so {v2} in as short muted "
-                    "clip{v3}. Trim or remove "
-                    "{v4} in the editor."
+                    "{count} take has no usable singing or words, so it is in as short muted "
+                    "clip. Trim or remove it in the editor."
+                    if count == 1
+                    else "{count} takes have no usable singing or words, so they are in as short "
+                    "muted clips. Trim or remove them in the editor."
                 ),
                 tr=(
                     "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve "
@@ -8364,10 +8424,6 @@ def _user_song_note(job: Job) -> str:
                     "kaldırabilirsin."
                 ),
                 count=count,
-                v1=" has" if count == 1 else "s have",
-                v2="it is" if count == 1 else "they are",
-                v3="" if count == 1 else "s",
-                v4="it" if count == 1 else "them",
             )
         )
     low = receipt.get("low_confidence_ids")
@@ -8376,17 +8432,17 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    "{count} take{v1} placed by my best guess "
-                    "and may be slightly off; check {v2} in the "
-                    "editor."
+                    "{count} take is placed by my best guess and may be slightly off; check it "
+                    "in the editor."
+                    if count == 1
+                    else "{count} takes are placed by my best guess and may be slightly off; "
+                    "check them in the editor."
                 ),
                 tr=(
                     "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; "
                     "editörde kontrol et."
                 ),
                 count=count,
-                v1=" is" if count == 1 else "s are",
-                v2="it" if count == 1 else "them",
             )
         )
     outside = receipt.get("placed_outside_ids")
@@ -8394,13 +8450,16 @@ def _user_song_note(job: Job) -> str:
         count = len(outside)
         notes.append(
             say(
-                en=("{count} take{v1} later in the song than a 2-minute video can hold."),
+                en=(
+                    "{count} take sits later in the song than a 2-minute video can hold."
+                    if count == 1
+                    else "{count} takes sit later in the song than a 2-minute video can hold."
+                ),
                 tr=(
                     "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha "
                     "geride kalıyor."
                 ),
                 count=count,
-                v1=" sits" if count == 1 else "s sit",
             )
         )
     placed = receipt.get("placed")
@@ -8412,10 +8471,13 @@ def _user_song_note(job: Job) -> str:
     if by_lyrics:
         notes.append(
             say(
-                en="I matched {by_lyrics} take{v1} by your singing.",
+                en=(
+                    "I matched {by_lyrics} take by your singing."
+                    if by_lyrics == 1
+                    else "I matched {by_lyrics} takes by your singing."
+                ),
                 tr="{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim.",
                 by_lyrics=by_lyrics,
-                v1="" if by_lyrics == 1 else "s",
             )
         )
     return " ".join(notes)
