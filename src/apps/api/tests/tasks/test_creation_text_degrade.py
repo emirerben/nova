@@ -38,6 +38,13 @@ Third review of #2314, written before the fixes:
  16. the stacked-lines reading counts her literal as shown when a line is missing or the lines
      read out of order;
  17. two left-out story beats are said as one ("Left out one explanation").
+
+Fourth review of #2314, written before the fixes:
+ 18. a hierarchy ask the composer sized wrong renders with a note that names none of her lines;
+ 19. a hierarchy ask whose own line the composer never wrote is said as a size miss, so she is
+     not told her line was left out of the text pass;
+ 20. her literal counts as shown when its words start or end inside unrelated lines ("Sabah
+     oldu" read across "Günaydın sabah" and "oldu bitti").
 """
 
 from __future__ import annotations
@@ -141,6 +148,11 @@ _LYRICS = CreativeBrief(
 )
 # The composer wrote no op and asked which layout she wanted.
 _CLARIFY = {"intent": "clarify", "needs_clarification": True, "reply": "Which layout?"}
+
+SUBTITLE = "Fresh air"
+_SMALLER = BriefRequirement(
+    id="subtitle", kind="text", scope="global", literal=SUBTITLE, facts={"smaller_than": TITLE}
+)
 
 
 # Prod thread 147eb928 (89fefe4d): a paragraph in the middle and its translation at the bottom,
@@ -336,6 +348,28 @@ GATES = [
         pinned=LINES,
         answer=_CLARIFY,
         reasons=("incomplete",),
+        keeps_good=False,
+    ),
+    Gate(
+        "hierarchy_unmet",
+        lambda snap: [_add(GOOD), {**_add(SUBTITLE), "patch": {"size_px": 400}}],
+        note=f"I couldn't size “{SUBTITLE}” exactly as you asked",
+        kept=SUBTITLE,
+        brief=_brief(_EXPLAIN, _SMALLER),
+    ),
+    Gate(
+        "hierarchy_unmet_line_never_written",
+        lambda snap: [
+            {
+                "op": "patch_text",
+                "selector": {"ids": [_title_id(snap)]},
+                "patch": {"color": "#FFD400"},
+            }
+        ],
+        note=f"I couldn't add “{SUBTITLE}” the way you asked",
+        kept=TITLE,
+        brief=_brief(_SMALLER),
+        reasons=("hierarchy_unmet",),
         keeps_good=False,
     ),
     Gate(
@@ -563,17 +597,25 @@ def test_a_composer_bundle_rejected_as_a_whole_still_fails(harness, monkeypatch)
     assert job.assembly_plan.get("variants") is None
 
 
-@pytest.mark.parametrize(
-    "pinned",
-    [LINES[:2], (LINES[1], LINES[0], LINES[2])],
-    ids=["a_line_missing", "lines_out_of_order"],
+_MORNING = CreativeBrief(
+    version=1,
+    requirements=[BriefRequirement(id="line", kind="text", scope="global", literal="Sabah oldu")],
 )
-def test_her_lines_not_all_shown_in_order_still_fail(harness, monkeypatch, pinned):  # noqa: F811
-    """Failure mode 16: the composer did nothing and her literal does not read word for word
-    across the lines on screen, so the pass failed as a whole."""
-    gate = Gate(
-        "partial", lambda snap: [], note=None, brief=_LYRICS, pinned=pinned, answer=_CLARIFY
-    )
+
+
+@pytest.mark.parametrize(
+    ("brief", "pinned"),
+    [
+        (_LYRICS, LINES[:2]),
+        (_LYRICS, (LINES[1], LINES[0], LINES[2])),
+        (_MORNING, ("Günaydın sabah", "oldu bitti")),
+    ],
+    ids=["a_line_missing", "lines_out_of_order", "words_inside_unrelated_lines"],
+)
+def test_her_lines_not_all_shown_in_order_still_fail(harness, monkeypatch, brief, pinned):  # noqa: F811
+    """Failure modes 16 and 20: the composer did nothing and her literal does not read word for
+    word across whole lines on screen, so the pass failed as a whole."""
+    gate = Gate("partial", lambda snap: [], note=None, brief=brief, pinned=pinned, answer=_CLARIFY)
     job, _ = _job(harness, monkeypatch, gate)
     failure = Mock(return_value=True)
     monkeypatch.setattr(gb, "_fail_job", failure)
