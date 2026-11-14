@@ -29,6 +29,8 @@ from fastapi import HTTPException
 from app.config import settings
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_voiceover_cut import narrated_slot_window
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
+from app.services.editor_limits import PLAYBACK_RATE_MIN
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.services.phone_voiceover_timeline import (
     _selected_source_audio_ids,
@@ -37,13 +39,11 @@ from app.services.phone_voiceover_timeline import (
     source_pool_paths,
 )
 
-# The native editor's own floor (`NativeEditorSession.minimumClipDuration`).
-MIN_SLOT_DURATION_S = 0.1
 # A posted window may overshoot its footage by float noise.
 _SOURCE_TOLERANCE_S = 0.001
 # A changed narrated window may not slow its footage below the native preview's
-# own floor (`NativeEditorRenderCompiler`: rates outside 0.25...4 don't preview).
-MIN_NARRATED_RATE = 0.25
+# own floor (`EditorLimits.playbackRate`: rates outside it do not preview).
+MIN_NARRATED_RATE = PLAYBACK_RATE_MIN
 
 
 def current_voiceover_slots(job: Any, variant: dict) -> list[dict] | None:
@@ -139,8 +139,9 @@ def resolve_phone_voiceover_slots(job: Any, variant: dict, slots: list[Any]) -> 
         in_s, duration = float(slot.in_s), float(slot.duration_s)
         if not (math.isfinite(in_s) and math.isfinite(duration)) or in_s < 0:
             raise _error(422, "TIMELINE_INVALID_WINDOW", slot_id=slot.slot_id)
-        if duration < MIN_SLOT_DURATION_S:
+        if below_editor_minimum(duration):
             raise _error(422, "TIMELINE_INVALID_WINDOW", slot_id=slot.slot_id)
+        duration = snap_to_editor_minimum(duration)
         crop_allowed = "sourceCrop" in settings.phone_render_verified_features
         if (
             slot.look_preset not in (None, "none")
