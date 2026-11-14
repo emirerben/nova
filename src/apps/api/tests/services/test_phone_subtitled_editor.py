@@ -29,6 +29,8 @@ from tests.pipeline.test_phone_subtitled_plan import (
     _video_overlay_card,
 )
 
+pytestmark = pytest.mark.journey("kri-841-talking-ending-clip")
+
 
 def _pinned_assembly_plan(recipe, *, variant_id="subtitled", visuals=()):
     import uuid

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Conservative UI grouping and verification of actual XCTest result coverage."""
 
+import difflib
 import json
 import math
 import os
@@ -40,6 +41,8 @@ UNIT_OVERHEAD_SECONDS = 7 * 60
 FEATURES = ("creation", "projects", "editor")
 FOCUSED = tuple(f"smoke,{group}" for group in FEATURES)
 UI_TEST_ROOT = "src/apps/ios/Tests/KriaUITests/"
+SWIFT_TEST_ROOT = "src/apps/ios/Tests/"
+SWIFT_PATH = re.compile(r"src/apps/ios/Tests/[\w/.-]+\.swift")
 TEST_ID = re.compile(r"[A-Za-z_]\w*/test\w+")
 # Members of the single XCTestCase class sit at exactly four spaces. Test bodies
 # (including nested helpers) are indented further; file scope is at column 0.
@@ -87,20 +90,48 @@ def validate_execution(value):
     return value
 
 
-def manifest():
+def manifest(root=ROOT):
+    """Groups derived from the UI test sources, plus the hand-kept inputs.
+
+    The file holds only what source cannot say: each XCTestCase class's feature
+    group (`classes`), the few tests that differ from it (`overrides`), the
+    smoke subset, and which app sources map to a group. A test method added,
+    renamed or removed inside a classified class needs no edit; an entry that
+    names a test that is gone is ignored here and reported by `check`. A class absent
+    from `classes` is not silently skipped: its tests join smoke, which every
+    selection runs, until `make sync-test-registries` reports it to classify.
+    """
     data = json.loads(MANIFEST.read_text())
-    if set(data["groups"]) != {"smoke", "creation", "projects", "editor"}:
+    classes, overrides = data["classes"], data["overrides"]
+    inventory = discovered(root)
+    names = {test.removeprefix("KriaUITests/") for test in inventory}
+    if (
+        not set(classes.values()) <= set(FEATURES)
+        or not set(overrides.values()) <= set(FEATURES)
+        or len(data["smoke"]) != len(set(data["smoke"]))
+    ):
         raise ValueError("Invalid UI group manifest")
-    for group, tests in data["groups"].items():
-        if (
-            not tests
-            or len(tests) != len(set(tests))
-            or any(not re.fullmatch(r"KriaUITests/\w+/test\w+", test) for test in tests)
-        ):
-            raise ValueError(f"Empty or invalid UI group: {group}")
-    if not set(data["sources"].values()) <= {"creation", "projects", "editor"}:
+    if not set(data["sources"].values()) <= set(FEATURES):
         raise ValueError("Invalid source mapping")
-    return data
+    # An entry for a test that is gone selects nothing; `check` names it. Selection
+    # keeps working so a rename cannot turn a PR's UI leg red without a message.
+    overrides = {name: group for name, group in overrides.items() if name in names}
+    smoke = [test for test in data["smoke"] if test in inventory]
+    groups = {group: [] for group in FEATURES}
+    unclassified = []
+    for test in sorted(inventory):
+        name = test.removeprefix("KriaUITests/")
+        group = overrides.get(name) or classes.get(name.split("/")[0])
+        (groups[group] if group else unclassified).append(test)
+    for group, tests in groups.items():
+        if not tests:
+            raise ValueError(f"Empty or invalid UI group: {group}")
+    groups["smoke"] = sorted(smoke) + unclassified
+    return {
+        "groups": groups,
+        "sources": data["sources"],
+        "unclassified": sorted({test.split("/")[1] for test in unclassified}),
+    }
 
 
 def discovered(root=ROOT):
@@ -120,15 +151,320 @@ def discovered(root=ROOT):
     return tests
 
 
+def stale_entries(root=ROOT):
+    """Hand-kept entries that name a class, test or source that no longer exists."""
+    data = json.loads(MANIFEST.read_text())
+    inventory = discovered(root)
+    names = {test.removeprefix("KriaUITests/") for test in inventory}
+    classes = {name.split("/")[0] for name in names}
+    return {
+        "classes": sorted(set(data["classes"]) - classes),
+        "overrides": sorted(set(data["overrides"]) - names),
+        "smoke": sorted(set(data["smoke"]) - inventory),
+        "sources": sorted(
+            path for path in data["sources"] if not (root / path).is_file()
+        ),
+    }
+
+
+def check(root=ROOT, base=None, journeys=None, after_sync=False):
+    """Problems that would make UI selection wrong or fall back to full, each with its fix."""
+    try:
+        stale = stale_entries(root)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return [f"UI registry unreadable: {error}"]
+    problems = [
+        f"ui-test-groups.json {kind} entry {name!r} no longer exists"
+        for kind, names in stale.items()
+        for name in names
+    ]
+    try:
+        manifest(root)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        problems.append(f"UI registry unreadable: {error}")
+    problems += stale_followers(root, base, journeys)
+    problems += missing_swift_files(root, journeys)
+    if problems and after_sync:
+        problems.append(
+            "`make sync-test-registries` followed every rename it could and these "
+            "remain: edit or delete each named entry by hand in "
+            "scripts/ios/ui-test-groups.json or the named file (a removed test, or a "
+            "method renamed in the same edit that added or removed another)"
+        )
+    elif problems:
+        problems.append(
+            "Fix: run `make sync-test-registries` to follow renamed UI test files, "
+            "classes and methods into the registry, workflows and self-tests (stage a "
+            "file rename first); delete an entry whose test was removed"
+        )
+    return problems
+
+
+def unclassified(root=ROOT):
+    return manifest(root)["unclassified"]
+
+
 def inventory_matches(root=ROOT):
-    data = manifest()
-    classified = set().union(*(set(v) for v in data["groups"].values()))
-    feature_tests = set().union(
-        *(set(data["groups"][g]) for g in ("creation", "projects", "editor"))
+    """Whether the registry still describes this tree well enough to select from."""
+    try:
+        manifest(root)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return True
+
+
+def git_changes(base, root=ROOT):
+    """(status letter, old path, new path) for every file changed since `base`."""
+    raw = (
+        subprocess.run(
+            ["git", "diff", "-M", "--name-status", "-z", base],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .split("\0")
     )
-    return (
-        classified == discovered(root) and set(data["groups"]["smoke"]) <= feature_tests
+    changes, index = [], 0
+    while index < len(raw) and raw[index]:
+        if raw[index].startswith("R"):
+            changes.append(("R", raw[index + 1], raw[index + 2]))
+            index += 3
+        else:
+            changes.append((raw[index][0], raw[index + 1], raw[index + 1]))
+            index += 2
+    return changes
+
+
+def git_renames(base, root=ROOT):
+    return {old: new for status, old, new in git_changes(base, root) if status == "R"}
+
+
+CLASS_DECLARATION = re.compile(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b")
+
+
+def method_bodies(text):
+    """Each test method's source up to the next `func`, with its own name blanked."""
+    starts = [
+        (m.start(), m.group(1)) for m in re.finditer(r"\bfunc\s+(test\w+)\s*\(", text)
+    ]
+    ends = [at for at, _ in starts[1:]] + [len(text)]
+    return {
+        name: text[at:end].replace(name, "", 1) for (at, name), end in zip(starts, ends)
+    }
+
+
+def is_same_test(old_body, new_body):
+    return difflib.SequenceMatcher(None, old_body, new_body).ratio() >= 0.8
+
+
+def renamed_tests(before, after):
+    """`Class/method` renames between two versions of one single-class Swift test file.
+
+    A class rename maps every method; a method rename is followed only when the
+    method count is unchanged and each differing position is a rename whose body
+    is still the same test (similarity >= 0.8), so an added, removed or replaced
+    test is never mistaken for one.
+    """
+    old_classes = CLASS_DECLARATION.findall(before)
+    new_classes = CLASS_DECLARATION.findall(after)
+    if len(old_classes) != 1 or len(new_classes) != 1:
+        return {}
+    old_methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", before)
+    new_methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", after)
+    old_bodies, new_bodies = method_bodies(before), method_bodies(after)
+    pairs = dict(zip(old_methods, new_methods))
+    if len(old_methods) != len(new_methods) or any(
+        old != new
+        and (
+            old in new_methods
+            or new in old_methods
+            or not is_same_test(old_bodies[old], new_bodies[new])
+        )
+        for old, new in pairs.items()
+    ):
+        pairs = {method: method for method in old_methods if method in new_methods}
+    return {
+        f"{old_classes[0]}/{old}": f"{new_classes[0]}/{pairs[old]}"
+        for old in old_methods
+        if old in pairs
+        and f"{old_classes[0]}/{old}" != f"{new_classes[0]}/{pairs[old]}"
+    }
+
+
+def follow_test_renames(data, renames):
+    """Apply `Class/method` renames to the group manifest; return what moved."""
+    changed = []
+    for old, new in renames.items():
+        old_class, new_class = old.split("/")[0], new.split("/")[0]
+        if old_class != new_class and old_class in data["classes"]:
+            data["classes"][new_class] = data["classes"].pop(old_class)
+            changed.append(f"class {old_class} -> {new_class}")
+        if old in data["overrides"]:
+            data["overrides"][new] = data["overrides"].pop(old)
+            changed.append(f"{old} -> {new}")
+        smoke = [
+            f"KriaUITests/{new}" if test == f"KriaUITests/{old}" else test
+            for test in data["smoke"]
+        ]
+        if smoke != data["smoke"]:
+            data["smoke"] = smoke
+            changed.append(f"smoke {old} -> {new}")
+    return changed
+
+
+def test_renames(base, root=ROOT):
+    """`Class/method` renames in the Swift tests between `base` and the working tree."""
+    renames = {}
+    for status, old, new in git_changes(base, root):
+        if (
+            old.startswith(SWIFT_TEST_ROOT)
+            and new.startswith(SWIFT_TEST_ROOT)
+            and status in "MR"
+            and new.endswith(".swift")
+        ):
+            before = subprocess.run(
+                ["git", "show", f"{base}:{old}"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            ).stdout
+            renames.update(renamed_tests(before, (root / new).read_text()))
+    return renames
+
+
+def swift_name_pattern(test):
+    return re.compile(rf"(?<!\w){re.escape(test)}(?!\w)")
+
+
+def swift_followers(root, journeys=None):
+    """Files that name a Swift test as `Class/method`: the journey manifest, the
+    workflows' native steps and these self-tests."""
+    files = [journeys or root / "scripts/ci/journey-manifest.json"]
+    for pattern in (".github/workflows/*.yml", "scripts/ios/tests/*.py"):
+        files += sorted(root.glob(pattern))
+    return [path for path in files if path.is_file()]
+
+
+def self_tests(root):
+    return sorted((root / "scripts/ios/tests").glob("*.py"))
+
+
+def bare_renames(renames):
+    """Class names and `func` names that changed, for the self-tests that quote
+    real tests outside the `Class/method` spelling."""
+    classes, methods = {}, {}
+    for old, new in renames.items():
+        (old_class, old_method), (new_class, new_method) = (
+            old.split("/"),
+            new.split("/"),
+        )
+        if old_class != new_class:
+            classes[old_class] = new_class
+        if old_method != new_method:
+            methods[old_method] = new_method
+    return classes, methods
+
+
+def bare_patterns(renames):
+    classes, methods = bare_renames(renames)
+    yield from (
+        (swift_name_pattern(old), new, old) for old, new in sorted(classes.items())
     )
+    yield from (
+        (re.compile(rf"(?<=func ){re.escape(old)}(?!\w)"), new, old)
+        for old, new in sorted(methods.items())
+    )
+
+
+def missing_swift_files(root, journeys=None):
+    """Swift test files that a workflow or self-test names by path but are gone."""
+    problems = []
+    for path in [*swift_followers(root, journeys)]:
+        for name in sorted(set(SWIFT_PATH.findall(path.read_text()))):
+            if not (root / name).is_file():
+                problems.append(
+                    f"{path.relative_to(root).as_posix()} names {name}, which does not exist"
+                )
+    return problems
+
+
+def stale_followers(root, base=None, journeys=None):
+    """Followers that still name a test git renamed since `base`."""
+    try:
+        base = (
+            base
+            or subprocess.run(
+                ["git", "merge-base", "HEAD", "origin/main"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+        renames = test_renames(base, root)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    problems = []
+    for path in swift_followers(root, journeys):
+        text = path.read_text()
+        for old, new in sorted(renames.items()):
+            if swift_name_pattern(old).search(text):
+                problems.append(
+                    f"{path.relative_to(root).as_posix()} still names {old!r}, "
+                    f"which git renamed to {new!r}"
+                )
+    for path in self_tests(root):
+        text = path.read_text()
+        for pattern, new, old in bare_patterns(renames):
+            if pattern.search(text):
+                problems.append(
+                    f"{path.relative_to(root).as_posix()} still names {old!r}, "
+                    f"which git renamed to {new!r}"
+                )
+    return problems
+
+
+def sync(root=ROOT, base=None, journeys=None):
+    """Follow git renames of files, classes and test methods into the hand-kept
+    entries (and every file that names the test); return what changed."""
+    if base is None:
+        base = subprocess.run(
+            ["git", "merge-base", "HEAD", "origin/main"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    data = json.loads(MANIFEST.read_text())
+    changed = []
+    for status, old, new in git_changes(base, root):
+        if old in data["sources"] and new not in data["sources"] and status == "R":
+            data["sources"][new] = data["sources"].pop(old)
+            changed.append(f"{old} -> {new}")
+    renames = test_renames(base, root)
+    changed += follow_test_renames(data, renames)
+    followers_self = set(self_tests(root))
+    for path in swift_followers(root, journeys):
+        text = original = path.read_text()
+        for old, new in renames.items():
+            text, count = swift_name_pattern(old).subn(new, text)
+            if count:
+                changed.append(
+                    f"{path.relative_to(root).as_posix()}: {old} -> {new} ({count})"
+                )
+        if path in followers_self:
+            for pattern, new, old in bare_patterns(renames):
+                text, count = pattern.subn(new, text)
+                if count:
+                    changed.append(
+                        f"{path.relative_to(root).as_posix()}: {old} -> {new} ({count})"
+                    )
+        if text != original:
+            path.write_text(text)
+    data["classes"] = dict(sorted(data["classes"].items()))
+    MANIFEST.write_text(json.dumps(data, indent=2) + "\n")
+    return changed
 
 
 def changed_tests(source, lines):
@@ -202,9 +538,7 @@ def select_groups(paths, root=ROOT, focused=None):
     diff touched (see changed_tests); such a file selects only those tests.
     """
     try:
-        if not inventory_matches(root):
-            return "full", "UI inventory changed or contains unclassified tests."
-        data = manifest()
+        data = manifest(root)
         sources = data["sources"]
         inventory = discovered(root)
         if not paths:
@@ -246,9 +580,7 @@ def expected_tests(value, root=ROOT):
         raise ValueError("UI execution cannot select none")
     if value == "full":
         return discovered(root)
-    if not inventory_matches(root):
-        raise ValueError("UI inventory changed; run full coverage")
-    data = manifest()
+    data = manifest(root)
     group, tests = parse_selection(value)
     selected = {f"KriaUITests/{test}" for test in tests}
     unknown = selected - discovered(root)
@@ -537,6 +869,20 @@ def load_report(bundle):
 
 
 def main():
+    if sys.argv[1:2] in (["check"], ["sync"]):
+        problems = []
+        if sys.argv[1] == "sync":
+            print("\n".join(sync()) or "UI registry already follows git renames")
+        problems = check(after_sync=sys.argv[1] == "sync")
+        for name in unclassified() if not problems else ():
+            print(
+                f"UI test class {name} is not in ui-test-groups.json classes: its tests "
+                "run in every selection until you add it with a creation, projects or "
+                "editor group"
+            )
+        for problem in problems:
+            print(f"ui registry: {problem}", file=sys.stderr)
+        raise SystemExit(1 if problems else 0)
     command, value = sys.argv[1:3]
     expected = expected_tests(value)
     # Long selections (main's full suite, an editor PR's group) split across

@@ -62,6 +62,8 @@ from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import ClipSelections, SelectionEntry, intent_key
 from app.services.creator_render_contract import build_render_contract
 
+pytestmark = pytest.mark.journey("kri-766-label-bound")
+
 LABEL = "Oblea de la casa"
 DESCRIPTION = "Tabağı kameraya uzattığı klip"
 INTRO = "analysis-proxy-ios-62514CA5.mp4"  # M1_06, her intro: says the dish name

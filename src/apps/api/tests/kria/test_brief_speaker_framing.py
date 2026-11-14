@@ -24,6 +24,8 @@ from app.kria.brief_checks import (
 )
 from app.kria.reply_language import reply_language_for
 
+pytestmark = pytest.mark.journey("kri-547-speaker-framing")
+
 R1 = "yatay videoyu dikey (9:16) formata getir ve yüzü hep kadrajda tut"
 
 

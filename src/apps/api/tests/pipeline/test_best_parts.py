@@ -9,6 +9,8 @@ from app.pipeline.best_parts import (
 from app.pipeline.unified_montage import BriefView, UnifiedClip, plan_unified_montage
 from app.services.length_planning import build_length_plan
 
+pytestmark = pytest.mark.journey("kri-625-moment-quality")
+
 
 def source(media_id, duration, moments=()):
     return {

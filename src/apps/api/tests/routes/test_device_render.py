@@ -30,6 +30,8 @@ from app.services.device_render import (
 from tests.services.test_guided_speech_cleanup import fixture_ids as cleanup_fixture_ids
 from tests.services.test_guided_speech_cleanup import load_fixture as load_cleanup_fixture
 
+pytestmark = pytest.mark.journey("kri-669-gameday")
+
 
 def scalar(value):
     return SimpleNamespace(scalar_one_or_none=lambda: value)

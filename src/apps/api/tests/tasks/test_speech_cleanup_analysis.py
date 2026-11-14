@@ -31,6 +31,8 @@ from app.services.speech_cleanup_preflight import (
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.tasks import speech_cleanup_analysis as task_module
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 
 @pytest.fixture(autouse=True)
 def _no_gemini_reference(monkeypatch) -> None:

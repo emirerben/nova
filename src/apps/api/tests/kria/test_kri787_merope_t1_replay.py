@@ -80,6 +80,8 @@ from app.services.creator_render_contract import CreatorRenderContract, read_ren
 from app.tasks import generative_build as gb
 from app.tasks.content_plan_build import _dispatch_item_render
 
+pytestmark = pytest.mark.journey("kri-787-merope-t1-replay")
+
 FIXTURE = json.loads(
     (Path(__file__).resolve().parents[1] / "fixtures" / "kri787_merope_t1_turns.json").read_text(
         encoding="utf-8"

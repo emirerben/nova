@@ -14,6 +14,8 @@ from app.agents.narrated_clip_alignment import (
     _order_mode_text,
 )
 
+pytestmark = pytest.mark.journey("kri-590-voiceover-cues")
+
 
 def _input(*, order_locked: bool = True) -> NarratedClipAlignmentInput:
     return NarratedClipAlignmentInput(

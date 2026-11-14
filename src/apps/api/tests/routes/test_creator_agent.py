@@ -83,6 +83,8 @@ from app.services.creator_capabilities import (
     resolve_creator_manifest,
 )
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 
 @pytest.fixture(autouse=True)
 def _stub_creator_clip_metadata_dispatch(monkeypatch) -> None:

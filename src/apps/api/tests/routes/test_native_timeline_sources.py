@@ -11,6 +11,8 @@ from app.routes import generative_jobs as routes
 from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD, canonical_source
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 
+pytestmark = pytest.mark.journey("kri-669-gameday")
+
 
 def admitted_phone_job(monkeypatch, mode="guided"):
     from tests.routes._editor_save_matrix import guided_phone_job as _guided_phone_job

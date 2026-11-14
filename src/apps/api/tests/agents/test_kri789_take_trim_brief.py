@@ -34,6 +34,8 @@ from app.kria.opening_cut_ask import requirement_opening_quote
 from app.services.choice_questions import CONFLICT_ORDER_BASIS, collect_conflicts
 from app.services.creator_render_contract import build_render_contract
 
+pytestmark = pytest.mark.journey("kri-789-take-trim-not-order")
+
 FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures"

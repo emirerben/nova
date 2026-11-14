@@ -3,14 +3,23 @@
 Run: python3 -m unittest discover -s scripts/ios/tests -v
 """
 
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
+spec = importlib.util.spec_from_file_location(
+    "ui_tests", Path(__file__).resolve().parents[1] / "ui_tests.py"
+)
+ui = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ui)
+sys.path.insert(0, str(Path(__file__).parent))
+import ui_fixture  # noqa: E402
 
 STUB = r"""#!/usr/bin/env python3
 import json, os, pathlib, signal, sys, time
@@ -57,8 +66,9 @@ elif name == 'xcrun':
     if args[:4] == ['xcresulttool', 'get', 'test-results', 'tests']:
         bundle = pathlib.Path(args[args.index('--path') + 1])
         test_args = json.loads((bundle / 'args.json').read_text())
-        manifest = json.loads((root / 'scripts/ios/ui-test-groups.json').read_text())
-        tests = sorted(set(t for values in manifest['groups'].values() for t in values))
+        sys.path.insert(0, str(root / 'scripts/ios'))
+        import ui_tests
+        tests = sorted(ui_tests.discovered())
         selected = [arg.removeprefix('-only-testing:') for arg in test_args if arg.startswith('-only-testing:')]
         if selected != ['KriaUITests']:
             tests = selected
@@ -224,8 +234,8 @@ class VerifyShellTests(unittest.TestCase):
             any(arg.startswith(("-only-testing:", "-skip-testing:")) for arg in build)
         )
         self.assertIn("-skip-testing:KriaUITests", unit)
-        ui = self.run_verify(suite="ui")
-        self.assertEqual(ui.returncode, 0, ui.stderr)
+        ran = self.run_verify(suite="ui")
+        self.assertEqual(ran.returncode, 0, ran.stderr)
         self.assertEqual(self.actions, ["test-without-building"])
         call = next(call for call in self.calls if call[-1] == "test-without-building")
         self.assertIn("-only-testing:KriaUITests", call)
@@ -244,7 +254,7 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
         result = self.run_verify(suite="ui", groups="smoke,creation")
         self.assertEqual(result.returncode, 0, result.stderr)
-        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
+        data = ui.manifest()
         expected = set(data["groups"]["smoke"] + data["groups"]["creation"])
         call = next(c for c in self.calls if c[-1] == "test-without-building")
         filters = [
@@ -257,10 +267,11 @@ class VerifyShellTests(unittest.TestCase):
 
     def test_changed_method_selection_runs_smoke_plus_exactly_those_tests(self):
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
-        changed = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        fixture = ui_fixture.fixtures(ui)[0]
+        changed = f"{fixture.cls}/{fixture.methods[0]}"
         result = self.run_verify(suite="ui", groups=f"smoke,{changed}")
         self.assertEqual(result.returncode, 0, result.stderr)
-        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
+        data = ui.manifest()
         call = next(c for c in self.calls if c[-1] == "test-without-building")
         filters = [
             a.removeprefix("-only-testing:")
@@ -426,8 +437,7 @@ class VerifyShellTests(unittest.TestCase):
         return [call for call in self.calls if call[-1] == "test-without-building"]
 
     def overran_first(self, group="smoke"):
-        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
-        return sorted(data["groups"][group])[0]
+        return sorted(ui.manifest(self.root)["groups"][group])[0]
 
     def test_a_test_past_the_time_allowance_gets_one_rerun(self):
         # xcodebuild never retries a test that runs past its allowance, so one
@@ -448,7 +458,8 @@ class VerifyShellTests(unittest.TestCase):
         result_dir = next((self.root / "test-results/ios").glob("ui.*"))
         flaky = json.loads((result_dir / "flaky-tests.json").read_text())
         self.assertEqual([test["identifier"] for test in flaky], [self.overran_first()])
-        self.assertIn("Verified 5 selected UI tests passed.", result.stdout)
+        smoke = len(ui.manifest(self.root)["groups"]["smoke"])
+        self.assertIn(f"Verified {smoke} selected UI tests passed.", result.stdout)
 
     def test_a_rerun_that_runs_past_the_allowance_again_stays_red(self):
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)

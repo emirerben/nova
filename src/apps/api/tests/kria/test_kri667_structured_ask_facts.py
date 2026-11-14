@@ -24,6 +24,8 @@ from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import PlanFacts, check_requirement
 from app.kria.reply_language import reply_language_for
 
+pytestmark = pytest.mark.journey("kri-667-turkish-chat")
+
 _TALKING = {"edit_format": "subtitled", "caption_style": "karaoke", "speech_cleanup_offered": True}
 
 

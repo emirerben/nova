@@ -31,6 +31,8 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import RequirementReceipt
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 _SOURDOUGH_CUTS = (
     "Cut out the long pauses, the part where I say 'let me start that one again', "
     "and the 'where was I' bit."

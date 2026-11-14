@@ -98,8 +98,18 @@ class ThroughputTests(unittest.TestCase):
             Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
         ).read_text()
         portable, native = workflow.split("  journey-native:", 1)
-        self.assertIn("tests/kria/test_kri623_ruled_out_clips.py", portable)
-        self.assertNotIn("tests/kria/test_kri623_ruled_out_clips.py", native)
+        step = "journey_registry.py step kri-623-ruled-out-clips"
+        self.assertIn(step, portable)
+        self.assertNotIn(step, native)
+        registry = importlib.util.spec_from_file_location(
+            "journey_registry", Path(__file__).with_name("journey_registry.py")
+        )
+        module = importlib.util.module_from_spec(registry)
+        registry.loader.exec_module(module)
+        files = module.step_files("kri-623-ruled-out-clips")
+        self.assertTrue(files)
+        for file in files:
+            self.assertTrue((module.ROOT / module.API / file).is_file(), file)
 
     def native_steps(self):
         """[(name, if-expression)] for every step of ci.yml's journey-native job."""

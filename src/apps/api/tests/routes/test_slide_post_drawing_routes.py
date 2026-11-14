@@ -33,6 +33,8 @@ from app.schemas.slide_post import (
     SlideTextElement,
 )
 
+pytestmark = pytest.mark.journey("kri-589-drawing")
+
 DRAWING = {
     "canvas_aspect": 0.5625,
     "strokes": [

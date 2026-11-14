@@ -117,6 +117,51 @@ pass. Full iOS regression runs at 03:23 UTC nightly or on manual dispatch; full
 native journeys run at 02:23 UTC nightly or on manual CI dispatch. Neither
 regression path dispatches TestFlight.
 
+Test registries are derived, not listed (KRI-1380). A journey API test declares
+`pytestmark = pytest.mark.journey("<journey-id>")` at module level (add
+`step="<name>"` when one journey has several `ci.yml` steps; the list, annotated
+and `mark.journey` spellings all work, and a decorator or class attribute is
+refused by name). `ci.yml` steps call `scripts/ci/journey_registry.py step <name>`
+instead of listing test paths, and `journey-manifest.json` rows gain the marked
+files as `api_tests` at load time (`journey_registry.journeys()`), so a new or
+renamed test needs no registry edit. CI self-tests assert properties of a step
+(non-empty, files exist), never a fixed path. Trigger `paths`, evidence tests
+without a marker and `xctests` stay in the manifest. A journey that `ci.yml`
+runs through `journey_registry.py tests <id>` (clip speed, camera-roll
+recommendations, the plaza title, recovery) takes a marker the same way. A
+trigger path is one file or a directory ending in `/`, the rule
+`select-tests.py` applies (`journey_registry.matches_journey_path`); `check`
+fails a path that selects nothing, so a new test file is added to `paths` by
+hand to trigger its journey.
+
+`make check-test-registries` (also a `scripts/ci` unit test and
+`preship-check.sh`) fails on a manifest path, test or `xctests` entry that does
+not exist, a Makefile, a script under `scripts/` or `formal/kria_turns`, the
+KRI-577 ledger `tests/gates/reliability-gates.json` or a non-`ci.yml` workflow
+that names a test that does not exist, a hand-kept file that still names a path git
+renamed, a marker whose step `ci.yml` never runs, a step with no marked test, an
+unknown journey id, a hand-listed test path in `ci.yml` and a native test named
+in `ci.yml` (`-only-testing:Target/Class/test`, `--xctest Class/test`) that does
+not exist in that target; a problem `sync` cannot fix names its own fix, the rest
+end with `make sync-test-registries`. After a rename, `make sync-test-registries` rewrites the renamed paths
+in those files and follows Swift class and test-method renames into
+`ui-test-groups.json`, the manifest's `xctests`, the `ci.yml` native steps and
+the `scripts/ios/tests` self-tests, including a renamed UI test file path, class
+name and `func` name they quote (stage a file rename first); `check` names a file
+that still holds the old name or a `src/apps/ios/Tests/...swift` path that is gone.
+When sync cannot follow an entry (a method renamed in the same edit that adds or
+removes another), the check after sync says to edit or delete that entry by hand.
+The `scripts/ios/tests` self-tests borrow their UI test file, class and methods
+from the tree (`ui_fixture.py`), so no real test name is spelled out there.
+Not derived yet: `api_tests` entries for the manifest's journeys that no marker
+declares (a new test for those still needs a manifest line or a marker), the
+native test names in `ci.yml` and the manifest's `xctests` (followed through
+renames, not generated), the manifest's `paths`, the Makefile, `verify-kria.sh`,
+`reliability-gates.json`, `request-following-regressions.py` and workflow test
+lists (validated and rename-followed, not generated), and
+`ui-test-durations.json` / `ui-test-measured-durations.json` (an unrecorded test
+weighs the median; refresh with `scripts/ios/refresh-ui-durations.py`).
+
 The stable `journey` job now aggregates `journey-mapping`, `journey-offline`,
 the database-backed `journey-library` (Linux), and every `journey-native` leg
 (Mac). Linux jobs install FFmpeg and friends through

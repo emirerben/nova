@@ -13,6 +13,8 @@ import pytest
 
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
 
+pytestmark = pytest.mark.journey("kri-766-label-bound")
+
 AGENT_DIR = "clip_request_resolver"
 AGENT_NAME = "nova.plan.clip_request_resolver"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)

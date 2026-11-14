@@ -62,6 +62,8 @@ from app.services.phone_sources import PhoneSourceBinding
 from app.services.speech_segments import ground_line
 from app.tasks import generative_build as gb
 
+pytestmark = pytest.mark.journey("kri-628-opening-cut")
+
 FIXTURE = json.loads(
     (Path(__file__).resolve().parents[1] / "fixtures" / "kri790_merope_t1_take.json").read_text()
 )

@@ -11,6 +11,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import journey_registry
 import ui_tests
 
 
@@ -368,7 +370,7 @@ def verify_named_tests(report: dict, expected: set) -> None:
 def api_tests_for_ids(ids: str) -> list[str]:
     import shlex
 
-    journeys = load(Path(__file__).with_name("journey-manifest.json"))["journeys"]
+    journeys = journey_registry.journeys()
     selected = ids.split(",") if ids else []
     require(
         selected and len(selected) == len(set(selected)),

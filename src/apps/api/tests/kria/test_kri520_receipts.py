@@ -28,6 +28,8 @@ from app.kria.brief_checks import (
 from app.kria.contracts import RequirementReceipt
 from app.kria.reply_language import reply_language_for
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 CLIPS = ("c1", "c2", "c3")
 
 

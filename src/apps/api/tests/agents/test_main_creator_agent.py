@@ -11,6 +11,8 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 
+pytestmark = pytest.mark.journey("kri-586-hook-copy")
+
 
 def _manifest() -> ResolvedCreatorManifest:
     available = CapabilityAvailability(available=True)

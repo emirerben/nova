@@ -16,9 +16,13 @@ import copy
 import uuid
 from types import SimpleNamespace
 
+import pytest
+
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
 from app.tasks import kria_runtime
+
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
 
 GENERATION = "720266e0bc584a09af74bf6fbf167f99"
 DEFAULT = "Your voiceover edit is ready."

@@ -41,6 +41,8 @@ from app.tasks.kria_runtime import (
     run_kria_turn,
 )
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 
 class _Result:
     def __init__(self, *, scalar=None, scalars=None):  # noqa: ANN001

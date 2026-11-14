@@ -13,6 +13,8 @@ from app.kria import planner
 from app.kria.planner import PlannedKriaTurn
 from app.services.creative_copy_decisions import media_digest
 
+pytestmark = pytest.mark.journey("kri-586-hook-copy")
+
 DIGEST = "d" * 24
 
 

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,10 +19,13 @@ SCRIPT = Path(__file__).resolve().parents[1] / "ui_tests.py"
 spec = importlib.util.spec_from_file_location("ui_tests", SCRIPT)
 ui = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ui)
+sys.path.insert(0, str(Path(__file__).parent))
+import ui_fixture  # noqa: E402
 
 RETRIED_FIXTURE = json.loads(
     (Path(__file__).with_name("fixtures") / "retried-ui-results.json").read_text()
 )
+PROJECTS = ui_fixture.fixtures(ui)
 OVERRUN_FIXTURE = json.loads(
     (Path(__file__).with_name("fixtures") / "overrun-ui-results.json").read_text()
 )
@@ -74,8 +78,9 @@ class UISelectionTests(unittest.TestCase):
             ):
                 self.assertEqual(ui.weights({"new"}), {"new": 90})
 
-    def test_every_current_test_is_classified(self):
-        self.assertTrue(ui.inventory_matches())
+    def test_registry_follows_the_tests_and_every_test_is_in_one_group(self):
+        problems = ui.check()
+        self.assertFalse(problems, "\n".join(problems))
         data = ui.manifest()
         features = [
             test
@@ -83,7 +88,13 @@ class UISelectionTests(unittest.TestCase):
             for test in data["groups"][group]
         ]
         self.assertEqual(len(features), len(set(features)))
-        self.assertEqual(set(features), ui.discovered())
+        unclassified = {
+            test
+            for test in ui.discovered()
+            if test.split("/")[1] in data["unclassified"]
+        }
+        self.assertEqual(set(features) | unclassified, ui.discovered())
+        self.assertLessEqual(unclassified, set(data["groups"]["smoke"]))
 
     def test_each_exact_mapping_selects_smoke_and_one_feature(self):
         for path, group in ui.manifest()["sources"].items():
@@ -110,7 +121,10 @@ class UISelectionTests(unittest.TestCase):
             if not methods or relative in data["sources"]:
                 continue
             groups = set().union(
-                *(owners[f"KriaUITests/{classes[0]}/{name}"] for name in methods)
+                *(
+                    owners.get(f"KriaUITests/{classes[0]}/{name}", set())
+                    for name in methods
+                )
             )
             if len(groups) != 1:
                 continue
@@ -120,12 +134,6 @@ class UISelectionTests(unittest.TestCase):
                 )
                 checked += 1
         self.assertGreater(checked, 0)
-        self.assertEqual(
-            ui.select_groups(
-                ["src/apps/ios/Tests/KriaUITests/NativeCaptionAnimationUITests.swift"]
-            )[0],
-            "smoke,editor",
-        )
 
     def test_test_file_groups_stay_conservative(self):
         # Failure modes: a file whose tests span groups runs only one of them; a
@@ -193,30 +201,61 @@ class UISelectionTests(unittest.TestCase):
             with self.subTest(paths=paths):
                 self.assertEqual(ui.select_groups(paths)[0], "full")
 
-    def test_new_removed_and_renamed_tests_force_full(self):
+    def test_new_removed_and_renamed_tests_need_no_registry_edit(self):
+        # A method added, renamed or removed inside a classified class stays in
+        # that class's group; a brand-new class runs in every selection until it
+        # is classified, so no test is skipped for want of a registry line.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tests = root / "src/apps/ios/Tests/KriaUITests"
             shutil.copytree(ui.ROOT / "src/apps/ios/Tests/KriaUITests", tests)
-            path = "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift"
+            fixture = PROJECTS[0]
+            path, cls, method = fixture.path, fixture.cls, fixture.methods[0]
             original = (root / path).read_text()
-            for source in (
-                original.replace(
-                    "    func testProject", "    func testRenamedProject", 1
+            declaration = f"final class {cls}: XCTestCase {{"
+            self.assertIn(declaration, original)
+            for source, test in (
+                (
+                    original.replace(f"func {method}(", f"func {method}Renamed(", 1),
+                    f"KriaUITests/{cls}/{method}Renamed",
                 ),
-                original.replace("    func testProject", "    func checkProject", 1),
-                original.replace(
-                    "final class ProjectsUITests: XCTestCase {",
-                    "final class ProjectsUITests: XCTestCase {\n    func testNewCase() {}",
+                (
+                    original.replace(
+                        declaration, f"{declaration}\n    func testNewCase() {{}}"
+                    ),
+                    f"KriaUITests/{cls}/testNewCase",
                 ),
             ):
                 (root / path).write_text(source)
-                self.assertEqual(ui.select_groups([path], root)[0], "full")
+                value = ui.select_groups([path], root)[0]
+                self.assertEqual(value, "smoke,projects")
+                self.assertIn(test, ui.manifest(root)["groups"]["projects"])
             (root / path).write_text(original)
             (tests / "NewTests.swift").write_text(
                 "class NewTests: XCTestCase { func testNew() {} }"
             )
-            self.assertEqual(ui.select_groups([path], root)[0], "full")
+            data = ui.manifest(root)
+            self.assertEqual(
+                set(data["unclassified"]) - set(ui.manifest()["unclassified"]),
+                {"NewTests"},
+            )
+            self.assertIn("KriaUITests/NewTests/testNew", data["groups"]["smoke"])
+            self.assertEqual(ui.select_groups([path], root)[0], "smoke,projects")
+            self.assertIn(
+                "KriaUITests/NewTests/testNew",
+                ui.expected_tests("smoke,projects", root),
+            )
+
+    def test_stale_entries_are_reported_with_the_fix_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tests = root / "src/apps/ios/Tests/KriaUITests"
+            shutil.copytree(ui.ROOT / "src/apps/ios/Tests/KriaUITests", tests)
+            smoke_class = ui.manifest()["groups"]["smoke"][0].split("/")[1]
+            (root / ui_fixture.file_of(ui, smoke_class).relative_to(ui.ROOT)).unlink()
+            problems = ui.check(root)
+            self.assertTrue(any(smoke_class in problem for problem in problems))
+            self.assertIn("make sync-test-registries", problems[-1])
 
     def test_deleted_source_mapping_requires_full(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -237,13 +276,108 @@ class UISelectionTests(unittest.TestCase):
             self.assertEqual(ui.select_groups(["any"])[0], "full")
             with self.assertRaises(ValueError):
                 ui.expected_tests("smoke,editor")
-        data = ui.manifest()
-        data["groups"]["creation"] = []
+        data = json.loads(ui.MANIFEST.read_text())
+        data["overrides"][next(iter(data["overrides"]))] = "nope"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.json"
             path.write_text(json.dumps(data))
-            with patch.object(ui, "MANIFEST", path), self.assertRaises(ValueError):
-                ui.expected_tests("smoke,creation")
+            with patch.object(ui, "MANIFEST", path):
+                self.assertEqual(ui.select_groups(["any"])[0], "full")
+                with self.assertRaises(ValueError):
+                    ui.expected_tests("smoke,creation")
+
+    def test_a_replaced_test_is_not_followed_as_a_rename(self):
+        body = (
+            "    func {name}() {{\n        let app = launch()\n"
+            '        app.buttons["save"].tap()\n'
+            '        XCTAssertTrue(app.staticTexts["Saved"].waitForExistence(timeout: 5))\n'
+            "    }}\n"
+        )
+        swift = "final class AlphaUITests: XCTestCase {{\n{}}}\n"
+        before = swift.format(body.format(name="testOld"))
+        renamed = swift.format(body.format(name="testNew"))
+        replaced = swift.format(
+            "    func testNew() {\n        XCTAssertEqual(unrelated(), 3)\n    }\n"
+        )
+        self.assertEqual(
+            ui.renamed_tests(before, renamed),
+            {"AlphaUITests/testOld": "AlphaUITests/testNew"},
+        )
+        self.assertEqual(ui.renamed_tests(before, replaced), {})
+
+    def test_an_in_place_rename_is_named_by_check_and_followed_by_sync(self):
+        real = json.loads(ui.MANIFEST.read_text())
+        smoke = real["smoke"][0]
+        smoke_class, smoke_method = smoke.removeprefix("KriaUITests/").split("/")
+        override = next(
+            name for name in real["overrides"] if name.split("/")[0] != smoke_class
+        )
+        override_class, override_method = override.split("/")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tests = root / "src/apps/ios/Tests/KriaUITests"
+            shutil.copytree(ui.ROOT / "src/apps/ios/Tests/KriaUITests", tests)
+            groups = root / "ui-test-groups.json"
+            groups.write_text(json.dumps({**real, "sources": {}}))
+            journeys = root / "journey-manifest.json"
+            journeys.write_text(json.dumps({"xctests": [smoke]}))
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                f"-only-testing:{smoke} \\\n--xctest {smoke_class}/{smoke_method}\n"
+            )
+
+            def git(*args):
+                subprocess.run(
+                    ["git", *args], cwd=root, check=True, capture_output=True
+                )
+
+            def source(name):
+                return next(
+                    path
+                    for path in tests.rglob("*.swift")
+                    if re.search(rf"class {name}\b", path.read_text())
+                )
+
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "t@example.com")
+            git("config", "user.name", "t")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            for klass, old, new in (
+                (smoke_class, smoke_method, "testRenamedSmokeSubject"),
+                (override_class, override_method, "testRenamedOverrideSubject"),
+            ):
+                file = source(klass)
+                file.write_text(
+                    file.read_text().replace(f"func {old}(", f"func {new}(")
+                )
+            with patch.object(ui, "MANIFEST", groups):
+                problems = ui.check(root)
+                self.assertTrue(any(smoke_method in p for p in problems))
+                self.assertTrue(any(override_method in p for p in problems))
+                self.assertFalse(any("ci.yml" in p for p in problems))
+                self.assertIn("make sync-test-registries", problems[-1])
+                problems = ui.check(root, base="HEAD", journeys=journeys)
+                self.assertTrue(
+                    any(f"ci.yml still names '{smoke_class}/" in p for p in problems)
+                )
+                value, _ = ui.select_groups(
+                    [source(smoke_class).relative_to(root).as_posix()], root
+                )
+                self.assertNotEqual(value, "full")
+                self.assertNotIn(smoke, ui.expected_tests("smoke", root))
+                changed = ui.sync(root, base="HEAD", journeys=journeys)
+                self.assertTrue(any(line.startswith("smoke ") for line in changed))
+                self.assertEqual(ui.check(root, base="HEAD", journeys=journeys), [])
+                renamed = smoke.replace(smoke_method, "testRenamedSmokeSubject")
+                self.assertIn(renamed, ui.expected_tests("smoke", root))
+                self.assertIn(renamed, journeys.read_text())
+                self.assertNotIn(smoke_method, workflow.read_text())
+                self.assertIn("testRenamedSmokeSubject", workflow.read_text())
+                overrides = json.loads(groups.read_text())["overrides"]
+                self.assertIn(f"{override_class}/testRenamedOverrideSubject", overrides)
+                self.assertNotIn(override, overrides)
 
     def test_focused_filters_preserve_smoke_and_deduplicate(self):
         data = ui.manifest()
@@ -263,10 +397,10 @@ class UISelectionTests(unittest.TestCase):
             "editor,smoke",
             "smoke,editor,creation",
             # Changed-test ids must be canonical (sorted, unique) and real.
-            "smoke,SignInUITests/testSignInShowsEveryProviderAndLegalLink,"
-            "ProjectsUITests/testProjectActionsCanBeCancelledWithoutChangingProject",
-            "smoke,ProjectsUITests/testNope",
-            "smoke,ProjectsUITests/helper",
+            f"smoke,{PROJECTS[1].cls}/{PROJECTS[1].methods[0]},"
+            f"{PROJECTS[0].cls}/{PROJECTS[0].methods[0]}",
+            f"smoke,{PROJECTS[0].cls}/testNope",
+            f"smoke,{PROJECTS[0].cls}/helper",
             "smoke,editor,editor",
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
@@ -274,7 +408,7 @@ class UISelectionTests(unittest.TestCase):
 
     def test_changed_test_methods_add_only_those_tests_to_smoke(self):
         data = ui.manifest()
-        rename = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        rename = f"{PROJECTS[0].cls}/{PROJECTS[0].methods[0]}"
         self.assertEqual(
             ui.expected_tests(f"smoke,{rename}"),
             set(data["groups"]["smoke"]) | {f"KriaUITests/{rename}"},
@@ -316,7 +450,7 @@ class UISelectionTests(unittest.TestCase):
             ui.shard_tests(set(sorted(inventory)[:2]), "3/3")
 
     def test_focused_selections_partition_exactly_like_the_full_suite(self):
-        rename = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        rename = f"{PROJECTS[0].cls}/{PROJECTS[0].methods[0]}"
         for value in ("smoke", *ui.FOCUSED, f"smoke,editor,{rename}"):
             expected = ui.expected_tests(value)
             for count in range(1, ui.MAX_SHARDS + 1):
@@ -357,8 +491,21 @@ class UISelectionTests(unittest.TestCase):
             ui.shard_count("none")
 
     def test_changed_tests_maps_lines_inside_test_methods_only(self):
-        path = "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift"
-        source = (ui.ROOT / path).read_text()
+        source = (
+            "import XCTest\n\n"
+            "final class SampleUITests: XCTestCase {\n"
+            "    func testRename() {\n"
+            "        tap()\n"
+            "        tap()\n"
+            "    }\n\n"
+            "    func testDrawer() {\n"
+            "        drag()\n"
+            "    }\n\n"
+            "    private func helper() {\n"
+            "        shared()\n"
+            "    }\n"
+            "}\n"
+        )
         lines = source.splitlines()
 
         def line_of(fragment, after=0):
@@ -366,24 +513,19 @@ class UISelectionTests(unittest.TestCase):
                 n for n, text in enumerate(lines, 1) if n > after and fragment in text
             )
 
-        rename = line_of(
-            "func testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
-        )
-        drawer = line_of("func testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint")
-        helper = line_of("private func createFreshChat")
-        rename_id = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
-        drawer_id = (
-            "ProjectsUITests/testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint"
-        )
+        rename = line_of("func testRename")
+        drawer = line_of("func testDrawer")
+        helper = line_of("private func helper")
+        rename_id, drawer_id = "SampleUITests/testRename", "SampleUITests/testDrawer"
         self.assertEqual(ui.changed_tests(source, {rename + 2}), {rename_id})
         self.assertEqual(
-            ui.changed_tests(source, {rename, drawer - 1, drawer + 3}),
+            ui.changed_tests(source, {rename, drawer - 1, drawer + 1}),
             {rename_id, drawer_id},
         )
         for outside in (
             {0},
             {1},  # import
-            {line_of("final class ProjectsUITests")},
+            {line_of("final class SampleUITests")},
             {helper + 1},  # private helper body
             {rename + 2, helper + 1},
             {len(lines) + 1},
@@ -399,20 +541,17 @@ class UISelectionTests(unittest.TestCase):
         )
 
     def test_selector_focuses_changed_methods_and_keeps_groups_conservative(self):
-        projects = "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift"
+        projects, sibling = PROJECTS[0].path, PROJECTS[1].path
         editor_source = "src/apps/ios/Kria/Features/NativeEditorView.swift"
         creation_source = "src/apps/ios/Kria/Features/CreationAttachments.swift"
-        rename = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        rename = f"{PROJECTS[0].cls}/{PROJECTS[0].methods[0]}"
         focused = {projects: {rename}}
         self.assertEqual(
             ui.select_groups([projects], focused=focused)[0], f"smoke,{rename}"
         )
         # A group already covering the method keeps the plain group value.
         self.assertEqual(
-            ui.select_groups(
-                [projects, "src/apps/ios/Tests/KriaUITests/SignInUITests.swift"],
-                focused=focused,
-            )[0],
+            ui.select_groups([projects, sibling], focused=focused)[0],
             "smoke,projects",
         )
         self.assertEqual(
@@ -426,7 +565,7 @@ class UISelectionTests(unittest.TestCase):
         for fallback in (
             None,
             {projects: None},
-            {projects: {"ProjectsUITests/testGone"}},
+            {projects: {f"{PROJECTS[0].cls}/testGone"}},
         ):
             with self.subTest(fallback=fallback):
                 self.assertEqual(
@@ -434,12 +573,12 @@ class UISelectionTests(unittest.TestCase):
                 )
         # An unmapped test file selects the group owning its tests; a focused
         # edit still narrows to just the changed methods.
-        visual = "src/apps/ios/Tests/KriaUITests/NativeCaptionVisualUITests.swift"
-        caption = "NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens"
-        self.assertNotIn(visual, ui.manifest()["sources"])
-        self.assertEqual(ui.select_groups([visual])[0], "smoke,editor")
+        visual = ui_fixture.fixtures(ui, "editor")[0]
+        caption = f"{visual.cls}/{visual.methods[0]}"
+        self.assertNotIn(visual.path, ui.manifest()["sources"])
+        self.assertEqual(ui.select_groups([visual.path])[0], "smoke,editor")
         self.assertEqual(
-            ui.select_groups([visual], focused={visual: {caption}})[0],
+            ui.select_groups([visual.path], focused={visual.path: {caption}})[0],
             f"smoke,{caption}",
         )
         for path, group in ui.manifest()["sources"].items():

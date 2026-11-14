@@ -28,6 +28,8 @@ from app.models import (
 )
 from app.tasks.maintenance import _CREATOR_ACTIVITY_SQL
 
+pytestmark = pytest.mark.journey("kri-798-render-worker-restart")
+
 _WINDOW_S = 600
 _INFLIGHT_S = 3600
 _STALE_AT = datetime.now(UTC) - timedelta(seconds=_INFLIGHT_S + 60)

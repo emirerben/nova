@@ -192,3 +192,6 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 timeout = 30
 required_plugins = ["pytest-timeout>=2.3"]
+markers = [
+    "journey(id, step=None): file belongs to a journey in scripts/ci/journey-manifest.json; step names the ci.yml step that runs it (scripts/ci/journey_registry.py)",
+]

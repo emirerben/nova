@@ -80,6 +80,8 @@ from app.tasks import content_plan_build
 from app.tasks.generative_build import _narrated_alignment_record, _narrated_creator_clip_labels
 from tests.tasks.test_selected_clip_dispatch import _verify
 
+pytestmark = pytest.mark.journey("kri-667-turkish-chat")
+
 # The KRI-623 cabin turn (4 clips: two long takes, a dim bedroom and a dark hallway).
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri623_tigre_m2_montage_turn.json"
 CASE: dict[str, Any] = json.loads(FIXTURE.read_text())

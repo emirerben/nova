@@ -4,7 +4,8 @@
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
-        workspace-pull workspace-push workspace-status
+        workspace-pull workspace-push workspace-status \
+        check-test-registries sync-test-registries
 
 PYTHON ?= python3
 API_DIR := src/apps/api
@@ -251,6 +252,22 @@ verify-editor-timeline:
 		tests/tasks/test_carousel_timed_lane_projection.py)
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
+
+# Journey tests and iOS UI test groups are derived from markers in the tests.
+# `check` names every hand-kept entry that no longer matches the tree; `sync`
+# follows git renames of files, Swift classes and test methods into those
+# entries, the Makefile, scripts and workflows (stage a file rename first).
+check-test-registries:
+	@status=0; \
+	$(PYTHON) scripts/ci/journey_registry.py check || status=1; \
+	$(PYTHON) scripts/ios/ui_tests.py check || status=1; \
+	exit $$status
+
+sync-test-registries:
+	@status=0; \
+	$(PYTHON) scripts/ios/ui_tests.py sync || status=1; \
+	$(PYTHON) scripts/ci/journey_registry.py sync || status=1; \
+	exit $$status
 
 api-install-dev:
 	@if [ ! -x "$(API_PYTHON)" ]; then \

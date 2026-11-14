@@ -68,6 +68,8 @@ from app.schemas.clip_intents import ClipIntent
 from app.services import creator_capabilities as capabilities
 from tests._prod_profile import PROD_NARRATION_IDENTITY
 
+pytestmark = pytest.mark.journey("kri-598-voiceover-planner")
+
 # The project's own clips and its one Visuals photo, as in the logged manifest.
 TIGRE_CLIPS = [
     "analysis-proxy-ios-8F1D55F0-5B98-49E7-962A-4D87727D0686.mp4",

@@ -53,6 +53,8 @@ from app.services.clip_intent_planning import PlannedIntentResolution
 from app.services.clip_intent_resolution import IntentClip, IntentResolution
 from app.tasks import content_plan_build
 
+pytestmark = pytest.mark.journey("kri-593-voiceover-clips")
+
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri593_tigre_voiceover_turn.json"
 CASE: dict[str, Any] = json.loads(FIXTURE.read_text())
 MANIFEST = CASE["main_creator_input"]["capability_manifest"]

@@ -15,6 +15,8 @@ from app.services.creator_render_contract import (
 )
 from tests.tasks.conftest import FakeJob, patch_job_session
 
+pytestmark = pytest.mark.journey("kri-492-length-ownership")
+
 
 def _assembly(strategy: dict) -> dict:
     # These fixtures model an already-confirmed creator request.  The old

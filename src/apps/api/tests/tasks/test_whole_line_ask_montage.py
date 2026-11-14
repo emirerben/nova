@@ -38,6 +38,8 @@ from app.kria.brief_checks import (
 from app.kria.reply_language import reply_language_for
 from tests.tasks.test_named_line_windows_montage import _finished, _holds, _plan, _render, _window
 
+pytestmark = pytest.mark.journey("kri-760-whole-line-ask")
+
 LINE = "Hi, I'm Karolina, I'm from Ecuador"
 KAROLINA = "m1_06"
 # Where the line is in the Karolina clip (the incident's was 0.2-2.2 s of an 8 s clip).

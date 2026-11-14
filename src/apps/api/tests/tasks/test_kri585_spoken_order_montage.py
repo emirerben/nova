@@ -73,6 +73,8 @@ from app.tasks import generative_build as gb
 from tests.pipeline.test_unified_montage import clip
 from tests.tasks.test_selected_clip_dispatch import _verify
 
+pytestmark = pytest.mark.journey("kri-585-spoken-order")
+
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri585_tigre_m1_clips.json"
 DATA = json.loads(_FIXTURE.read_text(encoding="utf-8"))
 CLIPS = DATA["clips"]

@@ -20,6 +20,8 @@ from app.pipeline.phone_captions import (
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.text_overlay import _FONT_REGISTRY
 
+pytestmark = pytest.mark.journey("kri-548-caption-watermark")
+
 
 def _word(text: str, start_s: float, end_s: float) -> dict:
     return {"text": text, "start_s": start_s, "end_s": end_s}

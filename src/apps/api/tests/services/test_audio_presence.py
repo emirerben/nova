@@ -21,6 +21,8 @@ from app.services.clip_speech import (
     classify_audio_presence,
 )
 
+pytestmark = pytest.mark.journey("kri-653-silent-take")
+
 requires_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is required")
 
 

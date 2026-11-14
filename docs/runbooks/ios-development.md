@@ -795,7 +795,9 @@ manifest still needs to establish one.
 
 The focused-UI policy runs a reviewed native feature's UI checks plus four
 cross-app smoke scenarios. The manifest in
-`scripts/ios/ui-test-groups.json` lists exact source paths and XCTest identifiers.
+`scripts/ios/ui-test-groups.json` lists exact source paths, each XCTestCase
+class's group, the few per-test overrides and the smoke subset; the per-test
+group lists are derived from the Swift sources by `ui_tests.manifest()`.
 The groups are `creation`, `projects`, and `editor`; `smoke` covers workspace
 navigation, creation through ready, editor back navigation, and playback.
 Shared workspace/app state, services/models, design-system files, media-engine
@@ -835,9 +837,20 @@ Mapped app sources still select their group, and method ids that group already
 covers are dropped. Unmapped UI test files (for example `NativeCaptionVisualUITests`)
 can focus too, so an edited test there now runs before merge. Before, it selected
 `full`, and PRs ran only smoke.
-Unknown or stale test inventory forces full selection in the selector; the
-manifest guard also requires new tests to be explicitly classified before the
-PR can pass.
+A test method added, renamed or removed inside a classified class needs no
+registry edit: it stays in the class's group. A new XCTestCase class that is not
+in `classes` runs in every selection (it joins smoke) with no edit required;
+`make check-test-registries` prints an advisory line naming it so you can add a
+`creation`, `projects` or `editor` group later. A registry entry naming a class,
+test or source that no longer exists fails `make check-test-registries` (also run
+by `preship-check.sh`) with the fix command; selection ignores the stale entry
+instead of failing the UI leg. After a rename, `make sync-test-registries`
+follows a renamed UI test file or app source, a renamed class and a renamed test
+method into the registry, the manifest's `xctests`, the `ci.yml` native steps and
+the `scripts/ios/tests` self-tests (which borrow real test files from the tree through
+`ui_fixture.py`). If sync cannot follow an entry, its closing line says to edit or
+delete the entry by hand, not to run sync again. A new unclassified class makes smoke larger
+(the self-tests derive its size from the registry, never a fixed count).
 
 UI tests remain serial. The preparation builds both test bundles, executes all
 non-UI tests, and writes the existing one-use receipt. Main smoke and nightly/manual UI runs
@@ -1260,5 +1273,5 @@ Adding the next update:
 4. Quote button and screen names exactly as the code shows them, keep a benefit to two
    short sentences and a card to four steps, and leave ticket IDs, PR numbers and flag
    names out. `WhatsNewTests` fails the build on any of these.
-5. Run `KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh`. A new UI test also goes in
-   `scripts/ios/ui-test-groups.json`.
+5. Run `KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh`. A new UI test method needs no
+   registry edit; a new UI test class runs in every selection until you add it to `classes` of `scripts/ios/ui-test-groups.json`.

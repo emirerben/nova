@@ -30,6 +30,8 @@ from app.services.speech_cleanup_decision import (
 )
 from app.services.speech_cleanup_preflight import SPEECH_CLEANUP_ENGINE_VERSION
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 
 def _source(fingerprint: str = "fingerprint-1") -> ActiveNarrationSource:
     return ActiveNarrationSource(

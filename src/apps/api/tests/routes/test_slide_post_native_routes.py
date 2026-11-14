@@ -19,6 +19,8 @@ from app.routes import plan_items
 from app.schemas.slide_post import SlidePostDraft, SlideRef
 from app.tasks.content_plan_build import DispatchResult
 
+pytestmark = pytest.mark.journey("slide-post-binding-recovery")
+
 
 def _user() -> SimpleNamespace:
     return SimpleNamespace(id=uuid.uuid4())
