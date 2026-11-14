@@ -108,21 +108,6 @@ _SKIP_ALIASES: tuple[str, ...] = (
     "başlık ekleme",
     "başlıksız devam et",
     "gerek yok",
-    # German (KRI-1453). No bare "nein": to "Hast du eine Idee?" it means "I don't
-    # have one" (so write it), like Turkish "yok" above.
-    "überspringen",
-    "überspring",
-    "kein titel",
-    "keinen titel",
-    "kein titel bitte",
-    "ohne titel",
-    "ohne titel weiter",
-    "weiter ohne titel",
-    "lass den titel weg",
-    "ich will keinen titel",
-    "ich möchte keinen titel",
-    "brauche keinen titel",
-    "kein titel nötig",
 )
 
 

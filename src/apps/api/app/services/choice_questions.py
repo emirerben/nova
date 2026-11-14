@@ -1814,23 +1814,6 @@ _NO_TITLE_ALIASES = (
     "başlık ekleme",
     "başlıksız devam et",
     "başlık istemem",
-    # Typed German declines (KRI-1453; matched in every chat language like Turkish).
-    "nein",
-    "nein danke",
-    "kein titel",
-    "keinen titel",
-    "kein titel bitte",
-    "keinen titel bitte",
-    "ohne titel",
-    "ohne titel weiter",
-    "weiter ohne titel",
-    "überspringen",
-    "überspring",
-    "lass den titel weg",
-    "ich will keinen titel",
-    "ich möchte keinen titel",
-    "brauche keinen titel",
-    "kein titel nötig",
 )
 
 
@@ -4449,7 +4432,33 @@ def _ordinal_names(number: int) -> list[str]:
             names += [f"{word} numara", f"numara {word}", f"seçenek {word}", f"{word} numaralı"]
             continue
         names += [word, f"{word} seçenek", f"{word} şık"]
-    return names + _german_ordinal_names(number)
+    return names
+
+
+# KRI-1453: typed German answers, matched by option key at read time. They stay out of the
+# stored question (its aliases are the EN/TR server contract, pinned by test_copy_routing).
+_GERMAN_TITLE_DECLINES = (
+    "kein titel",
+    "keinen titel",
+    "kein titel bitte",
+    "keinen titel bitte",
+    "ohne titel",
+    "ohne titel weiter",
+    "weiter ohne titel",
+    "überspringen",
+    "überspring",
+    "lass den titel weg",
+    "ich will keinen titel",
+    "ich möchte keinen titel",
+    "brauche keinen titel",
+    "kein titel nötig",
+)
+_GERMAN_KEY_ALIASES: dict[str, tuple[str, ...]] = {
+    OPT_NO_TITLE: ("nein", "nein danke", *_GERMAN_TITLE_DECLINES),
+    # creative_copy_decisions.OPT_CANCEL. No bare "nein": to "Hast du eine Idee?" it means
+    # "I don't have one" (so write it), like Turkish "yok".
+    "cancel": _GERMAN_TITLE_DECLINES,
+}
 
 
 def _option_names(
@@ -4464,16 +4473,18 @@ def _option_names(
     """
 
     label = _RECOMMENDED_TAG.sub("", str(option.get("label") or ""))
+    german = _GERMAN_KEY_ALIASES.get(str(option.get("key")), ())
     if names_only:
-        return [label, *(str(a) for a in option.get("aliases") or [])]
+        return [label, *(str(a) for a in option.get("aliases") or []), *german]
     return [
         str(option["key"]),
         label,
         str(number),
         f"option {number}",
         f"number {number}",
-        *(_ordinal_names(number) if ordinals else ()),
+        *(_ordinal_names(number) + _german_ordinal_names(number) if ordinals else ()),
         *(str(a) for a in option.get("aliases") or []),
+        *german,
     ]
 
 

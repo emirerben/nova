@@ -21,10 +21,10 @@ All checks are offline. No paid model call was made.
 |---|---|---|---|
 | Rule-based decision points (115 parity cases) | `tests/parity/test_decision_parity.py` | `tests/parity/test_decision_parity_de.py` | 62 pass, 53 strict-xfail gaps (rows below); 4 closed here (D10, D11, D38, D55) |
 | Model reads the chat ask (32 EN/TR pairs: pacing, music off, photo timing, sound effects, speed, delete, undo, clip exclude/all/order, length, captions, caption language, titles, text position/animation/font/colour, brightness, quote vs voiceover, status, redo, memory, slides) | `tests/evals/parity/test_model_parity.py` (EN/TR cassettes) | `tests/evals/parity/test_model_parity_de.py` + `de` in `tests/fixtures/parity_pairs/pairs.json` | Dry run passes for all 32: German input validates, reaches the prompt, reply-language agents are told to answer in German, canned answer parses. Replay skipped: no German cassette (recording = paid live run, not approved) |
-| Choice card: ordinals ("die zweite", "Nummer 2", "Nr. 2") | `tests/services/test_kri520_choice_turkish.py::test_turkish_ordinals_pick_the_numbered_option` | `tests/parity/test_german_understanding.py::test_german_ordinals_pick_the_numbered_option` | **Fixed** (`choice_questions._german_ordinal_names`) |
+| Choice card: ordinals ("die zweite", "Nummer 2", "Nr. 2") | `tests/services/test_kri520_choice_turkish.py::test_turkish_ordinals_pick_the_numbered_option` | `tests/parity/test_german_understanding.py::test_german_ordinals_pick_the_numbered_option` | **Fixed** (`choice_questions._german_ordinal_names`, read at match time) |
 | Choice card: unclear numbers stay unanswered ("zwei", "egal") | `…::test_unclear_turkish_numbers_are_not_answers` | `…::test_unclear_german_numbers_are_not_answers` | Pass |
-| Choice card: decline the title ("kein Titel", "nein", "überspringen") | `…::test_turkish_no_title_replies_decline_the_title` | `…::test_german_no_title_replies_decline_the_title` | **Fixed** (`_NO_TITLE_ALIASES`) |
-| Creative-copy question: skip, but bare "no" is not a skip | `…::test_creative_copy_skip_accepts_turkish_declines_everywhere` | `…::test_german_copy_skip_but_not_a_bare_no` | **Fixed** (`creative_copy_decisions._SKIP_ALIASES`, no bare "nein") |
+| Choice card: decline the title ("kein Titel", "nein", "überspringen") | `…::test_turkish_no_title_replies_decline_the_title` | `…::test_german_no_title_replies_decline_the_title` | **Fixed** (`choice_questions._GERMAN_KEY_ALIASES`) |
+| Creative-copy question: skip, but bare "no" is not a skip | `…::test_creative_copy_skip_accepts_turkish_declines_everywhere` | `…::test_german_copy_skip_but_not_a_bare_no` | **Fixed** (`choice_questions._GERMAN_KEY_ALIASES["cancel"]`, no bare "nein") |
 | Choice card: hand the choice over ("du entscheidest") | `…::test_turkish_delegation_picks_the_recommended_option`, parity D10/D11 | `…::test_german_delegation_picks_the_recommended_option`, parity D10/D11 | **Fixed** (`_DELEGATION_PHRASES`) |
 | Copilot: typed seconds answer ("10 Sekunden", "2,5 Sekunden") | `tests/test_kri520_copilot_turkish.py::test_duration_answer_reads_turkish_units` | `…::test_duration_answer_reads_german_seconds` | **Fixed** (`edit_copilot._DURATION_ANSWER_RE` unit) |
 | Copilot: vague length, pronouns, negation, media-kind words, stacking | `tests/test_kri520_copilot_turkish.py` (regex twins) | none | Model path (would be new intent regexes) |
@@ -57,7 +57,9 @@ All checks are offline. No paid model call was made.
 - Record German model cassettes (`<id>.de.json`) for the 32 pairs: a paid live run under the
   ledger cap (`--eval-mode=live`, ≤ $2). Needs Yasin's approval of the spend. Until then the
   German model layer is checked for wiring only, not for the decision the model makes.
-- German detection, choice answers, and the other fixed lists only switch on with
-  `KRIA_GERMAN_REPLIES_ENABLED` where they read language (`reply_language`); the closed answer
-  lists, the seconds unit, number words and filler sounds work in every chat language, like
-  their Turkish rows.
+- Only the detector words (`reply_language`) wait for `KRIA_GERMAN_REPLIES_ENABLED` (on in prod
+  since 2026-11-11). The choice answers, seconds unit, number words and filler sounds work in
+  every chat language, like their Turkish rows.
+- German choice answers are matched when a reply arrives and are not written into the stored
+  question, so English and Turkish question payloads stay byte-identical
+  (`tests/kria/test_copy_routing.py`).
