@@ -1206,12 +1206,13 @@ def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
     for row in report["requirements"]:
         if row["disposition"] in APPROVABLE:
             continue
-        name = by_id[row["requirement_id"]].text()
+        req = by_id[row["requirement_id"]]
         reason = str(row["reason"] or "")
         lines.append(
-            f"- {name}"
+            f"- {req.text()}"
             if policy and reason == policy
-            else f"- {name}: {reason} {_pin_next_step(brief, reason)}".rstrip()
+            # KRI-1465: `listed()`, so a requirement that is a sentence never reads ".:".
+            else f"- {req.listed()}: {reason} {_pin_next_step(brief, reason)}".rstrip()
         )
     return "\n".join(lines)
 
