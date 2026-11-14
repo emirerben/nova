@@ -2093,6 +2093,7 @@
     "Moved your text {text} onto its clip": "Deinen Text {text} auf seinen Clip verschoben",
     "Swapped a text animation your iPhone can't play yet for a simple fade-in": "Eine Textanimation, die dein iPhone noch nicht abspielen kann, durch ein einfaches Einblenden ersetzt",
     "Used your title {text} exactly as you wrote it": "Deinen Titel {text} genau so verwendet, wie du ihn geschrieben hast",
-    "Made your text {text} smaller so it fits clearly on screen": "Dein Text {text} ist jetzt kleiner, damit er gut lesbar ins Bild passt"
+    "Made your text {text} smaller so it fits clearly on screen": "Dein Text {text} ist jetzt kleiner, damit er gut lesbar ins Bild passt",
+    "Left out the captions: your iPhone can't draw them yet": "Untertitel weggelassen: dein iPhone kann sie noch nicht darstellen"
   }
 }
