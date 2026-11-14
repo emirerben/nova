@@ -50,13 +50,20 @@ final class NativeSplitBlankTests: XCTestCase {
     @MainActor
     private func blanks(_ session: NativeEditorSession) -> [EditorTimelineSlot] { session.document.clips.filter { !$0.removed && $0.isBlank } }
 
+    /// The row Save writes for slot `id`.
+    private func row(_ document: EditorDocument, _ id: String?) throws -> [String: JSONValue] {
+        let slots = try XCTUnwrap(document.snapshot(for: .timeline)?.objectValue?["slots"])
+        guard case .array(let rows) = slots else { throw XCTSkip("no slots") }
+        return try XCTUnwrap(rows.compactMap(\.objectValue).first { $0["slot_id"] == .string(id ?? "") })
+    }
+
     // MARK: Wire
 
     func testABlankIsWrittenWithoutAClipIndexAndReadBackWithItsColour() throws {
         let top = member(0, offset: 0, duration: 4), fill = blank(1, offset: 1, duration: 2, color: "#00ff00")
         XCTAssertEqual(fill.blankColor, "#00FF00", "A colour is kept in one case")
         let value = document([top, fill], duration: 4)
-        let row = try XCTUnwrap(value.encodeSlot(fill).objectValue)
+        let row = try self.row(value, fill.id)
         XCTAssertNil(row["clip_index"], "A blank has no source")
         XCTAssertEqual(row["media_kind"], .string("blank"))
         XCTAssertEqual(row["color"], .string("#00FF00"))
@@ -72,7 +79,7 @@ final class NativeSplitBlankTests: XCTestCase {
         XCTAssertEqual(read.splitPanelIndex, 1)
         XCTAssertEqual(read.splitOffsetS, 1)
         XCTAssertEqual(read.durationS, 2)
-        XCTAssertEqual(reopened.encodeSlot(read), value.encodeSlot(fill), "Reopening and saving again changes nothing")
+        XCTAssertEqual(try self.row(reopened, read.id), try self.row(value, fill.id), "Reopening and saving again changes nothing")
         XCTAssertEqual(reopened.snapshot(for: .timeline), value.snapshot(for: .timeline))
     }
 

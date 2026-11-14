@@ -2495,10 +2495,13 @@ struct NativeMiniStrip: View {
                     guard frame.maxX >= 0, frame.minX <= size.width else { continue }
                     let visible = frame.intersection(CGRect(origin: .zero, size: size))
                     guard !visible.isNull, visible.width > 0 else { continue }
+                    // A blank block is drawn as its own flat colour; it has no frames to separate.
+                    let blank = clip.slotID.flatMap { id in session.document.clips.first { $0.id == id } }?.blankColor
                     context.fill(
                         Path(roundedRect: visible, cornerRadius: 8),
-                        with: .color(index.isMultiple(of: 2) ? KriaColor.mutedInk : KriaColor.zinc)
+                        with: .color(blank.map(nativeEditorColor) ?? (index.isMultiple(of: 2) ? KriaColor.mutedInk : KriaColor.zinc))
                     )
+                    if blank != nil { continue }
                     let frameCount = max(2, Int(frame.width / 24))
                     for frameIndex in 1..<frameCount {
                         let x = frame.minX + frame.width * CGFloat(frameIndex) / CGFloat(frameCount)

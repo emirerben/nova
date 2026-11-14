@@ -122,6 +122,8 @@ enum NativeEditorRenderError: Error, Equatable {
             return activeSlots.indices.contains(index) ? activeSlots[index] : nil
         }
         for (index, clip) in clips.enumerated() {
+            // A blank block has no source: it rides on its section as `blanks` (below), never as a track clip.
+            if slot(for: clip, index: index)?.isBlank == true { continue }
             guard let sourceIndex = clip.sourceClipIndex, let source = sources[sourceIndex],
                   let fingerprint = source.asset.fingerprint else {
                 throw NativeEditorRenderError.missingSource(clip.sourceClipIndex ?? index)
@@ -1101,9 +1103,14 @@ enum NativeEditorRenderError: Error, Equatable {
             guard let index = document.clips.firstIndex(where: { $0.splitSectionID == section.id }),
                   let window = splitProjection.clipWindows.first(where: { $0.sourceIndex == index }) else { return nil }
             let start = window.start - document.clips[index].splitOffsetS
+            let blanks = document.clips.compactMap { slot -> SplitScreenBlank? in
+                guard !slot.removed, slot.isBlank, slot.splitSectionID == section.id, let panel = slot.splitPanelIndex,
+                      let id = slot.id, let color = slot.blankColor, let length = slot.durationS else { return nil }
+                return SplitScreenBlank(id: id, panelIndex: panel, start: start + slot.splitOffsetS, end: start + slot.splitOffsetS + length, color: color)
+            }
             return SplitScreenSection(id: section.id, start: start, end: start + section.durationS,
                                       panelWeights: section.panelWeights, gutter: section.gutter, backgroundColor: section.backgroundColor,
-                                      collapseEmptyPanels: section.collapseEmptyPanels)
+                                      collapseEmptyPanels: section.collapseEmptyPanels, blanks: blanks)
         }
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
         // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.

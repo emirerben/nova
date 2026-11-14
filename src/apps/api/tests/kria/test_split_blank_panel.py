@@ -549,3 +549,39 @@ def test_an_unrelated_chat_edit_keeps_a_blank_the_ai_cannot_place_itself(monkeyp
         assert [(row["color"], row.get("clip_index")) for row in blanks] == [("#112233", None)]
     finally:
         unbind_sending_build(token)
+
+
+def test_deleting_a_saved_blank_removes_it_and_keeps_the_section(monkeypatch):
+    from app.routes import generative_jobs as gj
+    from app.services.device_render import device_status
+
+    job, _ = authored(monkeypatch, "splitBlankPanel")
+    gj.prepare_editor_commit(job, "original_text", payload())
+    saved = job.assembly_plan["variants"][0]["user_timeline"]["slots"]
+    stored = next(row for row in saved if row.get("media_kind") == "blank")
+
+    clip = next(row for row in saved if row.get("media_kind") != "blank")
+    def wire(row, **changes):
+        known = gj.TimelineSlotEdit.model_fields
+        return gj.TimelineSlotEdit.model_validate(
+            {k: v for k, v in row.items() if k in known and v is not None} | changes
+        )
+
+    gone = wire(stored, removed=True)
+    kept = wire(clip)
+    gj.prepare_editor_commit(
+        job,
+        "original_text",
+        gj.EditorCommitRequest(
+            base_generation=job.assembly_plan["variants"][0]["render_generation_id"],
+            editor_state_version=2,
+            timeline_slots=[kept, gone],
+            split_screen_sections=[section()],
+            deletions=[gj.EditorDeletionRequest(kind="clip", id=stored["slot_id"])],
+        ),
+    )
+    after = job.assembly_plan["variants"][0]["user_timeline"]["slots"]
+    assert not [row for row in after if row.get("media_kind") == "blank" and not row.get("removed")]
+    recipe = device_status(job, "original_text").request.recipe
+    assert recipe.split_screen_sections[0].blanks == []
+    assert "splitBlankPanel" not in recipe.required_capabilities
