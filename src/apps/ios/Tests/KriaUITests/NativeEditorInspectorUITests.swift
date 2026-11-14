@@ -202,14 +202,24 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // Source has 20 s and a fixed section grows with its longest member, so dragging past the 4 s section end extends.
         selectTimelineClip(1, in: app)
         XCTAssertTrue(trailing.isHittable)
-        let extensionDistance = originalWidth
-        XCTAssertLessThan(trailing.frame.midX + extensionDistance, app.frame.maxX - 12)
-        dragHandle(trailing, by: extensionDistance)
+        // The drag must stop short of the timeline's 56 pt edge auto-scroll zone: a finger held there keeps extending
+        // the clip, so the result would depend on hold time (KRI-1467). A short block's 44 pt handle box hangs past
+        // the block end (KRI-1399), so start on the box's inner end, which lies over the block.
+        let pointsPerSecond = originalWidth / 4
+        let shortDuration = try XCTUnwrap(shortRow["duration_s"] as? Double)
+        let extensionStartX = trailing.frame.minX + 4
+        let extensionDistance = min(originalWidth, app.frame.maxX - 56 - 4 - extensionStartX)
+        let expectedExtension = shortDuration + Double(extensionDistance / pointsPerSecond)
+        XCTAssertGreaterThan(expectedExtension, 4.6, "The drag has room to pass the 4 s section end before the edge zone")
+        let extensionStart = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: extensionStartX, dy: trailing.frame.midY))
+        extensionStart.press(forDuration: 0.1, thenDragTo: extensionStart.withOffset(CGVector(dx: extensionDistance, dy: 0)),
+                             withVelocity: 100, thenHoldForDuration: 0.2)
         let extended = try splitSnapshot(app)
         let extendedRow = try extended.row(editedID)
         let extendedDuration = try XCTUnwrap(extendedRow["duration_s"] as? Double)
         XCTAssertGreaterThan(extendedDuration, 4.5, "Dragging past the section end grows the panel clip")
-        XCTAssertLessThanOrEqual(extendedDuration, 6.5)
+        XCTAssertEqual(extendedDuration, expectedExtension, accuracy: 0.15, "The panel clip grows by exactly the drag")
         XCTAssertEqual(try XCTUnwrap(extended.sections.first?["duration_s"] as? Double), extendedDuration, accuracy: 0.001,
             "The fixed section grows to its longest member")
         var expectedExtended = original.rows[0]
