@@ -697,9 +697,9 @@ def _seed_phone_montage_with_visuals(
     the item and the pool row ids by name. ``phone=False`` is an account that
     renders in the cloud, with uploaded clips instead of phone proxies.
     """
-    from tests._prod_profile import apply_prod_profile  # noqa: PLC0415
+    from tests._prod_profile import PRE_CUTOVER_SETTINGS, apply_prod_profile  # noqa: PLC0415
 
-    apply_prod_profile(monkeypatch)
+    apply_prod_profile(monkeypatch, hold_at_default=PRE_CUTOVER_SETTINGS)
     monkeypatch.setattr(settings, "phone_rendering_enabled", phone)
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
     monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [])

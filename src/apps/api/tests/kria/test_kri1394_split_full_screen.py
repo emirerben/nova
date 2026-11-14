@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 
+from app.config import settings
 from app.routes.generative_jobs import EditorCommitRequest
 from app.services import kria_editor_ops as editor
 from tests.evals.request_following.author_action_fixtures import Scenario, _split, build
@@ -71,7 +72,9 @@ def _room(variant: dict[str, Any]) -> None:
     variant["user_timeline"]["split_screen_sections"][0]["duration_s"] = 6.0
 
 
-def test_f1_offered_only_where_the_phone_plans_it(prod_profile) -> None:
+def test_f1_offered_only_where_the_phone_plans_it(
+    prod_profile, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert _run(_op())["snapshot"]["split_full_screen"] == [
         {
             "section_id": "duo",
@@ -104,7 +107,16 @@ def test_f1_offered_only_where_the_phone_plans_it(prod_profile) -> None:
         {"variant": talking},
         {"variant": short},
     ):
-        result = _run(_op(), **kwargs)
+        with monkeypatch.context() as scoped:
+            if kwargs.get("needs_split") is False:
+                # Production has verified splitScreen (live phone-render-config), so a case
+                # about a build without it has to take it away.
+                scoped.setattr(
+                    settings,
+                    "phone_render_verified_features",
+                    [f for f in settings.phone_render_verified_features if f != "splitScreen"],
+                )
+            result = _run(_op(), **kwargs)
         assert "split_full_screen" not in result["snapshot"], kwargs
         reasons = _reasons(result)
         assert reasons[0]["reason"] == "capability_unavailable", kwargs

@@ -17,7 +17,7 @@ def test_captures_are_portable_and_complete():
 
 
 @pytest.mark.parametrize("row", CASES, ids=lambda r: r["case"])
-def test_model_request_outcome(row, prod_profile):
+def test_model_request_outcome(row, prod_profile_pre_cutover):
     if row["case"] == "kria_v2_timeline_speed_up_clip":
         # Historical snapshot lacked field-level capability context. Preserve
         # the observed false proposal; current context has a separate regression.

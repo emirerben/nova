@@ -399,11 +399,15 @@ def test_speaker_background_survives_speech_cut(monkeypatch):
 
 
 def test_the_production_profile_strips_the_lane(monkeypatch, events):
-    """Prod has neither the flag nor the `speakerBackground` token."""
-    from tests._prod_profile import PROD_VERIFIED_FEATURES, apply_prod_profile
+    """A production-shaped device that has not verified the `speakerBackground` token."""
+    from tests._prod_profile import apply_prod_profile
 
     apply_prod_profile(monkeypatch)
-    assert "speakerBackground" not in PROD_VERIFIED_FEATURES
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [f for f in settings.phone_render_verified_features if f != "speakerBackground"],
+    )
     monkeypatch.setattr(settings, "speaker_background_enabled", True)
     asked = _compile(_background())
     assert asked.speaker_background is None

@@ -78,6 +78,8 @@ HELD = "I held this first draft back."
 def _flags(monkeypatch: pytest.MonkeyPatch) -> None:
     apply_prod_profile(monkeypatch)
     monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(settings, "ios_device_only_mode", False)
+    monkeypatch.setattr(settings, "cloud_render_execution_enabled", True)
     monkeypatch.setattr(settings, "kria_approval_readiness_enabled", True)
     monkeypatch.setattr(settings, "kria_choice_questions_enabled", True)
     monkeypatch.setattr(settings, "user_song_montage_enabled", True)

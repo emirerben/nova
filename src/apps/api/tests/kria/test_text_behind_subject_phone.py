@@ -321,10 +321,14 @@ async def test_device_render_poll_tells_an_old_build_to_update(monkeypatch) -> N
 
 
 def test_the_production_profile_strips_the_flag(monkeypatch) -> None:
-    """Prod has neither the flag nor the `behindSubject` token: today's compile is unchanged."""
-    from tests._prod_profile import PROD_VERIFIED_FEATURES, apply_prod_profile
+    """A production-shaped device without the `behindSubject` token: the compile is unchanged."""
+    from tests._prod_profile import apply_prod_profile
 
     apply_prod_profile(monkeypatch)
-    assert "behindSubject" not in PROD_VERIFIED_FEATURES
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [f for f in settings.phone_render_verified_features if f != "behindSubject"],
+    )
     set_client_protocol(21)
     assert _compile(_overlay(behind_subject=True)).behind_subject is None

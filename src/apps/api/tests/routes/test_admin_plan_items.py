@@ -231,6 +231,9 @@ def _pool_asset_row(**overrides) -> SimpleNamespace:
         source_filename="photo.jpg",
         analysis_attempt_count=0,
         created_at=datetime.now(UTC),
+        gcs_path="users/u1/plan/p1/pool/asset.jpg",
+        gcs_generation="777",
+        library_asset_id=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -551,7 +554,13 @@ class TestPlanItemDebugPayload:
         )
         assets = [
             _pool_asset_row(status="failed", error_code="analysis_unreadable"),
-            _pool_asset_row(status="ready", kind="video", duration_s=8.2),
+            _pool_asset_row(
+                status="ready",
+                kind="video",
+                duration_s=8.2,
+                gcs_path="users/u1/library/orig.mp4",
+                library_asset_id=uuid.UUID(int=7),
+            ),
         ]
         jobs = [job]
 
@@ -622,6 +631,11 @@ class TestPlanItemDebugPayload:
         assert len(body["pool_assets"]) == 2
         failed_asset = next(a for a in body["pool_assets"] if a["status"] == "failed")
         assert failed_asset["error_code"] == "analysis_unreadable"
+        assert failed_asset["gcs_path"] == "users/u1/plan/p1/pool/asset.jpg"
+        assert failed_asset["gcs_generation"] == "777"
+        library_asset = next(a for a in body["pool_assets"] if a["kind"] == "video")
+        assert library_asset["gcs_path"] == "users/u1/library/orig.mp4"
+        assert library_asset["library_asset_id"] == str(uuid.UUID(int=7))
 
         # ── jobs ──
         assert len(body["jobs"]) == 1

@@ -3609,6 +3609,10 @@ def _run_v2_visuals_dispatch(
 
     apply_prod_profile(monkeypatch)
     monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [])
+    if not phone_account:
+        # Production runs device-only, where no account renders in the cloud; this case is
+        # the legacy cloud lane the clip-only rule still guards.
+        monkeypatch.setattr(settings, "ios_device_only_mode", False)
     return _run_phone_dispatch(
         monkeypatch,
         edit_format="montage",
