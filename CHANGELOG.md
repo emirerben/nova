@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.202.0] - 2026-11-14
+
+### Changed
+- ci(evidence): pin PR evidence to the patch, not the head commit (KRI-1380) (#2304) <!-- release-pr: 2304 -->
+
 ## [0.88.201.0] - 2026-11-14
 
 ### Changed
