@@ -232,5 +232,6 @@
     "case": "texts out of sync with their clips -> realign_labels",
     "lane": "kria_v2_text",
     "reply_contains": []
-  }
+  },
+  "prompt_sha": "unpinned"
 }

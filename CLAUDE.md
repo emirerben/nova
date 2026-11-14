@@ -89,7 +89,7 @@ Use `make local-render` for byte-equivalent output before merging a render-affec
 - Backend lint: `cd src/apps/api && ruff check . && ruff format --check .`
 - Frontend (only for an explicitly requested web change): `cd src/apps/web && npm run lint && npx tsc --noEmit && npm test`
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
-- Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain WARN. Run before every PR.
+- Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain BLOCK (3rd fix PR needs a failure-mode list). Run before every PR.
 - Reliability (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; evidence and scratch-DB steps: `docs/runbooks/pr-acceptance-checklist.md`.
 
 ## Testing rules
@@ -225,7 +225,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (replay only; needs `ANTHROPIC_API_KEY`). Paid live Gemini requires an approved development-ledger run (hard cap $2, no judge); see `tests/evals/README.md`.
-- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump `prompt_version` (auto fingerprints, never bump: Main Creator, brief extractor, persona, content plan and the others listed in `docs/pipelines/prompt-version-history.md`); free replay evals must pass (live/judge optional, paid). Enums: `prompt_vocab.py` tokens; guard `test_prompt_vocab_drift.py`.
+- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump `prompt_version` (auto fingerprints, never bump: Main Creator, brief extractor, persona, content plan and the others listed in `docs/pipelines/prompt-version-history.md`); free replay evals must pass; a fixture whose prompt changed fails replay until re-recorded live (`tests/evals/README.md` "Fixture pins"; judge optional, paid). Enums: `prompt_vocab.py` tokens; guard `test_prompt_vocab_drift.py`.
 - **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh`. See `tests/evals/README.md` for the full prompt-iteration loop.
 - **Layer-2 cache-bump rule:** any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts must bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py`. Guard: `.github/workflows/layer2-cache-guard.yml`. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.
 - See `docs/pipelines/layer2-text-overlay.md` for Layer-2 stage details, OCR backend divergence (local Apple Vision ≠ prod Cloud Vision), and the template_text agent rubric.

@@ -21,9 +21,24 @@
       }
     ],
     "items": [
-      {"item_id": "item_a", "theme": "Skincare routine", "idea": "Your full nighttime skincare steps", "filming_suggestion": "Bathroom mirror close-ups"},
-      {"item_id": "item_b", "theme": "Workout split", "idea": "Explain your weekly push-pull-legs split", "filming_suggestion": "Gym b-roll with voiceover"},
-      {"item_id": "item_c", "theme": "Recipe", "idea": "A one-pan dinner under 500 calories", "filming_suggestion": "Overhead cooking shot"}
+      {
+        "item_id": "item_a",
+        "theme": "Skincare routine",
+        "idea": "Your full nighttime skincare steps",
+        "filming_suggestion": "Bathroom mirror close-ups"
+      },
+      {
+        "item_id": "item_b",
+        "theme": "Workout split",
+        "idea": "Explain your weekly push-pull-legs split",
+        "filming_suggestion": "Gym b-roll with voiceover"
+      },
+      {
+        "item_id": "item_c",
+        "theme": "Recipe",
+        "idea": "A one-pan dinner under 500 calories",
+        "filming_suggestion": "Overhead cooking shot"
+      }
     ],
     "max_assignments": 2
   },
@@ -34,5 +49,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "no good match — a ceiling fan and a parking lot serve none of the skincare/workout/recipe items; the honest answer is an empty list, not a forced match"
-  }
+  },
+  "prompt_sha": "aca4371fd0c71938"
 }

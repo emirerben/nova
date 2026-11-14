@@ -3,16 +3,66 @@
   "prompt_version": "2026-07-18.2",
   "input": {
     "words": [
-      {"word_id": "w000001", "text": "Selocanlar", "start_s": 1.24, "end_s": 1.82},
-      {"word_id": "w000002", "text": "Çelik", "start_s": 1.82, "end_s": 2.1},
-      {"word_id": "w000003", "text": "Çeliknaz", "start_s": 2.1, "end_s": 2.7},
-      {"word_id": "w000004", "text": "Pınar", "start_s": 3.57, "end_s": 3.9},
-      {"word_id": "w000005", "text": "Beyaz", "start_s": 3.9, "end_s": 4.3},
-      {"word_id": "w000006", "text": "Selpak", "start_s": 5.32, "end_s": 5.7},
-      {"word_id": "w000007", "text": "fil", "start_s": 5.7, "end_s": 6.0},
-      {"word_id": "w000008", "text": "Coca", "start_s": 6.48, "end_s": 6.75},
-      {"word_id": "w000009", "text": "Cola", "start_s": 6.75, "end_s": 7.0},
-      {"word_id": "w000010", "text": "ayıcık", "start_s": 7.0, "end_s": 7.45}
+      {
+        "word_id": "w000001",
+        "text": "Selocanlar",
+        "start_s": 1.24,
+        "end_s": 1.82
+      },
+      {
+        "word_id": "w000002",
+        "text": "Çelik",
+        "start_s": 1.82,
+        "end_s": 2.1
+      },
+      {
+        "word_id": "w000003",
+        "text": "Çeliknaz",
+        "start_s": 2.1,
+        "end_s": 2.7
+      },
+      {
+        "word_id": "w000004",
+        "text": "Pınar",
+        "start_s": 3.57,
+        "end_s": 3.9
+      },
+      {
+        "word_id": "w000005",
+        "text": "Beyaz",
+        "start_s": 3.9,
+        "end_s": 4.3
+      },
+      {
+        "word_id": "w000006",
+        "text": "Selpak",
+        "start_s": 5.32,
+        "end_s": 5.7
+      },
+      {
+        "word_id": "w000007",
+        "text": "fil",
+        "start_s": 5.7,
+        "end_s": 6.0
+      },
+      {
+        "word_id": "w000008",
+        "text": "Coca",
+        "start_s": 6.48,
+        "end_s": 6.75
+      },
+      {
+        "word_id": "w000009",
+        "text": "Cola",
+        "start_s": 6.75,
+        "end_s": 7.0
+      },
+      {
+        "word_id": "w000010",
+        "text": "ayıcık",
+        "start_s": 7.0,
+        "end_s": 7.45
+      }
     ],
     "candidates": [
       {
@@ -40,11 +90,41 @@
       }
     ],
     "assets": [
-      {"asset_id": "asset_selocan", "kind": "image", "subject": "Selocan mascot family", "filename": "selocan.png", "user_context": "Turkcell's old Selocan characters mentioned in the opening list."},
-      {"asset_id": "asset_robots", "kind": "image", "subject": "Çelik and Çeliknaz robot couple", "filename": "robots_wedding.png", "user_context": "Çelik Çeliknaz nostalgia reference, not a generic robot wedding."},
-      {"asset_id": "asset_pinar_sheep", "kind": "image", "subject": "Pınar Beyaz sheep mascot", "filename": "pinar_beyaz_sheep.png", "user_context": "Pınar Beyaz mascot from Turkish grocery campaigns."},
-      {"asset_id": "asset_selpak_elephant", "kind": "image", "subject": "Selpak elephant mascot", "filename": "selpak_elephant.png", "user_context": "Selpak elephant brand mascot named in the transcript."},
-      {"asset_id": "asset_cocacola_bear", "kind": "image", "subject": "Coca Cola polar bear", "filename": "cocacola_bear.png", "user_context": "Coca-Cola polar bear example at the end of the hook."}
+      {
+        "asset_id": "asset_selocan",
+        "kind": "image",
+        "subject": "Selocan mascot family",
+        "filename": "selocan.png",
+        "user_context": "Turkcell's old Selocan characters mentioned in the opening list."
+      },
+      {
+        "asset_id": "asset_robots",
+        "kind": "image",
+        "subject": "Çelik and Çeliknaz robot couple",
+        "filename": "robots_wedding.png",
+        "user_context": "Çelik Çeliknaz nostalgia reference, not a generic robot wedding."
+      },
+      {
+        "asset_id": "asset_pinar_sheep",
+        "kind": "image",
+        "subject": "Pınar Beyaz sheep mascot",
+        "filename": "pinar_beyaz_sheep.png",
+        "user_context": "Pınar Beyaz mascot from Turkish grocery campaigns."
+      },
+      {
+        "asset_id": "asset_selpak_elephant",
+        "kind": "image",
+        "subject": "Selpak elephant mascot",
+        "filename": "selpak_elephant.png",
+        "user_context": "Selpak elephant brand mascot named in the transcript."
+      },
+      {
+        "asset_id": "asset_cocacola_bear",
+        "kind": "image",
+        "subject": "Coca Cola polar bear",
+        "filename": "cocacola_bear.png",
+        "user_context": "Coca-Cola polar bear example at the end of the hook."
+      }
     ],
     "preset_id": "cigdem",
     "preset_version": "v1",
@@ -76,7 +156,10 @@
           "asset_selpak_elephant": "w000006",
           "asset_cocacola_bear": "w000008"
         },
-        "sfx_roles": ["visual_enter_soft", "badge_enter"],
+        "sfx_roles": [
+          "visual_enter_soft",
+          "badge_enter"
+        ],
         "boundary_token": null,
         "rationale": "Accumulate each named mascot on its spoken mention; use clean non-vocal entrances only."
       }
@@ -85,5 +168,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "notes": "Pins the Çiğdem intro contract: word-level asset anchors, creator-authored asset context in input, candidate-derived sequence number, unknown asset rejection, and non-vocal SFX allowlist."
-  }
+  },
+  "prompt_sha": "4a7bbcf80eaab832"
 }

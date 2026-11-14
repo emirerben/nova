@@ -132,7 +132,12 @@ from app.kria.narration_notes import (
 from app.kria.order_replacement import OrderReplacementProof
 from app.kria.paid_call_scope import paid_call_request_id
 from app.kria.removed_messages import is_removed, removed_turn_ids
-from app.kria.reply_language import current_reply_language, is_client_stock_message, say
+from app.kria.reply_language import (
+    asks_for_video_words,
+    current_reply_language,
+    is_client_stock_message,
+    say,
+)
 from app.kria.strategy_policy import (
     RefusedStrategy,
     check_strategy_for_runtime_v2,
@@ -1305,6 +1310,7 @@ def adapt_creator_action(
             mode="respond",
             turn_value="question",
             response=action.question,
+            asks_video_text=asks_for_video_words(action.reason_code),
         )
     if isinstance(action, DraftVoiceoverScript):
         # KRI-815: planned by `_plan_voiceover_script`; never a strategy or a draft.

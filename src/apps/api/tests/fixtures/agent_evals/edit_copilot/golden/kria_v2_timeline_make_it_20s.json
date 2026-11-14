@@ -103,5 +103,6 @@
     "source": "hand_authored_golden",
     "case": "EN whole-edit retarget is one op",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

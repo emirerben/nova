@@ -801,5 +801,6 @@
     "source": "Synthetic reproduction of narrative quote treated as mandatory on-screen caption; media durations and word timings are generated test data.",
     "case": "Reported speech in a narrated story is not a requested on-screen caption.",
     "expected_title": "A landmark unfolds"
-  }
+  },
+  "prompt_sha": "454fedf8f910be36"
 }

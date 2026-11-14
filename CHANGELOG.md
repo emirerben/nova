@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.226.0] - 2026-11-14
+
+### Changed
+- test(evals): pin agent fixtures to the prompt they were recorded for (KRI-1428) (#2350) <!-- release-pr: 2350 -->
+
+## [0.88.225.0] - 2026-11-14
+
+### Changed
+- fix(kria): readiness's "simpler version?" hold carries its card and yes drafts it (KRI-1447) (#2342) <!-- release-pr: 2342 -->
+
+## [0.88.224.0] - 2026-11-14
+
+### Changed
+- fix(kria): pasted lyrics no longer move the chat language (KRI-1448) (#2343) <!-- release-pr: 2343 -->
+
+## [0.88.223.0] - 2026-11-14
+
+### Changed
+- ci: block the third fix PR on a ticket without a failure-mode list (KRI-1383) (#2302) <!-- release-pr: 2302 -->
+
+## [0.88.222.0] - 2026-11-14
+
+### Changed
+- feat(ios): a picked clip appears at once and uploads behind it (KRI-1419) (#2336) <!-- release-pr: 2336 -->
+
+## [0.88.221.0] - 2026-11-14
+
+### Changed
+- chore(agents): delete four dead agents with no production caller (KRI-1428) (#2335) <!-- release-pr: 2335 -->
+
 ## [0.88.220.0] - 2026-11-14
 
 ### Changed

@@ -40,5 +40,6 @@
     "expect_any": true,
     "contract": "Contract: 'remaining clips (excluding the talk to camera video)' include intent + chronological order intent.",
     "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

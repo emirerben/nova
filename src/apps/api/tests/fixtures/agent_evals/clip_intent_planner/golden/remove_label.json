@@ -27,11 +27,18 @@
     "expect_intents": [
       {
         "op": "group",
-        "source_quote_keywords": ["group", "pub"]
+        "source_quote_keywords": [
+          "group",
+          "pub"
+        ]
       }
     ],
     "expect_any": true,
-    "expect_absent_ops": ["label", "exclude"],
+    "expect_absent_ops": [
+      "label",
+      "exclude"
+    ],
     "case": "Decoy (KRI-667): 'Remove the sport labels' removes text, never clips: no label and no exclude (clip_exclusions on); the pub group stays."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

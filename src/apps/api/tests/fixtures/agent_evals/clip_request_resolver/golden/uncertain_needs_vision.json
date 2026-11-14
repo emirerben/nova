@@ -73,5 +73,6 @@
     "source": "hand_authored_golden",
     "expect_needs_vision_nonempty": true,
     "case": "Every clip's record is too vague to name a sport (no record_span possible). The resolver must route ALL of them to needs_vision with zero guessed assignments -- never a fabricated label."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

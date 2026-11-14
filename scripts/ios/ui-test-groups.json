@@ -444,7 +444,7 @@
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testOneDragIsOneUndoStep",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testDragAndPinchPastTheLimitsSaveAFrameInRange",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable",
-      "KriaUITests/NativeEditorInspectorUITests/testDelayedPanelImportKeepsCapturedOwnerUndoAndReopen",
+      "KriaUITests/NativeEditorInspectorUITests/testDelayedPanelImportShowsAtOnceAndSavesTheAdmittedIndex",
       "KriaUITests/NativeEditorInspectorUITests/testOrdinaryFootageCanDuplicateBeforeCreatingSplitScreen",
       "KriaUITests/NativeEditorInspectorUITests/testSplitPanelHandleExtensionGrowsSectionAndClampsAtMinimumWithoutMovingPeers",
       "KriaUITests/NativeEditorInspectorUITests/testSplitPanelReplacesVideoWithUnusedPhotoAndKeepsCrop",

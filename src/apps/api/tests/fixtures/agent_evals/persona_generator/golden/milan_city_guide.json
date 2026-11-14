@@ -38,5 +38,6 @@
   "meta": {
     "source": "live_capture_2026-05-30b",
     "case": "market-trained: city-lifestyle questionnaire -> persona lands in the curated city-guide lane (banks-on); pillars (5) + sample_topics within bounds, all fields non-empty"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

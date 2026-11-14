@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "5760022c785b7db8",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "tender", "nostalgic"],
+          "vibe_tags": [
+            "wistful",
+            "tender",
+            "nostalgic"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "bittersweet memory",
@@ -71,7 +76,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "tender", "nostalgic"],
+          "vibe_tags": [
+            "wistful",
+            "tender",
+            "nostalgic"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "homesick longing",
@@ -89,7 +98,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "reverent", "tender"],
+          "vibe_tags": [
+            "sweeping",
+            "reverent",
+            "tender"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "quiet awe",
@@ -107,7 +120,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["upbeat", "glossy", "hopeful"],
+          "vibe_tags": [
+            "upbeat",
+            "glossy",
+            "hopeful"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "open-road optimism",
@@ -125,7 +142,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "punchy", "confident"],
+          "vibe_tags": [
+            "swagger",
+            "punchy",
+            "confident"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "street attitude",
@@ -138,60 +159,55 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_acoustic_wistful_a\", \"score\": 8.6, \"rationale\": \"Wistful tender acoustic with warm golden-hour grade matches the beach-sunset anniversary clips exactly; slot count of 7 fits the 4 long clips well.\", \"predicted_strengths\": [\"warm golden hour grade matches the footage\", \"slow pacing supports 6-7s handheld clips\", \"sentimental copy_tone reads against 'five years today' hook\"]}, {\"track_id\": \"track_cinematic_tender\", \"score\": 8.3, \"rationale\": \"Cinematic tender with reverent mood lifts the silhouette and hand-brushing clips into a more sweeping emotional register — distinct enough from the acoustic top pick that it earns the second slot over the near-identical acoustic alternative.\", \"predicted_strengths\": [\"distinct vibe from top pick — adds genuine top-K variety\", \"sweeping mood serves the silhouette clip\", \"medium pacing on 6 slots fits 4 long clips\"]}, {\"track_id\": \"track_acoustic_wistful_b\", \"score\": 8.2, \"rationale\": \"Scores within 0.5 of the top pick on identical labels (same vibe_tags, energy, pacing, copy_tone, grade) — ranked below cinematic on the diversity tiebreaker because two near-identical sentimental ballads in top-K is a worse outcome than one ballad + one cinematic.\", \"predicted_strengths\": [\"essentially interchangeable with top pick — useful fallback\", \"same golden-hour grade match\", \"works if user wants two acoustic variants for A/B\"]}, {\"track_id\": \"track_pop_radio\", \"score\": 5.5, \"rationale\": \"Hopeful upbeat pop reframes the anniversary as celebration rather than memory — viable variant but the high energy fights the slow-paced beach-walk footage.\", \"predicted_strengths\": [\"warm grade still aligns\", \"hopeful mood is a plausible alternate framing\"]}, {\"track_id\": \"track_hiphop_swagger\", \"score\": 1.8, \"rationale\": \"Swagger and street attitude are the wrong tonal universe for an intimate beach anniversary; saturated street grade fights the soft golden-hour clips.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_cinematic_tender\",\n      \"score\": 9.5,\n      \"rationale\": \"This track's sweeping, tender mood and cinematic profile perfectly align with the golden hour, silhouette shots and emotional storytelling of the clips.\",\n      \"predicted_strengths\": [\n        \"cinematic emotional arc\",\n        \"matches visual tone and pace\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_wistful_a\",\n      \"score\": 8.8,\n      \"rationale\": \"The wistful, tender acoustic sound and slow pacing beautifully complement the intimate couple moments and golden hour visuals.\",\n      \"predicted_strengths\": [\n        \"intimate and sentimental mood\",\n        \"low energy and slow pacing match\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_wistful_b\",\n      \"score\": 8.5,\n      \"rationale\": \"This track offers a similar tender, nostalgic vibe to track_acoustic_wistful_a, fitting the golden hour and candid couple scenes well.\",\n      \"predicted_strengths\": [\n        \"tender and nostalgic vibe\",\n        \"suitable for candid, sentimental moments\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_radio\",\n      \"score\": 4.0,\n      \"rationale\": \"The upbeat, high-energy vibe of this track clashes with the slow, sentimental nature and low energy of the couple's clips.\",\n      \"predicted_strengths\": [\n        \"hopeful underlying tone\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_swagger\",\n      \"score\": 1.5,\n      \"rationale\": \"The high-energy, punchy hip-hop vibe and fast pacing are completely mismatched with the romantic, slow-paced golden hour clips.\",\n      \"predicted_strengths\": []\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
-        "track_id": "track_acoustic_wistful_a",
-        "score": 8.6,
-        "rationale": "Wistful tender acoustic with warm golden-hour grade matches the beach-sunset anniversary clips exactly; slot count of 7 fits the 4 long clips well.",
+        "track_id": "track_cinematic_tender",
+        "score": 9.5,
+        "rationale": "This track's sweeping, tender mood and cinematic profile perfectly align with the golden hour, silhouette shots and emotional storytelling of the clips.",
         "predicted_strengths": [
-          "warm golden hour grade matches the footage",
-          "slow pacing supports 6-7s handheld clips",
-          "sentimental copy_tone reads against 'five years today' hook"
+          "cinematic emotional arc",
+          "matches visual tone and pace"
         ]
       },
       {
-        "track_id": "track_cinematic_tender",
-        "score": 8.3,
-        "rationale": "Cinematic tender with reverent mood lifts the silhouette and hand-brushing clips into a more sweeping emotional register — distinct enough from the acoustic top pick that it earns the second slot over the near-identical acoustic alternative.",
+        "track_id": "track_acoustic_wistful_a",
+        "score": 8.8,
+        "rationale": "The wistful, tender acoustic sound and slow pacing beautifully complement the intimate couple moments and golden hour visuals.",
         "predicted_strengths": [
-          "distinct vibe from top pick — adds genuine top-K variety",
-          "sweeping mood serves the silhouette clip",
-          "medium pacing on 6 slots fits 4 long clips"
+          "intimate and sentimental mood",
+          "low energy and slow pacing match"
         ]
       },
       {
         "track_id": "track_acoustic_wistful_b",
-        "score": 8.2,
-        "rationale": "Scores within 0.5 of the top pick on identical labels (same vibe_tags, energy, pacing, copy_tone, grade) — ranked below cinematic on the diversity tiebreaker because two near-identical sentimental ballads in top-K is a worse outcome than one ballad + one cinematic.",
+        "score": 8.5,
+        "rationale": "This track offers a similar tender, nostalgic vibe to track_acoustic_wistful_a, fitting the golden hour and candid couple scenes well.",
         "predicted_strengths": [
-          "essentially interchangeable with top pick — useful fallback",
-          "same golden-hour grade match",
-          "works if user wants two acoustic variants for A/B"
+          "tender and nostalgic vibe",
+          "suitable for candid, sentimental moments"
         ]
       },
       {
         "track_id": "track_pop_radio",
-        "score": 5.5,
-        "rationale": "Hopeful upbeat pop reframes the anniversary as celebration rather than memory — viable variant but the high energy fights the slow-paced beach-walk footage.",
+        "score": 4.0,
+        "rationale": "The upbeat, high-energy vibe of this track clashes with the slow, sentimental nature and low energy of the couple's clips.",
         "predicted_strengths": [
-          "warm grade still aligns",
-          "hopeful mood is a plausible alternate framing"
+          "hopeful underlying tone"
         ]
       },
       {
         "track_id": "track_hiphop_swagger",
-        "score": 1.8,
-        "rationale": "Swagger and street attitude are the wrong tonal universe for an intimate beach anniversary; saturated street grade fights the soft golden-hour clips.",
-        "predicted_strengths": [
-          "no real fit"
-        ]
+        "score": 1.5,
+        "rationale": "The high-energy, punchy hip-hop vibe and fast pacing are completely mismatched with the romantic, slow-paced golden hour clips.",
+        "predicted_strengths": []
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "tied vibes — two acoustic tracks within 0.4 points; cinematic gets rank 2 by diversity tiebreak (case b)"
+    "source": "provider_smoke_capture",
+    "case": "tied vibes — two acoustic tracks within 0.4 points; cinematic gets rank 2 by diversity tiebreak (case b)",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

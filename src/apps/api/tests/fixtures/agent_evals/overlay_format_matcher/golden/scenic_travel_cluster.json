@@ -23,10 +23,13 @@
     "highlight_color": "#FFD24A",
     "text_anchor": "center",
     "layout": "cluster",
-    "matched_example_ids": ["travel-scenic-cluster-01"]
+    "matched_example_ids": [
+      "travel-scenic-cluster-01"
+    ]
   },
   "meta": {
     "source": "hand_authored_golden",
     "case": "calm cinematic travel montage → editorial word-cluster layout with fade-in (never karaoke), matched the cluster exemplar"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

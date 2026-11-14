@@ -123,5 +123,6 @@
     "source": "hand_authored_golden",
     "case": "one clip, explicit angle: 'second' is slot index 1, right is positive (clockwise)",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }
