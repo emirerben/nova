@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.225.0] - 2026-11-14
+
+### Changed
+- fix(kria): readiness's "simpler version?" hold carries its card and yes drafts it (KRI-1447) (#2342) <!-- release-pr: 2342 -->
+
 ## [0.88.224.0] - 2026-11-14
 
 ### Changed
