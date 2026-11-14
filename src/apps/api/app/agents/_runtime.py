@@ -41,6 +41,7 @@ from typing import Any, ClassVar, Generic, Protocol, TypeVar
 import structlog
 from pydantic import BaseModel, ValidationError
 
+from app.agents._tool_calls import ToolRequest
 from app.agents.model_registry import model_spec, provider_of, supported_effort
 
 log = structlog.get_logger()
@@ -471,6 +472,7 @@ class ModelClient:
         thinking_level: str | None = None,
         timeout_s: float = 30.0,
         response_schema: dict[str, Any] | None = None,
+        tool_request: ToolRequest | None = None,
     ) -> ModelInvocation:
         raise NotImplementedError
 
@@ -530,6 +532,13 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 continue
             if value > 0:
                 return value
+        return None
+
+    def tool_request(self, input: InputT) -> ToolRequest | None:  # noqa: A002, ARG002
+        """Tools, system block and earlier rounds for a typed tool-calling agent (KRI-1393).
+
+        None (the default): the prompt is the whole request and the model answers in text.
+        """
         return None
 
     def required_fields(self) -> list[str]:
@@ -892,6 +901,10 @@ class Agent(ABC, Generic[InputT, OutputT]):
         stats: _RunStats,
     ) -> OutputT:
         prompt = self.render_prompt(input)
+        tool_request = self.tool_request(input)
+        # The system block, tools and earlier rounds a tool-calling request sends with the
+        # prompt: priced and keyed with it.
+        tool_text = tool_request.accounting_text() if tool_request is not None else ""
         media = self.media_uri(input)
         mime = self.media_mime(input) if media else None
         # KRI-542: lowered to the lightest rung for the rest of the loop after a MAX_TOKENS call.
@@ -939,6 +952,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 estimated_cost = estimate_call_cost_usd(
                     model=model,
                     prompt=prompt
+                    + tool_text
                     + (json.dumps(self.spec.response_schema) if self.spec.response_schema else ""),
                     max_output_tokens=provider_max_output_tokens,
                     media_mime=mime,
@@ -949,7 +963,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         idempotency_key=logical_call_id(
                             feature=self.spec.name,
                             model=model,
-                            prompt=prompt,
+                            prompt=prompt + tool_text,
                             ctx=ctx,
                             attempt=stats.attempts,
                             media_identity=media,
@@ -1001,6 +1015,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 )
                 if self.spec.response_schema is not None:
                     invoke_kwargs["response_schema"] = self.spec.response_schema
+                if tool_request is not None:
+                    invoke_kwargs["tool_request"] = tool_request
                 # A publisher may mint a per-attempt closure. That closure
                 # carries an attempt generation so late chunks from a timed-out
                 # executor thread cannot update a replacement attempt.

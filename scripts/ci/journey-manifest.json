@@ -3876,6 +3876,19 @@
         "src/apps/api/prompts/edit_copilot_ops/video_shape.txt",
         "src/apps/api/tests/kria/test_kri1394_chat_ops.py"
       ]
+    },
+    {
+      "id": "kri-1393-copilot-tool-calls",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_copilot_tool_calls.py tests/agents/test_copilot_tools.py tests/agents/test_editor_ops_v2.py tests/kria/test_copilot_partial_apply_repair.py tests/evals/request_following/test_runner.py",
+      "paths": [
+        "src/apps/api/app/agents/copilot_tools.py",
+        "src/apps/api/app/agents/_tool_calls.py",
+        "src/apps/api/prompts/edit_copilot_tools.txt",
+        "src/apps/api/tests/evals/request_following/compare_tools.py",
+        "src/apps/api/tests/kria/test_copilot_tool_calls.py",
+        "src/apps/api/tests/agents/test_copilot_tools.py"
+      ]
     }
   ]
 }

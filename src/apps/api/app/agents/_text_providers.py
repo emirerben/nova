@@ -8,6 +8,7 @@ summary never enters ``raw_text``.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -23,6 +24,13 @@ from app.agents._runtime import (
     ProviderOutcomeUnknownError,
     TerminalError,
     TransientError,
+)
+from app.agents._tool_calls import (
+    ToolAnswer,
+    ToolCall,
+    ToolRequest,
+    described_nesting,
+    parse_arguments,
 )
 from app.agents.model_registry import Provider, exact_spec
 from app.config import settings
@@ -124,8 +132,10 @@ class OpenAITextClient:
         timeout_s=30.0,
         response_schema=None,
         thought_summary_callback=None,
+        tool_request: ToolRequest | None = None,
     ):
         _preflight(model, "openai", media_uri, media_mime, thinking_budget, thinking_level)
+        _tools_preflight(model, tool_request, response_schema)
         reasoning = {"effort": thinking_level or "medium"}
         if thought_summary_callback is not None:
             # Sol returned no summary parts for "auto" or "detailed" in 4 of 4 Main Creator calls
@@ -139,7 +149,9 @@ class OpenAITextClient:
             max_output_tokens=max_output_tokens or 8192,
             timeout=timeout_s,
         )
-        if response_schema is not None:
+        if tool_request is not None:
+            kwargs.update(_openai_tool_kwargs(tool_request, prompt))
+        elif response_schema is not None:
             kwargs["text"] = {
                 "format": {
                     "type": "json_schema",
@@ -199,7 +211,11 @@ class OpenAITextClient:
                 else "incomplete"
             )
             return ModelInvocation(
-                raw_text=response.output_text,
+                raw_text=(
+                    _openai_tool_answer(response).envelope()
+                    if tool_request is not None
+                    else response.output_text
+                ),
                 tokens_in=usage.input_tokens,
                 tokens_out=max(0, usage.output_tokens - thoughts),
                 tokens_thoughts=thoughts,
@@ -240,8 +256,10 @@ class AnthropicTextClient:
         timeout_s=30.0,
         response_schema=None,
         thought_summary_callback=None,
+        tool_request: ToolRequest | None = None,
     ):
         _preflight(model, "anthropic", media_uri, media_mime, thinking_budget, thinking_level)
+        _tools_preflight(model, tool_request, response_schema)
         config = {"effort": thinking_level or "high"}
         if response_schema is not None:
             config["format"] = {"type": "json_schema", "schema": response_schema}
@@ -255,6 +273,8 @@ class AnthropicTextClient:
             thinking={"type": "adaptive"},
             output_config=config,
         )
+        if tool_request is not None:
+            kwargs.update(_anthropic_tool_kwargs(tool_request, prompt))
         client = self._get().with_options(max_retries=0)
 
         def consume(stop: Event):
@@ -298,10 +318,15 @@ class AnthropicTextClient:
                 if reason == "refusal"
                 else "completed"
                 if reason in ("end_turn", "stop_sequence")
+                or (reason == "tool_use" and tool_request is not None)
                 else "incomplete"
             )
             return ModelInvocation(
-                raw_text="".join(block.text for block in response.content if block.type == "text"),
+                raw_text=(
+                    _anthropic_tool_answer(response).envelope()
+                    if tool_request is not None
+                    else "".join(block.text for block in response.content if block.type == "text")
+                ),
                 tokens_in=usage.input_tokens + writes + reads,
                 tokens_out=max(0, usage.output_tokens - thoughts),
                 tokens_thoughts=thoughts,
@@ -319,3 +344,159 @@ class AnthropicTextClient:
             raise
         except Exception as exc:
             raise _translate(exc) from exc
+
+
+# ── Tool calling (KRI-1393) ────────────────────────────────────────────────────
+
+
+def _tools_preflight(model, tool_request, response_schema) -> None:
+    if tool_request is None:
+        return
+    spec = exact_spec(model)
+    if spec is None or not spec.supports_tools:
+        raise TerminalError("model does not take tool calls")
+    if response_schema is not None:
+        raise TerminalError("a tool-calling request has no response schema")
+
+
+def _openai_tool_kwargs(request: ToolRequest, prompt: str) -> dict[str, Any]:
+    """Instructions + the user turn + earlier rounds. The tool schemas stay non-strict: strict
+    mode needs every property required, and the agent's parser stays the validator."""
+    items: list[Any] = [{"role": "user", "content": prompt}]
+    for exchange in request.history:
+        answer = exchange.answer
+        if answer.provider == "openai" and answer.continuation:
+            items.extend(answer.continuation)
+        else:
+            items.extend(
+                {
+                    "type": "function_call",
+                    "call_id": call.id,
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments or {}, ensure_ascii=False),
+                }
+                for call in answer.calls
+            )
+        items.extend(
+            {"type": "function_call_output", "call_id": result.call_id, "output": result.content}
+            for result in exchange.results
+        )
+    return {
+        "instructions": request.system,
+        "input": items,
+        "tools": [
+            {
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": described_nesting(tool.parameters),
+                "strict": False,
+            }
+            for tool in request.tools
+        ],
+        "tool_choice": "required",
+        "parallel_tool_calls": True,
+        "prompt_cache_key": request.cache_key or None,
+        # With store=False, a later round needs the reasoning items back as encrypted content.
+        "include": ["reasoning.encrypted_content"],
+    }
+
+
+def _openai_tool_answer(response: Any) -> ToolAnswer:
+    calls: list[ToolCall] = []
+    continuation: list[dict[str, Any]] = []
+    for item in response.output:
+        if getattr(item, "type", "") == "function_call":
+            calls.append(
+                ToolCall(id=item.call_id, name=item.name, arguments=parse_arguments(item.arguments))
+            )
+        if getattr(item, "type", "") in ("reasoning", "function_call", "message"):
+            continuation.append(item.model_dump(mode="json", exclude_none=True))
+    return ToolAnswer(
+        provider="openai",
+        calls=calls,
+        text=response.output_text or "",
+        continuation=continuation,
+    )
+
+
+# Block fields the Messages API takes back, per block type. A response block can carry fields a
+# request block does not accept.
+_ANTHROPIC_REPLAY_FIELDS = {
+    "thinking": ("type", "thinking", "signature"),
+    "redacted_thinking": ("type", "data"),
+    "text": ("type", "text"),
+    "tool_use": ("type", "id", "name", "input"),
+}
+
+
+def _anthropic_tool_kwargs(request: ToolRequest, prompt: str) -> dict[str, Any]:
+    """The static system block carries the cache breakpoint: tools and system are the cached
+    prefix, the per-turn user message follows it. Forced tool choice is refused with thinking on
+    (Sonnet 5.5), so the choice is auto and the prompt asks for the calls."""
+    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    for exchange in request.history:
+        answer = exchange.answer
+        if answer.provider == "anthropic" and answer.continuation:
+            content = answer.continuation
+        else:
+            content = [
+                {
+                    "type": "tool_use",
+                    "id": call.id,
+                    "name": call.name,
+                    "input": call.arguments or {},
+                }
+                for call in answer.calls
+            ]
+        messages.append({"role": "assistant", "content": content})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": result.call_id,
+                        "content": result.content,
+                        "is_error": result.is_error,
+                    }
+                    for result in exchange.results
+                ],
+            }
+        )
+    return {
+        "system": [
+            {"type": "text", "text": request.system, "cache_control": {"type": "ephemeral"}}
+        ],
+        "messages": messages,
+        "tools": [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": described_nesting(tool.parameters),
+            }
+            for tool in request.tools
+        ],
+        "tool_choice": {"type": "auto"},
+    }
+
+
+def _anthropic_tool_answer(response: Any) -> ToolAnswer:
+    calls: list[ToolCall] = []
+    text: list[str] = []
+    continuation: list[dict[str, Any]] = []
+    for block in response.content:
+        kind = getattr(block, "type", "")
+        if kind == "tool_use":
+            calls.append(
+                ToolCall(id=block.id, name=block.name, arguments=parse_arguments(block.input))
+            )
+        elif kind == "text":
+            text.append(block.text)
+        fields = _ANTHROPIC_REPLAY_FIELDS.get(kind)
+        if fields is not None:
+            dumped = block.model_dump(mode="json")
+            continuation.append({key: dumped[key] for key in fields if key in dumped})
+    return ToolAnswer(
+        provider="anthropic", calls=calls, text="".join(text), continuation=continuation
+    )

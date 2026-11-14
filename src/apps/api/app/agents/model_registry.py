@@ -198,6 +198,18 @@ def exact_spec(name: str) -> ModelSpec | None:
     return next((spec for spec in _SPECS if spec.name == name), None)
 
 
+# The model a non-Google Main Creator or copilot falls back to on a provider failure (KRI-1385,
+# KRI-1393). Both answers are idempotent proposals, so another provider may answer after an
+# outage, a spend cap or an unknown outcome at the first.
+PLANNING_FALLBACK = "gemini-3.1-pro-preview"
+
+
+def cross_provider_fallback(name: str) -> tuple[str, ...]:
+    """The fallback chain a planning agent configured on ``name`` gets: none on Google."""
+
+    return () if provider_of(name) == "google" else (PLANNING_FALLBACK,)
+
+
 def audio_minute_usd(name: str) -> Decimal | None:
     """USD per audio minute for a duration-priced model (Whisper), or None."""
 

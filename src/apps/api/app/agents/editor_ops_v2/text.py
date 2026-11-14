@@ -50,6 +50,14 @@ def _clarify(state: Any, message: str) -> None:
     state.selector_clarification = message
 
 
+def text_patch_fields() -> frozenset[str]:
+    """The fields a text lane patch (add_text, patch_text, replace_text_sequence) may set."""
+    from app.agents.edit_copilot import _STYLE_PATCH_FIELDS  # noqa: PLC0415
+    from app.services.kria_editor_ops_text import EXTRA_PATCH_FIELDS  # noqa: PLC0415
+
+    return _STYLE_PATCH_FIELDS | EXTRA_PATCH_FIELDS | {"size_scale"}
+
+
 def coerce_text_patch(patch: object, state: Any) -> dict[str, Any] | None:
     """Validate a text patch; unknown fields are rejected, never silently dropped."""
     from app.agents.edit_copilot import (  # noqa: PLC0415
@@ -57,13 +65,11 @@ def coerce_text_patch(patch: object, state: Any) -> dict[str, Any] | None:
         _as_float,
         _coerce_patch,
     )
-    from app.services.kria_editor_ops_text import EXTRA_PATCH_FIELDS  # noqa: PLC0415
 
     if not isinstance(patch, dict) or not patch:
         state.invalid_value()
         return None
-    allowed = _STYLE_PATCH_FIELDS | EXTRA_PATCH_FIELDS | {"size_scale"}
-    if set(patch) - allowed:
+    if set(patch) - text_patch_fields():
         state.invalid_value()
         return None
     clean: dict[str, Any] = {}

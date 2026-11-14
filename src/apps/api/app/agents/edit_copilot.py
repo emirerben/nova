@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from typing import Any, ClassVar, Literal, NamedTuple, get_args
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.agents import editor_ops_v2 as _v2
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
@@ -29,9 +29,11 @@ from app.agents._schemas.text_animation_phases import (
     phases_patch,
 )
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.agents._tool_calls import ToolExchange
 from app.agents.editor_ops_v2 import overlays as _v2_overlays
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.length_options import length_options
+from app.agents.model_registry import cross_provider_fallback
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
@@ -133,7 +135,11 @@ log = structlog.get_logger()
 # and place, `caption_line_placement`), set_layer_order (LAYER ORDER), remove_full_screen_opening
 # (BACKGROUND `full_screen_opening`) and set_video_shape (VIDEO SHAPE). An edit with a creator song
 # and the `user_song` family drops the AUDIO LIMITS line that said chat cannot change it.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v126"
+# v127 (KRI-1393): EDIT_COPILOT_OUTPUT_MODE=tools answers with a tool per open op. Its system block
+# is these rules with each op's definition bullet moved into that op's tool description and the
+# JSON output block replaced by prompts/edit_copilot_tools.txt; the turn block is the user
+# message. JSON mode (the default) is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v127"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -770,6 +776,10 @@ def _load_motion_preset_controls() -> dict[str, dict[str, dict[str, Any]]]:
 
 
 _MOTION_PRESET_CONTROLS = _load_motion_preset_controls()
+# The fields a patch_motion_block patch may change.
+MOTION_PATCH_FIELDS = frozenset(
+    {"start_s", "end_s", "palette", "intensity", "params", "speed", "easing", "hold_frames"}
+)
 _OVERLAY_PATCH_FIELDS = frozenset(
     {
         "start_s",
@@ -846,28 +856,55 @@ class RejectedOp(BaseModel):
 
 _MAX_REPAIR_ROUNDS = 2
 _MAX_REPAIR_OPS = 12
+# Typed tool transport: a model that calls one tool per response (Sol) needs a round per
+# operation before it calls `reply`: at most one per op of a bundle, then the reply. The turn
+# deadline bounds them too.
+MAX_TOOL_ROUNDS = MAX_EDITOR_OPS + 1
 
 
 class CopilotRepair(BaseModel):
     """One repair round (KRI-1387): re-ask for the rejected ops only, keep the rest."""
 
-    repair_round: int = Field(ge=1, le=_MAX_REPAIR_ROUNDS)
+    repair_round: int = Field(ge=1, le=MAX_TOOL_ROUNDS)
     # The first answer's own fields except its ops: its reply, claim, intent and confidence
     # describe the whole request, so every round keeps them.
     base: dict[str, Any]
     # Ops already accepted (and compiled, when the caller checks compile). Never re-parsed.
     kept_ops: list[dict[str, Any]] = Field(default_factory=list)
-    rejected: list[RejectedOp] = Field(min_length=1, max_length=_MAX_REPAIR_OPS)
+    rejected: list[RejectedOp] = Field(default_factory=list, max_length=_MAX_REPAIR_OPS)
     # Rejections with no op to re-ask (a pass over parsed ops dropped it): every round names them.
     unrepairable: list[RejectedOp] = Field(default_factory=list)
     # Server notes from earlier rounds (time zone, missing filming times) for the kept ops.
     notes: list[str] = Field(default_factory=list)
+    # Typed tool transport only (KRI-1393): every earlier answer of this turn with the tool
+    # results it got, sent back as the conversation. In memory only: never dumped or persisted.
+    exchanges: list[ToolExchange] = Field(default_factory=list, exclude=True)
+    # Typed tool transport only: the first answer called operations but not `reply`. This round
+    # hears what applied and writes the turn's reply, so its own fields become the answer's.
+    awaiting_reply: bool = Field(default=False, exclude=True)
+
+    @model_validator(mode="after")
+    def _has_work(self) -> CopilotRepair:
+        if not self.awaiting_reply and (
+            not self.rejected or self.repair_round > _MAX_REPAIR_ROUNDS
+        ):
+            raise ValueError("a repair round needs a rejected op, within the repair rounds")
+        return self
 
     def answer(self, response: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
         """This round's corrected ops under the first answer's fields, and the repair ids an
         unmet entry settled. The round's own intent, confidence and reply are ignored: an
-        unsure correction must not turn the kept edit into a question."""
+        unsure correction must not turn the kept edit into a question. A round awaiting the
+        reply is the exception: its fields are the turn's answer."""
         ops = response.get("ops")
+        if self.awaiting_reply:
+            unmet = response.get("unmet_requests")
+            settled = {
+                tag
+                for item in (unmet if isinstance(unmet, list) else [])
+                if (tag := _repair_tag(item)) is not None
+            }
+            return {**response, "ops": ops if isinstance(ops, list) else []}, settled
         own_unmet = response.get("unmet_requests")
         own_unmet = (
             [item for item in own_unmet if isinstance(item, dict)]
@@ -948,6 +985,9 @@ class EditCopilotOutput(BaseModel):
     )
     # KRI-1387: the next repair round, when an edit turn has rejected ops a round could fix.
     repair: CopilotRepair | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Every op that did not apply, as the parser saw it (the typed tool transport answers each
+    # call with its own result). In memory only: never dumped.
+    not_applied: list[RejectedOp] = Field(default_factory=list, exclude=True)
 
 
 _MAX_UNMET_REQUESTS = 6
@@ -2789,33 +2829,43 @@ def _kept_notes(state: _ParseState, repairable: Sequence[RejectedOp]) -> list[st
     return [note for note in dict.fromkeys(state.reply_notes) if note not in explaining]
 
 
-def repair_feedback(rejections: Sequence[RejectedOp]) -> str:
+_JSON_REPAIR_ANSWER = (
+    "For each item, return ONE corrected operation in `ops` carrying "
+    '`"repairs": "<id>"`, or, when it cannot be done on this edit, an `unmet_requests` '
+    'entry `{"request", "reason", "repairs": "<id>"}` written for the creator. Send no '
+    "other operations. Return the same JSON keys as before."
+)
+
+
+def repair_feedback(rejections: Sequence[RejectedOp], *, answer: str = _JSON_REPAIR_ANSWER) -> str:
     """The repair block for rejected ops (KRI-1387): each op, why it failed, how to fix it.
 
     Every rejection kind comes back so the model can swap a closed family for an open one,
     retarget a stale index, fill a missing field, fix a value, or say it can't be done.
-    ``rejections[i]`` is answered under the id ``r{i + 1}``.
+    ``rejections[i]`` is answered under the id ``r{i + 1}``. ``answer`` says how to reply: JSON
+    keys by default, tool calls for the typed tool transport (KRI-1393).
     """
     lines = [
         "## REPAIR: OPERATIONS THAT WERE NOT APPLIED",
         "",
         "Your previous answer to this message was checked. The operations below were NOT "
         "applied. Every other operation in it is accepted and will apply: do not send it "
-        "again. For each item, return ONE corrected operation in `ops` carrying "
-        '`"repairs": "<id>"`, or, when it cannot be done on this edit, an `unmet_requests` '
-        'entry `{"request", "reason", "repairs": "<id>"}` written for the creator. Send no '
-        "other operations. Return the same JSON keys as before.",
+        "again. " + answer,
         "",
     ]
     for index, item in enumerate(rejections, start=1):
-        label = _REJECTION_KINDS.get(item.reason, (item.reason, None))[0]
-        sent = json.dumps(item.raw, ensure_ascii=False, sort_keys=True)[:600] if item.raw else "{}"
-        why = " ".join(part.strip() for part in (item.detail, item.note, item.hint) if part)
-        lines.append(f"- r{index} `{item.op}` {sent}")
-        lines.append(f"  Not applied ({label}): {why}"[:900])
+        lines.extend(repair_item_lines(index, item))
     if any(item.reason in {"invalid_value", "missing_required"} for item in rejections):
         lines.extend(("", _VALUE_RULES))
     return "\n".join(lines)
+
+
+def repair_item_lines(index: int, item: RejectedOp) -> tuple[str, str]:
+    """One rejected op as the repair block shows it: what was sent, and why it did not apply."""
+    label = _REJECTION_KINDS.get(item.reason, (item.reason, None))[0]
+    sent = json.dumps(item.raw, ensure_ascii=False, sort_keys=True)[:600] if item.raw else "{}"
+    why = " ".join(part.strip() for part in (item.detail, item.note, item.hint) if part)
+    return f"- r{index} `{item.op}` {sent}", f"  Not applied ({label}): {why}"[:900]
 
 
 def _repair_tag(raw: object) -> str | None:
@@ -4041,6 +4091,9 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         sensitive_io=True,
         prompt_version=EDIT_COPILOT_PROMPT_VERSION,
         model=settings.edit_copilot_model,
+        # An OpenAI or Anthropic copilot answers on Gemini after a provider failure (KRI-1393);
+        # the Gemini default has none, as before.
+        fallback_models=cross_provider_fallback(settings.edit_copilot_model),
         max_attempts=2,
         backoff_s=(2.0,),
         # Durable Kria turns supply a shared deadline and post-processing
@@ -4068,6 +4121,19 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # Cache-friendly order: everything stable across turns first (rules, catalogs,
         # lane fragments), per-turn data last, so Gemini's implicit prefix cache
         # can reuse the long shared head.
+        prompt = self.rules_prompt(input)
+        turn = self.turn_prompt(input)
+        prompt = f"{prompt.rstrip(chr(10))}\n\n{turn.rstrip(chr(10))}\n"
+        if input.repair is not None:
+            prompt = f"{prompt}\n{repair_feedback(input.repair.rejected)}\n"
+        # KRI-520: the reply-language instruction goes last, after every fragment.
+        # "" for English/unknown: byte-identical prompt.
+        language_line = prompt_language_line(input.reply_language)
+        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
+
+    def rules_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
+        """Rules, catalogs and the lane fragments this edit offers: the same for every turn of
+        an edit."""
         prompt = load_prompt(
             "edit_copilot",
             font_catalog=_font_catalog(),
@@ -4077,8 +4143,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         prompt = _with_scope_fragment(prompt, input.variant_snapshot)
-        prompt = _with_direction_fragment(prompt, input.variant_snapshot)
-        turn = load_prompt(
+        return _with_direction_fragment(prompt, input.variant_snapshot)
+
+    def turn_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
+        """This turn's message, draft and history."""
+        return load_prompt(
             "edit_copilot_turn",
             utterance=(
                 _clean_component_data(input.utterance)
@@ -4090,13 +4159,6 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             snapshot=_format_snapshot(input.variant_snapshot),
             max_ops=_operation_limit(input.variant_snapshot),
         )
-        prompt = f"{prompt.rstrip(chr(10))}\n\n{turn.rstrip(chr(10))}\n"
-        if input.repair is not None:
-            prompt = f"{prompt}\n{repair_feedback(input.repair.rejected)}\n"
-        # KRI-520: the reply-language instruction goes last, after every fragment.
-        # "" for English/unknown: byte-identical prompt.
-        language_line = prompt_language_line(input.reply_language)
-        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
         try:
@@ -4618,7 +4680,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 repair_round=next_round,
                 base=(
                     repair.base
-                    if repair is not None
+                    if repair is not None and not repair.awaiting_reply
                     else {
                         **{k: v for k, v in data.items() if k not in {"ops", "research_request"}},
                         "claimed_ops": model_claimed_ops,
@@ -4650,6 +4712,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 claimed_ops=claimed_ops,
                 length_options=offered_lengths if outcome == "clarification" else [],
                 repair=next_repair,
+                not_applied=not_applied,
             )
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc
@@ -6389,17 +6452,7 @@ def _coerce_payload(
             if not isinstance(patch, dict) or not patch:
                 state.invalid_value()
                 return None
-            allowed_patch = {
-                "start_s",
-                "end_s",
-                "palette",
-                "intensity",
-                "params",
-                "speed",
-                "easing",
-                "hold_frames",
-            }
-            if any(key not in allowed_patch for key in patch):
+            if any(key not in MOTION_PATCH_FIELDS for key in patch):
                 state.invalid_value()
                 return None
             clean_patch: dict[str, Any] = {}
