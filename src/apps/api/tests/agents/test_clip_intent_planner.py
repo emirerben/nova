@@ -1960,7 +1960,7 @@ def test_kri667_turkish_question_names_an_exclude_it_could_not_fit() -> None:
         ClipIntentPlannerInput(creator_request=request, reply_language="tr", clip_exclusions=True),
     )
     assert out.salvage_question is not None
-    assert "hariç tutma: quad klibi" in out.salvage_question
+    assert '"quad klibi"' in out.salvage_question
 
 
 # ── KRI-531: model slips on a Turkish chapter request are repaired, never asked ──
@@ -2476,8 +2476,8 @@ def test_kri552_the_prod_shape_still_asks_but_never_cuts_a_label_mid_word() -> N
     assert [i.intent_id for i in out.intents] == ["show_medal", "show_watch"]
     assert out.salvage_reasons == ["intent_invalid:model"]
     assert out.salvage_question is not None
-    assert '"caption: long pauses"' in out.salvage_question
-    assert '"caption: the part where I restart the kilometer…"' in out.salvage_question
+    assert '"long pauses"' in out.salvage_question
+    assert '"the part where I restart the kilometer…"' in out.salvage_question
     assert 'kilometer t"' not in out.salvage_question
     assert out.salvage_question.endswith("Please restate just those so I can add them.")
 
@@ -2509,7 +2509,7 @@ def test_kri552_a_turkish_question_names_the_labels_in_whole_words_too() -> None
     )
 
     assert out.salvage_question is not None
-    assert "yazı: kilometre otuz cümlesini baştan…" in out.salvage_question
+    assert '"kilometre otuz cümlesini baştan…"' in out.salvage_question
     assert out.salvage_question.endswith("Sadece bunları yeniden yazar mısın, ekleyeyim.")
 
 

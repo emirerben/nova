@@ -162,9 +162,7 @@ _QUESTION_MAX_CHARS = 400
 # never dropped as an invented op.
 _KNOWN_OPS = {"label", "group", "order", "include", "caption", "hide_part"}
 # KRI-667: `exclude` is a real op only with CLIP_INTENT_EXCLUDE_ENABLED; `_KNOWN_OPS`
-# stays the flag-off vocabulary (invented-op detection must not drift), and a creator
-# question may still name an exclude it could not keep.
-_PREVIEW_OPS = _KNOWN_OPS | {"exclude"}
+# stays the flag-off vocabulary (invented-op detection must not drift).
 # Leverkusen M2: every op the schema has (another session's new op included). Any other op
 # is one no wording can add, so it is never a "please restate" question.
 _CLIP_OPS = frozenset(get_args(ClipIntentOp))
@@ -220,6 +218,36 @@ def _norm(value: str) -> str:
     return " ".join(value.split())
 
 
+# Letters NFD does not split into base + mark ("ı" has no dot to drop).
+_FOLD_TABLE = str.maketrans({"ı": "i", "ø": "o", "Ø": "O", "ł": "l", "Ł": "L"})
+
+
+def _fold(value: str, *, case: bool) -> str:
+    """``value`` without diacritics (and case, when ``case``), one character for one."""
+    out = "".join(
+        unicodedata.normalize("NFD", char)[:1] or char for char in value.translate(_FOLD_TABLE)
+    )
+    return "".join(char.lower()[:1] or char for char in out) if case else out
+
+
+def _creator_spelling(value: str, sources: tuple[str, ...], *, case: bool) -> str | None:
+    """The creator span ``value`` copies with only diacritics (or ``case``) changed, as typed.
+
+    Tadic (thread aa36d140): a Turkish chat's model restores the "ı"/"ş"/"ç" a creator typed
+    on an English keyboard ("Yazilmis" -> "Yazılmış"). Every word is still theirs; the span
+    returned is exactly what they wrote, so a reworded quote never passes. ``value`` and
+    ``sources`` are ``_norm``-ed.
+    """
+    folded = _fold(value, case=case)
+    if not folded.strip():
+        return None
+    for source in sources:
+        at = _fold(source, case=case).find(folded)
+        if at >= 0:
+            return source[at : at + len(value)]
+    return None
+
+
 class ClipIntentSchemaError(SchemaError):
     """Planner output failed validation.
 
@@ -255,36 +283,26 @@ class _IntentUnexpressible(Exception):  # noqa: N818 - internal control flow
     """An op outside ``ClipIntentOp``: named on the draft, never asked about."""
 
 
-# KRI-520: operation names as the creator reads them in a Turkish question.
-_OP_NAMES_TR = {
-    "label": "etiket",
-    "group": "grup",
-    "order": "sıra",
-    "include": "dahil etme",
-    "caption": "yazı",
-    "exclude": "hariç tutma",
-    "hide_part": "bölüm gizleme",
-}
-
-
 def _copy(language: str | None, *, en: str, tr: str, **values: object) -> str:
     """Server copy for ``language`` (the input's), else the turn's bound language."""
     return say_in(language or current_reply_language(), en=en, tr=tr, **values)
 
 
 def _preview(raw_intent: object, language: str | None = None) -> str:
-    """Short, sanitized description of a returned intent, for a creator question."""
+    """Short, sanitized description of a returned intent, for a creator question.
+
+    Never the internal ``op: attribute`` form (Tadic: "yazı: this video" was all the creator
+    saw of their lyrics). A caption names the words it would print, anything else its target.
+    """
     fallback = _copy(language, en="an instruction", tr="bir talimat")
     if not isinstance(raw_intent, dict):
         return fallback
-    attribute = raw_intent.get("attribute")
-    op = raw_intent.get("op")
-    text = " ".join(_sanitize_text(attribute).split()) if isinstance(attribute, str) else ""
+    value = raw_intent.get("attribute")
+    if raw_intent.get("op") == "caption" and isinstance(raw_intent.get("creator_text"), str):
+        value = raw_intent["creator_text"] if raw_intent["creator_text"].strip() else value
+    text = " ".join(_sanitize_text(value).split()) if isinstance(value, str) else ""
     # KRI-552: whole words only; "...restart the kilometer t" read like a broken message.
-    text = trim_at_word(text, _LABEL_PREVIEW_CHARS).strip() or fallback
-    if isinstance(op, str) and op in _PREVIEW_OPS:
-        return f"{_copy(language, en=op, tr=_OP_NAMES_TR[op])}: {text}"
-    return text
+    return trim_at_word(text, _LABEL_PREVIEW_CHARS).strip() or fallback
 
 
 def _ask_preview(raw_intent: object, sources: tuple[str, ...], language: str | None) -> str:
@@ -515,7 +533,10 @@ def _unstitched_quote(quote: str, creator_text: str | None, sources: tuple[str, 
     for i, char in enumerate(quote):
         if char != " ":
             continue
-        left, right = quote[:i], quote[i + 1 :]
+        # Tadic: a quote joining two messages gains the model's own ":" or "," at the seam.
+        left, right = quote[:i].rstrip(",;:-"), quote[i + 1 :].lstrip("-")
+        if not (left and right):
+            continue
         if not (any(left in s for s in sources) and any(right in s for s in sources)):
             continue
         halves = [h for h in (left, right) if creator_text is None or creator_text in h]
@@ -1645,6 +1666,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             if repaired is not None:
                 intent = intent.model_copy(update={"source_quote": repaired})
                 quote = repaired
+        if quote and not any(quote in source for source in sources):
+            repaired = _creator_spelling(quote, sources, case=True)
+            if repaired is not None:
+                intent = intent.model_copy(update={"source_quote": repaired})
+                quote = repaired
         if not quote or not any(quote in source for source in sources):
             raise _IntentRejected(
                 "source_quote_not_creator_text",
@@ -1652,6 +1678,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             )
         if intent.creator_text is not None:
             text = _norm(intent.creator_text)
+            if not any(text in source for source in sources) and (
+                spelled := _creator_spelling(text, (quote, *sources), case=False)
+            ):
+                # Printed as the creator typed it. Case is not folded: "OJO DE BIFE" may be
+                # a style the creator never asked for (KRI-950), so it is still asked.
+                intent = intent.model_copy(update={"creator_text": spelled})
+                text = spelled
             if text not in quote and (repaired := _quote_with_text(quote, text, sources)):
                 intent = intent.model_copy(update={"source_quote": repaired})
                 quote = repaired
