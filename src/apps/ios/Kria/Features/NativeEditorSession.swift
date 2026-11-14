@@ -1401,8 +1401,18 @@ enum EditorOpenIntent { case warm, open }
     /// Past it the picture offers Retry. Internal so tests can shorten it.
     var retainedPreviewPreparationBound: Duration = .seconds(8)
     private var retainedPreviewPreparationTask: Task<Void, Never>?
-    /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`.
-    var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> AVPlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
+    /// What warming the live item left behind. From the moment the warm-up builds `player` on the item, that player
+    /// is the only one that may ever hold it: AVFoundation detaches an item from its player asynchronously, so giving
+    /// the same item to a new `AVPlayer` right after `replaceCurrentItem(with: nil)` throws "cannot be associated
+    /// with more than one instance of AVPlayer" and aborts the app (KRI-1404). `isPrerolled` says whether it reached
+    /// the requested time decoded and prerolled (the smooth hand-off); otherwise it still runs the plain swap.
+    struct WarmedLivePlayer {
+        let player: AVPlayer
+        let isPrerolled: Bool
+    }
+    /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`. Nil means the item was
+    /// never attached to any player.
+    var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> WarmedLivePlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
     private var playbackControlEpoch: UInt64 = 0
     private var previewResumeIntent: (owner: NativeEditorPreviewOwner, epoch: UInt64)?
 
@@ -4884,12 +4894,17 @@ enum EditorOpenIntent { case warm, open }
             guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             // The finished render is playing: ready the live item on its own player first, so the swap below is not
             // a pause, a detach, a seek and a resume in front of the creator's eyes.
+            // KRI-1404: once the warm-up has built its player on the live item, `warmHolder` is the only player that may
+            // hold that item. Every path below either installs it (smooth hand-off or plain swap) or drops this build.
+            var warmHolder: AVPlayer?
             var warmed: (player: AVPlayer, time: TimeInterval)?
             if retainedPreview != nil || (isPlaying && player != nil && player === finishedRenderPlayer) {
                 let target = currentTime
-                if let candidate = await prerolledPlayerProvider(preview.preview.playerItem, target) { warmed = (candidate, target) }
+                let attempt = await prerolledPlayerProvider(preview.preview.playerItem, target)
+                warmHolder = attempt?.player
+                if let attempt, attempt.isPrerolled { warmed = (attempt.player, target) }
                 guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
-                    warmed?.player.replaceCurrentItem(with: nil)
+                    warmHolder?.replaceCurrentItem(with: nil)
                     return
                 }
             }
@@ -4904,8 +4919,8 @@ enum EditorOpenIntent { case warm, open }
                     return
                 }
                 // A miss is the plain swap, not a failure: the retained picture stays until the live frame is admitted.
-                if reached { warmed = (candidate.player, target) }
-                else { candidate.player.replaceCurrentItem(with: nil); warmed = nil }
+                // The missed player keeps the item; the plain swap below runs on it.
+                warmed = reached ? (candidate.player, target) : nil
             }
             let latestTime = currentTime
             let resumePlayback = isPlaying || shouldResumeRetainedPreview
@@ -4913,13 +4928,18 @@ enum EditorOpenIntent { case warm, open }
             if let warmed {
                 // The creator paused or scrubbed while it warmed, or it took long enough to be far behind: the plain path.
                 if retainedPreview != nil || (resumePlayback && abs(latestTime - warmed.time) <= Self.warmHandoffMaxDrift) { adopted = warmed.player }
-                else { warmed.player.replaceCurrentItem(with: nil) }
                 NativePreviewDiagnostics.note("live-handoff", fields: [
                     "prerolled": "1", "adopted": adopted == nil ? "0" : "1",
                     "driftMs": String(Int(abs(latestTime - warmed.time) * 1000))])
+            } else if warmHolder != nil {
+                NativePreviewDiagnostics.note("live-handoff", fields: ["prerolled": "0", "adopted": "0"])
             }
+            // Not adopted: the plain swap (seek or position below) runs on the player already holding the item, set up
+            // like a fresh one, instead of attaching that item to a second player.
+            if adopted == nil { warmHolder?.automaticallyWaitsToMinimizeStalling = true }
             sourcePreview = preview
-            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe), adopting: adopted)
+            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe),
+                          reusing: adopted ?? warmHolder)
             watchSpeakerBackground(of: preview)
             liveSongVolumeActive = liveVolume
             previewBuiltDocument = baseline
@@ -10582,26 +10602,27 @@ enum EditorOpenIntent { case warm, open }
     /// How far playback may have moved on while a live item warmed before that player is still adopted.
     nonisolated private static let warmHandoffMaxDrift: TimeInterval = 0.35
 
-    /// A player holding `item`, seeked to `time` with zero tolerance and prerolled to play at rate 1, or nil when it
-    /// could not get there in about two seconds (the caller then takes the plain swap). Nothing is playing on it.
-    private static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> AVPlayer? {
+    /// A player holding `item`, seeked to `time` with zero tolerance and prerolled to play at rate 1 — or, when it
+    /// could not get there in about two seconds, the same player marked not prerolled, still holding the item for the
+    /// caller's plain swap (KRI-1404: it must never be detached here and re-attached elsewhere). Nothing plays on it.
+    private static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> WarmedLivePlayer {
         let candidate = AVPlayer(playerItem: item)
         candidate.automaticallyWaitsToMinimizeStalling = false
         var waited = 0
         while candidate.status != .readyToPlay {
             waited += 1
-            if candidate.status == .failed || Task.isCancelled || waited > 100 { candidate.replaceCurrentItem(with: nil); return nil }
+            if candidate.status == .failed || Task.isCancelled || waited > 100 { return WarmedLivePlayer(player: candidate, isPrerolled: false) }
             try? await Task.sleep(for: .milliseconds(20))
         }
-        guard await candidate.seek(to: CMTime(seconds: max(0, time), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero),
-              await candidate.preroll(atRate: 1) else {
-            candidate.replaceCurrentItem(with: nil)
-            return nil
+        guard await candidate.seek(to: CMTime(seconds: max(0, time), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) else {
+            return WarmedLivePlayer(player: candidate, isPrerolled: false)
         }
-        return candidate
+        return WarmedLivePlayer(player: candidate, isPrerolled: await candidate.preroll(atRate: 1))
     }
 
-    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil, adopting prerolled: AVPlayer? = nil) {
+    /// `holder`, when given, is the player already holding `item` (the warm-up's); it is used instead of a new one,
+    /// because the same item can never be attached to a second player (KRI-1404).
+    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil, reusing holder: AVPlayer? = nil) {
         playbackSeekTarget = nil
         cancelScrubFrames()
         seekRecoveryTask?.cancel()
@@ -10625,7 +10646,7 @@ enum EditorOpenIntent { case warm, open }
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
         if retainedPreview?.player !== player { player?.replaceCurrentItem(with: nil) }
-        let next = prerolled ?? AVPlayer(playerItem: item)
+        let next = holder ?? AVPlayer(playerItem: item)
         player = next
         previewDisplayTicket = currentPreviewWork
         observingPlayer = next
