@@ -16,22 +16,36 @@ guard fails any network attempt.
 
 Composer cassettes (``cassettes`` in ``fixture.json``): A the recorded clarification, B a
 hand-authored bundle that reaches the recorded "Text changed" raise site, C and D probes (the
-obvious removal of the duplicate block; a composer that leaves the lane alone).
+obvious removal of the duplicate block; a composer that leaves the lane alone). Under the
+recorded brief the lyric is already drawn and every ask met, so none of them is consumed.
+
+Scenarios (``scenarios``): the creator also asks for something the plan does not carry, so the
+text composer legitimately runs and answers. ``asks_text_drawn`` (every lyric line already on the
+plan, cassette A), ``asks_text_missing`` (one more wording the plan does not draw) and
+``composer_rejects`` (no question to ask).
 
 Checks (VERIFIED / NOT VERIFIED / INCONCLUSIVE); 1 and 2 run once per cassette:
 
 1. each_lyric_line_once: each lyric line is drawn exactly once in the compiled recipe's text layers.
 2. job_not_text_failed: the worker finishes without CreationTextCompositionError.
-3. clarification_becomes_question: a composer question is saved through the request-recovery
-   channel as a creator-facing question, not raised as a failure (cassette A).
+3. clarification_becomes_question: a composer question over a wording the plan does not draw is
+   saved through the request-recovery channel as the creator's question; the worker does not end
+   as `creation_text_failed` (asks_text_missing).
 4. dropped_line_rejected: negative control, a recipe with one lyric line removed fails check 1.
 5. composer_not_called: the lyric is already drawn and every ask met, so no cassette is consumed.
+6. question_does_not_block_shown_text: the composer asks, every lyric line is already drawn: the
+   video is made as planned, each line once, the question recorded with the plan and a note for
+   the creator, no recovery question saved (asks_text_drawn).
+7. other_failures_stay_failures: a composer that rejects without a question is still
+   `creation_text_failed`, nothing is saved as a question and no internal text is exposed as the
+   creator's reason (composer_rejects).
 
 The strategy is not read from the fixture as stored: it goes through the real planning boundary
 (`adapt_creator_action`) first, as a new request's does.
 
-Exits 1 unless every check is VERIFIED. Check 3 stays NOT VERIFIED until a composer question
-is saved as the creator's question (KRI-1445).
+Exits 1 unless every check is VERIFIED. The read-back of the saved question
+(`tasks/kria_runtime.py`) needs a thread: `tests/kria/test_kri1456_text_question_journey.py`
+runs it on this worker's output.
 """
 
 from __future__ import annotations
@@ -156,7 +170,9 @@ def planned_strategy(fx: dict) -> dict:
     return copy.deepcopy(apply.arguments["strategy"])
 
 
-def build_job(fx: dict) -> SimpleNamespace:
+def build_job(
+    fx: dict, extra_requirements: list[dict] | None = None, *, thread_id: uuid.UUID | None = None
+) -> SimpleNamespace:
     """The dispatched job: phone sources, pinned brief binding and render contract, the planned
     strategy and the generation's phone text style policy (the recorded job's)."""
     from app.kria.brief import CreativeBrief
@@ -190,7 +206,9 @@ def build_job(fx: dict) -> SimpleNamespace:
         "length_plan": copy.deepcopy(fx["length_plan"]),
     }
     strategy = planned_strategy(fx)
-    brief = CreativeBrief.model_validate(fx["brief"])
+    brief_json = copy.deepcopy(fx["brief"])
+    brief_json["requirements"] += copy.deepcopy(extra_requirements or [])
+    brief = CreativeBrief.model_validate(brief_json)
     original = clip["original"]
     source = PhoneSourceBinding(
         media_id=clip["media_id"],
@@ -211,7 +229,7 @@ def build_job(fx: dict) -> SimpleNamespace:
     )
     first, latest = fx["messages"]
     binding = BriefBinding.create(
-        uuid.uuid4(),
+        thread_id or uuid.uuid4(),
         brief,
         latest_message=latest,
         full_creator_request=f"{first}\n{latest}",
@@ -492,22 +510,32 @@ def check_job_not_text_failed(scenario: str, seen: dict) -> dict:
     return _result(2, "job_not_text_failed", scenario, why, evidence)
 
 
-def check_clarification_becomes_question(fx: dict, scenario: str, seen: dict) -> dict:
-    question = fx["cassettes"][scenario]["output"]["reply"]
+def _question_of(fx: dict, scenario: dict) -> str:
+    output = scenario.get("output") or fx["cassettes"][scenario["cassette"]]["output"]
+    return output["reply"]
+
+
+def check_clarification_becomes_question(question: str, scenario: str, seen: dict) -> dict:
     recovery = (seen.get("assembly_plan") or {}).get("request_recovery")
     binding = (seen.get("assembly_plan") or {}).get("creator_brief_binding") or {}
     exc = seen.get("worker_exc") or seen.get("pin_exc")
     why: list[str] = []
+    if seen["composer_calls"] != 1:
+        why.append(f"the composer was called {seen['composer_calls']} times, not once")
     if not isinstance(recovery, dict) or not str(recovery.get("message") or "").strip():
         why.append("no request_recovery question was saved for the creator")
     elif fold(question) not in fold(recovery["message"]):
         why.append(f"the saved question is not the composer's: {recovery['message']}")
     elif recovery.get("binding_digest") != binding.get("digest"):
         why.append("the saved question is not bound to the approved request")
-    if _text_failed(exc):
+    if exc is None:
+        why.append("the worker did not stop: no video should be planned without that line")
+    elif _text_failed(exc):
         why.append(
             f"the same turn ends as a failure: {type(exc).__name__} at {_where(exc)}"
         )
+    elif recipe_layers(seen) is not None:
+        why.append("a recipe was pinned without the line the creator asked for")
     return _result(
         3,
         "clarification_becomes_question",
@@ -519,7 +547,80 @@ def check_clarification_becomes_question(fx: dict, scenario: str, seen: dict) ->
             "saved_message": (recovery or {}).get("message")
             if isinstance(recovery, dict)
             else None,
+            "worker_ended_with": None if exc is None else type(exc).__name__,
         },
+    )
+
+
+def check_question_does_not_block_shown_text(
+    fx: dict, question: str, scenario: str, seen: dict
+) -> dict:
+    """The composer asked, every lyric line is already drawn: the video is made as planned."""
+    plan = seen.get("assembly_plan") or {}
+    record = plan.get("unified_montage") or {}
+    why: list[str] = []
+    if seen["composer_calls"] != 1:
+        why.append(f"the composer was called {seen['composer_calls']} times, not once")
+    for key in ("worker_exc", "pin_exc"):
+        if seen.get(key) is not None:
+            why.append(f"the question stopped the video: {type(seen[key]).__name__}")
+    layers = recipe_layers(seen)
+    counts = lyric_counts(layers, fx["lyrics"]["lines"]) if layers is not None else {}
+    if layers is None:
+        why.append("no recipe was pinned")
+    why += [f"a lyric line is drawn {n} times" for n in counts.values() if n != 1]
+    asked = record.get("text_question") or {}
+    if asked.get("question") != question:
+        why.append(f"the composer's question is not recorded with the plan: {asked}")
+    notes = record.get("repair_notes") or []
+    if not any("as you wrote it" in str(note) for note in notes):
+        why.append("the creator is told nothing about the question that was not applied")
+    if plan.get("request_recovery") is not None:
+        why.append("a recovery question was saved although the video was made")
+    return _result(
+        6,
+        "question_does_not_block_shown_text",
+        scenario,
+        why,
+        {
+            "drawn_per_line": list(counts.values()),
+            "text_question": asked,
+            "repair_notes": notes,
+            "composer_calls": seen["composer_calls"],
+        },
+    )
+
+
+def check_other_failures_stay_failures(scenario: str, seen: dict) -> dict:
+    """A composer that rejects without a question: still a failure, no question, no leak."""
+    from app.tasks.generative_build import _classify_phone_plan_failure, _phone_failure_details
+
+    exc = seen.get("worker_exc") or seen.get("pin_exc")
+    why: list[str] = []
+    code = kind = detail = creator_detail = None
+    if seen["composer_calls"] != 1:
+        why.append(f"the composer was called {seen['composer_calls']} times, not once")
+    if exc is None:
+        why.append("the worker finished: a rejected composer must not produce a video")
+    else:
+        code, kind = _classify_phone_plan_failure(exc)
+        detail, creator_detail = _phone_failure_details(
+            exc, failure_reason=code, kind=kind, decline=False
+        )
+        if code != "creation_text_failed":
+            why.append(f"the failure is {code}, not creation_text_failed")
+        if creator_detail is not None:
+            why.append(f"internal text is exposed as the creator's reason: {creator_detail}")
+        if "Text composition" in (detail or ""):
+            why.append(f"the stored error_detail is the exception's text: {detail}")
+    if (seen.get("assembly_plan") or {}).get("request_recovery") is not None:
+        why.append("a recovery question was saved for a failure that asks nothing")
+    return _result(
+        7,
+        "other_failures_stay_failures",
+        scenario,
+        why,
+        {"failure_reason": code, "creator_detail": creator_detail, "error_detail": detail},
     )
 
 
@@ -564,12 +665,17 @@ def run_offline() -> dict:
     fx = load_fixture()
     checks: list[dict] = []
     runs: dict[str, dict] = {}
+    scenario_runs: dict[str, dict] = {}
     with _prod_settings():
         for scenario, cassette in fx["cassettes"].items():
             job = build_job(fx)
             runs[scenario] = run_worker(
                 job, composer_raw=json.dumps(cassette["output"])
             )
+        for name, scenario in fx["scenarios"].items():
+            job = build_job(fx, scenario["extra_requirements"])
+            output = scenario.get("output") or fx["cassettes"][scenario["cassette"]]["output"]
+            scenario_runs[name] = run_worker(job, composer_raw=json.dumps(output))
     for scenario, seen in runs.items():
         checks.append(
             _guarded(
@@ -587,17 +693,40 @@ def run_offline() -> dict:
                 lambda s=scenario, v=seen: check_job_not_text_failed(s, v),
             )
         )
-    asking = next(
-        k for k, c in fx["cassettes"].items() if c["output"].get("needs_clarification")
-    )
-    checks.append(
-        _guarded(
-            3,
-            "clarification_becomes_question",
-            asking,
-            lambda: check_clarification_becomes_question(fx, asking, runs[asking]),
-        )
-    )
+    for name, scenario in fx["scenarios"].items():
+        seen = scenario_runs[name]
+        question = _question_of(fx, scenario) if scenario["expect"] != "failure" else ""
+        if scenario["expect"] == "rendered":
+            checks.append(
+                _guarded(
+                    6,
+                    "question_does_not_block_shown_text",
+                    name,
+                    lambda n=name, q=question, v=seen: check_question_does_not_block_shown_text(
+                        fx, q, n, v
+                    ),
+                )
+            )
+        elif scenario["expect"] == "question":
+            checks.append(
+                _guarded(
+                    3,
+                    "clarification_becomes_question",
+                    name,
+                    lambda n=name, q=question, v=seen: check_clarification_becomes_question(
+                        q, n, v
+                    ),
+                )
+            )
+        else:
+            checks.append(
+                _guarded(
+                    7,
+                    "other_failures_stay_failures",
+                    name,
+                    lambda n=name, v=seen: check_other_failures_stay_failures(n, v),
+                )
+            )
     checks.append(
         _guarded(
             4, "dropped_line_rejected", None, lambda: check_dropped_line_rejected(fx)
@@ -607,7 +736,7 @@ def run_offline() -> dict:
         _guarded(5, "composer_not_called", None, lambda: check_composer_not_called(runs))
     )
     checks.sort(key=lambda c: (c["id"], c["scenario"] or ""))
-    inputs = (runs[asking].get("composer_inputs") or [{}])[0]
+    inputs = (scenario_runs["asks_text_drawn"].get("composer_inputs") or [{}])[0]
     return {
         "fixture": fx["fixture_id"],
         "incident": fx["incident"],

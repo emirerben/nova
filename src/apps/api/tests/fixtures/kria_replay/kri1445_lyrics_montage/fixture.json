@@ -355,5 +355,75 @@
         "unmet_requests": []
       }
     }
+  },
+  "scenarios": {
+    "asks_text_drawn": {
+      "kind": "authored (the composer legitimately runs, KRI-1456)",
+      "authored": "the creator also asked for a style the plan lacks, so the composer is called; it answers with the recorded question (cassette A). Every lyric line is already on the plan",
+      "extra_requirements": [
+        {
+          "id": "r3",
+          "kind": "style",
+          "facts": {},
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "Make the lyrics look like a neon sign",
+          "source_turn_id": "turn-2"
+        }
+      ],
+      "cassette": "A_clarification",
+      "expect": "rendered"
+    },
+    "asks_text_missing": {
+      "kind": "authored (the composer legitimately runs, KRI-1456)",
+      "authored": "the creator also asked for one more line the plan does not draw, so the composer is called; it asks where that line goes. A video without that line would silently drop the creator's wording",
+      "extra_requirements": [
+        {
+          "id": "r3",
+          "kind": "text",
+          "facts": {},
+          "scope": "global",
+          "status": "open",
+          "literal": "Bu şarkı senin için",
+          "description": "Also add the words Bu şarkı senin için",
+          "source_turn_id": "turn-2"
+        }
+      ],
+      "output": {
+        "intent": "clarify",
+        "confidence": 0.4,
+        "reply": "Where should “Bu şarkı senin için” go: above the lyric or on its own at the end?",
+        "needs_clarification": true,
+        "ops": [],
+        "unmet_requests": []
+      },
+      "expect": "question"
+    },
+    "composer_rejects": {
+      "kind": "authored (the composer legitimately runs, KRI-1456)",
+      "authored": "same brief as asks_text_drawn, but the composer rejects the style with no question and no unmet reason: nothing to ask the creator, so it stays a failure",
+      "extra_requirements": [
+        {
+          "id": "r3",
+          "kind": "style",
+          "facts": {},
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "Make the lyrics look like a neon sign",
+          "source_turn_id": "turn-2"
+        }
+      ],
+      "output": {
+        "intent": "reject",
+        "confidence": 0.9,
+        "reply": "I can't do that with the text tool.",
+        "needs_clarification": false,
+        "ops": [],
+        "unmet_requests": []
+      },
+      "expect": "failure"
+    }
   }
 }
