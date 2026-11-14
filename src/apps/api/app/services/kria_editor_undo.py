@@ -164,7 +164,8 @@ def _replay(
 
     A commit's None means "leave it", so the merge alone cannot take a ``caption_meta`` or
     ``mix`` key away. A key the record holds as None had no value before the turn, so the
-    draft drops it."""
+    draft drops it. The merge also keeps every chat song key and never un-removes the song,
+    so the record's ``user_song`` (the creator's whole section) replaces the chat's."""
     lanes: dict[str, Any] = {}
     flat = copy.deepcopy(current)
     for section in plan_review.record_sections(record):
@@ -175,13 +176,19 @@ def _replay(
         if isinstance(lanes.get(lane), list):
             lanes[lane] = _ordered(lanes[lane], ids)
     request = EditorCommitRequest.model_validate({"base_generation": base_generation, **lanes})
-    draft = merge_editor_draft(current, editor_payload_dump(request))
+    restored = editor_payload_dump(request)
+    draft = merge_editor_draft(current, restored)
+    replaced: dict[str, Any] = {}
     for lane in _KEYED_LANES:
         gone = {k for k, v in (lanes.get(lane) or {}).items() if v is None}
         if gone and isinstance(draft.get(lane), dict):
-            draft[lane] = {k: v for k, v in draft[lane].items() if k not in gone}
-            if isinstance(draft.get("sections"), dict) and lane in draft["sections"]:
-                draft["sections"] = {**draft["sections"], lane: copy.deepcopy(draft[lane])}
+            replaced[lane] = {k: v for k, v in draft[lane].items() if k not in gone}
+    if "user_song" in restored:
+        replaced["user_song"] = restored["user_song"]
+    for lane, value in replaced.items():
+        draft[lane] = value
+        if isinstance(draft.get("sections"), dict) and lane in draft["sections"]:
+            draft["sections"] = {**draft["sections"], lane: copy.deepcopy(value)}
     return request, draft
 
 

@@ -74,8 +74,9 @@ The song lane now takes part. Replaying a `set_user_song` restore record writes 
 snapshot carries the song edit, so the drop compares `document.userSong` with the staged song
 instead of `snapshot(for:)`, which is nil for this lane on both sides.
 
-Today the server does not seal `set_user_song` turns for undo, so chat refuses to undo them. This
-covers the iPhone half only and is not an end-to-end song undo.
+The server half followed: the restore record now keeps the creator's own `user_song` section, and
+the undo writes it back as the flat key (`{removed: false}` when they had none), so chat undoes
+volume, window and removal end to end. See `chat-undo.md` (U9 to U14).
 
 - `testANewerChatHeadThatPutsTheSongBackDropsTheStagedSong`: the staged song leaves the editor,
   the editor's Undo brings it back, and the same head is not applied twice.

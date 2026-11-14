@@ -4057,12 +4057,12 @@ def _before_lanes(
             }
         )
     if "user_song" in changed:
-        from app.agents.editor_ops_v2.user_song import song_state  # noqa: PLC0415
+        from app.agents.editor_ops_v2.user_song import DRAFT_KEY  # noqa: PLC0415
 
-        song = song_state(state.job, variant) or {}
-        before["user_song"] = {
-            key: song[key] for key in ("volume", "window_start_s", "window_end_s") if key in song
-        }
+        # The creator's own unsaved section, not the song as it plays: a restore writes it back
+        # as the Save section, and an empty one is the saved song (KRI-1384).
+        draft_song = variant.get(DRAFT_KEY)
+        before["user_song"] = copy.deepcopy(draft_song) if isinstance(draft_song, dict) else {}
     if "mix" in changed:
         mix: dict[str, Any] = {}
         if state.mix_level is not None and variant.get("mix") is not None:
