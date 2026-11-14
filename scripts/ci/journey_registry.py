@@ -40,7 +40,17 @@ TEST_REFERENCE = re.compile(
 SWIFT_TESTS = "src/apps/ios/Tests"
 # Files that name tests by path but are not derived from markers. `check` fails
 # when one names a test that no longer exists; `sync` follows git renames in.
-HAND_LISTS = ("Makefile", "scripts/verify-kria.sh", ".github/workflows/*.yml")
+HAND_LISTS = (
+    "Makefile",
+    "scripts/*.sh",
+    "scripts/*.py",
+    "scripts/ci/select-tests.py",
+    "scripts/ios/*.py",
+    "scripts/kria/*.py",
+    "formal/kria_turns/verify.py",
+    ".github/workflows/*.yml",
+    "src/apps/api/tests/gates/reliability-gates.json",
+)
 RENAME_FOLLOWERS = (*HAND_LISTS, "scripts/ci/test_*.py")
 NOT_REWRITTEN = ("scripts/ci/test_journey_registry.py",)
 

@@ -72,7 +72,8 @@ class JourneyRegistryTests(unittest.TestCase):
         self.tree = Tree(self.directory.name)
 
     def test_checked_in_registries_have_no_drift(self):
-        self.assertEqual(registry.check(), [])
+        problems = registry.check()
+        self.assertFalse(problems, "\n".join(problems))
 
     def test_a_new_marked_test_is_run_with_no_registry_edit(self):
         self.tree.write(
@@ -191,6 +192,14 @@ class JourneyRegistryTests(unittest.TestCase):
     def test_other_hand_lists_fail_check_on_a_rename_and_sync_follows_it(self):
         self.tree.write("Makefile", "t:\n\tpytest tests/kria/test_listed.py::test_it\n")
         self.tree.write("scripts/ci/test_selection.py", 'PATH = "src/apps/api/tests/kria/test_listed.py"\n')
+        self.tree.write(
+            "src/apps/api/tests/gates/reliability-gates.json",
+            '{"gates": [{"regression_tests": ["tests/kria/test_listed.py"]}]}\n',
+        )
+        self.tree.write(
+            "scripts/request-following-regressions.py",
+            'SUITES = ["tests/kria/test_listed.py"]\n',
+        )
         self.tree.git("add", "-A")
         self.tree.git("commit", "-qm", "lists")
         self.assertEqual(self.tree.check(), [])
@@ -210,6 +219,15 @@ class JourneyRegistryTests(unittest.TestCase):
             "src/apps/api/tests/kria/test_listed_renamed.py",
             (self.tree.root / "scripts/ci/test_selection.py").read_text(),
         )
+        for sibling in (
+            "src/apps/api/tests/gates/reliability-gates.json",
+            "scripts/request-following-regressions.py",
+        ):
+            self.assertIn(
+                "tests/kria/test_listed_renamed.py",
+                (self.tree.root / sibling).read_text(),
+                sibling,
+            )
 
     def test_a_missing_hand_listed_test_node_is_reported(self):
         self.tree.write("Makefile", "t:\n\tpytest tests/kria/test_listed.py::test_gone\n")
