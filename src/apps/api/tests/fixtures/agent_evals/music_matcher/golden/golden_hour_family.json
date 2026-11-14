@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "ff62a16e0488dd2a",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "intimate", "nostalgic"],
+          "vibe_tags": [
+            "wistful",
+            "intimate",
+            "nostalgic"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "bittersweet but hopeful",
@@ -71,7 +76,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["upbeat", "glossy", "anthemic"],
+          "vibe_tags": [
+            "upbeat",
+            "glossy",
+            "anthemic"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "shiny weekend energy",
@@ -89,7 +98,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "tender", "reverent"],
+          "vibe_tags": [
+            "sweeping",
+            "tender",
+            "reverent"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "quiet awe",
@@ -107,7 +120,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "punchy", "playful"],
+          "vibe_tags": [
+            "swagger",
+            "punchy",
+            "playful"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "confident summer attitude",
@@ -120,49 +137,49 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_acoustic_001\", \"score\": 9.0, \"rationale\": \"Wistful acoustic ballad lines up directly with the warm golden-hour family b-roll and the slow handheld pacing of the uploaded clips.\", \"predicted_strengths\": [\"mood matches bittersweet family moment\", \"slow pacing fits 5-10s handheld shots\", \"warm color grade aligns with golden-hour footage\"]}, {\"track_id\": \"track_cinematic_001\", \"score\": 8.0, \"rationale\": \"Cinematic suite gives the same family content a more sweeping storytelling frame; the wide silhouette and macro shots can carry a reverent edit.\", \"predicted_strengths\": [\"different vibe from acoustic pick adds variety\", \"slot count of 6 fits a 4-clip set well\", \"cinematic copy_tone reads against silhouettes\"]}, {\"track_id\": \"track_hiphop_001\", \"score\": 3.5, \"rationale\": \"Hip-hop swagger does not serve sentimental golden-hour family content; offered as third only to satisfy the ranking contract.\", \"predicted_strengths\": [\"high-energy contrast variant if user wants chaos\"]}, {\"track_id\": \"track_pop_001\", \"score\": 2.5, \"rationale\": \"Glossy neon pop is mismatched with mellow family b-roll; 14 slots also fight a 4-clip set.\", \"predicted_strengths\": [\"only useful if user expands clip count later\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_acoustic_001\",\n      \"score\": 9.8,\n      \"rationale\": \"This track's intimate, wistful acoustic vibe perfectly complements the golden-hour family moments and warm tones of the clips.\",\n      \"predicted_strengths\": [\n        \"golden-hour aesthetic match\",\n        \"intimate family moments\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_001\",\n      \"score\": 9.3,\n      \"rationale\": \"The sweeping, tender cinematic mood enhances the emotional storytelling of the wide shots and close-ups of nature and family.\",\n      \"predicted_strengths\": [\n        \"emotional storytelling\",\n        \"wide shot enhancement\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_001\",\n      \"score\": 3.5,\n      \"rationale\": \"While the energy is a mismatch, the upbeat pop sound could offer a contrasting, more energetic take on the family clips.\",\n      \"predicted_strengths\": [\n        \"potential for an energetic variant\",\n        \"glossy production value\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_001\",\n      \"score\": 2.1,\n      \"rationale\": \"This track's high energy and confident attitude are a significant mismatch for the mellow, sentimental family clips.\",\n      \"predicted_strengths\": [\n        \"distinctive energy for contrast\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_acoustic_001",
-        "score": 9.0,
-        "rationale": "Wistful acoustic ballad lines up directly with the warm golden-hour family b-roll and the slow handheld pacing of the uploaded clips.",
+        "score": 9.8,
+        "rationale": "This track's intimate, wistful acoustic vibe perfectly complements the golden-hour family moments and warm tones of the clips.",
         "predicted_strengths": [
-          "mood matches bittersweet family moment",
-          "slow pacing fits 5-10s handheld shots",
-          "warm color grade aligns with golden-hour footage"
+          "golden-hour aesthetic match",
+          "intimate family moments"
         ]
       },
       {
         "track_id": "track_cinematic_001",
-        "score": 8.0,
-        "rationale": "Cinematic suite gives the same family content a more sweeping storytelling frame; the wide silhouette and macro shots can carry a reverent edit.",
+        "score": 9.3,
+        "rationale": "The sweeping, tender cinematic mood enhances the emotional storytelling of the wide shots and close-ups of nature and family.",
         "predicted_strengths": [
-          "different vibe from acoustic pick adds variety",
-          "slot count of 6 fits a 4-clip set well",
-          "cinematic copy_tone reads against silhouettes"
-        ]
-      },
-      {
-        "track_id": "track_hiphop_001",
-        "score": 3.5,
-        "rationale": "Hip-hop swagger does not serve sentimental golden-hour family content; offered as third only to satisfy the ranking contract.",
-        "predicted_strengths": [
-          "high-energy contrast variant if user wants chaos"
+          "emotional storytelling",
+          "wide shot enhancement"
         ]
       },
       {
         "track_id": "track_pop_001",
-        "score": 2.5,
-        "rationale": "Glossy neon pop is mismatched with mellow family b-roll; 14 slots also fight a 4-clip set.",
+        "score": 3.5,
+        "rationale": "While the energy is a mismatch, the upbeat pop sound could offer a contrasting, more energetic take on the family clips.",
         "predicted_strengths": [
-          "only useful if user expands clip count later"
+          "potential for an energetic variant",
+          "glossy production value"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_001",
+        "score": 2.1,
+        "rationale": "This track's high energy and confident attitude are a significant mismatch for the mellow, sentimental family clips.",
+        "predicted_strengths": [
+          "distinctive energy for contrast"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "golden-hour family b-roll — acoustic top pick, cinematic for diversity, pop/hip-hop ranked low"
+    "source": "provider_smoke_capture",
+    "case": "golden-hour family b-roll — acoustic top pick, cinematic for diversity, pop/hip-hop ranked low",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

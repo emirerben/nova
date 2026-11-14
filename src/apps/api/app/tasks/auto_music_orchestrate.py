@@ -66,7 +66,7 @@ can't bypass the gate.
 Cost guard (NON-NEGOTIABLE):
   - ``clip_metadata`` runs exactly N times (N = clip count). NOT N×K.
   - ``music_matcher`` runs exactly once.
-  - Per-variant LLM calls (transition_picker / text_designer / etc.)
+  - Per-variant LLM calls (text_designer / etc.)
     run K times — that's the *point* of the variant fan-out and is
     acceptable because they're text-only.
 
@@ -928,7 +928,7 @@ def _render_one_variant(
 
         # [b] Inject the track's MusicLabels copy_tone / transition_style
         # / color_grade so the downstream agents (text_designer,
-        # transition_picker, platform_copy) consume the SONG's creative
+        # platform_copy) consume the SONG's creative
         # direction, not the beat-only defaults. See plan Phase 3
         # "Inject the track's MusicLabels.copy_tone..." bullet. No agent
         # rewrites — we're just putting the right values in the recipe

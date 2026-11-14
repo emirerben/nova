@@ -424,13 +424,13 @@ def _phone_gate_multi(lang: str) -> Any:
 
 @case("kria_runtime._job_failure_copy")
 def _job_failures(lang: str) -> Any:
-    from app.tasks.content_plan_build import CREATOR_FACING_DETAIL_CODES, JOB_FAILURE_MESSAGES
+    from app.tasks.content_plan_build import JOB_FAILURE_MESSAGES
     from app.tasks.kria_runtime import _job_failure_copy
 
     out = [_job_failure_copy(code, None) for code in JOB_FAILURE_MESSAGES]
     out += [_job_failure_copy(None, None), _job_failure_copy("", None)]
-    out += [_job_failure_copy("never_heard_of_it", "detail")]
-    for code in sorted(CREATOR_FACING_DETAIL_CODES):
+    out += [_job_failure_copy("never_heard_of_it", None)]
+    for code in ("silent_audio_declined", "user_song_plan_declined"):
         out += [
             _job_failure_copy(code, "  The creator-facing detail.  "),
             _job_failure_copy(code, "   "),

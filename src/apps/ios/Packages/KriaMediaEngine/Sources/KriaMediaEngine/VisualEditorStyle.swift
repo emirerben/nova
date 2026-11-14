@@ -38,7 +38,7 @@ public struct VisualEditorStyle: Codable, Equatable, Sendable {
     public func validate() throws {
         guard version == 1, animation.version == 1, rotationDegrees.isFinite, (-360...360).contains(rotationDegrees),
               ["contain", "cover"].contains(fitMode), zoom.isFinite, (1...4).contains(zoom),
-              animation.speed.isFinite, (0.25...3).contains(animation.speed) else { throw RecipeError.invalidTimeline }
+              animation.speed.isFinite, TextAnimationPhases.speedRange.contains(animation.speed) else { throw RecipeError.invalidTimeline }
     }
     public func sample(time: Double, duration: Double) throws -> TextTransformSample {
         try validate()

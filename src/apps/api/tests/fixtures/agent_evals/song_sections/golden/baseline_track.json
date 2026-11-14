@@ -5,20 +5,61 @@
     "file_uri": "files/golden-music-track",
     "file_mime": "audio/mp4",
     "duration_s": 195.0,
-    "beat_timestamps_s": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
+    "beat_timestamps_s": [
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      3.5,
+      4.0
+    ],
     "audio_template_output": {
       "creative_direction": "Upbeat synth-pop track with a clear pre-chorus build into a soaring chorus around 0:48 and a second-act drop at 2:00.",
       "pacing_style": "fast, anthemic with build-and-release dynamics",
       "subject_niche": "travel highlight reels",
       "slots": [
-        {"position": 1, "target_duration_s": 8.0, "energy": "low"},
-        {"position": 2, "target_duration_s": 16.0, "energy": "medium"},
-        {"position": 3, "target_duration_s": 24.0, "energy": "medium"},
-        {"position": 4, "target_duration_s": 30.0, "energy": "high"},
-        {"position": 5, "target_duration_s": 42.0, "energy": "medium"},
-        {"position": 6, "target_duration_s": 30.0, "energy": "peaks_high"},
-        {"position": 7, "target_duration_s": 30.0, "energy": "medium"},
-        {"position": 8, "target_duration_s": 15.0, "energy": "low"}
+        {
+          "position": 1,
+          "target_duration_s": 8.0,
+          "energy": "low"
+        },
+        {
+          "position": 2,
+          "target_duration_s": 16.0,
+          "energy": "medium"
+        },
+        {
+          "position": 3,
+          "target_duration_s": 24.0,
+          "energy": "medium"
+        },
+        {
+          "position": 4,
+          "target_duration_s": 30.0,
+          "energy": "high"
+        },
+        {
+          "position": 5,
+          "target_duration_s": 42.0,
+          "energy": "medium"
+        },
+        {
+          "position": 6,
+          "target_duration_s": 30.0,
+          "energy": "peaks_high"
+        },
+        {
+          "position": 7,
+          "target_duration_s": 30.0,
+          "energy": "medium"
+        },
+        {
+          "position": 8,
+          "target_duration_s": 15.0,
+          "energy": "low"
+        }
       ]
     }
   },
@@ -58,5 +99,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "synth-pop with three meaningfully distinct sections (chorus, drop, pre-chorus build) — full 3-section happy path"
-  }
+  },
+  "prompt_sha": "4cb4defebb08268b"
 }

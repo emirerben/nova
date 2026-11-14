@@ -159,5 +159,6 @@
     "source": "hand_authored_golden",
     "case": "Instagram carousels have no full-screen size: the op is refused, not applied",
     "lane": "kria-606-slide-sizes"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

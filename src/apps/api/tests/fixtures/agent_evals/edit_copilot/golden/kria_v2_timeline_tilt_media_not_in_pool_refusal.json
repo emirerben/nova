@@ -139,5 +139,6 @@
     "source": "hand_authored_golden",
     "case": "refusal: the asked id is not in the pool, nothing is applied and the reply does not claim it",
     "lane": "kria_v2_timeline_tilt_media"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

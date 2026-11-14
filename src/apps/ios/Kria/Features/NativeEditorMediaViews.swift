@@ -3266,9 +3266,15 @@ struct NativeMiniStrip: View {
     private static let coastMinimumSpeed: CGFloat = 200
     /// Per-millisecond velocity retention: the same deceleration UIScrollView uses.
     private static let coastRetention = 0.998
+    /// Editor UI tests drag in fast, exact steps and assert where each one lands, so the glide stays off in editor
+    /// test mode unless a test opts in with `-ui-testing-editor-timeline-glide` (KRI-1450).
+    private static let coastAllowed: Bool = {
+        let arguments = ProcessInfo.processInfo.arguments
+        return !arguments.contains("-ui-testing-editor") || arguments.contains("-ui-testing-editor-timeline-glide")
+    }()
 
     private func startCoast(pointsPerSecond: CGFloat) {
-        guard !reduceMotion, pointsPerSecond.isFinite, abs(pointsPerSecond) >= Self.coastMinimumSpeed else { return }
+        guard Self.coastAllowed, !reduceMotion, pointsPerSecond.isFinite, abs(pointsPerSecond) >= Self.coastMinimumSpeed else { return }
         let scale = max(1, Double(pixelsPerSecond))
         var velocity = -Double(pointsPerSecond) / scale
         stopCoast()
@@ -3620,7 +3626,7 @@ private struct NativeClipSurface: View {
     /// it first. Ordinary clips show handles only while selected.
     var showsEndHandle = false
 
-    private let minimumDuration: TimeInterval = 0.1
+    private let minimumDuration: TimeInterval = EditorLimits.minClipSeconds
 
     private var duration: TimeInterval {
         NativeClipBlockGeometry.windowDuration(clip, minimum: minimumDuration)
@@ -3933,7 +3939,7 @@ struct NativeTrimHandleGeometry: Equatable {
 }
 
 enum NativeClipBlockGeometry {
-    static func windowDuration(_ clip: EditorClip, minimum: TimeInterval = 0.1) -> TimeInterval {
+    static func windowDuration(_ clip: EditorClip, minimum: TimeInterval = EditorLimits.minClipSeconds) -> TimeInterval {
         let window = clip.end - clip.start
         return max(minimum, window.isFinite && window > 0 ? window : minimum)
     }

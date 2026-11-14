@@ -24,7 +24,7 @@ from app.agents._schemas.text_element import CAPTION_CUE_SOURCE
 from app.config import settings
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.guided_edit_revision import normalize_guided_editor_revision
-from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
+from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS, EDITOR_MIN_CLIP_S
 from app.services.guided_timeline import (
     GUIDED_FPS,
     GuidedTimelineError,
@@ -81,7 +81,7 @@ _CODE_TEXT = {
     "TIMELINE_UNKNOWN_CLIP": "A clip on the timeline is no longer available",
     "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "Photos cannot be split",
     "TIMELINE_INVALID_PARENT": "A split clip lost its parent",
-    "TIMELINE_INVALID_DURATION": "A clip would be shorter than 0.1 seconds",
+    "TIMELINE_INVALID_DURATION": f"A clip would be shorter than {EDITOR_MIN_CLIP_S:g} seconds",
     "TIMELINE_SOURCE_BOUNDS": "A clip does not have enough footage for that length or speed",
 }
 

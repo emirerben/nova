@@ -3888,16 +3888,17 @@ Troubleshooting:
   stays B-roll unless the creator's answer stacked it; a take WITH candidates is always
   placed (check `position_basis` / `likelihood` in the receipt).
 - **`user_song_plan_declined`.** A real decline (song missing/replaced/unreadable, or
-  fallback impossible). The chat shows `Job.error_detail` verbatim for this code
-  (`CREATOR_FACING_DETAIL_CODES`), so keep those strings creator-facing. Before
+  fallback impossible). The chat shows the exception's `creator_detail` for this code
+  (stamped by `_fail_job` as `assembly_plan.creator_failure_detail`), so keep those strings
+  creator-facing. Before
   KRI-466 these surfaced as `phone_plan_unsupported` with the generic "your iPhone
   can't render yet" copy.
 - **`silent_audio_declined`.** The talking take has no sound at all (KRI-653: a dead-mic
   in-app recording; Whisper/Gemini hallucinate words over silence and the speech cut then
   removes ~all of it). Raised by `_run_phone_subtitled_job` via `_silent_audio_status`
   (`clip_speech.audio_presence`: loudest 50 ms window < -60 dB, or a >= 3 s clip with < 1 s
-  of windows >= -45 dB). Like `user_song_plan_declined` its `error_detail` is creator-facing
-  and in `CREATOR_FACING_DETAIL_CODES`. A measurement failure (`unknown`) fails OPEN. The
+  of windows >= -45 dB). Like `user_song_plan_declined` its message is creator-facing and
+  exposed as `creator_detail`. A measurement failure (`unknown`) fails OPEN. The
   speech-cleanup preflight refuses the same audio as `no_speech_track` before any Whisper spend.
 - **"Your song was replaced after this edit was approved".** The item's
   `song_generation` or duration no longer matches the approved plan; the creator

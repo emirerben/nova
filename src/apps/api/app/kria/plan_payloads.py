@@ -27,6 +27,7 @@ from app.kria.plan_contract import (
     PAYLOAD_MODELS,
     TRANSITION_DISPLAY,
 )
+from app.services.editor_limits import MOTION_FPS
 
 log = structlog.get_logger()
 
@@ -35,7 +36,6 @@ log = structlog.get_logger()
 _RECIPE_TRANSITIONS: dict[str, str] = {"fade_black": "fade", "fade_white": "fade"}
 
 _CLIP_TEXT_PREFIXES = ("clip-label-", "montage-text-", "group-title-")
-_MOTION_FPS = 30.0
 
 TrackMeta = Callable[[str], dict[str, Any] | None]
 
@@ -300,8 +300,8 @@ def _overlay_items(
                 "id": str(row["id"]),
                 "kind": "motion",
                 "label": _s(row.get("label"), 60),
-                "start_s": _r(max(0.0, start / _MOTION_FPS)),
-                "end_s": _r(max(0.0, end / _MOTION_FPS)),
+                "start_s": _r(max(0.0, start / MOTION_FPS)),
+                "end_s": _r(max(0.0, end / MOTION_FPS)),
             }
         )
     items.sort(key=lambda item: (item["start_s"], item["id"]))

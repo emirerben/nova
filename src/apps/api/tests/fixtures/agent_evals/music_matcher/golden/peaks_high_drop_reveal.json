@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "50627a9ba1114017",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["dramatic", "pulsing", "anthemic"],
+          "vibe_tags": [
+            "dramatic",
+            "pulsing",
+            "anthemic"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "build-and-drop reveal",
@@ -71,7 +76,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "punchy", "anthemic"],
+          "vibe_tags": [
+            "swagger",
+            "punchy",
+            "anthemic"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "fit-check flex",
@@ -89,7 +98,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["glossy", "anthemic", "celebratory"],
+          "vibe_tags": [
+            "glossy",
+            "anthemic",
+            "celebratory"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "headline release",
@@ -107,7 +120,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["reverent", "sweeping", "anticipatory"],
+          "vibe_tags": [
+            "reverent",
+            "sweeping",
+            "anticipatory"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "heirloom unveiling",
@@ -125,7 +142,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "tender", "patient"],
+          "vibe_tags": [
+            "wistful",
+            "tender",
+            "patient"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "memory longing",
@@ -138,60 +159,58 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_electronic_drop\", \"score\": 9.4, \"rationale\": \"Build-and-drop electronic with peaks_high energy is the literal mechanic this content needs — the slow unbox build into the on-beat reveal is exactly this track's profile, beat_pulse transitions would land the drop frame.\", \"predicted_strengths\": [\"peaks_high energy synced to the reveal beat\", \"beat_pulse transitions land on the box-lift moment\", \"12 slots over 4 clips supports build-then-cascade structure\"]}, {\"track_id\": \"track_hiphop_flex\", \"score\": 8.8, \"rationale\": \"Fit-check flex hip-hop names sneaker unboxings and fit walks directly; peaks_high energy delivers the reveal punch and lace-up rhythm without the synthetic edge of the electronic top pick.\", \"predicted_strengths\": [\"saturated street grade matches the alley fit-walk clip\", \"hard-cut transitions land the lacing rhythm\", \"swagger vibe reads against 'ten years waiting' hook\"]}, {\"track_id\": \"track_pop_glossy\", \"score\": 8.3, \"rationale\": \"Glossy headline-release pop frames the same content as a polished product-launch reveal; distinct enough from the electronic and hip-hop picks to round out the top-K with a third register.\", \"predicted_strengths\": [\"distinct vibe from top two — adds top-K variety\", \"high-contrast neon grade aligns with dramatic side-lighting\", \"whip_pan transitions fit the tracking-shot fit walk\"]}, {\"track_id\": \"track_cinematic_unbox\", \"score\": 7.0, \"rationale\": \"Heirloom-reveal cinematic frames the unbox as artisan ritual — works for the slow-build first clip, less for the fast lace-up and alley walk.\", \"predicted_strengths\": [\"reverent vibe elevates the macro unbox shot\", \"warm amber grade aligns with the box-lift lighting\"]}, {\"track_id\": \"track_acoustic_calm\", \"score\": 1.5, \"rationale\": \"Slow wistful acoustic is the textbook wrong call on a build-and-drop reveal — destroys the beat-locked reveal payoff the content depends on.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_electronic_drop\",\n      \"score\": 9.5,\n      \"rationale\": \"This track's build-and-drop structure is perfectly suited for the dramatic sneaker unboxing and reveal sequence.\",\n      \"predicted_strengths\": [\n        \"explosive beat drop on reveal\",\n        \"dramatic energy matches unboxing build\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_flex\",\n      \"score\": 9.2,\n      \"rationale\": \"The punchy swagger and high-energy profile align perfectly with the sneaker reveal, lacing, and 'flex' walk.\",\n      \"predicted_strengths\": [\n        \"high energy matches quick cuts and lacing\",\n        \"swagger vibe enhances the final walk-off\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_glossy\",\n      \"score\": 8.8,\n      \"rationale\": \"Its celebratory and anthemic pop vibe provides a bright, high-energy backdrop ideal for a product launch or reveal.\",\n      \"predicted_strengths\": [\n        \"celebratory tone for a special item\",\n        \"high energy for the reveal and walk\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_unbox\",\n      \"score\": 7.5,\n      \"rationale\": \"The reverent, anticipatory mood effectively builds tension for the special unboxing of the limited-edition sneakers.\",\n      \"predicted_strengths\": [\n        \"dramatic anticipation for the reveal\",\n        \"cinematic feel elevates product importance\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_calm\",\n      \"score\": 1.5,\n      \"rationale\": \"The slow, sentimental acoustic vibe fundamentally clashes with the high-energy unboxing and reveal of the sneakers.\",\n      \"predicted_strengths\": [\n        \"calm pacing for the initial slow build\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_electronic_drop",
-        "score": 9.4,
-        "rationale": "Build-and-drop electronic with peaks_high energy is the literal mechanic this content needs — the slow unbox build into the on-beat reveal is exactly this track's profile, beat_pulse transitions would land the drop frame.",
+        "score": 9.5,
+        "rationale": "This track's build-and-drop structure is perfectly suited for the dramatic sneaker unboxing and reveal sequence.",
         "predicted_strengths": [
-          "peaks_high energy synced to the reveal beat",
-          "beat_pulse transitions land on the box-lift moment",
-          "12 slots over 4 clips supports build-then-cascade structure"
+          "explosive beat drop on reveal",
+          "dramatic energy matches unboxing build"
         ]
       },
       {
         "track_id": "track_hiphop_flex",
-        "score": 8.8,
-        "rationale": "Fit-check flex hip-hop names sneaker unboxings and fit walks directly; peaks_high energy delivers the reveal punch and lace-up rhythm without the synthetic edge of the electronic top pick.",
+        "score": 9.2,
+        "rationale": "The punchy swagger and high-energy profile align perfectly with the sneaker reveal, lacing, and 'flex' walk.",
         "predicted_strengths": [
-          "saturated street grade matches the alley fit-walk clip",
-          "hard-cut transitions land the lacing rhythm",
-          "swagger vibe reads against 'ten years waiting' hook"
+          "high energy matches quick cuts and lacing",
+          "swagger vibe enhances the final walk-off"
         ]
       },
       {
         "track_id": "track_pop_glossy",
-        "score": 8.3,
-        "rationale": "Glossy headline-release pop frames the same content as a polished product-launch reveal; distinct enough from the electronic and hip-hop picks to round out the top-K with a third register.",
+        "score": 8.8,
+        "rationale": "Its celebratory and anthemic pop vibe provides a bright, high-energy backdrop ideal for a product launch or reveal.",
         "predicted_strengths": [
-          "distinct vibe from top two — adds top-K variety",
-          "high-contrast neon grade aligns with dramatic side-lighting",
-          "whip_pan transitions fit the tracking-shot fit walk"
+          "celebratory tone for a special item",
+          "high energy for the reveal and walk"
         ]
       },
       {
         "track_id": "track_cinematic_unbox",
-        "score": 7.0,
-        "rationale": "Heirloom-reveal cinematic frames the unbox as artisan ritual — works for the slow-build first clip, less for the fast lace-up and alley walk.",
+        "score": 7.5,
+        "rationale": "The reverent, anticipatory mood effectively builds tension for the special unboxing of the limited-edition sneakers.",
         "predicted_strengths": [
-          "reverent vibe elevates the macro unbox shot",
-          "warm amber grade aligns with the box-lift lighting"
+          "dramatic anticipation for the reveal",
+          "cinematic feel elevates product importance"
         ]
       },
       {
         "track_id": "track_acoustic_calm",
         "score": 1.5,
-        "rationale": "Slow wistful acoustic is the textbook wrong call on a build-and-drop reveal — destroys the beat-locked reveal payoff the content depends on.",
+        "rationale": "The slow, sentimental acoustic vibe fundamentally clashes with the high-energy unboxing and reveal of the sneakers.",
         "predicted_strengths": [
-          "no real fit"
+          "calm pacing for the initial slow build"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "peaks_high build-and-drop sneaker reveal — electronic tops on mechanic fit, hip-hop + pop diversify"
+    "source": "provider_smoke_capture",
+    "case": "peaks_high build-and-drop sneaker reveal — electronic tops on mechanic fit, hip-hop + pop diversify",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

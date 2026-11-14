@@ -195,5 +195,6 @@
     "case": "creator frames a wedding but footage is football/bar/selfie: literal captions + mismatch note",
     "lane": "kria-219-capture-time",
     "note": "model wording varies: structural check only; guard drops the parroted 'Pre-wedding selfie'"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

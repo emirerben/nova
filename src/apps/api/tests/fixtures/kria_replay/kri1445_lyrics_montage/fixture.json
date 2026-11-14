@@ -1,0 +1,429 @@
+{
+  "fixture_id": "kri1445_lyrics_montage",
+  "incident": "prod thread 6db7ecd4 (2026-11-14): a typed-lyrics montage ended creation_text_failed twice in assembly, before any phone render (KRI-1445 / KRI-1456)",
+  "source": {
+    "captured_with": [
+      "scripts/admin.py --prod GET jobs/<job_id>/debug (read-only), jobs d6c58d7b and e7bf7099"
+    ],
+    "recorded": [
+      "route unified_montage, platform phone, format montage, caption_style none, protocol 49, one 14.03 s video (media id, path, sha scrubbed)",
+      "approved strategy, scrubbed: clip_intents[0] is a caption op carrying the whole lyric as one block; pinned_texts holds the same lyric as 3 lines at bottom_center; resolved_clip_intents; direction guided_story; target_duration_s 4.0",
+      "brief v2: r1 'find the lyrics ... and add it as text' with no literal, r2 the pasted lyric as its literal",
+      "approved length plan: one best_moment window of 4 s on the clip (capacity 4.0 s)",
+      "job 1 (turn 1) pipeline event phone_plan_failed: CreationTextCompositionError 'Text composition is incomplete: The draft currently has overlapping text because it includes both the full lyrics in one block and the same lyrics split into three stacked lines. Please clarify which layout you prefer so I can remove the duplicate.'",
+      "job 2 (turn 2, message 'Fix it') pipeline event phone_plan_failed: CreationTextCompositionError 'Text composition could not compile: Text changed before this edit could be drafted', cause KriaEditorOpError",
+      "composer agent nova.edit.copilot ok, 1 attempt, 92 output tokens on job 1; input and output are stored redacted (keys and sha256 only)"
+    ],
+    "reconstructed": [
+      "the lyrics: three invented Turkish lines of the same shape (diacritics, 34-38 characters each) replace the creator's; the song title is invented too",
+      "cassette A: the composer's raw answer, authored from the recorded error_tail (a clarification, no ops)",
+      "cassette B: hand-authored. The recorded job 2 never stored the composer's ops, only the compile error; see README for what is and is not known about it",
+      "media analysis is trimmed to subject, description and moments; the thread, user and storage ids are scrubbed"
+    ]
+  },
+  "observed": {
+    "language": "en",
+    "job_1": {
+      "failure_reason": "creation_text_failed",
+      "error_class": "CreationTextCompositionError",
+      "error_tail": "Text composition is incomplete: The draft currently has overlapping text because it includes both the full lyrics in one block and the same lyrics split into three stacked lines. Please clarify which layout you prefer so I can remove the duplicate."
+    },
+    "job_2": {
+      "failure_reason": "creation_text_failed",
+      "error_class": "CreationTextCompositionError",
+      "cause_classes": [
+        "KriaEditorOpError"
+      ],
+      "error_tail": "Text composition could not compile: Text changed before this edit could be drafted"
+    },
+    "creator_saw": "I couldn't prepare the text while keeping your approved wording. Your draft and footage are saved. Try generating this edit again…"
+  },
+  "messages": [
+    "Find the lyrics to the song “Şarkımız Bitmez Seninle” and add it as text to this video",
+    "It goes like: Gönlümde yanar bir şarkı ağlasa da Yağmurlar yağsa da sokaklar ıslansa da Şarkımız bitmez bu şehirde seninle"
+  ],
+  "lyrics": {
+    "lines": [
+      "Gönlümde yanar bir şarkı ağlasa da",
+      "Yağmurlar yağsa da sokaklar ıslansa da",
+      "Şarkımız bitmez bu şehirde seninle"
+    ],
+    "full": "Gönlümde yanar bir şarkı ağlasa da Yağmurlar yağsa da sokaklar ıslansa da Şarkımız bitmez bu şehirde seninle"
+  },
+  "clip": {
+    "media_id": "analysis-proxy-lyrics-01",
+    "gcs_path": "users/redacted/threads/redacted/analysis-proxy-ios-lyrics-01.mp4",
+    "duration_s": 14.033333,
+    "original": {
+      "width": 1920,
+      "height": 1080,
+      "duration_s": 14.005,
+      "orientation_degrees": 90,
+      "byte_count": 15729960,
+      "has_audio": true
+    },
+    "proxy": {
+      "width": 320,
+      "height": 568,
+      "frame_rate": 30.0
+    },
+    "analysis": {
+      "width": 320,
+      "height": 568,
+      "aspect": 0.5634,
+      "duration_s": 14.033333,
+      "subject": "football player",
+      "description": "player jogs on pitch player claps to crowd player claps vigorously",
+      "best_moments": [
+        {
+          "end_s": 3.0,
+          "energy": 5.0,
+          "start_s": 0.0,
+          "description": "player jogs on pitch"
+        },
+        {
+          "end_s": 9.0,
+          "energy": 6.0,
+          "start_s": 5.0,
+          "description": "player claps to crowd"
+        },
+        {
+          "end_s": 14.0,
+          "energy": 7.0,
+          "start_s": 10.0,
+          "description": "player claps vigorously"
+        }
+      ],
+      "transcript": "",
+      "on_screen_text": "",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "rotation_degrees": 0,
+      "display_width": 320,
+      "display_height": 568,
+      "video_codec": "h264",
+      "pix_fmt": "yuv420p",
+      "brands": []
+    }
+  },
+  "brief": {
+    "version": 2,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "text",
+        "facts": {},
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Find the lyrics to the song “Şarkımız Bitmez Seninle” and add it as text to this video",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r2",
+        "kind": "text",
+        "facts": {},
+        "scope": "global",
+        "status": "open",
+        "literal": "Gönlümde yanar bir şarkı ağlasa da Yağmurlar yağsa da sokaklar ıslansa da Şarkımız bitmez bu şehirde seninle",
+        "description": "Use these supplied lyrics as the text requested for the video.",
+        "source_turn_id": "turn-2"
+      }
+    ]
+  },
+  "strategy": {
+    "pacing": "relaxed",
+    "direction": "guided_story",
+    "rationale": "A continuous 12-second passage will give viewers time to read the supplied lyrics while the player’s movement develops into applause. Three static lines will preserve your exact spelling without implying karaoke synchronization. The clip will keep its own stadium sound; no song recording or additional wording will be added.",
+    "intro_hook": "The player acknowledging the stadium crowd.",
+    "voice_mode": "per_clip",
+    "edit_format": "montage",
+    "clip_intents": [
+      {
+        "op": "caption",
+        "attribute": "this video",
+        "intent_id": "lyrics_caption_1",
+        "creator_text": "Gönlümde yanar bir şarkı ağlasa da Yağmurlar yağsa da sokaklar ıslansa da Şarkımız bitmez bu şehirde seninle",
+        "source_quote": "add it as text to this video\nIt goes like: Gönlümde yanar bir şarkı ağlasa da Yağmurlar yağsa da sokaklar ıslansa da Şarkımız bitmez bu şehirde seninle"
+      }
+    ],
+    "pinned_texts": [
+      {
+        "text": "Gönlümde yanar bir şarkı ağlasa da",
+        "corner": "bottom_center"
+      },
+      {
+        "text": "Yağmurlar yağsa da sokaklar ıslansa da",
+        "corner": "bottom_center"
+      },
+      {
+        "text": "Şarkımız bitmez bu şehirde seninle",
+        "corner": "bottom_center"
+      }
+    ],
+    "caption_style": "none",
+    "montage_audio": {
+      "source_media_ids": [],
+      "preview_source_beds": false,
+      "preserve_source_audio": true
+    },
+    "audio_strategy": "original_audio",
+    "render_program": "guided",
+    "story_structure": [
+      "Open with the player moving along the pitch.",
+      "Hold through the player’s applause toward the crowd.",
+      "Let the gesture register before ending, with the supplied lyrics remaining visible."
+    ],
+    "target_duration_s": 4.0,
+    "selected_media_ids": [],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "resolved_clip_intents": [
+      {
+        "op": "caption",
+        "status": "resolved",
+        "attribute": "this video",
+        "intent_id": "lyrics_caption_1",
+        "assignments": [
+          {
+            "evidence": "the clip is a video",
+            "media_id": "analysis-proxy-lyrics-01",
+            "confidence": 1.0
+          }
+        ],
+        "caption_text": "Gönlümde yanar bir şarkı ağlasa da Yağmurlar yağsa da sokaklar ıslansa da Şarkımız bitmez bu şehirde seninle",
+        "creator_text": "Gönlümde yanar bir şarkı ağlasa da Yağmurlar yağsa da sokaklar ıslansa da Şarkımız bitmez bu şehirde seninle",
+        "source_quote": "add it as text to this video\nIt goes like: Gönlümde yanar bir şarkı ağlasa da Yağmurlar yağsa da sokaklar ıslansa da Şarkımız bitmez bu şehirde seninle",
+        "caption_grounding": "creator_text"
+      }
+    ],
+    "selected_music_section": null
+  },
+  "best_parts": [
+    {
+      "score": 7.0,
+      "reason": "best_moment",
+      "media_id": "analysis-proxy-lyrics-01",
+      "source_end_s": 14.0,
+      "source_start_s": 10.0
+    }
+  ],
+  "length_plan": {
+    "owner": "footage",
+    "sources": [
+      {
+        "kind": "video",
+        "gcs_path": "users/redacted/threads/redacted/analysis-proxy-ios-lyrics-01.mp4",
+        "media_id": "analysis-proxy-lyrics-01",
+        "duration_s": 14.005,
+        "generation": null,
+        "storage_generation": "1"
+      }
+    ],
+    "version": 1,
+    "windows": [
+      {
+        "score": 7.0,
+        "reason": "best_moment",
+        "media_id": "analysis-proxy-lyrics-01",
+        "source_end_s": 14.0,
+        "source_start_s": 10.0
+      }
+    ],
+    "conflicts": [],
+    "capacity_s": 4.0,
+    "natural_owner": "footage",
+    "capacity_raw_s": 14.005,
+    "window_eligible": true,
+    "max_source_count": 80,
+    "target_duration_s": null,
+    "natural_duration_s": null
+  },
+  "client_protocol": 49,
+  "phone_text_style_policy": {
+    "version": 1,
+    "requested": {},
+    "preferences": {
+      "lyric": {
+        "position": "bottom"
+      },
+      "title": {
+        "position": "top",
+        "favorite_fonts": [
+          "Big Curls"
+        ]
+      },
+      "pinned": {
+        "position": "bottom_left"
+      },
+      "caption": {
+        "position": "bottom",
+        "favorite_fonts": [
+          "Montserrat Bold",
+          "Inter",
+          "Poppins Bold",
+          "TikTok Sans Bold"
+        ]
+      },
+      "all_text": {
+        "position": "bottom_left",
+        "stroke_width": 0.0,
+        "automatic_font": true,
+        "excluded_fonts": [
+          "Fraunces"
+        ],
+        "favorite_fonts": [
+          "Big Curls",
+          "Inter",
+          "Montserrat"
+        ],
+        "shadow_enabled": false
+      }
+    }
+  },
+  "cassettes": {
+    "A_clarification": {
+      "kind": "recorded outcome, authored output",
+      "recorded": "job 1 (turn 1): composer ok, 1 attempt, 92 output tokens, then CreationTextCompositionError with exactly this sentence as the tail",
+      "authored": "the raw answer (a clarification, no ops) is authored from that tail; the stored output is redacted",
+      "output": {
+        "intent": "clarify",
+        "confidence": 0.4,
+        "reply": "The draft currently has overlapping text because it includes both the full lyrics in one block and the same lyrics split into three stacked lines. Please clarify which layout you prefer so I can remove the duplicate.",
+        "needs_clarification": true,
+        "ops": [],
+        "unmet_requests": []
+      }
+    },
+    "B_removed_bar": {
+      "kind": "hand-authored, mechanism real",
+      "recorded": "job 2 (turn 2, 'Fix it'): CreationTextCompositionError 'Text composition could not compile: Text changed before this edit could be drafted', cause KriaEditorOpError. The ops were never stored.",
+      "authored": "remove the one-block bar (index 0), then re-time all four bars with a selector that still names bar 0. This is one bundle that reaches the recorded raise site; the recorded ops may have differed",
+      "output": {
+        "intent": "edit",
+        "confidence": 0.9,
+        "reply": "I removed the duplicate full-lyrics block and kept the three lines.",
+        "ops": [
+          {
+            "op": "remove_text",
+            "bar_index": 0
+          },
+          {
+            "op": "set_texts_timing",
+            "selector": {
+              "bar_indexes": [
+                0,
+                1,
+                2,
+                3
+              ]
+            },
+            "start_s": 0.0,
+            "end_s": 4.0
+          }
+        ],
+        "needs_clarification": false,
+        "unmet_requests": []
+      }
+    },
+    "C_remove_block": {
+      "kind": "probe, not recorded",
+      "authored": "the composer does the obvious fix: removes the one-block bar and keeps the three lines",
+      "output": {
+        "intent": "edit",
+        "confidence": 0.9,
+        "reply": "I removed the duplicate full-lyrics block and kept the three lines.",
+        "ops": [
+          {
+            "op": "remove_text",
+            "bar_index": 0
+          }
+        ],
+        "needs_clarification": false,
+        "unmet_requests": []
+      }
+    },
+    "D_no_op": {
+      "kind": "probe, not recorded",
+      "authored": "the composer leaves the lane as the plan built it",
+      "output": {
+        "intent": "describe",
+        "confidence": 0.9,
+        "reply": "The lyrics are already on the video.",
+        "ops": [],
+        "needs_clarification": false,
+        "unmet_requests": []
+      }
+    }
+  },
+  "scenarios": {
+    "asks_text_drawn": {
+      "kind": "authored (the composer legitimately runs, KRI-1456)",
+      "authored": "the creator also asked for a style the plan lacks, so the composer is called; it answers with the recorded question (cassette A). Every lyric line is already on the plan",
+      "extra_requirements": [
+        {
+          "id": "r3",
+          "kind": "style",
+          "facts": {},
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "Make the lyrics look like a neon sign",
+          "source_turn_id": "turn-2"
+        }
+      ],
+      "cassette": "A_clarification",
+      "expect": "rendered"
+    },
+    "asks_text_missing": {
+      "kind": "authored (the composer legitimately runs, KRI-1456)",
+      "authored": "the creator also asked for one more line the plan does not draw, so the composer is called; it asks where that line goes. A video without that line would silently drop the creator's wording",
+      "extra_requirements": [
+        {
+          "id": "r3",
+          "kind": "text",
+          "facts": {},
+          "scope": "global",
+          "status": "open",
+          "literal": "Bu şarkı senin için",
+          "description": "Also add the words Bu şarkı senin için",
+          "source_turn_id": "turn-2"
+        }
+      ],
+      "output": {
+        "intent": "clarify",
+        "confidence": 0.4,
+        "reply": "Where should “Bu şarkı senin için” go: above the lyric or on its own at the end?",
+        "needs_clarification": true,
+        "ops": [],
+        "unmet_requests": []
+      },
+      "expect": "question"
+    },
+    "composer_rejects": {
+      "kind": "authored (the composer legitimately runs, KRI-1456)",
+      "authored": "same brief as asks_text_drawn, but the composer rejects the style with no question and no unmet reason: nothing to ask the creator, so it stays a failure",
+      "extra_requirements": [
+        {
+          "id": "r3",
+          "kind": "style",
+          "facts": {},
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "Make the lyrics look like a neon sign",
+          "source_turn_id": "turn-2"
+        }
+      ],
+      "output": {
+        "intent": "reject",
+        "confidence": 0.9,
+        "reply": "I can't do that with the text tool.",
+        "needs_clarification": false,
+        "ops": [],
+        "unmet_requests": []
+      },
+      "expect": "failure"
+    }
+  }
+}

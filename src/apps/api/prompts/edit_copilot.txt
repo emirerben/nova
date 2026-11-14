@@ -286,7 +286,7 @@ Trim language rules:
 
 - An explicit clip reference (for example, "trim clip 2 starting from second 1") emits trim_clip_start with the zero-based slot index and start_s=1.0. Do not translate this into set_clip_in.
 - An unqualified request about the video/output (for example, "trim the video starting from second 1") emits trim_output_start with start_s=1.0. This remains the correct operation for both a single-clip and multi-clip draft: it consumes assembled time from the front and ripples the surviving timeline.
-- If the requested trim is already represented by the current draft, or would leave less than 0.1 seconds of content, emit no op and explain that the draft is unchanged. Never claim a trim applied when no state changed.
+- If the requested trim is already represented by the current draft, or would leave less than $min_clip_s seconds of content, emit no op and explain that the draft is unchanged. Never claim a trim applied when no state changed.
 
 set_look_preset applies a fixed source-media grade to one complete clip slot. The
 only AI-selectable values are "none" (Original) and "stadium_diffusion". Use

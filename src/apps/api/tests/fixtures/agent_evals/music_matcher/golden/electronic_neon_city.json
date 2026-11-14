@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "8d50215613261fd3",
   "input": {
     "clip_summaries": [
       {
@@ -63,7 +64,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["pulsing", "atmospheric", "moody"],
+          "vibe_tags": [
+            "pulsing",
+            "atmospheric",
+            "moody"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "neon-noir city",
@@ -81,7 +86,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["ambient", "ethereal", "patient"],
+          "vibe_tags": [
+            "ambient",
+            "ethereal",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "after-hours stillness",
@@ -99,7 +108,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["moody", "swagger", "patient"],
+          "vibe_tags": [
+            "moody",
+            "swagger",
+            "patient"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "after-dark cool",
@@ -117,7 +130,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["glossy", "anthemic", "neon"],
+          "vibe_tags": [
+            "glossy",
+            "anthemic",
+            "neon"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "headline release",
@@ -135,7 +152,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["intimate", "wistful", "patient"],
+          "vibe_tags": [
+            "intimate",
+            "wistful",
+            "patient"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "introspective evening",
@@ -153,7 +174,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "reverent", "majestic"],
+          "vibe_tags": [
+            "sweeping",
+            "reverent",
+            "majestic"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "quiet awe",
@@ -166,68 +191,68 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_electronic_synthwave\", \"score\": 9.2, \"rationale\": \"Neon-noir city profile names this exact content — wet-asphalt neon reflections, alley walks, subway motion blur; high-contrast neon grade matches the footage one-to-one.\", \"predicted_strengths\": [\"high-contrast neon grade matches magenta/cyan reflections\", \"beat_pulse transitions sync to subway arrival motion\", \"11 slots over 5 clips supports rhythmic intercutting\"]}, {\"track_id\": \"track_electronic_ambient\", \"score\": 8.0, \"rationale\": \"Ambient after-hours synth variant gives the same neon footage a more atmospheric, slower read — distinct vibe from the pulsing top pick.\", \"predicted_strengths\": [\"distinct mood from top pick — adds variety within electronic\", \"ethereal vibe lifts the ramen-steam clip\", \"dissolve transitions support slower atmospheric reading\"]}, {\"track_id\": \"track_hiphop_night\", \"score\": 7.8, \"rationale\": \"After-dark hip-hop names alley walks and street-lamp swagger directly; rounds out a genre-distinct top-K against the two electronic picks.\", \"predicted_strengths\": [\"third distinct genre — completes top-K diversity\", \"high-contrast neon grade still aligns\", \"hard-cut transitions punctuate the subway-arrival clip\"]}, {\"track_id\": \"track_pop_glossy\", \"score\": 6.5, \"rationale\": \"Glossy neon pop has the right color universe but pushes peaks_high energy onto medium-energy ambient city b-roll — viable variant, slightly over-driven.\", \"predicted_strengths\": [\"high-contrast neon grade aligns\", \"glossy mood lifts the vending-machine reach clip\"]}, {\"track_id\": \"track_cinematic_landscape\", \"score\": 2.5, \"rationale\": \"Warm-amber alpine landscape cinematic has no overlap with neon-noir city footage; wrong grade, wrong setting.\", \"predicted_strengths\": [\"no real fit\"]}, {\"track_id\": \"track_acoustic_porch\", \"score\": 1.8, \"rationale\": \"Outdoor wistful acoustic with warm golden-hour grade is the inverse of cool-neon city footage; wrong vibe and grade across every dimension.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_electronic_synthwave\",\n      \"score\": 9.8,\n      \"rationale\": \"This track's 'neon-noir city' mood and profile perfectly align with the clips' urban night scenes and vibrant reflections.\",\n      \"predicted_strengths\": [\n        \"perfect thematic match\",\n        \"energy and pacing sync\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_ambient\",\n      \"score\": 8.5,\n      \"rationale\": \"The ambient electronic vibe complements the atmospheric reflections and slower moments of the city clips, offering a contemplative mood.\",\n      \"predicted_strengths\": [\n        \"atmospheric mood fit\",\n        \"cinematic storytelling\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_glossy\",\n      \"score\": 7.2,\n      \"rationale\": \"The 'neon' vibe and 'high-contrast color' profile of this pop track would energize the clips with a sleek, modern feel.\",\n      \"predicted_strengths\": [\n        \"bright, energetic contrast\",\n        \"fast pacing for dynamic cuts\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_night\",\n      \"score\": 6.8,\n      \"rationale\": \"This track's 'after-dark cool' mood could provide a street-level, moody backdrop for the clips, focusing on the human element.\",\n      \"predicted_strengths\": [\n        \"moody street atmosphere\",\n        \"swagger for walking scenes\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_landscape\",\n      \"score\": 3.0,\n      \"rationale\": \"While cinematic, this track's sweeping, majestic mood is ill-suited for the intimate, urban neon clips.\",\n      \"predicted_strengths\": [\n        \"cinematic feel\",\n        \"medium energy\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_porch\",\n      \"score\": 1.5,\n      \"rationale\": \"The intimate, wistful tone of this acoustic track directly clashes with the high-energy, neon-lit urban aesthetic of the clips.\",\n      \"predicted_strengths\": [\n        \"intimate feel\",\n        \"slow pacing\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_electronic_synthwave",
-        "score": 9.2,
-        "rationale": "Neon-noir city profile names this exact content — wet-asphalt neon reflections, alley walks, subway motion blur; high-contrast neon grade matches the footage one-to-one.",
+        "score": 9.8,
+        "rationale": "This track's 'neon-noir city' mood and profile perfectly align with the clips' urban night scenes and vibrant reflections.",
         "predicted_strengths": [
-          "high-contrast neon grade matches magenta/cyan reflections",
-          "beat_pulse transitions sync to subway arrival motion",
-          "11 slots over 5 clips supports rhythmic intercutting"
+          "perfect thematic match",
+          "energy and pacing sync"
         ]
       },
       {
         "track_id": "track_electronic_ambient",
-        "score": 8.0,
-        "rationale": "Ambient after-hours synth variant gives the same neon footage a more atmospheric, slower read — distinct vibe from the pulsing top pick.",
+        "score": 8.5,
+        "rationale": "The ambient electronic vibe complements the atmospheric reflections and slower moments of the city clips, offering a contemplative mood.",
         "predicted_strengths": [
-          "distinct mood from top pick — adds variety within electronic",
-          "ethereal vibe lifts the ramen-steam clip",
-          "dissolve transitions support slower atmospheric reading"
-        ]
-      },
-      {
-        "track_id": "track_hiphop_night",
-        "score": 7.8,
-        "rationale": "After-dark hip-hop names alley walks and street-lamp swagger directly; rounds out a genre-distinct top-K against the two electronic picks.",
-        "predicted_strengths": [
-          "third distinct genre — completes top-K diversity",
-          "high-contrast neon grade still aligns",
-          "hard-cut transitions punctuate the subway-arrival clip"
+          "atmospheric mood fit",
+          "cinematic storytelling"
         ]
       },
       {
         "track_id": "track_pop_glossy",
-        "score": 6.5,
-        "rationale": "Glossy neon pop has the right color universe but pushes peaks_high energy onto medium-energy ambient city b-roll — viable variant, slightly over-driven.",
+        "score": 7.2,
+        "rationale": "The 'neon' vibe and 'high-contrast color' profile of this pop track would energize the clips with a sleek, modern feel.",
         "predicted_strengths": [
-          "high-contrast neon grade aligns",
-          "glossy mood lifts the vending-machine reach clip"
+          "bright, energetic contrast",
+          "fast pacing for dynamic cuts"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_night",
+        "score": 6.8,
+        "rationale": "This track's 'after-dark cool' mood could provide a street-level, moody backdrop for the clips, focusing on the human element.",
+        "predicted_strengths": [
+          "moody street atmosphere",
+          "swagger for walking scenes"
         ]
       },
       {
         "track_id": "track_cinematic_landscape",
-        "score": 2.5,
-        "rationale": "Warm-amber alpine landscape cinematic has no overlap with neon-noir city footage; wrong grade, wrong setting.",
+        "score": 3.0,
+        "rationale": "While cinematic, this track's sweeping, majestic mood is ill-suited for the intimate, urban neon clips.",
         "predicted_strengths": [
-          "no real fit"
+          "cinematic feel",
+          "medium energy"
         ]
       },
       {
         "track_id": "track_acoustic_porch",
-        "score": 1.8,
-        "rationale": "Outdoor wistful acoustic with warm golden-hour grade is the inverse of cool-neon city footage; wrong vibe and grade across every dimension.",
+        "score": 1.5,
+        "rationale": "The intimate, wistful tone of this acoustic track directly clashes with the high-energy, neon-lit urban aesthetic of the clips.",
         "predicted_strengths": [
-          "no real fit"
+          "intimate feel",
+          "slow pacing"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "electronic neon city — second electronic case, hip-hop after-dark fills variety"
+    "source": "provider_smoke_capture",
+    "case": "electronic neon city — second electronic case, hip-hop after-dark fills variety",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

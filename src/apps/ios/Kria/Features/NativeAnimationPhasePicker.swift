@@ -88,7 +88,7 @@ struct NativeAnimationPhasePicker<Session: NativeTransactionControlling>: View {
 
     private var speedControl: some View {
         HStack {
-            NativeEditorSlider(session: session, value: Binding(get: { speed }, set: onSpeed), in: 0.25...3, step: 0.25) {
+            NativeEditorSlider(session: session, value: Binding(get: { speed }, set: onSpeed), in: TextAnimationPhases.speedRange, step: 0.25) {
                 Text("Animation speed")
             }
             Text("\(speed.formatted())×").frame(minWidth: 42)

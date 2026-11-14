@@ -6,8 +6,16 @@
     "creator_context": "Sports creator comparing emotionally similar match experiences.",
     "item_context": "Two matches with parallel emotional moments.",
     "media_context": [
-      {"media_id": "match-a", "kind": "video", "creator_note": "first match"},
-      {"media_id": "match-b", "kind": "video", "creator_note": "second match"}
+      {
+        "media_id": "match-a",
+        "kind": "video",
+        "creator_note": "first match"
+      },
+      {
+        "media_id": "match-b",
+        "kind": "video",
+        "creator_note": "second match"
+      }
     ],
     "conversation": [],
     "capability_manifest": {
@@ -17,16 +25,36 @@
       "render_program": "guided",
       "has_voiceover": false,
       "media": [
-        {"media_id": "match-a", "kind": "video", "duration_s": 6.633, "label": "first match"},
-        {"media_id": "match-b", "kind": "video", "duration_s": 26.433, "label": "second match"}
+        {
+          "media_id": "match-a",
+          "kind": "video",
+          "duration_s": 6.633,
+          "label": "first match"
+        },
+        {
+          "media_id": "match-b",
+          "kind": "video",
+          "duration_s": 26.433,
+          "label": "second match"
+        }
       ],
       "catalog": [
-        {"catalog_id": "music-track-1", "kind": "music", "label": "Licensed sports pulse"}
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Licensed sports pulse"
+        }
       ],
       "capabilities": {
-        "dispatch_render": {"available": true},
-        "draft_guided_proposal": {"available": true},
-        "edit_format:montage": {"available": true}
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        }
       },
       "limits": {
         "max_media_refs": 50,
@@ -43,5 +71,6 @@
   "meta": {
     "source": "hand-authored-production-regression",
     "contract": "plain-language numeric alternation is normalized into an exact two-source round-robin cadence"
-  }
+  },
+  "prompt_sha": "unpinned"
 }
