@@ -33,7 +33,6 @@ _PYTHON_PLAYBACK_ALLOWED = {
     "app/agents/editor_ops_v2/text.py": "text `size_scale`, a size multiplier",
     "app/kria/portable_text.py": "text motion speed, its own range",
     "app/agents/_schemas/text_element.py": "text motion speed, its own range",
-    "app/pipeline/reframe.py": "ffmpeg speed_factor of a template slot, not an editor clip",
     "app/pipeline/agents/gemini_analyzer.py": "template-recipe slot speed_factor clamp",
     "app/agents/template_recipe.py": "template-recipe slot speed_factor clamp",
     "app/pipeline/custom_effects.py": "custom effect `speed` parameter",
@@ -59,12 +58,23 @@ _EDITOR_MODULES = (
     "app/services/phone_voiceover_cut_editor.py",
     "app/services/authored_editor.py",
     "app/services/kria_editor_ops_text.py",
+    "app/services/kria_editor_ops.py",
+    "app/agents/edit_copilot.py",
 )
 # A transition overlap floor is its own limit (0.1 s of dissolve), not a clip minimum.
 _EDITOR_LINE_EXEMPT = "overlap"
+# Lines in a listed module that carry a 0.1 s for another purpose.
+_EDITOR_LINE_ALLOWED = {
+    "app/agents/edit_copilot.py": (
+        "total_s - 0.1",  # a sound effect may sit at most 0.1 s before the end
+        'out["transition"] != "cut" and max_duration < 0.1',  # transition length floor
+        "max(0.1, float(out.get(",  # transition length floor
+    ),
+}
 _EDITOR_LITERALS = re.compile(
     r"\bge=0\.1\b|[<>]=? ?0\.1\b(?![0-9])|\b0\.1 ?[<>]=? |max\(0\.1,|\belse 0\.1\b"
-    r"|(?:least|than) 0\.1\b|\b0\.1 seconds|\b1(?:\.0)? ?/ ?30(?:\.0)?\b|\* ?30\) ?/ ?30\b"
+    r"|- 0\.1\b(?![0-9])|(?:least|than) 0\.1\b|\b0\.1 seconds"
+    r"|\b1(?:\.0)? ?/ ?30(?:\.0)?\b|\* ?30\) ?/ ?30\b"
 )
 
 _SWIFT_ALLOWED = {
@@ -75,6 +85,7 @@ _SWIFT_ALLOWED = {
 }
 _SWIFT_LIMIT_LITERALS = re.compile(
     r"0\.25\.\.\.[34]\b|\bmax\(rate, 0\.25\)|"
+    r"(?:uration|ength|pan|indow)\w*(?:\.\w+)* ?[<>]=? ?0\.1\b(?![0-9])|"
     r"\bminimum\w*\b[^\n=]*=\s*0\.1\s*$|minimum: TimeInterval = 0\.1\b|"
     r"\bmax\(0\.1, \w+\.end - \w+\.start\)|\(duration \* 30\)",
     re.M,
@@ -115,6 +126,7 @@ def test_editor_modules_do_not_retype_the_clip_minimum_or_frame() -> None:
         for n, line in enumerate((API_ROOT / rel).read_text(encoding="utf-8").splitlines(), 1)
         if _EDITOR_LITERALS.search(line)
         and _EDITOR_LINE_EXEMPT not in line
+        and not any(a in line for a in _EDITOR_LINE_ALLOWED.get(rel, ()))
         and not line.lstrip().startswith("#")
     ]
     assert not found, (
@@ -175,3 +187,28 @@ def test_edit_copilot_prompt_renders_every_limit() -> None:
     assert "{{" not in prompt and "$min_clip_s" not in prompt
     minimum = f"{editor_limits.EDITOR_MIN_CLIP_S:g}"
     assert f"less than {minimum} seconds of content" in prompt
+
+
+# The copilot's prompt_version is hand-numbered (tests, goldens and recorded threads pin it), so it
+# does not move when a limit it renders changes. A limit change must come with a version bump.
+_COPILOT_RENDERED_LIMITS = (0.1, 0.25, 4.0, 0.25, 3, 30)
+_COPILOT_VERSION_AT_THOSE_LIMITS = "2026-11-14-v128"
+
+
+def test_copilot_prompt_version_moves_with_the_limits_it_renders() -> None:
+    from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
+
+    current = (
+        editor_limits.EDITOR_MIN_CLIP_S,
+        editor_limits.PLAYBACK_RATE_MIN,
+        editor_limits.PLAYBACK_RATE_MAX,
+        editor_limits.ANIMATION_SPEED_MIN,
+        editor_limits.ANIMATION_SPEED_MAX,
+        editor_limits.MOTION_FPS,
+    )
+    if current != _COPILOT_RENDERED_LIMITS:
+        assert EDIT_COPILOT_PROMPT_VERSION != _COPILOT_VERSION_AT_THOSE_LIMITS, (
+            "An editor limit the edit copilot prompt renders changed: bump "
+            "EDIT_COPILOT_PROMPT_VERSION, then update _COPILOT_RENDERED_LIMITS and "
+            "_COPILOT_VERSION_AT_THOSE_LIMITS here."
+        )

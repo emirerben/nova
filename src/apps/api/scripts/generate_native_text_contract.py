@@ -86,7 +86,7 @@ import Foundation
 public enum EditorLimits {{
     public static let outputFPS = {MOTION_FPS}
     /// Shortest an editor clip window may be.
-    public static let minClipSeconds = {EDITOR_MIN_CLIP_S!r}
+    public static let minClipSeconds: Double = {EDITOR_MIN_CLIP_S!r}
     /// Source seconds per output second a clip may play at.
     public static let playbackRate: ClosedRange<Double> = {rate}
 }}

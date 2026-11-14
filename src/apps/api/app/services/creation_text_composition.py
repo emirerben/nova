@@ -57,6 +57,7 @@ CREATION_TEXT_COMPOSER_PROMPT_SOURCES: tuple[str, ...] = (
     "app/agents/prompt_vocab.py",
     "app/agents/_schemas/text_animation_phases.py",
     "app/agents/_schemas/text_element.py",
+    "app/services/editor_limits.py",
     "assets/fonts/font-registry.json",
     "prompts/edit_copilot_ops/text.txt",
 )

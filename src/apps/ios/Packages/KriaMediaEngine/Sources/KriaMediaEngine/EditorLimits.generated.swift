@@ -5,7 +5,7 @@ import Foundation
 public enum EditorLimits {
     public static let outputFPS = 30
     /// Shortest an editor clip window may be.
-    public static let minClipSeconds = 0.1
+    public static let minClipSeconds: Double = 0.1
     /// Source seconds per output second a clip may play at.
     public static let playbackRate: ClosedRange<Double> = 0.25...4.0
 }
