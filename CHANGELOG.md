@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.210.0] - 2026-11-14
+
+### Changed
+- fix(ios): the editor keeps a chat song change (KRI-1394) (#2320) <!-- release-pr: 2320 -->
+
 ## [0.88.209.0] - 2026-11-14
 
 ### Changed
