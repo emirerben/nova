@@ -121,23 +121,31 @@ def sequence_timing_plan(intent: SequenceTimingIntent, snapshot: dict) -> Sequen
             ),
             intent,
         )
-    reply = say(
-        en=(
-            (
-                f"Retime all {len(rows)} words in sequence over {end:g}s, "
+    if intent.target_s is not None:
+        reply = say(
+            en=(
+                "Retime all {count} words in sequence over {end:g}s, "
                 "keeping their wording and appearance."
-            )
-            if intent.target_s is not None
-            else (
-                f"Spread all {len(rows)} words in sequence across the video, "
+            ),
+            tr=(
+                "{count} kelimenin tamamını metin ve görünümlerini koruyarak "
+                "video boyunca sırayla yay."
+            ),
+            count=len(rows),
+            end=end,
+        )
+    else:
+        reply = say(
+            en=(
+                "Spread all {count} words in sequence across the video, "
                 "keeping their wording and appearance."
-            )
-        ),
-        tr=(
-            f"{len(rows)} kelimenin tamamını metin ve görünümlerini koruyarak "
-            "video boyunca sırayla yay."
-        ),
-    )
+            ),
+            tr=(
+                "{count} kelimenin tamamını metin ve görünümlerini koruyarak "
+                "video boyunca sırayla yay."
+            ),
+            count=len(rows),
+        )
     return SequenceTimingPlan(tuple(parsed), reply, intent, source, ids)
 
 

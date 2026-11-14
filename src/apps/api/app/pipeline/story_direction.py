@@ -144,24 +144,25 @@ def fallback_note(reason: str, direction: str, *, future: bool = False) -> str:
 
     ``future`` is the approval card's wording ("will be cut"), else the finished video's. Read
     in the creator's reply language (call under `_worker_reply_language`)."""
-    en, tr = _REASONS.get(reason, _REASONS["story_not_compilable"])
-    label_en, label_tr = _DIRECTION_LABEL.get(direction, (direction, direction))
+    code = reason if reason in _REASONS else "story_not_compilable"
+    why = say(en=_REASONS[code][0], tr=_REASONS[code][1])
+    label = (
+        say(en=_DIRECTION_LABEL[direction][0], tr=_DIRECTION_LABEL[direction][1])
+        if direction in _DIRECTION_LABEL
+        else direction
+    )
     if future:
         return say(
-            en="I'll cut this as a fast montage instead of a {label_en}: {v1}",
-            tr="Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2}",
-            label_en=label_en,
-            v1=en,
-            label_tr=label_tr,
-            v2=tr,
+            en="I'll cut this as a fast montage instead of a {label}: {why}",
+            tr="Bunu {label} yerine hızlı montaj olarak keseceğim: {why}",
+            label=label,
+            why=why,
         )
     return say(
-        en="I cut this as a fast montage instead of a {label_en}: {v1}.",
-        tr="Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}.",
-        label_en=label_en,
-        v1=en,
-        label_tr=label_tr,
-        v2=tr,
+        en="I cut this as a fast montage instead of a {label}: {why}.",
+        tr="Bunu {label} yerine hızlı montaj olarak kestim: {why}.",
+        label=label,
+        why=why,
     )
 
 

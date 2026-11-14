@@ -939,14 +939,17 @@ def with_filming_end_ticks(
             continue
         end = ordering.ordered_ids[-1 if position == "last" else 0]
         categories.append({**category, "suggested_media_ids": [end]})
-        last = position == "last"
         notes.append(
             say(
-                en='I ticked the {v1} clip you filmed for "{category_get}".',
-                tr='"{category_get}" için çektiğin {v2} klibi işaretledim.',
-                v1="last" if last else "first",
-                category_get=category.get("label"),
-                v2="son" if last else "ilk",
+                en='I ticked the last clip you filmed for "{label}".',
+                tr='"{label}" için çektiğin son klibi işaretledim.',
+                label=category.get("label"),
+            )
+            if position == "last"
+            else say(
+                en='I ticked the first clip you filmed for "{label}".',
+                tr='"{label}" için çektiğin ilk klibi işaretledim.',
+                label=category.get("label"),
             )
         )
     if not notes:

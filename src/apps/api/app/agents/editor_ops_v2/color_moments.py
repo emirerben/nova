@@ -29,6 +29,7 @@ from app.kria.portable_color_moments import (
     ColorMomentTone,
     validate_color_moments,
 )
+from app.kria.reply_language import say
 
 FAMILY = "color_moments"
 CLOSED_NOTE = (
@@ -101,6 +102,11 @@ def _note(state: Any, text: str) -> None:
     notes = getattr(state, "reply_notes", None)
     if isinstance(notes, list) and text not in notes:
         notes.append(text)
+
+
+def _closed_note() -> str:
+    """``CLOSED_NOTE`` in the chat's language."""
+    return say(en=CLOSED_NOTE[0], tr=CLOSED_NOTE[1])
 
 
 def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
@@ -183,7 +189,7 @@ SPECS = [
         fields=frozenset({"moments", "end_fade_s"}),
         family=frozenset({FAMILY}),
         coerce=_coerce,
-        closed_note=CLOSED_NOTE,
+        closed_note=_closed_note,
     )
 ]
 

@@ -1,0 +1,3987 @@
+{
+ "note": "KRI-1408: (file, en, tr) pairs this branch retires (a sentence built from English fragments, split into whole sentences per case) or adds (those whole sentences, word tables, calls the harvester could not read). English and Turkish output is unchanged; see test_codemod_kept_every_en_tr_pair. Once merged, the merge base holds them and this list matches nothing.",
+ "retired": [
+  [
+   "app/agents/edit_copilot.py",
+   "Added the filming hour to {count} clip{v1}.",
+   "{count} klibe çekim saatini ekledim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Clip{v1} {names} {v2}'t look like \"{words}\" from what I saw, so I didn't put that wording on {v3}. Tell me what {v4}, or ask me to describe what I see.",
+   "Klip {names} gördüğüm kadarıyla \"{words}\" gibi görünmüyor, o yüzden bu ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "How short should the {v1} be?",
+   "{v2} ne kadar kısa olsun?"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I didn't caption clip{v1} {join_skipped}.",
+   "Klip {join_skipped} için yazı eklemedim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I left out clip{plural} {join_unseen}: I can't tell what {v1}. Tell me and I'll add {v2}.",
+   "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. Söylersen ekleyeyim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Labelled {count} clip{v1}.",
+   "{count} klibe etiket ekledim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "No filming time for clip{plural} {join_untimed}.",
+   "Klip {join_untimed} için çekim saati yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Filming hour on {len_timed} of {total} clips; {missing} {v1} no filming time.",
+   "Çekim saati {total} klibin {len_timed} tanesinde var; {missing} klibin çekim saati yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}",
+   "Kare {seconds} sn donuyor, {where_tr}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}, as you asked later",
+   "Kare {seconds} sn donuyor, {where_tr}, sonra istediğin gibi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds {v1} {seconds}s",
+   "Kare {seconds} sn donuyor, {where_tr}, istediğin {requested:g} sn değil: bir donma en {v2} {seconds} sn sürebiliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}; you didn't say how long, so I held it for one second",
+   "Kare {seconds} sn donuyor, {where_tr}; süre söylemediğin için bir saniye tuttum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it {v1} than {previous:g}s",
+   "Kare {seconds} sn donuyor, {where_tr}; süre söylemediğin için {previous:g} sn'den {v2} tuttum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I kept the text away from where {named} was, but lost sight of it for part of the video, so I can't confirm it stays clear",
+   "Yazıyı {named_tr} olduğu yerden uzak tuttum ama videonun bir kısmında onu göremedim, açıkta kaldığını doğrulayamıyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I used {every}{len_used} clips, including the {len_short} short {v1}",
+   "{len_used} klibin {v2} kullandım, {len_short} kısa klip de dahil"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll spell {and_names_names} the way you wrote {v1} and check {v1} in the finished video",
+   "{v2} senin yazdığın gibi yazıp bitmiş videoda kontrol edeceğim: {and_names_names}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Mark {named} on a frame so I can keep the text off it",
+   "Yazıyı uzak tutabilmem için {named_tr} bir karede işaretle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Some text still covers {named}; there was no spot clear of it",
+   "Bazı yazılar hâlâ {named_tr} üstünde; açıkta bir yer kalmadı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cut what it heard as {joined_en} ({seconds:.1f} s).",
+   "Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr} ({seconds_tr} sn)."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cut what it heard as {joined_en}.",
+   "Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions show up to {drawn_words} words at a time, not {en_n}.",
+   "Altyazılar aynı anda {tr_n} değil, en fazla {drawn_words} kelime gösteriyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions won't be held to {en_n} words at a time.",
+   "Altyazılar aynı anda {tr_n} kelimeyle sınırlı kalmayacak."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The clip changed since you marked {named}; mark it again",
+   "{named_tr} işaretlediğinden beri klip değişti; tekrar işaretle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The video has {len_lengths} {moments}, not {ask_count}",
+   "Videoda {ask_count} değil {len_lengths} an var"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is about {round_s_facts_duration_s}s{outro}; you asked for {asked_en}.",
+   "Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen {asked_tr} istedin."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by {basis_replace}, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: {basis_tr_get_basis_basis_replace}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You changed the edit after I placed the text, so I can't confirm it still stays off {named}",
+   "Yazıyı yerleştirdikten sonra düzenlemeyi değiştirdin; hâlâ {named_tr} üstünde olmadığını doğrulayamıyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You marked {named} on a different clip than the one I put the text on; mark it on the speaking clip",
+   "{named_tr} yazının olduğu klipte değil başka bir klipte işaretledin; konuşan klipte işaretle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You're {corner_0} over your background, so you don't fill the frame.",
+   "Arka planın üstünde {corner_1}sın, o yüzden kadrajı doldurmuyorsun."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your voiceover mentions {joined} in a different order, so I followed the voiceover.",
+   "Seslendirmende {joined_2} farklı bir sırayla geçiyor, ben de seslendirmeyi takip ettim."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{and_names_absent} {v1}'t appear in the captions, so I couldn't check {v2} spelling.",
+   "Altyazılarda {and_names_absent} geçmiyor, o yüzden {v3} kontrol edemedim."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{and_names_spelled} {v1} spelled as you wrote {v2}.",
+   "{and_names_spelled} yazdığın gibi yazılmış."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{bed_still_plays} at full volume alongside your voice; {fix_en}",
+   "{v1}, sesinle aynı seviyede; {fix_tr}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{bed_still_plays} softly under your voice{about_en}; {fix_en}",
+   "{v1}, sesinin altında kısık{about_tr}; {fix_tr}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{en_label} clips play from {start:.1f} s to {end:.1f} s, under: \"{excerpt}\"",
+   "{tr_label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, şu sözlerle: \"{excerpt}\""
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{freeze_needs_frame} ({start}–{end}s into the clip) but not the exact frame to hold, so it plays normally. Tell me the second to freeze on, like \"freeze at {middle} seconds\"",
+   "{v1} (klibin {start}–{end}. saniyeleri) ama tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede donsun, söyle; örneğin \"{middle}. saniyede dondur\""
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{len_off} of {len_rows} texts don't have the requested {names_en} yet",
+   "{len_rows} metinden {len_off} tanesinde istenen {names_tr} henüz yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{len_off} of {total} text{v1} didn't end up reading exactly “{req_literal}”.",
+   "{total} yazının {len_off} tanesi tam olarak “{req_literal}” olmadı."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{missed} {verb} where you asked.",
+   "{missed} istediğin yerde değil."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{moment_not_in_clip}: {v1}",
+   "{v2}: {v3}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{named_cut_still_in}: \"{quote}\" ({v1})",
+   "{v2}: \"{quote}\" ({v3})"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{n} clip{v1} had no capture time, so I kept {v2} attachment order.",
+   "{n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{n} clip{v1} too short for its text to stay on screen long enough to read.",
+   "{n} klip, yazısının okunacak kadar ekranda kalması için çok kısa."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{prefix}; {en_tail} and you asked for {asked_en}",
+   "{v1}; {tr_tail}, sen {asked_tr} istedin"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{reason}; you didn't say how fast, so I used {speed}",
+   "{reason}; ne kadar hızlı söylemediğin için {speed} kullandım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{sentence_case_words} is clip {v1} of {len_steps}, not the {spot} one.",
+   "{capitalize_words_strip} {len_steps} klipten {v1}. sırada, {v2} değil."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} {plays} at {speed}",
+   "{subject_tr} {speed} hızda oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} {plays} at {speed}, as you asked later",
+   "{subject_tr} sonra istediğin gibi {speed} hızda oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} {plays} at {speed}, not the {requested:g}x you asked for: a clip plays {v1} {speed}",
+   "{subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: bir klip en {v2} {speed} hızda oynayabiliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} {plays} at {speed}, not the {requested:g}x you asked for: the clip ran out of footage",
+   "{subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: klibin görüntüsü yetmedi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{sum_fails} of {len_rows} don't have the requested {label_0}",
+   "{len_rows} yazıdan {sum_fails} tanesinde istenen {label_1} yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{talking_spoken_text_pinned}{word} you picked, at {clock} in your take; if I can't find that one, it won't appear",
+   "{v1}{word} anında, çekiminin {clock} noktasında gösteririm; o anı bulamazsam yazı çıkmaz"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{talking_window_plan}from {at_start} on, if I find that line; if not, it opens at the start",
+   "{v1}{at_start} cümlesinden sonrasını korurum, o cümleyi bulursam; bulamazsam video baştan açılır"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{talking_window_plan}from {at_start} to right after {at_end}, if I find those lines",
+   "{v1}{at_start} cümlesinden {at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, bu cümleleri bulursam"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{talking_window_plan}up to right after {at_end}, if I find that line; if not, it runs to the end",
+   "{v1}{at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, o cümleyi bulursam; bulamazsam video sonuna kadar sürer"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{unnamed} of your recordings never {v1}.",
+   "Kayıtlarından {unnamed} tanesi hiç görünmüyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1} on {joined_en}",
+   "{join_parts_tr}{tail_tr} çıkıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}, then you're {corner_0} when you start on your first recording.",
+   "{v2}, sonra ilk kaydına geçince {corner_1}sın."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}, then your background takes the screen.",
+   "{v2}, sonra arka plan ekranı alıyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}, then {corner_0}.",
+   "{v2}, sonra {corner_1}sın."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}.",
+   "{v2}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}; {repeats} more repeated the label before, so I left {v2} off.",
+   "{v1}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}; {why}.",
+   "{v2}; {why}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{words} ({spot})",
+   "{words} ({v1})"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "The captions sit {v1} than you asked so they stay off your face.",
+   "Altyazılar yüzüne gelmesin diye istediğinden daha {v2} duruyor."
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   "I couldn't leave out {v1}, so {v2} still in the video.",
+   "{v3} çıkaramadım, o yüzden videoda {v4}."
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   "I left out {v1} because {v2} too short to use.",
+   "{v3} kullanılamayacak kadar kısa {v4} için çıkardım."
+  ],
+  [
+   "app/kria/intent_review_copy.py",
+   "Optional: move the {word} to the {en_anchor} so it's easier to read.",
+   "İstersen {word} daha kolay okunsun diye {tr_anchor} taşınabilir."
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "Updated {v1}.",
+   "{capitalize_tr} güncelledim."
+  ],
+  [
+   "app/kria/planner.py",
+   "I could fit {planned} {v1}, not {count}.",
+   "{count} değil, {planned} an sığdırabildim."
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "I can't make this video the length you asked for yet: {instead_en}",
+   "Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead_tr}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The {words_value} direction isn't applied on this video yet: {instead_en}",
+   "{words_value} yönü bu videoda henüz uygulanmıyor: {instead_tr}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The {words_value} pacing isn't applied on this video yet: {instead_en}",
+   "{words_value} tempo bu videoda henüz uygulanmıyor: {instead_tr}"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "I left out {v1} {which}.",
+   "{which}. {v2} dışarıda bıraktım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Only {v1} {which} {v2} in this edit and {v3} about {possible:g} seconds, so the video can't be {wanted:g} seconds.",
+   "Bu düzenlemede yalnızca {which}. {v4} var ve {v5}yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "This kind of edit can't show {missing} yet. Should I make everything else and leave that text out?",
+   "Bu tür düzenleme {missing_tr} henüz gösteremiyor. Geri kalan her şeyi yapıp o yazıyı dışarıda bırakayım mı?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "This version leaves out the {noun_en} you asked for: \"{ask}\".",
+   "Bu sürümde istediğin {noun_tr} yok: \"{ask}\"."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "You picked {clips} clip{v1}, so \"{pin_text}\" can't go on clip {pin_clip}. Which clip should it be on?",
+   "{clips} klip seçtin, o yüzden \"{pin_text}\" {pin_clip}. klibe konamaz. Hangi klibe koyayım?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "{v1} {which} can't be in this edit.",
+   "{which}. {v2} bu düzenlemeye giremiyor."
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "I cut this as a fast montage instead of a {label_en}: {v1}.",
+   "Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}."
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "I'll cut this as a fast montage instead of a {label_en}: {v1}",
+   "Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2}"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Each {word} plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them.",
+   "Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Group by {word}, chronological inside each {word}",
+   "Her {tr_word} bir blok olsun; blok içinde kronolojik sırala"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Keep it strictly chronological; {word}s may interleave",
+   "Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That part can't make a {asked_s}-second edit without changing {lines_en}.",
+   "{lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That part runs longer than {asked_s} seconds, and I can't shorten it without changing {lines_en}.",
+   "O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That {source} cannot make a {asked_s}-second edit without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That {source} cannot make an edit of at most {asked_s} seconds without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use the supported trim for this {source}.",
+   "Bu {source_tr} için desteklenen kırpmayı kullanır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing {lines_en}.",
+   "Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve {lines_tr} değiştirmeden kısaltamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked for a chronological video and for the clips grouped by {word}.",
+   "Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked me to freeze the frame on that moment. I found it in {name} ({span}s), but I can't tell the exact instant, and I won't guess it.",
+   "O anda kareyi dondurmamı istedin. O anı {name_tr} buldum ({span}. saniyeler arası) ama tam anını bilemiyorum ve tahmin etmeyeceğim."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Your brief says \"{said}\", but the available {source} is {capacity_s} seconds.",
+   "İsteğinde \"{said}\" yazıyor ama mevcut {source_tr} {capacity_s} saniye."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "{subject_en} about {kept_s} seconds of your take: {span_en}.",
+   "{subject_tr} çekiminin yaklaşık {kept_s} saniyesini tutuyor: {span_tr}."
+  ],
+  [
+   "app/services/clip_intent_planning.py",
+   "I ticked the {v1} clip you filmed for \"{category_get}\".",
+   "\"{category_get}\" için çektiğin {v2} klibi işaretledim."
+  ],
+  [
+   "app/services/clip_none_answers.py",
+   "so the video ends on the {clip}. Tell me which clip to end on if you'd like a different one.",
+   "o yüzden video {clip}te bitiyor. Başka bir klipte bitmesini istersen hangisi olduğunu söyle."
+  ],
+  [
+   "app/services/clip_none_answers.py",
+   "so the video starts with the {clip}. Tell me which clip to start with if you'd like a different one.",
+   "o yüzden video {clip} ile başlıyor. Başka bir klip ile başlamasını istersen hangisi olduğunu söyle."
+  ],
+  [
+   "app/services/clip_none_answers.py",
+   "{v1} clip you {v2}",
+   "{v3} {v4} klip"
+  ],
+  [
+   "app/services/creator_render_contract.py",
+   "{v1} {v2}",
+   "{v3} {v4}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Aligned {who} to the {side}",
+   "{who} {side_tr_get_side_side} hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the background behind {who}: {v1}",
+   "{who} arka planı değişti: {v2}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the {v1} of {who}",
+   "{who} için {v2} değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Lined up {who} on the {horizontal}",
+   "{who} {v1} hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made {who} {word_en} ({old:g}→{new:g}px)",
+   "{who} {word_tr} ({old:g}→{new:g}px)"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved the captions to the {vertical}",
+   "Altyazılar {spot_tr} konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved {who} to the {named}",
+   "{who} {spot_tr} konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Set {who} to {case_en_get_str_common}",
+   "{who} → {case_tr_get_str_common}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Zoomed {who} to {zoom}",
+   "{who} {zoom} yakınlaştırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{label_0} {before}{level_first_after}{unit}",
+   "{label_1} {before}{level_first_after}{unit}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{verb_0} {plural_len_entry_targets}",
+   "{plural_len_entry_targets} {verb_1}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{verb_0} {v1}",
+   "{v1} {verb_1}"
+  ],
+  [
+   "app/services/music_genre.py",
+   "For the {genre} song you asked for, I suggest {song_en}. Add it when you post.",
+   "{song_tr}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin."
+  ],
+  [
+   "app/services/music_genre.py",
+   "I couldn't suggest {a_names_0} {join_names} track this time.",
+   "Bu sefer bir {join_names_2} şarkısı öneremedim."
+  ],
+  [
+   "app/services/music_genre.py",
+   "I don't have any {join_names} tracks. The closest I have is {song_en}. Add it when you post if you like it.",
+   "Elimde {join_names_2} şarkısı yok. En yakını {song_tr}. Beğenirsen paylaşırken ekleyebilirsin."
+  ],
+  [
+   "app/services/pin_withdrawal.py",
+   "leave it out and end on {clip}",
+   "onu çıkarıp videoyu {clip}te bitireyim"
+  ],
+  [
+   "app/services/pin_withdrawal.py",
+   "leave it out and start with {clip}",
+   "onu çıkarıp videoya {clip} ile başlayayım"
+  ],
+  [
+   "app/services/pin_withdrawal.py",
+   "the {v1} clip you {v2}",
+   "{v3} {v4} klip"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I matched {by_lyrics} take{v1} by your singing.",
+   "{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I prepared {count} reversible editor change{suffix}.",
+   "Editörde {count} geri alınabilir değişiklik hazırladım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{conflict_intro} {conflict_reason} I won't guess, so I haven't made an edit yet. To go ahead, reply {ways}.{unchanged}",
+   "{conflict_intro} {conflict_reason} Tahmin yürütmeyeceğim, o yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways_tr}.{unchanged}"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} take{v1} later in the song than a 2-minute video can hold.",
+   "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} take{v1} no usable singing or words, so {v2} in as short muted clip{v3}. Trim or remove {v4} in the editor.",
+   "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve sessiz klip olarak eklendi. Editörde kısaltabilir veya kaldırabilirsin."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} take{v1} placed by my best guess and may be slightly off; check {v2} in the editor.",
+   "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{edit_format} format",
+   "Format: {v1}"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{pacing} pacing",
+   "Tempo: {v1}"
+  ]
+ ],
+ "added": [
+  [
+   "app/agents/edit_copilot.py",
+   "Added the filming hour to {count} clip.",
+   "{count} klibe çekim saatini ekledim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Added the filming hour to {count} clips.",
+   "{count} klibe çekim saatini ekledim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Captions on this video can't animate yet.",
+   "Bu videodaki altyazılara henüz animasyon eklenemiyor."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Clip {names} doesn't look like \"{words}\" from what I saw, so I didn't put that wording on it. Tell me what it is, or ask me to describe what I see.",
+   "Klip {names} gördüğüm kadarıyla \"{words}\" gibi görünmüyor, o yüzden bu ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Clips {names} don't look like \"{words}\" from what I saw, so I didn't put that wording on them. Tell me what they are, or ask me to describe what I see.",
+   "Klip {names} gördüğüm kadarıyla \"{words}\" gibi görünmüyor, o yüzden bu ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "How short should the clips be?",
+   "Klipler ne kadar kısa olsun?"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "How short should the images be?",
+   "Görseller ne kadar kısa olsun?"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "How short should the videos be?",
+   "Videolar ne kadar kısa olsun?"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I didn't caption clip {join_skipped}.",
+   "Klip {join_skipped} için yazı eklemedim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I didn't caption clips {join_skipped}.",
+   "Klip {join_skipped} için yazı eklemedim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I don't have a way to do that here",
+   "bunu burada yapmanın bir yolu yok"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I left out clip {join_unseen}: I can't tell what it shows. Tell me and I'll add it.",
+   "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. Söylersen ekleyeyim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I left out clips {join_unseen}: I can't tell what they show. Tell me and I'll add them.",
+   "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. Söylersen ekleyeyim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Labelled {count} clip.",
+   "{count} klibe etiket ekledim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Labelled {count} clips.",
+   "{count} klibe etiket ekledim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "No filming time for clip {join_untimed}.",
+   "Klip {join_untimed} için çekim saati yok."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "No filming time for clips {join_untimed}.",
+   "Klip {join_untimed} için çekim saati yok."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "a detail it needs was missing",
+   "gereken bir bilgi eksikti"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "caption {number}",
+   "{number}. altyazı"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "clip {number}",
+   "{number}. klip"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "it goes together with a change I couldn't make",
+   "yapamadığım bir değişiklikle birlikte gidiyor"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "picture {number}",
+   "{number}. görsel"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "sound effect {number}",
+   "{number}. ses efekti"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "text {number}",
+   "{number}. yazı"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "that part isn't in this edit",
+   "o kısım bu düzenlemede yok"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "that value isn't one I can use",
+   "bu değeri kullanamıyorum"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the background",
+   "arka plan"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the captions",
+   "altyazılar"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the clips",
+   "klipler"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the edit direction",
+   "kurgunun yönü"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the look",
+   "görünüm"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the music",
+   "müzik"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the pictures",
+   "görseller"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the sound effects",
+   "ses efektleri"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the text",
+   "yazı"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "the transitions",
+   "geçişler"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "this editor can only restage it as a fast montage, so nothing changed. A different direction needs a fresh edit",
+   "bu editör onu yalnızca hızlı bir montaj olarak yeniden kurabiliyor, o yüzden hiçbir şey değişmedi. Başka bir yön için yeni bir düzenleme gerekiyor"
+  ],
+  [
+   "app/agents/editor_ops_v2/background.py",
+   "I can't put a plain colour behind you: a plain colour behind you isn't available right now.",
+   "Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil."
+  ],
+  [
+   "app/agents/editor_ops_v2/background.py",
+   "I can't put a plain colour behind you: a plain colour behind you isn't ready on this iPhone app yet.",
+   "Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil."
+  ],
+  [
+   "app/agents/editor_ops_v2/background.py",
+   "I can't put a plain colour behind you: this version of the app can't show a plain colour behind you yet.",
+   "Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil."
+  ],
+  [
+   "app/agents/editor_ops_v2/color_moments.py",
+   "Black-and-white moments, flashes and the end fade are not available here yet.",
+   "Siyah beyaz anlar, flaşlar ve sondaki kararma burada henüz yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "I couldn't order them by filming time: none of your clips carries a filming time.",
+   "Klipleri çekim saatine göre sıralayamadım: hiçbir klibinde çekim saati yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "I couldn't order them by filming time: only one of your clips carries a filming time.",
+   "Klipleri çekim saatine göre sıralayamadım: yalnızca bir klibinde çekim saati var."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "No filming time for clip {number}.",
+   "{number}. klipte çekim saati yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "No filming time for clips {numbers}.",
+   "Şu kliplerde çekim saati yok: {numbers}."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "The clips are already in chronological order.",
+   "Klipler zaten çekim sırasına göre sıralı."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "The clips are already in newest-first order.",
+   "Klipler zaten en yeniden eskiye sıralı."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "\"{other}\" for {name}",
+   "{name} yerine \"{other}\""
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "\"{trigger}\" at {at_s:.1f} s",
+   "\"{trigger}\" {at_s:.1f} sn'de"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "; one photo or video sits over it",
+   "; üstünde tek bir fotoğraf ya da video duruyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "; you're {corner}",
+   "; sen {corner}sın"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "; {shown} photos or videos take turns over it",
+   "; üstünde {shown} fotoğraf ya da video sırayla değişiyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "A plain {label} background sits behind you for the whole video",
+   "Bütün video boyunca arkanda düz {label} bir arka plan duruyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Arabic",
+   "Arapça"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Clip sound off",
+   "Klip sesi kapalı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Clip sound off: {where}",
+   "Klip sesi kapalı: {where}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Clip sound on",
+   "Klip sesi açık"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Clip sound on: {where}",
+   "Klip sesi açık: {where}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Clip {n}",
+   "{n}. klip"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Clips {head} and {last}",
+   "{head_tr} ve {last}. klipler"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Danish",
+   "Danca"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Dutch",
+   "Felemenkçe"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "English",
+   "İngilizce"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Every video clip",
+   "Her video klibi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Filming hour on {len_timed} of {total} clips; {missing} has no filming time.",
+   "Çekim saati {total} klibin {len_timed} tanesinde var; {missing} klibin çekim saati yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Filming hour on {len_timed} of {total} clips; {missing} have no filming time.",
+   "Çekim saati {total} klibin {len_timed} tanesinde var; {missing} klibin çekim saati yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}",
+   "Kare {seconds} sn donuyor, {where}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}, as you asked later",
+   "Kare {seconds} sn donuyor, {where}, sonra istediğin gibi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds at least {seconds}s",
+   "Kare {seconds} sn donuyor, {where}, istediğin {requested:g} sn değil: bir donma en az {seconds} sn sürebiliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds at most {seconds}s",
+   "Kare {seconds} sn donuyor, {where}, istediğin {requested:g} sn değil: bir donma en fazla {seconds} sn sürebiliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}; you didn't say how long, so I held it for one second",
+   "Kare {seconds} sn donuyor, {where}; süre söylemediğin için bir saniye tuttum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it longer than {previous:g}s",
+   "Kare {seconds} sn donuyor, {where}; süre söylemediğin için {previous:g} sn'den uzun tuttum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it shorter than {previous:g}s",
+   "Kare {seconds} sn donuyor, {where}; süre söylemediğin için {previous:g} sn'den kısa tuttum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "French",
+   "Fransızca"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "German",
+   "Almanca"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Greek",
+   "Yunanca"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't cut a line out of a video made of several takes yet",
+   "birkaç çekimden oluşan bir videodan henüz satır kesemiyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't tell yet which clip is the talking one",
+   "hangi klibin konuşma klibi olduğunu henüz bilmiyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't find it in your take",
+   "çekiminde bulamadım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't find the one you picked in your take",
+   "seçtiğin anı çekiminde bulamadım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't safely shorten {over} pause (the longest is {longest_s} s), so it stays",
+   "{over} duraklamayı güvenle kısaltamadım (en uzunu {longest_tr} sn), o yüzden kalıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't safely shorten {over} pause, so it stays",
+   "{over} duraklamayı güvenle kısaltamadım, o yüzden kalıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't safely shorten {over} pauses (the longest is {longest_s} s), so they stay",
+   "{over} duraklamayı güvenle kısaltamadım (en uzunu {longest_tr} sn), o yüzden kalıyorlar"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't safely shorten {over} pauses, so they stay",
+   "{over} duraklamayı güvenle kısaltamadım, o yüzden kalıyorlar"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I found that moment ({start}–{end}s into the clip) but not the exact frame to hold, so it plays normally. Tell me the second to freeze on, like \"freeze at {middle} seconds\"",
+   "O anı buldum (klibin {start}–{end}. saniyeleri) ama tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede donsun, söyle; örneğin \"{middle}. saniyede dondur\""
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I haven't planned a full-screen start in your own take",
+   "Kendi çekiminde tam ekran bir başlangıç planlamadım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I kept the text away from where {named} was, but lost sight of it for part of the video, so I can't confirm it stays clear",
+   "Yazıyı {named} olduğu yerden uzak tuttum ama videonun bir kısmında onu göremedim, açıkta kaldığını doğrulayamıyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I moved your text just above your face so it doesn't cover it",
+   "Yazını yüzünü kapatmasın diye yüzünün hemen üstüne taşıdım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I moved your text just below your face so it doesn't cover it",
+   "Yazını yüzünü kapatmasın diye yüzünün hemen altına taşıdım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I used all {len_used} clips, including the {len_short} short one",
+   "{len_used} klibin hepsini kullandım, {len_short} kısa klip de dahil"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I used all {len_used} clips, including the {len_short} short ones",
+   "{len_used} klibin hepsini kullandım, {len_short} kısa klip de dahil"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I used {len_used} clips, including the {len_short} short one",
+   "{len_used} klibin tamamını kullandım, {len_short} kısa klip de dahil"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I used {len_used} clips, including the {len_short} short ones",
+   "{len_used} klibin tamamını kullandım, {len_short} kısa klip de dahil"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll keep your take from {at_start} on, if I find that line; if not, it opens at the start",
+   "Çekiminin {at_start} cümlesinden sonrasını korurum, o cümleyi bulursam; bulamazsam video baştan açılır"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll keep your take from {at_start} to right after {at_end}, if I find those lines",
+   "Çekiminin {at_start} cümlesinden {at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, bu cümleleri bulursam"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll keep your take up to right after {at_end}, if I find that line; if not, it runs to the end",
+   "Çekiminin {at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, o cümleyi bulursam; bulamazsam video sonuna kadar sürer"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll show it on the {word} you picked, at {clock} in your take; if I can't find that one, it won't appear",
+   "Yazıyı seçtiğin {word} anında, çekiminin {clock} noktasında gösteririm; o anı bulamazsam yazı çıkmaz"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll spell {and_names_names} the way you wrote it and check it in the finished video",
+   "şunu senin yazdığın gibi yazıp bitmiş videoda kontrol edeceğim: {and_names_names}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll spell {and_names_names} the way you wrote them and check them in the finished video",
+   "şunları senin yazdığın gibi yazıp bitmiş videoda kontrol edeceğim: {and_names_names}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Italian",
+   "İtalyanca"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Korean",
+   "Korece"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Mark {named} on a frame so I can keep the text off it",
+   "Yazıyı uzak tutabilmem için {named} bir karede işaretle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "None of the {total} clips got its own text in this draft.",
+   "Bu taslakta {total} klibin hiçbirine kendi yazısı gelmedi."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Pop-in on {item}",
+   "{item} çıkıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Pop-ins on {head} and {last}",
+   "{head}, {last} çıkıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Pop-ins on {items} and {more} more",
+   "{items} ve {more} tane daha çıkıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Portuguese",
+   "Portekizce"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Serbian",
+   "Sırpça"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Some text still covers {named}; there was no spot clear of it",
+   "Bazı yazılar hâlâ {named} üstünde; açıkta bir yer kalmadı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Spanish",
+   "İspanyolca"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cut what it heard as {joined} ({seconds:.1f} s).",
+   "Konuşma temizliği duyduğu şu sesleri kesti: {joined} ({seconds_tr} sn)."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cut what it heard as {joined}.",
+   "Konuşma temizliği duyduğu şu sesleri kesti: {joined}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Text landed on {count} of {total} clips.",
+   "Yazı {total} klibin {count} tanesine geldi."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Text on {count} clips.",
+   "{count} klipte yazı var."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "That photo or video sits behind you for the whole video",
+   "O fotoğraf ya da video bütün video boyunca arkanda duruyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions show up to {drawn_words} words at a time, not one.",
+   "Altyazılar aynı anda bir değil, en fazla {drawn_words} kelime gösteriyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions show up to {drawn_words} words at a time, not three.",
+   "Altyazılar aynı anda üç değil, en fazla {drawn_words} kelime gösteriyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions show up to {drawn_words} words at a time, not two.",
+   "Altyazılar aynı anda iki değil, en fazla {drawn_words} kelime gösteriyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions show up to {drawn_words} words at a time, not {n}.",
+   "Altyazılar aynı anda {n} değil, en fazla {drawn_words} kelime gösteriyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions won't be held to one words at a time.",
+   "Altyazılar aynı anda bir kelimeyle sınırlı kalmayacak."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions won't be held to three words at a time.",
+   "Altyazılar aynı anda üç kelimeyle sınırlı kalmayacak."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions won't be held to two words at a time.",
+   "Altyazılar aynı anda iki kelimeyle sınırlı kalmayacak."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions won't be held to {n} words at a time.",
+   "Altyazılar aynı anda {n} kelimeyle sınırlı kalmayacak."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The captions write {written}. You can fix that in the editor.",
+   "Altyazılarda {written} yazıyor. Bunu editörde düzeltebilirsin."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The clip changed since you marked {named}; mark it again",
+   "{named} işaretlediğinden beri klip değişti; tekrar işaretle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The footage sound still plays at full volume alongside your voice; {fix}",
+   "Çekim sesi hâlâ çalıyor, sesinle aynı seviyede; {fix}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The footage sound still plays softly under your voice (about {pct}%); {fix}",
+   "Çekim sesi hâlâ çalıyor, sesinin altında kısık (yaklaşık %{pct}); {fix}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The footage sound still plays softly under your voice; {fix}",
+   "Çekim sesi hâlâ çalıyor, sesinin altında kısık; {fix}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The video doesn't start full screen in your own take",
+   "Video kendi çekiminde tam ekran başlamıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The video has {len_lengths} moment, not {ask_count}",
+   "Videoda {ask_count} değil {len_lengths} an var"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The video has {len_lengths} moments, not {ask_count}",
+   "Videoda {ask_count} değil {len_lengths} an var"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This day vlog edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (günlük vlog) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is about {round_s_facts_duration_s}s{outro}; you asked for at most {asked}s.",
+   "Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen en fazla {asked} saniye istedin."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is about {round_s_facts_duration_s}s{outro}; you asked for {asked}s.",
+   "Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen {asked} saniye istedin."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by attachment order, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: klipleri eklediğin sıra."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by attachment, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: klipleri eklediğin sıra."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by confirmed, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: onayladığın sıra."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by creator order, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: senin verdiğin sıra."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by editor, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: editördeki sıra."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by route, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: rota."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by song time, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: şarkının zamanı."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This draft is ordered by {basis_replace}, not the order you asked for.",
+   "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: {basis_replace}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This montage edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (montaj) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This narrated edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This narrated planned edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This narrated ready edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (seslendirmeli) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This single hero edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (tek kahraman) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This slides edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (slayt) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This subtitled edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (konuşmalı) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This talking head edit cuts your footage down; a Talking edit keeps the whole take.",
+   "Bu düzenleme (konuşmalı) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Turkish",
+   "Türkçe"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You changed the edit after I placed the text, so I can't confirm it still stays off {named}",
+   "Yazıyı yerleştirdikten sonra düzenlemeyi değiştirdin; hâlâ {named} üstünde olmadığını doğrulayamıyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You marked {named} on a different clip than the one I put the text on; mark it on the speaking clip",
+   "{named} yazının olduğu klipte değil başka bir klipte işaretledin; konuşan klipte işaretle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You'll start full screen in your own room",
+   "Kendi odanda tam ekran başlayacaksın"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You're full screen in your own take for the first {seconds} s",
+   "İlk {seconds} sn kendi çekiminde tam ekransın"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You're {corner} from the start, not full screen first",
+   "Baştan itibaren {corner}sın, tam ekran başlamıyorsun"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You're {corner} over your background, so you don't fill the frame.",
+   "Arka planın üstünde {corner}sın, o yüzden kadrajı doldurmuyorsun."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your voiceover mentions {joined} in a different order, so I followed the voiceover.",
+   "Seslendirmende {joined} farklı bir sırayla geçiyor, ben de seslendirmeyi takip ettim."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "and",
+   "ve"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "animation",
+   "animasyon"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "at most {target}s",
+   "en fazla {target} saniye"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "at the second you picked ({at}s into the clip)",
+   "seçtiğin saniyede (klibin {at}. saniyesi)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "colour",
+   "renk"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "cutting it out of your voiceover failed",
+   "seslendirmenden kesmek başarısız oldu"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "cutting it would leave too little video",
+   "kesersem çok az video kalırdı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "font",
+   "yazı tipi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "from {start} s",
+   "{start}. saniyeden itibaren"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "it",
+   "o"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "on that moment ({at}s into the clip)",
+   "o anda (klibin {at}. saniyesi)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "on that moment ({at}s into the clip; you left the exact frame to me)",
+   "o anda (klibin {at}. saniyesi; tam kareyi bana bıraktın)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "on the last frame of the last shot",
+   "son çekimin son karesinde"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "on the moment you picked, at its middle ({at}s into the clip)",
+   "seçtiğin anın ortasında (klibin {at}. saniyesi)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "position",
+   "konum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small at the bottom left",
+   "sol altta küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small at the bottom right",
+   "sağ altta küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small at the top left",
+   "sol üstte küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small at the top right",
+   "sağ üstte küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small in a corner",
+   "köşede küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small in the bottom-left corner",
+   "sol alt köşede küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small in the bottom-right corner",
+   "sağ alt köşede küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small in the top-left corner",
+   "sol üst köşede küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "small in the top-right corner",
+   "sağ üst köşede küçük"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "smaller text",
+   "daha küçük yazı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "tell me to mute it and I'll take it out",
+   "kapatmamı söylersen çıkarırım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "text grouping",
+   "yazı grubu"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "text hierarchy",
+   "yazı hiyerarşisi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "that clip",
+   "o klip"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "that line",
+   "that line"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "that part is about {kept}s",
+   "o kısım yaklaşık {kept} saniye"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "the first clip",
+   "ilk klip"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "the last clip",
+   "son klip"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "the talking clip is {take}s",
+   "konuşma klibi {take} saniye"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "the whole video",
+   "tüm video"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "the {label}",
+   "{label}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "this edit has no control to turn it down yet",
+   "bu düzenlemede onu kısacak bir ayar henüz yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "turn it down in the editor under Sounds > Original audio, or tell me to mute it",
+   "editörde Sesler > Orijinal ses bölümünden kıs ya da bana kapatmamı söyle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "where \"{line}\" is said",
+   "\"{line}\" denen yer"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you don't say it that many times",
+   "bunu o kadar çok kez söylemiyorsun"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you say it in more than one take, so I left it in; tell me which take to cut it from",
+   "bunu birden fazla çekimde söylüyorsun, o yüzden dokunmadım; hangi çekimden keseyim söyle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you say it more than once, so tell me which one to cut: the first, second or last",
+   "bunu birden fazla kez söylüyorsun, hangisini keseyim söyle: ilkini, ikincisini ya da sonuncusunu"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "your face",
+   "yüzün"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "your take has no word timings to find it in",
+   "çekiminde onu bulacak kelime zamanlaması yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "your take is {take}s",
+   "çekimin {take} saniye"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{and_names_absent} doesn't appear in the captions, so I couldn't check its spelling.",
+   "Altyazılarda {and_names_absent} geçmiyor, o yüzden yazımını kontrol edemedim."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{and_names_absent} don't appear in the captions, so I couldn't check their spelling.",
+   "Altyazılarda {and_names_absent} geçmiyor, o yüzden yazımlarını kontrol edemedim."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{and_names_spelled} are spelled as you wrote them.",
+   "{and_names_spelled} yazdığın gibi yazılmış."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{and_names_spelled} is spelled as you wrote it.",
+   "{and_names_spelled} yazdığın gibi yazılmış."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{at_s:.1f} s",
+   "{at_s:.1f} s"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{counts_head} and {counts_last}",
+   "{counts_head}, {counts_last}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} filler sound",
+   "{count} dolgu sesi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} filler sounds",
+   "{count} dolgu sesi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} long pause",
+   "{count} uzun duraklama"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} long pauses",
+   "{count} uzun duraklama"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} pause",
+   "{count} duraklama"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} pauses",
+   "{count} duraklama"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} restarted sentence",
+   "{count} baştan başlanan cümle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} restarted sentences",
+   "{count} baştan başlanan cümle"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{head} except {exceptions}",
+   "{head}, şunlar hariç: {exceptions}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{label} clips play from {start:.1f} s to {end:.1f} s, under: \"{excerpt}\"",
+   "{label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, şu sözlerle: \"{excerpt}\""
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{lead} {over} still last longer than {limit} s",
+   "{lead} {over} tanesi hâlâ {limit_tr} sn'den uzun"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{lead} {over} still last longer than {limit} s (the longest is {longest_s} s)",
+   "{lead} {over} tanesi hâlâ {limit_tr} sn'den uzun (en uzunu {longest_tr} sn)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{lead} {over} still lasts longer than {limit} s",
+   "{lead} {over} tanesi hâlâ {limit_tr} sn'den uzun"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{lead} {over} still lasts longer than {limit} s (the longest is {longest_s} s)",
+   "{lead} {over} tanesi hâlâ {limit_tr} sn'den uzun (en uzunu {longest_tr} sn)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{lead}: {moments}",
+   "{lead}: {moments}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{lead}; {tail} and you asked for {asked}",
+   "{lead}; {tail}, sen {asked} istedin"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{len_off} of {len_rows} texts don't have the requested {names} yet",
+   "{len_rows} metinden {len_off} tanesinde istenen {names} henüz yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{len_off} of {total} text didn't end up reading exactly “{req_literal}”.",
+   "{total} yazının {len_off} tanesi tam olarak “{req_literal}” olmadı."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{len_off} of {total} texts didn't end up reading exactly “{req_literal}”.",
+   "{total} yazının {len_off} tanesi tam olarak “{req_literal}” olmadı."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{length:.1f}s",
+   "{length:.1f}s"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{missed} aren't where you asked.",
+   "{missed} istediğin yerde değil."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{missed} isn't where you asked.",
+   "{missed} istediğin yerde değil."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{n} clip had no capture time, so I kept its attachment order.",
+   "{n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{n} clip is too short for its text to stay on screen long enough to read.",
+   "{n} klip, yazısının okunacak kadar ekranda kalması için çok kısa."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{n} clips are too short for its text to stay on screen long enough to read.",
+   "{n} klip, yazısının okunacak kadar ekranda kalması için çok kısa."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{n} clips had no capture time, so I kept their attachment order.",
+   "{n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{reason}; you didn't say how fast, so I used {rate:g}x",
+   "{reason}; ne kadar hızlı söylemediğin için {rate:g}x kullandım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{sentence_case_words} is clip {v1} of {len_steps}, not the first one.",
+   "{capitalize_words_strip} {len_steps} klipten {v1}. sırada, ilk değil."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{sentence_case_words} is clip {v1} of {len_steps}, not the last one.",
+   "{capitalize_words_strip} {len_steps} klipten {v1}. sırada, son değil."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{shown} photos or videos take turns behind you",
+   "{shown} fotoğraf ya da video arkanda sırayla değişiyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{start}-{end:g} s",
+   "{start}-{end:g}. saniyeler"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{still_in}: \"{quote}\" ({why})",
+   "{still_in}: \"{quote}\" ({why})"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} play at {rate:g}x",
+   "{subject} {rate:g}x hızda oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} play at {rate:g}x, as you asked later",
+   "{subject} sonra istediğin gibi {rate:g}x hızda oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} play at {rate:g}x, not the {requested:g}x you asked for: a clip plays at least {rate:g}x",
+   "{subject} {rate:g}x hızda oynuyor, istediğin {requested:g}x değil: bir klip en az {rate:g}x hızda oynayabiliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} play at {rate:g}x, not the {requested:g}x you asked for: a clip plays at most {rate:g}x",
+   "{subject} {rate:g}x hızda oynuyor, istediğin {requested:g}x değil: bir klip en fazla {rate:g}x hızda oynayabiliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} play at {rate:g}x, not the {requested:g}x you asked for: the clip ran out of footage",
+   "{subject} {rate:g}x hızda oynuyor, istediğin {requested:g}x değil: klibin görüntüsü yetmedi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} plays at {rate:g}x",
+   "{subject} {rate:g}x hızda oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} plays at {rate:g}x, as you asked later",
+   "{subject} sonra istediğin gibi {rate:g}x hızda oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} plays at {rate:g}x, not the {requested:g}x you asked for: a clip plays at least {rate:g}x",
+   "{subject} {rate:g}x hızda oynuyor, istediğin {requested:g}x değil: bir klip en az {rate:g}x hızda oynayabiliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} plays at {rate:g}x, not the {requested:g}x you asked for: a clip plays at most {rate:g}x",
+   "{subject} {rate:g}x hızda oynuyor, istediğin {requested:g}x değil: bir klip en fazla {rate:g}x hızda oynayabiliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{subject} plays at {rate:g}x, not the {requested:g}x you asked for: the clip ran out of footage",
+   "{subject} {rate:g}x hızda oynuyor, istediğin {requested:g}x değil: klibin görüntüsü yetmedi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{sum_fails} of {len_rows} don't have the requested {label}",
+   "{len_rows} yazıdan {sum_fails} tanesinde istenen {label} yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{target}s",
+   "{target} saniye"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{unnamed} of your recordings never show.",
+   "Kayıtlarından {unnamed} tanesi hiç görünmüyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{unnamed} of your recordings never shows.",
+   "Kayıtlarından {unnamed} tanesi hiç görünmüyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}, then you're {corner} when you start on your first recording.",
+   "{v1}, sonra ilk kaydına geçince {corner}sın."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}, then your background takes the screen.",
+   "{v1}, sonra arka plan ekranı alıyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}, then {corner}.",
+   "{v1}, sonra {corner}sın."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}; {repeats} more repeated the label before, so I left it off.",
+   "{v1}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}; {repeats} more repeated the label before, so I left them off.",
+   "{v1}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{v1}; {why}.",
+   "{v1}; {why}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{words} (clip {n})",
+   "{words} ({n}. klip)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{words} ({spot})",
+   "{words} ({spot})"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   " and ",
+   " ve "
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "Captions are {looks}.",
+   "Altyazılar {looks}."
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "Captions are {looks}; they cover a face in places, as you asked.",
+   "Altyazılar {looks}; istediğin gibi yer yer bir yüzün üstüne geliyorlar."
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "Captions are {looks}; they sit over you in the corner, as you asked.",
+   "Altyazılar {looks}; istediğin gibi köşedeki görüntünün üstünde duruyorlar."
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "Captions are {looks}; they sit over you in the corner, as you asked; they cover a face in places, as you asked.",
+   "Altyazılar {looks}; istediğin gibi köşedeki görüntünün üstünde duruyorlar; istediğin gibi yer yer bir yüzün üstüne geliyorlar."
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "The captions sit higher than you asked so they stay off your face.",
+   "Altyazılar yüzüne gelmesin diye istediğinden daha yukarıda duruyor."
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "The captions sit lower than you asked so they stay off your face.",
+   "Altyazılar yüzüne gelmesin diye istediğinden daha aşağıda duruyor."
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "at the bottom",
+   "altta"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "at the bottom left",
+   "sol altta"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "at the bottom right",
+   "sağ altta"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "at the top",
+   "üstte"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "at the top left",
+   "sol üstte"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "at the top right",
+   "sağ üstte"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "black",
+   "siyah"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "blue",
+   "mavi"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "coloured {color}",
+   "{color} renginde"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "in a black box",
+   "siyah bir kutuda"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "in a box",
+   "bir kutuda"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "in a grey box",
+   "gri bir kutuda"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "in a light grey box",
+   "açık gri bir kutuda"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "in a white box",
+   "beyaz bir kutuda"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "in the middle",
+   "ortada"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "large",
+   "büyük"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "lowercase",
+   "küçük harfli"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "one word at a time",
+   "her seferinde bir kelime"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "red",
+   "kırmızı"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "small",
+   "küçük"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "three words at a time",
+   "her seferinde üç kelime"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "two words at a time",
+   "her seferinde iki kelime"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "uppercase",
+   "büyük harfli"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "white",
+   "beyaz"
+  ],
+  [
+   "app/kria/caption_look_ask.py",
+   "yellow",
+   "sarı"
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   "I couldn't leave out {clips}, so it is still in the video.",
+   "{clips} çıkaramadım, o yüzden videoda duruyor."
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   "I couldn't leave out {clips}, so they are still in the video.",
+   "{clips} çıkaramadım, o yüzden videoda duruyorlar."
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   "I left out {clips} because it is too short to use.",
+   "{clips} kullanılamayacak kadar kısa olduğu için çıkardım."
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   "I left out {clips} because they are too short to use.",
+   "{clips} kullanılamayacak kadar kısa oldukları için çıkardım."
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   "clip {clip_number}",
+   "{clip_number}. klibi"
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   "clips {clip_numbers} and {last_clip}",
+   "{clip_numbers_dotted} ve {last_clip}. klipleri"
+  ],
+  [
+   "app/kria/editor_sequence_timing.py",
+   "Retime all {count} words in sequence over {end:g}s, keeping their wording and appearance.",
+   "{count} kelimenin tamamını metin ve görünümlerini koruyarak video boyunca sırayla yay."
+  ],
+  [
+   "app/kria/editor_sequence_timing.py",
+   "Spread all {count} words in sequence across the video, keeping their wording and appearance.",
+   "{count} kelimenin tamamını metin ve görünümlerini koruyarak video boyunca sırayla yay."
+  ],
+  [
+   "app/kria/intent_review_copy.py",
+   "Optional: move the {word} to the bottom so it's easier to read.",
+   "İstersen {word} daha kolay okunsun diye alta taşınabilir."
+  ],
+  [
+   "app/kria/intent_review_copy.py",
+   "Optional: move the {word} to the middle so it's easier to read.",
+   "İstersen {word} daha kolay okunsun diye ortaya taşınabilir."
+  ],
+  [
+   "app/kria/intent_review_copy.py",
+   "Optional: move the {word} to the top so it's easier to read.",
+   "İstersen {word} daha kolay okunsun diye üste taşınabilir."
+  ],
+  [
+   "app/kria/landscape_fit_ask.py",
+   "{n} sideways clip",
+   "{n} yatay klip"
+  ],
+  [
+   "app/kria/landscape_fit_ask.py",
+   "{n} sideways clips",
+   "{n} yatay klip"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   " and ",
+   " ve "
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "Updated {sections}.",
+   "{sections} güncelledim."
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "captions",
+   "altyazıları"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "clips",
+   "klipleri"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "look",
+   "görünümü"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "music",
+   "müziği"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "overlays",
+   "katmanları"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "sound effects",
+   "ses efektlerini"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "title",
+   "başlığı"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} caption",
+   "{count} altyazı"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} caption · {seconds}s",
+   "{count} altyazı · {seconds} sn"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} captions",
+   "{count} altyazı"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} captions · {seconds}s",
+   "{count} altyazı · {seconds} sn"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} clip",
+   "{count} klip"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} clip · {seconds}s",
+   "{count} klip · {seconds} sn"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} clips",
+   "{count} klip"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} clips · {seconds}s",
+   "{count} klip · {seconds} sn"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} overlay",
+   "{count} katman"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} overlay · {seconds}s",
+   "{count} katman · {seconds} sn"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} overlays",
+   "{count} katman"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} overlays · {seconds}s",
+   "{count} katman · {seconds} sn"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} sound effect",
+   "{count} ses efekti"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} sound effect · {seconds}s",
+   "{count} ses efekti · {seconds} sn"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} sound effects",
+   "{count} ses efekti"
+  ],
+  [
+   "app/kria/plan_blocks.py",
+   "{count} sound effects · {seconds}s",
+   "{count} ses efekti · {seconds} sn"
+  ],
+  [
+   "app/kria/planner.py",
+   "I could fit {planned} moment, not {count}.",
+   "{count} değil, {planned} an sığdırabildim."
+  ],
+  [
+   "app/kria/planner.py",
+   "I could fit {planned} moments, not {count}.",
+   "{count} değil, {planned} an sığdırabildim."
+  ],
+  [
+   "app/kria/route_capabilities/_legacy_unified.py",
+   "I can't use the day vlog story archetype on this video yet",
+   "day vlog hikâye kalıbını bu videoda henüz kullanamıyorum"
+  ],
+  [
+   "app/kria/route_capabilities/_legacy_unified.py",
+   "I can't use the single hero story archetype on this video yet",
+   "single hero hikâye kalıbını bu videoda henüz kullanamıyorum"
+  ],
+  [
+   "app/kria/route_capabilities/_legacy_unified.py",
+   "The balanced pacing isn't applied on this video yet: the cuts follow a fast pace",
+   "balanced tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda"
+  ],
+  [
+   "app/kria/route_capabilities/_legacy_unified.py",
+   "The guided story direction isn't applied on this video yet: it is cut as a fast montage",
+   "guided story yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
+  ],
+  [
+   "app/kria/route_capabilities/_legacy_unified.py",
+   "The native direction isn't applied on this video yet: it is cut as a fast montage",
+   "native yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
+  ],
+  [
+   "app/kria/route_capabilities/_legacy_unified.py",
+   "The relaxed pacing isn't applied on this video yet: the cuts follow a fast pace",
+   "relaxed tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda"
+  ],
+  [
+   "app/kria/route_capabilities/_legacy_unified.py",
+   "The text explainer direction isn't applied on this video yet: it is cut as a fast montage",
+   "text explainer yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "I can't make this video the length you asked for yet: {instead}",
+   "Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "I can't use the day vlog story archetype on this video yet",
+   "day vlog hikâye kalıbını bu videoda henüz kullanamıyorum"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "I can't use the single hero story archetype on this video yet",
+   "single hero hikâye kalıbını bu videoda henüz kullanamıyorum"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The balanced pacing isn't applied on this video yet: {instead}",
+   "balanced tempo bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The fast montage direction isn't applied on this video yet: {instead}",
+   "fast montage yönü bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The fast pacing isn't applied on this video yet: {instead}",
+   "fast tempo bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The guided story direction isn't applied on this video yet: {instead}",
+   "guided story yönü bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The native direction isn't applied on this video yet: {instead}",
+   "native yönü bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The relaxed pacing isn't applied on this video yet: {instead}",
+   "relaxed tempo bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The text explainer direction isn't applied on this video yet: {instead}",
+   "text explainer yönü bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The {words_value} direction isn't applied on this video yet: {instead}",
+   "{words_value} yönü bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/_lines.py",
+   "The {words_value} pacing isn't applied on this video yet: {instead}",
+   "{words_value} tempo bu videoda henüz uygulanmıyor: {instead}"
+  ],
+  [
+   "app/kria/route_capabilities/lipsync_song.py",
+   "it is cut to your song",
+   "şarkına göre kesiliyor"
+  ],
+  [
+   "app/kria/route_capabilities/lipsync_song.py",
+   "its length follows your song",
+   "uzunluğu şarkını takip ediyor"
+  ],
+  [
+   "app/kria/route_capabilities/lipsync_song.py",
+   "your song sets where the cuts fall",
+   "kesimlerin yerini şarkın belirliyor"
+  ],
+  [
+   "app/kria/route_capabilities/narrated.py",
+   "its length follows your voiceover",
+   "uzunluğu seslendirmeni takip ediyor"
+  ],
+  [
+   "app/kria/route_capabilities/narrated.py",
+   "the cuts follow your voiceover",
+   "kesimler seslendirmeni izliyor"
+  ],
+  [
+   "app/kria/route_capabilities/narrated.py",
+   "the video follows your voiceover",
+   "video seslendirmeni izliyor"
+  ],
+  [
+   "app/kria/route_capabilities/slide_post.py",
+   "a slide post shows each slide for its own time",
+   "slayt gönderisi her slaytı kendi süresince gösteriyor"
+  ],
+  [
+   "app/kria/route_capabilities/slide_post.py",
+   "a slide post shows your slides in order",
+   "slayt gönderisi slaytlarını sırayla gösteriyor"
+  ],
+  [
+   "app/kria/route_capabilities/slide_post.py",
+   "a slide post's length follows its slides",
+   "slayt gönderisinin uzunluğu slaytlarına bağlı"
+  ],
+  [
+   "app/kria/route_capabilities/speech_excerpt.py",
+   "it is cut around the spoken lines",
+   "konuşulan cümlelerin etrafında kesiliyor"
+  ],
+  [
+   "app/kria/route_capabilities/speech_excerpt.py",
+   "the cuts between spoken lines keep a fixed length",
+   "konuşmalar arasındaki kesimler sabit uzunlukta"
+  ],
+  [
+   "app/kria/route_capabilities/talking_head.py",
+   "its length follows your speech",
+   "uzunluğu konuşmanı takip ediyor"
+  ],
+  [
+   "app/kria/route_capabilities/talking_head.py",
+   "the video follows your speech",
+   "video konuşmanı izliyor"
+  ],
+  [
+   "app/kria/route_capabilities/unified_montage.py",
+   "it is cut as a fast montage",
+   "hızlı bir montaj olarak kesiliyor"
+  ],
+  [
+   "app/kria/route_capabilities/unified_montage.py",
+   "the cuts follow a fast pace",
+   "kesimler hızlı tempoda"
+  ],
+  [
+   "app/kria/route_capabilities/voiceover_montage.py",
+   "it is cut as a montage under your voiceover",
+   "seslendirmenin altında bir montaj olarak kesiliyor"
+  ],
+  [
+   "app/kria/route_capabilities/voiceover_montage.py",
+   "its length follows your voiceover",
+   "uzunluğu seslendirmeni takip ediyor"
+  ],
+  [
+   "app/kria/route_capabilities/voiceover_montage.py",
+   "the cuts keep their usual length",
+   "kesimler her zamanki uzunluğunda"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Clip {which} can't be in this edit.",
+   "{which}. klip bu düzenlemeye giremiyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Clips {which} can't be in this edit.",
+   "{which}. klipler bu düzenlemeye giremiyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "I left out clip {which}.",
+   "{which}. klibi dışarıda bıraktım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "I left out clips {which}.",
+   "{which}. klipleri dışarıda bıraktım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Only clip {which} is in this edit and it runs about {possible:g} seconds, so the video can't be {wanted:g} seconds.",
+   "Bu düzenlemede yalnızca {which}. klip var ve yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Only clips {which} are in this edit and together they run about {possible:g} seconds, so the video can't be {wanted:g} seconds.",
+   "Bu düzenlemede yalnızca {which}. klipler var ve birlikte yaklaşık {possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "This kind of edit can't show \"{closing_title}\" at the end yet. Should I make everything else and leave that text out?",
+   "Bu tür düzenleme sonda \"{closing_title}\" yazısını henüz gösteremiyor. Geri kalan her şeyi yapıp o yazıyı dışarıda bırakayım mı?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "This kind of edit can't show your own text on each shot or at the end yet. Should I make everything else and leave that text out?",
+   "Bu tür düzenleme her çekimde ya da sonda senin yazını henüz gösteremiyor. Geri kalan her şeyi yapıp o yazıyı dışarıda bırakayım mı?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "This kind of edit can't show your own text on each shot yet. Should I make everything else and leave that text out?",
+   "Bu tür düzenleme her çekimde senin yazını henüz gösteremiyor. Geri kalan her şeyi yapıp o yazıyı dışarıda bırakayım mı?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "This version leaves out the photo you asked for: \"{ask}\".",
+   "Bu sürümde istediğin fotoğraf yok: \"{ask}\"."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "This version leaves out the video you asked for: \"{ask}\".",
+   "Bu sürümde istediğin video yok: \"{ask}\"."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "You picked {clips} clip, so \"{pin_text}\" can't go on clip {pin_clip}. Which clip should it be on?",
+   "{clips} klip seçtin, o yüzden \"{pin_text}\" {pin_clip}. klibe konamaz. Hangi klibe koyayım?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "You picked {clips} clips, so \"{pin_text}\" can't go on clip {pin_clip}. Which clip should it be on?",
+   "{clips} klip seçtin, o yüzden \"{pin_text}\" {pin_clip}. klibe konamaz. Hangi klibe koyayım?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "the media you picked",
+   "seçtiğin medya"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "I cut this as a fast montage instead of a {label}: {why}.",
+   "Bunu {label} yerine hızlı montaj olarak kestim: {why}."
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "I'll cut this as a fast montage instead of a {label}: {why}",
+   "Bunu {label} yerine hızlı montaj olarak keseceğim: {why}"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "guided story",
+   "yönlendirmeli hikâye"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "text explainer",
+   "yazılı anlatım"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "the clips can't each be held long enough for it within the length you asked for",
+   "klipler, istediğin süre içinde bunun için yeterince uzun tutulamıyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "the clips' own spoken lines are kept whole, which only the fast-montage layout guarantees",
+   "kliplerin kendi konuşmaları bütün tutuluyor, bunu sadece hızlı montaj düzeni garanti ediyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "the footage doesn't fit that layout",
+   "görüntüler bu düzene uymuyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "the plan has no story outline to build chapters from",
+   "bölümleri oluşturacak bir hikâye taslağı yok"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "the same clip plays more than once, which only the fast-montage layout allows",
+   "aynı klip birden fazla kez oynuyor, buna sadece hızlı montaj düzeni izin veriyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "the story text couldn't be placed on it",
+   "hikâye yazısı buna yerleştirilemedi"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "there are too many clips to lay out as story chapters",
+   "bölümlere ayırmak için çok fazla klip var"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "you asked for a freeze frame or a speed change, which only the fast-montage layout plays",
+   "dondurulmuş kare ya da hız değişimi istedin, bunu sadece hızlı montaj düzeni oynatıyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "you asked for curved text, which only the fast-montage layout draws",
+   "kavisli yazı istedin, bunu sadece hızlı montaj düzeni çiziyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "you asked for text on individual clips, which only the fast-montage layout places",
+   "tek tek kliplere yazı istedin, bunu sadece hızlı montaj düzeni yerleştirebiliyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "you asked me to keep a part of a clip out, which only the fast-montage layout can guarantee",
+   "bir klibin bir bölümünü dışarıda tutmamı istedin, bunu sadece hızlı montaj düzeni garanti edebiliyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "you named exact moments, which only the fast-montage layout plays as given",
+   "belirli anları sen seçtin, bunları sadece hızlı montaj düzeni olduğu gibi oynatıyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "you set exact timing for photos or cuts, which only the fast-montage layout keeps",
+   "fotoğraflar ya da kesimler için net süre verdin, bunu sadece hızlı montaj düzeni koruyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "your iPhone build can't draw the crossfades that layout uses yet",
+   "iPhone sürümün o düzenin kullandığı geçişleri henüz çizemiyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "your own song sets the cut points, which only the fast-montage layout follows",
+   "kendi şarkın kesim noktalarını belirliyor, bunu sadece hızlı montaj düzeni izliyor"
+  ],
+  [
+   "app/pipeline/story_direction.py",
+   "your phone can't draw that layout for this footage",
+   "telefonun bu görüntüler için o düzeni çizemiyor"
+  ],
+  [
+   "app/routes/plan_items.py",
+   "a fast montage keeps its short cuts",
+   "hızlı montaj kısa kesimlerini koruyor"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Add longer footage",
+   "Daha uzun çekim ekle"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Choose fewer clips",
+   "Daha az klip seç"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Clips play in the exact order you filmed them.",
+   "Klipler tam olarak çektiğin sırayla oynar."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Don't cut it",
+   "Kesme"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Each group plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them.",
+   "Her grup tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Each sport plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them.",
+   "Her spor tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Each {noun} plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them.",
+   "Her {noun} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Early in it ({seconds}s)",
+   "Başına yakın ({seconds} sn)"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Group by group, chronological inside each group",
+   "Her grup bir blok olsun; blok içinde kronolojik sırala"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Group by sport, chronological inside each sport",
+   "Her spor bir blok olsun; blok içinde kronolojik sırala"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Group by {noun}, chronological inside each {noun}",
+   "Her {noun} bir blok olsun; blok içinde kronolojik sırala"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "I couldn't find “{quote}” in what's said in your video.",
+   "“{quote}” cümlesini videonda söylenenler arasında bulamadım."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "I found “{heard}” in your video, but not “{unheard}” after it.",
+   "Videonda “{heard}” cümlesini buldum ama ardındaki “{unheard}” kısmını bulamadım."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "I found “{heard}” in your video, but not “{unheard}” after it. The transcript has “{said}” there.",
+   "Videonda “{heard}” cümlesini buldum ama ardındaki “{unheard}” kısmını bulamadım. Dökümde orada “{said}” yazıyor."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "I found “{heard}” in your video, but not “{unheard}” before it.",
+   "Videonda “{heard}” cümlesini buldum ama öncesindeki “{unheard}” kısmını bulamadım."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "I found “{heard}” in your video, but not “{unheard}” before it. The transcript has “{said}” there.",
+   "Videonda “{heard}” cümlesini buldum ama öncesindeki “{unheard}” kısmını bulamadım. Dökümde orada “{said}” yazıyor."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "I'm using that clip's voice under the other clips.",
+   "Diğer kliplerin altında o klibin sesini kullanıyorum."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Keep it strictly chronological; groups may interleave",
+   "Tam kronolojik kalsın; grup klipleri iç içe geçebilir"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Keep it strictly chronological; sports may interleave",
+   "Tam kronolojik kalsın; spor klipleri iç içe geçebilir"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Keep it strictly chronological; {noun}s may interleave",
+   "Tam kronolojik kalsın; {noun} klipleri iç içe geçebilir"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Late in it ({seconds}s)",
+   "Sonuna yakın ({seconds} sn)"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Leave the text off",
+   "Yazıyı koyma"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Middle ({seconds}s)",
+   "Ortası ({seconds} sn)"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "On shot {shot}",
+   "{shot}. sahnede"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That footage cannot make a {asked_s}-second edit without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That footage cannot make an edit of at most {asked_s} seconds without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That part can't make a {asked_s}-second edit without changing that line.",
+   "Bu cümleyi değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That part can't make a {asked_s}-second edit without changing those lines.",
+   "Bu cümleleri değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That part runs longer than {asked_s} seconds, and I can't shorten it without changing that line.",
+   "O kısım {asked_s} saniyeden uzun ve bu cümleyi değiştirmeden kısaltamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That part runs longer than {asked_s} seconds, and I can't shorten it without changing those lines.",
+   "O kısım {asked_s} saniyeden uzun ve bu cümleleri değiştirmeden kısaltamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That song cannot make a {asked_s}-second edit without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That song cannot make an edit of at most {asked_s} seconds without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That spoken take cannot make a {asked_s}-second edit without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That spoken take cannot make an edit of at most {asked_s} seconds without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That voiceover with the selected footage cannot make a {asked_s}-second edit without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That voiceover with the selected footage cannot make an edit of at most {asked_s} seconds without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The selected footage runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter footage.",
+   "Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The selected footage runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage.",
+   "Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The selected song runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter song.",
+   "Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The selected song runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage.",
+   "Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The selected take runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter take.",
+   "Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The selected take runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage.",
+   "Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The selected voiceover runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter voiceover.",
+   "Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla {edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The selected voiceover runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage.",
+   "Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The video follows the footage without reuse or a silent extension.",
+   "Video tekrar veya sessiz uzatma olmadan çekim süresini takip eder."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The video follows the song without reuse or a silent extension.",
+   "Video tekrar veya sessiz uzatma olmadan şarkı süresini takip eder."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The video follows the spoken take without reuse or a silent extension.",
+   "Video tekrar veya sessiz uzatma olmadan konuşma kaydı süresini takip eder."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "This line belongs on shot {shot} of the draft.",
+   "Bu yazı taslağın {shot}. sahnesine ait."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Update the selected clips",
+   "Seçili klipleri güncelle"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use a shorter voiceover",
+   "Daha kısa bir seslendirme kullan"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use a supported {capacity_s}-second window of the footage; the remaining source is left out.",
+   "Video tekrar veya sessiz uzatma olmadan çekim süresini takip eder."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use a supported {capacity_s}-second window of the song; the remaining source is left out.",
+   "Video tekrar veya sessiz uzatma olmadan şarkı süresini takip eder."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use a supported {capacity_s}-second window of the spoken take; the remaining source is left out.",
+   "Video tekrar veya sessiz uzatma olmadan konuşma kaydı süresini takip eder."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use a supported {capacity_s}-second window of the voiceover with the selected footage; the remaining source is left out.",
+   "Video tekrar veya sessiz uzatma olmadan seçili çekimlerle birlikte seslendirme süresini takip eder."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use the supported trim for this footage.",
+   "Bu çekim için desteklenen kırpmayı kullanır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use the supported trim for this song.",
+   "Bu şarkı için desteklenen kırpmayı kullanır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use the supported trim for this spoken take.",
+   "Bu konuşma kaydı için desteklenen kırpmayı kullanır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use the supported trim for this voiceover with the selected footage.",
+   "Bu seçili çekimlerle birlikte seslendirme için desteklenen kırpmayı kullanır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use {capacity_s} seconds of the recording and selected footage; the remaining recording is left out.",
+   "Video tekrar veya sessiz uzatma olmadan seçili çekimlerle birlikte seslendirme süresini takip eder."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing that line.",
+   "Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve bu cümleyi değiştirmeden kısaltamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing those lines.",
+   "Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve bu cümleleri değiştirmeden kısaltamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked for a chronological video and for the clips grouped by group.",
+   "Hem kronolojik bir video hem de kliplerin grup bazında gruplanmasını istedin."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked for a chronological video and for the clips grouped by sport.",
+   "Hem kronolojik bir video hem de kliplerin spor bazında gruplanmasını istedin."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked for a chronological video and for the clips grouped by {noun}.",
+   "Hem kronolojik bir video hem de kliplerin {noun} bazında gruplanmasını istedin."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked me to freeze the frame on that moment. I found it in clip {number} ({span}s), but I can't tell the exact instant, and I won't guess it.",
+   "O anda kareyi dondurmamı istedin. O anı {number}. klipte buldum ({span}. saniyeler arası) ama tam anını bilemiyorum ve tahmin etmeyeceğim."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked me to freeze the frame on that moment. I found it in your clip ({span}s), but I can't tell the exact instant, and I won't guess it.",
+   "O anda kareyi dondurmamı istedin. O anı klibinde buldum ({span}. saniyeler arası) ama tam anını bilemiyorum ve tahmin etmeyeceğim."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked me to freeze the frame on that moment. I found it in “{file_name}” ({span}s), but I can't tell the exact instant, and I won't guess it.",
+   "O anda kareyi dondurmamı istedin. O anı “{file_name}” klibinde buldum ({span}. saniyeler arası) ama tam anını bilemiyorum ve tahmin etmeyeceğim."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Your brief says \"{said}\", but the available footage is {capacity_s} seconds.",
+   "İsteğinde \"{said}\" yazıyor ama mevcut çekim {capacity_s} saniye."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Your brief says \"{said}\", but the available song is {capacity_s} seconds.",
+   "İsteğinde \"{said}\" yazıyor ama mevcut şarkı {capacity_s} saniye."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Your brief says \"{said}\", but the available spoken take is {capacity_s} seconds.",
+   "İsteğinde \"{said}\" yazıyor ama mevcut konuşma kaydı {capacity_s} saniye."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Your brief says \"{said}\", but the available voiceover with the selected footage is {capacity_s} seconds.",
+   "İsteğinde \"{said}\" yazıyor ama mevcut seçili çekimlerle birlikte seslendirme {capacity_s} saniye."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Your end line keeps about {kept_s} seconds of your take: from the start to right after {end}.",
+   "Bitiş cümlen çekiminin yaklaşık {kept_s} saniyesini tutuyor: baştan {end} cümlesinin hemen sonrasına kadar."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Your start and end lines keep about {kept_s} seconds of your take: from {start} to right after {end}.",
+   "Başlangıç ve bitiş cümlelerin çekiminin yaklaşık {kept_s} saniyesini tutuyor: {start} cümlesinden {end} cümlesinin hemen sonrasına kadar."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Your start line keeps about {kept_s} seconds of your take: from {start} to the end.",
+   "Başlangıç cümlen çekiminin yaklaşık {kept_s} saniyesini tutuyor: {start} cümlesinden sona kadar."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "shot {shot}",
+   "{shot}. sahne"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "those words appear on {shots} of the draft, so I can't tell which shot you mean.",
+   "bu yazı taslakta birden fazla sahnede geçiyor ({shots}), hangisini kastettiğini anlayamıyorum."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "your {names} clips were filmed mixed together, so I can't do both.",
+   "{names} klipleri birbirine karışık çekilmiş, bu yüzden ikisini birden yapamıyorum."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "“{what}” ({span}s)",
+   "“{what}” ({span} sn)"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "“{what}” ({span}s, clip {number})",
+   "“{what}” ({span} sn, {number}. klip)"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "“{what}” ({span}s, “{file_name}”)",
+   "“{what}” ({span} sn, {number}. klip)"
+  ],
+  [
+   "app/services/clip_intent_planning.py",
+   "I ticked the first clip you filmed for \"{label}\".",
+   "\"{label}\" için çektiğin ilk klibi işaretledim."
+  ],
+  [
+   "app/services/clip_intent_planning.py",
+   "I ticked the last clip you filmed for \"{label}\".",
+   "\"{label}\" için çektiğin son klibi işaretledim."
+  ],
+  [
+   "app/services/clip_none_answers.py",
+   "so the video ends on the last clip you added. Tell me which clip to end on if you'd like a different one.",
+   "o yüzden video eklediğin son klipte bitiyor. Başka bir klipte bitmesini istersen hangisi olduğunu söyle."
+  ],
+  [
+   "app/services/clip_none_answers.py",
+   "so the video ends on the last clip you filmed. Tell me which clip to end on if you'd like a different one.",
+   "o yüzden video çektiğin son klipte bitiyor. Başka bir klipte bitmesini istersen hangisi olduğunu söyle."
+  ],
+  [
+   "app/services/clip_none_answers.py",
+   "so the video starts with the first clip you added. Tell me which clip to start with if you'd like a different one.",
+   "o yüzden video eklediğin ilk klip ile başlıyor. Başka bir klip ile başlamasını istersen hangisi olduğunu söyle."
+  ],
+  [
+   "app/services/clip_none_answers.py",
+   "so the video starts with the first clip you filmed. Tell me which clip to start with if you'd like a different one.",
+   "o yüzden video çektiğin ilk klip ile başlıyor. Başka bir klip ile başlamasını istersen hangisi olduğunu söyle."
+  ],
+  [
+   "app/services/creator_label_reply.py",
+   "Keep \"{text}\" exactly as written",
+   "\"{text}\" yazdığım gibi kalsın"
+  ],
+  [
+   "app/services/creator_render_contract.py",
+   "Your clips and photos have no filming time, so I can't put them in the order you filmed.",
+   "Kliplerinin ve fotoğraflarının hiçbiri için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum."
+  ],
+  [
+   "app/services/creator_render_contract.py",
+   "clip {number}",
+   "{number}. klip"
+  ],
+  [
+   "app/services/creator_render_contract.py",
+   "photo {number}",
+   "{number}. fotoğraf"
+  ],
+  [
+   "app/services/creator_render_contract.py",
+   "{names} has no filming time, so I can't put it in the order you filmed.",
+   "{names} için çekim saati yok, o yüzden onu çektiğin sıraya koyamıyorum."
+  ],
+  [
+   "app/services/creator_render_contract.py",
+   "{names} have no filming time, so I can't put them in the order you filmed.",
+   "{names} için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum."
+  ],
+  [
+   "app/services/creator_render_contract.py",
+   "{shown} and {extra} more",
+   "{shown} ve {extra} tane daha"
+  ],
+  [
+   "app/services/creator_song_rule.py",
+   " or ",
+   " ya da "
+  ],
+  [
+   "app/services/creator_song_rule.py",
+   "I can't add songs from the music library, so this video won't have the {genres} song you asked for.",
+   "Müzik kütüphanesinden şarkı ekleyemiyorum, bu yüzden bu videoda istediğin {genres} şarkısı olmayacak."
+  ],
+  [
+   "app/services/creator_song_rule.py",
+   "I can't add songs from the music library, so this video won't have the {genres} song you asked for. Upload your own song if you want one.",
+   "Müzik kütüphanesinden şarkı ekleyemiyorum, bu yüzden bu videoda istediğin {genres} şarkısı olmayacak. İstersen kendi şarkını yükleyebilirsin."
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "{width:g}px",
+   "{width:g}px"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a Echo Stack animation to {who}",
+   "{who} için Echo Stack animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a Elastic Condensed animation to {who}",
+   "{who} için Elastic Condensed animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a Focus Pull animation to {who}",
+   "{who} için Focus Pull animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a Ribbon Wipe animation to {who}",
+   "{who} için Ribbon Wipe animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a Silk Reveal animation to {who}",
+   "{who} için Silk Reveal animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a Word Relay animation to {who}",
+   "{who} için Word Relay animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a fade-in animation to {who}",
+   "{who} için solma animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a pop-in animation to {who}",
+   "{who} için pop animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a slide-in animation to {who}",
+   "{who} için kayma animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added a typewriter animation to {who}",
+   "{who} için daktilo animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added an animation to {who}",
+   "{who} için {animation} animasyonu eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Added {who}",
+   "{who} eklendi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Aligned {who} to the bottom",
+   "{who} alta hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Aligned {who} to the center",
+   "{who} ortaya hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Aligned {who} to the left",
+   "{who} sola hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Aligned {who} to the middle",
+   "{who} ortaya hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Aligned {who} to the right",
+   "{who} sağa hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Aligned {who} to the top",
+   "{who} üste hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Aligned {who} to the {side}",
+   "{who} {side} hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Bend",
+   "Kavis"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the background behind {who}: {behind}",
+   "{who} arka planı değişti: {behind}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the {label} of {who}",
+   "{who} için {label} değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed {who}",
+   "{who} değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Lined up {who} on the center",
+   "{who} ortaya hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Lined up {who} on the left",
+   "{who} sola hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Lined up {who} on the right",
+   "{who} sağa hizalandı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made {who} bigger ({old:g}→{new:g}px)",
+   "{who} büyüttüm ({old:g}→{new:g}px)"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made {who} smaller ({old:g}→{new:g}px)",
+   "{who} küçülttüm ({old:g}→{new:g}px)"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved the captions to the bottom",
+   "Altyazılar alt konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved the captions to the middle",
+   "Altyazılar orta konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved the captions to the top",
+   "Altyazılar üst konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved {who} to the bottom",
+   "{who} alt konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved {who} to the middle",
+   "{who} orta konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved {who} to the top",
+   "{who} üst konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Moved {who} to the {spot}",
+   "{who} {spot} konuma taşındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Music",
+   "Müzik"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Music volume",
+   "Müzik sesi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Muted {who}",
+   "{who} sessize alındı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Original sound",
+   "Orijinal ses"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed {who}",
+   "{who} kaldırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Set the transition after {who}",
+   "{who} sonrası geçiş değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Set the transition after {who} to {kind}",
+   "{who} sonrası geçiş değişti → {kind}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Set {who} to Title Case",
+   "{who} → Baş Harfler Büyük"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Set {who} to UPPERCASE",
+   "{who} → BÜYÜK HARF"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Set {who} to a new case",
+   "{who} → yeni harf biçimi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Set {who} to its original case",
+   "{who} → özgün harf"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Set {who} to lowercase",
+   "{who} → küçük harf"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Tilted {who} {amount} degrees left{rest}",
+   "{who} {amount} derece sola eğildi{rest}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Tilted {who} {amount} degrees right{rest}",
+   "{who} {amount} derece sağa eğildi{rest}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Unmuted {who}",
+   "{who} sesi açıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Zoomed {who} to {zoom:g}x",
+   "{who} {zoom:g}x yakınlaştırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "animation speed",
+   "animasyon hızı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "background",
+   "arka plan"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "behind-subject look",
+   "özne arkası görünümü"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "blurred background",
+   "bulanık arka plan"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "exit animation",
+   "çıkış animasyonu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "highlight colour",
+   "vurgu rengi"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "letter spacing",
+   "harf aralığı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "line spacing",
+   "satır aralığı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "looping animation",
+   "döngü animasyonu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "outline",
+   "kontur"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "photo or video behind it",
+   "arkasında fotoğraf ya da video"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "plain",
+   "düz"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "rotation",
+   "dönüş"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "shadow",
+   "gölge"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "text width",
+   "yazı genişliği"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "zoomed to {zoom:g}x",
+   "{zoom:g}x yakınlaştırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} camera effect",
+   "{count} kamera efekti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} camera effects",
+   "{count} kamera efekti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} caption",
+   "{count} altyazı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} captions",
+   "{count} altyazı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} clip",
+   "{count} klip"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} clips",
+   "{count} klip"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} label",
+   "{count} etiket"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} labels",
+   "{count} etiket"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} picture",
+   "{count} görsel"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} pictures",
+   "{count} görsel"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} sound effect",
+   "{count} ses efekti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} sound effects",
+   "{count} ses efekti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} text",
+   "{count} yazı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} texts",
+   "{count} yazı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{count} {kind}s",
+   "{count} {kind_tr}"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{kind} background",
+   "{kind} arka plan"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{label} {before} dB → {after} dB",
+   "{label} {before} dB → {after} dB"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{label} {before}% → {after}%",
+   "{label} {before}% → {after}%"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{label} → {after} dB",
+   "{label} → {after} dB"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "{label} → {after}%",
+   "{label} → {after}%"
+  ],
+  [
+   "app/services/music_genre.py",
+   " or ",
+   " ya da "
+  ],
+  [
+   "app/services/music_genre.py",
+   "For the {genre} song you asked for, I suggest {song}. Add it when you post.",
+   "{song}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin."
+  ],
+  [
+   "app/services/music_genre.py",
+   "I couldn't suggest a {names} track this time.",
+   "Bu sefer bir {names} şarkısı öneremedim."
+  ],
+  [
+   "app/services/music_genre.py",
+   "I couldn't suggest an {names} track this time.",
+   "Bu sefer bir {names} şarkısı öneremedim."
+  ],
+  [
+   "app/services/music_genre.py",
+   "I don't have any {names} tracks. The closest I have is {song}. Add it when you post if you like it.",
+   "Elimde {names} şarkısı yok. En yakını {song}. Beğenirsen paylaşırken ekleyebilirsin."
+  ],
+  [
+   "app/services/music_genre.py",
+   "“{title}” by {artist}",
+   "“{title}” ({artist})"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't aim or zoom a plain colour: only photos and videos can be aimed",
+   "Düz bir rengi hizalayamadım: yalnızca fotoğraflar ve videolar hizalanabilir"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't aim or zoom the recordings: it isn't available right now",
+   "Kayıtları hizalayamadım ya da yakınlaştıramadım: şu anda kullanılamıyor"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't change the backgrounds behind you over time: it isn't available right now",
+   "Arkandaki görselleri zamanla değiştiremedim: şu anda kullanılamıyor"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't place that generated image: it isn't available right now",
+   "Bu üretilmiş görseli yerleştiremedim: şu anda kullanılamıyor"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't place that generated image: it isn't in this video's Visuals",
+   "Bu üretilmiş görseli yerleştiremedim: bu videonun görselleri arasında değil"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't put a colour behind you: it isn't available right now",
+   "Arkana renk koyamadım: şu anda kullanılamıyor"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't put a photo or video behind a clip: it isn't available right now",
+   "Bir klibin arkasına fotoğraf ya da video koyamadım: şu anda kullanılamıyor"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't put a photo or video behind you on this edit",
+   "Bu düzenlemede arkana fotoğraf ya da video koyamadım"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't put a photo or video behind you: it isn't available right now",
+   "Arkana fotoğraf ya da video koyamadım: şu anda kullanılamıyor"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't read that photo or video",
+   "Bu fotoğraf ya da videoyu okuyamadım"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't start you full screen: it isn't available right now",
+   "Seni tam ekranda başlatamadım: şu anda kullanılamıyor"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't use that colour as your background",
+   "Bu rengi arka plan olarak kullanamadım"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't use that photo or video as your background",
+   "Bu fotoğraf ya da videoyu arka plan olarak kullanamadım"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't use that photo or video behind a clip: it isn't in this video's Visuals",
+   "Bu fotoğraf ya da videoyu klibin arkasına koyamadım: bu videonun görselleri arasında değil"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't use that photo or video: it isn't in this video's Visuals",
+   "Bu fotoğraf ya da videoyu kullanamadım: bu videonun görselleri arasında değil"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't use that start point: it's outside the video",
+   "Bu başlangıç noktasını kullanamadım: videonun dışında"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't use those background times: they overlap or are too short",
+   "Bu arka plan sürelerini kullanamadım: üst üste biniyor ya da çok kısa"
+  ],
+  [
+   "app/services/phone_speaker_background.py",
+   "Couldn't use those full-screen times: they overlap, are too short or run past the end",
+   "Bu tam ekran sürelerini kullanamadım: üst üste biniyor, çok kısa ya da videonun dışında"
+  ],
+  [
+   "app/services/pin_withdrawal.py",
+   "leave it out and end on the last clip you added",
+   "onu çıkarıp videoyu eklediğin son klipte bitireyim"
+  ],
+  [
+   "app/services/pin_withdrawal.py",
+   "leave it out and end on the last clip you filmed",
+   "onu çıkarıp videoyu çektiğin son klipte bitireyim"
+  ],
+  [
+   "app/services/pin_withdrawal.py",
+   "leave it out and start with the first clip you added",
+   "onu çıkarıp videoya eklediğin ilk klip ile başlayayım"
+  ],
+  [
+   "app/services/pin_withdrawal.py",
+   "leave it out and start with the first clip you filmed",
+   "onu çıkarıp videoya çektiğin ilk klip ile başlayayım"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Balanced pacing",
+   "Tempo: Dengeli"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Day Vlog format",
+   "Format: Günlük vlog"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Fast pacing",
+   "Tempo: Hızlı"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I can't confirm one of the requests you approved in this edit.",
+   "Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I can't safely make this edit with the requests you approved.",
+   "Onayladığın isteklerle bu düzenlemeyi güvenle oluşturamıyorum."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't finish that step, but your project and saved draft are safe. Try the request again.",
+   "Bu adımı tamamlayamadım ama projen ve kayıtlı taslağın güvende. İsteği tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I matched {by_lyrics} take by your singing.",
+   "{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I matched {by_lyrics} takes by your singing.",
+   "{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I prepared {count} reversible editor change.",
+   "Editörde {count} geri alınabilir değişiklik hazırladım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I prepared {count} reversible editor changes.",
+   "Editörde {count} geri alınabilir değişiklik hazırladım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Kria's AI service has reached its usage limit for now, so I couldn't work on this request. Your request, project and saved draft are safe. Trying again right away won't help; send it again later.",
+   "Kria'nın yapay zekâ hizmeti şimdilik kullanım sınırına ulaştı, bu yüzden bu istek üzerinde çalışamadım. İsteğin, projen ve kayıtlı taslağın güvende. Hemen tekrar denemek işe yaramaz; daha sonra yeniden gönder."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Montage format",
+   "Format: Montaj"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "My answer was cut off before it was complete. Your request, footage and saved draft are safe. Ask for a smaller step, such as one change at a time, and I'll take it from there.",
+   "Yanıtım tamamlanmadan kesildi. İsteğin, çekimlerin ve kayıtlı taslağın güvende. Daha küçük bir adım iste, örneğin her seferinde tek bir değişiklik; oradan devam ederim."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Narrated Planned format",
+   "Format: Seslendirmeli"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Narrated Ready format",
+   "Format: Seslendirmeli"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Narrated format",
+   "Format: Seslendirmeli"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Relaxed pacing",
+   "Tempo: Sakin"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Single Hero format",
+   "Format: Tek kahraman klip"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Slides format",
+   "Format: Slayt"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Subtitled format",
+   "Format: Altyazılı"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Talking Head format",
+   "Format: Kameraya konuşma"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Tell me how you want the clips ordered, and I'll make a new draft.",
+   "Klipleri hangi sırayla istediğini söyle, yeni bir taslak hazırlayayım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Tell me which clip goes first or last, and I'll make a new draft.",
+   "Hangi klibin başta ya da sonda olacağını söyle, yeni bir taslak hazırlayayım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Tell me which clip that text goes on, and I'll make a new draft.",
+   "O yazının hangi klibe gideceğini söyle, yeni bir taslak hazırlayayım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Tell me which clip you mean, and I'll make a new draft.",
+   "Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "The AI service ran out of time on that answer. Your choice, footage and saved draft are safe. Tap Try again.",
+   "Yapay zekâ hizmeti bu cevabı zamanında işleyemedi. Seçimin, çekimlerin ve kayıtlı taslağın güvende. Yeniden dene'ye dokun."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "The AI service ran out of time on that one. Your request, footage and saved draft are safe. Send it again, or ask for one change at a time so each step is lighter.",
+   "Yapay zekâ hizmeti bunu zamanında bitiremedi. İsteğin, çekimlerin ve kayıtlı taslağın güvende. Yeniden gönder ya da her adım hafiflesin diye her seferinde tek bir değişiklik iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This request stopped partway through several times in a row, so I stopped retrying it on my own. Your project and saved draft are safe. Send it again, or ask for one change at a time if it keeps happening.",
+   "Bu istek arka arkaya birkaç kez yarıda kaldı, bu yüzden kendi kendime yeniden denemeyi bıraktım. Projen ve kayıtlı taslağın güvende. Yeniden gönder; tekrar olursa her seferinde tek bir değişiklik iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "balanced",
+   "dengeli"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "day vlog",
+   "günlük vlog"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "fast",
+   "hızlı"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "focused",
+   "odaklı"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "montage",
+   "montaj"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "narrated",
+   "seslendirmeli"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "narrated planned",
+   "seslendirmeli"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "narrated ready",
+   "seslendirmeli"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "relaxed",
+   "sakin"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "single hero",
+   "tek kahraman klip"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "slides",
+   "slayt"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "subtitled",
+   "altyazılı"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "talking head",
+   "kameraya konuşma"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "video",
+   "video"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{conflict_intro} {conflict_reason} I won't guess, so I haven't made an edit yet. To go ahead, reply {ways}, or type the words you want.{unchanged}",
+   "{conflict_intro} {conflict_reason} Tahmin yürütmeyeceğim, o yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways} yaz ya da istediğin kelimeleri yaz.{unchanged}"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{conflict_intro} {conflict_reason} I won't guess, so I haven't made an edit yet. To go ahead, reply {ways}.{unchanged}",
+   "{conflict_intro} {conflict_reason} Tahmin yürütmeyeceğim, o yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways} yaz.{unchanged}"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} take has no usable singing or words, so it is in as short muted clip. Trim or remove it in the editor.",
+   "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve sessiz klip olarak eklendi. Editörde kısaltabilir veya kaldırabilirsin."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} take is placed by my best guess and may be slightly off; check it in the editor.",
+   "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} take sits later in the song than a 2-minute video can hold.",
+   "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} takes are placed by my best guess and may be slightly off; check them in the editor.",
+   "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} takes have no usable singing or words, so they are in as short muted clips. Trim or remove them in the editor.",
+   "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve sessiz klip olarak eklendi. Editörde kısaltabilir veya kaldırabilirsin."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{count} takes sit later in the song than a 2-minute video can hold.",
+   "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{refusal}, so I left the video as it was.",
+   "{refusal}, o yüzden videoyu olduğu gibi bıraktım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "{ways} or {option}",
+   "{ways} veya {option}"
+  ]
+ ]
+}

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.kria.reply_language import say
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._types import (
     Applied,
@@ -30,23 +31,29 @@ FIELD_HANDLING: dict[str, Handling] = {
     "pacing": NotApplied(
         lines.pacing_line(
             lambda _value, _s: False,
-            "a slide post shows each slide for its own time",
-            "slayt gönderisi her slaytı kendi süresince gösteriyor",
+            lambda: say(
+                en="a slide post shows each slide for its own time",
+                tr="slayt gönderisi her slaytı kendi süresince gösteriyor",
+            ),
         )
     ),
     "direction": NotApplied(
         lines.direction_line(
             None,
-            "a slide post shows your slides in order",
-            "slayt gönderisi slaytlarını sırayla gösteriyor",
+            lambda: say(
+                en="a slide post shows your slides in order",
+                tr="slayt gönderisi slaytlarını sırayla gösteriyor",
+            ),
         )
     ),
     "caption_style": NotApplied(lines.caption_style),
     "audio_strategy": NotApplied(lines.slide_audio),
     "target_duration_s": NotApplied(
         lines.stated_length(
-            "a slide post's length follows its slides",
-            "slayt gönderisinin uzunluğu slaytlarına bağlı",
+            lambda: say(
+                en="a slide post's length follows its slides",
+                tr="slayt gönderisinin uzunluğu slaytlarına bağlı",
+            )
         )
     ),
     "opening_title": NotApplied(lines.opening_title),

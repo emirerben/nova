@@ -144,13 +144,16 @@ def _guided_voiceover_downgrade_notice(manifest: ResolvedCreatorManifest) -> str
 def _asked_media_left_out_notice(kind: str | None, ask: str) -> str:
     """KRI-594: a photo or video the creator's brief asks for, named in their own words."""
 
-    noun_en, noun_tr = ("photo", "fotoğraf") if kind == "image" else ("video", "video")
+    if kind == "image":
+        return say(
+            en='This version leaves out the photo you asked for: "{ask}".',
+            tr='Bu sürümde istediğin fotoğraf yok: "{ask}".',
+            ask=ask,
+        )
     return say(
-        en='This version leaves out the {noun_en} you asked for: "{ask}".',
-        tr='Bu sürümde istediğin {noun_tr} yok: "{ask}".',
-        noun_en=noun_en,
+        en='This version leaves out the video you asked for: "{ask}".',
+        tr='Bu sürümde istediğin video yok: "{ask}".',
         ask=ask,
-        noun_tr=noun_tr,
     )
 
 
@@ -726,33 +729,41 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
             # KRI-514: name only what was asked for, and say the rest is kept. A
             # lone closing text is quoted back ("MY PICK") instead of a generic
             # "on each shot or at the end" the creator never asked for.
-            if strategy.shot_labels:
-                missing = "your own text on each shot" + (
-                    " or at the end" if strategy.closing_title else ""
-                )
-                missing_tr = (
-                    "her çekimde ya da sonda senin yazını"
-                    if strategy.closing_title
-                    else "her çekimde senin yazını"
-                )
-            else:
-                missing = f'"{strategy.closing_title}" at the end'
-                missing_tr = f'sonda "{strategy.closing_title}" yazısını'
-            return RefusedStrategy(
-                question=say(
+            if strategy.shot_labels and strategy.closing_title:
+                question = say(
                     en=(
-                        "This kind of edit can't show {missing} yet. Should I make everything "
-                        "else and leave that text out?"
+                        "This kind of edit can't show your own text on each shot or at the end "
+                        "yet. Should I make everything else and leave that text out?"
                     ),
                     tr=(
-                        "Bu tür düzenleme {missing_tr} henüz gösteremiyor. Geri kalan her şeyi "
-                        "yapıp o yazıyı dışarıda bırakayım mı?"
+                        "Bu tür düzenleme her çekimde ya da sonda senin yazını henüz "
+                        "gösteremiyor. Geri kalan her şeyi yapıp o yazıyı dışarıda bırakayım mı?"
                     ),
-                    missing=missing,
-                    missing_tr=missing_tr,
-                ),
-                code="shot_text_unavailable",
-            )
+                )
+            elif strategy.shot_labels:
+                question = say(
+                    en=(
+                        "This kind of edit can't show your own text on each shot yet. Should I "
+                        "make everything else and leave that text out?"
+                    ),
+                    tr=(
+                        "Bu tür düzenleme her çekimde senin yazını henüz gösteremiyor. Geri "
+                        "kalan her şeyi yapıp o yazıyı dışarıda bırakayım mı?"
+                    ),
+                )
+            else:
+                question = say(
+                    en=(
+                        'This kind of edit can\'t show "{closing_title}" at the end yet. Should I '
+                        "make everything else and leave that text out?"
+                    ),
+                    tr=(
+                        'Bu tür düzenleme sonda "{closing_title}" yazısını henüz gösteremiyor. '
+                        "Geri kalan her şeyi yapıp o yazıyı dışarıda bırakayım mı?"
+                    ),
+                    closing_title=strategy.closing_title,
+                )
+            return RefusedStrategy(question=question, code="shot_text_unavailable")
     if isinstance(exc, PhoneMediaUnavailableError):
         return RefusedStrategy(
             question=say(
@@ -903,9 +914,14 @@ _LOST_FIELD_WORDS: dict[str, tuple[str, str]] = {
 }
 
 
+def _own_media_ids(manifest: ResolvedCreatorManifest) -> list[str]:
+    """The project's own clips (not pool assets), in the app's order."""
+    return [media.media_id for media in manifest.media if not media.media_id.startswith("asset-")]
+
+
 def _clip_numbers(manifest: ResolvedCreatorManifest, media_ids: Sequence[str]) -> list[int]:
     """The clips' places among the project's own clips, as the app numbers them (1-based)."""
-    own = [media.media_id for media in manifest.media if not media.media_id.startswith("asset-")]
+    own = _own_media_ids(manifest)
     return sorted(own.index(media_id) + 1 for media_id in media_ids if media_id in own)
 
 
@@ -925,7 +941,7 @@ def _length_reason(
     manifest: ResolvedCreatorManifest, wanted: float, possible: float, played: Sequence[str]
 ) -> str:
     """Why a once-only montage can't be as long as asked: it can't outrun the clips it plays."""
-    own_count = sum(1 for media in manifest.media if not media.media_id.startswith("asset-"))
+    own_count = len(_own_media_ids(manifest))
     numbers = _clip_numbers(manifest, played)
     if numbers and len(numbers) < own_count:
         # Name the clips that are in, so a pick narrower than the creator meant shows.
@@ -946,28 +962,33 @@ def _length_reason(
                 possible=possible,
                 wanted=wanted,
             )
-        several = len(numbers) > 1
         which = _join_numbers(numbers)
+        if len(numbers) > 1:
+            return say(
+                en=(
+                    "Only clips {which} are in this edit and together they run about "
+                    "{possible:g} seconds, so the video can't be {wanted:g} seconds."
+                ),
+                tr=(
+                    "Bu düzenlemede yalnızca {which}. klipler var ve birlikte yaklaşık "
+                    "{possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
+                ),
+                which=which,
+                possible=possible,
+                wanted=wanted,
+            )
         return say(
             en=(
-                "Only {v1} {which} "
-                "{v2} in this edit and "
-                "{v3} about {possible:g} seconds, "
+                "Only clip {which} is in this edit and it runs about {possible:g} seconds, "
                 "so the video can't be {wanted:g} seconds."
             ),
             tr=(
-                "Bu düzenlemede yalnızca {which}. {v4} var ve "
-                "{v5}yaklaşık {possible:g} saniye sürüyor, bu "
-                "yüzden video {wanted:g} saniye olamıyor."
+                "Bu düzenlemede yalnızca {which}. klip var ve yaklaşık {possible:g} saniye "
+                "sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
             ),
-            v1="clips" if several else "clip",
             which=which,
-            v2="are" if several else "is",
-            v3="together they run" if several else "it runs",
             possible=possible,
             wanted=wanted,
-            v4="klipler" if several else "klip",
-            v5="birlikte " if several else "",
         )
     return say(
         en=(
@@ -997,34 +1018,45 @@ def _lost_in_words(
     """
     reasons: list[str] = []
     agreed: list[str] = []
-    named: list[tuple[str, str]] = []
+    named: list[str] = []
     for field in fields:
         if field == "selected_media_ids":
             gone = [m for m in before.selected_media_ids if m not in after.selected_media_ids]
             numbers = _clip_numbers(manifest, gone)
             if not numbers or len(numbers) > 6:
-                named.append(("the media you picked", "seçtiğin medya"))
+                named.append(say(en="the media you picked", tr="seçtiğin medya"))
                 continue
-            several = len(numbers) > 1
             which = _join_numbers(numbers)
-            reasons.append(
-                say(
-                    en="{v1} {which} can't be in this edit.",
-                    tr="{which}. {v2} bu düzenlemeye giremiyor.",
-                    v1="Clips" if several else "Clip",
-                    which=which,
-                    v2="klipler" if several else "klip",
+            if len(numbers) > 1:
+                reasons.append(
+                    say(
+                        en="Clips {which} can't be in this edit.",
+                        tr="{which}. klipler bu düzenlemeye giremiyor.",
+                        which=which,
+                    )
                 )
-            )
-            agreed.append(
-                say(
-                    en="I left out {v1} {which}.",
-                    tr="{which}. {v2} dışarıda bıraktım.",
-                    v1="clips" if several else "clip",
-                    which=which,
-                    v2="klipleri" if several else "klibi",
+                agreed.append(
+                    say(
+                        en="I left out clips {which}.",
+                        tr="{which}. klipleri dışarıda bıraktım.",
+                        which=which,
+                    )
                 )
-            )
+            else:
+                reasons.append(
+                    say(
+                        en="Clip {which} can't be in this edit.",
+                        tr="{which}. klip bu düzenlemeye giremiyor.",
+                        which=which,
+                    )
+                )
+                agreed.append(
+                    say(
+                        en="I left out clip {which}.",
+                        tr="{which}. klibi dışarıda bıraktım.",
+                        which=which,
+                    )
+                )
         elif field == "target_duration_s":
             wanted, possible = before.target_duration_s, after.target_duration_s
             reasons.append(_length_reason(manifest, wanted, possible, after.selected_media_ids))
@@ -1037,11 +1069,11 @@ def _lost_in_words(
                 )
             )
         elif field in _LOST_FIELD_WORDS:
-            named.append(_LOST_FIELD_WORDS[field])
+            named.append(say(en=_LOST_FIELD_WORDS[field][0], tr=_LOST_FIELD_WORDS[field][1]))
         else:
             return "", ""
     if named:
-        names = ", ".join(say(en=en, tr=tr) for en, tr in named)
+        names = ", ".join(named)
         reasons.append(
             say(
                 en="This edit can't keep: {names}.",
@@ -1144,7 +1176,7 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
             return RefusedStrategy(
                 question=say(
                     en=(
-                        'You picked {clips} clip{v1}, so "{pin_text}" '
+                        'You picked {clips} clip, so "{pin_text}" '
                         "can't go on clip {pin_clip}. Which clip should it be on?"
                     ),
                     tr=(
@@ -1152,7 +1184,20 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
                         "konamaz. Hangi klibe koyayım?"
                     ),
                     clips=clips,
-                    v1="" if clips == 1 else "s",
+                    pin_text=pin.text,
+                    pin_clip=pin.clip,
+                )
+                if clips == 1
+                else say(
+                    en=(
+                        'You picked {clips} clips, so "{pin_text}" '
+                        "can't go on clip {pin_clip}. Which clip should it be on?"
+                    ),
+                    tr=(
+                        '{clips} klip seçtin, o yüzden "{pin_text}" {pin_clip}. klibe '
+                        "konamaz. Hangi klibe koyayım?"
+                    ),
+                    clips=clips,
                     pin_text=pin.text,
                     pin_clip=pin.clip,
                 ),

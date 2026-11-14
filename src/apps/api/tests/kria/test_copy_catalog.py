@@ -294,6 +294,8 @@ def _pair_counts(result: Any) -> Counter:
 # catalog language reaches it (KRI-1362). Byte-identical English/Turkish is pinned per builder in
 # test_copy_routing.py. Once merged, the merge base holds them and this list matches nothing.
 _ROUTED_PAIRS = _FIXTURES / "copy_routed_pairs.json"
+# KRI-1408: pairs split into whole sentences so German gets no English fragments ("them").
+_KRI1408_PAIRS = _FIXTURES / "copy_kri1408_pairs.json"
 
 
 # Converts every say() file at the merge base (~30 s locally): above the 30 s default.
@@ -312,11 +314,15 @@ def test_codemod_kept_every_en_tr_pair() -> None:
         converted[rel] = new if new is not None else text
     before = _pair_counts(build.harvest(converted))
     after = _pair_counts(_harvest())
-    assert {k: v for k, v in (before - after).items()} == {}
+    kri1408 = _json(_KRI1408_PAIRS)
+    retired = {tuple(row) for row in kri1408["retired"]}
+    assert {k: v for k, v in (before - after).items() if k not in retired} == {}
     routed = {tuple(row) for row in _json(_ROUTED_PAIRS)["pairs"]}
+    routed |= {tuple(row) for row in kri1408["added"]}
     added = set(after - before)
     assert added - routed == set(), "new pairs: route copy through say() or pin them"
-    assert {(en, tr) for _f, en, tr in before} <= {(en, tr) for _f, en, tr in after}
+    kept = {(en, tr) for _f, en, tr in before if (_f, en, tr) not in retired}
+    assert kept <= {(en, tr) for _f, en, tr in after}
 
 
 # ---------------------------------------------------------------- (d) pseudo language

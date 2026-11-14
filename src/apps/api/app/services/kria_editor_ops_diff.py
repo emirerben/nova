@@ -770,11 +770,48 @@ def speech_cut_diff() -> EditorDiff:
 # ------------------------------------------------------------------------ describing
 
 
-def _plural(count: int, noun: str, noun_tr: str) -> str:
-    return say(
-        en=f"{count} {noun}" if count == 1 else f"{count} {noun}s",
-        tr=f"{count} {noun_tr}",
-    )
+# "1 clip" / "3 clips" per noun, so each language counts in its own words.
+_ONE_COUNT_WORDS = {
+    "clip": lambda count: say(en="{count} clip", tr="{count} klip", count=count),
+    "label": lambda count: say(en="{count} label", tr="{count} etiket", count=count),
+    "text": lambda count: say(en="{count} text", tr="{count} yazı", count=count),
+    "caption": lambda count: say(en="{count} caption", tr="{count} altyazı", count=count),
+    "sound effect": lambda count: say(
+        en="{count} sound effect", tr="{count} ses efekti", count=count
+    ),
+    "camera effect": lambda count: say(
+        en="{count} camera effect", tr="{count} kamera efekti", count=count
+    ),
+    "picture": lambda count: say(en="{count} picture", tr="{count} görsel", count=count),
+}
+_MANY_COUNT_WORDS = {
+    "clip": lambda count: say(en="{count} clips", tr="{count} klip", count=count),
+    "label": lambda count: say(en="{count} labels", tr="{count} etiket", count=count),
+    "text": lambda count: say(en="{count} texts", tr="{count} yazı", count=count),
+    "caption": lambda count: say(en="{count} captions", tr="{count} altyazı", count=count),
+    "sound effect": lambda count: say(
+        en="{count} sound effects", tr="{count} ses efekti", count=count
+    ),
+    "camera effect": lambda count: say(
+        en="{count} camera effects", tr="{count} kamera efekti", count=count
+    ),
+    "picture": lambda count: say(en="{count} pictures", tr="{count} görsel", count=count),
+}
+
+
+# The noun a lane's changed items are counted with ("Edited 2 captions", "Added 1 picture").
+_LANE_NOUNS = {
+    "captions": "caption",
+    "sfx": "sound effect",
+    "camera_effects": "camera effect",
+    "media_overlays": "picture",
+}
+
+
+def _plural(count: int, noun: str) -> str:
+    if count == 1:
+        return _ONE_COUNT_WORDS[noun](count)
+    return _MANY_COUNT_WORDS[noun](count)
 
 
 def _quote(text: str) -> str:
@@ -790,9 +827,9 @@ def describe_targets(entry: DiffEntry, live_text_count: int) -> str:
         kinds = {t.kind for t in targets}
         if kinds == {"clip"}:
             if count == 1:
-                number = re.sub(r"\D", "", targets[0].text)
+                number = "".join(ch for ch in targets[0].text if ch.isdecimal())
                 return say(en="clip {number}", tr="{number}. klip", number=number)
-            return _plural(count, "clip", "klip")
+            return _plural(count, "clip")
         names = {
             "video": ("the video", "video"),
             "music": ("the music", "müzik"),
@@ -801,7 +838,16 @@ def describe_targets(entry: DiffEntry, live_text_count: int) -> str:
             "title": ("the title", "başlık"),
         }
         en, tr = names.get(targets[0].kind, (targets[0].text, targets[0].text))
-        return say(en=en, tr=tr) if count == 1 else _plural(count, targets[0].kind, tr)
+        if count == 1:
+            return say(en=en, tr=tr)
+        # Several targets of a lane that names them itself (its receipt never shows ``who``).
+        return say(
+            en="{count} {kind}s",
+            tr="{count} {kind_tr}",
+            count=count,
+            kind=targets[0].kind,
+            kind_tr=tr,
+        )
     if count == 2 and count == live_text_count:
         return say(en="both texts", tr="iki yazı")
     if count > 2 and count == live_text_count:
@@ -813,28 +859,69 @@ def describe_targets(entry: DiffEntry, live_text_count: int) -> str:
         return _quote(only.text) if only.text else say(en="1 text", tr="1 yazı")
     kinds = {t.kind for t in targets}
     if kinds == {"label"}:
-        return _plural(count, "label", "etiket")
-    return _plural(count, "text", "yazı")
+        return _plural(count, "label")
+    return _plural(count, "text")
 
 
-# A legacy edge keeps the name of the `effect` it replaced ("a fade-in"); the rest use their label.
-_ENTRANCE_EN = {
-    edge: f"a {vocab.label}" for edge, vocab in TEXT_ANIMATION_VOCAB.items() if edge != "none"
-} | {edge: f"a {effect}" for effect, edge in LEGACY_EFFECT_ENTRANCE.items() if edge != "none"}
-_ENTRANCE_TR = {
-    edge: vocab.label_tr for edge, vocab in TEXT_ANIMATION_VOCAB.items() if edge != "none"
+# "Added a fade-in animation to 'Hi'" per entrance edge: a legacy edge keeps the name of the
+# `effect` it replaced ("a fade-in"); the rest use their label (`TEXT_ANIMATION_VOCAB`).
+_ENTRANCE_ADDED = {
+    "fade": lambda who: say(
+        en="Added a fade-in animation to {who}", tr="{who} için solma animasyonu eklendi", who=who
+    ),
+    "pop": lambda who: say(
+        en="Added a pop-in animation to {who}", tr="{who} için pop animasyonu eklendi", who=who
+    ),
+    "slide": lambda who: say(
+        en="Added a slide-in animation to {who}", tr="{who} için kayma animasyonu eklendi", who=who
+    ),
+    "typewriter": lambda who: say(
+        en="Added a typewriter animation to {who}",
+        tr="{who} için daktilo animasyonu eklendi",
+        who=who,
+    ),
+    "silkReveal": lambda who: say(
+        en="Added a Silk Reveal animation to {who}",
+        tr="{who} için Silk Reveal animasyonu eklendi",
+        who=who,
+    ),
+    "elasticCondensed": lambda who: say(
+        en="Added a Elastic Condensed animation to {who}",
+        tr="{who} için Elastic Condensed animasyonu eklendi",
+        who=who,
+    ),
+    "focusPull": lambda who: say(
+        en="Added a Focus Pull animation to {who}",
+        tr="{who} için Focus Pull animasyonu eklendi",
+        who=who,
+    ),
+    "wordRelay": lambda who: say(
+        en="Added a Word Relay animation to {who}",
+        tr="{who} için Word Relay animasyonu eklendi",
+        who=who,
+    ),
+    "ribbonWipe": lambda who: say(
+        en="Added a Ribbon Wipe animation to {who}",
+        tr="{who} için Ribbon Wipe animasyonu eklendi",
+        who=who,
+    ),
+    "echoStack": lambda who: say(
+        en="Added a Echo Stack animation to {who}",
+        tr="{who} için Echo Stack animasyonu eklendi",
+        who=who,
+    ),
 }
-_CASE_EN = {
-    "upper": "UPPERCASE",
-    "lower": "lowercase",
-    "title": "Title Case",
-    "none": "its original case",
-}
-_CASE_TR = {
-    "upper": "BÜYÜK HARF",
-    "lower": "küçük harf",
-    "title": "Baş Harfler Büyük",
-    "none": "özgün harf",
+_entrance_mismatch = (set(TEXT_ANIMATION_VOCAB) - {"none"}) ^ set(_ENTRANCE_ADDED)
+if _entrance_mismatch:
+    raise AssertionError(
+        "_ENTRANCE_ADDED must have exactly one sentence per entrance edge but none; "
+        f"add or remove: {sorted(_entrance_mismatch)}"
+    )
+_CASE_SET = {
+    "upper": lambda who: say(en="Set {who} to UPPERCASE", tr="{who} → BÜYÜK HARF", who=who),
+    "lower": lambda who: say(en="Set {who} to lowercase", tr="{who} → küçük harf", who=who),
+    "title": lambda who: say(en="Set {who} to Title Case", tr="{who} → Baş Harfler Büyük", who=who),
+    "none": lambda who: say(en="Set {who} to its original case", tr="{who} → özgün harf", who=who),
 }
 _PLAIN_LABELS = {
     "highlight_color": ("highlight colour", "vurgu rengi"),
@@ -864,13 +951,39 @@ def _where(x: float | None, y: float | None) -> tuple[str, str]:
     return horizontal, vertical
 
 
-_SIDE_TR = {
-    "left": "sola",
-    "right": "sağa",
-    "center": "ortaya",
-    "top": "üste",
-    "bottom": "alta",
-    "middle": "ortaya",
+# "Moved 'Hi' to the top" / "Lined up 'Hi' on the left" / "Aligned 'Hi' to the left".
+_SPOT_MOVED = {
+    "top": lambda who: say(en="Moved {who} to the top", tr="{who} üst konuma taşındı", who=who),
+    "middle": lambda who: say(
+        en="Moved {who} to the middle", tr="{who} orta konuma taşındı", who=who
+    ),
+    "bottom": lambda who: say(
+        en="Moved {who} to the bottom", tr="{who} alt konuma taşındı", who=who
+    ),
+}
+_LINED_UP = {
+    "left": lambda who: say(en="Lined up {who} on the left", tr="{who} sola hizalandı", who=who),
+    "right": lambda who: say(en="Lined up {who} on the right", tr="{who} sağa hizalandı", who=who),
+    "center": lambda who: say(
+        en="Lined up {who} on the center", tr="{who} ortaya hizalandı", who=who
+    ),
+}
+_ALIGNED = {
+    "left": lambda who: say(en="Aligned {who} to the left", tr="{who} sola hizalandı", who=who),
+    "right": lambda who: say(en="Aligned {who} to the right", tr="{who} sağa hizalandı", who=who),
+    "center": lambda who: say(
+        en="Aligned {who} to the center", tr="{who} ortaya hizalandı", who=who
+    ),
+    "top": lambda who: say(en="Aligned {who} to the top", tr="{who} üste hizalandı", who=who),
+    "bottom": lambda who: say(en="Aligned {who} to the bottom", tr="{who} alta hizalandı", who=who),
+    "middle": lambda who: say(
+        en="Aligned {who} to the middle", tr="{who} ortaya hizalandı", who=who
+    ),
+}
+_CAPTIONS_MOVED = {
+    "top": ("Moved the captions to the top", "Altyazılar üst konuma taşındı"),
+    "middle": ("Moved the captions to the middle", "Altyazılar orta konuma taşındı"),
+    "bottom": ("Moved the captions to the bottom", "Altyazılar alt konuma taşındı"),
 }
 
 
@@ -903,11 +1016,14 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
                 tr="{who} için giriş animasyonu değişti",
                 who=who,
             )
+        edge = str(common)
+        if edge in _ENTRANCE_ADDED:
+            return _ENTRANCE_ADDED[edge](who)
         return say(
-            en=f"Added {_ENTRANCE_EN.get(str(common), 'an')} animation to {who}".replace(
-                " animation animation", " animation"
-            ),
-            tr=f"{who} için {_ENTRANCE_TR.get(str(common), str(common))} animasyonu eklendi",
+            en="Added an animation to {who}",
+            tr="{who} için {animation} animasyonu eklendi",
+            who=who,
+            animation=edge,
         )
     if name == "font_family":
         return say(
@@ -928,15 +1044,20 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
     if name == "size":
         old, new = _num(first.before), _num(first.after)
         if len(entry.targets) == 1 and old is not None and new is not None:
-            word_en, word_tr = ("bigger", "büyüttüm") if new > old else ("smaller", "küçülttüm")
+            if new > old:
+                return say(
+                    en="Made {who} bigger ({old:g}→{new:g}px)",
+                    tr="{who} büyüttüm ({old:g}→{new:g}px)",
+                    who=who,
+                    old=old,
+                    new=new,
+                )
             return say(
-                en="Made {who} {word_en} ({old:g}→{new:g}px)",
-                tr="{who} {word_tr} ({old:g}→{new:g}px)",
+                en="Made {who} smaller ({old:g}→{new:g}px)",
+                tr="{who} küçülttüm ({old:g}→{new:g}px)",
                 who=who,
-                word_en=word_en,
                 old=old,
                 new=new,
-                word_tr=word_tr,
             )
         return say(en="Resized {who}", tr="{who} yeniden boyutlandı", who=who)
     if name == "position":
@@ -944,13 +1065,12 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
         befores = [t.before for t in entry.targets if isinstance(t.before, tuple)]
         named = afters[0][0] if afters and afters[0][0] not in (None, "custom") else None
         if named and len({a[0] for a in afters}) == 1:
-            spot_tr = {"top": "üst", "middle": "orta", "bottom": "alt"}.get(str(named), str(named))
+            spot = str(named)
+            if spot in _SPOT_MOVED:
+                return _SPOT_MOVED[spot](who)
+            # A spot name the editor does not offer today: its own name, in every language.
             return say(
-                en="Moved {who} to the {named}",
-                tr="{who} {spot_tr} konuma taşındı",
-                who=who,
-                named=named,
-                spot_tr=spot_tr,
+                en="Moved {who} to the {spot}", tr="{who} {spot} konuma taşındı", who=who, spot=spot
             )
         xs = {a[1] for a in afters}
         height_kept = len(afters) == len(befores) and all(
@@ -959,33 +1079,23 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
         )
         if len(xs) == 1 and height_kept and isinstance(next(iter(xs)), float):
             horizontal, _vertical = _where(next(iter(xs)), None)
-            return say(
-                en="Lined up {who} on the {horizontal}",
-                tr="{who} {v1} hizalandı",
-                who=who,
-                horizontal=horizontal,
-                v1=_SIDE_TR[horizontal],
-            )
+            return _LINED_UP[horizontal](who)
         return say(en="Moved {who}", tr="{who} taşındı", who=who)
     if name == "alignment":
         side = str(common) if isinstance(common, str) else None
+        if side in _ALIGNED:
+            return _ALIGNED[side](who)
         if side:
+            # A side name the editor does not offer today: its own name, in every language.
             return say(
-                en="Aligned {who} to the {side}",
-                tr="{who} {side_tr_get_side_side} hizalandı",
-                who=who,
-                side=side,
-                side_tr_get_side_side=_SIDE_TR.get(side, side),
+                en="Aligned {who} to the {side}", tr="{who} {side} hizalandı", who=who, side=side
             )
         return say(en="Changed the alignment of {who}", tr="{who} hizalaması değişti", who=who)
     if name == "text_case":
-        return say(
-            en="Set {who} to {case_en_get_str_common}",
-            tr="{who} → {case_tr_get_str_common}",
-            who=who,
-            case_en_get_str_common=_CASE_EN.get(str(common), "a new case"),
-            case_tr_get_str_common=_CASE_TR.get(str(common), "yeni harf biçimi"),
-        )
+        case = str(common)
+        if case in _CASE_SET:
+            return _CASE_SET[case](who)
+        return say(en="Set {who} to a new case", tr="{who} → yeni harf biçimi", who=who)
     if name == "timing":
         if (
             len(entry.targets) == 1
@@ -1006,8 +1116,13 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
                 span_first_after=span(first.after),
             )
         return say(en="Retimed {who}", tr="{who} zamanlaması değişti", who=who)
-    en, tr = _PLAIN_LABELS.get(name, (name.replace("_", " "), name.replace("_", " ")))
-    return say(en="Changed the {v1} of {who}", tr="{who} için {v2} değişti", v1=en, who=who, v2=tr)
+    if name in _PLAIN_LABELS:
+        label = say(en=_PLAIN_LABELS[name][0], tr=_PLAIN_LABELS[name][1])
+    else:
+        label = name.replace("_", " ")  # a field with no creator words: its own name
+    return say(
+        en="Changed the {label} of {who}", tr="{who} için {label} değişti", label=label, who=who
+    )
 
 
 def _font_display(target: DiffTarget) -> str:
@@ -1042,13 +1157,7 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
     is_number = isinstance(after, (int, float)) and not isinstance(after, bool)
     if name == "y_frac" and is_number:
         _horizontal, vertical = _where(None, float(after))
-        spot_tr = {"top": "üst", "middle": "orta", "bottom": "alt"}[vertical]
-        return say(
-            en="Moved the captions to the {vertical}",
-            tr="Altyazılar {spot_tr} konuma taşındı",
-            vertical=vertical,
-            spot_tr=spot_tr,
-        )
+        return say(en=_CAPTIONS_MOVED[vertical][0], tr=_CAPTIONS_MOVED[vertical][1])
     if name == "enabled" and isinstance(after, bool):
         if after:
             return say(en="Turned the captions on", tr="Altyazılar açıldı")
@@ -1112,40 +1221,54 @@ def _describe_tilt(entry: DiffEntry, who: str) -> str:
         for before, tilt in zip(befores, tilts, strict=True)
     ):
         if len({tilt.zoom for tilt in tilts}) == 1:
-            zoom = f"{tilts[0].zoom:g}x"
             return say(
-                en="Zoomed {who} to {zoom}", tr="{who} {zoom} yakınlaştırıldı", who=who, zoom=zoom
+                en="Zoomed {who} to {zoom:g}x",
+                tr="{who} {zoom:g}x yakınlaştırıldı",
+                who=who,
+                zoom=tilts[0].zoom,
             )
         return say(en="Changed the zoom of {who}", tr="{who} yakınlaştırması değişti", who=who)
     if len({repr(after) for after in afters}) != 1:
         return say(en="Changed the tilt of {who}", tr="{who} eğimi değişti", who=who)
     tilt = tilts[0]
     backdrop = tilt.backdrop
-    behind_en = behind_tr = ""
+    behind = ""
     if backdrop is not None:
         kind = backdrop.color if backdrop.kind == "color" else backdrop.kind
-        behind_en = {"blur": "blurred background", "media": "photo or video behind it"}.get(
-            kind, f"{kind} background"
-        )
-        behind_tr = {"blur": "bulanık arka plan", "media": "arkasında fotoğraf ya da video"}.get(
-            kind, f"{kind} arka plan"
-        )
+        if kind == "blur":
+            behind = say(en="blurred background", tr="bulanık arka plan")
+        elif kind == "media":
+            behind = say(en="photo or video behind it", tr="arkasında fotoğraf ya da video")
+        else:
+            behind = say(en="{kind} background", tr="{kind} arka plan", kind=kind)
     if all(before.rotation_deg == tilt.rotation_deg for before in befores):
         return say(
-            en="Changed the background behind {who}: {v1}",
-            tr="{who} arka planı değişti: {v2}",
+            en="Changed the background behind {who}: {behind}",
+            tr="{who} arka planı değişti: {behind}",
             who=who,
-            v1=behind_en or "plain",
-            v2=behind_tr or "düz",
+            behind=behind or say(en="plain", tr="düz"),
         )
     amount = f"{abs(tilt.rotation_deg):g}"
-    side_en, side_tr = ("right", "sağa") if tilt.rotation_deg > 0 else ("left", "sola")
+    extras = [behind] if behind else []
     if tilt.zoom != 1:
-        behind_en = f"zoomed to {tilt.zoom:g}x" + (f", {behind_en}" if behind_en else "")
-        behind_tr = f"{tilt.zoom:g}x yakınlaştırıldı" + (f", {behind_tr}" if behind_tr else "")
+        extras.insert(
+            0, say(en="zoomed to {zoom:g}x", tr="{zoom:g}x yakınlaştırıldı", zoom=tilt.zoom)
+        )
+    rest = "".join(f", {extra}" for extra in extras)
+    if tilt.rotation_deg > 0:
+        return say(
+            en="Tilted {who} {amount} degrees right{rest}",
+            tr="{who} {amount} derece sağa eğildi{rest}",
+            who=who,
+            amount=amount,
+            rest=rest,
+        )
     return say(
-        en=f"Tilted {who} {amount} degrees {side_en}" + (f", {behind_en}" if behind_en else ""),
-        tr=f"{who} {amount} derece {side_tr} eğildi" + (f", {behind_tr}" if behind_tr else ""),
+        en="Tilted {who} {amount} degrees left{rest}",
+        tr="{who} {amount} derece sola eğildi{rest}",
+        who=who,
+        amount=amount,
+        rest=rest,
     )
 
 
@@ -1201,10 +1324,9 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
         if name == "tilt":
             return _describe_tilt(entry, who)
         if name == "muted":
-            return say(
-                en=(f"Muted {who}" if first.after else f"Unmuted {who}"),
-                tr=(f"{who} sessize alındı" if first.after else f"{who} sesi açıldı"),
-            )
+            if first.after:
+                return say(en="Muted {who}", tr="{who} sessize alındı", who=who)
+            return say(en="Unmuted {who}", tr="{who} sesi açıldı", who=who)
         if name == "source_audio_volume":
             return say(
                 en="Changed the source volume of {who}",
@@ -1226,40 +1348,58 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
     if lane == "transition":
         value = _common(entry)
         kind = value[0] if isinstance(value, tuple) and value else None
-        return say(
-            en=f"Set the transition after {who}" + (f" to {kind}" if isinstance(kind, str) else ""),
-            tr=f"{who} sonrası geçiş değişti" + (f" → {kind}" if isinstance(kind, str) else ""),
-        )
+        if isinstance(kind, str):
+            # ``kind`` is the editor's transition id ("crossfade"), the same in every language.
+            return say(
+                en="Set the transition after {who} to {kind}",
+                tr="{who} sonrası geçiş değişti → {kind}",
+                who=who,
+                kind=kind,
+            )
+        return say(en="Set the transition after {who}", tr="{who} sonrası geçiş değişti", who=who)
     if lane == "audio":
         if name == "remove_music":
             return say(en="Removed the music", tr="Müzik kaldırıldı")
         if name == "music_track":
             return say(en="Changed the music", tr="Müzik değişti")
-        label = {
-            "music_level": ("Music", "Müzik"),
-            "original_level": ("Original sound", "Orijinal ses"),
-        }.get(name, ("Music volume", "Müzik sesi"))
-        unit = " dB" if name == "music_gain_db" else "%"
+        if name == "music_level":
+            label = say(en="Music", tr="Müzik")
+        elif name == "original_level":
+            label = say(en="Original sound", tr="Orijinal ses")
+        else:
+            label = say(en="Music volume", tr="Müzik sesi")
+        decibels = name == "music_gain_db"
 
         def level(value: Any) -> str:
             number = _num(value)
             if number is None:
                 return "?"
             return (
-                f"{number:g}"
-                if unit == " dB"
-                else f"{round(number * 100 if number <= 1 else number):g}"
+                f"{number:g}" if decibels else f"{round(number * 100 if number <= 1 else number):g}"
             )
 
-        before = f"{level(first.before)}{unit} → " if first.before is not None else "→ "
+        after = level(first.after)
+        if first.before is None:
+            if decibels:
+                return say(
+                    en="{label} → {after} dB", tr="{label} → {after} dB", label=label, after=after
+                )
+            return say(en="{label} → {after}%", tr="{label} → {after}%", label=label, after=after)
+        before = level(first.before)
+        if decibels:
+            return say(
+                en="{label} {before} dB → {after} dB",
+                tr="{label} {before} dB → {after} dB",
+                label=label,
+                before=before,
+                after=after,
+            )
         return say(
-            en="{label_0} {before}{level_first_after}{unit}",
-            tr="{label_1} {before}{level_first_after}{unit}",
-            label_0=label[0],
+            en="{label} {before}% → {after}%",
+            tr="{label} {before}% → {after}%",
+            label=label,
             before=before,
-            level_first_after=level(first.after),
-            unit=unit,
-            label_1=label[1],
+            after=after,
         )
     if lane == "title":
         return say(
@@ -1273,33 +1413,15 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
         return say(
             en="Edited {plural_len_entry_targets}",
             tr="{plural_len_entry_targets} düzenlendi",
-            plural_len_entry_targets=_plural(len(entry.targets), "caption", "altyazı"),
+            plural_len_entry_targets=_plural(len(entry.targets), _LANE_NOUNS[lane]),
         )
-    if lane in ("sfx", "camera_effects"):
-        noun = (
-            ("sound effect", "ses efekti") if lane == "sfx" else ("camera effect", "kamera efekti")
-        )
-        verb = {"added": ("Added", "eklendi"), "removed": ("Removed", "kaldırıldı")}.get(
-            name, ("Changed", "değişti")
-        )
-        return say(
-            en="{verb_0} {v1}",
-            tr="{v1} {verb_1}",
-            verb_0=verb[0],
-            v1=_plural(len(entry.targets), noun[0], noun[1]),
-            verb_1=verb[1],
-        )
-    if lane == "media_overlays":
-        verb = {"added": ("Added", "eklendi"), "removed": ("Removed", "kaldırıldı")}.get(
-            name, ("Changed", "değişti")
-        )
-        return say(
-            en="{verb_0} {plural_len_entry_targets}",
-            tr="{plural_len_entry_targets} {verb_1}",
-            verb_0=verb[0],
-            plural_len_entry_targets=_plural(len(entry.targets), "picture", "görsel"),
-            verb_1=verb[1],
-        )
+    if lane in ("sfx", "camera_effects", "media_overlays"):
+        things = _plural(len(entry.targets), _LANE_NOUNS[lane])
+        if name == "added":
+            return say(en="Added {who}", tr="{who} eklendi", who=things)
+        if name == "removed":
+            return say(en="Removed {who}", tr="{who} kaldırıldı", who=things)
+        return say(en="Changed {who}", tr="{who} değişti", who=things)
     if lane == "visual_media":
         return say(en="Removed visual items", tr="Görsel öğeler kaldırıldı")
     if lane == "speech_cut":

@@ -288,11 +288,14 @@ def caption_spot_moved_reason(position: str, y_frac: float) -> str:
     """Why the captions are not where the creator put them: a named face pushed them out."""
     band = caption_spot_band(position)
     lower = band is not None and y_frac > band[1]
+    if lower:
+        return say(
+            en="The captions sit lower than you asked so they stay off your face.",
+            tr="Altyazılar yüzüne gelmesin diye istediğinden daha aşağıda duruyor.",
+        )
     return say(
-        en=("The captions sit {v1} than you asked so they stay off your face."),
-        tr=("Altyazılar yüzüne gelmesin diye istediğinden daha {v2} duruyor."),
-        v1="lower" if lower else "higher",
-        v2="aşağıda" if lower else "yukarıda",
+        en="The captions sit higher than you asked so they stay off your face.",
+        tr="Altyazılar yüzüne gelmesin diye istediğinden daha yukarıda duruyor.",
     )
 
 
@@ -322,7 +325,7 @@ def caption_over_speaker(position: str | None, frame: str | None) -> bool:
 def _join(parts: list[str], conjunction: str) -> str:
     if len(parts) <= 1:
         return "".join(parts)
-    return f"{', '.join(parts[:-1])} {conjunction} {parts[-1]}"
+    return f"{', '.join(parts[:-1])}{conjunction}{parts[-1]}"
 
 
 def caption_look_reason(ask: CaptionLookAsk, *, over_speaker: bool, over_face: bool) -> str:
@@ -330,37 +333,51 @@ def caption_look_reason(ask: CaptionLookAsk, *, over_speaker: bool, over_face: b
 
     "Captions are small, white, lowercase and in the middle." -- the creator's ask is applied
     as given, so a spot on the corner speaker or a face is said, never silently moved."""
-    en_parts: list[str] = []
-    tr_parts: list[str] = []
+    parts: list[str] = []
     if ask.size is not None:
-        en_parts.append(_SIZE_WORDS[ask.size][0])
-        tr_parts.append(_SIZE_WORDS[ask.size][1])
+        parts.append(say(en=_SIZE_WORDS[ask.size][0], tr=_SIZE_WORDS[ask.size][1]))
     if ask.color is not None:
-        en, tr = _COLOR_WORDS.get(ask.color, (f"coloured {ask.color}", f"{ask.color} renginde"))
-        en_parts.append(en)
-        tr_parts.append(tr)
+        if ask.color in _COLOR_WORDS:
+            parts.append(say(en=_COLOR_WORDS[ask.color][0], tr=_COLOR_WORDS[ask.color][1]))
+        else:
+            parts.append(say(en="coloured {color}", tr="{color} renginde", color=ask.color))
     if ask.case is not None:
-        en_parts.append(_CASE_WORDS[ask.case][0])
-        tr_parts.append(_CASE_WORDS[ask.case][1])
+        parts.append(say(en=_CASE_WORDS[ask.case][0], tr=_CASE_WORDS[ask.case][1]))
     if ask.position is not None:
-        en_parts.append(_POSITION_WORDS[ask.position][0])
-        tr_parts.append(_POSITION_WORDS[ask.position][1])
+        parts.append(say(en=_POSITION_WORDS[ask.position][0], tr=_POSITION_WORDS[ask.position][1]))
     if ask.box is not None:
-        en, tr = _BOX_WORDS.get(ask.box, ("in a box", "bir kutuda"))
-        en_parts.append(en)
-        tr_parts.append(tr)
+        if ask.box in _BOX_WORDS:
+            parts.append(say(en=_BOX_WORDS[ask.box][0], tr=_BOX_WORDS[ask.box][1]))
+        else:
+            parts.append(say(en="in a box", tr="bir kutuda"))
     if ask.words is not None:
-        en_parts.append(_WORDS_WORDS[ask.words][0])
-        tr_parts.append(_WORDS_WORDS[ask.words][1])
-    en = f"Captions are {_join(en_parts, 'and')}"
-    tr = f"Altyazılar {_join(tr_parts, 've')}"
+        parts.append(say(en=_WORDS_WORDS[ask.words][0], tr=_WORDS_WORDS[ask.words][1]))
+    looks = _join(parts, say(en=" and ", tr=" ve "))
+    if over_speaker and over_face:
+        return say(
+            en=(
+                "Captions are {looks}; they sit over you in the corner, as you asked; "
+                "they cover a face in places, as you asked."
+            ),
+            tr=(
+                "Altyazılar {looks}; istediğin gibi köşedeki görüntünün üstünde duruyorlar; "
+                "istediğin gibi yer yer bir yüzün üstüne geliyorlar."
+            ),
+            looks=looks,
+        )
     if over_speaker:
-        en += "; they sit over you in the corner, as you asked"
-        tr += "; istediğin gibi köşedeki görüntünün üstünde duruyorlar"
+        return say(
+            en="Captions are {looks}; they sit over you in the corner, as you asked.",
+            tr="Altyazılar {looks}; istediğin gibi köşedeki görüntünün üstünde duruyorlar.",
+            looks=looks,
+        )
     if over_face:
-        en += "; they cover a face in places, as you asked"
-        tr += "; istediğin gibi yer yer bir yüzün üstüne geliyorlar"
-    return say(en=en + ".", tr=tr + ".")
+        return say(
+            en="Captions are {looks}; they cover a face in places, as you asked.",
+            tr="Altyazılar {looks}; istediğin gibi yer yer bir yüzün üstüne geliyorlar.",
+            looks=looks,
+        )
+    return say(en="Captions are {looks}.", tr="Altyazılar {looks}.", looks=looks)
 
 
 def apply_caption_case(

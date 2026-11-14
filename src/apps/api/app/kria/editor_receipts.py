@@ -41,6 +41,7 @@ from app.kria.style_asks import (
     value_matches,
     words,
 )
+from app.kria.text_trim import fit_lines
 from app.services.kria_editor_ops_diff import (
     DiffEntry,
     DiffTarget,
@@ -921,7 +922,7 @@ def reply_from_editor_receipts(
     if notes:
         parts.append(notes.strip())
     text = "\n".join(part for part in parts if part)
-    return text if len(text) <= MAX_REPLY_CHARS else text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
+    return fit_lines(text, MAX_REPLY_CHARS)
 
 
 def receipt_lead(
@@ -947,7 +948,7 @@ def receipt_lead(
     )
     parts = [lead, *notices, (notes or "").strip()]
     text = " ".join(part for part in parts if part)
-    return text if len(text) <= MAX_REPLY_CHARS else text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
+    return fit_lines(text, MAX_REPLY_CHARS)
 
 
 def reply_from_diff(
@@ -959,4 +960,4 @@ def reply_from_diff(
         parts.append(" ".join(notices))
     if notes:
         parts.append(notes.strip())
-    return "\n".join(parts)[:MAX_REPLY_CHARS]
+    return fit_lines("\n".join(parts), MAX_REPLY_CHARS)

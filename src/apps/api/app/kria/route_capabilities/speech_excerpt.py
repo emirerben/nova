@@ -67,15 +67,19 @@ FIELD_HANDLING: dict[str, Handling] = {
     "pacing": NotApplied(
         lines.pacing_line(
             _pace_applied,
-            "the cuts between spoken lines keep a fixed length",
-            "konuşmalar arasındaki kesimler sabit uzunlukta",
+            lambda: say(
+                en="the cuts between spoken lines keep a fixed length",
+                tr="konuşmalar arasındaki kesimler sabit uzunlukta",
+            ),
         )
     ),
     "direction": NotApplied(
         lines.direction_line(
             "fast_montage",
-            "it is cut around the spoken lines",
-            "konuşulan cümlelerin etrafında kesiliyor",
+            lambda: say(
+                en="it is cut around the spoken lines",
+                tr="konuşulan cümlelerin etrafında kesiliyor",
+            ),
         )
     ),
     "caption_style": NotApplied(lines.caption_style),

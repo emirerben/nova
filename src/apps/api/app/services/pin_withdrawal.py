@@ -59,6 +59,7 @@ _FILLERS = _phrases(
     "ok", "okay", "okey", "oki", "k", "fine", "alright", "all right", "yes", "yeah", "yep",
     "sure", "then", "just", "please", "pls", "plz", "so", "well", "hmm", "thanks", "thank you",
     "tamam", "peki", "olur", "evet", "o zaman", "hadi", "lütfen", "teşekkürler", "sağol",
+    "ja", "gut", "na gut", "alles klar", "dann", "bitte", "danke", "einfach",
 )  # fmt: skip
 # Whole answers that drop whichever clip the reply was stuck on.
 _ANY = _phrases(
@@ -80,23 +81,34 @@ _ANY = _phrases(
     "farketmez", "fark etmez", "gerek yok", "daha basit yap", "basit yap", "daha basit olsun",
     "basit olsun", "daha basit hazırla", "sadeleştir", "basitleştir", "daha sade yap",
     "onsuz yap", "onsuz hazırla", "onsuz devam et", "onsuz olsun",
+    "überspringen", "überspring", "überspringe", "überspring es", "überspring das",
+    "überspringe es", "überspringe das", "überspring den teil", "überspring diesen teil",
+    "das überspringen", "lass es weg", "lass das weg", "lass den teil weg", "weglassen",
+    "weg damit", "vergiss es", "vergiss das", "egal", "ist egal", "schon gut",
+    "nicht wichtig", "nicht so wichtig", "mach es ohne", "mach ohne", "ohne das",
+    "mach es einfacher", "einfacher", "mach es simpler", "einfachere version",
 )  # fmt: skip
 _VERBS_EN = (
     "skip", "drop", "forget", "forget about", "ignore", "never mind", "remove", "leave out",
     "don't worry about",
 )  # fmt: skip
 _VERBS_TR = ("boşver", "boş ver", "atla", "unut", "geç", "çıkar")
+# German puts the verb first ("überspring das Ende") or last ("das Ende weglassen").
+_VERBS_DE_FIRST = ("überspring", "überspringe", "vergiss", "streich", "streiche")
+_VERBS_DE_LAST = ("überspringen", "weglassen", "streichen", "vergessen")
 _OBJECTS = {
     "last": (
         ("the ending", "the end", "ending", "the last clip", "the last part", "the last shot",
          "the final part", "the final shot", "the final clip", "the closing shot",
          "the end part", "the ending clip"),
         ("sonu", "sonunu", "bitişi", "bitişini", "son klibi", "son kısmı"),
+        ("das ende", "den schluss", "den letzten clip", "den letzten teil", "das letzte stück"),
     ),
     "first": (
         ("the opening", "the start", "the beginning", "the first clip", "the first part",
          "the first shot", "the intro", "the opening shot", "the opener", "the opening clip"),
         ("başı", "başını", "açılışı", "girişi", "ilk klibi", "ilk kısmı", "başlangıcı"),
+        ("den anfang", "den start", "den ersten clip", "den ersten teil", "das intro"),
     ),
 }  # fmt: skip
 _AT = {
@@ -104,10 +116,17 @@ _AT = {
         *(f"{verb} {thing}" for verb in _VERBS_EN for thing in en),
         *(f"leave {thing} out" for thing in en),
         *(f"{thing} {verb}" for verb in _VERBS_TR for thing in tr),
+        *(f"{verb} {thing}" for verb in _VERBS_DE_FIRST for thing in de),
+        *(f"{thing} {verb}" for verb in _VERBS_DE_LAST for thing in de),
+        *(f"lass {thing} weg" for thing in de),
     )
-    for position, (en, tr) in _OBJECTS.items()
+    for position, (en, tr, de) in _OBJECTS.items()
 }
-_VERBS = tuple(sorted(_phrases(*_VERBS_EN, *_VERBS_TR), key=len, reverse=True))
+_VERBS = tuple(
+    sorted(
+        _phrases(*_VERBS_EN, *_VERBS_TR, *_VERBS_DE_FIRST, *_VERBS_DE_LAST), key=len, reverse=True
+    )
+)
 _CLAUSE_BREAK = re.compile(r"[,.;!?\n]+")
 
 
@@ -204,7 +223,7 @@ def _pin_sentences(words: str) -> tuple[str, ...]:
     from app.services.creator_render_contract import _pin_not_found  # noqa: PLC0415
 
     out = []
-    for language in ("en", "tr"):
+    for language in ("en", "tr", "de"):
         with reply_language_for(language):
             out.append(_flat(_pin_not_found(words)))
     return tuple(out)
@@ -339,27 +358,28 @@ def _ways_forward(position: str, words: str, basis: str | None) -> str:
     last = position == "last"
     if basis is None:
         then = say(en="leave it out", tr="onu çıkarayım")
-    else:
-        filmed = basis == "filmed"
-        clip = say(
-            en="the {v1} clip you {v2}",
-            tr="{v3} {v4} klip",
-            v1="last" if last else "first",
-            v2="filmed" if filmed else "added",
-            v3="çektiğin" if filmed else "eklediğin",
-            v4="son" if last else "ilk",
-        )
+    elif basis == "filmed":
         then = (
             say(
-                en="leave it out and end on {clip}",
-                tr="onu çıkarıp videoyu {clip}te bitireyim",
-                clip=clip,
+                en="leave it out and end on the last clip you filmed",
+                tr="onu çıkarıp videoyu çektiğin son klipte bitireyim",
             )
             if last
             else say(
-                en="leave it out and start with {clip}",
-                tr="onu çıkarıp videoya {clip} ile başlayayım",
-                clip=clip,
+                en="leave it out and start with the first clip you filmed",
+                tr="onu çıkarıp videoya çektiğin ilk klip ile başlayayım",
+            )
+        )
+    else:
+        then = (
+            say(
+                en="leave it out and end on the last clip you added",
+                tr="onu çıkarıp videoyu eklediğin son klipte bitireyim",
+            )
+            if last
+            else say(
+                en="leave it out and start with the first clip you added",
+                tr="onu çıkarıp videoya eklediğin ilk klip ile başlayayım",
             )
         )
     ways = say(

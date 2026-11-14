@@ -501,17 +501,18 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     if len(times) < 2:
         state.reply_notes.append(
             say(
-                en="I couldn't order them by filming time: "
-                + (
-                    "none of your clips carries a filming time."
+                en=(
+                    "I couldn't order them by filming time: none of your clips carries a "
+                    "filming time."
                     if not times
-                    else "only one of your clips carries a filming time."
+                    else "I couldn't order them by filming time: only one of your clips "
+                    "carries a filming time."
                 ),
-                tr="Klipleri çekim saatine göre sıralayamadım: "
-                + (
-                    "hiçbir klibinde çekim saati yok."
+                tr=(
+                    "Klipleri çekim saatine göre sıralayamadım: hiçbir klibinde çekim saati yok."
                     if not times
-                    else "yalnızca bir klibinde çekim saati var."
+                    else "Klipleri çekim saatine göre sıralayamadım: yalnızca bir klibinde "
+                    "çekim saati var."
                 ),
             )
         )
@@ -529,12 +530,16 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
         state.reorder_noop = True
         state.reply_notes.append(
             say(
-                en="The clips are already in "
-                + ("newest-first" if direction == "desc" else "chronological")
-                + " order.",
-                tr="Klipler zaten "
-                + ("en yeniden eskiye" if direction == "desc" else "çekim sırasına göre")
-                + " sıralı.",
+                en=(
+                    "The clips are already in newest-first order."
+                    if direction == "desc"
+                    else "The clips are already in chronological order."
+                ),
+                tr=(
+                    "Klipler zaten en yeniden eskiye sıralı."
+                    if direction == "desc"
+                    else "Klipler zaten çekim sırasına göre sıralı."
+                ),
             )
         )
         state.reject(
@@ -544,11 +549,15 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     if untimed:
         state.reply_notes.append(
             say(
-                en=f"No filming time for clip{'s' if len(untimed) != 1 else ''} "
-                f"{', '.join(untimed)}.",
-                tr=f"Şu kliplerde çekim saati yok: {', '.join(untimed)}."
-                if len(untimed) != 1
-                else f"{untimed[0]}. klipte çekim saati yok.",
+                en="No filming time for clip {number}.",
+                tr="{number}. klipte çekim saati yok.",
+                number=untimed[0],
+            )
+            if len(untimed) == 1
+            else say(
+                en="No filming time for clips {numbers}.",
+                tr="Şu kliplerde çekim saati yok: {numbers}.",
+                numbers=", ".join(untimed),
             )
         )
         state.reply_notes.append(

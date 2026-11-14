@@ -44,7 +44,6 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
-from app.text_fold import capitalize
 
 log = structlog.get_logger()
 
@@ -641,24 +640,23 @@ _SECTION_WORDS = {
 }
 
 
-def _join(words: list[str], word: str) -> str:
+def _join(words: list[str]) -> str:
     if len(words) <= 1:
         return "".join(words)
-    return f"{', '.join(words[:-1])} {word} {words[-1]}"
+    return ", ".join(words[:-1]) + say(en=" and ", tr=" ve ") + words[-1]
 
 
 def update_summary_text(changed: list[str]) -> str:
     """Deterministic, localized: composed from the changed sections only."""
-    from app.kria.reply_language import say  # noqa: PLC0415
-
     sections = [s for s in SECTION_ORDER if s in changed and s in _SECTION_WORDS]
-    en = _join([_SECTION_WORDS[s][0] for s in sections], "and")
-    tr = _join([_SECTION_WORDS[s][1] for s in sections], "ve")
+    words = [say(en=_SECTION_WORDS[s][0], tr=_SECTION_WORDS[s][1]) for s in sections]
+    joined = _join(words)
+    # The list opens the Turkish and German sentence, the English one names it mid-sentence.
+    language = current_reply_language()
     return say(
-        en="Updated {v1}.",
-        tr="{capitalize_tr} güncelledim.",
-        v1=en,
-        capitalize_tr=capitalize(tr, "tr"),
+        en="Updated {sections}.",
+        tr="{sections} güncelledim.",
+        sections=joined if language in (None, "en") else joined[:1].upper() + joined[1:],
     )[:400]
 
 
@@ -954,11 +952,24 @@ _BLOCK_TEXT_TR = {
     "Lip-sync": "Dudak senkronu",
     "Background": "Arka plan",
 }
+# `_count_label` output as an English template -> its Turkish (no plural there).
 _COUNT_NOUNS_TR = {
-    "clip": "klip",
-    "caption": "altyazı",
-    "sound effect": "ses efekti",
-    "overlay": "katman",
+    "{count} clip": "{count} klip",
+    "{count} clip · {seconds}s": "{count} klip · {seconds} sn",
+    "{count} clips": "{count} klip",
+    "{count} clips · {seconds}s": "{count} klip · {seconds} sn",
+    "{count} caption": "{count} altyazı",
+    "{count} caption · {seconds}s": "{count} altyazı · {seconds} sn",
+    "{count} captions": "{count} altyazı",
+    "{count} captions · {seconds}s": "{count} altyazı · {seconds} sn",
+    "{count} sound effect": "{count} ses efekti",
+    "{count} sound effect · {seconds}s": "{count} ses efekti · {seconds} sn",
+    "{count} sound effects": "{count} ses efekti",
+    "{count} sound effects · {seconds}s": "{count} ses efekti · {seconds} sn",
+    "{count} overlay": "{count} katman",
+    "{count} overlay · {seconds}s": "{count} katman · {seconds} sn",
+    "{count} overlays": "{count} katman",
+    "{count} overlays · {seconds}s": "{count} katman · {seconds} sn",
 }
 # `_count_label` output, optionally with the clips section's " · 24s".
 _COUNT_SUMMARY = re.compile(  # kri667: reads `_count_label`'s own output, never creator words
@@ -975,9 +986,12 @@ def _localized_text(text: Any) -> Any:
     match = _COUNT_SUMMARY.match(text)
     if match is None:
         return text
-    count, noun, seconds = match.groups()
-    turkish = f"{count} {_COUNT_NOUNS_TR[noun]}" + (f" · {seconds} sn" if seconds else "")
-    return say(en=text, tr=turkish)
+    count, _noun, seconds = match.groups()
+    # The text with its numbers as fields: a `_COUNT_NOUNS_TR` key.
+    key = "{count}" + text[len(count) :]
+    if seconds:
+        key = key[: -len(seconds) - 1] + "{seconds}s"
+    return say(en=key, tr=_COUNT_NOUNS_TR.get(key, key), count=count, seconds=seconds)
 
 
 def localized_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:

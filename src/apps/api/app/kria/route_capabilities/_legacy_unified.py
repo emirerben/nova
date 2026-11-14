@@ -21,6 +21,45 @@ _ROUTE_DIRECTION = "fast_montage"
 _ROUTE_PACE = "fast"
 
 
+# KRI-1408: one sentence per known value so German can word each one. English and Turkish are
+# the frozen lines above, word for word (the value's underscores read as spaces); an unknown
+# value keeps the generic line.
+_PACING_LINES: dict[str, tuple[str, str]] = {
+    "relaxed": (
+        "The relaxed pacing isn't applied on this video yet: the cuts follow a fast pace",
+        "relaxed tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda",
+    ),
+    "balanced": (
+        "The balanced pacing isn't applied on this video yet: the cuts follow a fast pace",
+        "balanced tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda",
+    ),
+}
+_DIRECTION_LINES: dict[str, tuple[str, str]] = {
+    "guided_story": (
+        "The guided story direction isn't applied on this video yet: it is cut as a fast montage",
+        "guided story yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor",
+    ),
+    "text_explainer": (
+        "The text explainer direction isn't applied on this video yet: it is cut as a fast montage",
+        "text explainer yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor",
+    ),
+    "native": (
+        "The native direction isn't applied on this video yet: it is cut as a fast montage",
+        "native yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor",
+    ),
+}
+_ARCHETYPE_LINES: dict[str, tuple[str, str]] = {
+    "day_vlog": (
+        "I can't use the day vlog story archetype on this video yet",
+        "day vlog hikâye kalıbını bu videoda henüz kullanamıyorum",
+    ),
+    "single_hero": (
+        "I can't use the single hero story archetype on this video yet",
+        "single hero hikâye kalıbını bu videoda henüz kullanamıyorum",
+    ),
+}
+
+
 def _clip(value: object, limit: int = 70) -> str:
     text = " ".join(str(value or "").split()).replace('"', "'")
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
@@ -70,6 +109,9 @@ def _pacing(value: Any, strategy: Mapping[str, Any]) -> str | None:
 
     if effective_pace(strategy) is not None:
         return None
+    key = str(value)
+    if key in _PACING_LINES:
+        return say(en=_PACING_LINES[key][0], tr=_PACING_LINES[key][1])
     return say(
         en=(
             "The {str_value_replace} pacing isn't applied on this video yet: "
@@ -83,6 +125,9 @@ def _pacing(value: Any, strategy: Mapping[str, Any]) -> str | None:
 def _direction(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value or value == _ROUTE_DIRECTION:
         return None
+    key = str(value)
+    if key in _DIRECTION_LINES:
+        return say(en=_DIRECTION_LINES[key][0], tr=_DIRECTION_LINES[key][1])
     return say(
         en=(
             "The {str_value_replace} direction isn't applied on this video yet: "
@@ -122,6 +167,9 @@ def _treatments(value: Any, _s: Mapping[str, Any]) -> str | None:
 def _archetype(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
+    key = str(value)
+    if key in _ARCHETYPE_LINES:
+        return say(en=_ARCHETYPE_LINES[key][0], tr=_ARCHETYPE_LINES[key][1])
     return say(
         en="I can't use the {str_value_replace} story archetype on this video yet",
         tr="{str_value_replace} hikâye kalıbını bu videoda henüz kullanamıyorum",

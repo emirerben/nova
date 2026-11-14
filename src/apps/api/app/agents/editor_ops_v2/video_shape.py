@@ -87,6 +87,11 @@ def current_shape(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _closed_note() -> str:
+    """``CLOSED_NOTE`` in the chat's language."""
+    return say(en=CLOSED_NOTE[0], tr=CLOSED_NOTE[1])
+
+
 def _op_set_video_shape(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
 
@@ -106,7 +111,7 @@ SPECS = [
         fields=frozenset({"orientation", "landscape_fit"}),
         family=frozenset({FAMILY}),
         coerce=_coerce,
-        closed_note=CLOSED_NOTE,
+        closed_note=_closed_note,
     )
 ]
 

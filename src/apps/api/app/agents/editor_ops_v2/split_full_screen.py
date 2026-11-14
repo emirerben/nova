@@ -295,6 +295,11 @@ def _op_make_split_full_screen(state: Any, op: dict[str, Any]) -> None:
     state.summary = "Made part of the split screen full screen"
 
 
+def _closed_note() -> str:
+    """``CLOSED_NOTE`` in the chat's language."""
+    return say(en=CLOSED_NOTE[0], tr=CLOSED_NOTE[1])
+
+
 def follow_lost_time(state: Any) -> None:
     """The lane step of ``makeSplitFullScreen``: ``removeTime`` over the lost spans, in place of
     the serial-unit rebase every other split edit gets (the phone passes
@@ -342,7 +347,7 @@ SPECS = [
         fields=frozenset({"section_id", "at_s", "side", "panel"}),
         family=frozenset({"clip", "timeline"}),
         coerce=_coerce,
-        closed_note=CLOSED_NOTE,
+        closed_note=_closed_note,
     )
 ]
 

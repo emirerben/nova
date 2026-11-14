@@ -501,7 +501,9 @@ _OP_PHRASES_TR = {
 
 def _op_label(op: object) -> str:
     key = str(op or "").strip().lower()
-    return say(en=_OP_PHRASES.get(key, ""), tr=_OP_PHRASES_TR.get(key, ""))
+    if key not in _OP_PHRASES:
+        return ""
+    return say(en=_OP_PHRASES[key], tr=_OP_PHRASES_TR[key])
 
 
 def _rejection_phrase(reason: object) -> str:

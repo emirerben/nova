@@ -193,39 +193,52 @@ def _pin_notice(
             words=words,
         )
     last = position == "last"
-    if basis is not None:
-        filmed = basis == "filmed"
-        clip = say(
-            en="{v1} clip you {v2}",
-            tr="{v3} {v4} klip",
-            v1="last" if last else "first",
-            v2="filmed" if filmed else "added",
-            v3="çektiğin" if filmed else "eklediğin",
-            v4="son" if last else "ilk",
-        )
+    if basis == "filmed":
         tail = (
             say(
                 en=(
-                    "so the video ends on the {clip}. Tell me which clip to end on if you'd "
-                    "like a different one."
+                    "so the video ends on the last clip you filmed. Tell me which clip to end "
+                    "on if you'd like a different one."
                 ),
                 tr=(
-                    "o yüzden video {clip}te bitiyor. Başka bir klipte bitmesini istersen "
-                    "hangisi olduğunu söyle."
+                    "o yüzden video çektiğin son klipte bitiyor. Başka bir klipte bitmesini "
+                    "istersen hangisi olduğunu söyle."
                 ),
-                clip=clip,
             )
             if last
             else say(
                 en=(
-                    "so the video starts with the {clip}. Tell me which clip to start with "
-                    "if you'd like a different one."
+                    "so the video starts with the first clip you filmed. Tell me which clip to "
+                    "start with if you'd like a different one."
                 ),
                 tr=(
-                    "o yüzden video {clip} ile başlıyor. Başka bir klip ile başlamasını "
+                    "o yüzden video çektiğin ilk klip ile başlıyor. Başka bir klip ile "
+                    "başlamasını istersen hangisi olduğunu söyle."
+                ),
+            )
+        )
+    elif basis is not None:
+        tail = (
+            say(
+                en=(
+                    "so the video ends on the last clip you added. Tell me which clip to end "
+                    "on if you'd like a different one."
+                ),
+                tr=(
+                    "o yüzden video eklediğin son klipte bitiyor. Başka bir klipte bitmesini "
                     "istersen hangisi olduğunu söyle."
                 ),
-                clip=clip,
+            )
+            if last
+            else say(
+                en=(
+                    "so the video starts with the first clip you added. Tell me which clip to "
+                    "start with if you'd like a different one."
+                ),
+                tr=(
+                    "o yüzden video eklediğin ilk klip ile başlıyor. Başka bir klip ile "
+                    "başlamasını istersen hangisi olduğunu söyle."
+                ),
             )
         )
     else:

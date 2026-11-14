@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.kria.brief import BriefRequirement
+from app.kria.reply_language import say
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._types import (
     Applied,
@@ -83,17 +84,21 @@ FIELD_HANDLING: dict[str, Handling] = {
     "story_structure": NotApplied(lines.story),
     "pacing": NotApplied(
         lines.pacing_line(
-            lines.pace_not_followed, "the video follows your speech", "video konuşmanı izliyor"
+            lines.pace_not_followed,
+            lambda: say(en="the video follows your speech", tr="video konuşmanı izliyor"),
         )
     ),
     "direction": NotApplied(
         lines.direction_line(
-            "fast_montage", "the video follows your speech", "video konuşmanı izliyor"
+            "fast_montage",
+            lambda: say(en="the video follows your speech", tr="video konuşmanı izliyor"),
         )
     ),
     "caption_style": NotApplied(lines.captions_always_on),
     "target_duration_s": NotApplied(
-        lines.stated_length("its length follows your speech", "uzunluğu konuşmanı takip ediyor")
+        lines.stated_length(
+            lambda: say(en="its length follows your speech", tr="uzunluğu konuşmanı takip ediyor")
+        )
     ),
     "title_animation": NotApplied(WithAsks(_title_animation)),
     "label_position": NotApplied(lines.label_position),

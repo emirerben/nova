@@ -800,11 +800,17 @@ def _moment_count_notice(
         count = promised.count
     else:
         return None
+    if planned == 1:
+        return say(
+            en="I could fit {planned} moment, not {count}.",
+            tr="{count} değil, {planned} an sığdırabildim.",
+            planned=planned,
+            count=count,
+        )
     return say(
-        en="I could fit {planned} {v1}, not {count}.",
+        en="I could fit {planned} moments, not {count}.",
         tr="{count} değil, {planned} an sığdırabildim.",
         planned=planned,
-        v1="moment" if planned == 1 else "moments",
         count=count,
     )
 
@@ -5774,46 +5780,50 @@ def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
     return cause
 
 
+# Why a request could not be planned, by recovery reason (en, tr). The reason is a code that
+# only picks the sentence; the creator reads the sentence.
+_RECOVERY_DETAILS: dict[str, tuple[str, str]] = {
+    "request_extraction_failed": (
+        "I couldn't reliably read every requested change.",
+        "İstediğin her değişikliği güvenilir şekilde okuyamadım.",
+    ),
+    "planning_batches_disagree": (
+        "The separate parts of your brief produced conflicting plans.",
+        "İsteğinin ayrı bölümleri birbiriyle çelişen planlar çıkardı.",
+    ),
+    "clip_planner_context_limit": (
+        "Your complete brief exceeds the clip planner's 12,000-character limit.",
+        "Tüm isteğin, klip planlayıcının 12.000 karakterlik sınırını aşıyor.",
+    ),
+    # KRI-523: the planner itself failed (not the reading of the request), so say so.
+    "creator_planning_failed": (
+        "I couldn't turn that into a plan this time.",
+        "Bu sefer bunu bir plana dönüştüremedim.",
+    ),
+    "editor_planning_failed": (
+        "I couldn't prepare those edits this time.",
+        "Bu sefer bu düzenlemeleri hazırlayamadım.",
+    ),
+    # The reading step hit a provider/transport failure: not a misread request.
+    "request_extraction_provider_failed": (
+        "I couldn't prepare those edits this time.",
+        "Bu sefer bu düzenlemeleri hazırlayamadım.",
+    ),
+}
+_RECOVERY_DETAIL_DEFAULT = (
+    "Your complete request exceeds the context this planning step can safely read.",
+    "Tüm isteğin, bu planlama adımının güvenle okuyabileceği sınırı aşıyor.",
+)
+
+
 def _request_recovery(
     manifest, prior, *, updates=(), reason="context_limit", cause=None
 ) -> PlannedKriaTurn:
     effective = apply_updates(prior, updates, source_turn_id=None)
     ids = [req.id for req in effective.live()]
     log.info("kria_request_recovery", stage="planning", reason=reason, requirement_ids=ids)
-    detail = {
-        "request_extraction_failed": say(
-            en="I couldn't reliably read every requested change.",
-            tr="İstediğin her değişikliği güvenilir şekilde okuyamadım.",
-        ),
-        "planning_batches_disagree": say(
-            en="The separate parts of your brief produced conflicting plans.",
-            tr="İsteğinin ayrı bölümleri birbiriyle çelişen planlar çıkardı.",
-        ),
-        "clip_planner_context_limit": say(
-            en="Your complete brief exceeds the clip planner's 12,000-character limit.",
-            tr="Tüm isteğin, klip planlayıcının 12.000 karakterlik sınırını aşıyor.",
-        ),
-        # KRI-523: the planner itself failed (not the reading of the request), so say so.
-        "creator_planning_failed": say(
-            en="I couldn't turn that into a plan this time.",
-            tr="Bu sefer bunu bir plana dönüştüremedim.",
-        ),
-        "editor_planning_failed": say(
-            en="I couldn't prepare those edits this time.",
-            tr="Bu sefer bu düzenlemeleri hazırlayamadım.",
-        ),
-        # The reading step hit a provider/transport failure: not a misread request.
-        "request_extraction_provider_failed": say(
-            en="I couldn't prepare those edits this time.",
-            tr="Bu sefer bu düzenlemeleri hazırlayamadım.",
-        ),
-    }.get(
-        reason,
-        say(
-            en="Your complete request exceeds the context this planning step can safely read.",
-            tr="Tüm isteğin, bu planlama adımının güvenle okuyabileceği sınırı aşıyor.",
-        ),
-    )
+    en, tr = _RECOVERY_DETAILS.get(reason, _RECOVERY_DETAIL_DEFAULT)
+    detail = say(en=en, tr=tr)
     follow_up = (
         say(
             en="Try again, or tell me the most important change first.",

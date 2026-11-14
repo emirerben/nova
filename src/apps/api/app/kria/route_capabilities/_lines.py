@@ -151,9 +151,25 @@ def _applies(predicate: Callable[[], bool] | None) -> bool:
         return False
 
 
+# One sentence per story archetype (`StoryShape`), so German can word each one (KRI-1408).
+_ARCHETYPE_LINES: dict[str, tuple[str, str]] = {
+    "day_vlog": (
+        "I can't use the day vlog story archetype on this video yet",
+        "day vlog hikâye kalıbını bu videoda henüz kullanamıyorum",
+    ),
+    "single_hero": (
+        "I can't use the single hero story archetype on this video yet",
+        "single hero hikâye kalıbını bu videoda henüz kullanamıyorum",
+    ),
+}
+
+
 def archetype(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
+    key = str(value)
+    if key in _ARCHETYPE_LINES:
+        return say(en=_ARCHETYPE_LINES[key][0], tr=_ARCHETYPE_LINES[key][1])
     return say(
         en="I can't use the {words_value} story archetype on this video yet",
         tr="{words_value} hikâye kalıbını bu videoda henüz kullanamıyorum",
@@ -305,7 +321,21 @@ def length_stated(strategy: Mapping[str, Any], requirements: Sequence[BriefRequi
     return creator_duration(brief=brief) is not None
 
 
-def stated_length(instead_en: str, instead_tr: str) -> WithAsks:
+# The route's own behaviour a declined value gives way to, built at render time so it is the
+# bound reply language's text: ``lambda: say(en=..., tr=...)``. A plain (English, Turkish) pair
+# is still read (callers outside the route tables); it gets no catalog line, so prefer the lambda.
+Instead = Callable[[], str]
+
+
+def _say_instead(en: str, tr: str) -> str:
+    return say(en=en, tr=tr)
+
+
+def _instead_text(instead: Instead | str, instead_tr: str) -> str:
+    return instead() if callable(instead) else _say_instead(instead, instead_tr)
+
+
+def stated_length(instead: Instead | str, instead_tr: str = "") -> WithAsks:
     """A length the creator stated that the route does not render to. Says no number: the
     card's other lengths are the plan's, and a second figure would contradict them."""
 
@@ -315,34 +345,75 @@ def stated_length(instead_en: str, instead_tr: str) -> WithAsks:
         if not length_stated(strategy, requirements):
             return None
         return say(
-            en="I can't make this video the length you asked for yet: {instead_en}",
-            tr="Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead_tr}",
-            instead_en=instead_en,
-            instead_tr=instead_tr,
+            en="I can't make this video the length you asked for yet: {instead}",
+            tr="Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead}",
+            instead=_instead_text(instead, instead_tr),
         )
 
     return WithAsks(build)
 
 
-def direction_line(own: str | None, instead_en: str, instead_tr: str) -> Builder:
+# One sentence per planned direction / pace, so German can word each one (KRI-1408); the
+# Turkish keeps the value words it always showed. An unknown value keeps the generic line.
+_DIRECTION_LINES: dict[str, tuple[str, str]] = {
+    "guided_story": (
+        "The guided story direction isn't applied on this video yet: {instead}",
+        "guided story yönü bu videoda henüz uygulanmıyor: {instead}",
+    ),
+    "fast_montage": (
+        "The fast montage direction isn't applied on this video yet: {instead}",
+        "fast montage yönü bu videoda henüz uygulanmıyor: {instead}",
+    ),
+    "text_explainer": (
+        "The text explainer direction isn't applied on this video yet: {instead}",
+        "text explainer yönü bu videoda henüz uygulanmıyor: {instead}",
+    ),
+    "native": (
+        "The native direction isn't applied on this video yet: {instead}",
+        "native yönü bu videoda henüz uygulanmıyor: {instead}",
+    ),
+}
+_PACING_LINES: dict[str, tuple[str, str]] = {
+    "relaxed": (
+        "The relaxed pacing isn't applied on this video yet: {instead}",
+        "relaxed tempo bu videoda henüz uygulanmıyor: {instead}",
+    ),
+    "balanced": (
+        "The balanced pacing isn't applied on this video yet: {instead}",
+        "balanced tempo bu videoda henüz uygulanmıyor: {instead}",
+    ),
+    "fast": (
+        "The fast pacing isn't applied on this video yet: {instead}",
+        "fast tempo bu videoda henüz uygulanmıyor: {instead}",
+    ),
+}
+
+
+def direction_line(own: str | None, instead: Instead | str, instead_tr: str = "") -> Builder:
     """``own`` is the direction the route always cuts (no line when the plan says the same)."""
 
     def build(value: Any, _s: Mapping[str, Any]) -> str | None:
         if not value or value == own:
             return None
+        key = str(value)
+        if key in _DIRECTION_LINES:
+            return say(
+                en=_DIRECTION_LINES[key][0],
+                tr=_DIRECTION_LINES[key][1],
+                instead=_instead_text(instead, instead_tr),
+            )
         return say(
-            en="The {words_value} direction isn't applied on this video yet: {instead_en}",
-            tr="{words_value} yönü bu videoda henüz uygulanmıyor: {instead_tr}",
+            en="The {words_value} direction isn't applied on this video yet: {instead}",
+            tr="{words_value} yönü bu videoda henüz uygulanmıyor: {instead}",
             words_value=_words(value),
-            instead_en=instead_en,
-            instead_tr=instead_tr,
+            instead=_instead_text(instead, instead_tr),
         )
 
     return build
 
 
 def pacing_line(
-    applied: Callable[[Any, Mapping[str, Any]], bool], instead_en: str, instead_tr: str
+    applied: Callable[[Any, Mapping[str, Any]], bool], instead: Instead | str, instead_tr: str = ""
 ) -> Builder:
     """``applied(value, strategy)`` is True when the route follows this pace. The card always
     shows the plan's pace ("Balanced pacing"), so a default the route ignores is still named."""
@@ -350,12 +421,18 @@ def pacing_line(
     def build(value: Any, strategy: Mapping[str, Any]) -> str | None:
         if not value or applied(value, strategy):
             return None
+        key = str(value)
+        if key in _PACING_LINES:
+            return say(
+                en=_PACING_LINES[key][0],
+                tr=_PACING_LINES[key][1],
+                instead=_instead_text(instead, instead_tr),
+            )
         return say(
-            en="The {words_value} pacing isn't applied on this video yet: {instead_en}",
-            tr="{words_value} tempo bu videoda henüz uygulanmıyor: {instead_tr}",
+            en="The {words_value} pacing isn't applied on this video yet: {instead}",
+            tr="{words_value} tempo bu videoda henüz uygulanmıyor: {instead}",
             words_value=_words(value),
-            instead_en=instead_en,
-            instead_tr=instead_tr,
+            instead=_instead_text(instead, instead_tr),
         )
 
     return build

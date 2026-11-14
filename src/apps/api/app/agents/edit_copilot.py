@@ -813,16 +813,14 @@ _CAPTION_META_FIELDS = frozenset(
 
 class _FieldGate(NamedTuple):
     capability: str
-    unavailable_en: str
-    unavailable_tr: str
 
 
 # A caption meta field only some app builds keep is accepted only where the snapshot
 # advertises that editor capability (`kria_editor_ops.COPILOT_EDITOR_CAPABILITIES`);
-# elsewhere the creator is told it can't be done yet.
-_CAPTION_META_FIELD_GATES = {
-    "animation_phases": _FieldGate(
-        "caption_animation",
+# elsewhere the creator is told it can't be done yet (`_CAPTION_META_UNAVAILABLE`, en/tr).
+_CAPTION_META_FIELD_GATES = {"animation_phases": _FieldGate("caption_animation")}
+_CAPTION_META_UNAVAILABLE: dict[str, tuple[str, str]] = {
+    "animation_phases": (
         "Captions on this video can't animate yet.",
         "Bu videodaki altyazılara henüz animasyon eklenemiyor.",
     ),
@@ -2803,33 +2801,29 @@ _VALUE_RULES = (
 )
 
 
-# Each kind: how the repair block labels it for the model, and why the creator is told it
-# did not apply (en, tr). Capability and compile details are already written for the creator.
-_REJECTION_KINDS: dict[str, tuple[str, tuple[str, str] | None]] = {
+# Each kind: how the repair block labels it for the model.
+_REJECTION_KINDS: dict[str, str] = {
+    "unknown_operation": "not an operation this editor has",
+    "capability_unavailable": "not available on this edit",
+    "missing_required": "a required field is missing",
+    "invalid_value": "a value is not valid",
+    "stale_target": "it points at something that is not in CURRENT DRAFT",
+    "compile_error": "the editor refused it",
+    "held_back": "held back: it applies only together with an operation that failed",
+}
+# Why the creator is told a kind did not apply (en, tr). Capability and compile details are
+# already written for the creator, so those kinds have none here.
+_REJECTION_PHRASES: dict[str, tuple[str, str]] = {
     "unknown_operation": (
-        "not an operation this editor has",
-        ("I don't have a way to do that here", "bunu burada yapmanın bir yolu yok"),
+        "I don't have a way to do that here",
+        "bunu burada yapmanın bir yolu yok",
     ),
-    "capability_unavailable": ("not available on this edit", None),
-    "missing_required": (
-        "a required field is missing",
-        ("a detail it needs was missing", "gereken bir bilgi eksikti"),
-    ),
-    "invalid_value": (
-        "a value is not valid",
-        ("that value isn't one I can use", "bu değeri kullanamıyorum"),
-    ),
-    "stale_target": (
-        "it points at something that is not in CURRENT DRAFT",
-        ("that part isn't in this edit", "o kısım bu düzenlemede yok"),
-    ),
-    "compile_error": ("the editor refused it", None),
+    "missing_required": ("a detail it needs was missing", "gereken bir bilgi eksikti"),
+    "invalid_value": ("that value isn't one I can use", "bu değeri kullanamıyorum"),
+    "stale_target": ("that part isn't in this edit", "o kısım bu düzenlemede yok"),
     "held_back": (
-        "held back: it applies only together with an operation that failed",
-        (
-            "it goes together with a change I couldn't make",
-            "yapamadığım bir değişiklikle birlikte gidiyor",
-        ),
+        "it goes together with a change I couldn't make",
+        "yapamadığım bir değişiklikle birlikte gidiyor",
     ),
 }
 # Rejections that mean the edit has no lane for the op: nothing applied is "unsupported".
@@ -2841,9 +2835,7 @@ def _kept_notes(state: _ParseState, repairable: Sequence[RejectedOp]) -> list[st
     """Server notes the next round keeps: not the ones explaining an op it may yet fix."""
     names = {item.op for item in repairable}
     explaining = {item.detail for item in repairable} | {item.note for item in repairable}
-    explaining |= {
-        say(en=en, tr=tr) for name, (en, tr) in _v2.REGISTRY.closed_notes.items() if name in names
-    }
+    explaining |= {note() for name, note in _v2.REGISTRY.closed_notes.items() if name in names}
     return [note for note in dict.fromkeys(state.reply_notes) if note not in explaining]
 
 
@@ -2880,7 +2872,7 @@ def repair_feedback(rejections: Sequence[RejectedOp], *, answer: str = _JSON_REP
 
 def repair_item_lines(index: int, item: RejectedOp) -> tuple[str, str]:
     """One rejected op as the repair block shows it: what was sent, and why it did not apply."""
-    label = _REJECTION_KINDS.get(item.reason, (item.reason, None))[0]
+    label = _REJECTION_KINDS.get(item.reason, item.reason)
     sent = json.dumps(item.raw, ensure_ascii=False, sort_keys=True)[:600] if item.raw else "{}"
     why = " ".join(part.strip() for part in (item.detail, item.note, item.hint) if part)
     return f"- r{index} `{item.op}` {sent}", f"  Not applied ({label}): {why}"[:900]
@@ -2938,55 +2930,54 @@ def _rejection_hint(item: RejectedOp, snapshot: dict) -> str:
     return f"Valid targets: {', '.join(ranges)}." if ranges else ""
 
 
-# Op-name word -> what the creator calls that part of the edit (en, tr). First match wins.
-_OP_TARGET_WORDS: tuple[tuple[tuple[str, ...], str, str], ...] = (
-    (("direction",), "the edit direction", "kurgunun yönü"),
-    (("caption",), "the captions", "altyazılar"),
-    (("text", "title", "label"), "the text", "yazı"),
-    (("music", "mix", "song"), "the music", "müzik"),
-    (("sfx", "sound"), "the sound effects", "ses efektleri"),
-    (("overlay", "visual", "media", "image", "motion", "slide"), "the pictures", "görseller"),
-    (("background", "speaker"), "the background", "arka plan"),
-    (("transition",), "the transitions", "geçişler"),
-    (("effect", "look", "color", "camera"), "the look", "görünüm"),
-)
-# Index field -> the numbered thing it addresses (en, tr), shown 1-based.
-_INDEX_TARGETS = (
-    ("bar_index", "text", "yazı"),
-    ("slot_index", "clip", "klip"),
-    ("cue_index", "caption", "altyazı"),
-    ("overlay_index", "picture", "görsel"),
-    ("sfx_index", "sound effect", "ses efekti"),
-)
+# Op-name words -> what the creator calls that part of the edit (en, tr). First match wins.
+_OP_TARGET_WORDS: dict[tuple[str, ...], tuple[str, str]] = {
+    ("direction",): ("the edit direction", "kurgunun yönü"),
+    ("caption",): ("the captions", "altyazılar"),
+    ("text", "title", "label"): ("the text", "yazı"),
+    ("music", "mix", "song"): ("the music", "müzik"),
+    ("sfx", "sound"): ("the sound effects", "ses efektleri"),
+    ("overlay", "visual", "media", "image", "motion", "slide"): ("the pictures", "görseller"),
+    ("background", "speaker"): ("the background", "arka plan"),
+    ("transition",): ("the transitions", "geçişler"),
+    ("effect", "look", "color", "camera"): ("the look", "görünüm"),
+}
+# Index field -> the numbered thing it addresses, shown 1-based, in the chat's language.
+_INDEX_TARGETS: dict[str, Callable[[int], str]] = {
+    "bar_index": lambda n: say(en="text {number}", tr="{number}. yazı", number=n),
+    "slot_index": lambda n: say(en="clip {number}", tr="{number}. klip", number=n),
+    "cue_index": lambda n: say(en="caption {number}", tr="{number}. altyazı", number=n),
+    "overlay_index": lambda n: say(en="picture {number}", tr="{number}. görsel", number=n),
+    "sfx_index": lambda n: say(en="sound effect {number}", tr="{number}. ses efekti", number=n),
+}
 
 
-def _op_target(item: RejectedOp) -> tuple[str, str]:
+def _op_target(item: RejectedOp) -> str:
+    """The part of the edit an op addresses, in the chat's language."""
     payload = _op_payload(item.raw)
-    for key, en, tr in _INDEX_TARGETS:
+    for key in _INDEX_TARGETS:
         index = payload.get(key)
         if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < 1000:
-            return f"{en} {index + 1}", f"{index + 1}. {tr}"
+            return _INDEX_TARGETS[key](index + 1)
     words = item.op.lower()
-    for keys, en, tr in _OP_TARGET_WORDS:
+    for keys in _OP_TARGET_WORDS:
         if any(word in words for word in keys):  # kri667: op identifiers, not words
-            return en, tr
-    return "the clips", "klipler"
+            return say(en=_OP_TARGET_WORDS[keys][0], tr=_OP_TARGET_WORDS[keys][1])
+    return say(en="the clips", tr="klipler")
 
 
 def _not_applied(item: RejectedOp) -> tuple[dict[str, str], str]:
     """An op that did not apply, in plain words (never parser jargon): the unmet entry
     {request: what was asked, reason: why not} and the reply sentence naming it."""
-    target_en, target_tr = _op_target(item)
     action = say(
         en="change {target}",
         tr="{target} için değişiklik yapmak",
-        target=say(en=target_en, tr=target_tr),
+        target=_op_target(item),
     )
-    phrases = _REJECTION_KINDS.get(item.reason, ("", None))[1]
     if item.note:
         why = item.note
-    elif phrases is not None:
-        why = say(en=phrases[0], tr=phrases[1])
+    elif item.reason in _REJECTION_PHRASES:
+        why = say(en=_REJECTION_PHRASES[item.reason][0], tr=_REJECTION_PHRASES[item.reason][1])
     else:
         why = item.detail or say(en="I couldn't apply it", tr="uygulayamadım")
     why = why.strip().rstrip(".")
@@ -3520,6 +3511,26 @@ def _bulk_pending_integrity_mismatch(
     return None
 
 
+def _selector_target_count(add: dict, snapshot: dict) -> object:
+    """How many sources an `add_unused_sources` op without its own count asks for."""
+    selector = add.get("selector") if isinstance(add.get("selector"), dict) else {}
+    summary = snapshot.get("source_pool_summary")
+    selectors = summary.get("selectors") if isinstance(summary, dict) else None
+    selector_summary = (
+        selectors.get(f"{selector.get('scope')}:{selector.get('media_kind')}")
+        if isinstance(selectors, dict)
+        else None
+    )
+    requested = selector_summary.get("target_count") if isinstance(selector_summary, dict) else None
+    if (
+        isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0
+    ) and selector.get("scope") == "unused_sources":
+        if selector.get("media_kind") == "all" and isinstance(summary, dict):
+            return summary.get("ready_unused_count")
+        return len(_bulk_target_rows(snapshot, selector, operation="add_unused_sources"))
+    return requested
+
+
 def _bulk_capacity_clarification(
     ops: list[dict],
     snapshot: dict,
@@ -3542,26 +3553,7 @@ def _bulk_capacity_clarification(
             if isinstance(row, dict) and not row.get("removed")
         )
     if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
-        selector = add.get("selector") if isinstance(add.get("selector"), dict) else {}
-        summary = snapshot.get("source_pool_summary")
-        selectors = summary.get("selectors") if isinstance(summary, dict) else None
-        selector_summary = (
-            selectors.get(f"{selector.get('scope')}:{selector.get('media_kind')}")
-            if isinstance(selectors, dict)
-            else None
-        )
-        requested = (
-            selector_summary.get("target_count") if isinstance(selector_summary, dict) else None
-        )
-        if (
-            isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0
-        ) and selector.get("scope") == "unused_sources":
-            if selector.get("media_kind") == "all" and isinstance(summary, dict):
-                requested = summary.get("ready_unused_count")
-            else:
-                requested = len(
-                    _bulk_target_rows(snapshot, selector, operation="add_unused_sources")
-                )
+        requested = _selector_target_count(add, snapshot)
     if isinstance(current_slots, bool) or not isinstance(current_slots, int):
         return None
     if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
@@ -4075,10 +4067,16 @@ def _story_direction_not_staged(direction: str) -> str:
 
     line = lines.direction_line(
         "fast_montage",
-        "this editor can only restage it as a fast montage, so nothing changed. "
-        "A different direction needs a fresh edit",
-        "bu editör onu yalnızca hızlı bir montaj olarak yeniden kurabiliyor, o yüzden hiçbir şey "
-        "değişmedi. Başka bir yön için yeni bir düzenleme gerekiyor",
+        lambda: say(
+            en=(
+                "this editor can only restage it as a fast montage, so nothing changed. "
+                "A different direction needs a fresh edit"
+            ),
+            tr=(
+                "bu editör onu yalnızca hızlı bir montaj olarak yeniden kurabiliyor, o yüzden "
+                "hiçbir şey değişmedi. Başka bir yön için yeni bir düzenleme gerekiyor"
+            ),
+        ),
     )(direction, {})
     return f"{line}." if line else CAPABILITY_UNAVAILABLE_DETAIL
 
@@ -4525,12 +4523,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                     ),
                 )
             else:
-                reply = say(
-                    en="How short should the {v1} be?",
-                    tr=("{v2} ne kadar kısa olsun?"),
-                    v1=referent or "clips",
-                    v2=_TR_REFERENT_NOUNS.get(referent or "clips", "Klipler"),
-                )
+                asked = referent if referent in _HOW_SHORT_QUESTIONS else "clips"
+                reply = say(en=_HOW_SHORT_QUESTIONS[asked][0], tr=_HOW_SHORT_QUESTIONS[asked][1])
         if not ops and state.invalid_notes:
             state.reply_notes.extend(state.invalid_notes)
         if state.reply_notes:
@@ -4784,7 +4778,12 @@ class ChatEditCopilotAgent(EditCopilotAgent):
     )
 
 
-_TR_REFERENT_NOUNS = {"images": "Görseller", "videos": "Videolar", "clips": "Klipler"}
+# The "how short?" question per bulk referent (`_sanitize_clarification_context`'s three).
+_HOW_SHORT_QUESTIONS: dict[str, tuple[str, str]] = {
+    "images": ("How short should the images be?", "Görseller ne kadar kısa olsun?"),
+    "videos": ("How short should the videos be?", "Videolar ne kadar kısa olsun?"),
+    "clips": ("How short should the clips be?", "Klipler ne kadar kısa olsun?"),
+}
 
 
 def _server_reply(ops: list[dict], notes: str) -> str:
@@ -4797,19 +4796,29 @@ def _server_reply(ops: list[dict], notes: str) -> str:
             if op.get("mode") == "append":
                 parts.append(
                     say(
-                        en="Added the filming hour to {count} clip{v1}.",
+                        en="Added the filming hour to {count} clip.",
                         tr="{count} klibe çekim saatini ekledim.",
                         count=count,
-                        v1="s" if count != 1 else "",
+                    )
+                    if count == 1
+                    else say(
+                        en="Added the filming hour to {count} clips.",
+                        tr="{count} klibe çekim saatini ekledim.",
+                        count=count,
                     )
                 )
             else:
                 parts.append(
                     say(
-                        en="Labelled {count} clip{v1}.",
+                        en="Labelled {count} clip.",
                         tr="{count} klibe etiket ekledim.",
                         count=count,
-                        v1="s" if count != 1 else "",
+                    )
+                    if count == 1
+                    else say(
+                        en="Labelled {count} clips.",
+                        tr="{count} klibe etiket ekledim.",
+                        count=count,
                     )
                 )
         else:
@@ -4897,7 +4906,7 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         )
         closed_note = _v2.REGISTRY.closed_notes.get(name)
         if closed_note is not None:
-            note = say(en=closed_note[0], tr=closed_note[1])
+            note = closed_note()
             if note not in state.reply_notes:
                 state.reply_notes.append(note)
         return None
@@ -5568,8 +5577,10 @@ def _ground_descriptive_captions(
             # A caption that only repeats the creator's own event words (e.g. "pre-wedding")
             # with none of them present in what was seen is the framing parroted onto
             # footage that doesn't show it: drop it and say so.
-            words = {w for w in re.findall(r"[^\W\d_]{4,}", _label_fold(str(op.get("text") or "")))}
-            claimed = words & vocab
+            op_words = {
+                w for w in re.findall(r"[^\W\d_]{4,}", _label_fold(str(op.get("text") or "")))
+            }
+            claimed = op_words & vocab
             if claimed and not any(w in seen_text[clip_id] for w in claimed):
                 mismatched.append((number.get(clip_id, 0), sorted(claimed)[0]))
                 continue
@@ -5583,23 +5594,29 @@ def _ground_descriptive_captions(
         state.reply_notes.append(
             say(
                 en=(
-                    "Clip{v1} {names} "
-                    '{v2}\'t look like "{words}" from '
-                    "what I saw, so I didn't put that wording on "
-                    "{v3}. Tell me what "
-                    "{v4}, or ask me to describe "
-                    "what I see."
+                    "Clip {names} doesn't look like \"{words}\" from what I saw, so I didn't put "
+                    "that wording on it. Tell me what it is, or ask me to describe what I see."
                 ),
                 tr=(
                     'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
                     "ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
                 ),
-                v1="s" if len(mismatched) != 1 else "",
                 names=names,
-                v2="don" if len(mismatched) != 1 else "doesn",
                 words=words,
-                v3="them" if len(mismatched) != 1 else "it",
-                v4="they are" if len(mismatched) != 1 else "it is",
+            )
+            if len(mismatched) == 1
+            else say(
+                en=(
+                    "Clips {names} don't look like \"{words}\" from what I saw, so I didn't put "
+                    "that wording on them. Tell me what they are, or ask me to describe what "
+                    "I see."
+                ),
+                tr=(
+                    'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
+                    "ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
+                ),
+                names=names,
+                words=words,
             )
         )
     if not written:
@@ -5637,30 +5654,42 @@ def _ground_descriptive_captions(
         + "."
     )
     if unseen:
-        plural = "s" if len(unseen) != 1 else ""
         state.reply_notes.append(
             say(
                 en=(
-                    "I left out clip{plural} {join_unseen}: I can't tell what "
-                    "{v1}. Tell me and I'll add "
-                    "{v2}."
+                    "I left out clip {join_unseen}: I can't tell what it shows. Tell me and "
+                    "I'll add it."
                 ),
                 tr=(
                     "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. "
                     "Söylersen ekleyeyim."
                 ),
-                plural=plural,
                 join_unseen=", ".join(unseen),
-                v1="they show" if plural else "it shows",
-                v2="them" if plural else "it",
+            )
+            if len(unseen) == 1
+            else say(
+                en=(
+                    "I left out clips {join_unseen}: I can't tell what they show. Tell me and "
+                    "I'll add them."
+                ),
+                tr=(
+                    "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. "
+                    "Söylersen ekleyeyim."
+                ),
+                join_unseen=", ".join(unseen),
             )
         )
     if skipped:
         state.reply_notes.append(
             say(
-                en=("I didn't caption clip{v1} {join_skipped}."),
+                en="I didn't caption clip {join_skipped}.",
                 tr="Klip {join_skipped} için yazı eklemedim.",
-                v1="s" if len(skipped) != 1 else "",
+                join_skipped=", ".join(skipped),
+            )
+            if len(skipped) == 1
+            else say(
+                en="I didn't caption clips {join_skipped}.",
+                tr="Klip {join_skipped} için yazı eklemedim.",
                 join_skipped=", ".join(skipped),
             )
         )
@@ -5860,12 +5889,16 @@ def _coerce_label_each_clip(
         labels.append(entry)
     if from_time:
         if untimed:
-            plural = "s" if len(untimed) != 1 else ""
             state.reply_notes.append(
                 say(
-                    en="No filming time for clip{plural} {join_untimed}.",
+                    en="No filming time for clip {join_untimed}.",
                     tr="Klip {join_untimed} için çekim saati yok.",
-                    plural=plural,
+                    join_untimed=", ".join(untimed),
+                )
+                if len(untimed) == 1
+                else say(
+                    en="No filming time for clips {join_untimed}.",
+                    tr="Klip {join_untimed} için çekim saati yok.",
                     join_untimed=", ".join(untimed),
                 )
             )
@@ -7103,7 +7136,9 @@ def _coerce_caption_meta_patch(patch: dict, snapshot: dict, state: _ParseState) 
         if gate is not None and not (
             isinstance(advertised, dict) and advertised.get(gate.capability) is True
         ):
-            unavailable = say(en=gate.unavailable_en, tr=gate.unavailable_tr)
+            unavailable = say(
+                en=_CAPTION_META_UNAVAILABLE[key][0], tr=_CAPTION_META_UNAVAILABLE[key][1]
+            )
             state.reject(op="set_caption_meta", reason="capability_unavailable", detail=unavailable)
             state.reply_notes.append(unavailable)
             continue

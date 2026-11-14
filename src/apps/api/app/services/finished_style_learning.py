@@ -667,7 +667,9 @@ def _instruction(
     from app.kria.reply_language import say_in  # noqa: PLC0415
 
     phrase = say_in(language, en=role, tr=_ROLE_TR.get(role, role))
-    words = {"role": phrase, "head": phrase[:1].upper() + phrase[1:], "label": phrase.capitalize()}
+    # First letter up, the rest as written: German nouns keep their capitals (KRI-1408).
+    head = phrase[:1].upper() + phrase[1:]
+    words = {"role": phrase, "head": head, "label": head}
     if automatic_font:
         return say_in(
             language,
@@ -714,7 +716,9 @@ def _instruction(
             language,
             en="{label} outlines {outline} in future videos.",
             tr="Gelecek videolarda {role} için kenar çizgisi {outline} olsun.",
-            outline=say_in(language, en="off", tr="kapalı") if value == 0 else f"{value:g}px",
+            outline=say_in(language, en="off", tr="kapalı")
+            if value == 0
+            else say_in(language, en="{width:g}px", tr="{width:g}px", width=value),
             **words,
         )
     return say_in(

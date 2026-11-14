@@ -28,21 +28,26 @@ FIELD_HANDLING: dict[str, Handling] = {
     "pacing": NotApplied(
         lines.pacing_line(
             lambda value, _s: value in {"fast", "relaxed"},
-            "the cuts keep their usual length",
-            "kesimler her zamanki uzunluğunda",
+            lambda: say(
+                en="the cuts keep their usual length", tr="kesimler her zamanki uzunluğunda"
+            ),
         )
     ),
     "direction": NotApplied(
         lines.direction_line(
             "fast_montage",
-            "it is cut as a montage under your voiceover",
-            "seslendirmenin altında bir montaj olarak kesiliyor",
+            lambda: say(
+                en="it is cut as a montage under your voiceover",
+                tr="seslendirmenin altında bir montaj olarak kesiliyor",
+            ),
         )
     ),
     "caption_style": NotApplied(lines.caption_style),
     "target_duration_s": NotApplied(
         lines.stated_length(
-            "its length follows your voiceover", "uzunluğu seslendirmeni takip ediyor"
+            lambda: say(
+                en="its length follows your voiceover", tr="uzunluğu seslendirmeni takip ediyor"
+            )
         )
     ),
     "title_animation": NotApplied(lines.title_animation),

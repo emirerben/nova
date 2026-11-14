@@ -23,13 +23,8 @@ _ROLES = {
     "text": ("text", "yazı", "Yazı"),
     "pin": ("pinned text", "sabit yazı", "Sabit yazı"),
 }
-# (English, Turkish "to the ...")
-_ANCHORS = {
-    "top": ("top", "üste"),
-    "middle": ("middle", "ortaya"),
-    "center": ("middle", "ortaya"),
-    "bottom": ("bottom", "alta"),
-}
+# Where a text may move: one sentence per place, so each language words its own direction.
+_ANCHORS = {"top": "top", "middle": "middle", "center": "middle", "bottom": "bottom"}
 
 
 class UncheckedReview(Exception):
@@ -139,13 +134,23 @@ def fix_optional(kind: str, role: str, target: Mapping[str, Any] | None = None) 
             word=word,
         )
     if kind == "move_text_to_safe_anchor":
-        en_anchor, tr_anchor = _ANCHORS.get(str((target or {}).get("anchor")), _ANCHORS["top"])
+        anchor = _ANCHORS.get(str((target or {}).get("anchor")), "top")
+        if anchor == "middle":
+            return say(
+                en="Optional: move the {word} to the middle so it's easier to read.",
+                tr="İstersen {word} daha kolay okunsun diye ortaya taşınabilir.",
+                word=word,
+            )
+        if anchor == "bottom":
+            return say(
+                en="Optional: move the {word} to the bottom so it's easier to read.",
+                tr="İstersen {word} daha kolay okunsun diye alta taşınabilir.",
+                word=word,
+            )
         return say(
-            en="Optional: move the {word} to the {en_anchor} so it's easier to read.",
-            tr="İstersen {word} daha kolay okunsun diye {tr_anchor} taşınabilir.",
+            en="Optional: move the {word} to the top so it's easier to read.",
+            tr="İstersen {word} daha kolay okunsun diye üste taşınabilir.",
             word=word,
-            en_anchor=en_anchor,
-            tr_anchor=tr_anchor,
         )
     return None
 

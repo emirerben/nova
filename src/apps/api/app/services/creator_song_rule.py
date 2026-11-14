@@ -80,15 +80,27 @@ def withheld_song_notice(section: Mapping[str, Any] | None) -> str | None:
     names = names or ([genre] if genre else [])
     if not names:
         return None
-    en = (
-        "I can't add songs from the music library, so this video won't have the "
-        f"{' or '.join(names)} song you asked for."
-    )
-    tr = (
-        "Müzik kütüphanesinden şarkı ekleyemiyorum, bu yüzden bu videoda istediğin "
-        f"{' ya da '.join(names)} şarkısı olmayacak."
-    )
+    genres = say(en=" or ", tr=" ya da ").join(names)
     if settings.user_song_montage_enabled:
-        en += " Upload your own song if you want one."
-        tr += " İstersen kendi şarkını yükleyebilirsin."
-    return say(en=en, tr=tr)
+        return say(
+            en=(
+                "I can't add songs from the music library, so this video won't have the "
+                "{genres} song you asked for. Upload your own song if you want one."
+            ),
+            tr=(
+                "Müzik kütüphanesinden şarkı ekleyemiyorum, bu yüzden bu videoda istediğin "
+                "{genres} şarkısı olmayacak. İstersen kendi şarkını yükleyebilirsin."
+            ),
+            genres=genres,
+        )
+    return say(
+        en=(
+            "I can't add songs from the music library, so this video won't have the "
+            "{genres} song you asked for."
+        ),
+        tr=(
+            "Müzik kütüphanesinden şarkı ekleyemiyorum, bu yüzden bu videoda istediğin "
+            "{genres} şarkısı olmayacak."
+        ),
+        genres=genres,
+    )

@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from app.kria.brief import BriefRequirement
+from app.kria.reply_language import say
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._types import (
     Applied,
@@ -102,22 +103,22 @@ FIELD_HANDLING: dict[str, Handling] = {
     "pacing": NotApplied(
         lines.pacing_line(
             lines.pace_not_followed,
-            "the cuts follow your voiceover",
-            "kesimler seslendirmeni izliyor",
+            lambda: say(en="the cuts follow your voiceover", tr="kesimler seslendirmeni izliyor"),
         )
     ),
     "direction": NotApplied(
         lines.direction_line(
             "fast_montage",
-            "the video follows your voiceover",
-            "video seslendirmeni izliyor",
+            lambda: say(en="the video follows your voiceover", tr="video seslendirmeni izliyor"),
         )
     ),
     "caption_style": NotApplied(lines.captions_always_on),
     # The steps tile the whole recorded voice, so the voice sets the length.
     "target_duration_s": NotApplied(
         lines.stated_length(
-            "its length follows your voiceover", "uzunluğu seslendirmeni takip ediyor"
+            lambda: say(
+                en="its length follows your voiceover", tr="uzunluğu seslendirmeni takip ediyor"
+            )
         )
     ),
     "title_animation": NotApplied(WithAsks(_title_animation)),

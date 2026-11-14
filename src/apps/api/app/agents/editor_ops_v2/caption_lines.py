@@ -137,6 +137,11 @@ def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None
     return out
 
 
+def _closed_note() -> str:
+    """``CLOSED_NOTE`` in the chat's language."""
+    return say(en=CLOSED_NOTE[0], tr=CLOSED_NOTE[1])
+
+
 def _op_patch_caption_line(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
 
@@ -192,7 +197,7 @@ SPECS = [
         fields=frozenset({"cue_id", "all", "size_px", "position_x_frac", "position_y_frac"}),
         family=frozenset({FAMILY}),
         coerce=_coerce,
-        closed_note=CLOSED_NOTE,
+        closed_note=_closed_note,
     )
 ]
 

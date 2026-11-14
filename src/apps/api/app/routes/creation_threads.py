@@ -69,6 +69,7 @@ from app.kria.media_sources import (
 from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.reply_language import (
     creator_typed_language,
+    current_reply_language,
     detect_chat_language,
     needs_typed_history,
     remember_reply_language,
@@ -2982,8 +2983,9 @@ def _status_message(
         )
     if job is not None and job.status not in PLAN_ITEM_JOB_TERMINAL:
         phase = str(job.current_phase or "").replace("_", " ").strip()
-        # The phase is an English pipeline name, so the Turkish line leaves it out.
-        if phase:
+        # The phase is an English pipeline name, so only an English chat shows it; every other
+        # language gets the line without it (KRI-1408).
+        if phase and current_reply_language() in (None, "en"):
             return say(
                 en="Kria is rendering your video ({phase}). I’ll update this chat when it’s ready.",
                 tr="Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım.",

@@ -31,7 +31,7 @@ from app.kria.render_assets import (
     VisualRenderAsset,
     VoiceoverRenderAsset,
 )
-from app.kria.reply_language import say
+from app.kria.reply_language import reply_language_for, say
 from app.kria.spoken_text_ask import requirement_spoken_text
 from app.pipeline.hidden_parts import (
     HiddenPart,
@@ -1319,53 +1319,75 @@ def text_clip_not_found(literal: str) -> str:
     )
 
 
-# KRI-1069: the fixed words after the named media in ``capture_time_missing``, in both
-# languages, so a refusal over it still names the order choice (``unresolved_field_path``).
-_NO_CAPTURE_TAILS = {
-    "en": (
-        "has no filming time, so I can't put it in the order you filmed.",
-        "have no filming time, so I can't put them in the order you filmed.",
-    ),
-    "tr": (
-        "için çekim saati yok, o yüzden onu çektiğin sıraya koyamıyorum.",
-        "için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum.",
-    ),
-}
-
-
-def capture_time_missing(names: Sequence[tuple[str, str]], *, whole_edit: bool = False) -> str:
-    """Media of a filming-order edit with no capture time, named, in the chat's language.
-
-    ``names`` are ``(en, tr)`` pairs (a file name is the same in both). ``whole_edit``: no
-    clip or photo of the edit has a time, so naming each is noise and the line says so.
-    KRI-1069: the contract once said "every selected clip" when one selected photo was not
-    a clip at all.
-    """
-    shown = list(names[:3])
-    more = len(names) - len(shown)
-    one = len(names) == 1 and not whole_edit
-    en = ", ".join(name for name, _tr in shown) + (f" and {more} more" if more else "")
-    tr = ", ".join(name for _en, name in shown) + (f" ve {more} tane daha" if more else "")
-    if whole_edit:
-        en, tr = "Your clips and photos", "Kliplerinin ve fotoğraflarının hiçbiri"
+def _no_filming_time(names: str, *, one: bool) -> str:
+    """KRI-1069: named media of a filming-order edit with no capture time."""
+    if one:
+        return say(
+            en="{names} has no filming time, so I can't put it in the order you filmed.",
+            tr="{names} için çekim saati yok, o yüzden onu çektiğin sıraya koyamıyorum.",
+            names=names,
+        )
     return say(
-        en="{v1} {v2}",
-        tr="{v3} {v4}",
-        v1=en,
-        v2=_NO_CAPTURE_TAILS["en"][0 if one else 1],
-        v3=tr,
-        v4=_NO_CAPTURE_TAILS["tr"][0 if one else 1],
+        en="{names} have no filming time, so I can't put them in the order you filmed.",
+        tr="{names} için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum.",
+        names=names,
     )
 
 
-def _media_name(row: Mapping[str, Any], kind: str, ordinal: int) -> tuple[str, str]:
+def _no_filming_time_at_all() -> str:
+    return say(
+        en="Your clips and photos have no filming time, so I can't put them in the order you "
+        "filmed.",
+        tr="Kliplerinin ve fotoğraflarının hiçbiri için çekim saati yok, o yüzden onları "
+        "çektiğin sıraya koyamıyorum.",
+    )
+
+
+def _says_no_filming_time(message: str) -> bool:
+    """``message`` is a ``capture_time_missing`` line in any reply language, so a refusal over
+    it still names the order choice (``unresolved_field_path``)."""
+    marker = "\x00"
+    for language in ("en", "tr", "de"):
+        with reply_language_for(language):
+            if message == _no_filming_time_at_all():
+                return True
+            for one in (True, False):
+                head, _, tail = _no_filming_time(marker, one=one).partition(marker)
+                if message.startswith(head) and message.endswith(tail):
+                    return True
+    return False
+
+
+def capture_time_missing(names: Sequence[str], *, whole_edit: bool = False) -> str:
+    """Media of a filming-order edit with no capture time, named, in the chat's language.
+
+    ``names`` are as the creator knows each medium (``_media_name``, in the bound language).
+    ``whole_edit``: no clip or photo of the edit has a time, so naming each is noise and the
+    line says so. KRI-1069: the contract once said "every selected clip" when one selected
+    photo was not a clip at all.
+    """
+    if whole_edit:
+        return _no_filming_time_at_all()
+    shown = ", ".join(names[:3])
+    more = len(names) - len(names[:3])
+    if more:
+        shown = say(
+            en="{shown} and {extra} more",
+            tr="{shown} ve {extra} tane daha",
+            shown=shown,
+            extra=more,
+        )
+    return _no_filming_time(shown, one=len(names) == 1)
+
+
+def _media_name(row: Mapping[str, Any], kind: str, ordinal: int) -> str:
     """How the creator knows one medium: its file name as the app shows it, else its place."""
     name = clip_display_name(row.get("source_filename"))
     if name:
-        return f'"{name}"', f'"{name}"'
+        return f'"{name}"'
     if kind == "photo":
-        return f"photo {ordinal}", f"{ordinal}. fotoğraf"
-    return f"clip {ordinal}", f"{ordinal}. klip"
+        return say(en="photo {number}", tr="{number}. fotoğraf", number=ordinal)
+    return say(en="clip {number}", tr="{number}. klip", number=ordinal)
 
 
 def _edit_visuals(
@@ -2002,7 +2024,7 @@ def build_render_contract(
         # time, after the clips on a tie, exactly as the planner orders them.
         visuals = _edit_visuals(media_snapshot, raw, hidden_ids)
         dates = {}
-        names: dict[str, tuple[str, str]] = {}
+        names: dict[str, str] = {}
         for ordinal, row in enumerate(rows, start=1):
             if not isinstance(row, Mapping) or not row.get("media_id"):
                 continue
@@ -2314,9 +2336,7 @@ ORDER_BASIS_UNRESOLVED = frozenset(
 def unresolved_field_path(message: str) -> str | None:
     """The strategy field an unresolved line's refusal names, or ``None``."""
 
-    if message in ORDER_BASIS_UNRESOLVED or message.endswith(
-        (*_NO_CAPTURE_TAILS["en"], *_NO_CAPTURE_TAILS["tr"])
-    ):
+    if message in ORDER_BASIS_UNRESOLVED or _says_no_filming_time(message):
         return REQUIREMENT_FIELD_PATHS["order_required"]
     return None
 

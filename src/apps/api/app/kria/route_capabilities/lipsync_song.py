@@ -16,6 +16,7 @@ from typing import Any
 
 from app.config import settings
 from app.kria.brief import BriefRequirement
+from app.kria.reply_language import say
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._types import (
     Applied,
@@ -60,16 +61,21 @@ FIELD_HANDLING: dict[str, Handling] = {
     "pacing": RecordedOnly(
         lines.pacing_line(
             lambda _value, _s: False,
-            "your song sets where the cuts fall",
-            "kesimlerin yerini şarkın belirliyor",
+            lambda: say(
+                en="your song sets where the cuts fall", tr="kesimlerin yerini şarkın belirliyor"
+            ),
         )
     ),
     "direction": NotApplied(
-        lines.direction_line("fast_montage", "it is cut to your song", "şarkına göre kesiliyor")
+        lines.direction_line(
+            "fast_montage", lambda: say(en="it is cut to your song", tr="şarkına göre kesiliyor")
+        )
     ),
     "caption_style": NotApplied(lines.song_caption_style),
     "target_duration_s": NotApplied(
-        lines.stated_length("its length follows your song", "uzunluğu şarkını takip ediyor")
+        lines.stated_length(
+            lambda: say(en="its length follows your song", tr="uzunluğu şarkını takip ediyor")
+        )
     ),
     "title_animation": NotApplied(WithAsks(_title_animation)),
     "label_position": NotApplied(lines.label_position),

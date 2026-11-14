@@ -984,19 +984,11 @@ _LOOKUP_TABLES = frozenset(
         "app.services.finished_style_learning._POSITION_TR",
         "app.kria.strategy_policy._SHAPE_NAMES_TR",
         "app.kria.brief_checks._SPOT_TR",
-        "app.kria.brief_checks._BASIS_TR",  # machine ordering basis
-        "app.kria.brief_checks._FORMAT_TR",  # machine edit format
         "app.kria.brief_checks._REASON_TR",  # exact English reason text
         "app.kria.brief_checks._OUTCOME_REASON_TR",  # exact English outcome text
         "app.kria.brief_checks._OUTCOME_STRETCH_PREFIX_TR",  # exact English outcome prefix
-        "app.services.choice_questions._COVERAGE_LABELS_TR",
-        "app.services.kria_editor_ops_diff._ENTRANCE_TR",
-        "app.services.kria_editor_ops_diff._CASE_TR",
-        "app.services.kria_editor_ops_diff._SIDE_TR",
         # Reads creator words (a parser vocabulary beside `_NUMBER_WORDS_EN`), not copy.
         "app.services.phone_reaction_grounding._NUMBER_WORDS_TR",
-        "app.tasks.kria_runtime._PACING_TR",
-        "app.tasks.kria_runtime._EDIT_FORMAT_TR",
         "app.tasks.kria_runtime._VARIANT_NAMES_TR",  # unknown ids are left out on purpose
         "app.tasks.kria_runtime._WORKER_TEXT_TR",  # exact worker text (checked below)
         "app.kria.plan_blocks._BLOCK_TEXT_TR",  # exact block summary text

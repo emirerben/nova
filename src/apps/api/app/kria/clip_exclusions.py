@@ -367,28 +367,33 @@ def still_played_exclusions(
     return [media_id for media_id in media_ids if media_id in excluded and media_id in played]
 
 
-def _clip_numbers(positions: Sequence[int]) -> tuple[str, str]:
-    """(en, tr) for 1-based clip numbers: "clip 2" / "clips 2 and 4", "2. klibi" / ..."""
+def _clip_numbers(positions: Sequence[int]) -> str:
+    """1-based clip numbers in the bound language: "clip 2" / "clips 2 and 4", "2. klibi" / ..."""
     shown = [str(p) for p in positions]
     if len(shown) == 1:
-        return f"clip {shown[0]}", f"{shown[0]}. klibi"
-    return (
-        f"clips {', '.join(shown[:-1])} and {shown[-1]}",
-        f"{', '.join(f'{p}.' for p in shown[:-1])} ve {shown[-1]}. klipleri",
+        return say(en="clip {clip_number}", tr="{clip_number}. klibi", clip_number=shown[0])
+    return say(
+        en="clips {clip_numbers} and {last_clip}",
+        tr="{clip_numbers_dotted} ve {last_clip}. klipleri",
+        clip_numbers=", ".join(shown[:-1]),
+        clip_numbers_dotted=", ".join(f"{p}." for p in shown[:-1]),
+        last_clip=shown[-1],
     )
 
 
 def still_played_notice(positions: Sequence[int]) -> str:
     """The draft's line for ``still_played_exclusions``, by 1-based clip number."""
-    en, tr = _clip_numbers(positions)
-    one = len(positions) == 1
+    clips = _clip_numbers(positions)
+    if len(positions) == 1:
+        return say(
+            en="I couldn't leave out {clips}, so it is still in the video.",
+            tr="{clips} çıkaramadım, o yüzden videoda duruyor.",
+            clips=clips,
+        )
     return say(
-        en="I couldn't leave out {v1}, so {v2} still in the video.",
-        tr="{v3} çıkaramadım, o yüzden videoda {v4}.",
-        v1=en,
-        v2="it is" if one else "they are",
-        v3=tr,
-        v4="duruyor" if one else "duruyorlar",
+        en="I couldn't leave out {clips}, so they are still in the video.",
+        tr="{clips} çıkaramadım, o yüzden videoda duruyorlar.",
+        clips=clips,
     )
 
 
@@ -415,15 +420,17 @@ def length_exclusion_notice(
         if media_id in matched and media_id not in still_played
     ]
     if left_out:
-        en, tr = _clip_numbers(left_out)
-        one = len(left_out) == 1
+        clips = _clip_numbers(left_out)
+        if len(left_out) == 1:
+            return say(
+                en="I left out {clips} because it is too short to use.",
+                tr="{clips} kullanılamayacak kadar kısa olduğu için çıkardım.",
+                clips=clips,
+            )
         return say(
-            en="I left out {v1} because {v2} too short to use.",
-            tr=("{v3} kullanılamayacak kadar kısa {v4} için çıkardım."),
-            v1=en,
-            v2="it is" if one else "they are",
-            v3=tr,
-            v4="olduğu" if one else "oldukları",
+            en="I left out {clips} because they are too short to use.",
+            tr="{clips} kullanılamayacak kadar kısa oldukları için çıkardım.",
+            clips=clips,
         )
     if not matched:
         return say(

@@ -197,6 +197,11 @@ def window_error(song: dict[str, Any], start: float | None, end: float | None) -
     return None
 
 
+def _closed_note() -> str:
+    """``CLOSED_NOTE`` in the chat's language."""
+    return say(en=CLOSED_NOTE[0], tr=CLOSED_NOTE[1])
+
+
 def _op_set_user_song(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
 
@@ -257,7 +262,7 @@ SPECS = [
         fields=frozenset({"volume", "window_start_s", "window_end_s", "remove"}),
         family=frozenset({FAMILY}),
         coerce=_coerce,
-        closed_note=CLOSED_NOTE,
+        closed_note=_closed_note,
     )
 ]
 

@@ -127,6 +127,7 @@ from app.kria.route_disclosure import (
     with_route_declines,
 )
 from app.kria.select_asks import exclusion_facts, only_video_ask
+from app.kria.text_trim import fit_lines
 from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
@@ -1098,17 +1099,43 @@ def _bind_thread_language(stack: ExitStack, thread: CreationThread) -> None:
     stack.enter_context(reply_language_for(thread_reply_language(thread)))
 
 
-_PACING_TR = {"relaxed": "Sakin", "balanced": "Dengeli", "fast": "Hızlı"}
-_EDIT_FORMAT_TR = {
-    "montage": "Montaj",
-    "talking_head": "Kameraya konuşma",
-    "day_vlog": "Günlük vlog",
-    "single_hero": "Tek kahraman klip",
-    "subtitled": "Altyazılı",
-    "narrated": "Seslendirmeli",
-    "narrated_planned": "Seslendirmeli",
-    "narrated_ready": "Seslendirmeli",
-    "slides": "Slayt",
+# The card's chips, one whole line per value (KRI-1408: a German chat translates the line, so
+# no English pace or format word is filled into it). Every ``CreativePace`` / ``EditFormat``.
+_PACING_CHIPS: dict[str, tuple[str, str]] = {
+    "relaxed": ("Relaxed pacing", "Tempo: Sakin"),
+    "balanced": ("Balanced pacing", "Tempo: Dengeli"),
+    "fast": ("Fast pacing", "Tempo: Hızlı"),
+}
+_EDIT_FORMAT_CHIPS: dict[str, tuple[str, str]] = {
+    "montage": ("Montage format", "Format: Montaj"),
+    "talking_head": ("Talking Head format", "Format: Kameraya konuşma"),
+    "day_vlog": ("Day Vlog format", "Format: Günlük vlog"),
+    "single_hero": ("Single Hero format", "Format: Tek kahraman klip"),
+    "subtitled": ("Subtitled format", "Format: Altyazılı"),
+    "narrated": ("Narrated format", "Format: Seslendirmeli"),
+    "narrated_planned": ("Narrated Planned format", "Format: Seslendirmeli"),
+    "narrated_ready": ("Narrated Ready format", "Format: Seslendirmeli"),
+    "slides": ("Slides format", "Format: Slayt"),
+}
+# The words `_useful_plan`'s fallback summary names the draft with ("" = none given). The
+# Turkish summary leaves them out; another language gets its own word.
+_SUMMARY_PACE_WORDS: dict[str, tuple[str, str]] = {
+    "": ("focused", "odaklı"),
+    "relaxed": ("relaxed", "sakin"),
+    "balanced": ("balanced", "dengeli"),
+    "fast": ("fast", "hızlı"),
+}
+_SUMMARY_FORMAT_WORDS: dict[str, tuple[str, str]] = {
+    "": ("video", "video"),
+    "montage": ("montage", "montaj"),
+    "talking_head": ("talking head", "kameraya konuşma"),
+    "day_vlog": ("day vlog", "günlük vlog"),
+    "single_hero": ("single hero", "tek kahraman klip"),
+    "subtitled": ("subtitled", "altyazılı"),
+    "narrated": ("narrated", "seslendirmeli"),
+    "narrated_planned": ("narrated planned", "seslendirmeli"),
+    "narrated_ready": ("narrated ready", "seslendirmeli"),
+    "slides": ("slides", "slayt"),
 }
 
 
@@ -1118,25 +1145,17 @@ def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
     from app.kria.route_disclosure import asked_only, route_ignores  # noqa: PLC0415
 
     strategy = arguments.strategy
-    pacing = strategy.pacing.replace("_", " ").title()
-    edit_format = strategy.edit_format.replace("_", " ").title()
+    pace = strategy.pacing
+    edit_format = strategy.edit_format
     pace_shown = route is None or not asked_only() or not route_ignores(route, "pacing")
     values = [
         arguments.summary,
-        say(
-            en="{pacing} pacing",
-            tr="Tempo: {v1}",
-            pacing=pacing,
-            v1=_PACING_TR.get(strategy.pacing, pacing),
-        )
-        if pace_shown
+        say(en=_PACING_CHIPS[pace][0], tr=_PACING_CHIPS[pace][1])
+        if pace_shown and pace in _PACING_CHIPS
         else None,
-        say(
-            en="{edit_format} format",
-            tr="Format: {v1}",
-            edit_format=edit_format,
-            v1=_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format),
-        ),
+        say(en=_EDIT_FORMAT_CHIPS[edit_format][0], tr=_EDIT_FORMAT_CHIPS[edit_format][1])
+        if edit_format in _EDIT_FORMAT_CHIPS
+        else None,
     ]
     return list(dict.fromkeys(value for value in values if value))[:3]
 
@@ -1207,17 +1226,38 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
         ):
             if intent.tool_name == "draft.apply_editor_ops":
                 count = len(arguments.get("operations") or [])
-                suffix = "s" if count != 1 else ""
-                arguments["summary"] = say(
-                    en="I prepared {count} reversible editor change{suffix}.",
-                    tr="Editörde {count} geri alınabilir değişiklik hazırladım.",
-                    count=count,
-                    suffix=suffix,
+                arguments["summary"] = (
+                    say(
+                        en="I prepared {count} reversible editor change.",
+                        tr="Editörde {count} geri alınabilir değişiklik hazırladım.",
+                        count=count,
+                    )
+                    if count == 1
+                    else say(
+                        en="I prepared {count} reversible editor changes.",
+                        tr="Editörde {count} geri alınabilir değişiklik hazırladım.",
+                        count=count,
+                    )
                 )
             else:
                 strategy = arguments.get("strategy") or {}
-                pacing = str(strategy.get("pacing") or "focused").replace("_", " ")
-                edit_format = str(strategy.get("edit_format") or "video").replace("_", " ")
+                # KRI-1408: a known pace / format is a word of the chat's language; anything
+                # else is the model's own value, shown as it wrote it.
+                raw_pace = str(strategy.get("pacing") or "")
+                raw_format = str(strategy.get("edit_format") or "")
+                pacing = (
+                    say(en=_SUMMARY_PACE_WORDS[raw_pace][0], tr=_SUMMARY_PACE_WORDS[raw_pace][1])
+                    if raw_pace in _SUMMARY_PACE_WORDS
+                    else raw_pace.replace("_", " ")
+                )
+                edit_format = (
+                    say(
+                        en=_SUMMARY_FORMAT_WORDS[raw_format][0],
+                        tr=_SUMMARY_FORMAT_WORDS[raw_format][1],
+                    )
+                    if raw_format in _SUMMARY_FORMAT_WORDS
+                    else raw_format.replace("_", " ")
+                )
                 arguments["summary"] = say(
                     en="I prepared a {pacing} {edit_format} draft around the available footage.",
                     # The pace and format words are machine values (English), so the
@@ -1340,32 +1380,46 @@ def _unresolved_choice_plan(
             # The option labels follow the chat's language (the conflict is built under
             # the turn's binding) and the matcher accepts them, so they are quoted as is.
             quoted = [f'"{o.label}"' for o in conflict.options]
-            ways = " or ".join(quoted)
-            ways_tr = f"{' veya '.join(quoted)} yaz"
+            ways = quoted[0] if quoted else ""
+            for option in quoted[1:]:
+                ways = say(
+                    en="{ways} or {option}", tr="{ways} veya {option}", ways=ways, option=option
+                )
             if conflict.kind == CONFLICT_TITLE_TEXT:
-                ways = f"{ways}, or type the words you want"
-                ways_tr = f"{ways_tr} ya da istediğin kelimeleri yaz"
-            return (
-                KriaTurnPlan(
-                    mode="respond",
-                    turn_value="recovery",
-                    response=say(
-                        en=(
-                            "{conflict_intro} {conflict_reason} I won't guess, so I haven't "
-                            "made an edit yet. To go ahead, reply {ways}.{unchanged}"
-                        ),
-                        tr=(
-                            "{conflict_intro} {conflict_reason} Tahmin yürütmeyeceğim, o "
-                            "yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways_tr}."
-                            "{unchanged}"
-                        ),
-                        conflict_intro=conflict.intro,
-                        conflict_reason=conflict.reason,
-                        ways=ways,
-                        unchanged=unchanged,
-                        ways_tr=ways_tr,
+                response = say(
+                    en=(
+                        "{conflict_intro} {conflict_reason} I won't guess, so I haven't "
+                        "made an edit yet. To go ahead, reply {ways}, or type the words you "
+                        "want.{unchanged}"
                     ),
-                ),
+                    tr=(
+                        "{conflict_intro} {conflict_reason} Tahmin yürütmeyeceğim, o "
+                        "yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways} yaz ya "
+                        "da istediğin kelimeleri yaz.{unchanged}"
+                    ),
+                    conflict_intro=conflict.intro,
+                    conflict_reason=conflict.reason,
+                    ways=ways,
+                    unchanged=unchanged,
+                )
+            else:
+                response = say(
+                    en=(
+                        "{conflict_intro} {conflict_reason} I won't guess, so I haven't "
+                        "made an edit yet. To go ahead, reply {ways}.{unchanged}"
+                    ),
+                    tr=(
+                        "{conflict_intro} {conflict_reason} Tahmin yürütmeyeceğim, o "
+                        "yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways} yaz."
+                        "{unchanged}"
+                    ),
+                    conflict_intro=conflict.intro,
+                    conflict_reason=conflict.reason,
+                    ways=ways,
+                    unchanged=unchanged,
+                )
+            return (
+                KriaTurnPlan(mode="respond", turn_value="recovery", response=response),
                 KEEP_OPEN_REASON,
             )
     try:
@@ -1383,10 +1437,13 @@ def _unresolved_choice_plan(
         )
     except CreatorRenderContractError as exc:
         # KRI-667: the contract writes English; a Turkish chat gets the Turkish twin or a
-        # Turkish line (`_worker_copy`), never the English sentence.
-        reason = _worker_copy(str(exc)) or say(
-            en=str(exc),
-            tr="Onayladığın isteklerle bu düzenlemeyi güvenle oluşturamıyorum.",
+        # Turkish line (`_worker_copy`), never the English sentence. KRI-1408: German too.
+        reason = _worker_copy(str(exc)) or _unless_english(
+            str(exc),
+            say(
+                en="I can't safely make this edit with the requests you approved.",
+                tr="Onayladığın isteklerle bu düzenlemeyi güvenle oluşturamıyorum.",
+            ),
         )
         return (
             KriaTurnPlan(
@@ -1410,16 +1467,20 @@ def _unresolved_choice_plan(
                 ),
                 "label_text_unusable",
             )
-        quoted = _quoted_unresolved(contract.unresolved[0])
-        if quoted is not None:
+        unresolved = contract.unresolved[0]
+        quoted_clip = _quoted_unresolved(unresolved)
+        if quoted_clip is not None:
             # KRI-1025: a clip the contract names ("which clip "X" means") comes with the
             # way forward, never as a reply with nothing to do next.
-            reason, step = quoted
-            question = f"{reason} {say(en=step[0], tr=step[1])}"
+            reason, step = quoted_clip
+            question = f"{reason} {say(en=_NEXT_STEPS[step][0], tr=_NEXT_STEPS[step][1])}"
         else:
-            question = _worker_copy(contract.unresolved[0]) or say(
-                en=contract.unresolved[0],
-                tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
+            question = _worker_copy(unresolved) or _unless_english(
+                unresolved,
+                say(
+                    en="I can't confirm one of the requests you approved in this edit.",
+                    tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
+                ),
             )
         return (
             KriaTurnPlan(
@@ -1586,8 +1647,8 @@ def _fit_reply(
         head = body[: -len(notice)].rstrip("\n")
         fitted = card_text_within(disclosures, room - len(head) - 1)
         body = f"{head}\n{fitted}" if head else fitted
-    if len(body) > room:
-        body = body[: max(0, room - 1)].rstrip() + "…"
+    # KRI-1408: the longest receipt reasons lose words first, never a word cut in half.
+    body = fit_lines(body, max(0, room))
     return f"{body}\n{tail}"
 
 
@@ -5261,9 +5322,12 @@ def _project_retryable_failure(
     # KRI-520: also reached from `_claim` (claims exhausted) before any turn binding, so
     # the copy follows the chat's language from the thread row itself.
     with reply_language_for(thread_reply_language(thread)):
-        en, tr = _TURN_FAILURE_COPY.get(code, _TURN_FAILURE_DEFAULT_COPY)
-        if code == "runtime_provider_outcome_unknown" and _source_is_tapped_answer(db, turn):
-            en, tr = _TAPPED_ANSWER_TIMEOUT_COPY
+        tapped = code == "runtime_provider_outcome_unknown" and _source_is_tapped_answer(db, turn)
+        en, tr = (
+            _TAPPED_ANSWER_TIMEOUT_COPY
+            if tapped
+            else _TURN_FAILURE_COPY.get(code, _TURN_FAILURE_DEFAULT_COPY)
+        )
         failure_copy = say(en=en, tr=tr)
     event = _append_sync_event(
         db,
@@ -6832,13 +6896,6 @@ _DEVICE_EDIT_REFUSALS = {
         "so I left the video as it was."
     ),
 }
-# KRI-1117: a background the Save or the pin refused, with the reason (S18).
-_DEVICE_EDIT_REFUSALS.update(
-    {
-        code: f"{en}, so I left the video as it was."
-        for code, (en, _tr) in BACKGROUND_REFUSALS.items()
-    }
-)
 _DEVICE_EDIT_REFUSAL_FALLBACK = (
     "I couldn't apply that change on your iPhone, so I left the video as it was."
 )
@@ -6860,18 +6917,19 @@ _DEVICE_EDIT_REFUSALS_TR = {
         "olduğu gibi bıraktım."
     ),
 }
-_DEVICE_EDIT_REFUSALS_TR.update(
-    {
-        code: f"{tr}, o yüzden videoyu olduğu gibi bıraktım."
-        for code, (_en, tr) in BACKGROUND_REFUSALS.items()
-    }
-)
 _DEVICE_EDIT_REFUSAL_FALLBACK_TR = (
     "Bu değişikliği iPhone'unda uygulayamadım, o yüzden videoyu olduğu gibi bıraktım."
 )
 
 
 def _device_edit_refusal_copy(code: str) -> str:
+    if code in BACKGROUND_REFUSALS:
+        # KRI-1117: a background the Save or the pin refused, with the reason (S18).
+        return say(
+            en="{refusal}, so I left the video as it was.",
+            tr="{refusal}, o yüzden videoyu olduğu gibi bıraktım.",
+            refusal=say(en=BACKGROUND_REFUSALS[code][0], tr=BACKGROUND_REFUSALS[code][1]),
+        )
     return say(
         en=_DEVICE_EDIT_REFUSALS.get(code, _DEVICE_EDIT_REFUSAL_FALLBACK),
         tr=_DEVICE_EDIT_REFUSALS_TR.get(code, _DEVICE_EDIT_REFUSAL_FALLBACK_TR),
@@ -7225,6 +7283,12 @@ _WORKER_TEXT_TR: dict[str, str] = {
 }
 
 
+def _unless_english(text: str, other: str) -> str:
+    """The worker's own English ``text`` in an English chat, else ``other`` (KRI-1408): free
+    worker text has no catalog line, so another language gets the caller's own sentence."""
+    return text if current_reply_language() in (None, "en") else other
+
+
 def _worker_copy(text: str | None) -> str | None:
     """A worker-written refusal sentence in the chat's language, or None to leave it out.
 
@@ -7343,20 +7407,35 @@ def _phone_evidence_refusal_copy(decline: dict[str, str]) -> str:
 # KRI-795: a refusal that needs the creator's decision (`needs_choice`,
 # `requirement_conflict`). The phone never saw the edit, so it is never "something your iPhone
 # can't render". The contract's unresolved sentences, keyed by the exact English the render
-# worker stores: (plain English, Turkish, what to do next in English and Turkish, the thread
+# worker stores: (plain English, Turkish, what to do next (a `_NEXT_STEPS` name), the thread
 # question that answers it). That question is asked again on the failure card, so a tap (or
 # its label typed) is the answer the next turn's gate replays. A test pins every key to
 # `creator_render_contract`.
 _CHOICE_DECLINES = frozenset({"needs_choice", "requirement_conflict"})
-_ORDER_NEXT_STEP = (
-    "Tell me how you want the clips ordered, and I'll make a new draft.",
-    "Klipleri hangi sırayla istediğini söyle, yeni bir taslak hazırlayayım.",
-)
-_UNRESOLVED_PLAIN: dict[str, tuple[str, str, tuple[str, str], str | None]] = {
+# What to do next, by name (KRI-1408: one table the catalog reads, so each line has German).
+_NEXT_STEPS: dict[str, tuple[str, str]] = {
+    "order": (
+        "Tell me how you want the clips ordered, and I'll make a new draft.",
+        "Klipleri hangi sırayla istediğini söyle, yeni bir taslak hazırlayayım.",
+    ),
+    "first_last": (
+        "Tell me which clip goes first or last, and I'll make a new draft.",
+        "Hangi klibin başta ya da sonda olacağını söyle, yeni bir taslak hazırlayayım.",
+    ),
+    "clip": (
+        "Tell me which clip you mean, and I'll make a new draft.",
+        "Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım.",
+    ),
+    "text_clip": (
+        "Tell me which clip that text goes on, and I'll make a new draft.",
+        "O yazının hangi klibe gideceğini söyle, yeni bir taslak hazırlayayım.",
+    ),
+}
+_UNRESOLVED_PLAIN: dict[str, tuple[str, str, str, str | None]] = {
     "I can't verify this ordering rule from the approved media.": (
         "I couldn't keep the clip order you asked for.",
         "İstediğin klip sırasını koruyamadım.",
-        _ORDER_NEXT_STEP,
+        "order",
         "order_basis",
     ),
     # Written only after the creator chose upload order and the clip rows did not add up,
@@ -7364,34 +7443,27 @@ _UNRESOLVED_PLAIN: dict[str, tuple[str, str, tuple[str, str], str | None]] = {
     "I need to know which clips are in the edit to verify their order.": (
         "I couldn't tell which clips are in this edit, so I couldn't keep their order.",
         "Bu düzenlemede hangi kliplerin olduğunu anlayamadım, o yüzden sıralarını koruyamadım.",
-        _ORDER_NEXT_STEP,
+        "order",
         None,
     ),
     "I need capture times for every selected clip to verify chronological order.": (
         "Some of your clips have no filming time, so I couldn't put them in the order you "
         "filmed them.",
         "Bazı kliplerinde çekim saati yok, o yüzden onları çektiğin sıraya koyamadım.",
-        _ORDER_NEXT_STEP,
+        "order",
         "order_basis",
     ),
     # KRI-762: named first / last clips are the clip resolver's, never the order question.
     "I couldn't tell which clips you want first or last, so I can't confirm their order.": (
         "I couldn't tell which clips you want first or last.",
         "Hangi klipleri başa ya da sona istediğini anlayamadım.",
-        (
-            "Tell me which clip goes first or last, and I'll make a new draft.",
-            "Hangi klibin başta ya da sonda olacağını söyle, yeni bir taslak hazırlayayım.",
-        ),
+        "first_last",
         None,
     ),
 }
-_CLIP_NEXT_STEP = (
-    "Tell me which clip you mean, and I'll make a new draft.",
-    "Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım.",
-)
 
 
-def _quoted_unresolved(stored: str) -> tuple[str, tuple[str, str]] | None:
+def _quoted_unresolved(stored: str) -> tuple[str, str] | None:
     """A contract sentence that quotes the creator's words, in the chat's language.
 
     The worker wrote it with one of the contract's own sentence builders, in English or (a
@@ -7406,15 +7478,9 @@ def _quoted_unresolved(stored: str) -> tuple[str, tuple[str, str]] | None:
     )
 
     for build, step in (
-        (_pin_not_found, _CLIP_NEXT_STEP),
-        (unclear_sequence_words, _CLIP_NEXT_STEP),
-        (
-            text_clip_not_found,
-            (
-                "Tell me which clip that text goes on, and I'll make a new draft.",
-                "O yazının hangi klibe gideceğini söyle, yeni bir taslak hazırlayayım.",
-            ),
-        ),
+        (_pin_not_found, "clip"),
+        (unclear_sequence_words, "clip"),
+        (text_clip_not_found, "text_clip"),
     ):
         for written_in in ("en", "tr"):
             with reply_language_for(written_in):
@@ -7459,7 +7525,7 @@ def _choice_refusal_parts(
     if alternative and alternative != _ASK_FOR_CHOICE:
         return reason, _worker_copy(alternative) or _try_different_approach()
     if step is not None:
-        return reason, say(en=step[0], tr=step[1])
+        return reason, say(en=_NEXT_STEPS[step][0], tr=_NEXT_STEPS[step][1])
     return reason, None if reason.endswith("?") else _try_different_approach()
 
 
@@ -8353,10 +8419,8 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    "{count} take{v1} no usable singing or "
-                    "words, so {v2} in as short muted "
-                    "clip{v3}. Trim or remove "
-                    "{v4} in the editor."
+                    "{count} take has no usable singing or words, so it is in as short muted "
+                    "clip. Trim or remove it in the editor."
                 ),
                 tr=(
                     "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve "
@@ -8364,10 +8428,19 @@ def _user_song_note(job: Job) -> str:
                     "kaldırabilirsin."
                 ),
                 count=count,
-                v1=" has" if count == 1 else "s have",
-                v2="it is" if count == 1 else "they are",
-                v3="" if count == 1 else "s",
-                v4="it" if count == 1 else "them",
+            )
+            if count == 1
+            else say(
+                en=(
+                    "{count} takes have no usable singing or words, so they are in as short "
+                    "muted clips. Trim or remove them in the editor."
+                ),
+                tr=(
+                    "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve "
+                    "sessiz klip olarak eklendi. Editörde kısaltabilir veya "
+                    "kaldırabilirsin."
+                ),
+                count=count,
             )
         )
     low = receipt.get("low_confidence_ids")
@@ -8376,17 +8449,26 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    "{count} take{v1} placed by my best guess "
-                    "and may be slightly off; check {v2} in the "
-                    "editor."
+                    "{count} take is placed by my best guess and may be slightly off; check "
+                    "it in the editor."
                 ),
                 tr=(
                     "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; "
                     "editörde kontrol et."
                 ),
                 count=count,
-                v1=" is" if count == 1 else "s are",
-                v2="it" if count == 1 else "them",
+            )
+            if count == 1
+            else say(
+                en=(
+                    "{count} takes are placed by my best guess and may be slightly off; check "
+                    "them in the editor."
+                ),
+                tr=(
+                    "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; "
+                    "editörde kontrol et."
+                ),
+                count=count,
             )
         )
     outside = receipt.get("placed_outside_ids")
@@ -8394,13 +8476,21 @@ def _user_song_note(job: Job) -> str:
         count = len(outside)
         notes.append(
             say(
-                en=("{count} take{v1} later in the song than a 2-minute video can hold."),
+                en="{count} take sits later in the song than a 2-minute video can hold.",
                 tr=(
                     "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha "
                     "geride kalıyor."
                 ),
                 count=count,
-                v1=" sits" if count == 1 else "s sit",
+            )
+            if count == 1
+            else say(
+                en="{count} takes sit later in the song than a 2-minute video can hold.",
+                tr=(
+                    "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha "
+                    "geride kalıyor."
+                ),
+                count=count,
             )
         )
     placed = receipt.get("placed")
@@ -8412,10 +8502,15 @@ def _user_song_note(job: Job) -> str:
     if by_lyrics:
         notes.append(
             say(
-                en="I matched {by_lyrics} take{v1} by your singing.",
+                en="I matched {by_lyrics} take by your singing.",
                 tr="{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim.",
                 by_lyrics=by_lyrics,
-                v1="" if by_lyrics == 1 else "s",
+            )
+            if by_lyrics == 1
+            else say(
+                en="I matched {by_lyrics} takes by your singing.",
+                tr="{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim.",
+                by_lyrics=by_lyrics,
             )
         )
     return " ".join(notes)
@@ -8890,17 +8985,14 @@ def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | Non
     if english is None:
         return None
     code = failure_code or ""
+    if current_reply_language() in (None, "en"):
+        return english
     # The code's own sentence and the default are catalog keys (KRI-1362); the creator-facing
-    # ``error_detail`` is free English text with no key, so German shows it as written.
-    if (
-        code in JOB_FAILURE_MESSAGES
-        and code in _JOB_FAILURE_MESSAGES_TR
-        and english == JOB_FAILURE_MESSAGES[code]
-    ):
+    # ``error_detail`` is free English text with no key, so another language gets the code's
+    # own sentence instead (KRI-1408), as Turkish always did.
+    if code in JOB_FAILURE_MESSAGES and code in _JOB_FAILURE_MESSAGES_TR:
         return say(en=JOB_FAILURE_MESSAGES[code], tr=_JOB_FAILURE_MESSAGES_TR[code])
-    if code not in _JOB_FAILURE_MESSAGES_TR and english == DEFAULT_JOB_FAILURE_MESSAGE:
-        return say(en=DEFAULT_JOB_FAILURE_MESSAGE, tr=_JOB_FAILURE_DEFAULT_TR)
-    return say(en=english, tr=_JOB_FAILURE_MESSAGES_TR.get(code, _JOB_FAILURE_DEFAULT_TR))
+    return say(en=DEFAULT_JOB_FAILURE_MESSAGE, tr=_JOB_FAILURE_DEFAULT_TR)
 
 
 # The three variant ids every generative job renders; any other id is left out of the

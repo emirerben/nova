@@ -464,8 +464,11 @@ def genre_record(genres: Sequence[AskedGenre], track: Any | None) -> dict[str, A
     }
 
 
-def _join(names: Sequence[str], last: str) -> str:
-    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} {last} {names[-1]}"
+def _join(names: Sequence[str]) -> str:
+    """The genre names as "pop, rock or jazz", in the bound reply language."""
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + say(en=" or ", tr=" ya da ") + names[-1]
 
 
 def _a(name: str) -> str:
@@ -492,34 +495,36 @@ def music_genre_notice(section: Mapping[str, Any] | None) -> str | None:
     artist = str(section.get("artist") or "").strip()
     if section.get("status") != "selected" or not title:
         # No song came back: the matcher may simply have failed, so don't blame the library.
+        joined = _join(names)
+        if _a(names[0]) == "an":
+            return say(
+                en="I couldn't suggest an {names} track this time.",
+                tr="Bu sefer bir {names} şarkısı öneremedim.",
+                names=joined,
+            )
         return say(
-            en="I couldn't suggest {a_names_0} {join_names} track this time.",
-            tr="Bu sefer bir {join_names_2} şarkısı öneremedim.",
-            a_names_0=_a(names[0]),
-            join_names=_join(names, "or"),
-            join_names_2=_join(names, "ya da"),
+            en="I couldn't suggest a {names} track this time.",
+            tr="Bu sefer bir {names} şarkısı öneremedim.",
+            names=joined,
         )
-    song_en = f"“{title}” by {artist}" if artist else f"“{title}”"
-    song_tr = f"“{title}” ({artist})" if artist else f"“{title}”"
+    song = (
+        say(en="“{title}” by {artist}", tr="“{title}” ({artist})", title=title, artist=artist)
+        if artist
+        else f"“{title}”"
+    )
     if section[GENRE_FIT]:
         return say(
-            en="For the {genre} song you asked for, I suggest {song_en}. Add it when you post.",
-            tr="{song_tr}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin.",
+            en="For the {genre} song you asked for, I suggest {song}. Add it when you post.",
+            tr="{song}, istediğin {genre} şarkısı için önerim. Paylaşırken ekleyebilirsin.",
             genre=genre,
-            song_en=song_en,
-            song_tr=song_tr,
+            song=song,
         )
     return say(
         en=(
-            "I don't have any {join_names} tracks. The closest I have is {song_en}. "
+            "I don't have any {names} tracks. The closest I have is {song}. "
             "Add it when you post if you like it."
         ),
-        tr=(
-            "Elimde {join_names_2} şarkısı yok. En yakını {song_tr}. "
-            "Beğenirsen paylaşırken ekleyebilirsin."
-        ),
-        join_names=_join(names, "or"),
-        song_en=song_en,
-        join_names_2=_join(names, "ya da"),
-        song_tr=song_tr,
+        tr=("Elimde {names} şarkısı yok. En yakını {song}. Beğenirsen paylaşırken ekleyebilirsin."),
+        names=_join(names),
+        song=song,
     )

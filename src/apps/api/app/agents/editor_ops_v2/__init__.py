@@ -127,9 +127,10 @@ class OpSpec:
     coerce: CoerceFn | None = None
     # Extra fragment file under prompts/edit_copilot_ops/ (beyond <lane>.txt).
     prompt_fragment: str | None = None
-    # (en, tr) sentence that REPLACES the model's reply when this op's family is not offered and
-    # nothing else survives, so "Done" is never shown for a closed lane (KRI-1350).
-    closed_note: tuple[str, str] | None = None
+    # The sentence (in the chat's language: the lane's own ``say()``) that REPLACES the model's
+    # reply when this op's family is not offered and nothing else survives, so "Done" is never
+    # shown for a closed lane (KRI-1350).
+    closed_note: Callable[[], str] | None = None
 
 
 def lane_specs() -> list[OpSpec]:
@@ -158,7 +159,7 @@ class MergedRegistry:
     new_ops: frozenset[str] = frozenset()
     families: dict[str, frozenset[str]] = field(default_factory=dict)
     coerce: dict[str, CoerceFn] = field(default_factory=dict)
-    closed_notes: dict[str, tuple[str, str]] = field(default_factory=dict)
+    closed_notes: dict[str, Callable[[], str]] = field(default_factory=dict)
 
 
 REGISTRY = MergedRegistry()

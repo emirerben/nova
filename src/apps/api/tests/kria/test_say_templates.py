@@ -57,16 +57,7 @@ _SAY_WRAPPERS = frozenset(
 # say() calls that still build en/tr with f-strings, by (module, enclosing function). Each one's
 # en or tr is not a plain literal (a conditional, a call) or holds a nested f-string, so the
 # codemod left it alone; they are handled when non-literal sentences move to the catalog.
-_KNOWN_FSTRING_CALLS = frozenset(
-    {
-        ("agents/editor_ops_v2/timeline.py", "_coerce_reorder_clips_by"),
-        ("kria/editor_sequence_timing.py", "sequence_timing_plan"),
-        ("kria/landscape_fit_ask.py", "_clips"),
-        ("services/choice_questions.py", "_text_placement"),
-        ("services/kria_editor_ops_diff.py", "_describe_text"),
-        ("services/kria_editor_ops_diff.py", "_plural"),
-    }
-)
+_KNOWN_FSTRING_CALLS: frozenset[tuple[str, str]] = frozenset()
 
 
 def _say_calls() -> list[tuple[str, str, ast.Call]]:
@@ -137,6 +128,42 @@ def _text(where: str, node: ast.AST) -> str | None:
     return None
 
 
+@cache
+def _harvested() -> tuple[dict, dict]:
+    """The (en, tr) templates the catalog harvester read, by call (file, line) and by sentence
+    table (module, table name)."""
+    build = _load_build()
+    by_line: dict[tuple[str, int], list[tuple[str, str]]] = {}
+    by_table: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for pair in build.harvest(build.app_sources()).pairs:
+        by_line.setdefault((pair.file, pair.line), []).append((pair.en, pair.tr))
+        if pair.origin and pair.origin[0] in {"table", "pairs", "parallel"}:
+            for table in pair.origin[2:-1] if pair.origin[0] == "parallel" else pair.origin[2:3]:
+                by_table.setdefault((pair.origin[1], table), []).append((pair.en, pair.tr))
+    return by_line, by_table
+
+
+def _texts(where: str, call: ast.Call, lang: str) -> list[str] | None:
+    """Every template a templated call's en/tr can be: one literal or constant, or (KRI-1408) the
+    entries of a sentence table the harvester reads (``say(en=_LINES[key][0], ...)``), each a
+    whole sentence with its own catalog line."""
+    text = _text(where, _kw(call, lang))
+    if text is not None:
+        return [text]
+    build, _index_ = _index()
+    rel = "app/" + where.rsplit(":", 1)[0]
+    by_line, by_table = _harvested()
+    found = list(by_line.get((rel, call.lineno), ()))
+    module = build.module_name(rel)
+    for side in ("en", "tr"):
+        for node in ast.walk(_kw(call, side)):
+            if isinstance(node, ast.Name):
+                found += by_table.get((module, node.id), ())
+    if not found:
+        return None
+    return sorted({en if lang == "en" else tr for en, tr in found})
+
+
 _CALLS = _say_calls()
 
 
@@ -187,16 +214,19 @@ def test_template_fields_match_the_values_passed(where: str, call: ast.Call) -> 
     assert None not in values, f"{where}: **kwargs hides which values a template gets"
     used: set[str] = set()
     for lang in ("en", "tr"):
-        text = _text(where, _kw(call, lang))
-        assert text is not None, (
-            f"{where}: templated {lang} must be a string literal or a module constant "
-            "(it is the catalog key)"
+        texts = _texts(where, call, lang)
+        assert texts is not None, (
+            f"{where}: templated {lang} must be a string literal, a module constant or a "
+            "sentence table the catalog harvester reads (it is the catalog key)"
         )
-        for name, _conv, spec in _fields(text):
-            assert name and name.isidentifier(), f"{where}: {lang} field {name!r} not a name"
-            assert name in values, f"{where}: {lang} uses {{{name}}} but the call does not pass it"
-            assert "{" not in (spec or ""), f"{where}: nested field in a format spec"
-            used.add(name)
+        for text in texts:
+            for name, _conv, spec in _fields(text):
+                assert name and name.isidentifier(), f"{where}: {lang} field {name!r} not a name"
+                assert name in values, (
+                    f"{where}: {lang} uses {{{name}}} but the call does not pass it"
+                )
+                assert "{" not in (spec or ""), f"{where}: nested field in a format spec"
+                used.add(name)
     assert used == values, f"{where}: values never used: {sorted(values - used)}"
 
 
@@ -228,7 +258,8 @@ def test_every_template_formats(where: str, call: ast.Call) -> None:
     """(3, 5) str.format never raises KeyError/IndexError on a template say() fills."""
     values = {k.arg for k in call.keywords if k.arg not in ("en", "tr")}
     for lang in ("en", "tr"):
-        _formats(_text(where, _kw(call, lang)), values)
+        for text in _texts(where, call, lang) or ():
+            _formats(text, values)
 
 
 def _as_fstring(template: str) -> str:
@@ -248,17 +279,17 @@ def test_str_format_gives_the_fstring_text(where: str, call: ast.Call) -> None:
     """(2, 3) Filling a template equals evaluating the f-string it replaced, for each value type."""
     values = {k.arg for k in call.keywords if k.arg not in ("en", "tr")}
     for lang in ("en", "tr"):
-        template = _text(where, _kw(call, lang))
-        source = _as_fstring(template)
-        for dummy in ("x", 3, 1.5, ["a", "b"], None):
-            env = dict.fromkeys(values, dummy)
-            try:
-                expected = eval(source, {}, env)  # noqa: S307 - our own literal, no user input
-            except (ValueError, TypeError):
-                with pytest.raises((ValueError, TypeError)):
-                    template.format(**env)
-                continue
-            assert template.format(**env) == expected, f"{where}: {lang} differs for {dummy!r}"
+        for template in _texts(where, call, lang) or ():
+            source = _as_fstring(template)
+            for dummy in ("x", 3, 1.5, ["a", "b"], None):
+                env = dict.fromkeys(values, dummy)
+                try:
+                    expected = eval(source, {}, env)  # noqa: S307 - our own literal, no user input
+                except (ValueError, TypeError):
+                    with pytest.raises((ValueError, TypeError)):
+                        template.format(**env)
+                    continue
+                assert template.format(**env) == expected, f"{where}: {lang} differs for {dummy!r}"
 
 
 # ---------------------------------------------------------------- say() itself

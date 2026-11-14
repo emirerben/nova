@@ -117,6 +117,29 @@ def _coerce_set_background(name: str, payload: dict, snapshot: dict, state: Any)
     }
 
 
+# The snapshot's ``color_reason`` (`kria_editor_ops._BACKGROUND_COLOR_UNAVAILABLE` and its
+# default, English) -> the whole refusal (en, tr), so another language never shows the English
+# reason inside its sentence (KRI-1408).
+_COLOR_REASON_DEFAULT = "a plain colour behind you isn't available right now"
+_COLOR_REFUSALS: dict[str, tuple[str, str]] = {
+    "a plain colour behind you isn't ready on this iPhone app yet": (
+        "I can't put a plain colour behind you: a plain colour behind you isn't ready on this "
+        "iPhone app yet.",
+        "Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
+    ),
+    "this version of the app can't show a plain colour behind you yet": (
+        "I can't put a plain colour behind you: this version of the app can't show a plain "
+        "colour behind you yet.",
+        "Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
+    ),
+    _COLOR_REASON_DEFAULT: (
+        "I can't put a plain colour behind you: a plain colour behind you isn't available "
+        "right now.",
+        "Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
+    ),
+}
+
+
 def _coerce_set_background_color(
     name: str, payload: dict, snapshot: dict, state: Any
 ) -> dict | None:
@@ -124,14 +147,17 @@ def _coerce_set_background_color(
     if isinstance(section, dict) and section.get("color_available") is not True:
         # S59: the lane is open but the colour gate is not -- say the snapshot's reason as an
         # unmet request, never the generic "can't change that on this edit".
-        reason = str(section.get("color_reason") or "").strip() or (
-            "a plain colour behind you isn't available right now"
-        )
-        detail = say(
-            en="I can't put a plain colour behind you: {reason}.",
-            tr="Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
-            reason=reason,
-        )
+        reason = str(section.get("color_reason") or "").strip()
+        if reason in _COLOR_REFUSALS or not reason:
+            refusal = reason or _COLOR_REASON_DEFAULT
+            detail = say(en=_COLOR_REFUSALS[refusal][0], tr=_COLOR_REFUSALS[refusal][1])
+        else:
+            # A reason this table does not know yet, quoted as the snapshot wrote it.
+            detail = say(
+                en="I can't put a plain colour behind you: {reason}.",
+                tr="Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
+                reason=reason,
+            )
         state.reject(op=name, reason="capability_unavailable", detail=detail)
         state.reply_notes.append(detail)
         return None

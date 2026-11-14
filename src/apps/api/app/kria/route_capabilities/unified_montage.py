@@ -54,15 +54,13 @@ FIELD_HANDLING: dict[str, Handling] = {
     "pacing": NotApplied(
         lines.pacing_line(
             _pace_applied,
-            "the cuts follow a fast pace",
-            "kesimler hızlı tempoda",
+            lambda: say(en="the cuts follow a fast pace", tr="kesimler hızlı tempoda"),
         )
     ),
     "direction": NotApplied(
         lines.direction_line(
             ROUTE_DIRECTION,
-            "it is cut as a fast montage",
-            "hızlı bir montaj olarak kesiliyor",
+            lambda: say(en="it is cut as a fast montage", tr="hızlı bir montaj olarak kesiliyor"),
         )
     ),
     "caption_style": NotApplied(_caption_style),

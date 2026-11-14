@@ -50,13 +50,22 @@ def _key(text: str) -> str:
     return " ".join(re.findall(r"\w+", loose_text(text)))
 
 
-# The "keep" answer in both languages: a creator who switched language still matches.
-_KEEP_EN = 'Keep "{}" exactly as written'
-_KEEP_TR = '"{}" yazdığım gibi kalsın'
+# The "keep" answer in every language: a creator who switched language still matches.
+_KEEP_EN = 'Keep "{text}" exactly as written'
+_KEEP_TR = '"{text}" yazdığım gibi kalsın'
+
+
+def _keep_forms() -> tuple[str, ...]:
+    """The "keep" answer's template in English, Turkish and each catalog language (German)."""
+    from app.kria.copy_catalog import translate  # noqa: PLC0415
+    from app.kria.reply_language import CATALOG_REPLY_LANGUAGES  # noqa: PLC0415
+
+    catalog_forms = (translate(language, _KEEP_EN) for language in CATALOG_REPLY_LANGUAGES)
+    return (_KEEP_EN, _KEEP_TR, *(form for form in catalog_forms if form))
 
 
 def keep_as_written_option(text: str) -> str:
-    return say(en=_KEEP_EN.format(text), tr=_KEEP_TR.format(text))
+    return say(en=_KEEP_EN, tr=_KEEP_TR, text=text)
 
 
 def shorter_label_option(text: str) -> str:
@@ -69,7 +78,7 @@ def keeps_as_written(text: str, creator_messages: str | None) -> bool:
     Read from all of the creator's messages, so the choice holds on every later turn.
     """
     said = f" {_key(creator_messages or '')} "
-    return any(f" {_key(form.format(text))} " in said for form in (_KEEP_EN, _KEEP_TR))
+    return any(f" {_key(form.format(text=text))} " in said for form in _keep_forms())
 
 
 def can_keep_as_written(text: str) -> bool:

@@ -93,10 +93,9 @@ class FitVerdict:
 
 
 def _clips(n: int) -> str:
-    return say(
-        en=f"{n} sideways clip" if n == 1 else f"{n} sideways clips",
-        tr=f"{n} yatay klip",
-    )
+    if n == 1:
+        return say(en="{n} sideways clip", tr="{n} yatay klip", n=n)
+    return say(en="{n} sideways clips", tr="{n} yatay klip", n=n)
 
 
 def _planned(fit: LandscapeFit) -> FitVerdict:
