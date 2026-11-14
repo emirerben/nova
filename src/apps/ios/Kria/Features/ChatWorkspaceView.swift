@@ -2408,7 +2408,6 @@ private struct CreationWorkspaceView: View {
                     recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
                     chooseAnother: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .chooseSource) } : nil,
                     approval: approval,
-                    format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
                     speechCheckTimedOut: speechCheckTimedOut,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
@@ -3430,7 +3429,21 @@ private struct CreationWorkspaceView: View {
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: delta.threadRevision)
         let known = Set(events.map(\.id))
         let fresh = delta.events.filter { !known.contains($0.id) }
+        // KRI-1403: a draft that arrives with its approval request is shown together with its card. Merged
+        // first, the draft drew as a plain message for one round trip and was then swapped for the card, so
+        // the chat jumped twice (and a tall card swapped in at the end blanked it). A failed read falls back
+        // to that order: `synchronizeApproval` below retries it.
+        var arrivingApproval: ApprovalSnapshot?
+        if fresh.contains(where: { $0.eventType == "approval_requested" }),
+           let request = Self.pendingApprovalRequest(in: ChatTranscriptHistory.merge(events, with: fresh)),
+           approval.flatMap({ UUID(uuidString: $0.approvalID) }) != request.id {
+            arrivingApproval = try? await model.api.approval(threadID: project.id, approvalID: request.id)
+        }
         events = ChatTranscriptHistory.merge(events, with: fresh)
+        if let arrivingApproval,
+           Self.pendingApprovalRequest(in: events)?.id == UUID(uuidString: arrivingApproval.approvalID) {
+            applyApproval(arrivingApproval)
+        }
         observeResponses()
         afterSequence = ChatTranscriptHistory.nextAfterSequence(
             current: afterSequence,
@@ -3590,29 +3603,40 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    private static let approvalTerminalTypes: Set<String> = ["approval_approved", "approval_denied", "approval_cancelled", "approval_expired"]
+
+    /// The newest `approval_requested` in `events` that no later event closed, with its approval id.
+    private static func pendingApprovalRequest(in events: [ThreadEvent]) -> (event: ThreadEvent, id: UUID)? {
+        guard let request = events.last(where: { $0.eventType == "approval_requested" }),
+              !events.contains(where: { $0.sequence > request.sequence && approvalTerminalTypes.contains($0.eventType) }),
+              let identifier = request.payload?["approval_id"]?.stringValue.flatMap(UUID.init(uuidString:))
+        else { return nil }
+        return (request, identifier)
+    }
+
+    private func applyApproval(_ fetched: ApprovalSnapshot) {
+        approval = fetched.status == "pending" && fetched.expiresAt > .now ? fetched : nil
+        approvalNotice = fetched.status == "expired" || fetched.expiresAt <= .now
+            ? "This approval expired. Send a message to request an updated direction." : nil
+    }
+
     private func synchronizeApproval() async throws {
-        let terminalTypes = Set(["approval_approved", "approval_denied", "approval_cancelled", "approval_expired"])
-        let lastRequest = events.last(where: { $0.eventType == "approval_requested" })
-        guard let lastRequest,
-              !events.contains(where: { $0.sequence > lastRequest.sequence && terminalTypes.contains($0.eventType) }),
-              let identifier = lastRequest.payload?["approval_id"]?.stringValue.flatMap(UUID.init(uuidString:))
-        else {
+        let terminalTypes = Self.approvalTerminalTypes
+        guard let pending = Self.pendingApprovalRequest(in: events) else {
             approval = nil
             approvalNotice = nil
             return
         }
-        if approval?.approvalID != identifier.uuidString || (approval?.expiresAt ?? .distantPast) <= .now {
+        let (lastRequest, identifier) = (pending.event, pending.id)
+        // The server sends lowercase ids and `uuidString` is uppercase: compare as UUIDs, or every poll re-fetches.
+        if approval.flatMap({ UUID(uuidString: $0.approvalID) }) != identifier || (approval?.expiresAt ?? .distantPast) <= .now {
             let fetched = try await model.api.approval(threadID: project.id, approvalID: identifier)
             let requestStillCurrent = events.contains(where: {
                 $0.id == lastRequest.id && $0.sequence == lastRequest.sequence
             }) && !events.contains(where: {
                 $0.sequence > lastRequest.sequence && terminalTypes.contains($0.eventType)
             })
-            if requestStillCurrent {
-                approval = fetched.status == "pending" && fetched.expiresAt > .now ? fetched : nil
-                approvalNotice = fetched.status == "expired" || fetched.expiresAt <= .now
-                    ? "This approval expired. Send a message to request an updated direction." : nil
-            }
+            if requestStillCurrent { applyApproval(fetched) }
         }
     }
 

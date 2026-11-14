@@ -89,6 +89,13 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
             DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
             return
         }
+        if request.httpMethod == "GET", request.url?.pathComponents.dropLast().last == "approvals",
+           let delay = ProcessInfo.processInfo.environment["KRIA_CHAT_APPROVAL_DELAY"].flatMap(Double.init), delay > 0 {
+            let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
+            delayedResponse = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
+            return
+        }
         if PerfFixture.isFullProjectionRead(request) {
             Perf.mark("fixture.full.arrived")
             PerfCounters.shared.setOnce("fixture fullDelayMS", Int(PerfFixture.delay(for: request) * 1000))
@@ -311,6 +318,41 @@ final class CreationChatFixture: @unchecked Sendable {
     private let steerApprovalID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     static let steerFirstSummary = "Open on the laugh and keep the pacing quick."
     static let steerTypedSummary = "Your request: you small at the bottom right, white captions in the middle, no music."
+    /// KRI-1403: `KRIA_CHAT_LONG_APPROVAL=1` replays the ylab chat (thread 8044373b, build 1977). The draft message
+    /// is the card text prod sent, word for word (14 lines, about 1,800 characters, without its prefix); the approval
+    /// card is what the server sends for it since KRI-1403 (`approval_card_text(_card_summary(...))` in German, with
+    /// German "can't check automatically" reasons neutral). `KRIA_CHAT_APPROVAL_DELAY` answers the approval read that
+    /// many seconds late, as the phone's second round trip.
+    static var longApprovalFixture: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_LONG_APPROVAL"] == "1" }
+    static let longApprovalCard = """
+    Render this draft: Hier ist die einfachere Version.
+    - Teilweise: Die fünf Clips in der Reihenfolge der Aufnahme verwenden und nichts umstellen. (Ich kann die Reihenfolge, die dieser Entwurf nutzt, nicht bestätigen)
+    - Erledigt: "Ihr sucht eine Feuerwehr?"
+    - Erledigt: Keine Musik. (Keine Musik, wie gewünscht)
+    - Wie besprochen weggelassen: 3 deiner Wünsche
+    Schau dir diese Stellen im Video an:
+    - Ein „Talking“-Video mit direkter Ansprache in die Kamera auf Deutsch.
+    - Alle fünf Clips als Teile derselben Vorstellung nutzen und keine Inhalte weglassen, außer den ausdrücklich genannten Pausen und Wiederholungen. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)
+    - Kein weiterer Text außer dem Titel und den ausdrücklich gewünschten Untertiteln.
+    - Keine Soundeffekte. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)
+    """
+    static let longApprovalProdCard = """
+    Render this draft: Hier ist die einfachere Version.
+    - Teilweise: Die fünf Clips in der Reihenfolge der Aufnahme verwenden und nichts umstellen. (Ich kann die Reihenfolge, die dieser Entwurf nutzt, nicht bestätigen)
+    - Erledigt: "Ihr sucht eine Feuerwehr?"
+    - Erledigt: Keine Musik. (Keine Musik, wie gewünscht)
+    - Wie besprochen weggelassen: Alle Sprechpausen herausschneiden, damit die Vorstellung straff wirkt.
+    - Wie besprochen weggelassen: Bei zweimal gesprochenen Sätzen nur die letzte, saubere Version behalten.
+    - Wie besprochen weggelassen: Deutsche Untertitel Wort für Wort, gut lesbar und nie über meinem Gesicht. Die angegebenen Namen und Zahlen exakt so schreiben.
+    Schau dir diese Stellen im Video an:
+    - Ein „Talking“-Video mit direkter Ansprache in die Kamera auf Deutsch. (Das kann ich noch nicht automatisch prüfen)
+    - Alle fünf Clips als Teile derselben Vorstellung nutzen und keine Inhalte weglassen, außer den ausdrücklich genannten Pausen und Wiederholungen. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)
+    - Kein weiterer Text außer dem Titel und den ausdrücklich gewünschten Untertiteln. (Das kann ich noch nicht automatisch prüfen)
+    - Keine Soundeffekte. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)
+    Hinweis zu diesem Video:
+    - Ich kann die Hook-Idee für den Anfang ("Deine direkte Vorstellung mit dem gewünschten Titel eröffnen.") in diesem Video noch nicht nutzen, deshalb wird sie nicht als Text angezeigt
+    - Ich kann die geplante Story-Struktur (Vorstellung und Erfahrungen beim Produk…, Förderprogramm, Projekte und Veranstalt…, Die eigene KI-App und Erfahrungen beim…, Motivation für YLAB., Persönliche Eigenschaften und Verabschi…) in diesem Video noch nicht umsetzen, deshalb ändert sie die Reihenfolge der Clips nicht
+    """
     static var researchPreviewFixture: [String: Any] { [
         "version": 1,
         "retrieved_at": "2026-10-25T09:00:00Z",
@@ -1398,7 +1440,12 @@ final class CreationChatFixture: @unchecked Sendable {
                     draftPayload["research_preview"] = Self.researchPreviewFixture
                 }
                 if let language = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_LANGUAGE"] { state["reply_language"] = language }
-                append("draft_applied", payload: draftPayload)
+                if Self.longApprovalFixture {
+                    // The server's draft message is the card's text without its "Render this draft:" prefix.
+                    append("draft_applied", text: Self.longApprovalProdCard.replacingOccurrences(of: "Render this draft: ", with: ""), payload: draftPayload)
+                } else {
+                    append("draft_applied", payload: draftPayload)
+                }
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
             }
             else {
@@ -1472,7 +1519,7 @@ final class CreationChatFixture: @unchecked Sendable {
             } else {
                 let approvalPayload = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 let turnID = approvalPayload?["turn_id"] as? String ?? id
-                return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": approvalPayload?["draft_revision"] as? Int ?? 1, "status": "pending", "consequence_summary": "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
+                return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": approvalPayload?["draft_revision"] as? Int ?? 1, "status": "pending", "consequence_summary": Self.longApprovalFixture ? Self.longApprovalCard : "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
             }
         } else if parts.last == "delta", let count = approvalDispatches[id] {
             // Ticks on the delta poll: like the server, nothing here bumps the revision until `render_queued`, so

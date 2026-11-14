@@ -28,6 +28,7 @@
     ", so have a look at the captions": ", o yüzden altyazılara bir göz at",
     ", so nothing plays on after your voice": ", o yüzden seslendirmeden sonra bir şey çalmıyor",
     ", starting with {pins_first}": ", {pins_first} ile başlayarak",
+    "- Left out as agreed: {count} of your asks": "- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin",
     "- Left out as agreed: {what}": "- Kararlaştırdığımız gibi çıkarıldı: {what}",
     "- Left out in the simpler version: {what}": "- Daha basit sürümde çıkarıldı: {what}",
     "- Left out: {v1} ({omission_reasons_get_req_id})": "- Çıkarıldı: {v1} ({omission_reasons_get_req_id})",

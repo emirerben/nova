@@ -117,6 +117,8 @@ from app.kria.request_budget import creator_request_text_sync, request_over_budg
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     Disclosure,
+    approval_card_disclosures,
+    approval_card_text,
     card_disclosures,
     card_text,
     card_text_within,
@@ -1607,6 +1609,32 @@ def _left_out_line(req: BriefRequirement, *, agreed: bool, label: str | None = N
         tr="- Daha basit sürümde çıkarıldı: {what}",
         what=what,
     )
+
+
+def _card_summary(reply: str) -> str:
+    """The approval card's copy of the draft reply (KRI-1403).
+
+    Two or more "Left out as agreed" lines become one line with their count: the creator chose
+    them on the question just before, and the card has to fit on one screen (ylab, build 1977:
+    a 14-line card blanked the chat). The draft reply itself keeps every line.
+    """
+    prefix = say(
+        en="- Left out as agreed: {what}",
+        tr="- Kararlaştırdığımız gibi çıkarıldı: {what}",
+        what="",
+    )
+    lines = reply.split("\n")
+    agreed = [index for index, line in enumerate(lines) if line.startswith(prefix)]
+    if len(agreed) < 2:
+        return reply
+    count = say(
+        en="- Left out as agreed: {count} of your asks",
+        tr="- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin",
+        count=len(agreed),
+    )
+    kept = [line for index, line in enumerate(lines) if index not in agreed[1:]]
+    kept[agreed[0]] = count
+    return "\n".join(kept)
 
 
 # KRI-1236: an ending the simpler version keeps without its arrow. The draft's coverage maps
@@ -4200,6 +4228,8 @@ def _complete_draft_turn(
         db.add(render_execution)
         db.flush()
         copy_notice = _restored_copy_notice(db, thread.id, planned)
+        card_shown = approval_card_disclosures(route_disclosures)
+        card_notice = card_text(card_shown) if card_shown else None
         approval = CreatorAgentApproval(
             creator_id=thread.creator_id,
             thread_id=thread.id,
@@ -4216,13 +4246,18 @@ def _complete_draft_turn(
             # KRI-689: the speed heads-up rides on the card too, unless the KRI-700 reply
             # (which already ends with it) became the summary. KRI-1352: words the server
             # restored to the brief are shown on the card before anyone approves them.
+            # KRI-1403: the card fits one screen: no plan notes the route won't use, and one
+            # line for the asks the creator just agreed to leave out.
             consequence_summary=" ".join(
                 part
                 for part in (
-                    f"Render this draft: {approval_summary}",
+                    "Render this draft: "
+                    + approval_card_text(_card_summary(approval_summary), route_disclosures),
                     copy_notice,
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
-                    route_notice if route_notice and route_notice not in approval_summary else None,
+                    card_notice
+                    if card_notice and route_notice and route_notice not in approval_summary
+                    else None,
                 )
                 if part
             ),

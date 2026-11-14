@@ -130,6 +130,7 @@
       "KriaUITests/ResearchPreviewApprovalUITests/testSourcedWordingAndSourcesShowBeforeApprovalAndASourceOpensInApp",
       "KriaUITests/ResearchPreviewApprovalUITests/testADraftWithoutResearchLooksUnchanged",
       "KriaUITests/ResearchPreviewApprovalUITests/testTurkishChatGetsTurkishCardWords",
+      "KriaUITests/LongApprovalCardUITests/testTheYlabApprovalCardFitsTheScreenAndTheChatNeverGoesBlank",
       "KriaUITests/MomentOrderUITests/testReorderPointAndSendExactlyThatAnswerThenApprovalIsOffered",
       "KriaUITests/MomentOrderUITests/testARefusedAnswerKeepsTheCardAndTheChoicesAndSaysWhy",
       "KriaUITests/MomentOrderUITests/testAStaleAnswerRefreshesToTheNewestCardAndSaysSo",
