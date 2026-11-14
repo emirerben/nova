@@ -1,7 +1,8 @@
 name: PR evidence
 
 # Body edits recheck evidence without starting API/native suites again.
-# Make `PR evidence` required in branch protection after this workflow lands.
+# `PR evidence` must be a required status check in the main ruleset: it is the only
+# evidence gate. See docs/runbooks/request-to-output-standard.md.
 on:
   pull_request:
     branches: [main, dev]
@@ -11,9 +12,11 @@ permissions:
   contents: read
   pull-requests: read
 
+# Only a push supersedes an in-flight run. A body edit queues behind it: the
+# running check reads the body once, so it cannot see an edit made afterwards.
 concurrency:
   group: pr-evidence-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
   pr-evidence:
@@ -79,8 +82,8 @@ jobs:
           )"
           if [[ "$state" == bootstrap ]]; then
             echo "bootstrap=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Policy introduction only: independent PR evidence validation is not active; required lint validates the candidate policy."
-            echo "PR evidence is not active for this policy introduction. Required lint validates the candidate policy and its tests. Make PR evidence required after merge." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Policy introduction only: independent PR evidence validation is not active."
+            echo "PR evidence is not active for this policy introduction. Make PR evidence required after merge." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "bootstrap=false" >> "$GITHUB_OUTPUT"
           fi
@@ -105,11 +108,14 @@ jobs:
               or current.get("number") != int(os.environ["PR_NUMBER"])
               or current.get("head", {}).get("sha") != os.environ["HEAD_SHA"]
               or current.get("base", {}).get("ref") != original["base"]["ref"]
-              or not isinstance(current.get("body"), str)
+              or "body" not in current
+              or not isinstance(current["body"], (str, type(None)))
           ):
               raise SystemExit("Current PR evidence must belong to this PR, head and base branch")
           # Keep this run's immutable diff/base; refresh only the body as inert data.
-          original["body"] = current["body"]
+          # The API returns null for an empty description; the validator decides
+          # whether the changed paths need evidence at all.
+          original["body"] = current.get("body") or ""
           (Path(os.environ["RUNNER_TEMP"]) / "pr-evidence-event.json").write_text(json.dumps(event))
           PYTHON
       - name: Validate request-to-output evidence

@@ -24,7 +24,7 @@ on:
 # Per-PR concurrency so a quick edit-then-sync doesn't leave two runs racing.
 concurrency:
   group: require-local-test-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
   require-local-test:

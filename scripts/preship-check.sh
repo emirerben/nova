@@ -185,6 +185,7 @@ else
   fail "request-to-output evidence is missing or invalid:"
   echo "$OUT" | sed 's/^/         /'
   info "write the PR description to $PR_BODY_FILE or pass --pr-body /path/to/body.md"
+  info "patch_id for HEAD: $(python3 scripts/ci/pr-evidence.py --repo "$REPO" --base "$MB" --head HEAD --patch-id 2>/dev/null || echo unavailable)"
   info "contract: docs/runbooks/request-to-output-standard.md"
 fi
 

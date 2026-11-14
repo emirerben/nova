@@ -13,10 +13,12 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
+from typing import NamedTuple
 from urllib.parse import urlsplit
 
 KINDS = {
@@ -41,7 +43,6 @@ LEVELS = {
 }
 FIELDS = {
     "schema_version",
-    "head_sha",
     "claim",
     "issue",
     "original_request",
@@ -50,6 +51,7 @@ FIELDS = {
     "root_cause",
     "checks",
 }
+IDENTITY_FIELDS = {"patch_id", "head_sha"}
 ROW_FIELDS = {
     "kind",
     "status",
@@ -131,8 +133,115 @@ def commit(repo, ref):
     return sha
 
 
-def changed_paths(repo, base, head, working):
+class Scope(NamedTuple):
+    repo: Path
+    head: str
+    ancestor: str
+    repository: str | None
+
+
+def merge_base(repo, base, head):
     ancestor = git(repo, "merge-base", base, head).decode().strip()
+    require(SHA.fullmatch(ancestor), "git returned an invalid merge-base SHA")
+    return ancestor
+
+
+PINNED_DIFF = (
+    "-c",
+    "core.quotePath=true",
+    "-c",
+    "diff.suppressBlankEmpty=false",
+    "diff",
+    "--no-renames",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--no-relative",
+    "--diff-algorithm=myers",
+    "--indent-heuristic",
+    "--inter-hunk-context=0",
+    "--binary",
+    "-U1",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+)
+
+
+def pinned_git(repo, *args, stdin=None):
+    """Run git with no user or system config so every machine hashes the same diff."""
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    env.update(
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_SYSTEM=os.devnull,
+        GIT_CONFIG_NOSYSTEM="1",
+    )
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            input=stdin,
+            capture_output=True,
+            check=True,
+            env=env,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", b"") or b""
+        raise ValueError(
+            "git failed while fingerprinting the PR patch"
+            + (f": {detail.decode(errors='replace').strip()}" if detail else "")
+        ) from error
+
+
+def patch_id(repo, ancestor, head):
+    """Fingerprint of what the PR changes, independent of the commits carrying it.
+
+    Two properties are chosen deliberately.
+    - --verbatim keeps whitespace, so re-indenting a line (which moves code in or
+      out of an if/for block in Python) changes the id. Plain --stable ignores it.
+    - -U1 keeps one line of context on each side of a hunk, so moving an added
+      line to a different place changes the id. -U0 hid that. The cost is that a
+      base edit directly adjacent to the PR's hunks also changes the id; the
+      failure is closed and the author recomputes with --patch-id.
+    Line numbers stay out of the hash, so a rebase over distant edits keeps it.
+    --binary makes a changed video/image alter it. Diffing from the merge-base keeps
+    merge commits that only bring in the base branch out of it. The diff settings
+    and an empty git config are pinned so a local diff.algorithm or color.ui cannot
+    produce an id CI would not.
+    """
+    diff = pinned_git(repo, *PINNED_DIFF, ancestor, head, "--")
+    output = pinned_git(repo, "patch-id", "--verbatim", stdin=diff)
+    fields = output.split()
+    require(
+        len(fields) >= 1 and re.fullmatch(rb"[0-9a-f]{40}", fields[0]),
+        "PR has no patch to fingerprint (empty diff against the base branch)",
+    )
+    return fields[0].decode()
+
+
+def is_ancestor(repo, candidate, head):
+    try:
+        return (
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "merge-base",
+                    "--is-ancestor",
+                    candidate,
+                    head,
+                ],
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+    except OSError as error:
+        raise ValueError("git ancestry check failed") from error
+
+
+def changed_paths(repo, base, head, working):
+    ancestor = merge_base(repo, base, head)
     raw = git(repo, "diff", "--no-renames", "--name-only", "-z", ancestor, head, "--")
     if working:
         require(
@@ -241,7 +350,8 @@ def extract(body):
     return value
 
 
-def artifact(value, repo, head, repository):
+def artifact(value, scope):
+    repo, head, repository = scope.repo, scope.head, scope.repository
     value = substantive(value, "artifact", minimum=3)
     if "://" in value:
         url = urlsplit(value)
@@ -263,10 +373,38 @@ def artifact(value, repo, head, repository):
         pinned_commit = re.fullmatch(r"commit/([0-9a-f]{40})", tail)
         if pinned_blob or pinned_commit:
             match = pinned_blob or pinned_commit
-            require(match[1] == head, "artifact commit/blob must be pinned to head_sha")
+            sha = match[1]
             if pinned_blob:
-                return artifact(pinned_blob[2], repo, head, repository)
-            return f"commit:{head}"
+                require(
+                    is_ancestor(repo, sha, head),
+                    "artifact blob commit must be the PR head or one of its ancestors; "
+                    "after a rebase use a repo-relative path",
+                )
+                path = pinned_blob[2]
+                require(
+                    git(
+                        repo,
+                        "rev-parse",
+                        "--verify",
+                        "--end-of-options",
+                        f"{sha}:{path}",
+                    )
+                    == git(
+                        repo,
+                        "rev-parse",
+                        "--verify",
+                        "--end-of-options",
+                        f"{head}:{path}",
+                    ),
+                    "artifact blob differs between its pinned commit and the PR head",
+                )
+                return artifact(path, scope)
+            own = git(repo, "rev-list", f"{scope.ancestor}..{head}").decode().split()
+            require(
+                sha in own,
+                "artifact commit must be one of this PR's own commits; after a rebase use a repo-relative path",
+            )
+            return f"commit:{sha}"
         require(
             re.fullmatch(
                 r"actions/runs/[1-9]\d*/(?:attempts/[1-9]\d*|artifacts/[1-9]\d*)", tail
@@ -302,18 +440,31 @@ def artifact(value, repo, head, repository):
     return f"git:{head}:{value}"
 
 
-def validate(value, repo, head, repository):
+def validate(value, scope, patch):
+    head = scope.head
+    identity = IDENTITY_FIELDS & set(value)
     require(
-        FIELDS <= set(value) <= FIELDS | {"request_artifact"},
-        f"request-evidence requires fields {', '.join(sorted(FIELDS))}",
+        len(identity) == 1
+        and FIELDS | identity <= set(value) <= FIELDS | identity | {"request_artifact"},
+        f"request-evidence requires fields {', '.join(sorted(FIELDS | {'patch_id'}))}",
     )
     require(
         type(value["schema_version"]) is int and value["schema_version"] == 1,
         "schema_version must be 1",
     )
-    require(
-        value["head_sha"] == head, "head_sha must match the exact current PR head SHA"
-    )
+    if "patch_id" in value:
+        require(
+            value["patch_id"] == patch,
+            "patch_id does not match this PR's patch: the code changed after the "
+            "evidence was recorded, or the evidence belongs to another change. "
+            "Recompute with: python3 scripts/ci/pr-evidence.py --patch-id --base origin/main --head HEAD",
+        )
+    else:
+        # Receipts written before patch_id existed; drop once no open PR carries one.
+        require(
+            value["head_sha"] == head,
+            "head_sha must match the exact current PR head SHA (or switch to patch_id)",
+        )
     require(
         value["claim"] in {"local_fix", "request_fulfillment"},
         "claim must be local_fix or request_fulfillment",
@@ -353,12 +504,10 @@ def validate(value, repo, head, repository):
                 f"{kind}: passed requires an executed evidence_level",
             )
             substantive(row.get("command"), f"{kind}.command", minimum=3)
-            actual = artifact(row.get("artifact"), repo, head, repository)
+            actual = artifact(row.get("artifact"), scope)
             if kind in CONTENT_KINDS:
                 try:
-                    expected = artifact(
-                        row.get("expectation_source"), repo, head, repository
-                    )
+                    expected = artifact(row.get("expectation_source"), scope)
                 except ValueError as error:
                     raise ValueError(f"{kind}.expectation_source: {error}") from error
                 if kind in {"wrong_content_control", "request_fulfillment"}:
@@ -389,7 +538,7 @@ def validate(value, repo, head, repository):
     )
     by_kind = {row["kind"]: row for row in checks}
     if value.get("request_artifact"):
-        artifact(value["request_artifact"], repo, head, repository)
+        artifact(value["request_artifact"], scope)
     require(
         not any(
             row["status"] == "passed" and row["evidence_level"] == "production"
@@ -403,7 +552,7 @@ def validate(value, repo, head, repository):
             value.get("request_artifact"),
             "request_fulfillment requires request_artifact identifying the original/redacted/synthetic request fixture",
         )
-        artifact(value["request_artifact"], repo, head, repository)
+        artifact(value["request_artifact"], scope)
         require(
             all(
                 row["status"] == "passed" for row in checks if row["kind"] != "rollout"
@@ -437,6 +586,11 @@ def main():
     parser.add_argument("--event", type=Path)
     parser.add_argument("--working", action="store_true")
     parser.add_argument(
+        "--patch-id",
+        action="store_true",
+        help="print the patch_id for the receipt; no PR body needed",
+    )
+    parser.add_argument(
         "--requirements",
         action="store_true",
         help="print scope JSON; no PR body needed",
@@ -450,6 +604,10 @@ def main():
             base == pr["base"]["sha"] and head == pr["head"]["sha"],
             "event base/head SHA does not match supplied --base/--head",
         )
+    ancestor = merge_base(args.repo, base, head)
+    if args.patch_id:
+        print(patch_id(args.repo, ancestor, head))
+        return
     scope = requirements(args.repo, base, head, args.working)
     if args.requirements:
         print(json.dumps(scope))
@@ -472,7 +630,11 @@ def main():
         ) from error
     if pr and args.body_file:
         require(body == pr.get("body"), "body-file differs from event PR body")
-    claim = validate(extract(body), args.repo, head, repository)
+    claim = validate(
+        extract(body),
+        Scope(args.repo, head, ancestor, repository),
+        patch_id(args.repo, ancestor, head),
+    )
     print(
         f"PR request evidence accepted for {claim}. This validates the receipt and references; it does not verify content, remote artifact availability, or deployment."
     )

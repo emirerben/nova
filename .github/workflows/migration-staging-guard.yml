@@ -41,7 +41,7 @@ on:
 
 concurrency:
   group: migration-staging-guard-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 permissions:
   contents: read
