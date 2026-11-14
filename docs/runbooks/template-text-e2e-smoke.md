@@ -51,7 +51,7 @@ fly status --app nova-video
 
 The output should show:
 - `Image` digest corresponding to v0.4.26.0 or later (version ≥ 0.4.26.0 in
-  `src/apps/api/VERSION`).
+  `VERSION` at the repo root).
 - Both the `api` and `worker` process groups showing `running` instances.
 
 If the deploy is still in progress, wait until both groups are `running` before

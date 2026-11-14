@@ -48,7 +48,7 @@ Rules:
 ## Key paths
 - `src/apps/web/src/` — frozen web app; Claude Code denies reads there (`.claude/settings.json`). Don't search or open it unless the user explicitly asks for web/admin work.
 - `DESIGN.md` — design-system source of truth (tokens, loading rules, anti-slop, a11y); design reviews calibrate against it.
-- `src/apps/api/` — FastAPI/Celery; music routes live in `routes/{admin_music,music,music_jobs}.py` (`_validate_clip_count` stays public for admin reuse).
+- `src/apps/api/` — FastAPI/Celery; music routes live in `routes/{admin_music,music,music_jobs}.py` (`validate_clip_count` stays public for admin reuse).
 - `src/apps/api/app/routes/generative_jobs.py` — generative-edit submission + status + swap-song/retext; re-signs ready variant URLs on read (`_variants_for_response`)
 - `src/apps/api/app/routes/admin_generative.py` — `/admin/generative` dashboard list
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery task (see `docs/pipelines/generative.md`)
@@ -61,7 +61,7 @@ Rules:
 - `src/apps/api/app/services/seed_provenance.py` — links generated items to honoured idea seeds via `match_specs_to_seeds` and `PlanItem.source_idea_seed_id`.
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
-- `plans/` — implementation plans (`plans/README.md` has status; 001–023)
+- `plans/` — implementation plans (`plans/README.md` has status; 001–027)
 
 ## Local dev
 ```bash
@@ -157,7 +157,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 ## Template pipeline
 - **Single-pass CFR-before-xfade invariant:** every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. It covers `avg_frame_rate=1/0` inputs (phone HEVC, screen recordings) where `framerate=fps=N` aborts. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. See agents/DECISIONS.md (2026-05-18).
 - **Renderer split:** agentic templates + music-job lyrics → `text_overlay_skia.py` (skia-python, HarfBuzz); classic non-music + non-agentic → Pillow + libass. Dispatch: `_burn_text_overlays(use_skia=...)` + `_pre_burn_curtain_slot_text(is_agentic=...)` in `template_orchestrate.py`. Kill switch: `TEXT_RENDERER_SKIA_ENABLED=false`.
-- **Renderer-parity invariant:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor_left` in `tests/pipeline/test_text_overlay_skia.py` — extend for any new anchor/position field. An agentic/music overlay change is NOT verified by the admin preview. Incident: agents/DECISIONS.md (2026-05 #296/#297).
+- **Renderer-parity invariant:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor` in `tests/pipeline/test_text_overlay_skia.py` — extend for any new anchor/position field. An agentic/music overlay change is NOT verified by the admin preview. Incident: agents/DECISIONS.md (2026-05 #296/#297).
 - **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders the REAL Skia path in the prod image, asserts overlays un-clipped, writes `.overlay-verify/{montage.png,report.json}`. Guard: `tests/pipeline/test_overlay_verify.py`. **Agent pre-PR gate:** run it, read both files, fix any FAIL, then `/ship`.
 - **Gemini metadata never becomes on-screen overlay text** (architectural invariant). Overlay substitution input is exclusively user-provided (`inputs.location`). `TestNoGeminiTextLeaks` in `tests/tasks/test_template_orchestrate.py` is the sentinel. See agents/DECISIONS.md (2026-05-13). Does NOT cover `copy_writer` captions.
 - Placeholder substitution: `_resolve_overlay_text()` + `_is_subject_placeholder()` in `template_orchestrate.py`. Literal overlays SHOULD set `"subject_substitute": False`; `tests/scripts/test_seed_overlays_literal.py` enforces this.
