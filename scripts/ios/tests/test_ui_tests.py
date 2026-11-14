@@ -286,6 +286,25 @@ class UISelectionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     ui.expected_tests("smoke,creation")
 
+    def test_a_replaced_test_is_not_followed_as_a_rename(self):
+        body = (
+            "    func {name}() {{\n        let app = launch()\n"
+            '        app.buttons["save"].tap()\n'
+            '        XCTAssertTrue(app.staticTexts["Saved"].waitForExistence(timeout: 5))\n'
+            "    }}\n"
+        )
+        swift = "final class AlphaUITests: XCTestCase {{\n{}}}\n"
+        before = swift.format(body.format(name="testOld"))
+        renamed = swift.format(body.format(name="testNew"))
+        replaced = swift.format(
+            "    func testNew() {\n        XCTAssertEqual(unrelated(), 3)\n    }\n"
+        )
+        self.assertEqual(
+            ui.renamed_tests(before, renamed),
+            {"AlphaUITests/testOld": "AlphaUITests/testNew"},
+        )
+        self.assertEqual(ui.renamed_tests(before, replaced), {})
+
     def test_an_in_place_rename_is_named_by_check_and_followed_by_sync(self):
         real = json.loads(ui.MANIFEST.read_text())
         smoke = real["smoke"][0]

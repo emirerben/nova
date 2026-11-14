@@ -152,8 +152,7 @@ def journey_native_for_ids(ids):
     )
 
 
-def matches_journey_path(path, prefix):
-    return path.startswith(prefix) if prefix.endswith("/") else path == prefix
+matches_journey_path = journey_registry.matches_journey_path
 
 
 def journey_affected(path):

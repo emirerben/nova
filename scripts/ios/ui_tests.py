@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Conservative UI grouping and verification of actual XCTest result coverage."""
 
+import difflib
 import json
 import math
 import os
@@ -242,12 +243,28 @@ def git_renames(base, root=ROOT):
 CLASS_DECLARATION = re.compile(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b")
 
 
+def method_bodies(text):
+    """Each test method's source up to the next `func`, with its own name blanked."""
+    starts = [
+        (m.start(), m.group(1)) for m in re.finditer(r"\bfunc\s+(test\w+)\s*\(", text)
+    ]
+    ends = [at for at, _ in starts[1:]] + [len(text)]
+    return {
+        name: text[at:end].replace(name, "", 1) for (at, name), end in zip(starts, ends)
+    }
+
+
+def is_same_test(old_body, new_body):
+    return difflib.SequenceMatcher(None, old_body, new_body).ratio() >= 0.8
+
+
 def renamed_tests(before, after):
     """`Class/method` renames between two versions of one single-class Swift test file.
 
     A class rename maps every method; a method rename is followed only when the
-    method count is unchanged and each differing position is a pure rename, so
-    an added or removed test is never mistaken for one.
+    method count is unchanged and each differing position is a rename whose body
+    is still the same test (similarity >= 0.8), so an added, removed or replaced
+    test is never mistaken for one.
     """
     old_classes = CLASS_DECLARATION.findall(before)
     new_classes = CLASS_DECLARATION.findall(after)
@@ -255,9 +272,15 @@ def renamed_tests(before, after):
         return {}
     old_methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", before)
     new_methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", after)
+    old_bodies, new_bodies = method_bodies(before), method_bodies(after)
     pairs = dict(zip(old_methods, new_methods))
     if len(old_methods) != len(new_methods) or any(
-        old != new and (old in new_methods or new in old_methods)
+        old != new
+        and (
+            old in new_methods
+            or new in old_methods
+            or not is_same_test(old_bodies[old], new_bodies[new])
+        )
         for old, new in pairs.items()
     ):
         pairs = {method: method for method in old_methods if method in new_methods}
@@ -332,7 +355,10 @@ def bare_renames(renames):
     real tests outside the `Class/method` spelling."""
     classes, methods = {}, {}
     for old, new in renames.items():
-        (old_class, old_method), (new_class, new_method) = old.split("/"), new.split("/")
+        (old_class, old_method), (new_class, new_method) = (
+            old.split("/"),
+            new.split("/"),
+        )
         if old_class != new_class:
             classes[old_class] = new_class
         if old_method != new_method:

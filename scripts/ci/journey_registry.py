@@ -52,6 +52,9 @@ HAND_LISTS = (
     "scripts/ios/*.py",
     "scripts/kria/*.py",
     "formal/kria_turns/verify.py",
+    "src/apps/api/scripts/*.sh",
+    "src/apps/api/scripts/run_*.py",
+    "src/apps/api/scripts/dev/*.py",
     ".github/workflows/*.yml",
     "src/apps/api/tests/gates/reliability-gates.json",
 )
@@ -63,15 +66,32 @@ def split_tests(value) -> list[str]:
     return value.split() if isinstance(value, str) else list(value or [])
 
 
-def is_journey_mark(node) -> bool:
+def mark_aliases(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """Names bound to `pytest.mark` and to `pytest` by the module's imports."""
+    marks, pytests = {"mark"}, {"pytest"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "pytest":
+            marks.update(a.asname or a.name for a in node.names if a.name == "mark")
+        elif isinstance(node, ast.Import):
+            pytests.update(
+                a.asname for a in node.names if a.name == "pytest" and a.asname
+            )
+    return marks, pytests
+
+
+def is_journey_mark(node, aliases=({"mark"}, {"pytest"})) -> bool:
     """`pytest.mark.journey` or `mark.journey`, however it is imported or aliased."""
+    marks, pytests = aliases
+    if not (isinstance(node, ast.Attribute) and node.attr == "journey"):
+        return False
+    base = node.value
+    if isinstance(base, ast.Name):
+        return base.id in marks
     return (
-        isinstance(node, ast.Attribute)
-        and node.attr == "journey"
-        and (
-            (isinstance(node.value, ast.Attribute) and node.value.attr == "mark")
-            or (isinstance(node.value, ast.Name) and node.value.id == "mark")
-        )
+        isinstance(base, ast.Attribute)
+        and base.attr == "mark"
+        and isinstance(base.value, ast.Name)
+        and base.value.id in pytests
     )
 
 
@@ -111,8 +131,9 @@ def marked_files(root: Path = ROOT):
             raise ValueError(f"{rel}: cannot parse to read its journey marker: {error}")
         inside = module_marks(tree)
         called = {id(n.func): n for n in ast.walk(tree) if isinstance(n, ast.Call)}
+        aliases = mark_aliases(tree)
         for node in ast.walk(tree):
-            if not is_journey_mark(node):
+            if not is_journey_mark(node, aliases):
                 continue
             call = called.get(id(node))
             if id(node) not in inside or call is None:
@@ -207,13 +228,17 @@ def workflow_tests_ids(root: Path, known: set[str]) -> set[str]:
     return ids
 
 
+def matches_journey_path(path: str, prefix: str) -> bool:
+    """The one rule for a trigger path: a directory (trailing `/`) or exactly one file."""
+    return path.startswith(prefix) if prefix.endswith("/") else path == prefix
+
+
 def path_exists(root: Path, path: str) -> bool:
-    """A trigger path is a file, a directory or a filename prefix some file starts with."""
+    """A trigger path must select something: `matches_journey_path` over the tree."""
     target = root / path
-    return target.exists() or (
-        target.parent.is_dir()
-        and any(child.name.startswith(target.name) for child in target.parent.iterdir())
-    )
+    if path.endswith("/"):
+        return target.is_dir() and any(child.is_file() for child in target.rglob("*"))
+    return target.is_file()
 
 
 def test_def_exists(path: Path, name: str) -> bool:
@@ -367,6 +392,18 @@ def check(
             problems.append(
                 f"{API}/{file} declares unknown journey {journey_id!r}; add the journey "
                 "to scripts/ci/journey-manifest.json or fix the id"
+            )
+    nodes = {
+        row["id"]
+        for row in rows
+        if any("::" in entry for entry in split_tests(row.get("api_tests")))
+    }
+    for file, journey_id, _ in marks:
+        if journey_id in nodes:
+            problems.append(
+                f"{API}/{file} marks journey {journey_id!r}, whose api_tests are named "
+                "nodes (journey-gate.py api-cases rejects a bare file); list the test "
+                "as file::test_name in scripts/ci/journey-manifest.json instead"
             )
     declared_steps = {step for _, _, step in marks}
     run_steps = workflow_steps(root)
