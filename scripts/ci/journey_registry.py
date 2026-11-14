@@ -38,6 +38,10 @@ TEST_REFERENCE = re.compile(
     r"(?<![\w/.-])((?:src/apps/api/)?tests/[\w/.-]+\.py)((?:::\w+)*)"
 )
 SWIFT_TESTS = "src/apps/ios/Tests"
+SWIFT_PACKAGE_TESTS = "src/apps/ios/Packages/*/Tests"
+ONLY_TESTING = re.compile(r"-only-testing:(\w+)/(\w+)(?:/(test\w+))?")
+XCTEST_ARG = re.compile(r"--xctest\s+(\w+)/(test\w+)")
+TESTS_CALL = re.compile(r"journey_registry\.py\s+tests\b")
 # Files that name tests by path but are not derived from markers. `check` fails
 # when one names a test that no longer exists; `sync` follows git renames in.
 HAND_LISTS = (
@@ -189,6 +193,29 @@ def workflow_steps(root: Path = ROOT) -> set[str]:
     return set(STEP_CALL.findall((root / ".github/workflows/ci.yml").read_text()))
 
 
+def workflow_tests_ids(root: Path, known: set[str]) -> set[str]:
+    """Journey ids named in or just above a `tests` call: those steps run the
+    marked files through `api_tests` instead of a `step` call."""
+    lines = (root / ".github/workflows/ci.yml").read_text().splitlines()
+    ids = set()
+    for index, line in enumerate(lines):
+        if TESTS_CALL.search(line):
+            window = "\n".join(lines[max(0, index - 3) : index + 1])
+            ids.update(
+                token for token in re.findall(r"[\w.-]+", window) if token in known
+            )
+    return ids
+
+
+def path_exists(root: Path, path: str) -> bool:
+    """A trigger path is a file, a directory or a filename prefix some file starts with."""
+    target = root / path
+    return target.exists() or (
+        target.parent.is_dir()
+        and any(child.name.startswith(target.name) for child in target.parent.iterdir())
+    )
+
+
 def test_def_exists(path: Path, name: str) -> bool:
     return bool(
         re.search(
@@ -210,15 +237,33 @@ def follower_files(root: Path) -> list[Path]:
     return sorted(files)
 
 
-def swift_test_ids(root: Path) -> set[str]:
-    """Every `Class/testName` some Swift file under the iOS Tests dir declares."""
-    ids = set()
-    for path in (root / SWIFT_TESTS).rglob("*.swift"):
-        text = path.read_text()
-        methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", text)
-        for name in re.findall(r"\bclass\s+(\w+)\b", text):
-            ids.update(f"{name}/{method}" for method in methods)
-    return ids
+def swift_test_ids(root: Path) -> tuple[set[str], set[str]]:
+    """(`Target/Class/test`, `Target/Class`) for every XCTest the iOS sources declare.
+
+    The target is the directory under a `Tests` folder, so `KriaTests` and
+    `KriaUITests` stay apart. A test belongs to a class declared above it in its
+    file, never to one declared below.
+    """
+    tests, classes = set(), set()
+    roots = [root / SWIFT_TESTS, *sorted(root.glob(SWIFT_PACKAGE_TESTS))]
+    for tests_root in roots:
+        for path in tests_root.rglob("*.swift"):
+            parts = path.relative_to(tests_root).parts
+            if len(parts) < 2:
+                continue
+            target, text = parts[0], path.read_text()
+            declared = [
+                (m.start(), m.group(1))
+                for m in re.finditer(r"\b(?:class|extension|struct)\s+(\w+)", text)
+            ]
+            classes.update(f"{target}/{name}" for _, name in declared)
+            for method in re.finditer(r"\bfunc\s+(test\w+)\s*\(", text):
+                tests.update(
+                    f"{target}/{name}/{method.group(1)}"
+                    for start, name in declared
+                    if start < method.start()
+                )
+    return tests, classes
 
 
 def hand_list_problems(root: Path) -> list[str]:
@@ -254,7 +299,9 @@ def stale_after_rename(root: Path, base: str | None, manifest: Path) -> list[str
         for old, new in sorted(moved.items()):
             variants = [(old, new)]
             if old.startswith(f"{API}/") and new.startswith(f"{API}/"):
-                variants.append((old.removeprefix(f"{API}/"), new.removeprefix(f"{API}/")))
+                variants.append(
+                    (old.removeprefix(f"{API}/"), new.removeprefix(f"{API}/"))
+                )
             for before, after in variants:
                 if rename_pattern(before).search(text):
                     problems.append(
@@ -265,18 +312,37 @@ def stale_after_rename(root: Path, base: str | None, manifest: Path) -> list[str
 
 
 def swift_problems(rows: list[dict], root: Path) -> list[str]:
+    """Native tests named by the manifest and by ci.yml's native steps must exist."""
     if not (root / SWIFT_TESTS).is_dir():
         return []
-    known = swift_test_ids(root)
+    tests, classes = swift_test_ids(root)
     problems = []
     for row in rows:
-        tests = [*row.get("xctests", []), *([row["xctest"]] if row.get("xctest") else [])]
-        for test in tests:
-            parts = test.removesuffix("()").split("/")
-            if len(parts) != 3 or "/".join(parts[1:]) not in known:
+        named = [
+            *row.get("xctests", []),
+            *([row["xctest"]] if row.get("xctest") else []),
+        ]
+        for test in named:
+            if test.removesuffix("()") not in tests:
                 problems.append(
                     f"{row['id']}: xctest {test!r} names no test under {SWIFT_TESTS}"
                 )
+    workflow = (root / ".github/workflows/ci.yml").read_text()
+    by_class = {test.split("/", 1)[1] for test in tests}
+    for target, name, method in ONLY_TESTING.findall(workflow):
+        found = (
+            f"{target}/{name}/{method}" in tests
+            if method
+            else f"{target}/{name}" in classes
+        )
+        if not found:
+            problems.append(
+                f"ci.yml -only-testing:{target}/{name}{'/' + method if method else ''} "
+                "names no native test"
+            )
+    for name, method in XCTEST_ARG.findall(workflow):
+        if f"{name}/{method}" not in by_class:
+            problems.append(f"ci.yml --xctest {name}/{method} names no native test")
     return problems
 
 
@@ -295,15 +361,24 @@ def check(
 
     for file, journey_id, _ in marks:
         if journey_id not in ids:
-            problems.append(f"{API}/{file} declares unknown journey {journey_id!r}")
+            problems.append(
+                f"{API}/{file} declares unknown journey {journey_id!r}; add the journey "
+                "to scripts/ci/journey-manifest.json or fix the id"
+            )
     declared_steps = {step for _, _, step in marks}
     run_steps = workflow_steps(root)
+    tests_ids = workflow_tests_ids(root, ids)
     for step in sorted(run_steps - declared_steps):
-        problems.append(f"ci.yml runs journey step {step!r} but no test declares it")
-    for step in sorted(declared_steps - run_steps):
+        problems.append(
+            f"ci.yml runs journey step {step!r} but no test declares it; add "
+            f'pytestmark = pytest.mark.journey("<id>", step="{step}") to its tests'
+        )
+    for step in sorted(declared_steps - run_steps - tests_ids):
         problems.append(
             f"journey step {step!r} is declared by "
-            f"{sorted(f for f, _, s in marks if s == step)} but ci.yml never runs it"
+            f"{sorted(f for f, _, s in marks if s == step)} but ci.yml never runs it; "
+            f"add `journey_registry.py step {step}` or `journey_registry.py tests <id>` "
+            "to a ci.yml step"
         )
     literal = LITERAL_TEST_PATH.findall((root / ".github/workflows/ci.yml").read_text())
     if literal:
@@ -313,6 +388,7 @@ def check(
             "journey_registry.py step <name>"
         )
 
+    declaration_problems = len(problems)
     for row in rows:
         for entry in split_tests(row.get("api_tests")):
             file, _, node = entry.partition("::")
@@ -331,12 +407,12 @@ def check(
                     f"{row['id']}: api_tests node {entry!r} has no such test"
                 )
         for path in row["paths"]:
-            if not (root / path).exists():
-                problems.append(f"{row['id']}: path {path!r} does not exist")
+            if not path_exists(root, path):
+                problems.append(f"{row['id']}: path {path!r} matches no file")
     problems += swift_problems(rows, root)
     problems += hand_list_problems(root)
     problems += stale_after_rename(root, base, manifest)
-    if problems:
+    if len(problems) > declaration_problems:
         problems.append(
             f"Fix: run `{FIX}` to follow git renames (stage the rename first) into "
             "scripts/ci/journey-manifest.json, the Makefile, scripts and workflows; "

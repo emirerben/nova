@@ -159,11 +159,13 @@ def stale_entries(root=ROOT):
         "classes": sorted(set(data["classes"]) - classes),
         "overrides": sorted(set(data["overrides"]) - names),
         "smoke": sorted(set(data["smoke"]) - inventory),
-        "sources": sorted(path for path in data["sources"] if not (root / path).is_file()),
+        "sources": sorted(
+            path for path in data["sources"] if not (root / path).is_file()
+        ),
     }
 
 
-def check(root=ROOT):
+def check(root=ROOT, base=None, journeys=None):
     """Problems that would make UI selection wrong or fall back to full, each with its fix."""
     try:
         stale = stale_entries(root)
@@ -178,11 +180,12 @@ def check(root=ROOT):
         manifest(root)
     except (OSError, ValueError, KeyError, TypeError) as error:
         problems.append(f"UI registry unreadable: {error}")
+    problems += stale_followers(root, base, journeys)
     if problems:
         problems.append(
             "Fix: run `make sync-test-registries` to follow renamed UI test files, "
-            "classes and methods (stage a file rename first); delete an entry whose "
-            "test was removed"
+            "classes and methods into the registry, workflows and self-tests (stage a "
+            "file rename first); delete an entry whose test was removed"
         )
     return problems
 
@@ -202,12 +205,16 @@ def inventory_matches(root=ROOT):
 
 def git_changes(base, root=ROOT):
     """(status letter, old path, new path) for every file changed since `base`."""
-    raw = subprocess.run(
-        ["git", "diff", "-M", "--name-status", "-z", base],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    ).stdout.decode().split("\0")
+    raw = (
+        subprocess.run(
+            ["git", "diff", "-M", "--name-status", "-z", base],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .split("\0")
+    )
     changes, index = [], 0
     while index < len(raw) and raw[index]:
         if raw[index].startswith("R"):
@@ -248,7 +255,8 @@ def renamed_tests(before, after):
     return {
         f"{old_classes[0]}/{old}": f"{new_classes[0]}/{pairs[old]}"
         for old in old_methods
-        if old in pairs and f"{old_classes[0]}/{old}" != f"{new_classes[0]}/{pairs[old]}"
+        if old in pairs
+        and f"{old_classes[0]}/{old}" != f"{new_classes[0]}/{pairs[old]}"
     }
 
 
@@ -263,16 +271,80 @@ def follow_test_renames(data, renames):
         if old in data["overrides"]:
             data["overrides"][new] = data["overrides"].pop(old)
             changed.append(f"{old} -> {new}")
-        data["smoke"] = [
+        smoke = [
             f"KriaUITests/{new}" if test == f"KriaUITests/{old}" else test
             for test in data["smoke"]
         ]
+        if smoke != data["smoke"]:
+            data["smoke"] = smoke
+            changed.append(f"smoke {old} -> {new}")
     return changed
+
+
+def test_renames(base, root=ROOT):
+    """`Class/method` renames in the Swift tests between `base` and the working tree."""
+    renames = {}
+    for status, old, new in git_changes(base, root):
+        if (
+            old.startswith(SWIFT_TEST_ROOT)
+            and new.startswith(SWIFT_TEST_ROOT)
+            and status in "MR"
+            and new.endswith(".swift")
+        ):
+            before = subprocess.run(
+                ["git", "show", f"{base}:{old}"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            ).stdout
+            renames.update(renamed_tests(before, (root / new).read_text()))
+    return renames
+
+
+def swift_name_pattern(test):
+    return re.compile(rf"(?<!\w){re.escape(test)}(?!\w)")
+
+
+def swift_followers(root, journeys=None):
+    """Files that name a Swift test as `Class/method`: the journey manifest, the
+    workflows' native steps and these self-tests."""
+    files = [journeys or root / "scripts/ci/journey-manifest.json"]
+    for pattern in (".github/workflows/*.yml", "scripts/ios/tests/*.py"):
+        files += sorted(root.glob(pattern))
+    return [path for path in files if path.is_file()]
+
+
+def stale_followers(root, base=None, journeys=None):
+    """Followers that still name a test git renamed since `base`."""
+    try:
+        base = (
+            base
+            or subprocess.run(
+                ["git", "merge-base", "HEAD", "origin/main"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+        renames = test_renames(base, root)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    problems = []
+    for path in swift_followers(root, journeys):
+        text = path.read_text()
+        for old, new in sorted(renames.items()):
+            if swift_name_pattern(old).search(text):
+                problems.append(
+                    f"{path.relative_to(root).as_posix()} still names {old!r}, "
+                    f"which git renamed to {new!r}"
+                )
+    return problems
 
 
 def sync(root=ROOT, base=None, journeys=None):
     """Follow git renames of files, classes and test methods into the hand-kept
-    entries (and the journey manifest's xctests); return what changed."""
+    entries (and every file that names the test); return what changed."""
     if base is None:
         base = subprocess.run(
             ["git", "merge-base", "HEAD", "origin/main"],
@@ -281,36 +353,26 @@ def sync(root=ROOT, base=None, journeys=None):
             capture_output=True,
             text=True,
         ).stdout.strip()
-    journeys = journeys or root / "scripts/ci/journey-manifest.json"
     data = json.loads(MANIFEST.read_text())
-    journey_text = journeys.read_text() if journeys.exists() else ""
-    changed, renames = [], {}
+    changed = []
     for status, old, new in git_changes(base, root):
         if old in data["sources"] and new not in data["sources"] and status == "R":
             data["sources"][new] = data["sources"].pop(old)
             changed.append(f"{old} -> {new}")
-        if not (
-            old.startswith(SWIFT_TEST_ROOT)
-            and new.startswith(SWIFT_TEST_ROOT)
-            and status in "MR"
-            and new.endswith(".swift")
-        ):
-            continue
-        before = subprocess.run(
-            ["git", "show", f"{base}:{old}"], cwd=root, capture_output=True, text=True
-        ).stdout
-        renames.update(renamed_tests(before, (root / new).read_text()))
+    renames = test_renames(base, root)
     changed += follow_test_renames(data, renames)
-    for old, new in renames.items():
-        journey_text, count = re.subn(
-            rf'(?<=/){re.escape(old)}(?=[("\s])', new, journey_text
-        )
-        if count:
-            changed.append(f"journey xctest {old} -> {new} ({count})")
+    for path in swift_followers(root, journeys):
+        text = original = path.read_text()
+        for old, new in renames.items():
+            text, count = swift_name_pattern(old).subn(new, text)
+            if count:
+                changed.append(
+                    f"{path.relative_to(root).as_posix()}: {old} -> {new} ({count})"
+                )
+        if text != original:
+            path.write_text(text)
     data["classes"] = dict(sorted(data["classes"].items()))
     MANIFEST.write_text(json.dumps(data, indent=2) + "\n")
-    if journey_text:
-        journeys.write_text(journey_text)
     return changed
 
 
