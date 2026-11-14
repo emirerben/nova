@@ -4,7 +4,7 @@ Engines (per turn):
 
 * `recorded` — the fixture carries the outcome (a prod capture or an authored reference).
 * `v1_copilot` — the recorded *model output* is replayed through the REAL v1 copilot path:
-  `EditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops` (the same call chain
+  `ChatEditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops` (the same call chain
   `execute_copilot_edit` runs, minus the DB row locks). The reply and the resulting edit are
   computed, not stored, so a change to any of those functions moves the score.
 * `v2_kria` — cassettes execute the real agent, adapter, registry and edit compiler.
@@ -326,14 +326,14 @@ def replay_turn_rounds(turn_id: str, payload: dict[str, Any]) -> Any:
     import asyncio
     import time
 
-    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+    from app.agents.edit_copilot import ChatEditCopilotAgent, EditCopilotInput
     from app.routes._copilot import _repaired
     from app.services.creator_model_comparison import tools_agent
 
     from ..runners.eval_runner import build_eval_run_context
 
     client = _AnswerSequence([str(payload["raw_text"]), *payload.get("repairs", [])])
-    agent = EditCopilotAgent(client)
+    agent = ChatEditCopilotAgent(client)
     if payload["output_mode"] == "tools":
         agent = tools_agent(agent)
     agent_input = EditCopilotInput.model_validate(payload["agent_input"])
@@ -358,7 +358,7 @@ def replay_v1_copilot(
     turn: Turn, plan_before: FinalPlan, *, mode: Mode = "replay"
 ) -> tuple[FinalPlan, str, list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     """Run one recorded copilot turn through the real v1 chat-edit path."""
-    from app.agents.edit_copilot import EditCopilotAgent
+    from app.agents.edit_copilot import ChatEditCopilotAgent
     from app.routes._copilot import _honest_outcome
     from app.services.creation_editor_actions import _applied_summary, _rejection_reply
     from app.services.kria_editor_ops import KriaEditorOpError, compile_editor_ops
@@ -379,7 +379,7 @@ def replay_v1_copilot(
             client = default_client()
         else:
             client = CassetteModelClient(str(payload["raw_text"]))
-        output = EditCopilotAgent(client).run(
+        output = ChatEditCopilotAgent(client).run(
             agent_input,
             ctx=build_eval_run_context(f"request-following:{turn.turn_id}", is_live=mode == "live"),
         )
@@ -471,7 +471,7 @@ def replay_v2_editor(
         raw = json.dumps(raw, ensure_ascii=False)
 
     from app.agents._model_client import default_client
-    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+    from app.agents.edit_copilot import ChatEditCopilotAgent, EditCopilotInput
     from app.kria.planner import adapt_editor_action
     from app.kria.registry import KRIA_TOOLS
     from app.routes._copilot import _honest_outcome
@@ -520,7 +520,7 @@ def replay_v2_editor(
             "original_request": payload.get("original_request"),
         }
     )
-    output = EditCopilotAgent(observed).run(
+    output = ChatEditCopilotAgent(observed).run(
         agent_input,
         ctx=build_eval_run_context(f"request-following:{turn.turn_id}", is_live=mode == "live"),
     )
@@ -532,7 +532,9 @@ def replay_v2_editor(
         "unexecuted: stage/save/DB dispatch/device apply/render/export",
     ]
     proof = _proof(
-        observed, prompt_version=EditCopilotAgent.spec.prompt_version, compiler=compile_editor_ops
+        observed,
+        prompt_version=ChatEditCopilotAgent.spec.prompt_version,
+        compiler=compile_editor_ops,
     )
     if not ops:
         snapshot_plan = _plan_with_texts(

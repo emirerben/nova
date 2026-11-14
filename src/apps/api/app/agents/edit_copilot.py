@@ -14,6 +14,7 @@ import math
 import re
 import unicodedata
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, Literal, NamedTuple, get_args
@@ -33,7 +34,7 @@ from app.agents._tool_calls import ToolExchange
 from app.agents.editor_ops_v2 import overlays as _v2_overlays
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.length_options import length_options
-from app.agents.model_registry import cross_provider_fallback
+from app.agents.model_registry import JSON_COPILOT_MODEL, cross_provider_fallback
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
@@ -4085,15 +4086,17 @@ def _with_direction_fragment(prompt: str, snapshot: object) -> str:
 
 
 class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
+    """The copilot in plain JSON, on Gemini: slide posts and creation text composition.
+
+    The chat turn runs ``ChatEditCopilotAgent``, the only copilot ``EDIT_COPILOT_MODEL`` moves.
+    """
+
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.edit.copilot",
         prompt_id="edit_copilot",
         sensitive_io=True,
         prompt_version=EDIT_COPILOT_PROMPT_VERSION,
-        model=settings.edit_copilot_model,
-        # An OpenAI or Anthropic copilot answers on Gemini after a provider failure (KRI-1393);
-        # the Gemini default has none, as before.
-        fallback_models=cross_provider_fallback(settings.edit_copilot_model),
+        model=JSON_COPILOT_MODEL,
         max_attempts=2,
         backoff_s=(2.0,),
         # Durable Kria turns supply a shared deadline and post-processing
@@ -4102,7 +4105,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # 124.3 s at 16,384) before this deadline, so it ends as a retryable truncation
         # and never as an outcome-unknown fence (same rule as the Main Creator).
         timeout_s=130.0,
-        thinking_level=settings.edit_copilot_thinking_level,
+        thinking_level="high",
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.012,
     )
@@ -4747,6 +4750,21 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
     def refusal_clarification(self) -> str:
         return self.schema_clarification()
+
+
+class ChatEditCopilotAgent(EditCopilotAgent):
+    """The chat turn's copilot (``run_copilot_turn``): EDIT_COPILOT_MODEL at
+    EDIT_COPILOT_THINKING_LEVEL, read at import. ``configure_creator_agent`` applies
+    EDIT_COPILOT_OUTPUT_MODE to it, so a non-Gemini model here can answer with tool calls."""
+
+    spec: ClassVar[AgentSpec] = replace(
+        EditCopilotAgent.spec,
+        model=settings.edit_copilot_model,
+        # An OpenAI or Anthropic copilot answers on Gemini after a provider failure (KRI-1393);
+        # the Gemini default has none, as before.
+        fallback_models=cross_provider_fallback(settings.edit_copilot_model),
+        thinking_level=settings.edit_copilot_thinking_level,
+    )
 
 
 _TR_REFERENT_NOUNS = {"images": "Görseller", "videos": "Videolar", "clips": "Klipler"}

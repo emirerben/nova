@@ -29,20 +29,26 @@ Production is unchanged. No Fly secret or default model was touched. The lead fl
 Set on Fly, api and worker, then restart both:
 
 - `EDIT_COPILOT_MODEL=claude-sonnet-5-5`, `EDIT_COPILOT_THINKING_LEVEL=medium`,
-  `EDIT_COPILOT_OUTPUT_MODE=tools`.
-- An Anthropic planning budget: `AI_ANTHROPIC_PLANNING_BUDGET_USD` and
-  `AI_ANTHROPIC_MONTHLY_BUDGET_USD` above 0. With 0 every Sonnet reservation is refused and each
-  turn answers on the Gemini fallback.
+  `EDIT_COPILOT_OUTPUT_MODE=tools`. Set all three together.
+- `ANTHROPIC_API_KEY`, and an Anthropic planning budget: `AI_ANTHROPIC_PLANNING_BUDGET_USD` and
+  `AI_ANTHROPIC_MONTHLY_BUDGET_USD` above 0. The `planning` capability is always metered, so with
+  0 every Sonnet reservation is refused and each turn answers on the Gemini fallback. The prices
+  the reservation uses are the `claude-sonnet-5-5` entry in `app/agents/model_registry.py`.
 
 A non-Gemini copilot now falls back to `gemini-3.1-pro-preview` inside the same turn (registry
 `cross_provider_fallback`); in tools mode the fallback also answers with tool calls. Rollback:
 unset the three copilot settings and restart. JSON mode is byte-identical to before this change.
 
-`EDIT_COPILOT_MODEL` also moves the slide-post chat edit and AI-prepared slide paths
-(`services/slide_post_chat_edit.py`, `services/slide_post_ai_prepared.py`). They build the copilot
-directly, so they stay in JSON mode, and Sonnet in JSON mode is unmeasured here (one invalid-JSON
-copilot answer in the earlier pilot). Check a slide post before the flip, or keep those paths on
-Gemini.
+The three settings move the chat turn only (KRI-1384): `run_copilot_turn`, which serves the
+plan-item copilot route, the Kria planner's edits and creation-thread chat edits. Every other
+caller of the copilot's model answers in plain JSON with no tool-call path, so it reads
+`JSON_COPILOT_MODEL` in `app/agents/model_registry.py` (Gemini, thinking as before) and stays put:
+the slide-post chat edit, the AI-prepared slide executor, creation text composition and the
+research writers and reviewer. Sonnet in JSON mode is unmeasured here (one invalid-JSON copilot
+answer in the earlier pilot). `tests/agents/test_copilot_model_scope.py` runs those callers with
+the flip set and fails if any of them moves;
+`docs/reviews/kri-1384/scripts/compare_copilot_model_scope.sh` shows that with the defaults every
+request and spec is byte-identical to the tree before the split.
 
 ## The numbers
 
@@ -193,7 +199,8 @@ for a full Gemini tools re-record (about $8); it is the open item below.
   Gemini tools mode has five turns of evidence.
 - **Canary before the flip**: the request-following set is synthetic footage and the copilot path
   only. Production turns add the planner, prompt caches that start cold, and the phone.
-- **Slide posts** follow `EDIT_COPILOT_MODEL` in JSON mode (see the flip section).
+- **Slide posts** stay on Gemini JSON after the flip (KRI-1384). Moving them needs a tools path
+  and a measurement of its own.
 - **Sol's one-call-per-response** makes multi-op edits slow; measure Sol again if OpenAI exposes a
   way to batch calls, or give Sol a larger round budget per turn.
 

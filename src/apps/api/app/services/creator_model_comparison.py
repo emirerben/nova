@@ -42,9 +42,9 @@ def agent_class(name):
 
         return MainCreatorAgent
     if name == "edit_copilot":
-        from app.agents.edit_copilot import EditCopilotAgent
+        from app.agents.edit_copilot import ChatEditCopilotAgent
 
-        return EditCopilotAgent
+        return ChatEditCopilotAgent
     raise ValueError("unsupported agent")
 
 
