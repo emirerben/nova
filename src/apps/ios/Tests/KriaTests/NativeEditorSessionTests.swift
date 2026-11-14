@@ -9029,7 +9029,7 @@ final class NativeEditorSessionTests: XCTestCase {
         return (session, uploads, target)
     }
 
-    private static func devicePlacementSessionWithSpy() async throws -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
+    static func devicePlacementSessionWithSpy() async throws -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
         let threadID = UUID()
         var authoritative = variant(duration: 2, generation: "generation-1")
         authoritative["render_destination"] = .string("device")
