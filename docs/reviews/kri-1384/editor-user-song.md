@@ -64,6 +64,29 @@ Control for mode 6. With the `payload[Self.userSongKey] == nil` gate removed,
 `testAChatHeadWithOnlyASongEditIsNotACommittedSnapshot` fails. The clean text becomes the head's
 `["unsaved"]` instead of the published `["hello"]`. With the gate restored, it passes.
 
+## Chat undo puts the song back (KRI-1384, after #2316)
+
+#2316 drops a staged chat lane from an open editor when a newer chat head carries that lane at the
+saved value (`DraftSnapshot.restoredChatSections`, `NativeEditorSession.dropRestoredChatSections`).
+The song lane now takes part. Replaying a `set_user_song` restore record writes the section as
+`removed: false` with no field set (`chat-undo.md`), so `chatLanes` reads a readable, empty
+`user_song` as restored and a non-empty one as changed. An unreadable one is neither. No editor
+snapshot carries the song edit, so the drop compares `document.userSong` with the staged song
+instead of `snapshot(for:)`, which is nil for this lane on both sides.
+
+Today the server does not seal `set_user_song` turns for undo, so chat refuses to undo them. This
+covers the iPhone half only and is not an end-to-end song undo.
+
+- `testANewerChatHeadThatPutsTheSongBackDropsTheStagedSong`: the staged song leaves the editor,
+  the editor's Undo brings it back, and the same head is not applied twice.
+- `testANewerChatHeadThatPutsTheSongBackLeavesASongTheCreatorEditedSinceAlone`: a volume the
+  creator set after the chat staged the song survives.
+
+Controls. Without the restored insert in `chatLanes`, the first test fails 5 assertions (the song
+stays at volume 0.4). With the drop comparing `snapshot(for:)` as before, the second test fails:
+the creator's 0.7 is erased to nil. Both pass with the change. After the rebase the four suites
+above ran 511 tests with 0 failures.
+
 ## Not covered
 
 - Native export of a staged chat song is not exercised here. The preview and Save reuse the

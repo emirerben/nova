@@ -2523,7 +2523,8 @@ enum EditorOpenIntent { case warm, open }
     private func dropRestoredChatSections(_ restored: Set<EditorSection>, revision: Int) -> Bool {
         guard var staged = chatStagedDocument else { return false }
         let untouched = restored.intersection(chatStagedSections)
-            .filter { document.snapshot(for: $0) == staged.snapshot(for: $0) }
+            // No snapshot carries the song edit, so its lane compares the edit itself.
+            .filter { $0 == .userSong ? document.userSong == staged.userSong : document.snapshot(for: $0) == staged.snapshot(for: $0) }
         guard !untouched.isEmpty else { return false }
         appendUndo(document); redoStack.removeAll()
         for section in untouched {

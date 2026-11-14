@@ -744,6 +744,40 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasOnlyChatStagedChanges)
     }
 
+    /// KRI-1384: a newer chat head that puts the song back to the saved one (`removed: false`, nothing set, as
+    /// replaying a `set_user_song` restore record writes it) drops the staged song from the open editor.
+    func testANewerChatHeadThatPutsTheSongBackDropsTheStagedSong() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let jobID = try XCTUnwrap(fake.draftSnapshot.baseJobID)
+        fake.draftSnapshot = Self.chatSongHead(.object(["volume": .number(0.4), "removed": .bool(false)]), revision: 2, jobID: jobID)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.4))
+        fake.draftSnapshot = Self.chatSongHead(.object(["removed": .bool(false)]), revision: 3, jobID: jobID)
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.document.userSong, "the chat's undo reached the editor")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.yourSongControls?.volume, 1)
+        session.undo()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.4), "the editor's Undo brings the chat song back")
+        session.redo()
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.document.userSong, "the same head is not applied twice")
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    /// The creator changed the song after the chat staged it: their edit is not the chat's to undo.
+    func testANewerChatHeadThatPutsTheSongBackLeavesASongTheCreatorEditedSinceAlone() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let jobID = try XCTUnwrap(fake.draftSnapshot.baseJobID)
+        fake.draftSnapshot = Self.chatSongHead(.object(["volume": .number(0.4), "removed": .bool(false)]), revision: 2, jobID: jobID)
+        await session.synchronizePromptRevision()
+        session.setUserSongVolume(0.7)
+        fake.draftSnapshot = Self.chatSongHead(.object(["removed": .bool(false)]), revision: 3, jobID: jobID)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.7))
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
     /// A chat turn's head (`merge_editor_draft`): the flat `user_song` section beside its nested copy, stamped
     /// with the phone's editor state version like every chat head.
     private static func chatSongHead(_ song: JSONValue, revision: Int, jobID: String) -> DraftSnapshot {
