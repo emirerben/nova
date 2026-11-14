@@ -857,8 +857,9 @@ class RejectedOp(BaseModel):
 _MAX_REPAIR_ROUNDS = 2
 _MAX_REPAIR_OPS = 12
 # Typed tool transport: a model that calls one tool per response (Sol) needs a round per
-# operation before it calls `reply`. Those rounds are bounded here and by the turn deadline.
-MAX_TOOL_ROUNDS = 6
+# operation before it calls `reply`: at most one per op of a bundle, then the reply. The turn
+# deadline bounds them too.
+MAX_TOOL_ROUNDS = MAX_EDITOR_OPS + 1
 
 
 class CopilotRepair(BaseModel):
