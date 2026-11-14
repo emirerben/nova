@@ -433,8 +433,7 @@ class VerifyShellTests(unittest.TestCase):
         return [call for call in self.calls if call[-1] == "test-without-building"]
 
     def overran_first(self, group="smoke"):
-        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
-        return sorted(data["groups"][group])[0]
+        return sorted(ui.manifest(self.root)["groups"][group])[0]
 
     def test_a_test_past_the_time_allowance_gets_one_rerun(self):
         # xcodebuild never retries a test that runs past its allowance, so one

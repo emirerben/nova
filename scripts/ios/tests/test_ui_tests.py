@@ -76,7 +76,8 @@ class UISelectionTests(unittest.TestCase):
                 self.assertEqual(ui.weights({"new"}), {"new": 90})
 
     def test_registry_follows_the_tests_and_every_test_is_in_one_group(self):
-        self.assertEqual(ui.check(), [])
+        problems = ui.check()
+        self.assertFalse(problems, "\n".join(problems))
         data = ui.manifest()
         features = [
             test
@@ -329,9 +330,9 @@ class UISelectionTests(unittest.TestCase):
                     ui.expected_tests("smoke", root),
                 )
                 self.assertIn("EditorUITests/testBackReturns", journeys.read_text())
-                self.assertIn(
-                    "AccountPrivacyUITests/testATypeFollows", json.loads(groups.read_text())["overrides"]
-                )
+                overrides = json.loads(groups.read_text())["overrides"]
+                self.assertIn("AccountPrivacyUITests/testATypeFollows", overrides)
+                self.assertNotIn(override, overrides)
 
     def test_focused_filters_preserve_smoke_and_deduplicate(self):
         data = ui.manifest()

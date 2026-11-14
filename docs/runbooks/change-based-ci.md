@@ -130,15 +130,17 @@ without a marker and `xctests` stay in the manifest.
 
 `make check-test-registries` (also a `scripts/ci` unit test and
 `preship-check.sh`) fails on a manifest path, test or `xctests` entry that does
-not exist, a Makefile, `scripts/verify-kria.sh` or non-`ci.yml` workflow that
-names a test that does not exist, a hand-kept file that still names a path git
+not exist, a Makefile, a script under `scripts/` or `formal/kria_turns`, the
+KRI-577 ledger `tests/gates/reliability-gates.json` or a non-`ci.yml` workflow
+that names a test that does not exist, a hand-kept file that still names a path git
 renamed, a marker whose step `ci.yml` never runs, a step with no marked test, an
 unknown journey id and a hand-listed test path in `ci.yml`; its last line names
 the fix. After a rename, `make sync-test-registries` rewrites the renamed paths
 in those files and follows Swift class and test-method renames into
 `ui-test-groups.json` and the manifest's `xctests` (stage a file rename first).
-Not derived yet: the manifest's `paths`, the Makefile, `verify-kria.sh` and
-workflow test lists (validated and rename-followed, not generated), and
+Not derived yet: the manifest's `paths`, the Makefile, `verify-kria.sh`,
+`reliability-gates.json`, `request-following-regressions.py` and workflow test
+lists (validated and rename-followed, not generated), and
 `ui-test-durations.json` / `ui-test-measured-durations.json` (an unrecorded test
 weighs the median; refresh with `scripts/ios/refresh-ui-durations.py`).
 
