@@ -2384,7 +2384,7 @@ enum EditorOpenIntent { case warm, open }
             return EditorClip(
                 id: id,
                 assetID: assetID,
-                sourceClipIndex: slot.clipIndex,
+                sourceClipIndex: slot.isBlank ? nil : slot.clipIndex,
                 start: window.start,
                 end: window.end,
                 trimIn: sourceStart,
@@ -5483,6 +5483,8 @@ enum EditorOpenIntent { case warm, open }
         if slot.raw["source_end_s"] != nil {
             slot.raw["source_end_s"] = .number(resized.start + resized.length * rate)
         }
+        // A blank has no source window to move.
+        if slot.isBlank { slot.inS = 0; slot.raw.removeValue(forKey: "source_start_locked") }
         if active.baseline.clips[index].raw["freeze_frame_s"]?.numberValue != nil {
             let baseline = active.baseline.clips[index]
             let clock = NativeClipSourceClock(slot: baseline)
@@ -9249,8 +9251,15 @@ enum EditorOpenIntent { case warm, open }
     /// `rebasesSplitLanes: false` is only for an edit that keeps every clip's window where it was.
     private func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next)
-        let retainedSplitIDs = Set(next.clips.filter { !$0.removed }.compactMap(\.splitSectionID))
+        // A section lives while a clip with footage does. Blanks alone have nothing to play, so they go with it.
+        let retainedSplitIDs = Set(next.clips.filter { !$0.removed && !$0.isBlank }.compactMap(\.splitSectionID))
         next.splitScreenSections.removeAll { !retainedSplitIDs.contains($0.id) }
+        for position in next.clips.indices.reversed() where next.clips[position].isBlank && !next.clips[position].removed
+            && !(next.clips[position].splitSectionID.map(retainedSplitIDs.contains) ?? false) {
+            var gone = next.clips.remove(at: position)
+            gone.removed = true
+            next.tombstones.append(gone)
+        }
         next.fitCollapseSectionDurations()
         guard next.splitScreenIsValid else { return }
         if !next.clips.isEmpty { next.editorState = "renderable" }
@@ -11365,6 +11374,50 @@ extension NativeEditorSession {
                 || lastPhoneRenderingCapabilities?.verifiedFeatures.contains("splitCollapse") == true)
     }
 
+    /// KRI-1421 (protocol 51): panels may hold a flat-colour block. Offered only while the server lists
+    /// `split_blank_panel` (or the pilot verified `splitBlankPanel`), because an older server cannot store a slot with no
+    /// clip index and its Save would refuse the edit.
+    var canFillSplitPanelsWithBlank: Bool {
+        KriaClientProtocolContract.version >= 51
+            && (document.capabilities["split_blank_panel"]?.editable == true
+                || lastPhoneRenderingCapabilities?.verifiedFeatures.contains("splitBlankPanel") == true)
+    }
+
+    /// True exactly when `fillSplitPanelWithBlank` has room, which is when `canAddToSplitPanel` does.
+    func canFillSplitPanelWithBlank(sectionID: String, panel: Int) -> Bool {
+        canFillSplitPanelsWithBlank && canAddToSplitPanel(sectionID: sectionID, panel: panel)
+    }
+
+    /// One undo step: a block of the section's background colour covers the panel's free time (the gap under the
+    /// playhead, else the time after its last clip), and is selected so its colour can be changed.
+    func fillSplitPanelWithBlank(sectionID: String, panel: Int) {
+        guard canFillSplitPanelsWithBlank, canEditSplitScreen,
+              let section = document.splitScreenSections.first(where: { $0.id == sectionID }) else { return }
+        guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
+            splitScreenActionError = Self.splitPanelFullMessage
+            return
+        }
+        splitScreenActionError = nil
+        let slot = EditorTimelineSlot.blank(color: section.backgroundColor, durationS: opening.end - opening.start,
+                                            sectionID: sectionID, panelIndex: panel, offset: opening.start)
+        transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: sectionID, panel: panel, offset: opening.start) }
+        guard document.clips.contains(where: { $0.id == slot.id }) else { return }
+        select(.init(kind: .clip, id: clipID(for: slot.id).uuidString), seekToStart: false)
+    }
+
+    /// The selected clip's block colour (`#RRGGBB`), nil unless a blank block is selected.
+    var selectedBlankColor: String? {
+        guard let selection, selection.kind == .clip, let index = clipSlotIndex(selection.id) else { return nil }
+        return document.clips[index].blankColor
+    }
+
+    /// One undo step per change; anything but a six-digit hex colour is ignored.
+    func setSelectedBlankColor(_ hex: String) {
+        guard canEditSplitScreen, let color = EditorSpeakerBackground.normalizedColor(hex), let selection, selection.kind == .clip,
+              let index = clipSlotIndex(selection.id), document.clips[index].isBlank else { return }
+        transactDocument(section: .timeline) { $0.clips[index].raw["color"] = .string(color) }
+    }
+
     var canSplitSelectedClip: Bool {
         guard canEditTimeline, let selection, let found = sourceWindowSlot(for: selection) else { return false }
         let offset = currentTime - found.clip.start
@@ -11688,7 +11741,7 @@ extension NativeEditorSession {
     }
 
     private func isStillSlot(_ slot: EditorTimelineSlot) -> Bool {
-        (slot.raw["media_kind"]?.stringValue ?? slot.raw["kind"]?.stringValue) == "image"
+        slot.isBlank || (slot.raw["media_kind"]?.stringValue ?? slot.raw["kind"]?.stringValue) == "image"
             || resolvedSources?[slot.clipIndex].map { isStill($0.url) } == true
     }
 
@@ -11697,7 +11750,7 @@ extension NativeEditorSession {
         guard canEditSplitScreen, (2...3).contains(count), let id = selectedSplitScreenSectionID,
               let sectionIndex = document.splitScreenSections.firstIndex(where: { $0.id == id }),
               document.splitScreenSections[sectionIndex].panelCount != count,
-              document.clips.contains(where: { !$0.removed && $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) < count }) else { return }
+              document.clips.contains(where: { !$0.removed && !$0.isBlank && $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) < count }) else { return }
         transactDocument(section: .timeline) { value in
             value.splitScreenSections[sectionIndex].panelCount = count
             value.splitScreenSections[sectionIndex].panelWeights = Array(repeating: 1, count: count)
@@ -11729,7 +11782,7 @@ extension NativeEditorSession {
         guard canEditSplitScreen, duration.isFinite, (minimumClipDuration...1800).contains(duration),
               let id = selectedSplitScreenSectionID,
               let index = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
-        guard document.clips.contains(where: { $0.splitSectionID == id && $0.splitOffsetS <= duration - minimumClipDuration + 0.000001 }) else {
+        guard document.clips.contains(where: { !$0.isBlank && $0.splitSectionID == id && $0.splitOffsetS <= duration - minimumClipDuration + 0.000001 }) else {
             splitScreenActionError = "Keep at least one clip inside the section. Move a clip earlier before shortening it."
             return
         }
@@ -11770,6 +11823,12 @@ extension NativeEditorSession {
         let late = a > 0.000001, early = b < length - 0.000001
         guard late || early else { return slot }
         var piece = slot
+        if slot.isBlank {
+            // A block has no footage to advance: only its window and place change.
+            piece.durationS = b - a; piece.durationBeats = nil
+            if slot.splitSectionID != nil { piece.raw["split_offset_s"] = .number(slot.splitOffsetS + a) }
+            return piece
+        }
         if slot.raw["freeze_frame_s"]?.numberValue != nil {
             piece = NativeClipSourceClock(slot: slot).sliced(from: a, to: b).applying(to: slot)
         } else {
@@ -11865,10 +11924,11 @@ extension NativeEditorSession {
     /// One undo step: the section becomes `keepPanel`'s clips in the order they play and the other panels go.
     /// A panel with no footage cannot replace the section.
     func removeSplitScreen(sectionID: String, keepPanel: Int) {
-        guard canEditSplitScreen, !document.splitPanelMembers(sectionID: sectionID, panel: keepPanel).isEmpty else { return }
+        guard canEditSplitScreen, document.splitPanelMembers(sectionID: sectionID, panel: keepPanel).contains(where: { !$0.isBlank }) else { return }
         transactDocument(section: .timeline) { value in
             guard let insertion = value.clips.firstIndex(where: { $0.splitSectionID == sectionID }) else { return }
-            let kept = value.clips.filter { $0.splitSectionID == sectionID && $0.splitPanelIndex == keepPanel }
+            // A blank only exists inside a split, so it never becomes a full-screen clip.
+            let kept = value.clips.filter { $0.splitSectionID == sectionID && $0.splitPanelIndex == keepPanel && !$0.isBlank }
                 .sorted { $0.splitOffsetS < $1.splitOffsetS }.map { slot -> EditorTimelineSlot in
                     var result = slot; result.clearSplitMembership(); return result
                 }
@@ -11913,7 +11973,7 @@ extension NativeEditorSession {
             let start = max(slot.splitOffsetS, part.start), end = min(slot.splitOffsetS + length, part.end)
             return end - start >= minimumClipDuration ? (start: start, end: end) : nil
         }
-        let footage = Set(block.filter { overlap($0, full) != nil }.compactMap(\.splitPanelIndex))
+        let footage = Set(block.filter { !$0.isBlank && overlap($0, full) != nil }.compactMap(\.splitPanelIndex))
         let selected = selection.flatMap { $0.kind == .clip ? clipSlotIndex($0.id) : nil }
             .flatMap { document.clips[$0].splitSectionID == sectionID ? document.clips[$0].splitPanelIndex : nil }
         guard let panel = selected.flatMap({ footage.contains($0) ? $0 : nil }) ?? footage.min() else { return nil }
@@ -11925,7 +11985,7 @@ extension NativeEditorSession {
             guard let length = slot.durationS, !slot.removed, slot.splitSectionID == sectionID else { sectionSlots.append(slot); continue }
             let rate = timelineClips.first(where: { $0.slotID == slot.id }).map { effectiveSourceRate(slot: slot, clip: $0) } ?? Self.explicitPlaybackRate(slot)
             let candidates: [(span: (start: Double, end: Double)?, inSection: Bool)] = [
-                (overlap(slot, kept), true), (slot.splitPanelIndex == panel ? overlap(slot, full) : nil, false),
+                (overlap(slot, kept), true), (slot.splitPanelIndex == panel && !slot.isBlank ? overlap(slot, full) : nil, false),
             ]
             let parts = candidates.compactMap { candidate in candidate.span.map { (start: $0.start, end: $0.end, inSection: candidate.inSection) } }
                 .sorted { $0.start < $1.start }

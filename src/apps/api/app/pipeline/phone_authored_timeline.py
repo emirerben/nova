@@ -18,7 +18,7 @@ from app.kria.recipes import (
 )
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
-from app.kria.split_screen import SplitScreenMembership, layout_split_timeline
+from app.kria.split_screen import SplitScreenMembership, is_blank_row, layout_split_timeline
 from app.pipeline.authored_timeline import render_presentation
 from app.pipeline.editor_render_window import phone_source_window
 from app.pipeline.phone_captions import (
@@ -106,6 +106,10 @@ def compile_phone_authored_timeline(
         for left, right in zip(ordered, ordered[1:]):
             panel_predecessors[id(right)] = left
     for index, row in enumerate(rows):
+        if is_blank_row(row):
+            # A blank has no source or receipt: it rides on its section as `blanks` (already
+            # laid out above), never as a track clip, so audio and ownership never see it.
+            continue
         if not 0 <= row["clip_index"] < len(catalog):
             raise ValueError("authored source index is outside the source catalog")
         source = catalog[row["clip_index"]]

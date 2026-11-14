@@ -2115,7 +2115,11 @@ def compile_strategy_to_plan(
                 edit_format=strategy.edit_format,
             )
         media_ids = {media.media_id for media in manifest.media}
-        if any(panel.media_id not in media_ids for panel in strategy.split_screen.panels):
+        if any(
+            clip.media_id not in media_ids
+            for panel in strategy.split_screen.panels
+            for clip in panel.sequence
+        ):
             raise CreatorStrategyError("A split panel source is not in the approved media")
 
     # KRI-118 item 2: repair a chat-picked story shape (day_vlog/single_hero)

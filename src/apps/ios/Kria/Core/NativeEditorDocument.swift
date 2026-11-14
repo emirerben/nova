@@ -1353,6 +1353,8 @@ private extension EditorDocument {
     func encodeSlot(_ item: EditorTimelineSlot) -> JSONValue {
         var known: [String: JSONValue] = ["slot_id": item.id.map(JSONValue.string) ?? .null, "clip_index": .number(Double(item.clipIndex)), "in_s": .number(item.inS), "duration_beats": item.durationBeats.map { .number(Double($0)) } ?? .null, "duration_s": item.durationS.map(JSONValue.number) ?? .null, "removed": .bool(item.removed), "transition_after": .string(item.transitionAfter), "transition_duration_s": item.transitionDurationS.map(JSONValue.number) ?? .null, "parent_segment_id": item.parentSegmentID.map(JSONValue.string) ?? .null, "look_adjustments": item.lookAdjustments.map(JSONValue.object) ?? .null]
         if let lookPreset = item.lookPreset { known["look_preset"] = .string(lookPreset) }
+        // A blank has no source, and the server refuses a clip index on it.
+        if item.isBlank { known.removeValue(forKey: "clip_index") }
         return .object(merged(item.raw, known))
     }
     func encodeText(_ item: EditorTextElement) -> JSONValue { .object(merged(item.raw, ["id": .string(item.id), "text": .string(item.text), "start_s": .number(item.startS), "end_s": .number(item.endS), "role": item.role.map(JSONValue.string) ?? .null])) }
@@ -1390,7 +1392,7 @@ private extension EditorDocument {
 private extension EditorDocument {
     // New placements have no slot_id until Save assigns one. Keep them through
     // draft hydration and subsequent chat/commit round trips.
-    static func decodeSlots(_ rows: [JSONValue]) -> [EditorTimelineSlot] { rows.compactMap { value in guard let o = object(value), let index = integer(o["clip_index"]), let inS = number(o["in_s"]) else { return nil }; return EditorTimelineSlot(id: string(o["slot_id"]), clipIndex: index, inS: inS, durationS: number(o["duration_s"]), durationBeats: integer(o["duration_beats"]), removed: o["removed"]?.boolValue ?? false, parentSegmentID: string(o["parent_segment_id"]), transitionAfter: string(o["transition_after"]) ?? "cut", transitionDurationS: number(o["transition_duration_s"]), lookPreset: string(o["look_preset"]), lookAdjustments: object(o["look_adjustments"]), raw: o) } }
+    static func decodeSlots(_ rows: [JSONValue]) -> [EditorTimelineSlot] { rows.compactMap { value in guard let o = object(value), let index = integer(o["clip_index"]) ?? (o["media_kind"]?.stringValue == EditorTimelineSlot.blankMediaKind ? -1 : nil), let inS = number(o["in_s"]) ?? (index == -1 ? 0 : nil) else { return nil }; return EditorTimelineSlot(id: string(o["slot_id"]), clipIndex: index, inS: inS, durationS: number(o["duration_s"]), durationBeats: integer(o["duration_beats"]), removed: o["removed"]?.boolValue ?? false, parentSegmentID: string(o["parent_segment_id"]), transitionAfter: string(o["transition_after"]) ?? "cut", transitionDurationS: number(o["transition_duration_s"]), lookPreset: string(o["look_preset"]), lookAdjustments: object(o["look_adjustments"]), raw: o) } }
     static func decodeText(_ rows: [JSONValue]) -> [EditorTextElement] { rows.compactMap { value in guard let o = object(value), let id = string(o["id"]), let text = string(o["text"]), let start = number(o["start_s"]), let end = number(o["end_s"]) else { return nil }; return EditorTextElement(id: id, text: text, startS: start, endS: end, role: string(o["role"]), raw: o) } }
     static func decodeCaptions(_ rows: [JSONValue]) -> [EditorCaptionCue] {
         var used = Set(rows.compactMap { object($0).flatMap { string($0["id"]) } })

@@ -825,13 +825,18 @@ def prepare_phone_editor_commit(
         None,
     )
     require_phone_voiceover_source_audio_client(before_variant)
-    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL
+    from app.services.client_protocol import SPLIT_BLANK_PANEL_PROTOCOL, SPLIT_COLLAPSE_PROTOCOL
     from app.services.phone_rollout import (
+        split_blank_client_supported,
         split_collapse_client_supported,
         split_screen_client_supported,
     )
 
-    if not split_screen_client_supported() or not split_collapse_client_supported():
+    if (
+        not split_screen_client_supported()
+        or not split_collapse_client_supported()
+        or not split_blank_client_supported()
+    ):
         try:
             split_recipe = device_status(job, variant_id).request.recipe
         except KeyError:
@@ -853,6 +858,15 @@ def prepare_phone_editor_commit(
                     "code": "client_update_required",
                     "feature": "split_collapse",
                     "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
+                },
+            )
+        if "splitBlankPanel" in capabilities and not split_blank_client_supported():
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "split_blank_panel",
+                    "minimum_client_protocol": SPLIT_BLANK_PANEL_PROTOCOL,
                 },
             )
     staged = _StagedJob(job)
