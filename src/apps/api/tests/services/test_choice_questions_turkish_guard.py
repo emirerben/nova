@@ -471,18 +471,54 @@ def test_source_hands_every_choice_intro_and_reason_through_say() -> None:
     tree = ast.parse(Path(cq.__file__).read_text())
     problems: list[str] = []
 
+    say_funcs: set[str] = set()
+    say_tables: set[str] = set()
+
     def is_say(node: ast.AST) -> bool:
-        """A ``say()`` call, a choice between ``say()`` calls (one template per branch), or two
-        ``say()`` results joined (each piece is its own catalog key)."""
+        """A ``say()`` call, a choice between ``say()`` calls (one template per branch), two
+        ``say()`` results joined (each piece is its own catalog key), or (KRI-1408) a call to a
+        module helper that only returns ``say()`` text, or to a table of such lambdas
+        (``_SOURCE_EXACT[owner](asked_s)``: one whole sentence per owner)."""
         if isinstance(node, ast.IfExp):
             return is_say(node.body) and is_say(node.orelse)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             return is_say(node.left) and (
                 is_say(node.right) or isinstance(node.right, ast.Name)  # ``+ more`` (a say())
             )
+        if not isinstance(node, ast.Call):
+            return False
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id == "say" or func.id in say_funcs
         return (
-            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "say"
+            isinstance(func, ast.Subscript)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in say_tables
         )
+
+    module_funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+    for node in tree.body:
+        value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
+        target = node.targets[0] if isinstance(node, ast.Assign) else getattr(node, "target", None)
+        if (
+            isinstance(value, ast.Dict)
+            and isinstance(target, ast.Name)
+            and value.values
+            and all(isinstance(v, ast.Lambda) and is_say(v.body) for v in value.values)
+        ):
+            say_tables.add(target.id)
+    grown = True
+    while grown:  # helpers returning another say() helper's text count too
+        grown = False
+        for func in module_funcs:
+            returns = [n.value for n in ast.walk(func) if isinstance(n, ast.Return)]
+            if (
+                func.name not in say_funcs
+                and returns
+                and all(r is not None and is_say(r) for r in returns)
+            ):
+                say_funcs.add(func.name)
+                grown = True
 
     for func in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
         if func.name == "ask_user_choice":
