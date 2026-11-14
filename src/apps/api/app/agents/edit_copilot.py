@@ -4483,6 +4483,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             bulk_context = _bulk_clarification_context([], input.utterance, bulk_pending_actions)
 
         if ops and self.compile_check is not None:
+            from app.services.thought_summaries import publish_step  # noqa: PLC0415
+
+            publish_step(
+                f"Checking {len(ops)} {'edit' if len(ops) == 1 else 'edits'} in your editor"
+            )
             ops = self._compiled_ops(ops, state)
         if repair is not None:
             # A rejected op the answer neither corrected nor declared unmet stays not done.

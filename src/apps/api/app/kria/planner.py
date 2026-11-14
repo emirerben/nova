@@ -3310,7 +3310,10 @@ async def _call_main_creator(
     item_id: uuid.UUID | None = None,
     creator_agent_session_id: uuid.UUID | None = None,
 ) -> MainCreatorOutput:
-    from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
+    from app.services.thought_summaries import (  # noqa: PLC0415
+        current_thought_publisher,
+        publish_step,
+    )
 
     request_id = paid_call_request_id(thread_id)
 
@@ -3334,8 +3337,11 @@ async def _call_main_creator(
         )
 
     async def _call() -> MainCreatorOutput:
+        publish_step("Planning your edit from your clips")
         try:
-            return await asyncio.to_thread(_run_agent)
+            plan = await asyncio.to_thread(_run_agent)
+            publish_step("Checking the plan against your request")
+            return plan
         except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
             # Provider work may still be billable, or a spend cap answers the same on every
             # retry. Never disguise either as a recoverable planning failure ("try again"):
