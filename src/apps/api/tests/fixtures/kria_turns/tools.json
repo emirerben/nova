@@ -2701,8 +2701,28 @@
               "title": "Audio Fade Out"
             },
             "clip_index": {
-              "title": "Clip Index",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Clip Index"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Color"
             },
             "duration_beats": {
               "anyOf": [
@@ -3074,7 +3094,6 @@
             }
           },
           "required": [
-            "clip_index",
             "in_s"
           ],
           "title": "EditorStateTimelineSlot",

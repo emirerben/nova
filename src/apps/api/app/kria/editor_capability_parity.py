@@ -249,9 +249,18 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("make_split_full_screen",),
         fields=("section_id", "at_s", "side", "panel"),
     ),
+    # KRI-1421: blank blocks are a person's action first. PR 2327 owns the split ops; until one
+    # places a blank (`add_split_panel_clip` with `blank: true`), the agent cannot.
+    "split_screen_blank": _g(
+        "agent_unsupported",
+        "fillSplitPanelWithBlank setSelectedBlankColor",
+        reason="A blank block in a split panel is placed and recoloured by hand; the split ops "
+        "(PR 2327) do not take a blank yet.",
+    ),
     "split_screen_queries": _g(
         "not_an_edit",
-        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved",
+        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved "
+        "canFillSplitPanelWithBlank",
         reason="Read-only checks the Split panel uses to decide what to offer.",
     ),
     # ---------------------------------------------------------------- audio
