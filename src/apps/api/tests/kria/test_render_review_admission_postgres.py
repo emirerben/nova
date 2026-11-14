@@ -900,14 +900,95 @@ async def test_authority_digest_ignores_read_side_effects_but_not_authority(
     assert authority_digest() != admitted
 
 
+async def _leftover_dispatchable_turn(*, oldest: bool = False) -> str:
+    """A queued turn some other test left behind: broker stubbed there, lease long gone."""
+    user, thread, _ = _seed_runtime_project()
+    await _submit(user, thread, "A turn some other test left queued")
+    with sync_session() as db:
+        db.execute(
+            text(
+                "UPDATE creator_agent_turns SET lease_expires_at = NULL, "
+                "created_at = CASE WHEN :oldest THEN TIMESTAMPTZ '2000-01-01 00:00:00+00' "
+                "ELSE created_at END WHERE thread_id = :thread"
+            ),
+            {"thread": thread, "oldest": oldest},
+        )
+        db.commit()
+    return thread
+
+
+@pytest.fixture
+def own_reconcile_lock(monkeypatch) -> int:
+    """A reconcile advisory-lock key only this test uses.
+
+    The real Postgres `pg_try_advisory_lock` still decides overlap, but an unrelated sweeper (a
+    parallel worker, a dev loop, another test) holds the production key, not this one, so it can
+    neither make this test's sweep skip nor be disturbed by the overlap control below."""
+    import uuid
+
+    from app.tasks import kria_runtime
+
+    key = uuid.uuid4().int & 0x7FFFFFFFFFFFFFFF
+    monkeypatch.setattr(kria_runtime, "_RECONCILE_ADVISORY_KEY", key)
+    return key
+
+
 @pytest.mark.asyncio
+async def test_an_overlapping_turn_sweep_skips_without_publishing_and_a_free_one_publishes(
+    monkeypatch, own_reconcile_lock
+):
+    from unittest.mock import Mock
+
+    from sqlalchemy import text as sql_text
+
+    from app.database import sync_engine
+    from app.tasks import kria_runtime
+    from app.tasks.kria_runtime import reconcile_kria_turns
+
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    delivered = Mock()
+    monkeypatch.setattr(kria_runtime.run_kria_turn, "apply_async", delivered)
+    monkeypatch.setattr(kria_runtime.execute_kria_approval, "apply_async", delivered)
+    thread = await _leftover_dispatchable_turn(oldest=True)
+    with sync_session() as db:
+        turn = db.scalar(
+            text("SELECT id::text FROM creator_agent_turns WHERE thread_id = :thread"),
+            {"thread": thread},
+        )
+
+    # Another sweeper holds the lock: this sweep must neither publish nor touch the turn.
+    with sync_engine.connect() as other_sweeper:
+        assert other_sweeper.execute(
+            sql_text("select pg_try_advisory_lock(:key)"), {"key": own_reconcile_lock}
+        ).scalar()
+        try:
+            skipped = reconcile_kria_turns.run()
+            assert skipped == {"published": 0, "settled": 0, "skipped": 1}
+            delivered.assert_not_called()
+        finally:
+            # A session lock outlives a pooled connection, so release this test's own key for sure.
+            other_sweeper.execute(
+                sql_text("select pg_advisory_unlock(:key)"), {"key": own_reconcile_lock}
+            )
+            other_sweeper.commit()
+
+    # Once it lets go, the next sweep publishes the same turn.
+    swept = reconcile_kria_turns.run()
+    assert "skipped" not in swept
+    assert swept["published"] >= 1
+    delivered.assert_any_call(args=[turn], task_id=turn, queue="agent-control")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crowded", [False, True], ids=["one-leftover", "fifty-older-leftovers"])
 async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconciler(
-    approved_publication, monkeypatch
+    approved_publication, monkeypatch, crowded, own_reconcile_lock
 ):
     from unittest.mock import Mock
 
     from app.models import CreatorGenerationReview
     from app.services import render_review_admission as admission
+    from app.tasks import kria_runtime
     from app.tasks.kria_runtime import reconcile_kria_turns
     from app.tasks.render_review import prepare_generation_review
 
@@ -931,9 +1012,30 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
         )
         db.commit()
 
+    # Another module's queued turn (its broker was stubbed there, and its 35 s lease runs out while
+    # a slow run is still going) is dispatchable when this test sweeps. A real publish would need
+    # Redis, which the free regression workflow does not run: the sweep is under test, not delivery.
+    # The sweep takes the oldest 50 eligible turns, so a crowded database must not hide the turn
+    # this test asserts on.
+    for _ in range(50 if crowded else 0):
+        await _leftover_dispatchable_turn()
+    # The asserted turn is the oldest eligible one, so the sweep's oldest-50 window always holds it.
+    stray_thread = await _leftover_dispatchable_turn(oldest=True)
+
+    delivered = Mock()
+    monkeypatch.setattr(kria_runtime.run_kria_turn, "apply_async", delivered)
+    monkeypatch.setattr(kria_runtime.execute_kria_approval, "apply_async", delivered)
     forbidden = Mock(side_effect=AssertionError("review recovery inside the 45s chat reconciler"))
     monkeypatch.setattr(admission, "reconcile_generation_reviews", forbidden)
-    reconcile_kria_turns.run()
+    swept = reconcile_kria_turns.run()
+    assert "skipped" not in swept, "the sweep ran: nothing else holds this test's lock key"
+    assert swept["published"] >= 1, "the sweep saw the leftover turn"
+    with sync_session() as db:
+        stray_turn = db.scalar(
+            text("SELECT id::text FROM creator_agent_turns WHERE thread_id = :thread"),
+            {"thread": stray_thread},
+        )
+    delivered.assert_any_call(args=[stray_turn], task_id=stray_turn, queue="agent-control")
     forbidden.assert_not_called()
     monkeypatch.undo()
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
