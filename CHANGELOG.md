@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.203.0] - 2026-11-14
+
+### Changed
+- feat(kria): chat "undo that" on the iPhone (KRI-1384) (#2316) <!-- release-pr: 2316 -->
+
 ## [0.88.202.0] - 2026-11-14
 
 ### Changed
