@@ -1,0 +1,105 @@
+name: Fix chain
+
+# KRI-1383: a third fix PR on one KRI ticket needs a failure-mode list
+# (docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule).
+# Body and title edits recheck without starting the heavy suites. When another fix
+# PR on the same ticket merges, fix-chain-recheck.yml reruns this check on the
+# open ones, so a green result cannot outlive the count it was computed against.
+# Skip marker (own line in the PR body, with a reason): [skip-fix-chain] <reason>
+# Add `Fix chain` to the required checks in branch protection after this lands.
+on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# Only a push supersedes an in-flight run; a body edit (the usual fix) queues
+# behind it instead of cancelling a run on the current head.
+concurrency:
+  group: fix-chain-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
+
+jobs:
+  fix-chain:
+    name: Fix chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted baseline policy
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .fix-chain-policy
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Check out candidate history as data
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .fix-chain-diff
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check fix chain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          script=.fix-chain-policy/scripts/ci/fix-chain-check.py
+          if [ ! -f "$script" ]; then
+            echo "::notice::Policy introduction only: fix-chain-check.py is not on the base branch yet, so nothing is enforced for this PR."
+            exit 0
+          fi
+          # Title, branch and body are read fresh as data; none is ever evaluated by the shell.
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pr.json"
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          temp = Path(os.environ["RUNNER_TEMP"])
+          pr = json.loads((temp / "pr.json").read_text())
+          if pr["head"]["sha"] != os.environ["HEAD_SHA"]:
+              raise SystemExit("PR head moved; a newer run will check it")
+          (temp / "body.md").write_text(pr.get("body") or "")
+          (temp / "title.txt").write_text(pr["title"])
+          (temp / "branch.txt").write_text(pr["head"]["ref"])
+          PYTHON
+          # The step runs outside any git checkout, so gh must be told the repo.
+          limit=5000
+          fetched=0
+          for attempt in 1 2 3; do
+            if gh pr list --repo "$GITHUB_REPOSITORY" --state merged --base main --limit "$limit" \
+                --json number,title,headRefName > "$RUNNER_TEMP/index.json"; then
+              fetched=1
+              break
+            fi
+            sleep "${FIX_CHAIN_RETRY_SLEEP:-5}"
+          done
+          if [ "$fetched" != 1 ]; then
+            echo "::error::Could not fetch the merged-PR index; fix PRs without a KRI id in the squash title cannot be counted. Re-run the check."
+            exit 1
+          fi
+          if [ "$(python3 -c 'import json,os,sys; print(len(json.load(open(os.environ["RUNNER_TEMP"] + "/index.json"))))')" -ge "$limit" ]; then
+            echo "::warning::Merged-PR index reached its $limit-PR limit; older fix PRs may not be counted by branch or title."
+          fi
+          args=(--repo .fix-chain-diff --main-ref "$BASE_SHA" --head "$HEAD_SHA"
+            --branch "$(cat "$RUNNER_TEMP/branch.txt")" --title "$(cat "$RUNNER_TEMP/title.txt")"
+            --body-file "$RUNNER_TEMP/body.md" --pr-index "$RUNNER_TEMP/index.json"
+            --pr-number "$PR_NUMBER")
+          while IFS= read -r f; do
+            case "$f" in *.md) args+=(--changed-file "$f") ;; esac
+          done < <(git -C .fix-chain-diff diff --name-only "$BASE_SHA...$HEAD_SHA")
+          set +e
+          out="$(python3 "$script" "${args[@]}" 2>&1)"
+          status=$?
+          set -e
+          echo "$out"
+          { echo '### Fix chain'; echo '```'; echo "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if echo "$out" | grep -q 'SKIPPED with reason'; then
+            echo "::warning::fix-chain skip marker used; reviewer should confirm the reason."
+          fi
+          exit "$status"
