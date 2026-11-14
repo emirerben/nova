@@ -21,6 +21,22 @@ U5  ``orientation`` / ``landscape_fit`` belong to no plan-review section, so the
 U6  The seal checks a replay that is not what the commit writes: both read one ``_replay``.
 U7  A hand edit to the lane after the chat turn is overwritten (the F1 rule): refused, nothing
     written.
+
+The creator's song (``set_user_song``):
+
+U9  The record holds the derived song (the plan's window and volume as the video plays them),
+    so the undo pins the song's end as one the creator set (``creator_end_s``) and the editor
+    differs from the one before the turn.
+U10 Restoring "no song edit" keeps the chat's volume or window, because a commit's None means
+    "leave it" and the merge keeps the chat's song keys.
+U11 Restoring after a removal keeps the song removed, because the merge never un-removes
+    (``removed: false`` is dropped).
+U12 The restored draft drops the flat ``user_song`` key, so a phone that staged the chat's song
+    never drops it. The key stays present and reads as empty (``{removed: false}``).
+U13 The undo loses the creator's own unsaved song edit from before the turn and goes back to the
+    saved song instead.
+U14 A hand edit to the song after the chat turn is overwritten (the F1 rule): refused, nothing
+    written. Covered for volume, window and removal by the U7 test.
 """
 
 from __future__ import annotations
@@ -124,7 +140,35 @@ CASES = {
         "video_shape",
         lambda _value: "fill",
     ),
+    "song volume": Case(
+        _probe("creator_song", {"op": "set_user_song", "volume": 0.6}),
+        "user_song",
+        "user_song",
+        lambda song: {**song, "volume": 0.8},
+    ),
+    "song window": Case(
+        _probe(
+            "creator_song", {"op": "set_user_song", "window_start_s": 12.0, "window_end_s": 40.0}
+        ),
+        "user_song",
+        "user_song",
+        lambda song: {**song, "window_start_s": 14.0},
+    ),
+    "song removal": Case(
+        _probe("creator_song", {"op": "set_user_song", "remove": True}),
+        "user_song",
+        "user_song",
+        # The creator took the removal back in the editor and set a volume.
+        lambda _song: {"volume": 0.5, "removed": False},
+    ),
+    "lip-sync song volume": Case(
+        _probe("creator_song", {"op": "set_user_song", "volume": 0.4}),
+        "user_song",
+        "user_song",
+        lambda song: {**song, "volume": 0.9},
+    ),
 }
+SONGS = sorted(name for name, case in CASES.items() if case.lane == "user_song")
 
 
 def _seed(user_id, session_id, probe: Scenario, monkeypatch) -> dict[str, Any]:  # noqa: ANN001
@@ -302,24 +346,50 @@ async def test_a_hand_edit_to_another_caption_key_survives_the_delete(
         await async_engine.dispose()
 
 
-SONG = _probe("creator_song", {"op": "set_user_song", "volume": 0.6})
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", SONGS)
+async def test_a_song_undo_leaves_the_flat_section_the_phone_reads_as_put_back(
+    copilot,  # noqa: F811
+    monkeypatch,
+    name,
+) -> None:
+    case = CASES[name]
+    user_id, thread_id, session_id = _seed_runtime_project()
+    _seed(user_id, session_id, case.probe, monkeypatch)
+    try:
+        edited, undone = await _chat_then_undo(copilot, case, user_id, thread_id)
+        assert _lane(edited, "user_song") != {"removed": False}, "the chat turn wrote a song edit"
+        assert _lane(undone, "user_song") == {"removed": False}, f"{name}: U12"
+    finally:
+        await async_engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_a_song_change_is_not_undone_from_chat(
+async def test_a_song_undo_keeps_the_song_edit_the_creator_had_before_the_turn(
     copilot,  # noqa: F811
     monkeypatch,
 ) -> None:
+    window = CASES["song window"]
     user_id, thread_id, session_id = _seed_runtime_project()
-    _seed(user_id, session_id, SONG, monkeypatch)
-    copilot.answers = {"Do it": SONG.reference, "Undo that": [UNDO]}
+    _seed(user_id, session_id, window.probe, monkeypatch)
+    mine = {"volume": 0.5, "removed": False}
+    copilot.answers = {"Do it": window.probe.reference, "Undo that": [UNDO], "Look now": []}
     try:
-        await _say(user_id, thread_id, "Do it", _clean("s0"))
+        await _say(
+            user_id,
+            thread_id,
+            "Do it",
+            {"base_generation": GEN, "client_state_id": "s0", "lanes": {"user_song": mine}},
+        )
         edited = _head(thread_id)
-        assert "user_song" in edited["snap"]["editor_payload"], "the phone reads the flat key"
-        assert _record(edited["id"]) is None or "chat_undo" not in _record(edited["id"])
+        assert _lane(edited, "user_song")["window_start_s"] == 12.0
         await _say(user_id, thread_id, "Undo that", _phone(edited, "user_song", sid="s1"))
-        assert "history_state" not in copilot.snapshots["Undo that"], "refused, not half undone"
-        assert _head(thread_id)["id"] == edited["id"], "nothing was written"
+        assert copilot.snapshots["Undo that"]["history_state"] == {"can_undo_last_turn": True}
+        undone = _head(thread_id)
+        assert _lane(undone, "user_song") == mine, (
+            "U13: the creator's volume stays, the window goes"
+        )
+        await _say(user_id, thread_id, "Look now", _phone(undone, "user_song", sid="s2"))
+        assert copilot.snapshots["Look now"]["user_song"] == copilot.snapshots["Do it"]["user_song"]
     finally:
         await async_engine.dispose()

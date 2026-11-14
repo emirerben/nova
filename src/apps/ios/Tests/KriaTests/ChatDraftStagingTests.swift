@@ -902,6 +902,98 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
     }
 
+    /// A video whose bars/crop choice is open. `stored` is the fit the variant keeps; without one the
+    /// server reports its value only through the capability, as on videos rendered before it was stored.
+    private static func fitVariant(stored: String?) -> [String: JSONValue] {
+        var value = variant()
+        value["editor_capabilities"] = .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(true),
+            "orientation": .object(["editable": .bool(true), "value": .string("portrait")]),
+            "landscape_fit": .object(["editable": .bool(true), "value": .string(stored ?? "fill")])])
+        if let stored { value["landscape_fit"] = .string(stored) }
+        return value
+    }
+
+    /// A `set_video_shape` chat head (or its undo): the flat `landscape_fit` key beside its nested copy.
+    private static func fitHead(_ fit: String, revision: Int) -> DraftSnapshot {
+        DraftSnapshot(draftID: "d\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision,
+            snapshotHash: "h\(revision)", etag: "e\(revision)", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
+                       "editor_payload": .object(["base_generation": .string("g1"), "editor_state_version": .number(2),
+                                                  "landscape_fit": .string(fit), "sections": .object(["landscape_fit": .string(fit)])])],
+            canUndo: true, createdAt: .now)
+    }
+
+    private func loadedFit(stored: String?) async -> (NativeEditorSession, EditorCommitSpy) {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.fitVariant(stored: stored),
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2",
+                sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false, landscapeFit: true),
+                revisionNumber: 4, revisionHash: "r4", expectedDuration: nil))
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        return (session, fake)
+    }
+
+    /// KRI-1394 `set_video_shape`: a chat fit change opens as the creator's unsaved edit, is sent back with the
+    /// next turn (so the server can offer its undo) and saves.
+    func testAChatFitChangeOpensAsAnUnsavedEditThatTheNextTurnCarriesAndSaves() async throws {
+        for stored in ["fill", nil] as [String?] {
+            let (session, fake) = await loadedFit(stored: stored)
+            XCTAssertEqual(session.document.effectiveLandscapeFit, "fill")
+            fake.draftSnapshot = Self.fitHead("fit", revision: 2)
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.effectiveLandscapeFit, "fit", "\(stored ?? "nil"): the chat's fit is shown")
+            XCTAssertTrue(session.isDirty(.landscapeFit))
+            XCTAssertTrue(session.hasOnlyChatStagedChanges)
+            let state = try XCTUnwrap(session.exportEditorState())
+            let lanes = try XCTUnwrap(Self.encoded(state)["lanes"]?.objectValue)
+            XCTAssertEqual(lanes["landscape_fit"], .string("fit"), "\(stored ?? "nil"): the next turn carries it")
+            XCTAssertEqual(state.draftRevision, 2)
+            await session.save()
+            XCTAssertEqual(fake.lastRequest?.landscapeFit, "fit", "\(stored ?? "nil"): Save sends the chat's fit")
+            XCTAssertNil(fake.lastRequest?.orientation)
+        }
+    }
+
+    /// KRI-1384: chat "undo that" on a fit change reaches an editor that staged it, whether the video stores
+    /// its fit or only reports it.
+    func testANewerChatHeadThatPutsTheFitBackReachesTheLiveEditor() async throws {
+        for stored in ["fill", nil] as [String?] {
+            let (session, fake) = await loadedFit(stored: stored)
+            fake.draftSnapshot = Self.fitHead("fit", revision: 2)
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.effectiveLandscapeFit, "fit")
+            fake.draftSnapshot = Self.fitHead("fill", revision: 3)
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.effectiveLandscapeFit, "fill", "\(stored ?? "nil"): the chat's undo reached the editor")
+            XCTAssertFalse(session.hasUnsavedChanges)
+            session.undo()
+            XCTAssertEqual(session.document.effectiveLandscapeFit, "fit", "\(stored ?? "nil"): the editor's Undo brings the chat fit back")
+            session.redo()
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.effectiveLandscapeFit, "fill", "\(stored ?? "nil"): the same head is not applied twice")
+            XCTAssertEqual(fake.commitCount, 0)
+        }
+    }
+
+    func testANewerChatHeadThatPutsTheFitBackKeepsTheCreatorsEditElsewhere() async throws {
+        let (session, fake) = await loadedFit(stored: nil)
+        fake.draftSnapshot = Self.fitHead("fit", revision: 2)
+        await session.synchronizePromptRevision()
+        session.setTextStyle(id: "t1", style: "Inter")
+        fake.draftSnapshot = Self.fitHead("fill", revision: 3)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.effectiveLandscapeFit, "fill")
+        XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"))
+        XCTAssertFalse(session.isDirty(.landscapeFit))
+        XCTAssertTrue(session.isDirty(.text))
+    }
+
+    func testAChatHeadWithOnlyAFitEditIsNotACommittedSnapshot() {
+        let head = Self.fitHead("fit", revision: 5)
+        let clean = EditorDocument(snapshot: head.editorDraft(projectID: UUID(), authoritativeVariant: Self.fitVariant(stored: "fill")).serverSnapshot)
+        XCTAssertEqual(clean.landscapeFit, "fill", "the saved fit, not the chat head's")
+    }
+
     private static func withoutNulls(_ value: JSONValue?) -> JSONValue? {
         switch value {
         case let .object(object): return .object(object.compactMapValues { withoutNulls($0) })

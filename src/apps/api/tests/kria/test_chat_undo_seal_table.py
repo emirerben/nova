@@ -16,6 +16,8 @@ Ways this can fail, each caught below:
   so an exact restore compares unequal;
 * a lane no plan-review section owns (``orientation``, ``landscape_fit``) is left out of the
   record, so the turn cannot be undone;
+* the record holds the creator's song as it plays, not their ``user_song`` section, so the undo
+  pins the song's end as one they set (``creator_end_s``);
 * a refusal that only holds for the probe's data (a video with no title yet, a picture row the
   commit schema rejects) hides that the same op seals on a saved video.
 """
@@ -51,10 +53,6 @@ NOT_SEALED = {
     "clip_add_remove.remove_visual_media [visual_blocks]": (
         "the probe's picture row has no `asset_id` / `src_gcs_path`, so the commit schema "
         "rejects the pre-turn row"
-    ),
-    "creator_song.set_user_song [user_song]": (
-        "the record holds the derived song state, not the creator's song section: the replay "
-        "pins the song's end as the creator's (`creator_end_s`)"
     ),
 }
 
