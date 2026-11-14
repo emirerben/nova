@@ -138,12 +138,6 @@ The five new threads are met. The eight unmet are unchanged: the groups the phon
 
 ## Open
 
-- **A chat song change seen from the editor.** On approval the runtime runs the real Save, which
-  merges `user_song`. But the phone's draft loader (`NativeEditorDocument`) decodes no
-  `user_song` section. If the creator opens the editor before approving and saves from there, the
-  Sounds tab shows the saved song and the chat's song change is dropped. The other four ops'
-  sections (`caption_meta`, `media_overlays` / `visual_blocks`, `speaker_background`,
-  `orientation` / `landscape_fit`) are decoded. Fixing it is an iOS change.
 - **Card labels.** OVERLAY CARDS lists a card's id, kind, time and place, not its label, so
   "the beach photo" cannot be resolved.
 - **Background receipts.** `EditorDiff` has no `speaker_background` lane (open since #2300), so

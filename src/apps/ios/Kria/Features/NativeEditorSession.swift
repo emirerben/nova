@@ -2480,7 +2480,25 @@ enum EditorOpenIntent { case warm, open }
         guard let edit else { return nil }
         var value = EditorDocument(snapshot: edit.snapshot)
         value.revision.number = draft.revision
-        return (value, edit.sections)
+        value.userSong = editableUserSong(edit.userSong)
+        var sections = edit.sections
+        if value.userSong == nil { sections.remove(.userSong) }
+        guard !sections.isEmpty else { return nil }
+        return (value, sections)
+    }
+
+    /// A chat song edit under the rules a hand edit follows: each field only while its `user_song.*` capability
+    /// is open, and never a lip-sync song's window (its takes were filmed against it).
+    private func editableUserSong(_ edit: EditorUserSongState?) -> EditorUserSongState? {
+        guard let edit, let saved = savedUserSong else { return nil }
+        if edit.removed { return canEditOperation(["user_song.remove"], section: .userSong) ? edit : nil }
+        var state = EditorUserSongState()
+        if canEditOperation(["user_song.volume"], section: .userSong) { state.volume = edit.volume }
+        if saved.mode == .background, canEditOperation(["user_song.window"], section: .userSong) {
+            state.windowStartS = edit.windowStartS
+            state.windowEndS = edit.windowEndS
+        }
+        return state.isEmpty ? nil : state
     }
 
     /// Show a staged chat edit as unsaved changes on top of the clean document.
@@ -2505,7 +2523,8 @@ enum EditorOpenIntent { case warm, open }
     private func dropRestoredChatSections(_ restored: Set<EditorSection>, revision: Int) -> Bool {
         guard var staged = chatStagedDocument else { return false }
         let untouched = restored.intersection(chatStagedSections)
-            .filter { document.snapshot(for: $0) == staged.snapshot(for: $0) }
+            // No snapshot carries the song edit, so its lane compares the edit itself.
+            .filter { $0 == .userSong ? document.userSong == staged.userSong : document.snapshot(for: $0) == staged.snapshot(for: $0) }
         guard !untouched.isEmpty else { return false }
         appendUndo(document); redoStack.removeAll()
         for section in untouched {
