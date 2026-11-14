@@ -25,7 +25,13 @@ from app.agents._runtime import (
     TerminalError,
     TransientError,
 )
-from app.agents._tool_calls import ToolAnswer, ToolCall, ToolRequest, parse_arguments
+from app.agents._tool_calls import (
+    ToolAnswer,
+    ToolCall,
+    ToolRequest,
+    described_nesting,
+    parse_arguments,
+)
 from app.agents.model_registry import Provider, exact_spec
 from app.config import settings
 
@@ -383,7 +389,7 @@ def _openai_tool_kwargs(request: ToolRequest, prompt: str) -> dict[str, Any]:
                 "type": "function",
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters,
+                "parameters": described_nesting(tool.parameters),
                 "strict": False,
             }
             for tool in request.tools
@@ -464,7 +470,11 @@ def _anthropic_tool_kwargs(request: ToolRequest, prompt: str) -> dict[str, Any]:
         ],
         "messages": messages,
         "tools": [
-            {"name": tool.name, "description": tool.description, "input_schema": tool.parameters}
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": described_nesting(tool.parameters),
+            }
             for tool in request.tools
         ],
         "tool_choice": {"type": "auto"},

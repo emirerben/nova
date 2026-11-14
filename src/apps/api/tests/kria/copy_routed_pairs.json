@@ -1475,6 +1475,11 @@
    "app/services/kria_editor_ops_diff.py",
    "Removed your song",
    "Şarkın kaldırıldı"
+  ],
+  [
+   "app/agents/copilot_tools.py",
+   "Your current draft is unchanged.",
+   "Mevcut taslağın değişmedi."
   ]
  ]
 }

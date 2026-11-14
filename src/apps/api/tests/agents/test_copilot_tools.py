@@ -14,6 +14,7 @@ from app.agents.copilot_tools import (
     REPLY_TOOL,
     copilot_tools,
     operation_tool,
+    patch_fields,
     tools_rules,
 )
 from app.agents.edit_copilot import (
@@ -85,3 +86,10 @@ def test_tools_rules_moves_each_op_definition_into_its_tool_and_keeps_the_rest()
     assert operation_tool("edit_text", prose["edit_text"]).description.endswith(
         '{"bar_index":0,"text":"new hook"}'
     )
+
+
+def test_every_op_with_a_patch_offers_exactly_its_coercers_keys():
+    with_patch = {name for name in _OP_FIELDS if "patch" in _op_fields(name)}
+    assert set(patch_fields()) == with_patch
+    for name, keys in patch_fields().items():
+        assert set(operation_tool(name).parameters["properties"]["patch"]["properties"]) == keys

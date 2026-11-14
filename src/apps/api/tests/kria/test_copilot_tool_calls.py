@@ -290,7 +290,7 @@ async def test_no_reply_applies_nothing(monkeypatch, edit):
 
     assert len(model.requests) == 1, "100 s left is less than one 120 s copilot call"
     assert response.ops == []
-    assert response.reply == "I couldn't finish that edit. Nothing changed."
+    assert response.reply == "Your current draft is unchanged."
 
 
 async def test_truncated_answer_is_retried_lighter(monkeypatch, edit):

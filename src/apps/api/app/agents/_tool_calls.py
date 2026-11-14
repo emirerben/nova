@@ -125,3 +125,51 @@ class ToolRequest(BaseModel):
             ensure_ascii=False,
             sort_keys=True,
         )
+
+
+def described_nesting(schema: dict[str, Any]) -> dict[str, Any]:
+    """``schema`` typed at its top level, with every nested object written as its keys and types.
+
+    The shape the OpenAI and Anthropic copilot tools were measured with (KRI-797): about half
+    the tool tokens of full typing, and their tool arguments are not decoded against the schema.
+    Gemini constrains arguments to the declared properties (an object declared without them
+    comes back empty), so it gets the typed schema.
+    """
+
+    def kind(node: Any) -> str:
+        if not isinstance(node, dict):
+            return "any JSON"
+        if "const" in node:
+            return json.dumps(node["const"])
+        if "anyOf" in node:
+            return " or ".join(kind(branch) for branch in node["anyOf"])
+        if "enum" in node:
+            return "one of " + "|".join(map(str, node["enum"]))
+        if node.get("type") == "array":
+            return "list of " + kind(node.get("items"))
+        if node.get("type") == "object" and "properties" in node:
+            return "object with " + ", ".join(node["properties"])
+        return str(node.get("type", "any JSON"))
+
+    def visit(node: Any, depth: int) -> Any:
+        if isinstance(node, list):
+            return [visit(value, depth) for value in node]
+        if not isinstance(node, dict):
+            return node
+        if depth >= 1 and node.get("type") == "object" and "properties" in node:
+            required = set(node.get("required", []))
+            fields = ", ".join(
+                f"{key} ({kind(value)}{', required' if key in required else ''})"
+                for key, value in node["properties"].items()
+            )
+            return {"type": "object", "description": f"Fields: {fields}."}
+        return {
+            key: {k: visit(v, depth + 1) for k, v in value.items()}
+            if key == "properties"
+            else visit(value, depth)
+            if key in ("items", "anyOf")
+            else value
+            for key, value in node.items()
+        }
+
+    return visit(schema, 0)

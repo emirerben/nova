@@ -317,9 +317,10 @@ class _AnswerSequence:
         return ModelInvocation(raw_text=self.answers[self.calls - 1])
 
 
-def replay_tools_copilot(turn_id: str, payload: dict[str, Any]) -> Any:
-    """A typed tool-call recording (KRI-1393) through the tools agent and the chat route's repair
-    loop: the first answer, then one recorded answer per repair round. None: the call failed."""
+def replay_turn_rounds(turn_id: str, payload: dict[str, Any]) -> Any:
+    """A KRI-797 recording through the copilot (typed tool calls or JSON, per ``output_mode``) and
+    the chat route's repair loop: the first answer, then one recorded answer per round. None:
+    the call failed."""
     if payload.get("error"):
         return None
     import asyncio
@@ -332,7 +333,9 @@ def replay_tools_copilot(turn_id: str, payload: dict[str, Any]) -> Any:
     from ..runners.eval_runner import build_eval_run_context
 
     client = _AnswerSequence([str(payload["raw_text"]), *payload.get("repairs", [])])
-    agent = tools_agent(EditCopilotAgent(client))
+    agent = EditCopilotAgent(client)
+    if payload["output_mode"] == "tools":
+        agent = tools_agent(agent)
     agent_input = EditCopilotInput.model_validate(payload["agent_input"])
 
     def context(suffix: str = ""):
@@ -365,8 +368,8 @@ def replay_v1_copilot(
 
     payload = turn.copilot or {}
     agent_input = payload["agent_input"]
-    if payload.get("output_mode") == "tools":
-        output = replay_tools_copilot(turn.turn_id, payload)
+    if payload.get("output_mode") in ("tools", "json"):
+        output = replay_turn_rounds(turn.turn_id, payload)
         if output is None:
             return plan_before, _FAILED_TURN_REPLY, ["copilot failed: " + payload["error"]], [], []
     else:

@@ -39,10 +39,13 @@ from .runner import (
     run_thread,
 )
 
-ARMS: dict[str, tuple[str, str]] = {
-    "gemini": ("gemini-3.1-pro-preview", "high"),
-    "sol": ("gpt-6.1-sol", "medium"),
-    "sonnet": ("claude-sonnet-5-5", "medium"),
+# arm: (model, thinking level, output mode). `gemini-json` re-records the JSON control at this
+# prompt version, for run-to-run noise.
+ARMS: dict[str, tuple[str, str, str]] = {
+    "gemini": ("gemini-3.1-pro-preview", "high", "tools"),
+    "sol": ("gpt-6.1-sol", "medium", "tools"),
+    "sonnet": ("claude-sonnet-5-5", "medium", "tools"),
+    "gemini-json": ("gemini-3.1-pro-preview", "high", "json"),
 }
 # The chat route's repair loop runs another round only while a full copilot call still fits:
 # the planner passes a 120 s copilot timeout (`planner.py`); this harness gives each turn 180 s.
@@ -50,16 +53,16 @@ _TURN_BUDGET_S = 180.0
 _COPILOT_TIMEOUT_S = 120.0
 
 
+def _copilot_thread(path: Path) -> bool:
+    """An authored thread whose every turn is a chat-copilot turn."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return raw.get("provenance") == "authored" and all(
+        t.get("engine") == "v1_copilot" for t in raw["turns"]
+    )
+
+
 def _authored_paths() -> list[Path]:
-    paths = []
-    for path in discover_fixture_paths():
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if raw.get("provenance") == "authored" and all(
-            t.get("engine") == "v1_copilot" and "raw_text" in (t.get("copilot") or {})
-            for t in raw["turns"]
-        ):
-            paths.append(path)
-    return paths
+    return [path for path in discover_fixture_paths() if _copilot_thread(path)]
 
 
 def _arm_dir(out: Path, arm: str, tag: str | None) -> Path:
@@ -81,13 +84,15 @@ def _seed(source: Path, target: Path) -> None:
     target.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _agent(model: str, effort: str, client: Any):
+def _agent(model: str, effort: str, client: Any, mode: str = "tools"):
     from dataclasses import replace
 
     from app.agents.edit_copilot import EditCopilotAgent
     from app.services.creator_model_comparison import tools_agent
 
-    agent = tools_agent(EditCopilotAgent(client))
+    agent = EditCopilotAgent(client)
+    if mode == "tools":
+        agent = tools_agent(agent)
     # The model under test answers alone: a fallback would hide its failures.
     agent.spec = replace(agent.spec, model=model, thinking_level=effort, fallback_models=())
     return agent
@@ -101,14 +106,15 @@ def _estimate(agent: Any, payload: dict[str, Any]) -> float:
     request = agent.tool_request(validated)
     return estimate_call_cost_usd(
         model=agent.spec.model,
-        prompt=agent.render_prompt(validated) + request.accounting_text(),
+        prompt=agent.render_prompt(validated)
+        + (request.accounting_text() if request is not None else ""),
         max_output_tokens=agent.max_output_tokens,
         media_mime=None,
     )
 
 
 def _record_turn(
-    fixture_id: str, turn_id: str, payload: dict[str, Any], model: str, effort: str, run_id: str
+    fixture_id: str, turn_id: str, payload: dict[str, Any], arm: tuple[str, str, str], run_id: str
 ) -> dict[str, Any]:
     from app.agents._model_client import default_client
     from app.agents._runtime import TerminalError
@@ -118,7 +124,8 @@ def _record_turn(
     from ..runners.eval_runner import RecordingModelClient, build_eval_run_context
 
     client = RecordingModelClient(default_client())
-    agent = _agent(model, effort, client)
+    model, effort, mode = arm
+    agent = _agent(model, effort, client, mode)
     rounds: list[dict[str, Any]] = []
     run = agent.run
 
@@ -159,7 +166,7 @@ def _record_turn(
     started = time.perf_counter()
     record: dict[str, Any] = {
         "agent_input": payload,
-        "output_mode": "tools",
+        "output_mode": mode,
         "model": model,
         "effort": effort,
         "prompt_version": agent.spec.prompt_version,
@@ -205,7 +212,7 @@ def _recorded(raw_text: str) -> str:
         return raw_text
 
 
-def record_thread(path: Path, model: str, effort: str, run_id: str, cap_usd: float) -> str:
+def record_thread(path: Path, arm: tuple[str, str, str], run_id: str, cap_usd: float) -> str:
     """Record every unrecorded turn of one arm thread: "done", or "cap" (nothing spent on it)."""
     from app.agents.edit_copilot import EditCopilotInput
 
@@ -229,14 +236,14 @@ def record_thread(path: Path, model: str, effort: str, run_id: str, cap_usd: flo
         replies = [r.reply for r in results[:todo]]
         payload = agent_input_for(fixture, footage, todo, plan_before, replies)
         EditCopilotInput.model_validate(payload)
-        estimate = _estimate(_agent(model, effort, None), payload) * 2
+        estimate = _estimate(_agent(*arm[:2], None, arm[2]), payload) * 2
         spent = run_spend_usd(run_id)
         if spent + estimate > cap_usd:
             print(f"cap: {fixture.fixture_id} turn {todo}: spent {spent:.3f} + est {estimate:.3f}")
             return "cap"
         before = spent
         record = _record_turn(
-            fixture.fixture_id, raw["turns"][todo]["turn_id"], payload, model, effort, run_id
+            fixture.fixture_id, raw["turns"][todo]["turn_id"], payload, arm, run_id
         )
         record["cost_usd"] = round(run_spend_usd(run_id) - before, 6)
         raw["turns"][todo]["copilot"] = record
@@ -251,8 +258,8 @@ def record_thread(path: Path, model: str, effort: str, run_id: str, cap_usd: flo
 
 def price(arm: str, only: list[str] | None) -> dict[str, Any]:
     """Zero-spend estimate of each thread's first turn on this arm (repairs not included)."""
-    model, effort = ARMS[arm]
-    agent = _agent(model, effort, None)
+    model, effort, mode = ARMS[arm]
+    agent = _agent(model, effort, None, mode)
     rows = []
     for path in _authored_paths():
         if only and path.stem not in only:
@@ -295,15 +302,14 @@ def _without_repairs(path: Path, target: Path) -> Path:
     return target
 
 
-def _first_answer_rejections(payload: dict[str, Any]) -> int:
-    """How many ops of the first answer the parser refused (before any repair round)."""
+def _first_answer_not_applied(payload: dict[str, Any]) -> int:
+    """How many ops of the first answer did not apply (before any repair round)."""
     from app.agents.edit_copilot import EditCopilotAgent
 
     from ..runners.eval_runner import build_eval_run_context
     from .runner import _AnswerSequence
 
-    client = _AnswerSequence([str(payload["raw_text"])])
-    agent = EditCopilotAgent(client)
+    agent = EditCopilotAgent(_AnswerSequence([str(payload["raw_text"])]))
     if payload.get("output_mode") == "tools":
         from app.services.creator_model_comparison import tools_agent
 
@@ -312,16 +318,54 @@ def _first_answer_rejections(payload: dict[str, Any]) -> int:
         output = agent.run(
             payload["agent_input"], ctx=build_eval_run_context("kri797:rejections", is_live=False)
         )
-    return sum(1 for item in output.rejection_reasons if item.get("op") != "bundle")
+    return len(output.not_applied)
 
 
-def score_dir(directory: Path, *, first_answer_only: bool = False) -> dict[str, Any]:
+def _has_reply(raw_text: str) -> bool:
+    from app.agents._tool_calls import ToolAnswer
+
+    return any(call.name == "reply" for call in ToolAnswer.decode(raw_text).calls)
+
+
+def _usd(model: str, call: dict[str, Any]) -> float:
+    """List-price cost of one recorded call (the JSON control's recordings carry tokens only)."""
+    from app.agents.model_registry import model_spec
+
+    rates = model_spec(model).price.standard
+    cached = call.get("tokens_cached") or 0
+    out = (call.get("tokens_out") or 0) + (call.get("tokens_thoughts") or 0)
+    return float(
+        ((call["tokens_in"] - cached) * rates.input + cached * rates.cached + out * rates.output)
+        / 1_000_000
+    )
+
+
+def _set_scores(results: list[tuple[Any, Any]]) -> dict[str, Any]:
+    from .scorer import compute_kpi
+
+    kpi = compute_kpi(r for _, r in results)
+    return {
+        "threads": len(results),
+        "requirements": kpi.overall.total,
+        "met": kpi.overall.met,
+        "partial": kpi.overall.partial,
+        "unmet": kpi.overall.unmet,
+        "met_share": round(kpi.met_share or 0, 4),
+        "overclaims": kpi.overall.overclaims,
+    }
+
+
+def score_dir(
+    directory: Path, *, first_answer_only: bool = False, only: set[str] | None = None
+) -> dict[str, Any]:
     """Replay one arm's recordings (or the JSON baseline) through the real path and score."""
     import tempfile
 
-    from .scorer import compute_kpi
-
-    paths = sorted(directory.glob("*.json"))
+    paths = [
+        path
+        for path in sorted(directory.glob("*.json"))
+        if (only is None or path.stem in only) and _copilot_thread(path)
+    ]
     with tempfile.TemporaryDirectory() as scratch, _unmetered():
         results = []
         for path in paths:
@@ -329,49 +373,62 @@ def score_dir(directory: Path, *, first_answer_only: bool = False) -> dict[str, 
                 _without_repairs(path, Path(scratch) / path.name) if first_answer_only else path
             )
             fixture = load_fixture(source)
-            if fixture.provenance != "authored":
-                continue
             results.append((fixture, run_thread(fixture)))
-    kpi = compute_kpi(r for _, r in results)
     calls = [t.copilot or {} for f, _ in results for t in f.turns]
+    recorded_here = any(c.get("rounds") for c in calls)
     first = [c["latency_s"] for c in calls if "latency_s" in c]
-    turn = [c.get("turn_latency_s", c.get("latency_s")) for c in calls if "latency_s" in c]
-    rounds = [r for c in calls for r in c.get("rounds", [])]
-    invocations = [i for r in rounds for i in r["calls"]]
-    first_calls = [c["rounds"][0]["calls"] for c in calls if c.get("rounds")]
-    tokens_in = [sum(i["tokens_in"] for i in r[-1:]) for r in first_calls if r]
-    cached = [sum(i["tokens_cached"] for i in r[-1:]) for r in first_calls if r]
-    costs = [c["cost_usd"] for c in calls if "cost_usd" in c]
-    repaired = [c for c in calls if c.get("repairs")]
+    turn = [c.get("turn_latency_s", c["latency_s"]) for c in calls if "latency_s" in c]
+    if recorded_here:
+        firsts = [c["rounds"][0]["calls"][-1] for c in calls if c.get("rounds")]
+        every = [i for c in calls for r in c.get("rounds", []) for i in r["calls"]]
+        costs = [c["cost_usd"] for c in calls if "cost_usd" in c]
+        rounds = [len(c.get("rounds", [])) for c in calls]
+    else:
+        firsts = every = [c for c in calls if "tokens_in" in c]
+        costs = [_usd(c.get("model_actual") or "gemini-3.1-pro-preview", c) for c in firsts]
+        rounds = [1 for _ in calls]
+    tokens_in = [c["tokens_in"] for c in firsts]
+    cached = [c.get("tokens_cached") or 0 for c in firsts]
+    not_applied = [_first_answer_not_applied(c) for c in calls if c.get("raw_text")]
     errors = [c for c in calls if c.get("error")]
-    retried = [c for c in calls if c.get("rounds") and len(c["rounds"][0]["calls"]) > 1]
-    rejected = [_first_answer_rejections(c) for c in calls if c.get("raw_text")]
-    per_thread = {f.fixture_id: {s.requirement_id: s.status for s in r.scores} for f, r in results}
+    actions = [(f, r) for f, r in results if f.fixture_id.startswith("action_")]
+    threads = [(f, r) for f, r in results if not f.fixture_id.startswith("action_")]
     return {
-        "threads": len(results),
+        **_set_scores(results),
+        "conversation_threads": _set_scores(threads),
+        "per_action_set": _set_scores(actions),
         "turns": len(calls),
-        "requirements": kpi.overall.total,
-        "met": kpi.overall.met,
-        "partial": kpi.overall.partial,
-        "unmet": kpi.overall.unmet,
-        "met_share": kpi.met_share,
-        "overclaims": kpi.overall.overclaims,
+        "model_calls": len(every),
         "first_answer_latency_p50_s": _percentile(first, 0.5),
         "first_answer_latency_p95_s": _percentile(first, 0.95),
-        "turn_latency_p50_s": _percentile([t for t in turn if t is not None], 0.5),
-        "turn_latency_p95_s": _percentile([t for t in turn if t is not None], 0.95),
-        "model_calls": len(invocations) or len(first),
-        "first_answer_tokens_in_mean": (sum(tokens_in) / len(tokens_in)) if tokens_in else None,
-        "first_answer_tokens_cached_mean": (sum(cached) / len(cached)) if cached else None,
-        "cost_total_usd": round(sum(costs), 4) if costs else None,
-        "cost_per_turn_usd": round(sum(costs) / len(costs), 4) if costs else None,
-        "turns_with_repair_round": len(repaired),
+        "turn_latency_p50_s": _percentile(turn, 0.5),
+        "turn_latency_p95_s": _percentile(turn, 0.95),
+        "first_answer_tokens_in_mean": round(sum(tokens_in) / len(tokens_in))
+        if tokens_in
+        else None,
+        "first_answer_tokens_cached_mean": round(sum(cached) / len(cached)) if cached else None,
+        "tokens_in_per_turn_mean": round(sum(c["tokens_in"] for c in every) / len(calls)),
+        "cost_total_usd": round(sum(costs), 4),
+        "cost_per_turn_usd": round(sum(costs) / len(calls), 4),
+        "rounds_per_turn_mean": round(sum(rounds) / len(rounds), 2),
+        "rounds_per_turn_max": max(rounds),
+        "turns_with_reply_round": sum(
+            1
+            for c in calls
+            if c.get("output_mode") == "tools"
+            and c.get("raw_text")
+            and not _has_reply(c["raw_text"])
+        ),
+        "turns_with_not_applied_op": sum(1 for count in not_applied if count),
+        "not_applied_ops": sum(not_applied),
         "turns_failed": len(errors),
-        "failed": [c.get("error") for c in errors],
-        "turns_with_schema_retry": len(retried),
-        "turns_with_rejected_op": sum(1 for count in rejected if count),
-        "rejected_ops": sum(rejected),
-        "per_thread": per_thread,
+        "failed": sorted({str(c.get("error"))[:120] for c in errors}),
+        "turns_with_schema_retry": sum(
+            1 for c in calls if any(len(r["calls"]) > 1 for r in c.get("rounds", []))
+        ),
+        "per_thread": {
+            f.fixture_id: {s.requirement_id: s.status for s in r.scores} for f, r in results
+        },
     }
 
 
@@ -399,11 +456,16 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(price(args.arm, only), indent=2))
         return
     if args.score:
-        result: dict[str, Any] = {"json_gemini_control": score_dir(THREAD_DIR)}
+        result: dict[str, Any] = {
+            "json_gemini_control": score_dir(THREAD_DIR, only=only and set(only))
+        }
         for directory in sorted(p for p in args.out.iterdir() if (p / "threads").is_dir()):
             threads = directory / "threads"
-            result[directory.name] = score_dir(threads)
-            result[directory.name + ":first_answer"] = score_dir(threads, first_answer_only=True)
+            subset = set(only) if only else None
+            result[directory.name] = score_dir(threads, only=subset)
+            result[directory.name + ":first_answer"] = score_dir(
+                threads, first_answer_only=True, only=subset
+            )
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
     from .report import _require_live_guards
@@ -411,14 +473,14 @@ def main(argv: list[str] | None = None) -> None:
     _require_live_guards(args, parser)
     os.environ["AI_COST_CONTROL_ENABLED"] = "true"
     os.environ.setdefault("AI_USAGE_ENVIRONMENT", "development")
-    model, effort = ARMS[args.arm]
+    arm = ARMS[args.arm]
     target = _arm_dir(args.out, args.arm, args.tag)
     for source in _authored_paths():
         if only and source.stem not in only:
             continue
         path = target / source.name
         _seed(source, path)
-        if record_thread(path, model, effort, args.test_run_id, args.max_cost_usd) == "cap":
+        if record_thread(path, arm, args.test_run_id, args.max_cost_usd) == "cap":
             break
     print(f"run {args.test_run_id} spent ${run_spend_usd(args.test_run_id):.4f}")
 

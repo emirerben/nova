@@ -426,7 +426,9 @@ class GeminiClient(ModelClient):
 
 
 def _gemini_tool_config(request: ToolRequest, types: Any) -> dict[str, Any]:
-    """System block, function declarations, and ANY: the answer is function calls only."""
+    """System block, typed function declarations, and VALIDATED: calls are decoded against
+    their schemas. ANY (calls only) refuses a request whose schemas pass a size limit that a
+    phone edit's typed op tools exceed; VALIDATED and AUTO accept the full 91-tool set."""
     return {
         "system_instruction": request.system,
         "tools": [
@@ -442,7 +444,7 @@ def _gemini_tool_config(request: ToolRequest, types: Any) -> dict[str, Any]:
             )
         ],
         "tool_config": types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(mode="ANY")
+            function_calling_config=types.FunctionCallingConfig(mode="VALIDATED")
         ),
         "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
     }

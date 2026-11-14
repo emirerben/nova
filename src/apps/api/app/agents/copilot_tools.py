@@ -2,17 +2,20 @@
 
 ``EDIT_COPILOT_OUTPUT_MODE=tools`` runs ``ToolsEditCopilotAgent``. Each operation open on the
 edit (``_family_allowed``) is offered as a tool whose arguments schema is that operation's entry
-in the typed wire registry (``_creator_wire.copilot_operation_schemas``), so the parser and the
-tool schemas come from one table. A ``reply`` tool carries the turn's non-operation fields.
+in the typed wire registry (``_creator_wire.copilot_operation_schemas``), with ``patch`` narrowed
+to the keys that op's coercer reads, so the parser and the tools come from one table. A ``reply``
+tool carries the turn's non-operation fields.
 
 The rules prompt goes in the provider's system block (cached); the turn block is the user
 message. Each operation's definition bullet moves out of the rules into its tool description,
 so an operation closed on this edit costs no prompt at all.
 
-The model's calls are turned back into the JSON answer the copilot parser already reads, so
-partial apply, the honesty rules and the repair round are unchanged. A repair round sends the
-first answer back as the model's turn, with one tool result per call: the rejected calls carry
-``repair_feedback`` and every other call is acknowledged.
+The model's calls become the JSON answer the copilot parser already reads, so partial apply,
+the honesty rules and the repair round are unchanged. A later round sends each earlier answer
+back as the model's own turn with one tool result per call: a rejected call carries its
+``repair_feedback`` line, the others are acknowledged. Operations without ``reply`` (a model that
+calls one tool per response) get rounds that report what applied and ask for the rest; nothing
+applies until the model's reply arrives.
 """
 
 from __future__ import annotations
@@ -115,53 +118,17 @@ _BULK_SELECTOR_KEYS = ("scope", "media_kind", "quantifier")
 _JSON_REFS = ("#/$defs/JSONValue", "#/$defs/NonNullJSONValue")
 
 
-def _kind(node: Any) -> str:
-    if not isinstance(node, dict) or node.get("$ref") in _JSON_REFS:
-        return "any JSON"
-    if "const" in node:
-        return json.dumps(node["const"])
-    if "anyOf" in node:
-        return " or ".join(_kind(branch) for branch in node["anyOf"])
-    if "enum" in node:
-        return "one of " + "|".join(map(str, node["enum"]))
-    if node.get("type") == "array":
-        return "list of " + _kind(node.get("items"))
-    if node.get("type") == "object" and "properties" in node:
-        return "object with " + ", ".join(node["properties"])
-    return str(node.get("type", "any JSON"))
-
-
-def _tool_schema(node: Any, depth: int = 0) -> Any:
-    """The wire schema as a tool argument schema: typed at the top level, nested objects
-    described by their keys and types.
-
-    Gemini refuses a request whose tool schemas pass a size limit (a phone edit's ~45 fully
-    typed op tools were refused; every tool alone was accepted) and any recursive reference,
-    so the nesting below an op's own fields, and the recursive JSONValue, become text. The
-    tools are non-strict on every provider, and the parser validates every argument.
-    """
+def _tool_schema(node: Any) -> Any:
+    """The wire schema as a tool argument schema. The wire's recursive JSONValue (dynamic preset
+    params, effect configs) becomes any JSON value: Gemini refuses a recursive reference, and
+    the parser validates every argument."""
     if isinstance(node, list):
-        return [_tool_schema(value, depth) for value in node]
+        return [_tool_schema(value) for value in node]
     if not isinstance(node, dict):
         return node
     if node.get("$ref") in _JSON_REFS:
         return {"description": "Any JSON value; its shape is in the rules."}
-    if depth >= 1 and node.get("type") == "object" and "properties" in node:
-        required = set(node.get("required", []))
-        fields = ", ".join(
-            f"{key} ({_kind(value)}{', required' if key in required else ''})"
-            for key, value in node["properties"].items()
-        )
-        return {"type": "object", "description": f"Fields: {fields}."}
-    result: dict[str, Any] = {}
-    for key, value in node.items():
-        if key == "properties":
-            result[key] = {k: _tool_schema(v, depth + 1) for k, v in value.items()}
-        elif key in ("items", "anyOf"):
-            result[key] = _tool_schema(value, depth)
-        else:
-            result[key] = value
-    return result
+    return {key: _tool_schema(value) for key, value in node.items()}
 
 
 def _description(name: str, prose: str | None) -> str:
@@ -433,10 +400,7 @@ class ToolsEditCopilotAgent(EditCopilotAgent):
             intent="unknown",
             ops=[],
             confidence=0.0,
-            reply=say(
-                en="I couldn't finish that edit. Nothing changed.",
-                tr="Bu düzenlemeyi bitiremedim. Hiçbir şey değişmedi.",
-            ),
+            reply=say(en="Your current draft is unchanged.", tr="Mevcut taslağın değişmedi."),
             outcome="failed",
             repair=repair,
             not_applied=parsed.not_applied,
