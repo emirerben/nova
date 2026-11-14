@@ -460,6 +460,7 @@
       "KriaUITests/SplitScreenAcceptanceUITests/testDisabledPanelActionsSayWhyAndTheFillExitIsCalledBack",
       "KriaUITests/SplitScreenAcceptanceUITests/testDroppingAPanelThatHoldsFootageAsksFirstAndAddingOneDoesNot",
       "KriaUITests/SplitScreenAcceptanceUITests/testAShortSelectedClipKeepsTwoFullSizeEndHandles",
+      "KriaUITests/SplitScreenAcceptanceUITests/testPreviewFollowsTheDividerWhileTheFingerIsStillDown",
       "KriaUITests/SplitFlowGapsUITests/testWholeVideoIsTheDefault",
       "KriaUITests/SplitFlowGapsUITests/testSplitCanBeExtendedWithoutCollapse",
       "KriaUITests/SplitFlowGapsUITests/testSplitCanBeExtendedWithCollapse",

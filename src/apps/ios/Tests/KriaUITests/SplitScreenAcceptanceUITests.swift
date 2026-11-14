@@ -176,6 +176,59 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         attach(app, name: "Zoomed-out panel end handles")
     }
 
+    // KRI-1418. The picture has to follow the divider while the finger is still down, not catch up after release.
+    // The frame is grabbed in the middle of a held drag, with the touch still on the screen.
+    func testPreviewFollowsTheDividerWhileTheFingerIsStillDown() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 2", in: app) // blue under the red top panel
+        app.buttons["native-editor-split-done"].tap()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        // The band's own identifier is overridden by the preview's, so it is found by its label.
+        let divider = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Panel divider'")).firstMatch
+        XCTAssertTrue(divider.waitForExistence(timeout: 10))
+
+        func rgb(_ shot: XCUIScreenshot, atFraction y: CGFloat) throws -> (r: Int, g: Int, b: Int) {
+            let image = try XCTUnwrap(shot.image.cgImage)
+            let scale = CGFloat(image.width) / app.frame.width
+            let rect = CGRect(x: (preview.frame.minX + preview.frame.width * 0.25 - 2) * scale,
+                              y: (preview.frame.minY + preview.frame.height * y - 2) * scale, width: 4 * scale, height: 4 * scale)
+            var bytes = [UInt8](repeating: 0, count: 4)
+            let crop = try XCTUnwrap(image.cropping(to: rect))
+            try XCTUnwrap(CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)).draw(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return (Int(bytes[0]), Int(bytes[1]), Int(bytes[2]))
+        }
+        // The selected bottom panel wears a light wash, so blue is "more blue than red", not a pure value.
+        let before = try rgb(app.screenshot(), atFraction: 0.6)
+        XCTAssertTrue(before.b > before.r + 40, "Before the drag the 60% line is still inside the blue bottom panel: \(before)")
+
+        // Off the centre, where the swap handle sits. Dragging 20% of the canvas down moves the boundary from 50% to 70%.
+        let grab = divider.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+        let release = grab.withOffset(CGVector(dx: 0, dy: preview.frame.height * 0.2))
+        var held: XCUIScreenshot?
+        let grabbed = expectation(description: "frame grabbed while the finger is down")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            held = XCUIScreen.main.screenshot()
+            grabbed.fulfill()
+        }
+        grab.press(forDuration: 0.1, thenDragTo: release, withVelocity: .slow, thenHoldForDuration: 5)
+        wait(for: [grabbed], timeout: 10)
+
+        let frame = try XCTUnwrap(held)
+        let attachment = XCTAttachment(screenshot: frame)
+        attachment.name = "Preview mid-drag, finger still down"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let band = try rgb(frame, atFraction: 0.6)
+        XCTAssertTrue(band.r > 190 && band.g < 120 && band.b < 130,
+                      "Between the old and the new boundary the top panel's red must already be on screen before release: \(band)")
+        let below = try rgb(frame, atFraction: 0.85)
+        XCTAssertTrue(below.b > below.r + 40, "Below the new boundary stays blue: \(below)")
+    }
+
     private func panelCount(_ app: XCUIApplication) throws -> Int {
         let authored = try sections(app)
         let section = try XCTUnwrap((authored["split_screen_sections"] as? [[String: Any]])?.first)
