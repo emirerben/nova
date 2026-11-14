@@ -19,6 +19,13 @@ Failure modes, written before the fix:
    ("yazı: this video", "caption: ..."), in Turkish or English.
 7. On-screen text whose capitals changed is not the creator's text (KRI-950): still asked,
    even though a quote with changed capitals is accepted as provenance.
+
+Found in review, written before the second fix:
+8. The quote is the original request (as typed, or respelled) and the on-screen text is the
+   verse pasted in its own message, so never inside the quote: kept.
+9. Both repairs at once, a ":" at the seam and a respelled verse: kept.
+10. On-screen text that is only a phrase inside another message, not lines the creator
+    pasted on their own, outside the quote: still asked (`creator_text_not_source_backed`).
 """
 
 from __future__ import annotations
@@ -152,3 +159,31 @@ def test_the_question_never_names_an_instruction_by_its_operation() -> None:
         assert '"the anthem"' in out.salvage_question
         assert "label:" not in out.salvage_question
         assert "etiket:" not in out.salvage_question
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [_REQUEST, _REQUEST.replace("Yildizlar", "Yıldızlar")],
+    ids=["as-typed", "respelled"],
+)
+def test_the_request_as_quote_keeps_the_verse_pasted_after_it(quote: str) -> None:
+    out = _parse(_caption(quote))
+
+    [intent] = out.intents
+    assert intent.source_quote == _REQUEST
+    assert intent.creator_text == _VERSE
+
+
+def test_a_seam_quote_with_a_respelled_verse_keeps_the_caption() -> None:
+    out = _parse(_caption(f"add it as text to this video: {_RESPELLED_VERSE}", _RESPELLED_VERSE))
+
+    [intent] = out.intents
+    assert intent.source_quote == _VERSE
+    assert intent.creator_text == _VERSE
+
+
+def test_a_phrase_from_another_message_is_still_asked() -> None:
+    with pytest.raises(ClipIntentSchemaError) as raised:
+        _parse(_caption(_VERSE, creator_text="add it as text"))
+
+    assert raised.value.drop_classes == ["creator_text_not_source_backed"]

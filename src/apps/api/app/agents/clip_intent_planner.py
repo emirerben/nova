@@ -6,6 +6,7 @@ import json
 import math
 import re
 import unicodedata
+from functools import lru_cache
 from hashlib import sha256
 from typing import Any, ClassVar, Literal, get_args
 
@@ -26,6 +27,7 @@ from app.schemas.clip_intents import (
     ClipIntentOp,
 )
 from app.services.order_mode import key_order_mode
+from app.text_fold import loose_case
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _ROLE_MARKERS = re.compile(r"(?i)(^|[\s.;!?])(system|assistant|user|tool|developer)\s*[:>]")
@@ -218,34 +220,56 @@ def _norm(value: str) -> str:
     return " ".join(value.split())
 
 
-# Letters NFD does not split into base + mark ("ı" has no dot to drop).
-_FOLD_TABLE = str.maketrans({"ı": "i", "ø": "o", "Ø": "O", "ł": "l", "Ł": "L"})
+@lru_cache(maxsize=64)
+def _loose_with_index(value: str) -> tuple[str, tuple[int, ...]]:
+    """``loose_case(value)`` and, for each folded character, its index in ``value``."""
+    pieces = [loose_case(char) for char in value]
+    return "".join(pieces), tuple(i for i, piece in enumerate(pieces) for _ in piece)
 
 
-def _fold(value: str, *, case: bool) -> str:
-    """``value`` without diacritics (and case, when ``case``), one character for one."""
-    out = "".join(
-        unicodedata.normalize("NFD", char)[:1] or char for char in value.translate(_FOLD_TABLE)
-    )
-    return "".join(char.lower()[:1] or char for char in out) if case else out
-
-
-def _creator_spelling(value: str, sources: tuple[str, ...], *, case: bool) -> str | None:
-    """The creator span ``value`` copies with only diacritics (or ``case``) changed, as typed.
+def _creator_spelling(value: str, sources: tuple[str, ...], *, ignore_case: bool) -> str | None:
+    """The creator span ``value`` copies with only diacritics (or, ``ignore_case``, case) changed.
 
     Tadic (thread aa36d140): a Turkish chat's model restores the "ı"/"ş"/"ç" a creator typed
     on an English keyboard ("Yazilmis" -> "Yazılmış"). Every word is still theirs; the span
     returned is exactly what they wrote, so a reworded quote never passes. ``value`` and
     ``sources`` are ``_norm``-ed.
     """
-    folded = _fold(value, case=case)
+    folded, _ = _loose_with_index(value)
     if not folded.strip():
         return None
     for source in sources:
-        at = _fold(source, case=case).find(folded)
-        if at >= 0:
-            return source[at : at + len(value)]
+        haystack, index = _loose_with_index(source)
+        at = haystack.find(folded)
+        if at < 0:
+            continue
+        start, end = index[at], index[at + len(folded) - 1] + 1
+        while end < len(source) and unicodedata.combining(source[end]):
+            end += 1
+        span = source[start:end]
+        if ignore_case or [c.isupper() for c in span] == [c.isupper() for c in value]:
+            return span
     return None
+
+
+def _pasted_lines(text: str, input: ClipIntentPlannerInput) -> bool:  # noqa: A002
+    """``text`` is whole lines of a creator message: pasted as its own copy, not a phrase.
+
+    Tadic: "add the lyrics as text to this video", then the lyrics in their own message. The
+    caption's quote is the ask and its on-screen text the later lines, never inside the quote.
+    ``text`` is ``_norm``-ed.
+    """
+    for message in (input.creator_request, input.latest_user_message or ""):
+        lines = [line for line in (_norm(raw) for raw in message.splitlines()) if line]
+        for i in range(len(lines)):
+            run = ""
+            for line in lines[i:]:
+                run = f"{run} {line}" if run else line
+                if len(run) >= len(text):
+                    break
+            if run == text:
+                return True
+    return False
 
 
 class ClipIntentSchemaError(SchemaError):
@@ -511,7 +535,9 @@ def _creator_form(text: str, input: ClipIntentPlannerInput) -> str:  # noqa: A00
     return text
 
 
-def _unstitched_quote(quote: str, creator_text: str | None, sources: tuple[str, ...]) -> str | None:
+def _unstitched_quote(
+    quote: str, creator_text: str | None, sources: tuple[str, ...], *, respelled: bool = False
+) -> str | None:
     """The creator span inside a quote the model stitched from exact creator spans.
 
     Flash sometimes prefixes each chapter row with the request's governing sentence
@@ -520,13 +546,28 @@ def _unstitched_quote(quote: str, creator_text: str | None, sources: tuple[str, 
     Every word is still the creator's; only the join is not contiguous. Returns the
     piece that holds ``creator_text`` (or the longest piece when there is none), only
     when every piece is an exact creator span, so nothing invented ever passes.
-    ``quote`` and ``creator_text`` are ``_norm``-ed.
+    ``quote`` and ``creator_text`` are ``_norm``-ed. ``respelled``: a piece may also differ
+    from the creator's only by diacritics or case (``_creator_spelling``), and is returned
+    as the creator typed it.
     """
+
+    def creator_span(piece: str) -> str | None:
+        if any(piece in s for s in sources):
+            return piece
+        return _creator_spelling(piece, sources, ignore_case=True) if respelled else None
+
+    def holds_text(piece: str) -> bool:
+        if creator_text is None or creator_text in piece:
+            return True
+        if not respelled:
+            return False
+        return _creator_spelling(creator_text, (piece,), ignore_case=False) is not None
+
     if _ELLIPSIS.search(quote):
         pieces = [p.strip(" ,;") for p in _ELLIPSIS.split(quote)]
-        pieces = [p for p in pieces if p]
-        if pieces and all(any(p in s for s in sources) for p in pieces):
-            held = [p for p in pieces if creator_text is None or creator_text in p]
+        spans = [creator_span(p) for p in pieces if p]
+        if spans and all(spans):
+            held = [p for p in spans if p and holds_text(p)]
             if held:
                 return max(held, key=len)
     best: str | None = None
@@ -537,10 +578,10 @@ def _unstitched_quote(quote: str, creator_text: str | None, sources: tuple[str, 
         left, right = quote[:i].rstrip(",;:-"), quote[i + 1 :].lstrip("-")
         if not (left and right):
             continue
-        if not (any(left in s for s in sources) and any(right in s for s in sources)):
+        halves = [creator_span(left), creator_span(right)]
+        if not all(halves):
             continue
-        halves = [h for h in (left, right) if creator_text is None or creator_text in h]
-        for half in halves:
+        for half in (h for h in halves if h and holds_text(h)):
             if best is None or len(half) > len(best):
                 best = half
     return best
@@ -1662,12 +1703,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 quote = _norm(repaired)
         if quote and not any(quote in source for source in sources):
             text = _norm(intent.creator_text) if intent.creator_text is not None else None
-            repaired = _unstitched_quote(quote, text, sources)
-            if repaired is not None:
-                intent = intent.model_copy(update={"source_quote": repaired})
-                quote = repaired
-        if quote and not any(quote in source for source in sources):
-            repaired = _creator_spelling(quote, sources, case=True)
+            repaired = (
+                _unstitched_quote(quote, text, sources)
+                or _creator_spelling(quote, sources, ignore_case=True)
+                or _unstitched_quote(quote, text, sources, respelled=True)
+            )
             if repaired is not None:
                 intent = intent.model_copy(update={"source_quote": repaired})
                 quote = repaired
@@ -1679,7 +1719,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         if intent.creator_text is not None:
             text = _norm(intent.creator_text)
             if not any(text in source for source in sources) and (
-                spelled := _creator_spelling(text, (quote, *sources), case=False)
+                spelled := _creator_spelling(text, (quote, *sources), ignore_case=False)
             ):
                 # Printed as the creator typed it. Case is not folded: "OJO DE BIFE" may be
                 # a style the creator never asked for (KRI-950), so it is still asked.
@@ -1688,10 +1728,12 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             if text not in quote and (repaired := _quote_with_text(quote, text, sources)):
                 intent = intent.model_copy(update={"source_quote": repaired})
                 quote = repaired
-            if text not in quote or not any(text in source for source in sources):
+            backed = any(text in source for source in sources)
+            if not backed or (text not in quote and not _pasted_lines(text, input)):
                 raise _IntentRejected(
                     "creator_text_not_source_backed",
-                    "creator_text must be exact creator words inside source_quote",
+                    "creator_text must be exact creator words inside source_quote,"
+                    " or whole lines of a creator message",
                 )
             creator_form = _creator_form(intent.creator_text, input)
             if creator_form != intent.creator_text:
