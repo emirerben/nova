@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.223.0] - 2026-11-14
+
+### Changed
+- ci: block the third fix PR on a ticket without a failure-mode list (KRI-1383) (#2302) <!-- release-pr: 2302 -->
+
 ## [0.88.222.0] - 2026-11-14
 
 ### Changed
