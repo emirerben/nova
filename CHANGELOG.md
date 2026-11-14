@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.211.0] - 2026-11-14
+
+### Changed
+- fix(kria): undo a chat song change and stage a chat landscape_fit on iPhone (#2325) <!-- release-pr: 2325 -->
+
 ## [0.88.210.0] - 2026-11-14
 
 ### Changed
