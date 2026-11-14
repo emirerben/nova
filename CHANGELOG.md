@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.215.0] - 2026-11-14
+
+### Changed
+- fix(ios): split picker tabs, tile progress and preview ghosts (KRI-1417) (#2331) <!-- release-pr: 2331 -->
+
 ## [0.88.214.0] - 2026-11-14
 
 ### Changed
