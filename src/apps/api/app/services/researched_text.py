@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents._model_client import GeminiClient, default_client
 from app.agents._runtime import Agent, AgentSpec, RunContext, SchemaError
+from app.agents.model_registry import JSON_COPILOT_MODEL
 from app.config import settings
 from app.schemas.research import (
     PreparedResearch,
@@ -253,7 +254,7 @@ class ResearchCopyAgent(Agent[ResearchCopyInput, ResearchCopyOutput]):
         name="nova.research.caption_binding",
         prompt_id="research_caption_binding",
         prompt_version="v10-correction-round",
-        model=settings.edit_copilot_model,
+        model=JSON_COPILOT_MODEL,
         # Gemini 3 counts thinking against the output budget. Assos (live run, 2026-11-01): at
         # "high" the writer ran out of its 8,192 tokens and, with one attempt, the draft was
         # refused. A second attempt lets the runtime's KRI-542 retry at "low" run, and the
@@ -399,7 +400,7 @@ class ResearchLayersAgent(Agent[ResearchLayersInput, ResearchLayersOutput]):
         name="nova.research.text_layers",
         prompt_id="research_text_layers",
         prompt_version="v1",
-        model=settings.edit_copilot_model,
+        model=JSON_COPILOT_MODEL,
         max_attempts=2,
         timeout_s=60,
         thinking_level="high",
@@ -462,7 +463,7 @@ class ResearchReviewAgent(Agent[ResearchReviewInput, ResearchReviewOutput]):
         name="nova.research.claim_review",
         prompt_id="research_claim_review",
         prompt_version="v5-text-layers",
-        model=settings.edit_copilot_model,
+        model=JSON_COPILOT_MODEL,
         max_attempts=1,
         timeout_s=45,
         thinking_level="low",

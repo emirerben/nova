@@ -118,7 +118,7 @@ async def test_large_narrated_context_reaches_agent_with_text_capability(monkeyp
                 ops=[{"op": "set_text_timing", "bar_index": 150, "end_s": 4}],
             )
 
-    monkeypatch.setattr(_copilot, "EditCopilotAgent", FakeAgent)
+    monkeypatch.setattr(_copilot, "ChatEditCopilotAgent", FakeAgent)
     monkeypatch.setattr(_copilot, "default_client", lambda: object())
     result = await _copilot.run_copilot_turn(
         _copilot.CopilotTurnBody(

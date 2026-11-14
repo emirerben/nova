@@ -294,7 +294,7 @@ def turn(monkeypatch):
                 seen["prompts"].append(real.render_prompt(agent_input))
                 return real.parse(raw, agent_input)
 
-        monkeypatch.setattr(copilot_route, "EditCopilotAgent", _RecordedCopilot)
+        monkeypatch.setattr(copilot_route, "ChatEditCopilotAgent", _RecordedCopilot)
         response = TestClient(app, raise_server_exceptions=False).post(
             f"/plan-items/{item.id}/variants/v1/copilot/turn",
             json={"message": message, "turns": [], "snapshot": _snapshot()},

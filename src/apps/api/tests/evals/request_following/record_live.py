@@ -99,31 +99,31 @@ def agent_input_for(
 
 def rendered_prompt_chars(agent_input: dict[str, Any]) -> int:
     from app.agents._model_client import default_client
-    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+    from app.agents.edit_copilot import ChatEditCopilotAgent, EditCopilotInput
 
-    agent = EditCopilotAgent(default_client())
+    agent = ChatEditCopilotAgent(default_client())
     return len(agent.render_prompt(EditCopilotInput.model_validate(agent_input)).encode("utf-8"))
 
 
 def reservation_estimate_usd(model: str, prompt: str) -> float:
-    from app.agents.edit_copilot import EditCopilotAgent
+    from app.agents.edit_copilot import ChatEditCopilotAgent
     from app.services.ai_cost_control import estimate_call_cost_usd
 
     return estimate_call_cost_usd(
         model=model,
         prompt=prompt,
-        max_output_tokens=EditCopilotAgent.max_output_tokens,
+        max_output_tokens=ChatEditCopilotAgent.max_output_tokens,
         media_mime=None,
     )
 
 
 def price(paths: list[Path]) -> dict[str, Any]:
     """Zero-spend cost estimate for the first turn of every thread still to record."""
-    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+    from app.agents.edit_copilot import ChatEditCopilotAgent, EditCopilotInput
     from app.config import settings
 
     model = settings.edit_copilot_model
-    agent = EditCopilotAgent(None)  # render only
+    agent = ChatEditCopilotAgent(None)  # render only
     rows = []
     for path in paths:
         fixture = load_fixture(path)
@@ -146,7 +146,7 @@ def price(paths: list[Path]) -> dict[str, Any]:
     expected_total = sum(r["expected_usd_per_turn"] * r["turns"] for r in rows)
     return {
         "model": model,
-        "prompt_version": EditCopilotAgent.spec.prompt_version,
+        "prompt_version": ChatEditCopilotAgent.spec.prompt_version,
         "threads": len(rows),
         "calls": calls,
         "expected_total_usd": round(expected_total, 2),
@@ -167,7 +167,7 @@ def _record_turn(
     fixture: RFFixture, index: int, agent_input: dict[str, Any], test_run_id: str
 ) -> dict[str, Any]:
     from app.agents._model_client import default_client
-    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+    from app.agents.edit_copilot import ChatEditCopilotAgent, EditCopilotInput
 
     from ..runners.eval_runner import RecordingModelClient, build_eval_run_context
 
@@ -177,14 +177,14 @@ def _record_turn(
         f"request-following:{fixture.fixture_id}:{fixture.turns[index].turn_id}", is_live=True
     )
     started = time.perf_counter()
-    EditCopilotAgent(client).run(EditCopilotInput.model_validate(agent_input), ctx=ctx)
+    ChatEditCopilotAgent(client).run(EditCopilotInput.model_validate(agent_input), ctx=ctx)
     latency_s = time.perf_counter() - started
     last = client.invocations[-1]
     return {
         "agent_input": agent_input,
         "raw_text": last.raw_text,
-        "prompt_version": EditCopilotAgent.spec.prompt_version,
-        "model_actual": last.model_used or EditCopilotAgent.spec.model,
+        "prompt_version": ChatEditCopilotAgent.spec.prompt_version,
+        "model_actual": last.model_used or ChatEditCopilotAgent.spec.model,
         "recorded_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "latency_s": round(latency_s, 2),
         "model_calls": len(client.invocations),
@@ -218,9 +218,9 @@ def record_thread(path: Path, test_run_id: str, cap_usd: float) -> str:
         plan_before = results[todo - 1].plan_after if todo else fixture.initial_plan
         replies = [r.reply for r in results[:todo]]
         payload = agent_input_for(fixture, footage, todo, plan_before, replies)
-        from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+        from app.agents.edit_copilot import ChatEditCopilotAgent, EditCopilotInput
 
-        prompt = EditCopilotAgent(None).render_prompt(EditCopilotInput.model_validate(payload))
+        prompt = ChatEditCopilotAgent(None).render_prompt(EditCopilotInput.model_validate(payload))
         estimate = reservation_estimate_usd(settings.edit_copilot_model, prompt)
         spent = run_spend_usd(test_run_id)
         if spent + estimate > cap_usd:
