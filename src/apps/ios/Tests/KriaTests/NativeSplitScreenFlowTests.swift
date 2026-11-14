@@ -222,6 +222,58 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         XCTAssertEqual(shown(), [1, 1], "Undo puts the old ratio back on screen")
     }
 
+    /// Opt-in (`TEST_RUNNER_KRIA_SPLIT_DRAG_BENCH=1`). Time from each touch sample to the on-screen composition
+    /// carrying its weights, then a 60 Hz paced drag counting the samples that reach the screen before release.
+    @MainActor
+    func testDividerDragPreviewLatencyBenchmark() async throws {
+        guard ProcessInfo.processInfo.environment["KRIA_SPLIT_DRAG_BENCH"] != nil else { throw XCTSkip("opt-in benchmark") }
+        let source = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var document = EditorDocument(clips: [member(0, offset: 0, duration: 3, clipIndex: 0), member(1, offset: 0, duration: 3, clipIndex: 1)],
+                                      capabilities: Self.editable)
+        document.splitScreenSections = [.init(id: "s", durationS: 3, panelCount: 2)]
+        let session = makeSession(document)
+        session.currentTime = 0.5
+        await session.prepareFixtureSourcePreview(url: source)
+        func shown() -> [Double]? { session.displayedSourcePreviewRecipe?.splitScreenSections.first?.panelWeights }
+        func milliseconds(_ duration: Duration) -> Double {
+            Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
+        }
+
+        session.beginSplitDividerDrag(sectionID: "s", between: 0, and: 1)
+        var latencies: [Double] = []
+        var timeouts = 0
+        for step in 1...80 {
+            let start = ContinuousClock.now
+            session.updateSplitDividerDrag(deltaFraction: 0.004 * Double(step))
+            let wanted = try XCTUnwrap(session.splitContextAtPlayhead).section.panelWeights
+            while shown() != wanted, start.duration(to: .now) < .seconds(5) { await Task.yield() }
+            if shown() == wanted { latencies.append(milliseconds(start.duration(to: .now))) } else { timeouts += 1 }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        session.endSplitDividerDrag()
+        for _ in 0..<200 where shown() != session.splitContextAtPlayhead?.section.panelWeights { try await Task.sleep(for: .milliseconds(20)) }
+
+        session.beginSplitDividerDrag(sectionID: "s", between: 0, and: 1)
+        var seen = Set<[Double]>()
+        let paced = ContinuousClock.now
+        for step in 1...90 {
+            session.updateSplitDividerDrag(deltaFraction: -0.003 * Double(step))
+            try await Task.sleep(for: .milliseconds(16))
+            if let weights = shown() { seen.insert(weights) }
+        }
+        let pacedSeconds = milliseconds(paced.duration(to: .now)) / 1000
+        session.endSplitDividerDrag()
+        let sorted = latencies.sorted()
+        func percentile(_ p: Double) -> Double { sorted.isEmpty ? -1 : sorted[min(sorted.count - 1, Int(p * Double(sorted.count)))] }
+        let report = String(format: "BENCH split-drag samples=%d timeouts=%d latency_ms min=%.1f p50=%.1f p90=%.1f max=%.1f | paced 90 samples in %.2fs shown_before_release=%d",
+                            latencies.count, timeouts, sorted.first ?? -1, percentile(0.5), percentile(0.9), sorted.last ?? -1, pacedSeconds, seen.count)
+        print(report)
+        let attachment = XCTAttachment(string: report + "\nlatencies_ms=" + latencies.map { String(format: "%.1f", $0) }.joined(separator: ","))
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertEqual(timeouts, 0)
+    }
+
     @MainActor
     func testSwapExchangesWholePanelsInOneStepWithoutTouchingClipsOrSizes() throws {
         let topA = member(0, offset: 0, duration: 2)
