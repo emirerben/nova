@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.205.0] - 2026-11-14
+
+### Changed
+- fix(kria): EDIT_COPILOT_MODEL moves only the chat turn (KRI-1384) (#2321) <!-- release-pr: 2321 -->
+
 ## [0.88.204.0] - 2026-11-14
 
 ### Changed
