@@ -2104,6 +2104,9 @@
     "Left out one text change I couldn't make fit": "Eine Textänderung, die ich nicht unterbringen konnte, habe ich weggelassen",
     "Left out one text change for {text} because I couldn't make it fit": "Eine Textänderung für {text} habe ich weggelassen, weil ich sie nicht unterbringen konnte",
     "Left out one line I couldn't add to your text": "Eine Zeile, die ich deinem Text nicht hinzufügen konnte, habe ich weggelassen",
-    "Left out {text} because I couldn't add it as its own line": "{text} habe ich weggelassen, weil ich es nicht als eigene Zeile hinzufügen konnte"
+    "Left out {text} because I couldn't add it as its own line": "{text} habe ich weggelassen, weil ich es nicht als eigene Zeile hinzufügen konnte",
+    "I couldn't do {text}, so the video shows the rest of your text": "{text} konnte ich nicht umsetzen, das Video zeigt den Rest deines Textes",
+    "Left out one text change I couldn't make": "Eine Textänderung, die ich nicht umsetzen konnte, habe ich weggelassen",
+    "Left out {count} text changes I couldn't make fit": "{count} Textänderungen, die ich nicht unterbringen konnte, habe ich weggelassen"
   }
 }

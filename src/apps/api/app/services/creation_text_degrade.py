@@ -55,9 +55,6 @@ _STRATEGY: Mapping[str, Literal["one_op", "added_text"]] = {
 # Rejections whose item renders in part: the words are on screen, one asked behavior is not.
 _SHRINKABLE = frozenset({"incomplete", "hierarchy_unmet", "editorial_unmet"})
 
-# Like `phone_plan_repair._MAX_REPAIR_PASSES`: a bounded number of narrowing rounds.
-MAX_DEGRADE_PASSES = 3
-
 
 @dataclass(frozen=True)
 class TextDrop:
@@ -66,12 +63,15 @@ class TextDrop:
     reason: TextGateReason
     action: Literal["dropped", "shrunk"]
     # The creator-visible words the drop concerns (quoted in the note), when there are some.
+    # For `incomplete` it is her unmet ask in her words, as the composer restated it.
     text: str | None = None
     # The dropped editor op's name, for the admin trace only.
     op: str | None = None
-    # Whether one of the creator's live text asks could own an `unasked_text` line. A title
-    # ask ("and the English translation at the bottom") authorizes no new row, yet the line
-    # is hers (prod 3c312af4), so leaving it out is said.
+    # Whether the item may be one the creator asked for. For `unasked_text`: one of her live
+    # text asks could own the line. A title ask ("and the English translation at the bottom")
+    # authorizes no new row, yet the line is hers (prod 3c312af4), so leaving it out is said.
+    # For `incomplete`: False when no ask of hers is unmet and only composer ops the parser
+    # refused are missing, so the note does not call them part of her request.
     asked: bool = True
 
     def note(self) -> str | None:
@@ -97,6 +97,17 @@ class TextDrop:
                 text=quoted,
             )
         if self.reason == "incomplete":
+            if quoted is not None:
+                return say(
+                    en="I couldn't do {text}, so the video shows the rest of your text",
+                    tr="{text} isteğini yapamadım, videoda yazının geri kalanı var",
+                    text=quoted,
+                )
+            if not self.asked:
+                return say(
+                    en="Left out one text change I couldn't make",
+                    tr="Yapamadığım bir yazı değişikliğini eklemedim",
+                )
             return say(
                 en="I couldn't do every part of your text request, so the video shows the "
                 "parts I could",
@@ -151,11 +162,31 @@ class TextDrop:
         }
 
 
+# Drops whose note is "Left out one text change for ... because I couldn't make it fit". Past
+# `_FIT_LINES` of them (a composer that mistimed every label), they share one counted line.
+_FIT_REASONS = frozenset({"replay_failed", "research_missing", "layer_shape"})
+_FIT_LINES = 3
+
+
 def text_drop_notes(drops: Sequence[TextDrop]) -> list[str]:
     """Each drop's note once, in order, in the caller's bound reply language."""
+    fit = [
+        index
+        for index, drop in enumerate(drops)
+        if drop.reason in _FIT_REASONS and drop.action == "dropped"
+    ]
     notes: list[str] = []
-    for drop in drops:
-        note = drop.note()
+    for index, drop in enumerate(drops):
+        if len(fit) <= _FIT_LINES or index not in fit:
+            note = drop.note()
+        elif index == fit[0]:
+            note = say(
+                en="Left out {count} text changes I couldn't make fit",
+                tr="Sığdıramadığım {count} yazı değişikliğini eklemedim",
+                count=len(fit),
+            )
+        else:
+            continue
         if note and note[:160] not in notes:
             notes.append(note[:160])
     return notes
@@ -211,12 +242,14 @@ class Degraded(Generic[T]):
     cause: CreationTextCompositionError | None
 
 
-def shrink(error: CreationTextCompositionError) -> TextDrop:
+def shrink(
+    error: CreationTextCompositionError, *, text: str | None = None, asked: bool = True
+) -> TextDrop:
     """Render without the one asked behavior ``error`` names, or re-raise it when it is not one
-    of the gates that may (``_SHRINKABLE``)."""
+    of the gates that may (``_SHRINKABLE``). ``text`` and ``asked`` are the drop's own."""
     if error.reason not in _SHRINKABLE:
         raise error
-    return TextDrop(reason=error.reason, action="shrunk")  # type: ignore[arg-type]
+    return TextDrop(reason=error.reason, action="shrunk", text=text, asked=asked)  # type: ignore[arg-type]
 
 
 def literal_ops(
@@ -273,8 +306,10 @@ def degrade_text_ops(
     every single drop (or the unasked lines, together) and keeps the first that passes. When no
     single drop passes, the round still narrows: by a drop that turns the rejection into a
     different degradable one, else by the first op whose arrival makes a prefix of the program
-    fail the same way (two equally bad rows). A timeout, an untyped rejection, or nothing left
-    to try after ``MAX_DEGRADE_PASSES`` rounds re-raises the first rejection unchanged.
+    fail the same way (several equally bad rows). Every such round removes at least one op, so
+    there are at most as many rounds as ops; each costs replays only, never a model call. A
+    timeout, an untyped rejection, or a round with nothing left to try re-raises the first
+    rejection unchanged.
 
     ``text_asked``: the creator has a live text ask, so an ``unasked_text`` line may be hers
     and leaving it out is said (``TextDrop.asked``).
@@ -297,7 +332,7 @@ def degrade_text_ops(
     def dropped_items(reason: str | None, indexes: frozenset[int]) -> list[TextDrop]:
         return _dropped(reason, kept, indexes, lane, asked=text_asked)
 
-    for _ in range(MAX_DEGRADE_PASSES):
+    for _ in range(len(ops)):
         strategy = _STRATEGY.get(error.reason or "")
         if strategy is None:
             raise first

@@ -2195,6 +2195,21 @@
    "app/services/creation_text_degrade.py",
    "Left out {text} because I couldn't add it as its own line",
    "{text} metnini ayrı bir satır olarak ekleyemediğim için çıkardım"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "I couldn't do {text}, so the video shows the rest of your text",
+   "{text} isteğini yapamadım, videoda yazının geri kalanı var"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one text change I couldn't make",
+   "Yapamadığım bir yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out {count} text changes I couldn't make fit",
+   "Sığdıramadığım {count} yazı değişikliğini eklemedim"
   ]
  ],
  "retired": [

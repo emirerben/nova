@@ -14,6 +14,11 @@ the fences are stand-ins; nothing is dispatched and nothing writes to production
 ``--no-degrade`` runs the text gates as before KRI-1376 (the negative control). The receipt names
 the outcome, the notes the creator would read and the drawn text layers; each model call and its
 cost is in the ``agent_run`` log lines.
+
+Clip facts run for real (the capture copies onto each clip's analysis) except the landmark guess,
+which makes no model call. Visuals cannot be rebuilt: no read-only admin route returns their
+stored path, generation and analysis. The receipt's ``not_replayed`` lists every such gap for
+this job; a non-empty list means the plan, and every outcome after it, may differ from prod.
 """
 
 from __future__ import annotations
@@ -52,6 +57,22 @@ def _bindings(assignments: list[dict]) -> list[dict]:
     return rows
 
 
+def _not_replayed(snapshot: dict, landmark_asks: int) -> list[str]:
+    gaps = []
+    visuals = snapshot.get("visuals") or []
+    if visuals:
+        gaps.append(
+            f"visuals: the approved draft placed {len(visuals)} Visuals; this replay plans "
+            "without them"
+        )
+    if landmark_asks:
+        gaps.append(
+            f"landmark guesses: {landmark_asks} clips would ask the landmark model; this replay "
+            "answers none"
+        )
+    return gaps
+
+
 def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
     from app.config import settings  # noqa: PLC0415
     from app.kria.brief import CreativeBrief  # noqa: PLC0415
@@ -88,6 +109,7 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
     failures: list[dict] = []
     events: list[tuple[str, str, dict]] = []
     text_drops: list = []
+    landmark_asks: list[str] = []
     compose = composition.compose_creation_text
 
     def composed(*args, drops=None, **kwargs):
@@ -118,7 +140,14 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
         mock.patch.object(gb, "_guided_execution_plan", guided_plan),
         mock.patch.object(gb, "_fail_job", fail),
         mock.patch.object(gb, "mark_failed_phase", lambda *_a, **_k: None),
-        mock.patch.object(clip_facts, "enrich_clip_facts", lambda results, **_k: list(results)),
+        mock.patch.object(
+            clip_facts,
+            "_guess_landmark",
+            lambda entry, **_k: landmark_asks.append(str(entry.get("media_id"))),
+        ),
+        mock.patch.object(gb, "_checkpoint_unified_facts", lambda *_a: None),
+        # Prod runs with CLIP_FACTS_ENABLED on.
+        mock.patch.object(settings, "clip_facts_enabled", True),
         mock.patch.object(settings, "phone_rendering_enabled", True),
         mock.patch.object(settings, "phone_font_qualification_strict", False),
         mock.patch.object(
@@ -139,7 +168,9 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
                 "degrade_text_ops",
                 lambda ops, attempt, **_k: Degraded(attempt(ops), ops, [], None),
             ),
-            mock.patch.object(composition, "shrink", lambda error: (_ for _ in ()).throw(error)),
+            mock.patch.object(
+                composition, "shrink", lambda error, **_k: (_ for _ in ()).throw(error)
+            ),
         ]
     for patch in patches:
         patch.start()
@@ -155,6 +186,7 @@ def replay(capture: dict, *, degrade: bool) -> dict[str, Any]:
     return {
         "job_id": source["id"],
         "degrade": degrade,
+        "not_replayed": _not_replayed(binding["media_snapshot"], len(landmark_asks)),
         "status": job.status,
         "failure": failures[-1] if failures else None,
         "text_drops": [drop.record() for drop in text_drops],
@@ -183,6 +215,8 @@ def main(argv: list[str] | None = None) -> int:
     capture = json.loads(args.capture.read_text(encoding="utf-8"))
     receipt = replay(capture, degrade=not args.no_degrade)
     args.out.write_text(json.dumps(receipt, ensure_ascii=False, indent=2, default=str) + "\n")
+    for gap in receipt["not_replayed"]:
+        print(f"not replayed: {gap}", file=sys.stderr)
     return 0
 
 
