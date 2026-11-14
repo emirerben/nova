@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.223.0] - 2026-11-14
+
+### Changed
+- ci: block the third fix PR on a ticket without a failure-mode list (KRI-1383) (#2302) <!-- release-pr: 2302 -->
+
+## [0.88.222.0] - 2026-11-14
+
+### Changed
+- feat(ios): a picked clip appears at once and uploads behind it (KRI-1419) (#2336) <!-- release-pr: 2336 -->
+
+## [0.88.221.0] - 2026-11-14
+
+### Changed
+- chore(agents): delete four dead agents with no production caller (KRI-1428) (#2335) <!-- release-pr: 2335 -->
+
+## [0.88.220.0] - 2026-11-14
+
+### Changed
+- fix(kria): a length the creator never stated never blocks the video (KRI-1446) (#2339) <!-- release-pr: 2339 -->
+
 ## [0.88.219.0] - 2026-11-14
 
 ### Changed

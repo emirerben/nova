@@ -2,8 +2,8 @@
 
 Producer of `MusicLabels` (see `app/agents/_schemas/music_labels.py`). Runs
 once per track at admin-publish time. The matcher (Phase 2) consumes
-`ai_labels` to pick top-K tracks per auto-music job; `transition_picker`
-and `text_designer` consume `copy_tone` + `transition_style` directly in
+`ai_labels` to pick top-K tracks per auto-music job; `text_designer`
+consumes `copy_tone` + `transition_style` directly in
 auto-music mode.
 
 Inputs:
