@@ -1510,6 +1510,26 @@
    "app/agents/editor_ops_v2/split_full_screen.py",
    "Part of a split screen can't go full screen from chat on this edit.",
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
+  ],
+  [
+   "app/services/apns.py",
+   "Open Kria to see what to do next.",
+   "Sıradaki adımı görmek için Kria'yı aç."
+  ],
+  [
+   "app/services/apns.py",
+   "Open it to watch and share.",
+   "Açıp izleyebilir ve paylaşabilirsin."
+  ],
+  [
+   "app/services/apns.py",
+   "Your video is ready",
+   "Videon hazır"
+  ],
+  [
+   "app/services/apns.py",
+   "Your video needs a look",
+   "Videona bir göz at"
   ]
  ],
  "retired": [

@@ -12,6 +12,8 @@ from uuid import UUID
 import httpx
 from pydantic import SecretStr
 
+from app.kria.reply_language import LANGUAGE_NAMES, say_in
+
 Environment = Literal["sandbox", "production"]
 Category = Literal["token", "request", "provider", "retryable", "unknown"]
 Code = Literal[
@@ -33,13 +35,42 @@ Code = Literal[
 ]
 ActivityKind = Literal["video_ready", "action_required"]
 _HOSTS = {"sandbox": "api.sandbox.push.apple.com", "production": "api.push.apple.com"}
-# Generic English copy chosen by the closed kind. Never user data (no titles, media or text).
+# Generic copy chosen by the closed kind, keyed by its English text. Never user data (no titles,
+# media or text). Turkish is below; German and later languages come from the chat catalog
+# (``app/kria/copy/<language>.json``, looked up by the English sentence) — KRI-1144.
+_VIDEO_READY_TITLE = "Your video is ready"
+_VIDEO_READY_BODY = "Open it to watch and share."
+_ACTION_REQUIRED_TITLE = "Your video needs a look"
+_ACTION_REQUIRED_BODY = "Open Kria to see what to do next."
 ALERT_COPY: Mapping[ActivityKind, tuple[str, str]] = MappingProxyType(
     {
-        "video_ready": ("Your video is ready", "Open it to watch and share."),
-        "action_required": ("Your video needs a look", "Open Kria to see what to do next."),
+        "video_ready": (_VIDEO_READY_TITLE, _VIDEO_READY_BODY),
+        "action_required": (_ACTION_REQUIRED_TITLE, _ACTION_REQUIRED_BODY),
     }
 )
+_ALERT_COPY_TR: Mapping[str, str] = MappingProxyType(
+    {
+        _VIDEO_READY_TITLE: "Videon hazır",
+        _VIDEO_READY_BODY: "Açıp izleyebilir ve paylaşabilirsin.",
+        _ACTION_REQUIRED_TITLE: "Videona bir göz at",
+        _ACTION_REQUIRED_BODY: "Sıradaki adımı görmek için Kria'yı aç.",
+    }
+)
+# The languages a push can be written in; None is English. Same closed set as chat replies.
+ALERT_LANGUAGES: frozenset[str | None] = frozenset({None, *LANGUAGE_NAMES})
+
+
+def alert_text(kind: ActivityKind, language: str | None) -> tuple[str, str]:
+    """(title, body) for ``kind`` in ``language``; English when the language is off or unknown.
+
+    ``say_in`` applies the chat's rules: German only while its switch is on, and a sentence the
+    catalog lacks falls back to English, so a push is never blocked by its copy.
+    """
+    title, body = (
+        say_in(language, en=english, tr=_ALERT_COPY_TR.get(english, english))
+        for english in ALERT_COPY[kind]
+    )
+    return title, body
 
 
 @dataclass(frozen=True)
@@ -66,6 +97,8 @@ class ActivityNotification:
     activity_id: UUID
     notification_id: UUID
     kind: ActivityKind
+    # The chat's language (``CreationThread.state["reply_language"]``); None means English.
+    language: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -73,6 +106,8 @@ class ActivityNotification:
             or not isinstance(self.notification_id, UUID)
             or not isinstance(self.kind, str)
             or self.kind not in ALERT_COPY
+            or not (self.language is None or isinstance(self.language, str))
+            or self.language not in ALERT_LANGUAGES
         ):
             raise ValueError("Invalid activity notification")
 
@@ -137,7 +172,7 @@ class APNsTransport:
             )
         ):
             return Rejected("provider", "InvalidBearer")
-        title, body = ALERT_COPY[notification.kind]
+        title, body = alert_text(notification.kind, notification.language)
         request = httpx.Request(
             "POST",
             f"https://{_HOSTS[target.environment]}/3/device/{target.token.get_secret_value()}",
