@@ -1271,3 +1271,86 @@ def test_configured_runtime_drives_real_auth_registration_and_fake_http2_once(
         "body": "Open it to watch and share.",
     }
     assert delivery_state(delivery_id) == ("accepted", 1)
+
+
+# KRI-1144: the push is written in the chat's language (``CreationThread.state["reply_language"]``,
+# the same language Kria answers that chat in). Ways this can fail, each pinned below:
+# a Turkish/German chat still gets English; German leaks while its switch is off; a chat with no
+# language stops being English; the reply-language kill switch is ignored.
+PUSH_COPY = {
+    "en": {
+        "video_ready": ("Your video is ready", "Open it to watch and share."),
+        "action_required": ("Your video needs a look", "Open Kria to see what to do next."),
+    },
+    "tr": {
+        "video_ready": ("Videon hazır", "Açıp izleyebilir ve paylaşabilirsin."),
+        "action_required": ("Videona bir göz at", "Sıradaki adımı görmek için Kria'yı aç."),
+    },
+    "de": {
+        "video_ready": ("Dein Video ist fertig", "Öffne es, um es anzusehen und zu teilen."),
+        "action_required": (
+            "Dein Video braucht dich kurz",
+            "Öffne Kria, um zu sehen, wie es weitergeht.",
+        ),
+    },
+}
+
+
+def _set_chat_language(journey, language):
+    with sync_session() as db:
+        thread = db.get(CreationThread, journey.thread_id)
+        state = dict(thread.state or {})
+        if language is None:
+            state.pop("reply_language", None)
+        else:
+            state["reply_language"] = language
+        thread.state = state
+        db.commit()
+
+
+def _pushed_alert(journey, *, needs_attention):
+    assert journey.register().status_code == 200
+    activity_id = journey.activity(needs_attention=needs_attention)
+    delivery_id = journey.discover()
+    requests = []
+
+    async def send():
+        async with wire_transport(requests) as transport:
+            return await dispatch_delivery(delivery_id, transport=transport, policy=POLICY)
+
+    assert asyncio.run(send()) == "accepted"
+    assert len(requests) == 1
+    assert len(requests[0].content) < 1024
+    payload = json.loads(requests[0].content)
+    assert payload["activity_id"] == str(activity_id)
+    alert = payload["aps"]["alert"]
+    return alert["title"], alert["body"]
+
+
+@pytest.mark.parametrize("language", ["en", "tr", "de"])
+@pytest.mark.parametrize(
+    "needs_attention,kind", [(False, "video_ready"), (True, "action_required")]
+)
+def test_push_is_written_in_the_chat_language(
+    journey, monkeypatch, language, needs_attention, kind
+):
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", True)
+    _set_chat_language(journey, language)
+    assert _pushed_alert(journey, needs_attention=needs_attention) == PUSH_COPY[language][kind]
+
+
+def test_german_chat_gets_english_push_while_german_is_switched_off(journey, monkeypatch):
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", False)
+    _set_chat_language(journey, "de")
+    assert _pushed_alert(journey, needs_attention=False) == PUSH_COPY["en"]["video_ready"]
+
+
+def test_chat_without_a_language_keeps_the_english_push(journey):
+    _set_chat_language(journey, None)
+    assert _pushed_alert(journey, needs_attention=True) == PUSH_COPY["en"]["action_required"]
+
+
+def test_reply_language_kill_switch_keeps_the_english_push(journey, monkeypatch):
+    monkeypatch.setattr(settings, "kria_reply_language_enabled", False)
+    _set_chat_language(journey, "tr")
+    assert _pushed_alert(journey, needs_attention=False) == PUSH_COPY["en"]["video_ready"]
