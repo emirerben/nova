@@ -9,10 +9,21 @@ Ways this can fail, each caught below:
   docs/reviews/kri-1384/chat-undo.md still says every group seals;
 * an op that sealed stops sealing (the restore record lost a lane), so undo quietly disappears;
 * an op listed as not sealing starts sealing, so the doc and this table understate undo;
-* ``seal`` raises instead of answering None (it must never fail a chat turn).
+* ``seal`` raises instead of answering None (it must never fail a chat turn);
+* a restore that must take a key away (a caption line override, the all-lines size, the
+  captions' animation default) keeps the chat's value, because a commit's None means "leave it";
+* a lane read off the variant (picture blocks) lacks the schema defaults the replayed rows carry,
+  so an exact restore compares unequal;
+* a lane no plan-review section owns (``orientation``, ``landscape_fit``) is left out of the
+  record, so the turn cannot be undone;
+* a refusal that only holds for the probe's data (a video with no title yet, a picture row the
+  commit schema rejects) hides that the same op seals on a saved video.
 """
 
 from __future__ import annotations
+
+import dataclasses
+from typing import Any
 
 import pytest
 
@@ -29,18 +40,40 @@ from tests.evals.request_following.author_action_fixtures import (
     build,
 )
 
-# Turns chat refuses to undo, as "group.op [lanes the turn writes]": replaying the record does not
-# give back exactly what the creator had (docs/reviews/kri-1384/chat-undo.md says why for each).
+# Turns chat refuses to undo, as "group.op [lanes the turn writes]", and why replaying the record
+# does not give back exactly what the creator had (the same table is in
+# docs/reviews/kri-1384/chat-undo.md).
 NOT_SEALED = {
-    "text_authoring.set_title [title]",
-    "clip_add_remove.remove_visual_media [visual_blocks]",
-    "caption_animation.set_caption_meta [caption_meta]",
-    "caption_style_scope.patch_caption_line [caption_meta]",
-    "creator_song.set_user_song [user_song]",
-    "layer_order.set_layer_order [visual_blocks]",
-    "video_shape.set_video_shape [landscape_fit]",
-    "video_shape.set_video_shape [orientation]",
+    "text_authoring.set_title [title]": (
+        "the video has no title yet: the compiler records the old title only from `intro_text`, "
+        "and a commit cannot clear a title"
+    ),
+    "clip_add_remove.remove_visual_media [visual_blocks]": (
+        "the probe's picture row has no `asset_id` / `src_gcs_path`, so the commit schema "
+        "rejects the pre-turn row"
+    ),
+    "creator_song.set_user_song [user_song]": (
+        "the record holds the derived song state, not the creator's song section: the replay "
+        "pins the song's end as the creator's (`creator_end_s`)"
+    ),
 }
+
+
+def _titled(variant: dict[str, Any]) -> None:
+    variant["intro_text"] = "Harbour run"
+
+
+def _saved_rows(base: Any) -> Any:  # noqa: ANN401
+    """``base``'s picture blocks as a Save stores them (the commit schema requires these)."""
+
+    def apply(variant: dict[str, Any]) -> None:
+        base(variant)
+        for row in variant["visual_blocks"]:
+            row["asset_id"] = row["id"]
+            row["src_gcs_path"] = f"generative-jobs/job/sources/{row['id']}.jpg"
+            row["display_mode"] = "overlay"
+
+    return apply
 
 
 # The parity guard's probes; an undo turn itself stores no record, so it is not sealed.
@@ -97,3 +130,30 @@ def test_a_phone_chat_edit_seals_unless_listed(probe: Scenario, prod_profile) ->
             f"{turn} does not seal, so chat refuses to undo it: fix its restore "
             "record or list it in NOT_SEALED and docs/reviews/kri-1384/chat-undo.md"
         )
+
+
+def _probe(group: str, op: str) -> Scenario:
+    return next(p for p in PROBES if p.group == group and p.reference[0]["op"] == op)
+
+
+# The data-dependent refusals above, on the video a creator actually has.
+ON_A_SAVED_VIDEO = {
+    "a video with a title": dataclasses.replace(
+        _probe("text_authoring", "set_title"), variant=_titled
+    ),
+    "picture rows as a Save stores them": dataclasses.replace(
+        _probe("clip_add_remove", "remove_visual_media"),
+        variant=_saved_rows(_probe("clip_add_remove", "remove_visual_media").variant),
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(ON_A_SAVED_VIDEO))
+def test_a_refusal_that_depends_on_the_probe_data_seals_on_a_saved_video(
+    case: str, prod_profile
+) -> None:
+    verdict = _sealed(ON_A_SAVED_VIDEO[case])
+    assert verdict is not None, f"{case}: the probe no longer compiles"
+    turn, sealed = verdict
+    assert turn in NOT_SEALED, f"{case}: {turn} seals on the probe data too; drop this case"
+    assert sealed, f"{case}: {turn} does not seal even on a saved video ({NOT_SEALED[turn]})"

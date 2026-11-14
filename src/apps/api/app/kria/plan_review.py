@@ -1093,6 +1093,10 @@ def build_restore_record(
             put("clips", lane, {"value": before.get(lane) or []})
         elif lane in before and lane in FIELD_SECTIONS:
             put(FIELD_SECTIONS[lane][0], lane, {"value": before[lane]})
+        elif lane in before and lane in _UNOWNED_LANES:
+            # A scoped commit never carries these (layer 3 strips them), so only an unscoped
+            # chat turn's record holds them, for "undo that". They put back with the look.
+            put("look", lane, {"value": before[lane]})
     for lane, (old, new) in dependencies.items():
         if lane in data and lane in original_before:
             sections.setdefault("clips", {}).setdefault(lane, {})["timing"] = [new, old]
