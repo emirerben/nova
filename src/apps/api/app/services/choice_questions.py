@@ -799,12 +799,16 @@ def simpler_version_accepted(events: Events, dropped_fields: Iterable[str]) -> b
     question: an older "yes", the receipts path's question, or a refusal about something
     else never counts.
     """
+    return _accepted_refusal_card(events, dropped_fields) is not None
+
+
+def _accepted_refusal_card(events: Events, dropped_fields: Iterable[str]) -> dict[str, Any] | None:
     question = _simpler_question_answered(events, {"simpler_version"})
     if question is None:
-        return False
+        return None
     offered = {str(name) for name in question.get("dropped_fields") or ()}
     dropping = set(dropped_fields)
-    return bool(dropping) and dropping <= offered
+    return question if dropping and dropping <= offered else None
 
 
 def simpler_version_carried(events: Events, dropped_fields: Iterable[str]) -> bool:
@@ -821,24 +825,28 @@ def simpler_version_carried(events: Events, dropped_fields: Iterable[str]) -> bo
     ``dropped_fields``) offered to leave out every field the policy drops now. A tap on a card
     that records no fields (readiness / receipts) is walked past, never taken as this consent.
     """
+    return _carried_refusal_card(events, dropped_fields) is not None
+
+
+def _carried_refusal_card(events: Events, dropped_fields: Iterable[str]) -> dict[str, Any] | None:
     dropping = set(dropped_fields)
     if not dropping:
-        return False
+        return None
     rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
     for index in range(len(rows) - 1, -1, -1):
         role, payload = rows[index]
         if role == "assistant":
             if payload.get(EVENT_TYPE_KEY) in {"draft_applied", "draft_undone"}:
-                return False
+                return None
             continue
         if role != "user":
             continue
         selection = payload.get("choice_selection")
         if not isinstance(selection, dict):
-            return False  # a typed message is a new request
+            return None  # a typed message is a new request
         key = selection.get("option_key")
         if key in _CHANGE_REQUEST_KEYS:
-            return False
+            return None
         if key != "simpler_version":
             continue  # a tap that answers another question
         # The card it answered must have been the open simpler-version question then.
@@ -848,8 +856,19 @@ def simpler_version_carried(events: Events, dropped_fields: Iterable[str]) -> bo
         offered = {str(name) for name in question.get("dropped_fields") or ()}
         if not offered:
             continue  # a readiness / receipts card: not a policy refusal's consent
-        return dropping <= offered
-    return False
+        return question if dropping <= offered else None
+    return None
+
+
+def simpler_refusal_consent(
+    events: Events, dropped_fields: Iterable[str], *, carried: bool
+) -> dict[str, Any] | None:
+    """The policy refusal's card whose "simpler version" answer covers ``dropped_fields``:
+    this turn's own answer, or with ``carried`` an earlier tap (`simpler_version_carried`)."""
+    fields = tuple(dropped_fields)
+    return _accepted_refusal_card(events, fields) or (
+        _carried_refusal_card(events, fields) if carried else None
+    )
 
 
 def follows_change_request(events: Events) -> bool:
@@ -6322,6 +6341,7 @@ __all__ = [
     "simpler_version_answer",
     "simpler_version_carried",
     "simpler_version_ask",
+    "simpler_refusal_consent",
     "simpler_version_question",
     "without_length_answer_echo",
 ]
