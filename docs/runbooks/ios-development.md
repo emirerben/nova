@@ -92,6 +92,67 @@ root (CI also runs these before the full gate):
 python3 -m unittest discover -s scripts/ios/tests -v
 ```
 
+## Client protocol number (KRI-1381)
+
+`KriaClientProtocolContract.version` (iOS) and the `*_PROTOCOL` constants in
+`src/apps/api/app/services/client_protocol.py` (server) carry the number. Never pick
+it by hand: two open PRs that each pick `max + 1` collide on merge. When you rebase
+onto main, run
+
+```bash
+python3 scripts/bump-protocol.py <feature-name> [--config-field <name>_min_client_protocol]
+```
+
+It sets the feature's number to one above everything on main and rewrites the iOS
+version, the server constant (added if new) and the `config.py` default of every
+named field in one step. A field called `<feature>_min_client_protocol` or
+`<feature>_client_protocol` is picked up without being named. Re-run it after every
+rebase that brings in another protocol bump; re-running is idempotent.
+
+The script stops, rather than leave a gate behind, when:
+
+- a config field is new since `origin/main`, or still holds the feature's old number, and
+  is not named. The feature's gate may not follow the `<feature>_min_client_protocol`
+  name (`media_card_style` vs `CARD_STYLE`), so a field nobody named is never left behind
+  silently. Pass `--config-field <name>` to move it with the feature, or
+  `--leave-config-field <name>` when it belongs to another feature.
+- `origin/main` does not resolve (no git, a remote under another name). Without it the
+  shipped checks below are off, so the run stops; `git fetch origin main`, or `--force`.
+- the feature's constant is already on `origin/main`. Shipped builds depend on that
+  number; add a new constant for the new gate (`--force` only for one that has not
+  shipped).
+- a config field it would move (named, or picked up by the `<feature>_min_client_protocol`
+  / `<feature>_client_protocol` rule) is already on `origin/main`. A feature name that
+  collides with a shipped gate such as `caption-animation` or `kria-minimum` would
+  otherwise lock older builds out; add a new field instead. Every field it does move is
+  printed with its old and new value.
+
+When two features took the same number, the one that rebases second just re-runs the
+same command: a field whose `<name>_PROTOCOL` constant belongs to the other feature is
+left alone.
+
+Tests compare against `KriaClientProtocolContract.version` or the constant, never a
+literal. `scripts/bump-protocol.py --check` (run by
+`tests/test_client_protocol_single_source.py`) fails when, on a test line that mentions
+"protocol", the current number sits in a code position (after `=`, `==`, `:`, `(`, `,`,
+`[` or inside quotes), so `assert X_PROTOCOL == N`, `client_protocol=N`, `"Client-Protocol": "N"`,
+`str(N)` and `KriaClientProtocolContract.version == N` all fail. It also flags
+`set_client_protocol(N)` and `bind_sending_build(N)`, `.default == N`, `requires_protocol: N`, `(N, True)` parametrize
+rows and `appProtocol: N`. In a Python test that sets a client protocol it also flags a
+module-level `NAME = N` stand-in and a `{N: ...}` dict key, and in a Swift test that reads
+the contract an `XCTAssertEqual(header, "N")` on its own line. It fails too when a `config.py` gate or server constant is above
+the app's version. A floor such as `XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, N, ...)`
+is allowed, and `protocol-literal-ok` on a line marks a fixture number that is not the
+app's. Limit: a number on a line that never mentions "protocol" (for example an argument
+to a gate helper like `planned_for(47)`) is not seen, because every `50` in the suite would
+otherwise match; reference the constant there.
+The guard reads tests only, so `formal/` scripts that import the constants must derive
+their expectations from them too (`verify_split_protocol.py` does for the blank-panel
+number; its pin json is a hash of the `device_render` function and stays). App code that gates on a number must read the
+`client_protocol.py` constant (server) or the contract (iOS), as a literal there keeps
+its old value after a re-bump. The per-version doc comment above `static let version`
+stays a hand edit.
+
 ## Phone export proof (KRI-139, KRI-470 PR-G)
 
 Recipe validation and file metadata do not prove what a creator hears or sees.
