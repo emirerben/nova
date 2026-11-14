@@ -29,7 +29,7 @@ Added with the verifier's findings, before the fix:
      a refused candidate), or twice for one row;
  14. a look every clip carries refuses the whole video, or fills the approval card's six lines
      with one note per clip;
- 15. more kinds of reject than the cap still loop, or end in anything but the typed refusal.
+ 15. a degrade that does not fix its row loops, or ends in anything but the typed refusal.
 
 Added with the second verifier's findings, before the fix:
  16. a turned clip whose background picture is not bound refuses untyped, naming no reason or
@@ -39,11 +39,24 @@ Added with the second verifier's findings, before the fix:
      text font") stay English in a Turkish chat next to the Turkish shrink note;
  18. the planning dry run still answers a degradable row with ``PhoneProposalRejected``, so the
      creator is offered the request-blind fallback instead of the model's draft and its note.
+
+Added with the third verifier's findings, before the fix:
+ 19. a word-timed text on a Voiceover edit with no clear spot at its size still stops the whole
+     video to ask the creator, although a smaller readable size fits below the face;
+ 20. that shrink touches a text that already fit, its words or its time, or goes below the
+     readable floor;
+ 21. the shrink is silent: no note on the variant, a note in English in a Turkish chat, or no
+     ``requirement_recovery`` event naming the row;
+ 22. the approval card shows a degrade note in English in a Turkish chat (the planning task
+     binds no chat language);
+ 23. four different kinds of degradable reject still refuse the whole video; or, with no cap,
+     a degrade that does not fix its row loops instead of ending in the typed refusal.
 """
 
 from __future__ import annotations
 
 import copy
+import uuid
 from typing import get_args
 from unittest.mock import Mock
 
@@ -333,7 +346,7 @@ def test_a_confirmed_text_with_no_room_shrinks_instead_of_asking():
 def test_without_the_shrink_the_crowded_text_asks_for_a_choice(monkeypatch):
     """Failure mode 8 for the placement gate: the crowd really leaves no room at full size."""
     plan, bindings, contract = _crowded()
-    monkeypatch.setattr(phone_plan_repair, "_shrink_sizes", lambda element: [element.size_px])
+    monkeypatch.setattr(phone_plan_degrade, "shrink_sizes", lambda size, **_kw: [size])
 
     with pytest.raises(CreatorRenderContractError) as refused:
         compile_phone_guided_repaired(plan, bindings, contract=contract)
@@ -356,7 +369,6 @@ def test_a_size_the_creator_chose_never_shrinks():
     plan.text_elements = [*CROWD, stray]
     element = stray.model_copy(update={"position": "custom", "y_frac": 0.5})
 
-    assert phone_plan_repair._shrink_sizes(element) == [64]
     with pytest.raises(CreatorRenderContractError) as refused:
         phone_plan_repair._place_added_contract_text(plan, element)
     assert refused.value.decline_reason == "needs_choice"
@@ -539,15 +551,16 @@ def test_a_row_degraded_twice_gets_one_note_naming_both():
     ]
 
 
-# --- the cap -----------------------------------------------------------------------------------
+# --- many rejects, and a degrade that does not help ---------------------------------------------
 
 
 @pytest.mark.usefixtures("_verified")
-def test_three_kinds_of_reject_render_and_a_fourth_refuses_typed():
-    """Failure mode 15: different rejects degrade up to the cap; past it the last one is raised.
+def test_four_kinds_of_reject_all_render_with_their_notes():
+    """Failure mode 23: every degradable row degrades, however many kinds of reject there are.
 
     The video is landscape, so its golden hour is a ``look_source`` reject; the photo's zoom
-    a ``photo_treatment``; the photo's transition out a ``final_transition``.
+    a ``photo_treatment``; the photo's transition out a ``final_transition``; the right-to-left
+    staggered text a ``text_effect``.
     """
     plan, bindings, visuals = photo_fixture(
         image_motion="subtle_zoom_in", transition_after="crossfade"
@@ -555,6 +568,8 @@ def test_three_kinds_of_reject_render_and_a_fourth_refuses_typed():
     plan.story_timeline[0] = plan.story_timeline[0].model_copy(
         update={"look_preset": "golden_hour"}
     )
+    rtl, _bindings = _rtl()
+    plan.text_elements = rtl.text_elements
 
     result = compile_phone_guided_repaired(plan, bindings, visuals=visuals)
 
@@ -562,13 +577,40 @@ def test_three_kinds_of_reject_render_and_a_fourth_refuses_typed():
         "final_transition",
         "look_source",
         "photo_treatment",
+        "text_effect",
     ]
-    assert len(result.notes) == 3
-    rtl, _bindings = _rtl()
-    plan.text_elements = rtl.text_elements
+    assert sorted(result.notes) == [
+        "Ended your video on a cut instead of a transition",
+        "Showed clip 1 without its look: your iPhone can't draw that yet",
+        "Showed photo 2 without its zoom: your iPhone can't draw that yet",
+        f"Showed the text “{ARABIC}” with a simple fade-in: your iPhone can't play its "
+        "animation yet",
+    ]
+
+
+@pytest.mark.usefixtures("_verified")
+def test_a_degrade_that_does_not_fix_its_row_ends_in_the_typed_refusal(monkeypatch):
+    """Failure mode 15: the same reject on the same row twice is raised, never looped on."""
+    plan, bindings = fixture()
+    plan.story_timeline = [
+        plan.story_timeline[0].model_copy(update={"look_preset": "faded_analog"})
+    ]
+    attempts = []
+
+    def no_help(plan, exc):  # noqa: ANN001
+        attempts.append(exc.item_id)
+        recovery = phone_plan_degrade.Recovery(
+            reason=exc.reason, lane=exc.lane, item_id=exc.item_id, action="dropped"
+        )
+        return plan, [recovery]
+
+    monkeypatch.setattr(phone_plan_degrade, "degrade_plan_for_phone", no_help)
+
     with pytest.raises(UnsupportedPhonePlan) as refused:
-        compile_phone_guided_repaired(plan, bindings, visuals=visuals)
-    assert (refused.value.reason, refused.value.item_id) == ("text_effect", "rtl-text")
+        compile_phone_guided_repaired(plan, bindings)
+
+    assert (refused.value.reason, refused.value.item_id) == ("moment_treatment", "moment")
+    assert attempts == ["moment"]
 
 
 def test_a_reject_that_names_no_known_row_is_left_to_fail():
@@ -580,3 +622,113 @@ def test_a_reject_that_names_no_known_row_is_left_to_fail():
         ValueError("phone timeline duration differs from approved plan"),
     ):
         assert phone_plan_degrade.degrade_plan_for_phone(plan, exc) == (plan, [])
+
+
+# --- a word-timed text on a Voiceover edit ------------------------------------------------------
+
+# A two-line text at its fitted size runs into the captions below the face; one line fits.
+SPOKEN = "Twenty minutes of total darkness on the water"
+SPOKEN_WORDS = "yirmi dakika boyunca tam karanlık ve sessizlik içinde bekledik".split()
+
+
+def _spoken_job(monkeypatch, *, literal: str = SPOKEN, language: str | None = None):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+    from app.kria.brief_binding import BriefBinding
+    from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_narrated, _words
+    from tests.tasks.test_phone_voiceover_requested_edits import _enable_requested_word_text
+
+    words = _words(*((word, 1.0 + 0.3 * i, 1.3 + 0.3 * i) for i, word in enumerate(SPOKEN_WORDS)))
+    job, snapshot, _session, _bindings = _setup_narrated(
+        monkeypatch,
+        spoken_words=words,
+        extra_candidates={"creator_strategy": {"opening_title": "Night boat rules"}},
+    )
+    _enable_requested_word_text(monkeypatch)
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r6",
+                kind="text",
+                scope="global",
+                literal=literal,
+                facts={"triggers": ["yirmi dakika"]},
+            )
+        ],
+    )
+    binding = BriefBinding.create(uuid.uuid4(), brief).model_dump(mode="json")
+    snapshot["creator_brief_binding"] = binding
+    job.assembly_plan["creator_brief_binding"] = binding
+    if language is not None:
+        snapshot["creator_reply_language"] = language
+    return job, snapshot
+
+
+def test_a_spoken_text_with_no_room_shrinks_instead_of_asking(monkeypatch):
+    """Failure modes 19-21, through the real Voiceover worker task."""
+    job, snapshot = _spoken_job(monkeypatch)
+    events = _captured_events(monkeypatch)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    assert "request_recovery" not in job.assembly_plan
+    variant = job.assembly_plan["variants"][0]
+    [receipt] = variant["spoken_text_placement"]["rows"]
+    assert receipt["status"] == "placed"
+    [row] = [r for r in variant["narrated_title_text_elements"] if r["id"] == "spoken-text-r6"]
+    assert (row["text"], row["start_s"]) == (SPOKEN, pytest.approx(1.0, abs=1 / 30))
+    assert 40 <= row["size_px"] < receipt["placement"]["shrunk_from_px"]
+    assert variant["phone_repair_notes"] == [
+        f"Made your text “{SPOKEN}” smaller so it fits clearly on screen"
+    ]
+    recovered = [data for stage, event, data in events if stage == "phone_plan"]
+    assert recovered == [
+        {
+            "decision": "render_with_notes",
+            "reason": "spoken_text_fit",
+            "lane": "spoken_text",
+            "item_id": "spoken-text-r6",
+            "action": "shrunk",
+        }
+    ]
+    recipe = device_status(job, "narrated").request.recipe
+    assert len([layer for layer in recipe.text_layers if layer.id.startswith("title-")]) == 2
+
+
+def test_without_the_shrink_the_spoken_text_still_asks(monkeypatch):
+    """Failure mode 8 for this gate: at its own size the text really has no clear spot."""
+    job, snapshot = _spoken_job(monkeypatch)
+    monkeypatch.setattr(phone_plan_degrade, "shrink_sizes", lambda size, **_kw: [size])
+
+    with pytest.raises(UnsupportedPhonePlan) as refused:
+        gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert (refused.value.reason, refused.value.lane) == ("spoken_text_unplaced", "spoken_text")
+    assert "couldn't safely place" in job.assembly_plan["request_recovery"]["message"]
+
+
+def test_a_turkish_voiceover_chat_gets_the_shrink_note_in_turkish(monkeypatch):
+    job, snapshot = _spoken_job(monkeypatch, language="tr")
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.assembly_plan["variants"][0]["phone_repair_notes"] == [
+        f"“{SPOKEN}” yazını ekrana net sığsın diye küçülttüm"
+    ]
+
+
+def test_a_spoken_text_that_fits_keeps_its_size_and_says_nothing(monkeypatch):
+    """Failure mode 20: only a text with no clear spot at its own size changes."""
+    job, snapshot = _spoken_job(monkeypatch, literal="20 dk")
+    events = _captured_events(monkeypatch)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    variant = job.assembly_plan["variants"][0]
+    [receipt] = variant["spoken_text_placement"]["rows"]
+    assert "shrunk_from_px" not in receipt["placement"]
+    [row] = [r for r in variant["narrated_title_text_elements"] if r["id"] == "spoken-text-r6"]
+    assert row["size_px"] == 120
+    assert "phone_repair_notes" not in variant
+    assert not [data for stage, _event, data in events if stage == "phone_plan"]

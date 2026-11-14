@@ -801,6 +801,7 @@
     "Lip-sync keeps the song where you filmed it.": "Dudak senkronu şarkıyı çektiğin yerde tutar.",
     "Longer: each clip stays on screen a little longer.": "Daha uzun: her klip ekranda biraz daha uzun kalır.",
     "Made your text {text} smaller so it fits clearly next to the other text": "{text} yazını diğer yazıların yanına net sığsın diye küçülttüm",
+    "Made your text {text} smaller so it fits clearly on screen": "{text} yazını ekrana net sığsın diye küçülttüm",
     "Made {who} bigger ({old:g}→{new:g}px)": "{who} büyüttüm ({old:g}→{new:g}px)",
     "Made {who} smaller ({old:g}→{new:g}px)": "{who} küçülttüm ({old:g}→{new:g}px)",
     "Make it without these": "Bunlar olmadan hazırla",
