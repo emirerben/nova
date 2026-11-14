@@ -3414,6 +3414,7 @@
         "src/apps/api/app/agents/main_creator.py",
         "src/apps/api/app/agents/brief_extractor.py",
         "src/apps/api/tests/kria/test_brief_long_request.py",
+        "src/apps/api/tests/fixtures/kria_turns/east-run-brief.json",
         "src/apps/api/tests/fixtures/kria_replay/q2-long-prompt/",
         "scripts/kria/score_q2_long_prompt.py",
         "docs/reviews/qendresa-23-long-prompts.md"

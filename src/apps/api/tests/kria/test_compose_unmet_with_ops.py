@@ -1,7 +1,7 @@
 """29 Ekim lane E (KRI-1039): compose with the editor ops instead of refusing.
 
 Written from the failure list, before the code was trusted:
-* the flag-off path changed (routing, fast-path set, replan cues, op shape, windows);
+* the flag-off path changed (routing, fast-path set, op shape, windows);
 * a sequence's windows leave a gap or overlap (they must tile the source window exactly);
 * weighted windows are not proportional, or a one-letter word gets a zero-length window;
 * a cumulative build-up drops the full sentence, loses the hold at the end, or its steps are
@@ -73,7 +73,9 @@ def test_compose_unmet_flag_off_is_byte_identical(monkeypatch) -> None:
     rows = _compile(["one", "two", "three"], monkeypatch, flag=False, mode="cumulative")
     assert [r["text"] for r in rows] == ["one", "two", "three"]
     assert [(r["start_s"], r["end_s"]) for r in rows] == [(0.0, 3.0), (3.0, 6.0), (6.0, 9.0)]
-    # Routing helpers: the fast-path set and the replan cues are the earlier ones.
+    # The fast-path set is the earlier one. KRI-1392 deleted the re-plan cue lists on purpose
+    # ("make the font different" was a re-plan because "different" was on one); the edit or
+    # rebuild call is the brief extractor's request_scope, or the copilot's answer.
     replace_sequence = KriaTurnPlan.model_validate(
         {
             "mode": "act",
@@ -89,7 +91,6 @@ def test_compose_unmet_flag_off_is_byte_identical(monkeypatch) -> None:
         }
     )
     assert planner._is_fast_path_plan(replace_sequence) is False
-    assert planner._fast_path_eligible("make the font different") is False
     card = _scorecard()
     fx = card.load_fixture()
     with card._prod_flags():
@@ -113,8 +114,6 @@ def test_followup_reaches_the_copilot_on_a_ready_render_and_replans_without_one(
     # A job that never produced a variant has no editable lanes (prod job 51f7124f: no
     # `variants` key), so the follow-up is a re-plan whatever the flag says.
     assert failed["model_calls"] == ["nova.creator.main"]
-    assert planner._fast_path_eligible("farkli bir versiyon istiyorum") is False
-    assert planner._fast_path_eligible("give me another version") is False
 
 
 def test_weighted_windows_tile_the_source_and_follow_character_count(monkeypatch) -> None:

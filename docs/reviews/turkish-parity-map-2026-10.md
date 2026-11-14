@@ -97,10 +97,10 @@ structured field instead (the KRI-667 direction).
 | D13 | schemas/edit_proposal.py:1052 | `recognize_image_layout` | Photo fit vs fill | EN-only | yes | `"fotoğrafları kırpma, tam görünsün"` → None **(ran)**, so the default crop is used. |
 | D14 | schemas/edit_proposal.py:401 | `loose_creator_text` | Feeds every Turkish reader in this module | EN+TR, gated | — | Returns `""` when the whole message reads English. Mixed text loses its Turkish words; see N11. |
 | D15 | schemas/edit_proposal.py:384-600, :958 | `_TR_*` cadence, scope, reuse, duration, mixed timing | Timing, scope, reuse, total length | EN+TR | — | Works for Turkish (KRI-520). |
-| D16 | kria/brief.py:497, :511, :733, :740 | `_REDO_PATTERNS` / `_TR_REDO_PATTERNS`, `_asks_move`, `_asks_remove` | Full re-plan vs editor op | EN+TR, but English side is broken by N01 | — | Turkish works. English all-caps or Title Case fails. |
+| D16 | kria/brief.py:1148, :1155 | `_asks_move`, `_asks_remove` | Positional clip move or removal vs re-plan | EN+TR | — | The redo patterns were deleted (KRI-1392): the brief extractor's `request_scope` decides a re-plan. |
 | D17 | kria/brief_route.py:16, :23 | `fold_text`, `loose_text` | Canonical fold | EN+TR | — | Reference implementation (see N12). |
 | D18 | kria/language.py:99, :105 | `is_status_question`, `is_help_question` | v2 status/help short-circuit | EN+TR | — | `"durum ne?"` → True **(ran)**. |
-| D19 | kria/planner.py:3448, :2232 | `_TEXT_EDIT_ASK` + TR twin, `_EN_HOLD_WORDS` + TR | Text-edit asks, hold seconds | EN+TR | — | OK. |
+| D19 | kria/planner.py:4146 | `_EN_HOLD_WORDS` + TR | Hold seconds | EN+TR | — | OK. `_TEXT_EDIT_ASK` was deleted (KRI-1392): the copilot's answer decides. |
 | D20 | agents/main_creator.py:1254 | `_explicit_media_scope_from_request` | Model-side media scope | EN+TR | — | OK. |
 | D21 | agents/_schemas/creator_policy.py:125, :149 | `_turkish_stated_count_matches_manifest`, `explicit_scope_from_stated_media_count` | "16 klip ile" = all media | EN+TR | — | OK. |
 | D22 | smart_edit/planner.py:43-95 (entry `plan_smart_captions` :1985) | `_DIRECT_ORDINALS`, `_CARDINALS`, `_LIST_TERMS`, prefixes | Smart-caption list/ordinal/payoff events | TR-only, no language gate | yes, `agents/smart_edit_planner.py` | English talking heads get no deterministic list events ("first", "reason two"). |

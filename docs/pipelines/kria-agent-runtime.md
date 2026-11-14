@@ -225,8 +225,13 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
 - **Router.** `route_requirements` is deterministic. `replan` when a new
   requirement is `order`/`select`, a per-clip text requirement arrives and the
   plan has no per-clip text lane, the kinds are mixed, there is no editable
-  render, or the message asks to redo it ("do it again based on my prompt").
-  Otherwise `editor_ops`. With a render present the Main Creator runs first (it
+  render, or the turn carries a rebuild verdict. Otherwise `editor_ops`. No
+  wording decides a rebuild (KRI-1392): the brief extractor's `request_scope`
+  does where it runs, and the copilot answers every other rendered turn with
+  ops, a question, or a refusal that offers a fresh version. Replying with the
+  word that offer quotes ("redo", "yeniden yap", "nochmal") re-plans; an
+  editor target that cannot be opened never re-plans, and its reply carries the
+  same offer. Evidence: `docs/reviews/kri-1384/routing-cues.md`. With a render present the Main Creator runs first (it
   extracts the requirements) and the copilot only when the router says
   `editor_ops`. `_validate_draft_plan` rejects an editor-ops-only plan when the
   route is `replan`.
