@@ -59,7 +59,8 @@ after the card lands.
 
 The same test also fails if the draft message (its "Hinweis zu diesem Video" line, which only the draft carries) is
 on screen at any sample before the card: with this change it never is, and the chat had text on screen in every
-sample.
+sample. Red control: with only the `refreshDelta` read-first step switched off (a temporary environment check, not
+committed), the same test fails with the draft seen alone before its card.
 
 The white flash itself did not reproduce in the simulator before the fix (no blank sample in either run), so the
 evidence for the white chat is the size bound: no approval card on this input is taller than the visible chat.
