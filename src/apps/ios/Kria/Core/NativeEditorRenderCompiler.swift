@@ -213,9 +213,10 @@ enum NativeEditorRenderError: Error, Equatable {
             var freezeHold = authoredSlot?.raw["freeze_hold_s"]?.numberValue ?? 0
             if freezeHold > 0, let frame = authoredSlot?.raw["freeze_frame_s"]?.numberValue, frame.isFinite {
                 let motion = (frame - sourceStart) / (explicitRate ?? 1)
-                let hold = ((authoredMovingDuration - motion) * 30).rounded() / 30
-                let minimumMotion = authoredSlot?.parentSegmentID != nil ? 1.0 / 30 : 0.1
-                freezeHold = motion >= minimumMotion - 0.000_001 && hold >= 1.0 / 30 - 0.000_001 ? hold : 0
+                let fps = Double(EditorLimits.outputFPS)
+                let hold = ((authoredMovingDuration - motion) * fps).rounded() / fps
+                let minimumMotion = authoredSlot?.parentSegmentID != nil ? 1 / fps : EditorLimits.minClipSeconds
+                freezeHold = motion >= minimumMotion - 0.000_001 && hold >= 1 / fps - 0.000_001 ? hold : 0
             }
             let freezes = freezeHold.isFinite && freezeHold > 0
                 && authoredMovingDuration - freezeHold > 0

@@ -56,7 +56,7 @@ from app.routes.generative_jobs import (
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.editor_window import EDITOR_MIN_CLIP_S, below_editor_minimum
 from app.services.clip_facts import assignment_facts, facts_for_prompt
-from app.services.editor_limits import MAX_EDITOR_OPS
+from app.services.editor_limits import MAX_EDITOR_OPS, MOTION_FPS
 from app.services.kria_editor_ops_diff import (
     EditorDiff,
     diff_compiled_state,
@@ -3159,7 +3159,7 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
         elif name == "set_clip_in":
             row.update(set_source_start(row, float(op["in_s"])))
         else:
-            amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
+            amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - EDITOR_MIN_CLIP_S))
             row.update(slice_source_window(row, amount, _slot_duration(row)))
             if row.get("split_section_id"):
                 row["split_offset_s"] += amount
@@ -3183,7 +3183,7 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
             row["source_end_s"] = row["in_s"] + span
         row["source_start_locked"] = True
     elif name == "trim_clip_start":
-        amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
+        amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - EDITOR_MIN_CLIP_S))
         row["in_s"] = float(row.get("in_s") or 0.0) + amount * _slot_rate(row)
         row["source_start_locked"] = True
         if row.get("split_section_id"):
@@ -3209,7 +3209,7 @@ def _op_trim_output_start(state: _DraftState, op: dict[str, Any]) -> None:
         if row.get("removed"):
             continue
         duration = _slot_duration(row)
-        if remaining >= duration - 0.1:
+        if remaining >= duration - EDITOR_MIN_CLIP_S:
             row["removed"] = True
             remaining -= duration
             continue
@@ -3740,7 +3740,7 @@ def compile_editor_ops(
             state.summary = None
         targets = [float(op["target_s"]) for op in ops if op.get("op") == "set_total_duration"]
         if targets and any(op.get("fit_to_video") for op in sequence_ops):
-            rounded_target = round(targets[-1] * 30) / 30
+            rounded_target = round(targets[-1] * MOTION_FPS) / MOTION_FPS
             if abs(total - rounded_target) > 0.001:
                 raise TextTimingConflict(
                     targets[-1],
