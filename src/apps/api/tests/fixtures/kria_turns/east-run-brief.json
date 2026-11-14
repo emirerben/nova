@@ -49,6 +49,7 @@
     {
       "user_message": "Do it again based on my prompt.",
       "brief_updates": [],
+      "request_scope": "rebuild",
       "expected_route": "replan",
       "expected_live_ids": ["r1", "r2", "r3", "r4"]
     }

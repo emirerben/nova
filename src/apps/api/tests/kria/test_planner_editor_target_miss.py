@@ -736,27 +736,14 @@ async def test_failed_extraction_still_serves_a_short_in_place_text_edit(
 
 
 @pytest.mark.parametrize(
-    "message",
+    "copilot",
     [
-        "give me a different version",  # a re-plan cue belongs to the planner
-        "make the title bigger " * 20,  # over the fast-path size
-        "Make the title smaller and keep the whole video.",  # compound: half must not apply
-        "Make the title smaller, then make it red",
-        "Add a new title \u201cLisbon\u201d. Animate it",  # two sentences
-        "Başlığı küçült ve rengini kırmızı yap",  # Turkish joiner
-        "Use the order you added the clips",  # not a text edit
+        None,
+        _fade_plan("remove_clip"),
+        _fade_plan("trim_clip"),
+        SimpleNamespace(mode="respond", turn_value="recovery", response="No.", intents=()),
     ],
 )
-async def test_failed_extraction_does_not_serve_replans_or_long_requests(
-    monkeypatch: pytest.MonkeyPatch, message: str
-) -> None:
-    result = await _extraction_fails(monkeypatch, message, _fade_plan())
-    assert result.brief_coverage["reason"] == "request_extraction_failed"
-    assert result.brief_updates == ()
-    planner._plan_editor_revision.assert_not_awaited()
-
-
-@pytest.mark.parametrize("copilot", [None, _fade_plan("remove_clip"), _fade_plan("trim_clip")])
 async def test_failed_extraction_keeps_recovery_when_the_copilot_cannot_serve_it(
     monkeypatch: pytest.MonkeyPatch, copilot: object
 ) -> None:

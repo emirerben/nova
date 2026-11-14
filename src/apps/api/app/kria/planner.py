@@ -2795,16 +2795,67 @@ async def _load_editor_target(
 
 # The editor can refuse an edit the draft has no lane for (a spoken-excerpt montage
 # only has text/title), and a re-sent request adds nothing new for the planner to
-# act on. A bare refusal is a dead end, so it carries the way out: "redo" is a
-# `wants_full_replan` phrase, which routes the next turn to a full re-plan.
+# act on. A bare refusal is a dead end, so it carries the way out: replying with the
+# quoted word re-plans the next turn (`_accepts_redo_offer`).
 _REDO_OFFER = (
     ' If you want a fresh version built from your whole request, reply "redo" and I\'ll '
     "render it again."
 )
-# KRI-520: "yeniden yap" is a `wants_full_replan` phrase (brief.py `_REDO_PATTERNS`).
 _REDO_OFFER_TR = (
     ' Tüm isteğinden yeni bir sürüm istersen "yeniden yap" yaz, videoyu tekrar oluşturayım.'
 )
+
+
+def _redo_offer() -> str:
+    return say(en=_REDO_OFFER, tr=_REDO_OFFER_TR)
+
+
+def _redo_offer_words() -> dict[str, str]:
+    """Each language's offer sentence -> the word it asks the creator to reply with."""
+    from app.kria.copy_catalog import translate  # noqa: PLC0415
+    from app.kria.reply_language import CATALOG_REPLY_LANGUAGES  # noqa: PLC0415
+
+    offers = {
+        _REDO_OFFER,
+        _REDO_OFFER_TR,
+        *(translate(language, _REDO_OFFER) for language in CATALOG_REPLY_LANGUAGES),
+    }
+    return {
+        offer.strip(): offer.split('"')[1] for offer in offers if offer and offer.count('"') >= 2
+    }
+
+
+async def _accepts_redo_offer(db: AsyncSession, thread_id: uuid.UUID, message: str) -> bool:
+    """KRI-1392: the creator replied with the exact word the previous reply asked for.
+
+    The one re-plan no model reads first. The copilot cannot rebuild, so its refusal and the
+    unopenable-draft replies offer a fresh version; the word the offer quotes is our own, so
+    matching it answers our question instead of guessing at free text. Any other wording is the
+    brief extractor's or the copilot's to read, in any language.
+    """
+    offers = _redo_offer_words()
+    if loose_text(message).strip(" .!?") not in {loose_text(word) for word in offers.values()}:
+        return False
+    rows = (
+        (
+            await db.execute(
+                select(CreationThreadEvent.content)
+                .where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.role == "assistant",
+                    CreationThreadEvent.event_type == "assistant_response",
+                    CreationThreadEvent.content.is_not(None),
+                )
+                .order_by(CreationThreadEvent.sequence.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return bool(rows) and any(offer in str(rows[0]) for offer in offers)
+
+
 _WEB_PROPOSED_REPLY = "I prepared this edit for the editor to validate and stage."
 # The Turkish canned line `routes/_copilot._honest_outcome` writes for a Turkish turn;
 # `tests/kria/test_kri520_planner_copy.py` pins that the two stay in step.
@@ -2950,7 +3001,7 @@ async def _plan_editor_revision(
             and _REDO_OFFER not in reply
             and _REDO_OFFER_TR not in reply
         ):
-            reply = f"{reply}{say(en=_REDO_OFFER, tr=_REDO_OFFER_TR)}"
+            reply = f"{reply}{_redo_offer()}"
         return KriaTurnPlan(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
@@ -5837,18 +5888,16 @@ async def _serve_unextracted_edit(
     creator's full message is recorded as one requirement, so it stays visible instead of
     being dropped; the turn's receipt then names what the ops changed (KRI-558).
 
-    Returns None whenever that is not the case (a re-plan cue, a long message, no editor
-    target, the copilot asking a question or proposing structural ops): the caller then
-    keeps the honest recovery reply and the draft is untouched.
+    Returns None whenever that is not the case (more than one sentence, no editor target,
+    the copilot asking a question, refusing, proposing structural ops or naming a part it
+    could not do): the caller then keeps the honest recovery reply and the draft is
+    untouched. With the typed requirements unknown, a compound ask must not get half of it
+    applied (KRI-524). The copilot's reading decides what one sentence asks (KRI-1392), but
+    its unmet list misses parts of a multi-sentence brief: recorded East Run turn t1-brief got
+    five title and label ops with nothing named unmet while the per-clip labels and the time
+    to read them were not done (tests/fixtures/request_following/threads/east_run.json).
     """
-    # Only a clearly SINGLE text ask: when extraction failed the typed requirements are
-    # unknown, so a compound ask ("smaller and keep the whole video") must not get half of
-    # it applied (KRI-524). Anything not obviously one text edit keeps the honest recovery.
-    if not (
-        _fast_path_eligible(user_message)
-        and _is_text_edit_ask(user_message)
-        and _is_single_ask(user_message)
-    ):
+    if _sentence_count(user_message) != 1:
         return None
     try:
         update = BriefUpdate(
@@ -5868,7 +5917,7 @@ async def _serve_unextracted_edit(
         ),
         **_state_kw(editor_state),
     )
-    if not _is_fast_path_plan(editor_plan):
+    if not _is_fast_path_plan(editor_plan) or _leaves_requests_unmet(editor_plan):
         return None
     log.warning("kria_request_degraded_to_copilot", **cause)
     ids = [req.id for req in apply_updates(prior_brief, (update,), source_turn_id=None).live()]
@@ -5917,70 +5966,23 @@ _FAST_PATH_OPS = frozenset(
 # (`KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`; off = the set above, unchanged).
 _COMPOSE_FAST_PATH_OPS = frozenset({"replace_text_sequence"})
 _GROUNDED_REORDERS = (None, "capture_time", "random")
-_FAST_PATH_MAX_CHARS = 280
-# A text/label/caption ask: when the copilot answers it with a question or a refusal, that
-# answer stands (a full re-plan would write labels from place/time facts and re-render).
-_TEXT_EDIT_ASK = re.compile(r"\b(labels?|captions?|texts?|titles?|wording|font)\b")
-# KRI-520: the same ask in Turkish, matched on `loose_text` (diacritics stripped, so
-# "başlığı" and "basligi" both land). Stems take any suffix: baslik/basligi/basliklar,
-# yazi/yazilar/altyazi (alt yazi), metin/metni, etiket, ifade (wording). "font" takes only
-# Turkish case endings, so English "fonts" keeps its old (non-)match.
-# "yazın" alone is "in summer", "Metin'in" is a name, "yüz ifadesi" is a facial
-# expression: none of them is a text ask.
-_TEXT_EDIT_ASK_TR = re.compile(
-    r"\b(?:(?:bas(?:lik|lig)|etiket)\w*|(?:alt)?yazi(?!n\b)\w*|met(?:in|ni)(?![\'’])\w*|"
-    r"(?<!yuz )ifade\w*|font(?:lar|lari|u|un|a|i|ta|tan)?)\b"
-)
-# Wording that needs the planner even when the copilot could stage something.
-_REPLAN_CUES = re.compile(
-    r"\b(vibe|different|another version|new (edit|video|version|cut)|recut|re-?cut|re-?do|"
-    r"from scratch|best \d+|top \d+|\d+ best|use (only|just)|only (the )?(best|funniest|top)|"
-    r"funniest|more clips|fewer clips|farkl\w*|yeniden|bastan|ba\u015ftan)\b"
-)
-# KRI-520: Turkish re-plan wording on `loose_text`, at the English cues' precision: a new
-# version, "from scratch", a best/funniest-N selection, more/fewer clips. A bare
-# "en iyi" or "tekrar" stays out (they also appear in ordinary edits).
-_REPLAN_CUES_TR = re.compile(
-    r"\b(?:farkl|yeniden|bastan|sifirdan|en iyi \d|\d+ en iyi|"
-    r"(?:sadece|yalnizca) en (?:iyi|komik)|en komik|"
-    r"daha (?:fazla|cok|az) klip|"
-    r"yeni (?:bir )?(?:video|versiyon|surum|duzenleme|kesim)|"
-    r"baska (?:bir )?(?:versiyon|surum|video|duzenleme|kesim))\w*"
-)
 
 
-def _is_text_edit_ask(message: str) -> bool:
-    """A text/label/caption/title ask, in English or Turkish."""
-    return bool(
-        _TEXT_EDIT_ASK.search(" ".join(message.casefold().split()))
-        or _TEXT_EDIT_ASK_TR.search(loose_text(message))
-    )
+def _sentence_count(message: str) -> int:
+    """Sentences by their end punctuation or line breaks, in any language."""
+    text = message.replace("!", ".").replace("?", ".").replace("\n", ". ")
+    return sum(1 for part in f"{text} ".split(". ") if part.strip(" ."))
 
 
-# Joiners that make a message more than one ask (English and Turkish), plus list punctuation.
-_COMPOUND_CUES = re.compile(
-    r"[;,&+]|\b(?:and|also|then|plus|as well|too|after that|ve|ayr[iı]ca|sonra|bir de)\b"
-)
-
-
-def _is_single_ask(message: str) -> bool:
-    """One sentence with no joiner: the only shape safe to serve without typed requirements."""
-    text = " ".join(message.casefold().split())
-    if not text or "\n" in message.strip():
-        return False
-    sentences = [part for part in re.split(r"(?<=[.!?])\s+", text) if part.strip(" .!?")]
-    return len(sentences) == 1 and _COMPOUND_CUES.search(text) is None
-
-
-def _fast_path_eligible(message: str) -> bool:
-    from app.kria.brief import wants_full_replan  # noqa: PLC0415
-
-    text = " ".join(message.casefold().split())
-    return (
-        0 < len(text) <= _FAST_PATH_MAX_CHARS
-        and not wants_full_replan(message)
-        and _REPLAN_CUES.search(text) is None
-        and _REPLAN_CUES_TR.search(loose_text(message)) is None
+def _leaves_requests_unmet(plan: KriaTurnPlan) -> bool:
+    """The copilot named a part of the message its ops do not do."""
+    return any(
+        (
+            intent.arguments.get("unmet_requests")
+            if isinstance(intent.arguments, dict)
+            else getattr(intent.arguments, "unmet_requests", None)
+        )
+        for intent in plan.intents or ()
     )
 
 
@@ -6041,10 +6043,6 @@ def _state_kw(editor_state: Any) -> dict[str, Any]:
     return {"editor_state": editor_state} if editor_state is not None else {}
 
 
-def _editor_state_stale() -> bool:
-    return _editor_target_miss.get() == "editor_state_stale"
-
-
 _EDITOR_STATE_STALE_REPLY_TR = "Videon değişti. Editörü yeniden açıp tekrar dene."
 _SPEECH_CUT_NEEDS_SAVE_REPLY_TR = "Önce düzenlemelerini kaydet, sonra sessiz kısımları kesebilirim."
 
@@ -6071,7 +6069,7 @@ def _editor_target_miss_guarded() -> bool:
 
 
 def _failed_correction_alternative() -> str:
-    return say(
+    alternative = say(
         en=(
             "I can't apply this whole correction with the saved draft's supported editor tools. "
             "Nothing was changed. Ask for a single text or style change, or ask for a new "
@@ -6083,6 +6081,7 @@ def _failed_correction_alternative() -> str:
             "ya da kayıtlı isteğinden yeni bir sürüm iste."
         ),
     )
+    return alternative + _redo_offer()
 
 
 def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
@@ -6120,6 +6119,7 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
                             "Kayıtlı isteğinden yeni bir sürüm iste."
                         ),
                     )
+                    + _redo_offer()
                 ),
             ),
             manifest_hash=manifest.manifest_hash,
@@ -6135,6 +6135,7 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
                 else _editor_state_stale_reply()
                 if miss == "editor_state_stale"
                 else say(en=_EDITOR_TARGET_RECOVERY_REPLY, tr=_EDITOR_TARGET_RECOVERY_REPLY_TR)
+                + _redo_offer()
             ),
         ),
         manifest_hash=manifest.manifest_hash,  # type: ignore[attr-defined]
@@ -7577,20 +7578,16 @@ async def _plan_live_turn(
             or any(row.get("render_status") == "needs_attention" for row in latest_variants)
         )
     )
+    # The creator answered our fresh-version offer: a re-plan, never a correction or an edit.
+    accepts_redo = await _accepts_redo_offer(db, thread_id, user_message)
     correction_candidate = (
         compose_unmet_with_ops()
         and failed_render
         and not answers_clip_question
-        and _fast_path_eligible(user_message)
-    )
-    text_correction = correction_candidate and _is_text_edit_ask(user_message)
-    failed_variant = any(
-        row.get("render_status") in {"failed", "needs_attention"} for row in latest_variants
+        and not accepts_redo
     )
     saved_heads = []
-    if (text_correction and not latest_variants) or (
-        correction_candidate and not text_correction and failed_variant
-    ):
+    if correction_candidate and not latest_variants:
         saved_heads = (
             (
                 await db.execute(
@@ -7606,12 +7603,13 @@ async def _plan_live_turn(
             .scalars()
             .all()
         )
-    # A text ask corrects the failed render (staged on its editor head, or refused honestly)
+    # A change corrects the failed render (staged on its editor head, or refused honestly)
     # only when that render left something to correct: a variant, or editor work built on the
     # job. A render that failed before making any video (Leverkusen M2 10-31: phone plan
     # refused, no `variants` key) leaves only the strategy draft, so the change re-plans like
-    # every other follow-up to a failed first render.
-    failed_editor_correction = text_correction and (
+    # every other follow-up to a failed first render. Whether the message asks for a change or
+    # a new version is the brief extractor's reading below (KRI-1392), not its wording.
+    failed_editor_correction = correction_candidate and (
         bool(latest_variants)
         or any(
             isinstance(head, CreatorEditDraft)
@@ -7619,18 +7617,6 @@ async def _plan_live_turn(
             for head in saved_heads
         )
     )
-    if correction_candidate and not text_correction and failed_variant:
-        failed_editor_correction = any(
-            failed_editor_draft_basis(
-                head, latest_job, row, thread_id=thread_id, creator_id=creator_id, item_id=item.id
-            )
-            is not None
-            for head in saved_heads
-            if isinstance(head, CreatorEditDraft)
-            for row in latest_variants
-            if row.get("variant_id") == head.variant_key
-            and row.get("render_status") in {"failed", "needs_attention"}
-        )
     extract_first = (
         brief_on
         and item.current_job_id is not None
@@ -7645,6 +7631,7 @@ async def _plan_live_turn(
         and not answers_clip_question
         and not (binding_on and brief_on)
         and not creative_copy_pending
+        and not accepts_redo
     ):
         has_render = item.current_job_id is not None
         _editor_target_miss.set(None)
@@ -7655,12 +7642,7 @@ async def _plan_live_turn(
             user_message=user_message,
             **_state_kw(editor_state),
         )
-        if (
-            editor_plan is None
-            and _editor_target_miss_guarded()
-            and has_render
-            and (_fast_path_eligible(user_message) or _editor_state_stale())
-        ):
+        if editor_plan is None and _editor_target_miss_guarded() and has_render:
             return _editor_target_recovery(manifest)
         if editor_plan is not None:
             return PlannedKriaTurn(
@@ -7695,10 +7677,10 @@ async def _plan_live_turn(
     extracted_delegation = False
     extracted_read_ids: tuple[str, ...] = ()
     pre_extracted_retrieved_ids: list[str] = []
-    semantic_request_scope: str | None = None
+    semantic_request_scope: str | None = "rebuild" if accepts_redo else None
     # A rendered followup only needs typed requirement extraction before routing.
     # Keep the wide Main Creator envelope for genuine replans and first drafts.
-    if extract_first and not answers_clip_question:
+    if extract_first and not answers_clip_question and not accepts_redo:
         try:
             extraction_inputs = await _load_creator_inputs(
                 db,
@@ -7860,7 +7842,7 @@ async def _plan_live_turn(
                         },
                         brief_expected_version=prior_brief.version if prior_brief else 0,
                     )
-            if failed_editor_correction:
+            if failed_editor_correction and semantic_request_scope != "rebuild":
                 return PlannedKriaTurn(
                     plan=KriaTurnPlan(
                         mode="respond",
@@ -8162,11 +8144,7 @@ async def _plan_live_turn(
         )
         shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
         await db.rollback()
-        if (
-            target is None
-            and _editor_target_miss_guarded()
-            and (_fast_path_eligible(user_message) or _editor_state_stale())
-        ):
+        if target is None and _editor_target_miss_guarded():
             # The route below would be a re-plan caused solely by the missing target.
             return _editor_target_recovery(manifest)
     route = route_requirements(

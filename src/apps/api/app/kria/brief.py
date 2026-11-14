@@ -15,7 +15,7 @@ editor operations (``editor_ops`` -> ``draft.apply_editor_ops``):
 * ``replan`` when any new requirement is ``order`` or ``select``; when a
   per-clip text requirement arrives and the current plan has no per-clip text
   lane; when the request mixes requirement kinds; when there is no render to
-  edit; or when the creator explicitly asks to redo it from their prompt.
+  edit; or when the turn carries a rebuild verdict (``full_replan=True``).
 * ``editor_ops`` otherwise (including turns with no new requirement).
 """
 
@@ -992,83 +992,18 @@ class CurrentPlanShape:
 
 _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
 
-# Whole-edit redo phrases only. "make the title bigger again" / "cut the intro
-# again" are ordinary edits and must stay on the editor-op path, so "again" only
-# counts right after a whole-edit object or next to prompt/brief/request.
-#
-# English patterns run on ``_legacy_fold`` output, exactly as before KRI-520.
-_REDO_PATTERNS = (
-    re.compile(
-        r"\b(do|make|create|generate|render|build|try|run)\s+"
-        r"(it|this|that|the (video|edit)|everything|all of it)(\s+all)?\s+again\b"
-    ),
-    re.compile(r"\b(try|start)\s+again\b"),
-    re.compile(r"\b(prompt|brief|request|instructions?)\b.{0,20}\bagain\b"),
-    re.compile(r"\bagain\b.{0,20}\b(prompt|brief|request|instructions?)\b"),
-    re.compile(r"\b(redo|re-do|start over|from scratch)\b"),
-    re.compile(r"\bbased on (my|the) (prompt|brief|request|instructions?)\b"),
-)
-# KRI-520: Turkish patterns run on ``loose_text`` output (case-folded, Turkish letters
-# reduced to ASCII), so they are written in that form ("baştan" is "bastan") and
-# ASCII-typed Turkish ("hazirla") matches too. Never applied to English messages.
-_TR_REDO_PATTERNS = (
-    # "baştan" alone is a redo ("baştan yap"); "baştan sona" is start-to-finish.
-    re.compile(r"\bbastan\b(?!\s+sona\b)"),
-    re.compile(r"\bsifirdan\b"),
-)
-# "yeniden yap", "tekrar dene", "bir daha oluştur", "tekrar hazırla". A trailing
-# -ma/-me is the negative ("tekrar yapma" = don't do it again), so it never counts.
-_TR_REDO_AGAIN = re.compile(
-    r"\b(?:yeniden|tekrar|bir daha)\s+(?:yap|dene|olustur|hazirla)(?!m[ae])\w*"
-)
-# The element a nearby word names ("başlığı tekrar yap" = redo the TITLE): a
-# redo aimed at one element is an ordinary edit, like "make the title bigger again".
-_TR_ELEMENT_STEMS = (
-    "baslik",
-    "baslig",
-    "yazi",
-    "altyazi",
-    "metin",
-    "metn",
-    "etiket",
-    "muzik",
-    "muzig",
-    "sarki",
-    "klip",
-    "klib",
-    "renk",
-    "reng",
-    "font",
-    "ses",
-    "efekt",
-    "gecis",
-    "sure",
-    "hiz",
-    "logo",
-    "intro",
-    "giris",
-    "kapanis",
-    "gorsel",
-    "resim",
-    "resm",
-    "foto",
-)
-
-
-_NEGATED_AGAIN = re.compile(r"\b(don'?t|dont|do not|never|stop)\b[^.!?]{0,20}\bagain\b")
-
 
 def _legacy_fold(message: str) -> str:
     """The English patterns' fold: the shared ``fold_text`` (KRI-781).
 
-    It used to map "I" to dotless "ı", so "DO IT AGAIN" read "do ıt agaın" and an
-    uppercase English redo missed every pattern (a KRI-520 regression).
+    It used to map "I" to dotless "ı", so "REMOVE CLIP 2" missed every pattern (a KRI-520
+    regression).
     """
     return fold_text(message or "")
 
 
 def _fold_for_redo(message: str) -> str:
-    """The Turkish patterns' fold: ``loose_text``, so "HAZIRLA" matches "hazirla"."""
+    """The Turkish patterns' fold: ``loose_text``, so "SİL" matches "sil"."""
     return loose_text(message or "")
 
 
@@ -1076,28 +1011,6 @@ def _reads_english(message: str) -> bool:
     """English messages never reach the Turkish patterns: "at", "al", "son" and "once"
     are English words too ("put video 3 at the start")."""
     return detect_chat_language(message) == "en"
-
-
-def _asks_turkish_redo(text: str) -> bool:
-    for match in _TR_REDO_AGAIN.finditer(text):
-        before = text[: match.start()].split()[-2:]
-        if any(word.startswith(_TR_ELEMENT_STEMS) for word in before):
-            continue
-        return True
-    return False
-
-
-def wants_full_replan(message: str) -> bool:
-    """ "Do it again based on my prompt" is a supported re-plan, not an editor op."""
-    english = _NEGATED_AGAIN.sub(" ", _legacy_fold(message))
-    if any(pattern.search(english) for pattern in _REDO_PATTERNS):
-        return True
-    if _reads_english(message):
-        return False
-    turkish = _fold_for_redo(message)
-    return any(pattern.search(turkish) for pattern in _TR_REDO_PATTERNS) or _asks_turkish_redo(
-        turkish
-    )
 
 
 def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> CurrentPlanShape:
@@ -1346,14 +1259,14 @@ def route_requirements(
 ) -> Route:
     """Deterministic scope router. See the module docstring for the rules.
 
-    ``full_replan=False`` is a semantic extractor verdict and suppresses the
-    legacy message regex. ``None`` preserves the historical fallback for callers
-    that do not have a semantic verdict yet.
+    ``full_replan=True`` is a rebuild verdict (the brief extractor's ``request_scope``, or the
+    creator's reply to a fresh-version offer). Without one the turn is an edit unless a
+    requirement needs a capability the editor lacks (KRI-1392: no wording decides it).
     """
     reqs = list(new_reqs)
     if current_plan is None or not current_plan.has_render:
         return "replan"
-    if full_replan is True or (full_replan is None and message and wants_full_replan(message)):
+    if full_replan is True:
         return "replan"
     if not reqs:
         return "editor_ops"
@@ -2101,5 +2014,4 @@ __all__ = [
     "render_brief_request",
     "requested_media",
     "route_requirements",
-    "wants_full_replan",
 ]
