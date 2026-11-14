@@ -17,6 +17,10 @@ wrong:
   placeholder reasons do not pass
 - CRLF bodies from the GitHub web UI
 - an id glued to letters ("kri-29ekim", Turkish for 29 October) is not a ticket
+- merge-commit PRs: the branch commits ride in as second parents and must not
+  count as PRs of their own; the PR is counted once, by its index title
+- rebase-merged PRs: N commits without "(#N)" are one PR, not N; a feat PR
+  carrying a "fix: review nits" commit is not a fix PR
 - the PR under check is gated on one ticket (title, else branch), the same one
   it is charged to once merged: a child-titled fix on a parent-named branch is
   gated by the child, not the parent's chain
@@ -57,11 +61,25 @@ class FixChainTests(unittest.TestCase):
         self.git("add", ".")
         self.git("commit", "-qm", subject)
 
-    def run_check(self, *, title="", branch="", body="", index=None, files=None, pr=None):
+    def run_check(
+        self, *, title="", branch="", body="", index=None, files=None, pr=None
+    ):
         body_file = self.repo.parent / f"{self.repo.name}-body.md"
         body_file.write_text(body)
-        args = ["python3", str(SCRIPT), "--repo", str(self.repo), "--main-ref", "main",
-                "--branch", branch, "--title", title, "--body-file", str(body_file)]
+        args = [
+            "python3",
+            str(SCRIPT),
+            "--repo",
+            str(self.repo),
+            "--main-ref",
+            "main",
+            "--branch",
+            branch,
+            "--title",
+            title,
+            "--body-file",
+            str(body_file),
+        ]
         if index is not None:
             index_file = self.repo.parent / f"{self.repo.name}-index.json"
             index_file.write_text(json.dumps(index))
@@ -72,6 +90,22 @@ class FixChainTests(unittest.TestCase):
             args += ["--pr-number", str(pr)]
         done = subprocess.run(args, capture_output=True, text=True)
         return done.returncode, done.stdout + done.stderr
+
+    def merge_commit_pr(self, number, branch_subjects):
+        if not self.counter:
+            self.main_commit("chore: base")
+        self.git("checkout", "-q", "-b", f"pr{number}")
+        for subject in branch_subjects:
+            self.main_commit(subject)
+        self.git("checkout", "-q", "main")
+        self.git(
+            "merge",
+            "--no-ff",
+            "-q",
+            f"pr{number}",
+            "-m",
+            f"Merge pull request #{number} from o/pr{number}",
+        )
 
     def two_fixes(self):
         self.main_commit("fix(editor): one (KRI-7) (#101)")
@@ -89,13 +123,21 @@ class FixChainTests(unittest.TestCase):
 
     def test_ticket_only_in_branch_still_counts(self):
         self.two_fixes()
-        code, out = self.run_check(title="fix(editor): three", branch="codex/kri-7-three")
+        code, out = self.run_check(
+            title="fix(editor): three", branch="codex/kri-7-three"
+        )
         self.assertEqual(code, 1, out)
 
     def test_prior_without_id_in_title_is_found_by_pr_branch(self):
         self.main_commit("fix(editor): one (KRI-7) (#101)")
         self.main_commit("fix(editor): two without id (#102)")
-        index = [{"number": 102, "title": "fix(editor): two without id", "headRefName": "codex/kri-7-two"}]
+        index = [
+            {
+                "number": 102,
+                "title": "fix(editor): two without id",
+                "headRefName": "codex/kri-7-two",
+            }
+        ]
         code, out = self.run_check(title="fix: three (KRI-7)", index=index)
         self.assertEqual(code, 1, out)
         self.assertEqual(self.run_check(title="fix: three (KRI-7)")[0], 0)
@@ -103,7 +145,11 @@ class FixChainTests(unittest.TestCase):
     def test_pr_only_in_index_counts_and_dedupes_with_git(self):
         self.main_commit("fix(editor): one (KRI-7) (#101)")
         index = [
-            {"number": 101, "title": "fix(editor): one", "headRefName": "codex/kri-7-one"},
+            {
+                "number": 101,
+                "title": "fix(editor): one",
+                "headRefName": "codex/kri-7-one",
+            },
             {"number": 55, "title": "fix(editor): older", "headRefName": "kri-7-older"},
         ]
         code, out = self.run_check(title="fix: three (KRI-7)", index=index)
@@ -133,10 +179,20 @@ class FixChainTests(unittest.TestCase):
         self.main_commit("fix: a (#501)")
         self.main_commit("fix: b (#502)")
         index = [
-            {"number": 501, "title": "fix: a", "headRefName": "codex/kri-29ekim-live2-pr"},
-            {"number": 502, "title": "fix: b", "headRefName": "codex/kri-29ekim-live3-pr"},
+            {
+                "number": 501,
+                "title": "fix: a",
+                "headRefName": "codex/kri-29ekim-live2-pr",
+            },
+            {
+                "number": 502,
+                "title": "fix: b",
+                "headRefName": "codex/kri-29ekim-live3-pr",
+            },
         ]
-        code, out = self.run_check(title="fix: c", branch="codex/kri-29ekim-live4", index=index)
+        code, out = self.run_check(
+            title="fix: c", branch="codex/kri-29ekim-live4", index=index
+        )
         self.assertEqual(code, 0, out)
         self.assertIn("no KRI", out)
         self.assertEqual(self.run_check(title="fix: c (KRI-29)", index=index)[0], 0)
@@ -144,7 +200,9 @@ class FixChainTests(unittest.TestCase):
     def test_child_title_on_parent_branch_is_gated_by_the_child(self):
         self.main_commit("fix: a (KRI-736) (#601)")
         self.main_commit("fix: b (KRI-736) (#602)")
-        code, out = self.run_check(title="fix: child thing (KRI-9999)", branch="codex/kri-736-child")
+        code, out = self.run_check(
+            title="fix: child thing (KRI-9999)", branch="codex/kri-736-child"
+        )
         self.assertEqual(code, 0, out)
         self.assertIn("KRI-9999", out)
         self.assertNotIn("KRI-736", out)
@@ -156,7 +214,9 @@ class FixChainTests(unittest.TestCase):
 
     def test_valid_block_in_body_passes(self):
         self.two_fixes()
-        self.assertEqual(self.run_check(title="fix: three (KRI-7)", body=GOOD_BLOCK)[0], 0)
+        self.assertEqual(
+            self.run_check(title="fix: three (KRI-7)", body=GOOD_BLOCK)[0], 0
+        )
 
     def test_crlf_body_passes(self):
         self.two_fixes()
@@ -179,7 +239,9 @@ class FixChainTests(unittest.TestCase):
         }
         for name, body in weak.items():
             with self.subTest(name):
-                self.assertEqual(self.run_check(title="fix: three (KRI-7)", body=body)[0], 1)
+                self.assertEqual(
+                    self.run_check(title="fix: three (KRI-7)", body=body)[0], 1
+                )
 
     def test_doc_block_counts_only_when_changed_in_this_pr(self):
         self.two_fixes()
@@ -189,7 +251,9 @@ class FixChainTests(unittest.TestCase):
         path = "docs/reviews/kri-7-failure-modes.md"
         self.assertEqual(self.run_check(title="fix: three (KRI-7)")[0], 1)
         self.assertEqual(self.run_check(title="fix: three (KRI-7)", files=[path])[0], 0)
-        self.assertEqual(self.run_check(title="fix: three (KRI-7)", files=["../outside.md"])[0], 1)
+        self.assertEqual(
+            self.run_check(title="fix: three (KRI-7)", files=["../outside.md"])[0], 1
+        )
 
     def test_skip_marker_needs_own_line_and_real_reason(self):
         self.two_fixes()
@@ -204,13 +268,86 @@ class FixChainTests(unittest.TestCase):
         }
         for name, body in bad.items():
             with self.subTest(name):
-                self.assertEqual(self.run_check(title="fix: three (KRI-7)", body=body)[0], 1)
+                self.assertEqual(
+                    self.run_check(title="fix: three (KRI-7)", body=body)[0], 1
+                )
 
     def test_no_ticket_anywhere_is_skipped(self):
         self.two_fixes()
         code, out = self.run_check(title="fix: something", branch="feature/x")
         self.assertEqual(code, 0, out)
         self.assertIn("no KRI", out)
+
+    def test_merge_commit_branch_commits_are_not_separate_prs(self):
+        self.merge_commit_pr(
+            701, ["fix: a (KRI-8)", "fix: b (KRI-8)", "fix: c (KRI-8)"]
+        )
+        index = [
+            {
+                "number": 701,
+                "title": "fix: the thing (KRI-8)",
+                "headRefName": "codex/kri-8-thing",
+            }
+        ]
+        code, out = self.run_check(title="fix: second (KRI-8)", index=index)
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 prior fix", out)
+        self.assertEqual(self.run_check(title="fix: second (KRI-8)")[0], 0)
+
+    def test_merge_commit_pr_with_no_index_entry_does_not_count_its_commits(self):
+        self.merge_commit_pr(702, ["fix: a (KRI-8)", "fix: b (KRI-8)"])
+        code, out = self.run_check(title="fix: first (KRI-8)", index=[])
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 prior fix", out)
+
+    def test_feat_merge_commit_with_fix_nit_commit_is_not_a_fix(self):
+        self.merge_commit_pr(
+            703,
+            [
+                "feat: thing (KRI-8)",
+                "fix: review nits (KRI-8)",
+                "fix: more nits (KRI-8)",
+            ],
+        )
+        index = [
+            {
+                "number": 703,
+                "title": "feat: thing (KRI-8)",
+                "headRefName": "codex/kri-8-thing",
+            }
+        ]
+        code, out = self.run_check(title="fix: first (KRI-8)", index=index)
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 prior fix", out)
+
+    def test_two_real_merge_commit_fix_prs_still_block_the_third(self):
+        self.merge_commit_pr(704, ["fix: a (KRI-8)", "fix: b (KRI-8)"])
+        self.merge_commit_pr(705, ["fix: c (KRI-8)"])
+        index = [
+            {
+                "number": 704,
+                "title": "fix: one (KRI-8)",
+                "headRefName": "codex/kri-8-one",
+            },
+            {"number": 705, "title": "fix: two", "headRefName": "codex/kri-8-two"},
+        ]
+        code, out = self.run_check(title="fix: three (KRI-8)", index=index)
+        self.assertEqual(code, 1, out)
+        self.assertIn("2 prior fix", out)
+
+    def test_rebase_merged_pr_counts_once_not_per_commit(self):
+        for subject in ["fix: a (KRI-8)", "fix: b (KRI-8)", "fix: c (KRI-8)"]:
+            self.main_commit(subject)
+        index = [
+            {
+                "number": 706,
+                "title": "fix: the thing (KRI-8)",
+                "headRefName": "codex/kri-8-thing",
+            }
+        ]
+        code, out = self.run_check(title="fix: second (KRI-8)", index=index)
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 prior fix", out)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,13 @@ title or branch name (from --pr-index, a JSON list of
 {number, title, headRefName}). Counting only the first id keeps a child fix that
 names its parent second from inflating the parent's count.
 
+Only first-parent history is read, so the branch commits of a merge-commit PR
+never count as PRs of their own. With a PR index, a first-parent commit that has
+no "(#N)" (a rebase-merged commit or a direct push) is not a PR and is ignored:
+the index already holds every merged PR by its real title. Without an index
+(offline local run) such commits are counted one by one, which can overcount a
+multi-commit rebase merge.
+
 Exit 0: allowed. Exit 1: blocked. Exit 2: usage error.
 """
 
@@ -34,7 +41,18 @@ ROW_RE = re.compile(
 )
 SKIP_RE = re.compile(r"^" + re.escape(SKIP_MARKER) + r"(?:\s+(.*))?$")
 PLACEHOLDER_RE = re.compile(r"<[^<>\n]*>")
-EMPTY_TOKENS = {"todo", "tbd", "none", "n/a", "na", "test", "tests", "xxx", "manual", "existing"}
+EMPTY_TOKENS = {
+    "todo",
+    "tbd",
+    "none",
+    "n/a",
+    "na",
+    "test",
+    "tests",
+    "xxx",
+    "manual",
+    "existing",
+}
 MIN_ROWS = 2
 MIN_REASON_CHARS = 20
 MIN_REASON_WORDS = 4
@@ -64,7 +82,9 @@ def prior_fixes(repo, main_ref, index, current_pr):
         if ticket:
             found.setdefault(ticket, set()).add(key)
 
-    for line in git(repo, "log", main_ref, "--format=%H%x1f%s").splitlines():
+    for line in git(
+        repo, "log", "--first-parent", main_ref, "--format=%H%x1f%s"
+    ).splitlines():
         sha, _, subject = line.partition("\x1f")
         if not is_fix(subject):
             continue
@@ -72,11 +92,15 @@ def prior_fixes(repo, main_ref, index, current_pr):
         number = int(pr.group(1)) if pr else None
         if number is not None and number == current_pr:
             continue
+        if number is None and index:
+            continue
         key = f"pr-{number}" if number is not None else sha
         ticket = first_ticket(subject)
         if ticket is None and number in by_number:
             entry = by_number[number]
-            ticket = first_ticket(entry.get("title")) or first_ticket(entry.get("headRefName"))
+            ticket = first_ticket(entry.get("title")) or first_ticket(
+                entry.get("headRefName")
+            )
         charge(key, ticket)
 
     for number, entry in by_number.items():
@@ -103,14 +127,19 @@ def failure_mode_problems(text, ticket):
         if not heading or heading.group(1).upper() != ticket:
             continue
         rows, bad = 0, []
-        for row in lines[start + 1:]:
+        for row in lines[start + 1 :]:
             if not row.strip():
                 continue
             if not re.match(r"^\s*[-*]\s", row):
                 break
             match = ROW_RE.match(row)
             token = (match.group(1) or match.group(2)) if match else None
-            if match and token and valid_token(token) and not PLACEHOLDER_RE.search(row):
+            if (
+                match
+                and token
+                and valid_token(token)
+                and not PLACEHOLDER_RE.search(row)
+            ):
                 rows += 1
             else:
                 bad.append(row.strip())
@@ -175,11 +204,19 @@ def main(argv):
     parser.add_argument("--changed-file", action="append", default=[])
     args = parser.parse_args(argv)
 
-    body = Path(args.body_file).read_text(errors="replace") if args.body_file and Path(args.body_file).is_file() else ""
+    body = (
+        Path(args.body_file).read_text(errors="replace")
+        if args.body_file and Path(args.body_file).is_file()
+        else ""
+    )
     index = json.loads(Path(args.pr_index).read_text()) if args.pr_index else []
 
-    subjects = [] if args.title else branch_fix_subjects(args.repo, args.main_ref, args.head)
-    current_is_fix = is_fix(args.title) if args.title else any(is_fix(s) for s in subjects)
+    subjects = (
+        [] if args.title else branch_fix_subjects(args.repo, args.main_ref, args.head)
+    )
+    current_is_fix = (
+        is_fix(args.title) if args.title else any(is_fix(s) for s in subjects)
+    )
     # Same rule as prior_fixes: one ticket per PR, so a child fix is never gated
     # by the parent it names second, and is later charged to the ticket it was gated on.
     ticket = (
@@ -192,7 +229,9 @@ def main(argv):
         print("fix-chain: no KRI-<n> in title or branch - skipped")
         return 0
     if not current_is_fix:
-        print(f"fix-chain: not a fix PR for {', '.join(tickets)} - no failure-mode list required")
+        print(
+            f"fix-chain: not a fix PR for {', '.join(tickets)} - no failure-mode list required"
+        )
         return 0
 
     priors = prior_fixes(args.repo, args.main_ref, index, args.pr_number)
@@ -200,7 +239,9 @@ def main(argv):
     for ticket in tickets:
         count = len(priors.get(ticket, ()))
         if count < THRESHOLD:
-            print(f"fix-chain: {ticket} has {count} prior fix PR(s) on main - no fix chain")
+            print(
+                f"fix-chain: {ticket} has {count} prior fix PR(s) on main - no fix chain"
+            )
             continue
         label = f"{ticket} already has {count} prior fix PR(s) on main; this is fix #{count + 1}"
         problem = failure_mode_problems(body, ticket)
@@ -221,11 +262,19 @@ def main(argv):
         print(f"  {problem}")
         print("  Add to the PR body (or a changed docs/ or plans/ .md file):")
         print(f"    Failure modes for {ticket} (after fix #{count})")
-        print("    - <shape / input / state> -> <expected outcome> | covered by <test id>")
-        print("    - <shape / input / state> -> <expected outcome> | uncovered - adding <test id>")
+        print(
+            "    - <shape / input / state> -> <expected outcome> | covered by <test id>"
+        )
+        print(
+            "    - <shape / input / state> -> <expected outcome> | uncovered - adding <test id>"
+        )
         print("  Or, if this is not a repeat of the same fault, add its own line:")
-        print(f"    {SKIP_MARKER} <one-line reason, at least {MIN_REASON_CHARS} characters>")
-        print("  Rule: docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule")
+        print(
+            f"    {SKIP_MARKER} <one-line reason, at least {MIN_REASON_CHARS} characters>"
+        )
+        print(
+            "  Rule: docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule"
+        )
     return status
 
 

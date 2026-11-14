@@ -192,9 +192,9 @@ fi
 
 # ── 8. Fix-chain gate (KRI-751, blocking since KRI-1383) ─────────────────────
 # A 3rd fix PR on one KRI ticket needs a failure-mode list (or a skip marker with
-# a reason). Same script CI runs (.github/workflows/fix-chain.yml). Locally the
-# PR title is unknown, so "is a fix" comes from this branch's commit subjects;
-# CI uses the real title. PR_TITLE=... overrides.
+# a reason). Same script CI runs (.github/workflows/fix-chain.yml). The PR title
+# is PR_TITLE, else the open PR's title from gh; before a PR exists, "is a fix"
+# comes from this branch's commit subjects.
 echo "[8/8] fix-chain check"
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 PR_INDEX_FILE=""
@@ -208,7 +208,11 @@ if command -v gh >/dev/null 2>&1; then
   fi
 fi
 [ -n "$PR_INDEX_FILE" ] || warn "gh unavailable - fix PRs without a KRI id in the squash title are not counted locally (CI counts them)"
-FIX_ARGS=(--repo "$REPO" --main-ref origin/main --head HEAD --branch "$BRANCH" --title "${PR_TITLE:-}" --body-file "$PR_BODY_FILE")
+FIX_TITLE="${PR_TITLE:-}"
+if [ -z "$FIX_TITLE" ] && command -v gh >/dev/null 2>&1; then
+  FIX_TITLE="$(gh pr view --json title -q .title 2>/dev/null || true)"
+fi
+FIX_ARGS=(--repo "$REPO" --main-ref origin/main --head HEAD --branch "$BRANCH" --title "$FIX_TITLE" --body-file "$PR_BODY_FILE")
 [ -n "$PR_INDEX_FILE" ] && FIX_ARGS+=(--pr-index "$PR_INDEX_FILE")
 while IFS= read -r f; do
   case "$f" in *.md) FIX_ARGS+=(--changed-file "$f") ;; esac

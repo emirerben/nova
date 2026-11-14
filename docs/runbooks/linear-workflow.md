@@ -62,9 +62,10 @@ Trigger: a KRI ticket's **second `fix` PR has merged**. `scripts/preship-check.s
 
 How it counts:
 
+- Merge-commit and rebase merges count once per PR, by the PR's own title from the `gh` index, never once per branch commit. A `fix: review nits` commit inside a `feat` PR is not a fix PR.
 - Only merged PRs on `main` whose title starts with `fix` (`fix:`, `fix(scope):`, `hotfix`). `feat`, `test`, `chore`, `docs` and release-metadata PRs never count.
 - A fix is charged to the **first** KRI id in its squash subject. A subject with no id is charged to the first id in its PR title or head branch name (PR index from `gh`). A child fix that names its parent second does not count against the parent.
-- The PR being checked is a fix when its title starts with `fix` (locally: when a commit on the branch does, or `PR_TITLE=...` is set). The ticket comes from the PR title, else the branch name.
+- The PR being checked is a fix when its title starts with `fix` (locally: the open PR's title via `gh`, or `PR_TITLE=...`; before a PR exists, when a commit on the branch does). The ticket comes from the PR title, else the branch name.
 
 Before a **third** fix PR on that ticket, write a failure-mode list in the PR body (or a changed `docs/` or `plans/` `.md` file); the ticket may keep a copy, but the gate does not read it. One line per way the feature can still fail, each either:
 
