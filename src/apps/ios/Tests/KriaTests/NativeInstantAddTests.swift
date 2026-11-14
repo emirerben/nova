@@ -133,9 +133,8 @@ final class NativeInstantAddTests: XCTestCase {
             XCTAssertEqual(after.clipIndex, before.raw["pending_local"] == .bool(true) ? 9 : before.clipIndex)
         }
         XCTAssertEqual(f.session.undoDepthForTesting, undoDepth, "Landing is not an undo step")
-        f.session.undo()
-        f.session.undo()
-        XCTAssertFalse(f.session.document.clips.contains { $0.splitPanelIndex == 1 }, "Undo returns to before the add")
+        for _ in 0..<3 { f.session.undo() }
+        XCTAssertFalse(f.session.document.clips.contains { $0.splitPanelIndex == 1 }, "Undo of the cut, the trim and the add returns to before the add")
         f.session.redo()
         XCTAssertEqual(f.session.document.clips.first { $0.splitPanelIndex == 1 }?.clipIndex, 9,
                        "History holds the real index too, never the provisional one")
@@ -217,7 +216,8 @@ final class NativeInstantAddTests: XCTestCase {
         XCTAssertTrue(secondStarted)
         f.session.undo()
         f.session.setClipTiming(clipID: "top", durationS: 1.5)
-        XCTAssertFalse(f.uploads.containsEditorPlacement(second), "Once no history step holds the block its upload is cancelled")
+        let cancelled = await poll { !f.uploads.containsEditorPlacement(second) }
+        XCTAssertTrue(cancelled, "Once no history step holds the block its upload is cancelled")
         XCTAssertEqual(f.session.finishingUploadCount, 0)
     }
 

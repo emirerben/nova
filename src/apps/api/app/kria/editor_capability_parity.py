@@ -429,7 +429,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "pollVisualLibrary retryLibraryVisual loadSoundEffectCatalog end set "
         "auditPreviewWindow configureClipAudioForTesting configureReplacementSourcesForTesting "
         "discardPlaybackForNewJobForTesting finishScrubFramesForTesting "
-        "setResolvedSourcesForTesting stageSplitPanelPlacementForTesting",
+        "setResolvedSourcesForTesting setPendingAddAdmissionForTesting previewSourceURLForTesting",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
     ),
     "background_tool_navigation": _g(
