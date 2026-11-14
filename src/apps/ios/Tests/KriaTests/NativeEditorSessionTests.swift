@@ -1891,6 +1891,69 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.sourcePreviewState, .ready)
     }
 
+    func testPublishedSpeechMontagePreviewsItsPinnedPictureAndSpeechTracks() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let video = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        let speech = input.deletingPathExtension().appendingPathExtension("wav")
+        try FileManager.default.copyItem(at: video, to: input)
+        defer { try? FileManager.default.removeItem(at: input) }
+        try Self.silentWAV(seconds: 4).write(to: speech)
+        defer { try? FileManager.default.removeItem(at: speech) }
+        let original = try await AssetImportCoordinator(project: project).importAsset(from: input)
+        let originalSpeech = try await AssetImportCoordinator(project: project).importAsset(from: speech)
+        let store = SourceAssetStore(project: project)
+        try store.bind(mediaID: "source", original: original)
+        try store.bind(mediaID: "speech", original: originalSpeech)
+        let fingerprint = try XCTUnwrap(original.fingerprint)
+        let speechFingerprint = try XCTUnwrap(originalSpeech.fingerprint)
+        var recipe = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a").recipe
+        recipe.schemaVersion = 2
+        recipe.rendererVersion = "kria-ios-2"
+        recipe.assets = [
+            MediaAsset(id: "source", relativePath: "source", fingerprint: fingerprint),
+            MediaAsset(id: "speech", relativePath: "speech", fingerprint: speechFingerprint),
+        ]
+        recipe.assetManifest = RenderAssetManifest(assets: [
+            RenderAssetReference(id: "source", fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: "source")),
+            RenderAssetReference(id: "speech", fingerprint: try RenderFingerprint(speechFingerprint), source: .original(mediaID: "speech")),
+        ])
+        recipe.tracks = [
+            TimelineTrack(id: "speech-montage", kind: .video, clips: [
+                TimelineClip(id: "picture", sourceAssetID: "source", sourceStart: 0.5, sourceDuration: 1, volume: 0),
+            ]),
+            TimelineTrack(id: "speech-audio", kind: .audio, clips: [
+                TimelineClip(id: "excerpt", sourceAssetID: "speech", sourceStart: 1.5, sourceDuration: 1),
+            ]),
+        ]
+        try recipe.validate()
+        let request = DeviceRenderRequest(
+            identity: .init(jobID: jobID, variantID: "speech_montage", recipeRevision: 1, recipeDigest: String(repeating: "a", count: 64)),
+            recipe: recipe)
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "speech_montage", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "variant_id": .string("speech_montage"), "resolved_archetype": .string("speech_montage"),
+                "render_destination": .string("device"), "render_status": .string("ready"),
+                "render_generation_id": .string("generation-1"), "output_url": .string(video.absoluteString),
+                "editor_capabilities": .object(["timeline": .bool(false), "text_elements": .bool(false), "mix": .bool(false)]),
+            ])
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        fake.deviceRenderResponse = .init(phase: "published", request: request, publishedGeneration: "generation-1")
+
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(session.displayedSourcePreviewRecipe?.tracks, recipe.tracks)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
     /// Cards and sounds closed (their rollout flag off): the server sends no
     /// lanes, so a live preview would drop what the finished MP4 shows. The
     /// editor keeps playing the finished MP4.
