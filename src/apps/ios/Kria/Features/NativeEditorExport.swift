@@ -7,18 +7,26 @@ import UIKit
 /// control — the confusion this fixes (KRI-91).
 enum NativeEditorSaveControl: Equatable {
     case saved, unsaved, saving
+    /// Save was tapped while adds still upload (KRI-1419); it runs on its own once they land.
+    case finishing(uploads: Int)
 
-    init(isSaving: Bool, hasUnsavedChanges: Bool) {
-        self = isSaving ? .saving : hasUnsavedChanges ? .unsaved : .saved
+    init(isSaving: Bool, hasUnsavedChanges: Bool, finishingUploads: Int = 0) {
+        self = finishingUploads > 0 ? .finishing(uploads: finishingUploads) : isSaving ? .saving : hasUnsavedChanges ? .unsaved : .saved
     }
 
     var isEnabled: Bool { self == .unsaved }
+
+    var title: String? {
+        guard case .finishing(let uploads) = self else { return nil }
+        return String(localized: "Finishing \(uploads) uploads…")
+    }
 
     var accessibilityLabel: String {
         switch self {
         case .saved: String(localized: "Saved")
         case .unsaved: String(localized: "Save changes")
         case .saving: String(localized: "Saving")
+        case .finishing: title ?? String(localized: "Saving")
         }
     }
 }

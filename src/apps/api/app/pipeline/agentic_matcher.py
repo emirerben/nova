@@ -9,11 +9,9 @@ heuristic in `template_matcher.match()` for templates with is_agentic=True.
 matcher when the agent fails — a single flaky LLM call shouldn't take
 down a user's job.
 
-shot_ranker is intentionally NOT used here in v1; clip_router needs only
-one ranked signal per clip (hook_score), and adding a second LLM hop for
-moment-level ranking is more cost/latency than it earns for templates
-where each clip has 1-3 best_moments anyway. Layer shot_ranker in once
-we see clip_router make consistently good slot assignments.
+clip_router needs only one ranked signal per clip (hook_score); a second
+LLM hop for moment-level ranking costs more than it earns for templates
+where each clip has 1-3 best_moments anyway.
 """
 
 from __future__ import annotations

@@ -63,23 +63,27 @@ struct PendingEditorSourcePlacement: Codable, Identifiable, Sendable {
     let visual: CreationVisual?
     let localDurationS: Double?
     let replacingSlotID: String?
+    /// The split panel a timeline add was aimed at, so a relaunch that lost the unsaved block still lands it there.
+    struct SplitPanel: Codable, Equatable, Sendable { let sectionID: String; let panel: Int; let offset: Double }
+    let splitPanel: SplitPanel?
     var status: String
     var error: String?
     var retryable: Bool
 
-    init(id: UUID, target: EditorSourceRegistrationTarget, lane: Lane, visual: CreationVisual?, localDurationS: Double?, replacingSlotID: String? = nil, status: String = "preparing", error: String? = nil, retryable: Bool = true) {
+    init(id: UUID, target: EditorSourceRegistrationTarget, lane: Lane, visual: CreationVisual?, localDurationS: Double?, replacingSlotID: String? = nil, splitPanel: SplitPanel? = nil, status: String = "preparing", error: String? = nil, retryable: Bool = true) {
         self.id = id; self.target = target; self.lane = lane; self.visual = visual; self.localDurationS = localDurationS
-        self.replacingSlotID = replacingSlotID
+        self.replacingSlotID = replacingSlotID; self.splitPanel = splitPanel
         self.status = status; self.error = error; self.retryable = retryable
     }
 
-    enum CodingKeys: String, CodingKey { case id, target, lane, visual, localDurationS, replacingSlotID, status, error, retryable }
+    enum CodingKeys: String, CodingKey { case id, target, lane, visual, localDurationS, replacingSlotID, splitPanel, status, error, retryable }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id); target = try c.decode(EditorSourceRegistrationTarget.self, forKey: .target)
         lane = try c.decode(Lane.self, forKey: .lane); visual = try c.decodeIfPresent(CreationVisual.self, forKey: .visual)
         localDurationS = try c.decodeIfPresent(Double.self, forKey: .localDurationS)
         replacingSlotID = try c.decodeIfPresent(String.self, forKey: .replacingSlotID)
+        splitPanel = try c.decodeIfPresent(SplitPanel.self, forKey: .splitPanel)
         status = try c.decodeIfPresent(String.self, forKey: .status) ?? "preparing"
         error = try c.decodeIfPresent(String.self, forKey: .error)
         retryable = try c.decodeIfPresent(Bool.self, forKey: .retryable) ?? true
@@ -1613,7 +1617,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                     guard target.sourceKind == .visual else { throw APIError.invalidResponse }
                     // Pool registration queues analysis. Admission requires
                     // its ready row, including for a timeline photo.
-                    for _ in 0..<360 where visual.status != "ready" {
+                    for _ in 0..<360 where visual.status != "ready" && visual.mediaStatus != "ready" {
                         guard containsEditorPlacement(record.id), !Task.isCancelled else { return }
                         if visual.status == "failed" {
                             failEditorPlacement(record.id, error: String(localized: "This visual couldn’t be prepared. Choose it again."), retryable: false)
@@ -1624,11 +1628,21 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                         visual = refreshed
                         if visual.status != "ready" { try await Task.sleep(for: .seconds(1)) }
                     }
-                    guard visual.status == "ready" else {
+                    guard visual.status == "ready" || visual.mediaStatus == "ready" else {
                         failEditorPlacement(record.id, error: String(localized: "Preparation is taking longer than expected. Try again."))
                         return
                     }
-                    _ = try await finishEditorSource(record, target: target, sourceID: visual.id)
+                    // A server before KRI-1419 still wants finished analysis; wait it out rather than fail.
+                    for _ in 0..<360 {
+                        do {
+                            _ = try await finishEditorSource(record, target: target, sourceID: visual.id)
+                            break
+                        } catch APIError.requestFailed(status: 422, _) where visual.status != "ready" {
+                            guard containsEditorPlacement(record.id), !Task.isCancelled else { return }
+                            try await Task.sleep(for: .seconds(1))
+                            visual = try await api.visuals(itemID: itemID).assets.first(where: { $0.id == visual.id }) ?? visual
+                        }
+                    }
                     // The server already has the date/place from registerVisual; the retained record
                     // must not keep the coordinates until the editor acknowledges it.
                     ClipCaptureStore.shared.remove(record.id)

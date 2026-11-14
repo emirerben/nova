@@ -3789,6 +3789,22 @@
         }
       }
     },
+    "A clip didn’t finish uploading. Retry or remove it, then save." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein Clip wurde nicht fertig hochgeladen. Versuch es nochmal oder entferne ihn, dann speichere."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir klibin yüklemesi bitmedi. Tekrar dene ya da kaldır, sonra kaydet."
+          }
+        }
+      }
+    },
     "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here." : {
       "localizations" : {
         "de" : {
@@ -16327,6 +16343,52 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Önce yeni yazını tamamla"
+          }
+        }
+      }
+    },
+    "Finishing %lld uploads…" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Upload wird abgeschlossen…"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Uploads werden abgeschlossen…"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Finishing %lld upload…"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Finishing %lld uploads…"
+                }
+              }
+            }
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld yükleme tamamlanıyor…"
           }
         }
       }
@@ -40984,6 +41046,22 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Bu medya eklenemedi. Düzenlemen değişmedi. %@"
+          }
+        }
+      }
+    },
+    "This media couldn’t be uploaded. Try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses Medium konnte nicht hochgeladen werden. Versuch es nochmal."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu medya yüklenemedi. Tekrar dene."
           }
         }
       }

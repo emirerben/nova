@@ -242,53 +242,74 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
     }
 
-    // Fills the empty Bottom panel from the picker's import hook. The panel's footage is a new slot (a fill never
-    // replaces), so the real registration, undo, redo and Save/reopen all act on one added clip.
-    func testDelayedPanelImportKeepsCapturedOwnerUndoAndReopen() throws {
+    /// The document rows without an attachment, for polling.
+    private func liveRows(_ app: XCUIApplication) -> [[String: Any]] {
+        let element = app.descendants(matching: .any)["native-editor-test-document"].firstMatch
+        guard let data = (element.value as? String)?.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = root["editor_payload"] as? [String: Any], let sections = payload["sections"] as? [String: Any] else { return [] }
+        return sections["timeline_slots"] as? [[String: Any]] ?? []
+    }
+
+    // KRI-1419: fills the empty Bottom panel from the picker's import hook while the fixture holds the server's
+    // registration. The block must be in the panel and the preview before the upload is admitted; Save waits for
+    // the upload and sends the admitted index; reopen shows the same block.
+    func testDelayedPanelImportShowsAtOnceAndSavesTheAdmittedIndex() throws {
         let flags = ["-ui-testing-editor-gameday-add", "-ui-testing-editor-split-import",
                      "-ui-testing-editor-split-persistence", "-ui-testing-editor-split-persistence-reset"]
         let (app, before) = try launchTwoPanelAcceptance(extraArguments: flags, fill: false)
         let sectionID = try XCTUnwrap(before.sections[0]["id"] as? String)
         let importButton = app.buttons["native-editor-split-import"]
         XCTAssertTrue(importButton.waitForExistence(timeout: 10))
-        importButton.tap()
-        app.buttons["native-editor-split-done"].tap()
-        selectTimelineClip(1, in: app)
-        let pending = try splitSnapshot(app)
-        XCTAssertEqual(NSArray(array: pending.rows), NSArray(array: before.rows), "Selection must change before registration completes")
-        try assertSplitPeers(before, unchangedIn: pending, excluding: [])
         let release = app.buttons["split-import-release"]
-        let registered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: release)
-        XCTAssertEqual(XCTWaiter.wait(for: [registered], timeout: 90), .completed, "Real proxy preparation, reservation and PUT must reach registration")
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.isSelected)
-        let stillPending = try splitSnapshot(app)
-        XCTAssertEqual(NSArray(array: stillPending.rows), NSArray(array: before.rows))
-        release.tap()
-        let probe = app.descendants(matching: .any)["native-editor-test-document"].firstMatch
-        let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "editor_source_placement_id"), object: probe)
-        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 40), .completed)
-        let imported = try splitSnapshot(app)
-        XCTAssertEqual(imported.rows.count, before.rows.count + 1, "Filling an empty panel adds exactly one clip")
-        let target = try XCTUnwrap(imported.rows.first { $0["editor_source_placement_id"] != nil })
-        XCTAssertEqual(target["clip_index"] as? Int, 4)
-        XCTAssertEqual(target["split_section_id"] as? String, sectionID)
-        XCTAssertEqual(target["split_panel_index"] as? Int, 1, "The import lands in the empty Bottom panel")
-        XCTAssertFalse(try XCTUnwrap(target["editor_source_placement_id"] as? String).isEmpty)
-        let addedID = try XCTUnwrap(target["slot_id"] as? String)
-        try assertSplitPeers(before, unchangedIn: imported, excluding: [addedID])
+        let picked = Date()
+        importButton.tap()
+        var released = false
+        var timeToBlock: TimeInterval?
+        while Date().timeIntervalSince(picked) < 120 {
+            if liveRows(app).contains(where: { $0["editor_source_placement_id"] != nil }) {
+                timeToBlock = Date().timeIntervalSince(picked)
+                break
+            }
+            if !released, release.exists, release.isEnabled { release.tap(); released = true }
+        }
+        let measured = XCTAttachment(string: String(format: "time_to_block_s=%.3f released_first=%@", timeToBlock ?? -1, released ? "yes" : "no"))
+        measured.name = "KRI-1419 time from pick to block"
+        measured.lifetime = .keepAlways
+        add(measured)
+        XCTAssertNotNil(timeToBlock, "The picked clip must reach the timeline")
+        XCTAssertFalse(released, "The block appears before the server admits the upload")
+        let pending = try splitSnapshot(app)
+        XCTAssertEqual(pending.rows.count, before.rows.count + 1, "Filling an empty panel adds exactly one clip")
+        let block = try XCTUnwrap(pending.rows.first { $0["editor_source_placement_id"] != nil })
+        XCTAssertLessThan(try XCTUnwrap(block["clip_index"] as? Int), 0, "Until admission the block plays the local file")
+        XCTAssertEqual(block["split_section_id"] as? String, sectionID)
+        XCTAssertEqual(block["split_panel_index"] as? Int, 1, "The import lands in the empty Bottom panel")
+        let addedID = try XCTUnwrap(block["slot_id"] as? String)
+        try assertSplitPeers(before, unchangedIn: pending, excluding: [addedID])
+        app.buttons["native-editor-split-done"].tap()
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists, "The preview plays the pending block")
         app.buttons["native-editor-undo"].tap()
-        let undone = try splitSnapshot(app)
-        XCTAssertEqual(NSArray(array: undone.rows), NSArray(array: before.rows))
-        try assertSplitPeers(before, unchangedIn: undone, excluding: [])
+        XCTAssertEqual(NSArray(array: try splitSnapshot(app).rows), NSArray(array: before.rows))
         app.buttons["native-editor-redo"].tap()
-        let redone = try splitSnapshot(app)
-        XCTAssertEqual(NSArray(array: redone.rows), NSArray(array: imported.rows))
-        try assertSplitPeers(imported, unchangedIn: redone, excluding: [])
+        XCTAssertEqual(NSArray(array: try splitSnapshot(app).rows), NSArray(array: pending.rows))
+
         let save = app.buttons["native-editor-save"]
         XCTAssertTrue(save.isEnabled)
         save.tap()
+        let finishing = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Finishing 1 upload…"), object: save)
+        XCTAssertEqual(XCTWaiter.wait(for: [finishing], timeout: 5), .completed, "Save waits for the upload and says so")
+        let registered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: release)
+        XCTAssertEqual(XCTWaiter.wait(for: [registered], timeout: 90), .completed, "Real proxy preparation, reservation and PUT must reach registration")
+        release.tap()
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@ AND isEnabled == false", "Saved"), object: save)
-        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 40), .completed, "Save runs on its own once the upload is admitted")
+        let imported = try splitSnapshot(app)
+        let target = try XCTUnwrap(try imported.row(addedID))
+        XCTAssertEqual(target["clip_index"] as? Int, 4, "The saved block names the admitted source")
+        XCTAssertNil(target["pending_local"])
+        XCTAssertEqual(target["split_panel_index"] as? Int, 1)
+        try assertSplitPeers(before, unchangedIn: imported, excluding: [addedID])
         app.terminate()
         app.launchArguments.removeAll { $0 == "-ui-testing-editor-split-persistence-reset" }
         app.launch()
@@ -297,7 +318,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed)
         let reopened = try splitSnapshot(app)
         XCTAssertEqual(NSArray(array: reopened.rows), NSArray(array: imported.rows))
-        try assertSplitPeers(imported, unchangedIn: reopened, excluding: [])
         XCTAssertFalse(app.buttons["native-editor-save"].isEnabled)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists)
     }

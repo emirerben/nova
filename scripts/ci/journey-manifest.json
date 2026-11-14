@@ -1127,6 +1127,15 @@
       ]
     },
     {
+      "id": "kri-1446-unstated-length-never-blocks",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri_tadic_length_tolerance.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kria_replay/kri_tadic_length/",
+        "src/apps/api/tests/kria/test_kri_tadic_length_tolerance.py"
+      ]
+    },
+    {
       "id": "kri-708-caption-correction",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_caption_correct.py",
@@ -3878,7 +3887,15 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_layer_order.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_speaker_full_opening.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_video_shape.json",
-        "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_full_screen.json"
+        "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_full_screen.json",
+        "src/apps/api/app/pipeline/agentic_matcher.py",
+        "src/apps/api/tests/fixtures/agent_evals/shot_ranker/golden/hook_first.json",
+        "src/apps/api/tests/fixtures/agent_evals/shot_ranker/golden/thematic_pull.json",
+        "src/apps/api/tests/fixtures/agent_evals/shot_ranker/golden/variety_check.json",
+        "src/apps/api/tests/fixtures/agent_evals/transition_picker/golden/calm_dissolve.json",
+        "src/apps/api/tests/fixtures/agent_evals/transition_picker/golden/default_hard_cut.json",
+        "src/apps/api/tests/fixtures/agent_evals/transition_picker/golden/energy_chapter_break.json",
+        "src/apps/api/tests/fixtures/agent_evals/transition_picker/golden/whip_pan_match.json"
       ]
     },
     {
