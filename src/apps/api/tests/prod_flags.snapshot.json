@@ -53,6 +53,10 @@
       "source": "default",
       "value": false
     },
+    "background_focus_min_client_protocol": {
+      "source": "default",
+      "value": 42
+    },
     "background_follows_talk_enabled": {
       "source": "default",
       "value": false
@@ -81,6 +85,10 @@
       "source": "default",
       "value": true
     },
+    "caption_animation_min_client_protocol": {
+      "source": "default",
+      "value": 24
+    },
     "caption_background_contrast_enabled": {
       "source": "default",
       "value": true
@@ -88,6 +96,10 @@
     "caption_case_reference_enabled": {
       "source": "default",
       "value": true
+    },
+    "caption_correction_model": {
+      "source": "default",
+      "value": "gpt-4o"
     },
     "caption_legibility_enabled": {
       "source": "default",
@@ -113,6 +125,10 @@
       "source": "default",
       "value": true
     },
+    "caption_translation_model": {
+      "source": "default",
+      "value": ""
+    },
     "carousel_auto_author_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
@@ -128,6 +144,10 @@
     "change_request_fresh_brief_enabled": {
       "source": "default",
       "value": true
+    },
+    "chat_undo_min_client_protocol": {
+      "source": "default",
+      "value": 50
     },
     "clip_exposure_fact_enabled": {
       "source": "default",
@@ -164,6 +184,10 @@
     "color_moments_enabled": {
       "source": "default",
       "value": false
+    },
+    "color_moments_min_client_protocol": {
+      "source": "default",
+      "value": 48
     },
     "conformance_feedback_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
@@ -269,9 +293,21 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "edit_copilot_model": {
+      "source": "default",
+      "value": "gemini-3.1-pro-preview"
+    },
     "edit_director_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
+    },
+    "edit_director_eval_comparison_model": {
+      "source": "default",
+      "value": "gemini-3.6-flash"
+    },
+    "edit_director_model": {
+      "source": "default",
+      "value": "gemini-3.1-pro-preview"
     },
     "edit_format_day_vlog_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
@@ -285,9 +321,13 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "edit_omni_model": {
+      "source": "default",
+      "value": "gemini-omni-flash-preview"
+    },
     "edit_proposal_semantic_enabled": {
-      "source": "legacy-fly-digest-2026-10-08",
-      "value": true
+      "source": "job-data:no-semantic-planner-2026-11-14",
+      "value": false
     },
     "edit_transitions_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
@@ -321,9 +361,21 @@
       "source": "default",
       "value": true
     },
+    "freehand_drawing_min_client_protocol": {
+      "source": "default",
+      "value": 6
+    },
+    "freeze_frame_min_client_protocol": {
+      "source": "default",
+      "value": 16
+    },
     "fullscreen_cutaways_enabled": {
       "source": "default",
       "value": false
+    },
+    "gemini_model": {
+      "source": "default",
+      "value": "gemini-2.5-flash"
     },
     "generated_images_enabled": {
       "source": "default",
@@ -481,6 +533,10 @@
       "source": "default",
       "value": []
     },
+    "kria_minimum_client_protocol": {
+      "source": "default",
+      "value": 2
+    },
     "kria_phone_montage_preflight_enabled": {
       "source": "default",
       "value": true
@@ -500,6 +556,10 @@
     "kria_prompt_moment_inspection_enabled": {
       "source": "default",
       "value": false
+    },
+    "kria_question_batch_min_client_protocol": {
+      "source": "default",
+      "value": 14
     },
     "kria_reply_language_enabled": {
       "source": "default",
@@ -544,6 +604,10 @@
     "kria_steer_now_user_ids": {
       "source": "default",
       "value": []
+    },
+    "kria_suggester_model": {
+      "source": "default",
+      "value": "gpt-6.1-sol"
     },
     "kria_suggestion_chips_enabled": {
       "source": "default",
@@ -665,6 +729,10 @@
       "source": "default",
       "value": true
     },
+    "main_creator_model": {
+      "source": "default",
+      "value": "gemini-3.1-pro-preview"
+    },
     "matte_depth_occluder_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
@@ -672,6 +740,18 @@
     "matte_rvm_enabled": {
       "source": "default",
       "value": true
+    },
+    "media_backdrop_min_client_protocol": {
+      "source": "default",
+      "value": 31
+    },
+    "media_card_style_min_client_protocol": {
+      "source": "default",
+      "value": 44
+    },
+    "media_card_tilt_min_client_protocol": {
+      "source": "default",
+      "value": 30
     },
     "media_collection_cache_only": {
       "source": "default",
@@ -700,6 +780,18 @@
     "media_tilt_enabled": {
       "source": "default",
       "value": false
+    },
+    "media_tilt_min_client_protocol": {
+      "source": "default",
+      "value": 28
+    },
+    "media_tilt_zoom_min_client_protocol": {
+      "source": "default",
+      "value": 33
+    },
+    "moment_order_min_client_protocol": {
+      "source": "default",
+      "value": 20
     },
     "motion_scenes_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
@@ -745,6 +837,10 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "narrated_whisper_model": {
+      "source": "default",
+      "value": "small.en"
+    },
     "native_notifications_enabled": {
       "source": "default",
       "value": false
@@ -756,6 +852,10 @@
     "omni_generated_video_enabled": {
       "source": "default",
       "value": false
+    },
+    "open_questions_min_client_protocol": {
+      "source": "default",
+      "value": 22
     },
     "overlay_autoapply_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
@@ -828,6 +928,10 @@
     "phone_narrated_title_enabled": {
       "source": "default",
       "value": true
+    },
+    "phone_narrated_title_preview_min_client_protocol": {
+      "source": "default",
+      "value": 4
     },
     "phone_narration_rendering_enabled": {
       "source": "default",
@@ -991,6 +1095,10 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "phone_voiceover_editor_min_client_protocol": {
+      "source": "default",
+      "value": 3
+    },
     "phone_voiceover_reaction_beats_enabled": {
       "source": "default",
       "value": true
@@ -998,6 +1106,10 @@
     "phone_voiceover_source_audio_enabled": {
       "source": "default",
       "value": false
+    },
+    "phone_voiceover_source_audio_min_client_protocol": {
+      "source": "default",
+      "value": 17
     },
     "phone_voiceover_spoken_text_enabled": {
       "source": "default",
@@ -1026,6 +1138,10 @@
     "poster_ondemand_repair_enabled": {
       "source": "default",
       "value": false
+    },
+    "protected_region_mark_min_client_protocol": {
+      "source": "default",
+      "value": 19
     },
     "reconcile_stuck_variants_enabled": {
       "source": "default",
@@ -1071,6 +1187,10 @@
       "source": "default",
       "value": true
     },
+    "script_fonts_min_client_protocol": {
+      "source": "default",
+      "value": 35
+    },
     "sfx_autoplace_enabled": {
       "source": "default",
       "value": false
@@ -1083,6 +1203,10 @@
       "source": "default",
       "value": false
     },
+    "single_word_text_min_client_protocol": {
+      "source": "default",
+      "value": 11
+    },
     "slide_post_ai_recovery_enabled": {
       "source": "default",
       "value": false
@@ -1094,6 +1218,10 @@
     "slide_post_drawing_enabled": {
       "source": "default",
       "value": true
+    },
+    "slide_post_drawing_min_client_protocol": {
+      "source": "default",
+      "value": 7
     },
     "slide_post_extended_device_export_enabled": {
       "source": "default",
@@ -1114,6 +1242,14 @@
     "slide_post_sizes_enabled": {
       "source": "default",
       "value": false
+    },
+    "slide_post_sizes_min_client_protocol": {
+      "source": "default",
+      "value": 5
+    },
+    "slide_post_sticker_min_client_protocol": {
+      "source": "default",
+      "value": 8
     },
     "slide_post_stickers_enabled": {
       "source": "default",
@@ -1199,9 +1335,21 @@
       "source": "default",
       "value": true
     },
+    "speaker_background_color_min_client_protocol": {
+      "source": "default",
+      "value": 34
+    },
     "speaker_background_enabled": {
       "source": "default",
       "value": false
+    },
+    "speaker_background_min_client_protocol": {
+      "source": "default",
+      "value": 27
+    },
+    "speaker_background_windows_min_client_protocol": {
+      "source": "default",
+      "value": 32
     },
     "speaker_frame_caption_faces_enabled": {
       "source": "default",
@@ -1210,6 +1358,10 @@
     "speaker_full_opening_enabled": {
       "source": "default",
       "value": false
+    },
+    "speaker_full_opening_min_client_protocol": {
+      "source": "default",
+      "value": 41
     },
     "speech_cleanup_budget_clamp_enabled": {
       "source": "default",
@@ -1343,9 +1495,17 @@
       "source": "default",
       "value": false
     },
+    "text_behind_subject_phone_min_client_protocol": {
+      "source": "default",
+      "value": 21
+    },
     "text_bend_enabled": {
       "source": "default",
       "value": true
+    },
+    "text_bend_min_client_protocol": {
+      "source": "default",
+      "value": 9
     },
     "text_composer_asked_only_enabled": {
       "source": "default",
@@ -1443,9 +1603,17 @@
       "source": "default",
       "value": true
     },
+    "voiceover_original_audio_min_client_protocol": {
+      "source": "default",
+      "value": 15
+    },
     "voiceover_route_follows_prompt_enabled": {
       "source": "default",
       "value": true
+    },
+    "whisper_model": {
+      "source": "default",
+      "value": "base.en"
     },
     "whole_video_text_pin_enabled": {
       "source": "default",
@@ -1456,6 +1624,7 @@
     "decisions-md:2026-11-02": "agents/DECISIONS.md [2026-11-02] records the applied sequence IOS_DEVICE_ONLY_MODE=true then CLOUD_RENDER_EXECUTION_ENABLED=false. Production jobs carry assembly_plan.native_device_only=true, which agrees. A repo statement, no secret read.",
     "default": "Code default. Production may override it through a Fly secret that was not read; treat the value as unconfirmed.",
     "job-data:creator_brief_binding-2026-11-14": "Every sampled production creation job from 2026-11-04 to 2026-11-13 (6 of 6, two accounts) carries assembly_plan.creator_brief_binding, which only the writer cohort produces. Whether production uses the global flag or an allowlist is not known; the replay user is synthetic, so the global flag is the approximation. Read with admin GET /admin/jobs/<id>/debug.",
+    "job-data:no-semantic-planner-2026-11-14": "No nova.plan.semantic_edit_proposal or nova.plan.edit_proposal agent run appears in GET /admin/plan-items/<id>/proposal-trace for the 30 plan items behind the 60 most recent production content-plan jobs (2026-10-28..2026-11-14, 11 failed and 40+ finished jobs), and CLAUDE.md lists EDIT_PROPOSAL_SEMANTIC_ENABLED as false. Supersedes the 2026-10-08 Fly digest comparison, which read it as on (changed since, or never reached on this route).",
     "legacy-fly-digest-2026-10-08": "Boolean flags that shared PHONE_RENDERING_ENABLED's Fly secret digest (last re-derived 2026-10-08 into the former hand list in tests/_prod_profile.py). Digests were compared, no value was read. Flags enabled after that date are not recorded here.",
     "live:phone-render-config": "GET /admin/kria/phone-render-config on the production API (names only, no secret value); re-read on every `refresh --live`.",
     "runbook:chat-speech-cleanup-rollout": "docs/runbooks/chat-speech-cleanup-rollout.md says the retake switches have been on in prod since 2026-11-04. A repo statement, no secret read."

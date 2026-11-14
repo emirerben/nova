@@ -34,11 +34,15 @@ import re
 import signal
 import subprocess
 import sys
+import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
+
+from sqlalchemy.exc import OperationalError
 
 API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = API_ROOT.parents[2]
@@ -50,13 +54,20 @@ WORKER_QUEUES = (
     "creator-fidelity-v1"
 )
 KEPT_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "SHELL")
-MODEL_KEY = re.compile(r"^[A-Z0-9_]+_API_KEY$")
-NOT_MODEL_KEYS = ("ADMIN_", "INTERNAL_", "WAITLIST_")
+MODEL_KEY = re.compile(r"^(?:GEMINI|OPENAI|ANTHROPIC)_API_KEY$")
+REDIS_URL = "redis://localhost:6379/14"
+REDIS_KEY_PREFIX = "nova-dev"
+MIN_FREE_DB_CONNECTIONS = 20
 MEDIA_KINDS = {"video", "image"}
+DURATION_TOLERANCE_S = 0.15
 
 
 class ReplayJobError(RuntimeError):
     pass
+
+
+class ReplayInfrastructureError(ReplayJobError):
+    """The local machine could not host the replay; says nothing about the production job."""
 
 
 def _load_dotenv(path: Path) -> dict[str, str]:
@@ -204,14 +215,24 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
     sources: list[dict[str, Any]] = []
     seen: set[str] = set()
     user_id = str(job["user_id"])
-    recorded = _recorded_media_ids(job)
-    for assignment in item_debug.get("clip_assignments") or []:
-        media_id = str(assignment.get("media_id") or "")
+    recorded = _recorded_media(job)
+    clip_rows = [
+        a
+        for a in item_debug.get("clip_assignments") or []
+        if a.get("media_id") and a.get("gcs_path") and (a.get("kind") or "video") in MEDIA_KINDS
+    ]
+    pool_rows = [
+        a
+        for a in item_debug.get("pool_assets") or []
+        if a.get("kind") in MEDIA_KINDS and a.get("status") == "ready"
+    ]
+    chosen = _select_recorded_media(recorded, clip_rows, pool_rows)
+    _name_unnamed_binding_rows(job_debug, chosen)
+    for assignment in clip_rows:
+        media_id = str(assignment["media_id"])
         kind = str(assignment.get("kind") or "video")
-        object_path = str(assignment.get("gcs_path") or "")
-        if not media_id or not object_path or kind not in MEDIA_KINDS or media_id in seen:
-            continue
-        if recorded is not None and _media_key(media_id) not in recorded:
+        object_path = str(assignment["gcs_path"])
+        if media_id in seen or (chosen is not None and _media_key(media_id) not in chosen.clips):
             continue
         seen.add(media_id)
         local = inputs_dir / "media" / media_id
@@ -224,11 +245,9 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         sources.append(_source(local, source_id=media_id, kind=kind, object_path=object_path))
     pool_prefix = f"users/{user_id}/plan/{item_id}/pool/"
     pool_objects: list[str] | None = None
-    for asset in item_debug.get("pool_assets") or []:
-        kind = str(asset.get("kind") or "")
-        if kind not in MEDIA_KINDS or asset.get("status") != "ready":
-            continue
-        if recorded is not None and _media_key(str(asset["id"])) not in recorded:
+    for asset in pool_rows:
+        kind = str(asset["kind"])
+        if chosen is not None and _media_key(str(asset["id"])) not in chosen.pool:
             continue
         object_path = asset.get("gcs_path")
         generation = asset.get("gcs_generation")
@@ -268,7 +287,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         )
     if not sources:
         raise ReplayJobError("The plan item holds no footage in storage to replay")
-    coverage = _check_source_coverage(job, sources, recorded)
+    coverage = _check_source_coverage(job, sources, recorded, chosen)
 
     manifest = {"job_id": job_id, "creator_request": creator_request, "sources": sources}
     for name, value in (
@@ -282,6 +301,10 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
     return {
         "job": job,
         "item": item,
+        "item_id": str(item_id),
+        "job_agent_names": sorted(
+            {r["agent_name"] for r in job_debug.get("agent_runs") or [] if r.get("agent_name")}
+        ),
         "source_count": len(sources),
         "source_coverage": coverage,
         "creator_request": creator_request,
@@ -299,21 +322,126 @@ def _binding_snapshot(job: dict[str, Any]) -> dict[str, Any]:
     return ((plan.get("creator_brief_binding") or {}).get("media_snapshot")) or {}
 
 
-def _recorded_media_ids(job: dict[str, Any]) -> set[str] | None:
-    """The clips and visuals the job was approved against, or None when it recorded none.
+@dataclass(frozen=True)
+class RecordedMedia:
+    """The media a job was approved against, as its brief binding recorded it.
+
+    Older bindings name every row (``media_id``); newer ones keep only the kind, duration and
+    upload receipt of a clip and the kind of a visual, so those rows are matched to the
+    item's media by shape instead of by id.
+    """
+
+    named: frozenset[str]
+    unnamed_clips: tuple[dict[str, Any], ...]
+    unnamed_visuals: tuple[dict[str, Any], ...]
+
+    @property
+    def total(self) -> int:
+        return len(self.named) + len(self.unnamed_clips) + len(self.unnamed_visuals)
+
+
+@dataclass(frozen=True)
+class ChosenMedia:
+    clips: frozenset[str]
+    pool: frozenset[str]
+    matched_clip_rows: tuple[tuple[dict[str, Any], str], ...]
+
+
+def _recorded_media(job: dict[str, Any]) -> RecordedMedia | None:
+    """What the job was approved against, or None when it recorded no media at all.
 
     The item's pool and clip rows may have changed since the job ran (assets added later),
     so the replay takes exactly these and nothing else.
     """
 
     snapshot = _binding_snapshot(job)
-    rows = [*(snapshot.get("clip_assignments") or []), *(snapshot.get("visuals") or [])]
-    ids = {_media_key(str(row["media_id"])) for row in rows if row.get("media_id")}
-    return ids or None
+    clips = [r for r in snapshot.get("clip_assignments") or [] if isinstance(r, dict)]
+    visuals = [r for r in snapshot.get("visuals") or [] if isinstance(r, dict)]
+    named = frozenset(
+        _media_key(str(r["media_id"])) for r in [*clips, *visuals] if r.get("media_id")
+    )
+    recorded = RecordedMedia(
+        named=named,
+        unnamed_clips=tuple(r for r in clips if not r.get("media_id")),
+        unnamed_visuals=tuple(r for r in visuals if not r.get("media_id")),
+    )
+    return recorded if recorded.total else None
+
+
+def _select_recorded_media(
+    recorded: RecordedMedia | None,
+    clip_rows: list[dict[str, Any]],
+    pool_rows: list[dict[str, Any]],
+) -> ChosenMedia | None:
+    """Pick the item's media rows the job used; refuse when they cannot be told apart.
+
+    A clip row without an id matches an item clip of the same kind whose duration agrees
+    within ``DURATION_TOLERANCE_S``; two equally close candidates are ambiguous. Visuals
+    without ids are item pool assets, matched by kind: the item must hold exactly as many ready
+    assets of that kind as the binding recorded, otherwise which ones the job used is unknown.
+    """
+
+    if recorded is None:
+        return None
+    clips = {_media_key(str(r["media_id"])) for r in clip_rows} & recorded.named
+    pool = {_media_key(str(r["id"])) for r in pool_rows} & recorded.named
+    matched: list[tuple[dict[str, Any], str]] = []
+    for row in recorded.unnamed_clips:
+        kind = str(row.get("kind") or "video")
+        duration = row.get("duration_s")
+        scored = sorted(
+            (
+                abs(float(candidate.get("duration_s") or 0) - float(duration or 0)),
+                str(candidate["media_id"]),
+            )
+            for candidate in clip_rows
+            if str(candidate.get("kind") or "video") == kind
+            and _media_key(str(candidate["media_id"])) not in clips
+            and (
+                duration is None
+                or abs(float(candidate.get("duration_s") or 0) - float(duration))
+                <= DURATION_TOLERANCE_S
+            )
+        )
+        if not scored:
+            raise ReplayJobError(
+                f"The job recorded a {kind} clip of {duration} s without a media id and the "
+                "item holds no unclaimed clip of that kind and length; refusing to replay on "
+                "different footage"
+            )
+        if len(scored) > 1 and abs(scored[0][0] - scored[1][0]) < 0.01:
+            raise ReplayJobError(
+                f"Two item clips match the recorded {kind} clip of {duration} s equally; "
+                "which one the job used is unknown"
+            )
+        clips.add(_media_key(scored[0][1]))
+        matched.append((row, scored[0][1]))
+    for kind in sorted({str(r.get("kind") or "") for r in recorded.unnamed_visuals}):
+        wanted = sum(1 for r in recorded.unnamed_visuals if str(r.get("kind") or "") == kind)
+        held = [r for r in pool_rows if r["kind"] == kind and _media_key(str(r["id"])) not in pool]
+        if len(held) != wanted:
+            raise ReplayJobError(
+                f"The job recorded {wanted} pool {kind}s without media ids and the item holds "
+                f"{len(held)} ready ones now; which ones the job used is unknown, so the replay "
+                "would run on different footage"
+            )
+        pool |= {_media_key(str(r["id"])) for r in held}
+    return ChosenMedia(frozenset(clips), frozenset(pool), tuple(matched))
+
+
+def _name_unnamed_binding_rows(job_debug: dict[str, Any], chosen: ChosenMedia | None) -> None:
+    """Give matched binding clip rows their item media id so their upload receipts restore."""
+
+    for row, media_id in chosen.matched_clip_rows if chosen else ():
+        row["media_id"] = media_id
+        row["replay_matched_by"] = "kind_and_duration"
 
 
 def _check_source_coverage(
-    job: dict[str, Any], sources: list[dict[str, Any]], recorded: set[str] | None
+    job: dict[str, Any],
+    sources: list[dict[str, Any]],
+    recorded: RecordedMedia | None,
+    chosen: ChosenMedia | None,
 ) -> dict[str, Any]:
     """Refuse a replay that would run on different inputs than the production job.
 
@@ -326,10 +454,10 @@ def _check_source_coverage(
     snapshot = _binding_snapshot(job)
     visuals = [s for s in sources if s["kind"] in MEDIA_KINDS]
     if recorded is not None:
-        missing = sorted(recorded - {_media_key(s["id"]) for s in visuals})
+        missing = sorted(recorded.named - {_media_key(s["id"]) for s in visuals})
         if missing:
             raise ReplayJobError(
-                f"The job was approved against {len(recorded)} visuals and clips but "
+                f"The job was approved against {recorded.total} visuals and clips but "
                 f"{len(missing)} are not recoverable ({', '.join(missing[:5])}); refusing to "
                 "replay on different footage"
             )
@@ -342,8 +470,12 @@ def _check_source_coverage(
         raise ReplayJobError("The job recorded a voiceover but the item holds none in storage")
     return {
         "bound_to_recorded_media": recorded is not None,
-        "recorded_visuals_and_clips": len(recorded) if recorded is not None else None,
+        "recorded_visuals_and_clips": recorded.total if recorded is not None else None,
         "replayed_visuals_and_clips": len(visuals),
+        "matched_without_media_id": {
+            "clips": len(chosen.matched_clip_rows) if chosen else 0,
+            "pool_visuals": len(recorded.unnamed_visuals) if recorded else 0,
+        },
         "pool_images": sum(1 for s in visuals if s.get("pool") and s["kind"] == "image"),
         "pool_videos": sum(1 for s in visuals if s.get("pool") and s["kind"] == "video"),
         "voiceover": any(s["kind"] == "audio" for s in sources),
@@ -351,11 +483,11 @@ def _check_source_coverage(
 
 
 def replay_environment(dotenv: dict[str, str], scratch_url: str, namespace: str) -> dict[str, str]:
-    """Clean environment: model keys from .env, local scratch targets, nothing from production."""
+    """Clean environment: model provider keys from .env, local scratch targets, nothing else."""
 
     env = {key: os.environ[key] for key in KEPT_ENV if key in os.environ}
     for key, value in dotenv.items():
-        if MODEL_KEY.fullmatch(key) and not key.startswith(NOT_MODEL_KEYS):
+        if MODEL_KEY.fullmatch(key):
             env[key] = value
     if dotenv.get("TOKEN_ENCRYPTION_KEY"):
         env["TOKEN_ENCRYPTION_KEY"] = dotenv["TOKEN_ENCRYPTION_KEY"]
@@ -375,25 +507,43 @@ def scratch_database_url(dotenv: dict[str, str], database: str) -> str:
     """
 
     from sqlalchemy import create_engine, text
-    from sqlalchemy.exc import OperationalError
 
     configured = urlsplit(dotenv.get("DATABASE_URL") or os.environ.get("DATABASE_URL") or "")
     if (configured.hostname or "").lower() not in {"localhost", "127.0.0.1", "::1"}:
         raise ReplayJobError("DATABASE_URL in .env is not local; refusing to derive a scratch URL")
     host = f"localhost:{configured.port or 5432}"
-    candidates = [configured._replace(path=f"/{database}", query="", fragment="")]
+    candidates = [
+        configured._replace(scheme="postgresql", path=f"/{database}", query="", fragment="")
+    ]
     candidates.append(urlsplit(f"postgresql://{os.environ.get('USER', '')}@{host}/{database}"))
     for candidate in candidates:
         engine = create_engine(urlunsplit(candidate._replace(path="/postgres")))
         try:
             with engine.connect() as connection:
                 connection.execute(text("SELECT 1"))
+                free = _free_connections(connection)
+            if free < MIN_FREE_DB_CONNECTIONS:
+                raise ReplayInfrastructureError(
+                    f"Local PostgreSQL has only {free} free connections (the worker and the "
+                    f"replay need {MIN_FREE_DB_CONNECTIONS}); other sessions hold the rest"
+                )
             return urlunsplit(candidate)
         except OperationalError:
             continue
         finally:
             engine.dispose()
-    raise ReplayJobError("No local PostgreSQL role from .env or $USER can connect to `postgres`")
+    raise ReplayInfrastructureError(
+        "No local PostgreSQL role from .env or $USER can connect to `postgres`"
+    )
+
+
+def _free_connections(connection: Any) -> int:
+    from sqlalchemy import text
+
+    row = connection.execute(
+        text("SELECT current_setting('max_connections')::int - count(*) FROM pg_stat_activity")
+    ).one()
+    return int(row[0])
 
 
 def _scratch_name(url: str) -> str:
@@ -432,15 +582,40 @@ def recreate_scratch_database(url: str, env: dict[str, str]) -> None:
     )
 
 
-def drop_scratch_database(url: str) -> None:
+def drop_scratch_database(url: str, attempts: int = 5) -> None:
+    """Drop the run's scratch database; a busy server (connection limit) is retried."""
+
     from sqlalchemy import text
 
-    engine = _maintenance_engine(url)
+    for attempt in range(1, attempts + 1):
+        engine = _maintenance_engine(url)
+        try:
+            with engine.connect() as connection:
+                connection.execute(
+                    text(f'DROP DATABASE IF EXISTS "{_scratch_name(url)}" WITH (FORCE)')
+                )
+            return
+        except OperationalError:
+            if attempt == attempts:
+                raise
+            time.sleep(3 * attempt)
+        finally:
+            engine.dispose()
+
+
+def delete_queue_namespace(namespace: str) -> int:
+    """Remove the Redis keys (broker bindings, unacked index) this run's worker left behind."""
+
+    if not re.fullmatch(r"replay-[0-9a-f]{8}-[0-9a-z]+", namespace):
+        raise ReplayJobError(f"Refusing to delete Redis keys for namespace {namespace!r}")
+    import redis
+
+    client = redis.Redis.from_url(REDIS_URL)
     try:
-        with engine.connect() as connection:
-            connection.execute(text(f'DROP DATABASE IF EXISTS "{_scratch_name(url)}" WITH (FORCE)'))
+        keys = list(client.scan_iter(match=f"{REDIS_KEY_PREFIX}:{namespace}:*", count=500))
+        return int(client.delete(*keys)) if keys else 0
     finally:
-        engine.dispose()
+        client.close()
 
 
 def start_worker(env: dict[str, str], run_dir: Path, namespace: str) -> subprocess.Popen[bytes]:
@@ -476,6 +651,83 @@ def stop_worker(worker: subprocess.Popen[bytes]) -> None:
             worker.wait(timeout=30)
         except subprocess.TimeoutExpired:
             os.killpg(worker.pid, signal.SIGKILL)
+
+
+PRODUCTION_TRACE_PAGES = 10
+AGENT_RUNS_CODE = """
+import json
+from app.agents._runtime import SUCCESS_OUTCOMES
+from app.database import sync_session
+from app.models import AgentRun
+
+with sync_session() as db:
+    runs = [
+        {"agent_name": r.agent_name, "outcome": r.outcome}
+        for r in db.query(AgentRun).order_by(AgentRun.created_at)
+    ]
+print(json.dumps({"runs": runs, "success": sorted(SUCCESS_OUTCOMES)}))
+"""
+
+
+def production_agents(item_id: str, job_agent_names: list[str]) -> tuple[set[str], bool]:
+    """Agent names production ran for the plan item (all pages of its proposal trace).
+
+    The second value is False when the trace was cut off, so an absence proves nothing.
+    """
+
+    names = set(job_agent_names)
+    cursor: str | None = None
+    for _ in range(PRODUCTION_TRACE_PAGES):
+        suffix = f"&cursor={quote(cursor, safe='')}" if cursor else ""
+        page = prod_get(f"/admin/plan-items/{item_id}/proposal-trace?limit=100{suffix}")
+        names |= {r["agent_name"] for r in page.get("agent_runs") or [] if r.get("agent_name")}
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return names, True
+    return names, False
+
+
+def replay_agents(env: dict[str, str]) -> dict[str, Any]:
+    """The agent runs the replay recorded in its scratch database."""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", AGENT_RUNS_CODE],
+        cwd=API_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ReplayJobError(f"Could not read the replay's agent runs: {completed.stderr[-300:]}")
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+def compare_routes(
+    production: set[str], trace_complete: bool, recorded: dict[str, Any]
+) -> dict[str, Any]:
+    """Did the replay fail inside an agent production never ran for this plan item?
+
+    The replay drives the same controllers as the chat, but a flag the snapshot approximates
+    can send it down a planner production does not use. A failure there is the replay's own, so
+    it is reported as a divergence instead of as the production job's failure reason.
+    """
+
+    success = set(recorded["success"])
+    last_outcome: dict[str, str] = {}
+    for run in recorded["runs"]:
+        last_outcome[run["agent_name"]] = run["outcome"]
+    ran = sorted(last_outcome)
+    failed = sorted(name for name, outcome in last_outcome.items() if outcome not in success)
+    return {
+        "production_agents": sorted(production),
+        "production_trace_complete": trace_complete,
+        "replay_agents": ran,
+        "replay_only_agents": sorted(set(ran) - production),
+        "replay_failed_agents": failed,
+        "diverged_failures": sorted(set(failed) - production) if trace_complete else [],
+    }
 
 
 def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
@@ -549,15 +801,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.fetch_only:
             print(f"inputs: {inputs_dir}")
             return 0
+        production, trace_complete = production_agents(info["item_id"], info["job_agent_names"])
         run_dir.mkdir(parents=True)
         scratch_url = scratch_database_url(
             dotenv, f"{SCRATCH_DATABASE_PREFIX}{uuid.uuid4().hex[:12]}"
         )
         env = replay_environment(dotenv, scratch_url, namespace)
-        recreate_scratch_database(scratch_url, env)
-        worker = start_worker(
-            {**_creator_environment(env, run_dir, inputs_dir), **env}, run_dir, namespace
-        )
+        worker_env = {**_creator_environment(env, run_dir, inputs_dir), **env}
+        try:
+            recreate_scratch_database(scratch_url, env)
+        except (OperationalError, subprocess.CalledProcessError) as exc:
+            raise ReplayInfrastructureError(
+                f"Could not create the scratch database: {type(exc).__name__}"
+            ) from exc
+        worker = start_worker(worker_env, run_dir, namespace)
         completed = subprocess.run(
             [
                 sys.executable,
@@ -585,16 +842,37 @@ def main(argv: list[str] | None = None) -> int:
         )
         result = summarize(run_dir / "replay-receipt.json", run_dir)
         result["replay_exit_code"] = completed.returncode
+        route = compare_routes(production, trace_complete, replay_agents(worker_env))
+        result["route_comparison"] = route
+        if result["outcome"] == "failed" and route["diverged_failures"]:
+            result["replay_failure"] = {
+                "failure_reason": result["failure_reason"],
+                "error_detail": result["error_detail"],
+            }
+            result["outcome"] = "diverged_from_production"
+            result["failure_reason"] = (
+                f"The replay failed inside {', '.join(route['diverged_failures'])}, which "
+                "production never ran for this plan item. That failure is the replay's own, "
+                "not the production job's: check the flag snapshot "
+                "(scripts/prod_flag_snapshot.py unverified) for the setting that selects it."
+            )
         result["source_job"] = {"id": job_id, "failure_reason": info["job"].get("failure_reason")}
         print(json.dumps(result, indent=2, ensure_ascii=False))
         succeeded = result["outcome"] in {"video_rendered", "device_plan_ready"}
         return 0 if succeeded and completed.returncode == 0 else 1
+    except ReplayInfrastructureError as exc:
+        print(f"replay not run, local infrastructure: {exc}", file=sys.stderr)
+        return 3
     except Exception as exc:  # noqa: BLE001 - a CLI driver reports any setup failure once
         print(f"replay failed before the render: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     finally:
         if worker is not None:
             stop_worker(worker)
+            try:
+                delete_queue_namespace(namespace)
+            except Exception as exc:  # noqa: BLE001 - cleanup must not mask the result
+                print(f"redis keys not deleted: {exc}", file=sys.stderr)
         if scratch_url is not None:
             try:
                 drop_scratch_database(scratch_url)

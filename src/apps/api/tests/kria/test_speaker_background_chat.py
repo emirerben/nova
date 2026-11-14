@@ -59,7 +59,8 @@ def _open_gate(monkeypatch: pytest.MonkeyPatch) -> None:
             *(
                 f
                 for f in settings.phone_render_verified_features
-                if f not in {"speakerBackgroundWindows", "speakerBackgroundColor"}
+                if f
+                not in {"speakerBackgroundWindows", "speakerBackgroundColor", "backgroundFocus"}
             ),
             "speakerBackground",
         ],
