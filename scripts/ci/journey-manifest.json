@@ -629,6 +629,7 @@
         "src/apps/api/prompts/clip_request_resolver.txt",
         "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri612_explain_the_footages.json",
         "src/apps/api/tests/fixtures/prompt_coverage/kri651_approved_hook.json",
+        "src/apps/api/tests/fixtures/kria_turns/east-run-brief.json",
         "src/apps/api/tests/kria/test_brief_provider_recovery_postgres.py",
         "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift"
       ]
