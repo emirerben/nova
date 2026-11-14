@@ -234,6 +234,32 @@ final class ChatTimelineTests: XCTestCase {
         else { XCTFail("Expected thought disclosure between request and reply") }
     }
 
+    /// A removal is an `action_remove_media` event after the `media_added` it undoes. Failure modes: a multi-file
+    /// receipt losing the wrong row, an emptied receipt leaving a ghost entry, a re-attached file staying hidden,
+    /// a removal with no id or for an unknown id changing anything.
+    func testRemovedMediaLeavesTheReceiptUnlessAttachedAgainLater() {
+        func media(_ ids: String...) -> [String: JSONValue] {
+            ["media": .array(ids.map { .object(["media_id": .string($0), "kind": .string("video"), "filename": .string("\($0).mp4")]) })]
+        }
+        func removal(_ sequence: Int, _ id: String?) -> ThreadEvent {
+            event(id: "rm-\(sequence)", sequence: sequence, role: "user", type: "action_remove_media", content: nil,
+                  payload: id.map { ["action": .string("remove_media"), "media_id": .string($0)] } ?? ["action": .string("remove_media")])
+        }
+        func ids(_ events: [ThreadEvent]) -> [[String]] {
+            ChatTimeline.build(events: events, pending: [], stage: nil).compactMap { entry in
+                guard case .media(let e) = entry.content else { return nil }
+                return CreationAttachedMedia.parse(e.payload ?? [:]).map(\.id)
+            }
+        }
+        let added = [event(id: "m1", sequence: 1, role: "user", type: "media_added", content: nil, payload: media("a", "b", "c"))]
+        XCTAssertEqual(ids(added + [removal(2, "b")]), [["a", "c"]], "only the removed file goes")
+        XCTAssertEqual(ChatTimelineRow.rows(ChatTimeline.build(events: added + [removal(2, "b")], pending: [], stage: nil)).map(\.mediaIndex), [0, 1])
+        XCTAssertEqual(ids(added + [removal(2, "a"), removal(3, "b"), removal(4, "c")]), [], "an emptied receipt is dropped")
+        XCTAssertEqual(ids(added + [removal(2, nil), removal(3, "zzz")]), [["a", "b", "c"]], "no id, or an unknown id, hides nothing")
+        let again = added + [removal(2, "a"), event(id: "m2", sequence: 3, role: "user", type: "media_added", content: nil, payload: media("a"))]
+        XCTAssertEqual(ids(again), [["b", "c"], ["a"]], "the same id attached after its removal shows again")
+    }
+
     private func event(
         id: String,
         sequence: Int,

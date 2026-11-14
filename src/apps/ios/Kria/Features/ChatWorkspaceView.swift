@@ -581,6 +581,9 @@ private struct CreationWorkspaceView: View {
     @State private var isChoosingFormat = false
     @State private var formatResolveFailed = false
     @State private var threadState: [String: JSONValue] = [:]
+    /// Files the creator swiped away that the server has not confirmed yet; their rows are already gone.
+    @State private var removingMediaIDs: Set<String> = []
+    @State private var mediaRemovalError: String?
     /// KRI-693: the plan item's Visuals, read only while a clip picker offers Visuals (`asset-…`) candidates.
     @State private var clipPoolVisuals: [CreationVisual] = []
     @State private var afterSequence = -1
@@ -1385,12 +1388,18 @@ private struct CreationWorkspaceView: View {
         }
         ForEach(timelineRows) { row in
             if let index = row.mediaIndex {
-                mediaReceipt(row.entry, index: index)
-                    .padding(.top, row.joinsMediaAbove ? ChatConversationSpacing.mediaStrip - ChatConversationSpacing.row : 0)
+                if !isBeingRemoved(row.entry, index: index) {
+                    mediaReceipt(row.entry, index: index)
+                        .padding(.top, row.joinsMediaAbove ? ChatConversationSpacing.mediaStrip - ChatConversationSpacing.row : 0)
+                }
             } else {
                 timelineRow(row.entry)
                     .transition(Self.rowTransition(for: row.entry, reduceMotion: reduceMotion))
             }
+        }
+        if let mediaRemovalError {
+            Text(mediaRemovalError).kriaType(.label).foregroundStyle(KriaColor.failureText)
+                .accessibilityIdentifier("chat-media-remove-error")
         }
         if currentProject.status == .ready {
             FinishedEditSuggestionsView(api: model.api, refreshToken: "\(currentProject.serverRevision):\(finishedEditSuggestionRefresh)") {
@@ -1778,6 +1787,31 @@ private struct CreationWorkspaceView: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Uploaded \(attachment.displayName)")
                 .accessibilityIdentifier("chat-media-\(attachment.id)")
+                .kriaSwipeToDelete(label: "Remove \(attachment.displayName)", identifier: "chat-media-remove-\(attachment.id)",
+                                   isEnabled: workspaceStage != .rendering) { removeMedia(attachment.id) }
+                .excludesDrawerGestureWhen(workspaceStage != .rendering)
+            }
+        }
+    }
+
+    private func isBeingRemoved(_ entry: ChatTimelineEntry, index: Int) -> Bool {
+        guard !removingMediaIDs.isEmpty, case .media(let event) = entry.content else { return false }
+        let received = CreationAttachedMedia.parse(event.payload ?? [:])
+        return received.indices.contains(index) && removingMediaIDs.contains(received[index].id)
+    }
+
+    /// The row goes at once; the server's removal then arrives as an event and keeps it gone. A refusal brings it back.
+    private func removeMedia(_ mediaID: String) {
+        mediaRemovalError = nil
+        removingMediaIDs.insert(mediaID)
+        Task {
+            let outcome = await model.uploads.remove(mediaID: mediaID, projectID: project.id)
+            if case .refused(let message) = outcome {
+                mediaRemovalError = message
+                removingMediaIDs.remove(mediaID)
+            } else {
+                await refreshNow()
+                removingMediaIDs.remove(mediaID)
             }
         }
     }

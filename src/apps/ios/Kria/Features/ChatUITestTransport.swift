@@ -1033,8 +1033,10 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
                 append("generation_started")
             } else if action == "remove_media" {
-                state["media"] = []
-                append("action_remove_media")
+                // The server drops that one file and logs which one, so the chat can stop showing it.
+                let removed = payload["media_id"] as? String
+                state["media"] = (state["media"] as? [[String: Any]] ?? []).filter { removed == nil || $0["media_id"] as? String != removed }
+                append("action_remove_media", role: "user", payload: ["action": "remove_media", "media_id": removed ?? ""])
             }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
