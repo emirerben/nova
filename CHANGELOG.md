@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.219.0] - 2026-11-14
+
+### Changed
+- feat(ios): fill a split panel with a blank block (KRI-1421) (#2338) <!-- release-pr: 2338 -->
+
 ## [0.88.218.0] - 2026-11-14
 
 ### Changed
