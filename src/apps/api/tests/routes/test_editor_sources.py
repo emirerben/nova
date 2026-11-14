@@ -658,3 +658,59 @@ async def test_other_reservation_database_failures_are_not_disguised_as_busy(adm
         )
     assert exc.value is failure
     a.db.rollback.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("analysis", "media", "admitted"),
+    [("analyzing", "ready", True), ("failed", "ready", True), ("analyzing", "pending", False)],
+)
+async def test_photo_admission_needs_verified_bytes_not_finished_analysis(
+    admission, analysis, media, admitted
+):
+    # KRI-1419: a creator who just picked a photo should not wait on Gemini to place it.
+    a = admission
+    a.asset.status, a.asset.media_status = analysis, media
+    if not admitted:
+        with pytest.raises(HTTPException, match="visual_not_ready"):
+            await post(a)
+        a.publish.assert_not_called()
+        return
+    out, response = await post(a)
+    assert out.status == "preparing" and response.status_code == 202
+    a.publish.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_save_keeps_a_verified_photo_whose_analysis_is_still_running(admission):
+    a = admission
+    a.asset.status, a.asset.media_status = "analyzing", "ready"
+    a.variant[EDITOR_SOURCES_FIELD] = {
+        "sources": [
+            {
+                **source(
+                    str(a.asset.id),
+                    lane="asset",
+                    kind="image",
+                    duration_s=None,
+                    gcs_path=a.asset.gcs_path,
+                    generation=a.asset.gcs_generation,
+                ),
+                "status": "ready",
+                "visual_binding": {
+                    "media_id": str(a.asset.id),
+                    "kind": "image",
+                    "generation": "42",
+                    "gcs_path": a.asset.gcs_path,
+                },
+            }
+        ]
+    }
+    await routes.validate_editor_sources(
+        a.db, job=a.job, variant=a.variant, used_media_ids={str(a.asset.id)}
+    )
+    a.asset.media_status = "pending"
+    with pytest.raises(HTTPException, match="editor_visual_unavailable"):
+        await routes.validate_editor_sources(
+            a.db, job=a.job, variant=a.variant, used_media_ids={str(a.asset.id)}
+        )

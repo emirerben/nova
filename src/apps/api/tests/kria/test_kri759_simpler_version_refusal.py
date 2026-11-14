@@ -80,7 +80,7 @@ def _manifest(item_id: str = "item-m1"):
 
 
 def _strategy(*, selected: list[str] | None = None, seconds: int = 20) -> CreativeStrategy:
-    """What the scope step left the policy: one clip picked, 20 s asked."""
+    """What the scope step left the policy: one clip picked, 20 s asked (the server stamp)."""
     return CreativeStrategy(
         edit_format="montage",
         audio_strategy="original_audio",
@@ -88,6 +88,8 @@ def _strategy(*, selected: list[str] | None = None, seconds: int = 20) -> Creati
         media_scope="selected",
         target_duration_s=seconds,
         video_reuse_policy="once",
+        target_duration_requested=True,
+        creator_duration_s=seconds,
     )
 
 

@@ -169,6 +169,68 @@ def _():
     return Doc([slot(0, panel=0, duration_s=2.5), slot(2, panel=1)], [section()])
 
 
+def _blank_ready(job, monkeypatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "splitBlankPanel"],
+    )
+
+
+def blank(
+    *, panel: int, offset: float = 0.0, duration_s: float = 4.0, color: str = "#112233"
+) -> dict:
+    """What the phone writes for a panel's blank block: a colour and a window, no clip index."""
+    return {
+        "slot_id": str(uuid.uuid4()),
+        "media_kind": "blank",
+        "color": color,
+        "in_s": 0.0,
+        "duration_s": duration_s,
+        "split_section_id": "s",
+        "split_panel_index": panel,
+        "split_offset_s": offset,
+    }
+
+
+def _blanks_drawn(*expected: tuple[int, float, float, str]):
+    def check(variant, recipe) -> None:
+        got = [
+            (b.panel_index, b.start, b.end, b.color) for b in recipe.split_screen_sections[0].blanks
+        ]
+        assert got == list(expected)
+        assert "splitBlankPanel" in recipe.required_capabilities
+
+    return check
+
+
+@row(
+    "blank-in-panel",
+    "fill a panel with a blank block",
+    setup=_blank_ready,
+    check=_blanks_drawn((1, 0.0, 4.0, "#112233")),
+)
+def _():
+    return Doc([slot(0, panel=0), blank(panel=1)], [section()])
+
+
+@row(
+    "blank-cut-trimmed-and-recoloured",
+    "cut, trim and recolour a blank block",
+    setup=_blank_ready,
+    check=_blanks_drawn((1, 0.0, 1.5, "#FF0000"), (1, 2.0, 3.0, "#00FF00")),
+)
+def _():
+    return Doc(
+        [
+            slot(0, panel=0),
+            blank(panel=1, duration_s=1.5, color="#FF0000"),
+            blank(panel=1, offset=2.0, duration_s=1.0, color="#00FF00"),
+        ],
+        [section()],
+    )
+
+
 @row("photo-in-panel", "a photo in a panel")
 def _():
     return Doc([slot(0, panel=0), slot(PHOTO, panel=1, media_kind="image")], [section()])
@@ -529,7 +591,12 @@ def test_every_editor_capability_saves_and_saves_again(monkeypatch, case):
     ]
     recipe = device_status(job, VARIANT).request.recipe
     assert recipe.duration > 0
-    assert len(panels(recipe)) == sum(1 for r in _active(doc.slots) if r.get("split_section_id"))
+    # A blank block rides on its section (`blanks`), so it is a stored slot but not a panel clip.
+    assert len(panels(recipe)) == sum(
+        1
+        for r in _active(doc.slots)
+        if r.get("split_section_id") and r.get("media_kind") != "blank"
+    )
     if "text_elements" in doc.extra:
         assert {t["id"] for t in doc.extra["text_elements"]} <= {
             t["id"] for t in variant.get("text_elements") or []

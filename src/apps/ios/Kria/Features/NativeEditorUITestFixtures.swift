@@ -801,6 +801,9 @@ enum NativeEditorUITestFixtures {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-collapse") {
             capabilities["split_collapse"] = .object(["editable": .bool(true)])
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-blank") {
+            capabilities["split_blank_panel"] = .object(["editable": .bool(true)])
+        }
         return .object(capabilities)
     }
 

@@ -16,5 +16,6 @@
     "expect_intents": [],
     "expect_any": false,
     "expect_question": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

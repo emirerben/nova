@@ -909,7 +909,14 @@ enum EditorOpenIntent { case warm, open }
     @Published private(set) var previewSkippedMediaCount = 0
     /// Cards loaded for the preview at once. Each file keeps its own request/resource timeouts.
     static let previewMediaConcurrency = 4
-    private var resolvedSources: [Int: ResolvedEditorSource]?
+    /// A pending add's local source rides along whenever the pool sources are replaced (KRI-1419).
+    private var resolvedSources: [Int: ResolvedEditorSource]? {
+        didSet {
+            guard let value = resolvedSources, !pendingTimelineAdds.isEmpty else { return }
+            resolvedSources = value.merging(pendingTimelineAdds.values.map { ($0.clipIndex, $0.source) }) { kept, _ in kept }
+        }
+    }
+    private var pendingClipIndices: Set<Int> { Set(pendingTimelineAdds.values.map(\.clipIndex)) }
     /// KRI-719: a multi-clip Talking edit's footage cutaways, drawn over the speakers in the live preview
     /// only (never part of the document). Set with `resolvedSources`, cleared with it.
     private var previewTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
@@ -1630,8 +1637,24 @@ enum EditorOpenIntent { case warm, open }
     private var transactionBaseline: EditorDocument?
     private var splitDividerDrag: (sectionID: String, upper: Int, lower: Int, active: [Int], weights: [Double], ownsTransaction: Bool)?
     private var splitDragRefusedInPlace = false
-    /// Imports bound for a split panel, by placement id. In memory only: a relaunch places them as ordinary clips.
-    private var splitPanelPlacements: [UUID: (sectionID: String, panel: Int, offset: Double)] = [:]
+    /// KRI-1419: adds still uploading, by placement id. Their slots are in the document under `clipIndex`, a provisional
+    /// negative index the server never sees, and play `source`, the editor's own copy of the picked file.
+    private struct PendingTimelineAdd {
+        let clipIndex: Int
+        let source: ResolvedEditorSource
+        let kind: EditorSourceRegistrationTarget.SourceKind
+        let localDurationS: Double?
+        let splitPanel: PendingEditorSourcePlacement.SplitPanel?
+        var task: Task<Void, Never>?
+        /// Set while an upload attempt runs; Save waits only for these.
+        var attempt: UUID?
+    }
+    @Published private var pendingTimelineAdds: [UUID: PendingTimelineAdd] = [:]
+    private var nextProvisionalClipIndex = -1000
+    /// Uploads Save is waiting for, for its "Finishing 1 upload…" label. Zero when Save is not waiting.
+    @Published private(set) var finishingUploadCount = 0
+    /// Test seam: stands in for the upload plus the server's admission of a pending add.
+    private var pendingAddAdmission: ((PendingEditorSourcePlacement, URL) async throws -> EditorSourceRegistrationResponse)?
     private var draftProjectionCache: EditorDraft?
     private var activeTimedEdit: ActiveTimedEdit?
     private var timelineItemsCache: [NativeEditorTimelineItem]?
@@ -2208,6 +2231,7 @@ enum EditorOpenIntent { case warm, open }
             appendUndo(baseline); redoStack.removeAll()
         }
         transactionBaseline = nil
+        prunePendingTimelineAdds()
     }
 
     private func appendUndo(_ value: EditorDocument, isRedo: Bool = false) {
@@ -2384,7 +2408,7 @@ enum EditorOpenIntent { case warm, open }
             return EditorClip(
                 id: id,
                 assetID: assetID,
-                sourceClipIndex: slot.clipIndex,
+                sourceClipIndex: slot.isBlank ? nil : slot.clipIndex,
                 start: window.start,
                 end: window.end,
                 trimIn: sourceStart,
@@ -4337,7 +4361,7 @@ enum EditorOpenIntent { case warm, open }
                 requiredIndices.formUnion(phoneTalkingIndices == nil ? [] : phoneTalkingInserts.map(\.clipIndex))
                 requiredIndices.formUnion(document.clipAudio.map(\.sourceClipIndex))
                 requiredIndices.formUnion(phoneNarratedSeeds.map(\.clipIndex))
-                sources = try await resolver.resolve(pool, generation: generation, requiredIndices: requiredIndices)
+                sources = try await resolver.resolve(pool, generation: generation, requiredIndices: requiredIndices.subtracting(pendingClipIndices))
             }
             guard sequence == sourcePreviewSequence, !Task.isCancelled,
                   document.revision.baseGeneration == generation else { return }
@@ -4824,9 +4848,10 @@ enum EditorOpenIntent { case warm, open }
                 + talkingCutaways.map(\.clipIndex))
             if !needed.isSubset(of: Set(sources.keys)), let pool = sourcePool, let resolver = sourceResolver {
                 sourcePreviewState = .preparing
-                sources = try await resolver.resolve(pool, generation: baseline.revision.baseGeneration, requiredIndices: needed)
+                sources = try await resolver.resolve(pool, generation: baseline.revision.baseGeneration, requiredIndices: needed.subtracting(pendingClipIndices))
                 guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline else { return }
                 resolvedSources = sources
+                sources = resolvedSources ?? sources
             }
             #if DEBUG
             NativePreviewDiagnostics.record("prepare-audio")
@@ -5511,6 +5536,8 @@ enum EditorOpenIntent { case warm, open }
         if slot.raw["source_end_s"] != nil {
             slot.raw["source_end_s"] = .number(resized.start + resized.length * rate)
         }
+        // A blank has no source window to move.
+        if slot.isBlank { slot.inS = 0; slot.raw.removeValue(forKey: "source_start_locked") }
         if active.baseline.clips[index].raw["freeze_frame_s"]?.numberValue != nil {
             let baseline = active.baseline.clips[index]
             let clock = NativeClipSourceClock(slot: baseline)
@@ -5568,9 +5595,11 @@ enum EditorOpenIntent { case warm, open }
     /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
     func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
     func setResolvedSourcesForTesting(_ value: [Int: ResolvedEditorSource]) { resolvedSources = value }
-    func stageSplitPanelPlacementForTesting(_ id: UUID, sectionID: String, panel: Int, offset: Double) {
-        splitPanelPlacements[id] = (sectionID, panel, offset)
+    func setPendingAddAdmissionForTesting(_ admit: @escaping (PendingEditorSourcePlacement, URL) async throws -> EditorSourceRegistrationResponse) {
+        pendingAddAdmission = admit
     }
+    func previewSourceURLForTesting(clipIndex: Int) -> URL? { resolvedSources?[clipIndex]?.url ?? pendingTimelineAdds.values.first { $0.clipIndex == clipIndex }?.source.url }
+    var undoDepthForTesting: Int { undoStack.count }
     func discardPlaybackForNewJobForTesting() { discardPlaybackForNewJob() }
     func configureClipAudioForTesting(variant: [String: JSONValue], pinnedNarrationPresent: Bool?, resolvedNarration: ResolvedEditorSource?) {
         previewVariant = variant
@@ -6529,9 +6558,10 @@ enum EditorOpenIntent { case warm, open }
         let placementID = placement.id.uuidString
         switch placement.lane {
         case .timeline:
-            guard canAddTimelineMedia else { throw APIError.unsupported }
+            let landing = pendingTimelineAdds[placement.id] != nil
+            guard landing || canAddTimelineMedia else { throw APIError.unsupported }
             guard let index = response.sourceIndex else { throw APIError.invalidResponse }
-            guard !document.clips.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else {
+            guard landing || !document.clips.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else {
                 mediaUploads?.acknowledgeEditorPlacement(placement.id); return
             }
             let duration: Double
@@ -6558,28 +6588,34 @@ enum EditorOpenIntent { case warm, open }
             }
             let resolver = sourceResolver ?? NativeEditorSourceResolver(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID), jobID: jobID)
             let needed = Set(timelineClips.compactMap(\.sourceClipIndex) + document.clipAudio.map(\.sourceClipIndex)).union([index])
-            let sources = try await resolver.resolve(pool, generation: placement.target.baseGeneration, requiredIndices: needed)
+            let sources = try await resolver.resolve(pool, generation: placement.target.baseGeneration, requiredIndices: needed.subtracting(pendingClipIndices))
             guard editorImportsActive, mediaUploads?.containsEditorPlacement(placement.id) == true,
                   !Task.isCancelled, document.revision.baseGeneration == placement.target.baseGeneration else { return }
-            guard !document.clips.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else {
+            let stillLanding = landing && pendingTimelineAdds[placement.id] != nil
+            guard stillLanding || !document.clips.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else {
                 mediaUploads?.acknowledgeEditorPlacement(placement.id); return
             }
-            guard canAddTimelineMedia else { throw APIError.unsupported }
+            guard stillLanding || canAddTimelineMedia else { throw APIError.unsupported }
             let latestNeeded = Set(timelineClips.compactMap(\.sourceClipIndex) + document.clipAudio.map(\.sourceClipIndex)).union([index])
-            guard latestNeeded.isSubset(of: Set(sources.keys)),
+            guard latestNeeded.subtracting(pendingClipIndices).isSubset(of: Set(sources.keys)),
                   let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) else { throw APIError.invalidResponse }
             let compiler = try NativeEditorRenderCompiler(fontDirectory: fonts)
             sourceResolver = resolver; sourcePool = pool; originalsRecoveryPool = pool
             resolvedSources = sources; sourceCompiler = compiler
             sourcePreviewGeneration = placement.target.baseGeneration
             sourcePreviewState = .preparing
-            if let target = splitPanelPlacements[placement.id] {
+            if stillLanding {
+                landPendingTimelineAdd(placement.id, clipIndex: index, raw: placedSourceRaw(placement, response: response, duration: duration))
+                mediaUploads?.acknowledgeEditorPlacement(placement.id)
+                await sourcePreviewTask?.value
+                return
+            }
+            if let target = placement.splitPanel {
                 guard let opening = document.splitPanelOpening(sectionID: target.sectionID, panel: target.panel, near: target.offset),
                       opening.end - opening.start >= minimumClipDuration else { throw APIError.conflict }
                 let slot = EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(duration, opening.end - opening.start), raw: placedSourceRaw(placement, response: response, duration: duration))
                 transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: target.sectionID, panel: target.panel, offset: opening.start) }
                 guard document.clips.contains(where: { $0.id == placementID }) else { throw APIError.invalidResponse }
-                splitPanelPlacements[placement.id] = nil
                 select(.init(kind: .clip, id: placementID))
                 mediaUploads?.acknowledgeEditorPlacement(placement.id)
                 await sourcePreviewTask?.value
@@ -6675,6 +6711,12 @@ enum EditorOpenIntent { case warm, open }
 
     func retryPendingEditorImport(_ placement: PendingEditorSourcePlacement) async {
         guard let uploads = mediaUploads else { return }
+        if pendingTimelineAdds[placement.id] != nil {
+            // The editor kept its own copy, so a retry restarts the whole upload from it.
+            await uploads.discardEditorPlacement(placement.id)
+            startPendingTimelineAddUpload(placement.id)
+            return
+        }
         await uploads.retryEditorPlacement(placement)
         // Keep the existing waiter token; it will consume the freshly posted
         // response without concurrent placement work.
@@ -6682,7 +6724,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     func dismissPendingEditorImport(_ placement: PendingEditorSourcePlacement) async {
-        splitPanelPlacements[placement.id] = nil
+        if pendingTimelineAdds[placement.id] != nil { removePendingTimelineAdd(placement.id) }
         await mediaUploads?.discardEditorPlacement(placement.id)
         if placement.lane == .timeline { addClipError = nil } else { visualError = nil }
     }
@@ -6697,6 +6739,10 @@ enum EditorOpenIntent { case warm, open }
             return
         }
         guard !isAddingClip || alreadyPreparing else { return }
+        if replacingSlotID == nil {
+            await addPendingTimelineMedia(fileURL: fileURL, splitPanel: splitPanel)
+            return
+        }
         if !alreadyPreparing { isAddingClip = true }
         addClipError = nil
         defer { if !alreadyPreparing { isAddingClip = false } }
@@ -6718,7 +6764,6 @@ enum EditorOpenIntent { case warm, open }
             let placement = PendingEditorSourcePlacement(id: recordID, target: target, lane: .timeline, visual: nil,
                                                          localDurationS: localDuration, replacingSlotID: replacingSlotID)
             uploads.beginEditorPlacement(placement)
-            if let splitPanel { splitPanelPlacements[recordID] = splitPanel }
             importID = placement.id
             pendingPlacementIDs.insert(placement.id)
             defer { pendingPlacementIDs.remove(placement.id) }
@@ -6745,6 +6790,225 @@ enum EditorOpenIntent { case warm, open }
             if let importID { uploads.failEditorPlacement(importID, error: "This media couldn’t be added. Try again.") }
             addClipError = "This media couldn’t be added. Your edit is unchanged. " + error.localizedDescription
         }
+    }
+
+    // MARK: Instant add (KRI-1419)
+
+    /// The pick goes into the timeline at once, played from a copy the editor keeps; upload and admission run behind
+    /// it and `landPendingTimelineAdd` swaps in the server's index. Only a video's length is read before the insert.
+    private func addPendingTimelineMedia(fileURL: URL, splitPanel: (sectionID: String, panel: Int, offset: Double)?) async {
+        isAddingClip = true
+        defer { isAddingClip = false }
+        addClipError = nil
+        let id = UUID()
+        do {
+            let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+            guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
+            let isImage = values.contentType?.preferredMIMEType?.hasPrefix("image/") == true || NativeDownloadedMedia.isStillImage(fileURL)
+            let kind: EditorSourceRegistrationTarget.SourceKind = isImage ? .visual : .footage
+            guard kind == .footage || phoneAllowsVisualKind("image") else { throw APIError.unsupported }
+            let project = BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID)
+            let copy = try Self.retainPendingAddFile(fileURL, id: id, project: project)
+            let source = try await Self.pendingAddSource(copy, id: id, project: project, still: isImage)
+            let localDuration = isImage ? nil : source.asset.duration
+            let length: Double
+            if isImage {
+                length = Self.addedClipDurationS
+            } else {
+                guard let usable = Self.deviceTimelineDuration(proxyDuration: nil, localDuration: localDuration, minimum: minimumClipDuration) else {
+                    throw AddClipSourceUnreadable()
+                }
+                length = usable
+            }
+            let clipIndex = nextProvisionalClipIndex
+            nextProvisionalClipIndex -= 1
+            var raw = Self.placedSourceRaw(isPhoto: isImage, measured: localDuration)
+            raw["editor_source_placement_id"] = .string(id.uuidString)
+            raw["pending_local"] = .bool(true)
+            pendingTimelineAdds[id] = PendingTimelineAdd(clipIndex: clipIndex, source: ResolvedEditorSource(clipIndex: clipIndex,
+                mediaID: source.mediaID, asset: source.asset, url: source.url), kind: kind, localDurationS: localDuration,
+                splitPanel: splitPanel.map { .init(sectionID: $0.sectionID, panel: $0.panel, offset: $0.offset) })
+            resolvedSources?[clipIndex] = pendingTimelineAdds[id]?.source
+            if let splitPanel {
+                guard let opening = document.splitPanelOpening(sectionID: splitPanel.sectionID, panel: splitPanel.panel, near: splitPanel.offset),
+                      opening.end - opening.start >= minimumClipDuration else {
+                    splitScreenActionError = Self.splitPanelFullMessage
+                    throw CancellationError()
+                }
+                let slot = EditorTimelineSlot(id: id.uuidString, clipIndex: clipIndex, inS: 0, durationS: min(length, opening.end - opening.start), raw: raw)
+                transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: splitPanel.sectionID, panel: splitPanel.panel, offset: opening.start) }
+            } else {
+                transactDocument(section: .timeline) {
+                    $0.clips.append(EditorTimelineSlot(id: id.uuidString, clipIndex: clipIndex, inS: 0, durationS: min(Self.addedClipDurationS, length), raw: raw))
+                }
+            }
+            guard document.clips.contains(where: { $0.id == id.uuidString }) else { throw APIError.invalidResponse }
+            select(.init(kind: .clip, id: id.uuidString))
+            startPendingTimelineAddUpload(id)
+        } catch {
+            if let add = pendingTimelineAdds.removeValue(forKey: id) {
+                resolvedSources?[add.clipIndex] = nil
+                try? FileManager.default.removeItem(at: add.source.url)
+            }
+            guard !(error is CancellationError) else { return }
+            addClipError = "This media couldn’t be added. Your edit is unchanged. " + error.localizedDescription
+        }
+    }
+
+    /// Moves a temporary pick (a Photos export) or clones any other file into the project, so the preview keeps its
+    /// bytes whatever later happens to the picked file.
+    private static func retainPendingAddFile(_ file: URL, id: UUID, project: ProjectDirectory) throws -> URL {
+        let directory = project.root.appending(path: "pending-adds", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appending(path: id.uuidString + (file.pathExtension.isEmpty ? "" : "." + file.pathExtension))
+        if BackgroundUploadCoordinator.isInTemporaryDirectory(file), (try? FileManager.default.moveItem(at: file, to: destination)) != nil {
+            return destination
+        }
+        try FileManager.default.copyItem(at: file, to: destination)
+        return destination
+    }
+
+    private nonisolated static func pendingAddSource(_ url: URL, id: UUID, project: ProjectDirectory, still: Bool) async throws -> ResolvedEditorSource {
+        let fingerprint = try await Task.detached(priority: .userInitiated) { try SHA256Fingerprinter().fingerprint(file: url) }.value
+        var asset = MediaAsset(id: "pending-" + id.uuidString, relativePath: "pending-adds/" + url.lastPathComponent, fingerprint: fingerprint)
+        if !still {
+            let media = AVURLAsset(url: url)
+            let duration = try await media.load(.duration).seconds
+            guard duration.isFinite, duration > 0, let track = try await media.loadTracks(withMediaType: .video).first else {
+                throw AddClipSourceUnreadable()
+            }
+            let rectangle = CGRect(origin: .zero, size: try await track.load(.naturalSize)).applying(try await track.load(.preferredTransform))
+            asset.duration = duration
+            asset.naturalSize = MediaSize(width: abs(rectangle.width), height: abs(rectangle.height))
+        }
+        return ResolvedEditorSource(clipIndex: -1, mediaID: asset.id, asset: asset, url: url)
+    }
+
+    /// Idempotent: (re)starts the upload of a pending add from the editor's copy, against the current generation.
+    private func startPendingTimelineAddUpload(_ id: UUID) {
+        guard var add = pendingTimelineAdds[id] else { return }
+        add.task?.cancel()
+        let attempt = UUID()
+        add.attempt = attempt
+        pendingPlacementIDs.insert(id)
+        add.task = Task { @MainActor [weak self] in
+            await self?.uploadPendingTimelineAdd(id)
+            guard let self, self.pendingTimelineAdds[id]?.attempt == attempt || self.pendingTimelineAdds[id] == nil else { return }
+            self.pendingTimelineAdds[id]?.attempt = nil
+            self.pendingPlacementIDs.remove(id)
+        }
+        pendingTimelineAdds[id] = add
+    }
+
+    private func uploadPendingTimelineAdd(_ id: UUID) async {
+        // The target names the generation the server admits against; a save in flight is about to change it.
+        while isSaving, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
+        guard let add = pendingTimelineAdds[id], !Task.isCancelled, let uploads = mediaUploads,
+              let target = editorSourceTarget(kind: add.kind) else { return }
+        let placement = PendingEditorSourcePlacement(id: id, target: target, lane: .timeline, visual: nil,
+                                                     localDurationS: add.localDurationS, splitPanel: add.splitPanel)
+        uploads.beginEditorPlacement(placement)
+        do {
+            let response: EditorSourceRegistrationResponse
+            if let pendingAddAdmission {
+                response = try await pendingAddAdmission(placement, add.source.url)
+            } else {
+                let accepted = await uploads.enqueue(fileURL: add.source.url, projectID: threadID ?? projectID, source: .files,
+                    consentGiven: true, purpose: add.kind == .footage ? .analysisProxy : .cloudRenderSource,
+                    role: add.kind == .footage ? .clip : .visual, itemID: itemID, editorSourceTarget: target, recordID: id)
+                guard accepted else { throw APIError.invalidResponse }
+                response = try await waitForEditorSource(target, recordID: id, uploads: uploads)
+            }
+            guard response.status == "ready", response.sourceIndex != nil else { throw APIError.invalidResponse }
+            try await placeEditorSource(placement, response: response)
+        } catch {
+            guard editorImportsActive, !(error is CancellationError), pendingTimelineAdds[id] != nil else { return }
+            uploads.failEditorPlacement(id, error: "This media couldn’t be uploaded. Try again.")
+        }
+    }
+
+    /// Admission named the real source: every slot of this add, in the document and in history, takes its index.
+    /// Not an undo step, so the creator's edits on the pending block stay exactly as they are.
+    private func landPendingTimelineAdd(_ id: UUID, clipIndex: Int, raw: [String: JSONValue]) {
+        let key = JSONValue.string(id.uuidString)
+        func landed(_ value: EditorDocument) -> EditorDocument {
+            var value = value
+            for index in value.clips.indices where value.clips[index].raw["editor_source_placement_id"] == key
+                && value.clips[index].raw["pending_local"] == .bool(true) {
+                value.clips[index].clipIndex = clipIndex
+                value.clips[index].raw.merge(raw) { _, new in new }
+                value.clips[index].raw["pending_local"] = nil
+            }
+            return value
+        }
+        undoStack = undoStack.map(landed)
+        redoStack = redoStack.map(landed)
+        transactionBaseline = transactionBaseline.map(landed)
+        chatStagedDocument = chatStagedDocument.map(landed)
+        if let add = pendingTimelineAdds.removeValue(forKey: id) { resolvedSources?[add.clipIndex] = nil }
+        document = landed(document)
+        refreshDirtyState(); refreshDuration()
+    }
+
+    /// Remove of a failed add: its slots leave the document and every history step, and its copy is deleted.
+    private func removePendingTimelineAdd(_ id: UUID) {
+        let key = JSONValue.string(id.uuidString)
+        func without(_ value: EditorDocument) -> EditorDocument {
+            var value = value
+            value.clips.removeAll { $0.raw["editor_source_placement_id"] == key && $0.raw["pending_local"] == .bool(true) }
+            let retained = Set(value.clips.filter { !$0.removed }.compactMap(\.splitSectionID))
+            value.splitScreenSections.removeAll { !retained.contains($0.id) }
+            value.fitCollapseSectionDurations()
+            return value
+        }
+        undoStack = undoStack.map(without)
+        redoStack = redoStack.map(without)
+        transactionBaseline = transactionBaseline.map(without)
+        chatStagedDocument = chatStagedDocument.map(without)
+        document = without(document)
+        refreshDirtyState(); refreshDuration()
+        discardPendingTimelineAdd(id)
+    }
+
+    private func discardPendingTimelineAdd(_ id: UUID) {
+        guard let add = pendingTimelineAdds.removeValue(forKey: id) else { return }
+        add.task?.cancel()
+        if add.attempt != nil { pendingPlacementIDs.remove(id) }
+        resolvedSources?[add.clipIndex] = nil
+        let uploads = mediaUploads
+        Task { await uploads?.discardEditorPlacement(id) }
+        try? FileManager.default.removeItem(at: add.source.url)
+    }
+
+    /// An add lives while the document or any undo or redo step still holds one of its slots, so redo can bring it
+    /// back. Once none does (undo, then a new edit) its upload is cancelled.
+    private func prunePendingTimelineAdds() {
+        guard !pendingTimelineAdds.isEmpty else { return }
+        let held = Set(([document] + undoStack + redoStack + [transactionBaseline].compactMap { $0 }).flatMap { value in
+            value.clips.compactMap { $0.raw["pending_local"] == .bool(true) ? $0.raw["editor_source_placement_id"]?.stringValue : nil }
+        })
+        for id in pendingTimelineAdds.keys where !held.contains(id.uuidString) { discardPendingTimelineAdd(id) }
+    }
+
+    private var uploadingAddCount: Int {
+        pendingTimelineAdds.values.filter { $0.attempt != nil }.count
+    }
+
+    /// Save never sends a provisional index: it waits for adds still uploading, then refuses a block whose upload failed.
+    private func finishPendingAddsBeforeSave() async -> Bool {
+        guard !pendingTimelineAdds.isEmpty || document.clips.contains(where: { $0.raw["pending_local"] == .bool(true) }) else { return true }
+        let identity = editorOperationIdentity
+        defer { finishingUploadCount = 0 }
+        while uploadingAddCount > 0 {
+            finishingUploadCount = uploadingAddCount
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled, identity == editorOperationIdentity else { return false }
+        }
+        guard !document.clips.contains(where: { $0.raw["pending_local"] == .bool(true) }) else {
+            saveState = .failed("A clip didn’t finish uploading. Retry or remove it, then save.")
+            return false
+        }
+        return true
     }
 
     var overlayPlanScope: String? {
@@ -8740,11 +9004,13 @@ enum EditorOpenIntent { case warm, open }
         guard let previous = undoStack.popLast() else { return }
         saveHistory?.recordUndo(to: previous, from: document)
         appendRedo(document); document = previous; refreshDirtyState(); refreshDuration()
+        prunePendingTimelineAdds()
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
         appendUndo(document, isRedo: true); document = next; refreshDirtyState(); refreshDuration()
+        prunePendingTimelineAdds()
     }
 
     func save() async {
@@ -8752,7 +9018,8 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func save(retrying retrySections: Set<EditorSection>) async {
-        guard !isSaving, activeSaveAttemptID == nil else { return }
+        guard !isSaving, activeSaveAttemptID == nil, finishingUploadCount == 0 else { return }
+        guard await finishPendingAddsBeforeSave(), !isSaving, activeSaveAttemptID == nil else { return }
         let attemptID = UUID()
         let identity = editorOperationIdentity
         activeSaveAttemptID = attemptID
@@ -9277,8 +9544,15 @@ enum EditorOpenIntent { case warm, open }
     /// `rebasesSplitLanes: false` is only for an edit that keeps every clip's window where it was.
     private func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next)
-        let retainedSplitIDs = Set(next.clips.filter { !$0.removed }.compactMap(\.splitSectionID))
+        // A section lives while a clip with footage does. Blanks alone have nothing to play, so they go with it.
+        let retainedSplitIDs = Set(next.clips.filter { !$0.removed && !$0.isBlank }.compactMap(\.splitSectionID))
         next.splitScreenSections.removeAll { !retainedSplitIDs.contains($0.id) }
+        for position in next.clips.indices.reversed() where next.clips[position].isBlank && !next.clips[position].removed
+            && !(next.clips[position].splitSectionID.map(retainedSplitIDs.contains) ?? false) {
+            var gone = next.clips.remove(at: position)
+            gone.removed = true
+            next.tombstones.append(gone)
+        }
         next.fitCollapseSectionDurations()
         guard next.splitScreenIsValid else { return }
         if !next.clips.isEmpty { next.editorState = "renderable" }
@@ -9289,6 +9563,7 @@ enum EditorOpenIntent { case warm, open }
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
         document = next; changedSections.formUnion(sections); refreshDirtyState(); refreshDuration()
+        prunePendingTimelineAdds()
     }
 
     func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
@@ -11393,6 +11668,50 @@ extension NativeEditorSession {
                 || lastPhoneRenderingCapabilities?.verifiedFeatures.contains("splitCollapse") == true)
     }
 
+    /// KRI-1421 (protocol 51): panels may hold a flat-colour block. Offered only while the server lists
+    /// `split_blank_panel` (or the pilot verified `splitBlankPanel`), because an older server cannot store a slot with no
+    /// clip index and its Save would refuse the edit.
+    var canFillSplitPanelsWithBlank: Bool {
+        KriaClientProtocolContract.version >= 51
+            && (document.capabilities["split_blank_panel"]?.editable == true
+                || lastPhoneRenderingCapabilities?.verifiedFeatures.contains("splitBlankPanel") == true)
+    }
+
+    /// True exactly when `fillSplitPanelWithBlank` has room, which is when `canAddToSplitPanel` does.
+    func canFillSplitPanelWithBlank(sectionID: String, panel: Int) -> Bool {
+        canFillSplitPanelsWithBlank && canAddToSplitPanel(sectionID: sectionID, panel: panel)
+    }
+
+    /// One undo step: a block of the section's background colour covers the panel's free time (the gap under the
+    /// playhead, else the time after its last clip), and is selected so its colour can be changed.
+    func fillSplitPanelWithBlank(sectionID: String, panel: Int) {
+        guard canFillSplitPanelsWithBlank, canEditSplitScreen,
+              let section = document.splitScreenSections.first(where: { $0.id == sectionID }) else { return }
+        guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
+            splitScreenActionError = Self.splitPanelFullMessage
+            return
+        }
+        splitScreenActionError = nil
+        let slot = EditorTimelineSlot.blank(color: section.backgroundColor, durationS: opening.end - opening.start,
+                                            sectionID: sectionID, panelIndex: panel, offset: opening.start)
+        transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: sectionID, panel: panel, offset: opening.start) }
+        guard document.clips.contains(where: { $0.id == slot.id }) else { return }
+        select(.init(kind: .clip, id: clipID(for: slot.id).uuidString), seekToStart: false)
+    }
+
+    /// The selected clip's block colour (`#RRGGBB`), nil unless a blank block is selected.
+    var selectedBlankColor: String? {
+        guard let selection, selection.kind == .clip, let index = clipSlotIndex(selection.id) else { return nil }
+        return document.clips[index].blankColor
+    }
+
+    /// One undo step per change; anything but a six-digit hex colour is ignored.
+    func setSelectedBlankColor(_ hex: String) {
+        guard canEditSplitScreen, let color = EditorSpeakerBackground.normalizedColor(hex), let selection, selection.kind == .clip,
+              let index = clipSlotIndex(selection.id), document.clips[index].isBlank else { return }
+        transactDocument(section: .timeline) { $0.clips[index].raw["color"] = .string(color) }
+    }
+
     var canSplitSelectedClip: Bool {
         guard canEditTimeline, let selection, let found = sourceWindowSlot(for: selection) else { return false }
         let offset = currentTime - found.clip.start
@@ -11417,7 +11736,8 @@ extension NativeEditorSession {
             Self.number($0.raw["source_duration_s"] ?? $0.raw["source_duration"]) != nil
         }.map(\.clipIndex))
         let admitted = Set((sourcePool?.clips ?? []).filter { $0.nativeSource != nil }.map(\.clipIndex))
-        return measured.union(admitted).sorted().map { ($0, "Clip \($0 + 1)") }
+        // A pending add's provisional index is not a source anyone can pick again (KRI-1419).
+        return measured.union(admitted).subtracting(pendingClipIndices).sorted().map { ($0, "Clip \($0 + 1)") }
     }
 
     var canCreateWholeVideoSplit: Bool { wholeVideoUnavailableReason == nil }
@@ -11716,7 +12036,7 @@ extension NativeEditorSession {
     }
 
     private func isStillSlot(_ slot: EditorTimelineSlot) -> Bool {
-        (slot.raw["media_kind"]?.stringValue ?? slot.raw["kind"]?.stringValue) == "image"
+        slot.isBlank || (slot.raw["media_kind"]?.stringValue ?? slot.raw["kind"]?.stringValue) == "image"
             || resolvedSources?[slot.clipIndex].map { isStill($0.url) } == true
     }
 
@@ -11725,7 +12045,7 @@ extension NativeEditorSession {
         guard canEditSplitScreen, (2...3).contains(count), let id = selectedSplitScreenSectionID,
               let sectionIndex = document.splitScreenSections.firstIndex(where: { $0.id == id }),
               document.splitScreenSections[sectionIndex].panelCount != count,
-              document.clips.contains(where: { !$0.removed && $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) < count }) else { return }
+              document.clips.contains(where: { !$0.removed && !$0.isBlank && $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) < count }) else { return }
         transactDocument(section: .timeline) { value in
             value.splitScreenSections[sectionIndex].panelCount = count
             value.splitScreenSections[sectionIndex].panelWeights = Array(repeating: 1, count: count)
@@ -11757,7 +12077,7 @@ extension NativeEditorSession {
         guard canEditSplitScreen, duration.isFinite, (minimumClipDuration...1800).contains(duration),
               let id = selectedSplitScreenSectionID,
               let index = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
-        guard document.clips.contains(where: { $0.splitSectionID == id && $0.splitOffsetS <= duration - minimumClipDuration + 0.000001 }) else {
+        guard document.clips.contains(where: { !$0.isBlank && $0.splitSectionID == id && $0.splitOffsetS <= duration - minimumClipDuration + 0.000001 }) else {
             splitScreenActionError = "Keep at least one clip inside the section. Move a clip earlier before shortening it."
             return
         }
@@ -11798,6 +12118,12 @@ extension NativeEditorSession {
         let late = a > 0.000001, early = b < length - 0.000001
         guard late || early else { return slot }
         var piece = slot
+        if slot.isBlank {
+            // A block has no footage to advance: only its window and place change.
+            piece.durationS = b - a; piece.durationBeats = nil
+            if slot.splitSectionID != nil { piece.raw["split_offset_s"] = .number(slot.splitOffsetS + a) }
+            return piece
+        }
         if slot.raw["freeze_frame_s"]?.numberValue != nil {
             piece = NativeClipSourceClock(slot: slot).sliced(from: a, to: b).applying(to: slot)
         } else {
@@ -11893,10 +12219,11 @@ extension NativeEditorSession {
     /// One undo step: the section becomes `keepPanel`'s clips in the order they play and the other panels go.
     /// A panel with no footage cannot replace the section.
     func removeSplitScreen(sectionID: String, keepPanel: Int) {
-        guard canEditSplitScreen, !document.splitPanelMembers(sectionID: sectionID, panel: keepPanel).isEmpty else { return }
+        guard canEditSplitScreen, document.splitPanelMembers(sectionID: sectionID, panel: keepPanel).contains(where: { !$0.isBlank }) else { return }
         transactDocument(section: .timeline) { value in
             guard let insertion = value.clips.firstIndex(where: { $0.splitSectionID == sectionID }) else { return }
-            let kept = value.clips.filter { $0.splitSectionID == sectionID && $0.splitPanelIndex == keepPanel }
+            // A blank only exists inside a split, so it never becomes a full-screen clip.
+            let kept = value.clips.filter { $0.splitSectionID == sectionID && $0.splitPanelIndex == keepPanel && !$0.isBlank }
                 .sorted { $0.splitOffsetS < $1.splitOffsetS }.map { slot -> EditorTimelineSlot in
                     var result = slot; result.clearSplitMembership(); return result
                 }
@@ -11941,7 +12268,7 @@ extension NativeEditorSession {
             let start = max(slot.splitOffsetS, part.start), end = min(slot.splitOffsetS + length, part.end)
             return end - start >= minimumClipDuration ? (start: start, end: end) : nil
         }
-        let footage = Set(block.filter { overlap($0, full) != nil }.compactMap(\.splitPanelIndex))
+        let footage = Set(block.filter { !$0.isBlank && overlap($0, full) != nil }.compactMap(\.splitPanelIndex))
         let selected = selection.flatMap { $0.kind == .clip ? clipSlotIndex($0.id) : nil }
             .flatMap { document.clips[$0].splitSectionID == sectionID ? document.clips[$0].splitPanelIndex : nil }
         guard let panel = selected.flatMap({ footage.contains($0) ? $0 : nil }) ?? footage.min() else { return nil }
@@ -11953,7 +12280,7 @@ extension NativeEditorSession {
             guard let length = slot.durationS, !slot.removed, slot.splitSectionID == sectionID else { sectionSlots.append(slot); continue }
             let rate = timelineClips.first(where: { $0.slotID == slot.id }).map { effectiveSourceRate(slot: slot, clip: $0) } ?? Self.explicitPlaybackRate(slot)
             let candidates: [(span: (start: Double, end: Double)?, inSection: Bool)] = [
-                (overlap(slot, kept), true), (slot.splitPanelIndex == panel ? overlap(slot, full) : nil, false),
+                (overlap(slot, kept), true), (slot.splitPanelIndex == panel && !slot.isBlank ? overlap(slot, full) : nil, false),
             ]
             let parts = candidates.compactMap { candidate in candidate.span.map { (start: $0.start, end: $0.end, inSection: candidate.inSection) } }
                 .sorted { $0.start < $1.start }

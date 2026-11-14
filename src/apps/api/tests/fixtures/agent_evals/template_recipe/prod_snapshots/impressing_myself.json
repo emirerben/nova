@@ -32,8 +32,8 @@
             "font_style": "sans",
             "text_color": "#FFFFFF",
             "font_family": "Inter Tight",
-            "sample_text": "\u201cWho are you trying to impress with all those travel stories?\u201d",
-            "emoji_prefix": "\ud83d\udde3\ufe0f",
+            "sample_text": "“Who are you trying to impress with all those travel stories?”",
+            "emoji_prefix": "🗣️",
             "stroke_width": 3,
             "text_size_px": 55,
             "has_darkening": false,
@@ -106,5 +106,6 @@
     "template_id": "936e9558-248f-49be-b857-2b9a193522c6",
     "template_name": "Impressing Myself",
     "exported_at": "2026-05-10T14:16:43.146308+00:00"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

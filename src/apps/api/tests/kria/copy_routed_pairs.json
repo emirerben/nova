@@ -1511,5 +1511,14 @@
    "Part of a split screen can't go full screen from chat on this edit.",
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
   ]
+ ],
+ "retired": [
+  ["app/agents/clip_intent_planner.py", "label", "etiket"],
+  ["app/agents/clip_intent_planner.py", "group", "grup"],
+  ["app/agents/clip_intent_planner.py", "order", "sıra"],
+  ["app/agents/clip_intent_planner.py", "include", "dahil etme"],
+  ["app/agents/clip_intent_planner.py", "caption", "yazı"],
+  ["app/agents/clip_intent_planner.py", "exclude", "hariç tutma"],
+  ["app/agents/clip_intent_planner.py", "hide_part", "bölüm gizleme"]
  ]
 }

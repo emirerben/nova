@@ -3,21 +3,96 @@
   "prompt_version": "2",
   "input": {
     "words": [
-      {"i": 0, "text": "¿Qué", "start_s": 0.01, "end_s": 0.69},
-      {"i": 1, "text": "te", "start_s": 0.69, "end_s": 0.92},
-      {"i": 2, "text": "llaman?", "start_s": 0.92, "end_s": 2.0},
-      {"i": 3, "text": "Lucas", "start_s": 2.0, "end_s": 4.0},
-      {"i": 4, "text": "Acá", "start_s": 4.0, "end_s": 4.72},
-      {"i": 5, "text": "tenemos", "start_s": 4.72, "end_s": 6.0},
-      {"i": 6, "text": "salsas", "start_s": 6.0, "end_s": 6.25},
-      {"i": 7, "text": "tradicionales", "start_s": 6.25, "end_s": 6.81},
-      {"i": 8, "text": "argentinas,", "start_s": 6.81, "end_s": 7.32},
-      {"i": 9, "text": "salsas", "start_s": 7.32, "end_s": 7.57},
-      {"i": 10, "text": "criollas,", "start_s": 7.57, "end_s": 8.14},
-      {"i": 11, "text": "chivichurros", "start_s": 8.14, "end_s": 9.0},
-      {"i": 12, "text": "y", "start_s": 9.0, "end_s": 9.11},
-      {"i": 13, "text": "sardines", "start_s": 9.11, "end_s": 10.0},
-      {"i": 14, "text": "Gracias", "start_s": 10.0, "end_s": 12.0}
+      {
+        "i": 0,
+        "text": "¿Qué",
+        "start_s": 0.01,
+        "end_s": 0.69
+      },
+      {
+        "i": 1,
+        "text": "te",
+        "start_s": 0.69,
+        "end_s": 0.92
+      },
+      {
+        "i": 2,
+        "text": "llaman?",
+        "start_s": 0.92,
+        "end_s": 2.0
+      },
+      {
+        "i": 3,
+        "text": "Lucas",
+        "start_s": 2.0,
+        "end_s": 4.0
+      },
+      {
+        "i": 4,
+        "text": "Acá",
+        "start_s": 4.0,
+        "end_s": 4.72
+      },
+      {
+        "i": 5,
+        "text": "tenemos",
+        "start_s": 4.72,
+        "end_s": 6.0
+      },
+      {
+        "i": 6,
+        "text": "salsas",
+        "start_s": 6.0,
+        "end_s": 6.25
+      },
+      {
+        "i": 7,
+        "text": "tradicionales",
+        "start_s": 6.25,
+        "end_s": 6.81
+      },
+      {
+        "i": 8,
+        "text": "argentinas,",
+        "start_s": 6.81,
+        "end_s": 7.32
+      },
+      {
+        "i": 9,
+        "text": "salsas",
+        "start_s": 7.32,
+        "end_s": 7.57
+      },
+      {
+        "i": 10,
+        "text": "criollas,",
+        "start_s": 7.57,
+        "end_s": 8.14
+      },
+      {
+        "i": 11,
+        "text": "chivichurros",
+        "start_s": 8.14,
+        "end_s": 9.0
+      },
+      {
+        "i": 12,
+        "text": "y",
+        "start_s": 9.0,
+        "end_s": 9.11
+      },
+      {
+        "i": 13,
+        "text": "sardines",
+        "start_s": 9.11,
+        "end_s": 10.0
+      },
+      {
+        "i": 14,
+        "text": "Gracias",
+        "start_s": 10.0,
+        "end_s": 12.0
+      }
     ],
     "language": "es"
   },
@@ -31,10 +106,14 @@
     "source_json_path": [
       "words"
     ],
-    "source_slice": [0, 15],
+    "source_slice": [
+      0,
+      15
+    ],
     "case": "Clean NEGATIVE (es), 15 recorded words. Source: KRI-838 Don Julio T3, forced-es whisper.cpp pass. Why no restart: a short Spanish exchange; 'salsas tradicionales argentinas, salsas criollas' is a list of items, not a re-delivery.",
     "expect_empty": true,
     "language": "es",
     "raw_text_origin": "hand_authored_expected_answer (NOT a live model capture)"
-  }
+  },
+  "prompt_sha": "5668f90cc81a96ce"
 }

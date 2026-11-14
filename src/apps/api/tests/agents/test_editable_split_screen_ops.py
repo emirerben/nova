@@ -1493,3 +1493,168 @@ def test_split_shrink_removes_partial_background_windows_below_minimum(document)
     assert [r["media_id"] for r in background["windows"]] == ["survivor"]
     assert len(background["full_screen_windows"]) == 1
     assert background["full_screen_windows"][0]["end_s"] == 1
+
+
+# add_split_panel_clip (KRI-1420). Failure modes, each pinned below:
+# * the new clip lands on top of the panel's last clip instead of after it, or on an empty
+#   panel at a stale offset;
+# * the section is left too short, so the clip never plays, or grows when the creator said to
+#   keep its length;
+# * a photo or a short video gets a length the source cannot give;
+# * a source the creator never approved, an unknown section or a missing panel gets through;
+# * an explicit offset that overlaps a clip in the panel is accepted and fails at layout;
+# * a collapse section keeps a stale length; text after a grown section stays where it was;
+# * a peer clip in another panel shifts.
+def _stack(job, variant, **extra):
+    return apply(
+        job,
+        variant,
+        {"op": "create_split_screen", "slot_indexes": [0, 1], "panel_count": 2, **extra},
+    )
+
+
+def _add(job, variant, section, **fields):
+    return apply(job, variant, {"op": "add_split_panel_clip", "section_id": section, **fields})
+
+
+def _panel(variant, panel):
+    return sorted(
+        (r for r in variant["user_timeline"]["slots"] if r.get("split_panel_index") == panel),
+        key=lambda r: r["split_offset_s"],
+    )
+
+
+def test_added_clip_follows_the_panels_last_clip_and_grows_the_section(document):
+    job, variant = document
+    variant, payload = _stack(job, variant)
+    section = payload["split_screen_sections"][0]["id"]
+    bottom_before = deepcopy(_panel(variant, 1))
+    variant, payload = _add(job, variant, section, panel_index=0, clip_index=2)
+    top = _panel(variant, 0)
+    assert [(r["clip_index"], r["split_offset_s"], r["duration_s"]) for r in top] == [
+        (0, 0, 2),
+        (2, 2, 3),
+    ]
+    assert payload["split_screen_sections"][0]["duration_s"] == 5
+    assert _panel(variant, 1) == bottom_before
+    assert editor.build_editor_snapshot(job, variant)["total_duration_s"] == 5
+    assert len({r["slot_id"] for r in variant["user_timeline"]["slots"]}) == 3
+
+
+def test_added_clip_on_an_emptied_panel_starts_at_zero(document):
+    job, variant = document
+    variant, payload = _stack(job, variant, duration_s=4)
+    section = payload["split_screen_sections"][0]["id"]
+    variant, _ = apply(job, variant, {"op": "remove_clip", "slot_index": 1})
+    assert not [r for r in _panel(variant, 1) if not r.get("removed")]
+    variant, _ = _add(job, variant, section, panel_index=1, clip_index=2)
+    live = [r for r in _panel(variant, 1) if not r.get("removed")]
+    assert [(r["clip_index"], r["split_offset_s"], r["duration_s"]) for r in live] == [(2, 0, 3)]
+
+
+def test_room_in_the_section_is_used_before_the_section_grows(document):
+    job, variant = document
+    variant, payload = _stack(job, variant, duration_s=8)
+    section = payload["split_screen_sections"][0]["id"]
+    variant, payload = _add(job, variant, section, panel_index=1, clip_index=2)
+    assert [(r["split_offset_s"], r["duration_s"]) for r in _panel(variant, 1)] == [(0, 2), (2, 3)]
+    assert payload["split_screen_sections"][0]["duration_s"] == 8
+
+
+def test_keeping_the_section_length_bounds_the_clip_or_refuses_a_full_panel(document):
+    job, variant = document
+    variant, payload = _stack(job, variant, duration_s=4)
+    section = payload["split_screen_sections"][0]["id"]
+    variant, payload = _add(job, variant, section, panel_index=0, clip_index=2, grow_section=False)
+    assert [(r["split_offset_s"], r["duration_s"]) for r in _panel(variant, 0)] == [(0, 2), (2, 2)]
+    assert payload["split_screen_sections"][0]["duration_s"] == 4
+    before = deepcopy(variant)
+    with pytest.raises(editor.KriaEditorOpError, match="room|full"):
+        editor.compile_editor_ops(
+            job,
+            variant,
+            [
+                {
+                    "op": "add_split_panel_clip",
+                    "section_id": section,
+                    "panel_index": 0,
+                    "clip_index": 2,
+                    "grow_section": False,
+                }
+            ],
+        )
+    assert variant == before
+
+
+def test_explicit_length_is_bounded_by_the_source_and_offsets_must_not_overlap(document):
+    job, variant = document
+    variant, payload = _stack(job, variant, duration_s=4)
+    section = payload["split_screen_sections"][0]["id"]
+    video, _ = _add(job, variant, section, panel_index=0, clip_index=0, offset_s=2, duration_s=20)
+    assert _panel(video, 0)[1]["duration_s"] == 8  # the 8-second source, not the 20 asked for
+    assert _panel(video, 0)[1]["source_duration_s"] == 8
+    short, _ = _add(job, variant, section, panel_index=0, clip_index=2, offset_s=2, duration_s=1)
+    assert _panel(short, 0)[1]["duration_s"] == 1
+    for offset in (0, 1, 1.9):
+        with pytest.raises(editor.KriaEditorOpError, match="already has a clip"):
+            editor.compile_editor_ops(
+                job,
+                variant,
+                [
+                    {
+                        "op": "add_split_panel_clip",
+                        "section_id": section,
+                        "panel_index": 0,
+                        "clip_index": 2,
+                        "offset_s": offset,
+                    }
+                ],
+            )
+
+
+def test_unapproved_source_unknown_section_missing_panel_and_closed_capability_are_refused(
+    document, monkeypatch
+):
+    job, variant = document
+    variant, payload = _stack(job, variant)
+    section = payload["split_screen_sections"][0]["id"]
+    snapshot = editor.build_editor_snapshot(job, variant)
+    snapshot["editor_ops_version"] = 2
+    base = {"op": "add_split_panel_clip", "section_id": section, "panel_index": 0, "clip_index": 2}
+    for wrong in (
+        {"clip_index": 99},
+        {"section_id": "gone"},
+        {"panel_index": 2},
+        {"panel_index": True},
+        {"duration_s": 0.01},
+        {"offset_s": -1},
+    ):
+        assert parse_editor_operation({**base, **wrong}, snapshot, _ParseState(0.99)) is None, wrong
+    assert parse_editor_operation(base, snapshot, _ParseState(0.99)) is not None
+    monkeypatch.setattr(editor, "split_screen_available", lambda *args: False)
+    closed = editor.build_editor_snapshot(job, variant)
+    closed["editor_ops_version"] = 2
+    assert parse_editor_operation(base, closed, _ParseState(0.99)) is None
+
+
+def test_collapse_section_follows_the_added_clip_and_later_text_moves_once(document, monkeypatch):
+    job, variant = document
+    monkeypatch.setattr(editor, "split_collapse_available", lambda *args: True)
+    tail = deepcopy(variant["user_timeline"]["slots"][1])
+    tail["slot_id"] = "tail"
+    variant["user_timeline"]["slots"].append(tail)
+    variant, payload = _stack(job, variant)
+    section = payload["split_screen_sections"][0]["id"]
+    variant["text_elements"][0].update(start_s=2, end_s=4, segment_id="tail")
+    variant, payload = _add(job, variant, section, panel_index=0, clip_index=2)
+    assert payload["split_screen_sections"][0]["duration_s"] == 5
+    assert variant["text_elements"][0]["start_s"] == 5
+    assert variant["text_elements"][0]["end_s"] == 7
+
+    variant, payload = apply(
+        job,
+        variant,
+        {"op": "update_split_screen", "section_id": section, "collapse_empty_panels": True},
+    )
+    variant, payload = _add(job, variant, section, panel_index=1, clip_index=2)
+    assert payload["split_screen_sections"][0]["duration_s"] == 5

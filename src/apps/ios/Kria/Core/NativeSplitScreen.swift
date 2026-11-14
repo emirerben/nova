@@ -167,6 +167,22 @@ extension EditorTimelineSlot {
     mutating func clearSplitMembership() {
         for key in ["split_section_id", "split_panel_index", "split_offset_s"] { raw.removeValue(forKey: key) }
     }
+
+    /// KRI-1421: a flat-colour block in a split panel. It has no source, so no clip index (the in-memory `clipIndex` is -1
+    /// and the wire row omits the key), and it lives only inside a section.
+    static let blankMediaKind = "blank"
+    var isBlank: Bool { raw["media_kind"]?.stringValue == Self.blankMediaKind }
+    /// `#RRGGBB`, uppercase; nil when this is not a blank or its colour is unreadable.
+    var blankColor: String? {
+        guard isBlank, let value = raw["color"]?.stringValue else { return nil }
+        return EditorSpeakerBackground.normalizedColor(value)
+    }
+    static func blank(id: String = UUID().uuidString, color: String, durationS: Double, sectionID: String, panelIndex: Int, offset: Double) -> EditorTimelineSlot {
+        var slot = EditorTimelineSlot(id: id, clipIndex: -1, inS: 0, durationS: durationS,
+                                      raw: ["media_kind": .string(blankMediaKind), "color": .string(EditorSpeakerBackground.normalizedColor(color) ?? color)])
+        slot.setSplitMembership(sectionID: sectionID, panelIndex: panelIndex, offset: offset)
+        return slot
+    }
 }
 
 extension EditorDocument {
@@ -189,9 +205,11 @@ extension EditorDocument {
         var previous: String?
         for slot in clips where !slot.removed {
             guard let id = slot.splitSectionID else {
-                guard ["split_section_id", "split_panel_index", "split_offset_s"].allSatisfy({ slot.raw[$0] == nil || slot.raw[$0] == .null }) else { return false }
+                guard !slot.isBlank, ["split_section_id", "split_panel_index", "split_offset_s"].allSatisfy({ slot.raw[$0] == nil || slot.raw[$0] == .null }) else { return false }
                 previous = nil; continue
             }
+            // A blank is a colour and a window: no source, and a colour the engine can draw.
+            guard !slot.isBlank || (slot.clipIndex == -1 && slot.blankColor != nil) else { return false }
             guard let section = splitScreenSections.first(where: { $0.id == id }),
                   let panel = slot.splitPanelIndex, panel < section.panelCount,
                   slot.raw["split_offset_s"]?.numberValue != nil,
@@ -202,6 +220,8 @@ extension EditorDocument {
             previous = id
         }
         for section in splitScreenSections {
+            // A section of only blanks has nothing to play.
+            guard clips.contains(where: { !$0.removed && !$0.isBlank && $0.splitSectionID == section.id }) else { return false }
             for panel in 0..<section.panelCount {
                 let members = clips.filter { !$0.removed && $0.splitSectionID == section.id && $0.splitPanelIndex == panel }.sorted { $0.splitOffsetS < $1.splitOffsetS }
                 for i in members.indices {
@@ -209,6 +229,8 @@ extension EditorDocument {
                         let left = members[j], right = members[i]
                         let overlap = left.splitOffsetS + (left.durationS ?? 0) - right.splitOffsetS
                         guard overlap > 0.000001 else { continue }
+                        // A blank has no transition: it never shares time with another member of its panel.
+                        guard !left.isBlank, !right.isBlank else { return false }
                         let allowed = min(0.3, left.transitionDurationS ?? 0.3, (left.durationS ?? 0) * 0.3, (right.durationS ?? 0) * 0.3)
                         guard j == i - 1, right.splitOffsetS > left.splitOffsetS,
                               left.transitionAfter != "cut", allowed >= 0.1, overlap <= allowed + 0.000001 else { return false }

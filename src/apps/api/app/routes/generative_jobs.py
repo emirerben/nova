@@ -1000,7 +1000,13 @@ class TimelineSlotEdit(BaseModel):
     split_section_id: str | None = Field(default=None, min_length=1, max_length=160)
     split_panel_index: int | None = Field(default=None, ge=0, le=2, strict=True)
     split_offset_s: float | None = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
-    clip_index: int
+    # KRI-1421: a blank block (`media_kind == "blank"`) is a flat `color` in a split panel. It has
+    # no source, so no `clip_index`; every other slot still requires one.
+    clip_index: int | None = None
+    # Source slots already carry a `media_kind` of "image" or "video"; only "blank" means anything
+    # here, so every other value is accepted and left out of the stored row.
+    media_kind: str | None = None
+    color: str | None = None
     in_s: float
     duration_beats: int | None = None
     duration_s: float | None = None
@@ -1073,6 +1079,52 @@ class TimelineSlotEdit(BaseModel):
         if value is None:
             raise ValueError("look_preset cannot be null")
         return value
+
+    @model_serializer(mode="wrap")
+    def omit_blank_fields(self, handler):
+        payload = handler(self)
+        if self.media_kind != "blank":
+            payload.pop("media_kind", None)
+            payload.pop("color", None)
+        return payload
+
+    @model_validator(mode="after")
+    def blank_or_source(self) -> TimelineSlotEdit:
+        """A slot is a source clip or a blank block, never both; a blank carries only a colour."""
+        if self.media_kind != "blank":
+            if self.clip_index is None:
+                raise ValueError("clip_index is required")
+            return self
+        if self.clip_index is not None or not re.fullmatch(  # kri667: hex colour field
+            r"#[0-9A-Fa-f]{6}", self.color or ""
+        ):
+            raise ValueError("a blank block has a #RRGGBB color and no clip_index")
+        sourced = (
+            "playback_rate",
+            "source_end_s",
+            "source_crop",
+            "tilt",
+            "layout",
+            "speaker_subject",
+            "speaker_frame_override",
+            "media_transform",
+            "source_audio_volume",
+            "audio_fade_in",
+            "audio_fade_out",
+            "freeze_hold_s",
+            "freeze_frame_s",
+            "muted",
+            "parent_segment_id",
+            "look_adjustments",
+        )
+        if any(
+            name in self.model_fields_set and getattr(self, name) is not None for name in sourced
+        ):
+            raise ValueError("a blank block has no source to adjust")
+        if self.transition_after != "cut":
+            raise ValueError("a blank block has no transition")
+        self.color = self.color.upper()
+        return self
 
     @model_validator(mode="after")
     def normalize_cut_transition_duration(self) -> TimelineSlotEdit:
@@ -7750,7 +7802,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "drawings": _drawing_capabilities(job, variant),
     }
     from app.services.client_protocol import current_client_protocol
-    from app.services.phone_rollout import split_collapse_planned_for, split_screen_supported
+    from app.services.phone_rollout import (
+        split_blank_planned_for,
+        split_collapse_planned_for,
+        split_screen_supported,
+    )
 
     if (
         variant.get("render_destination") == "device"
@@ -7762,6 +7818,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # re-checking it must offer the same capabilities (KRI-1321).
         if split_collapse_planned_for(current_client_protocol()):
             capabilities["split_collapse"] = True
+        if split_blank_planned_for(current_client_protocol()):
+            capabilities["split_blank_panel"] = True
     if (
         variant.get("editor_timeline_mode") == "authored"
         and variant.get("render_destination") == "device"
@@ -9070,6 +9128,26 @@ def dispatch_get_timeline(
     ):
         if marker := saved_user_song_for_variant(job, variant):
             timeline["saved_user_song"] = marker
+    from app.services.phone_rollout import split_blank_client_supported  # noqa: PLC0415
+
+    # A build below 51 cannot decode a slot with no `clip_index` and would drop the block on Save.
+    if (
+        any(
+            isinstance(row, dict) and row.get("media_kind") == "blank" and not row.get("removed")
+            for row in timeline.get("slots") or []
+        )
+        and not split_blank_client_supported()
+    ):
+        from app.services.client_protocol import SPLIT_BLANK_PANEL_PROTOCOL  # noqa: PLC0415
+
+        raise HTTPException(
+            status_code=426,
+            detail={
+                "code": "client_update_required",
+                "feature": "split_blank_panel",
+                "minimum_client_protocol": SPLIT_BLANK_PANEL_PROTOCOL,
+            },
+        )
     return timeline
 
 
@@ -11376,6 +11454,7 @@ def prepare_editor_commit(
             sources = current.get("sources") or []
             adds_imported_source = any(
                 not slot.removed
+                and slot.clip_index is not None
                 and 0 <= slot.clip_index < len(sources)
                 and sources[slot.clip_index]["media_id"] in imported_ids - saved_ids
                 for slot in payload.timeline_slots or []

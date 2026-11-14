@@ -116,7 +116,7 @@
   "KriaUITests/NativeEditorInspectorUITests/testApprovingACaptionLineCommitsItAndEnablesSaveOnceThePanelCloses": 20.5,
   "KriaUITests/NativeEditorInspectorUITests/testConnectedPanelsKeepRailAndPreviewStableAndCollapseActiveTool": 38.7,
   "KriaUITests/NativeEditorInspectorUITests/testConnectedTextPresetAndAnimationPreviewControls": 41.1,
-  "KriaUITests/NativeEditorInspectorUITests/testDelayedPanelImportKeepsCapturedOwnerUndoAndReopen": 84.3,
+  "KriaUITests/NativeEditorInspectorUITests/testDelayedPanelImportShowsAtOnceAndSavesTheAdmittedIndex": 84.3,
   "KriaUITests/NativeEditorInspectorUITests/testDraggingTrailingClipHandleToRightEdgeAutoScrollsPastVisibleWindow": 23.9,
   "KriaUITests/NativeEditorInspectorUITests/testEditorChromeFitsViewportAndCurrentToolsRemainReachable": 25.0,
   "KriaUITests/NativeEditorInspectorUITests/testEmptyingATalkingCaptionLineRemovesItAndUndoRestoresIt": 24.3,

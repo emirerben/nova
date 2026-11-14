@@ -37,6 +37,7 @@ from app.services.phone_editor_sources import (
     editor_visual_bindings,
     lease_expired,
     phone_editor_source_revision,
+    visual_bytes_ready,
 )
 from app.services.phone_sources import (
     PHONE_SOURCES_FIELD,
@@ -391,7 +392,7 @@ async def create_editor_source(
             asset is None
             or asset.plan_item_id != item.id
             or asset.user_id != user.id
-            or asset.status != "ready"
+            or not visual_bytes_ready(asset)
         ):
             raise HTTPException(status_code=422, detail="visual_not_ready")
         if asset.kind not in {"image", "video"}:
@@ -505,7 +506,7 @@ async def validate_editor_sources(
                 asset is None
                 or asset.plan_item_id != job.content_plan_item_id
                 or asset.user_id != job.user_id
-                or asset.status != "ready"
+                or not visual_bytes_ready(asset)
                 or asset.kind != binding.get("kind", "image")
                 or asset.gcs_path != binding.get("gcs_path")
                 or str(asset.gcs_generation or "") != binding.get("generation")

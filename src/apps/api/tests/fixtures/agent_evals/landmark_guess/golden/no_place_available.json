@@ -18,5 +18,6 @@
     "source": "hand_authored_golden",
     "case": "No place or coordinates were sent (location toggle off / no GPS); an unmistakable landmark is still named from the frames alone.",
     "live_note": "Bucket-relative dev clip; live mode uploads it via the fixture uploader. Replay uses raw_text; live is structural only (the dev clip's real content differs from the recorded answer)."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

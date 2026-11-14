@@ -6,13 +6,13 @@
       "clip_id": "clip_tr_003",
       "media_type": "video",
       "duration_s": 4.0,
-      "subject": "el yap\u0131m\u0131 kek taba\u011fa diziliyor, \u00fcst\u00fcne \u00e7ikolata ak\u0131t\u0131l\u0131yor",
+      "subject": "el yapımı kek tabağa diziliyor, üstüne çikolata akıtılıyor",
       "hook_text": "",
       "hook_score": 7.0,
       "energy": 5.5,
-      "description": "yak\u0131n plan, mutfak tezgah\u0131, \u00e7ikolata sosu yava\u015f\u00e7a ak\u0131yor, ak\u015fam ayd\u0131nlatmas\u0131"
+      "description": "yakın plan, mutfak tezgahı, çikolata sosu yavaşça akıyor, akşam aydınlatması"
     },
-    "hero_transcript": "bunu evde 10 dakikada yap\u0131yorum",
+    "hero_transcript": "bunu evde 10 dakikada yapıyorum",
     "tone": "punchy",
     "form": {
       "effect": "static",
@@ -34,14 +34,15 @@
     ],
     "language": "tr"
   },
-  "raw_text": "{\"text\": \"bunu yapmadan \u00f6lme\", \"highlight_word\": \"\u00f6lme\"}",
+  "raw_text": "{\"text\": \"bunu yapmadan ölme\", \"highlight_word\": \"ölme\"}",
   "output": {
-    "text": "bunu yapmadan \u00f6lme",
-    "highlight_word": "\u00f6lme"
+    "text": "bunu yapmadan ölme",
+    "highlight_word": "ölme"
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "TR food/reveal \u2192 punchy imperative in lowercase sen-form (\u00f6lme = informal 'don't die'). Three-word punch matches the static form; energy enough to hold the swipe.",
+    "case": "TR food/reveal → punchy imperative in lowercase sen-form (ölme = informal 'don't die'). Three-word punch matches the static form; energy enough to hold the swipe.",
     "language": "tr"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

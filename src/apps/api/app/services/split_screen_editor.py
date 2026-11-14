@@ -2,9 +2,15 @@
 
 from fastapi import HTTPException
 
-from app.kria.split_screen import layout_split_timeline
-from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL, SPLIT_SCREEN_PROTOCOL
+from app.kria.split_screen import is_blank_row, layout_split_timeline
+from app.services.client_protocol import (
+    SPLIT_BLANK_PANEL_PROTOCOL,
+    SPLIT_COLLAPSE_PROTOCOL,
+    SPLIT_SCREEN_PROTOCOL,
+)
 from app.services.phone_rollout import (
+    split_blank_client_supported,
+    split_blank_supported,
     split_collapse_client_supported,
     split_collapse_supported,
     split_screen_client_supported,
@@ -13,6 +19,11 @@ from app.services.phone_rollout import (
 
 
 def require_split_screen_commit(variant, payload):
+    if any(
+        row.media_kind == "blank" and not row.removed and row.split_section_id is None
+        for row in payload.timeline_slots or []
+    ):
+        raise HTTPException(422, detail={"code": "TIMELINE_BLANK_OUTSIDE_SPLIT"})
     saved = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
     proposed = payload.split_screen_sections
     members = any(row.split_section_id is not None for row in payload.timeline_slots or [])
@@ -48,6 +59,21 @@ def require_split_screen_commit(variant, payload):
                 "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
             },
         )
+    proposes_blank = any(row.media_kind == "blank" for row in payload.timeline_slots or [])
+    saved_blank = any(
+        is_blank_row(row) and not row.get("removed")
+        for row in (variant.get("user_timeline") or {}).get("slots") or []
+    )
+    # A build below 51 cannot decode a slot with no `clip_index`, so its Save would drop the block.
+    if (proposes_blank or saved_blank) and not split_blank_client_supported():
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "split_blank_panel",
+                "minimum_client_protocol": SPLIT_BLANK_PANEL_PROTOCOL,
+            },
+        )
     if variant.get("render_destination") != "device":
         raise HTTPException(422, detail={"code": "split_screen_requires_device"})
     if (proposed or proposed_policies or saved_policies) and not split_screen_supported(
@@ -56,6 +82,8 @@ def require_split_screen_commit(variant, payload):
         raise HTTPException(422, detail={"code": "split_screen_unavailable"})
     if proposes_collapse and not split_collapse_supported(require_client=False):
         raise HTTPException(422, detail={"code": "split_collapse_unavailable"})
+    if proposes_blank and not split_blank_supported(require_client=False):
+        raise HTTPException(422, detail={"code": "split_blank_panel_unavailable"})
     if proposed is not None and payload.timeline_slots is None:
         raise HTTPException(422, detail={"code": "split_screen_requires_timeline"})
     if payload.timeline_slots is not None:

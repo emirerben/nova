@@ -6,9 +6,21 @@
     "creator_context": "Personal sports-day footage from Ann Arbor.",
     "item_context": "A short highlight montage from several games.",
     "media_context": [
-      {"media_id": "clip-football", "kind": "video", "creator_note": "football action"},
-      {"media_id": "photo-volleyball", "kind": "image", "creator_note": "volleyball"},
-      {"media_id": "clip-tennis", "kind": "video", "creator_note": "tennis action"}
+      {
+        "media_id": "clip-football",
+        "kind": "video",
+        "creator_note": "football action"
+      },
+      {
+        "media_id": "photo-volleyball",
+        "kind": "image",
+        "creator_note": "volleyball"
+      },
+      {
+        "media_id": "clip-tennis",
+        "kind": "video",
+        "creator_note": "tennis action"
+      }
     ],
     "conversation": [],
     "capability_manifest": {
@@ -18,19 +30,49 @@
       "render_program": "guided",
       "has_voiceover": false,
       "media": [
-        {"media_id": "clip-football", "kind": "video", "duration_s": 12.0, "label": "Football"},
-        {"media_id": "photo-volleyball", "kind": "image", "label": "Volleyball"},
-        {"media_id": "clip-tennis", "kind": "video", "duration_s": 10.0, "label": "Tennis"}
+        {
+          "media_id": "clip-football",
+          "kind": "video",
+          "duration_s": 12.0,
+          "label": "Football"
+        },
+        {
+          "media_id": "photo-volleyball",
+          "kind": "image",
+          "label": "Volleyball"
+        },
+        {
+          "media_id": "clip-tennis",
+          "kind": "video",
+          "duration_s": 10.0,
+          "label": "Tennis"
+        }
       ],
       "catalog": [
-        {"catalog_id": "sfx-fah", "kind": "sound_effect", "label": "Fah"},
-        {"catalog_id": "music-track-1", "kind": "music", "label": "Licensed sports pulse"}
+        {
+          "catalog_id": "sfx-fah",
+          "kind": "sound_effect",
+          "label": "Fah"
+        },
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Licensed sports pulse"
+        }
       ],
       "capabilities": {
-        "dispatch_render": {"available": true},
-        "draft_guided_proposal": {"available": true},
-        "edit_format:montage": {"available": true},
-        "sound_effects": {"available": true}
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        },
+        "sound_effects": {
+          "available": true
+        }
       },
       "limits": {
         "max_media_refs": 50,
@@ -47,6 +89,9 @@
   "meta": {
     "source": "hand-authored-golden",
     "contract": "full production wording preserves exact title and typed licensed SFX intent",
-    "sfx_intent": {"effect_id": "sfx-fah"}
-  }
+    "sfx_intent": {
+      "effect_id": "sfx-fah"
+    }
+  },
+  "prompt_sha": "unpinned"
 }

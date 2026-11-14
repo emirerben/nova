@@ -51,6 +51,15 @@ class AssignPanel(SectionCommand):
     duplicate: bool = False
 
 
+class AddPanelClip(SectionCommand):
+    section_id: str
+    panel_index: int = Field(ge=0, le=2, strict=True)
+    clip_index: int = Field(ge=0, strict=True)
+    offset_s: float | None = Field(default=None, ge=0, le=1800)
+    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    grow_section: bool = True
+
+
 class SwapPanels(SectionCommand):
     section_id: str
     first_panel: int = Field(ge=0, le=2, strict=True)
@@ -92,6 +101,7 @@ _MODELS = {
     "create_split_screen": CreateSection,
     "update_split_screen": UpdateSection,
     "assign_split_panel": AssignPanel,
+    "add_split_panel_clip": AddPanelClip,
     "swap_split_panels": SwapPanels,
     "remove_split_screen": RemoveSection,
 }
@@ -138,6 +148,11 @@ def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None
                     raise ValueError("panel outside section")
             if name == "assign_split_panel" and clean["slot_index"] >= len(slots):
                 raise ValueError("invalid slot index")
+            if name == "add_split_panel_clip" and not any(
+                r.get("clip_index") == clean["clip_index"] and r.get("ready")
+                for r in snapshot.get("replacement_source_pool", [])
+            ):
+                raise ValueError("Source is not approved")
         if "panel_weights" in clean and (
             len(clean["panel_weights"]) not in (2, 3) or any(w <= 0 for w in clean["panel_weights"])
         ):
@@ -360,6 +375,8 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                     if r.get("split_section_id") == section["id"]
                 ]
                 state.slots.insert(max(remaining) + 1 if remaining else index, row)
+            elif name == "add_split_panel_clip":
+                _add_panel_clip(state, section, members, command)
             elif name == "swap_split_panels":
                 a, b = command["first_panel"], command["second_panel"]
                 if max(a, b) >= section["panel_count"]:
@@ -387,6 +404,78 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
     except (ValueError, TypeError) as exc:
         raise editor.KriaEditorOpError(str(exc)) from exc
     state.changed.add("timeline")
+
+
+# A photo added to a panel plays this long, as on the phone (`addedClipDurationS`).
+_ADDED_PHOTO_S = 3.0
+
+
+def _add_panel_clip(state: Any, section: dict, members: list[dict], command: dict) -> None:
+    """Put an approved source into a panel like the phone's `insertSplitPanelSource`.
+
+    It starts after the panel's last clip unless `offset_s` says where. The phone refuses a full
+    panel because its person can lengthen the section by hand. Chat has no such step, so the
+    section grows to hold the whole clip, unless `grow_section` is false and the clip is cut to
+    the room that is left.
+    """
+    from app.services import kria_editor_ops as editor
+
+    source = next(
+        (
+            r
+            for r in editor.replacement_source_pool(state.job, state.variant)
+            if r["clip_index"] == command["clip_index"] and r.get("ready")
+        ),
+        None,
+    )
+    if source is None:
+        raise ValueError("Source is not approved")
+    panel = command["panel_index"]
+    if panel >= section["panel_count"]:
+        raise ValueError("The panel does not exist")
+    photo = source["kind"] == "image"
+    native = _ADDED_PHOTO_S if photo else source.get("duration_s")
+    if native is None or native < 0.1:
+        raise ValueError("The selected video needs an approved measured duration")
+    length = command.get("duration_s", native)
+    if not photo:
+        length = min(length, native)
+    peers = [r for r in members if r["split_panel_index"] == panel]
+    offset = command.get("offset_s")
+    if offset is None:
+        offset = max((r["split_offset_s"] + editor._slot_duration(r) for r in peers), default=0.0)
+    if any(
+        offset < r["split_offset_s"] + editor._slot_duration(r) - 1e-6
+        and offset + length > r["split_offset_s"] + 1e-6
+        for r in peers
+    ):
+        raise ValueError("This panel already has a clip at that time. Choose a later offset_s.")
+    if command["grow_section"]:
+        section["duration_s"] = max(section["duration_s"], offset + length)
+    else:
+        length = min(length, section["duration_s"] - offset)
+        if length < 0.1:
+            raise ValueError("This panel is full. Shorten a clip in it to make room.")
+    row = {
+        "slot_id": str(uuid4()),
+        "clip_index": command["clip_index"],
+        "media_id": source["media_id"],
+        "media_kind": source["kind"],
+        "in_s": 0.0,
+        "duration_s": length,
+        "duration_beats": None,
+        "removed": False,
+        "transition_after": "cut",
+        "look_preset": "none",
+        "source_start_locked": True,
+        "split_section_id": section["id"],
+        "split_panel_index": panel,
+        "split_offset_s": offset,
+    }
+    if not photo:
+        row["source_duration_s"] = native
+    last = max(i for i, r in enumerate(state.slots) if r.get("split_section_id") == section["id"])
+    state.slots.insert(last + 1, row)
 
 
 def live_timeline_units(rows: list[dict]) -> list[list[dict]]:

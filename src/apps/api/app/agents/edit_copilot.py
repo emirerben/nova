@@ -143,7 +143,10 @@ log = structlog.get_logger()
 # v128 (KRI-1394): make_split_full_screen (SPLIT FULL SCREEN, prompts/edit_copilot_ops/
 # split_full_screen.txt), printed only where a split section can play part full screen from chat,
 # so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v128"
+# v129 (KRI-1420): add_split_panel_clip, a second clip in a split panel from the approved source
+# pool, taught in the SPLIT SCREEN fragment (prompts/edit_copilot_ops/split_screen.txt), printed
+# only where split_screen_available is true, so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v129"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

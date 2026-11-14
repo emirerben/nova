@@ -95,3 +95,14 @@ Collapse sections derive their length from the longest member (shrink and grow).
 
 - `canAddToSplitPanel(sectionID:panel:)` is true only when an add has room: a gap under the playhead, or free time after the panel's last member. A panel that is full to the section end cannot take another clip; shorten one of its clips first. `addSplitPanelClip` clamps to that free time, so the affordance never offers an add that would be refused.
 - `wholeVideoUnavailableReason` explains in one short sentence why "Whole video" is unavailable; `defaultSplitScope` is `.wholeVideo` when there are at least two ordinary clips and no section.
+
+## Blank block (`media_kind: "blank"`, phone protocol 51)
+
+A split panel can hold a flat-colour block instead of footage. It is a timeline slot with `media_kind: "blank"`, `color` (`#RRGGBB`), `duration_s`, the usual `split_section_id`, `split_panel_index` and `split_offset_s`, `in_s: 0` and NO `clip_index`. The editor value is the same atomic timeline, so it trims, moves, cuts and deletes like a photo (unlimited length, the 1800 s cap, a cut makes two independent blocks that keep the colour).
+
+- **Where.** Only inside a split section, and a section keeps at least one real clip (a section of only blanks has nothing to play, so the editor drops the blanks with the last clip). A blank never overlaps another member of its panel and has no transition, no source adjustments and no audio. Other slots still require a `clip_index`; slot rows of any other `media_kind` are unchanged.
+- **Colour.** Starts as the section background. Any `#RRGGBB` is valid; the server stores it uppercase.
+- **Collapse.** A blank counts as a member: its panel stays drawn while it plays and a collapsing section lasts until its longest member, a blank included.
+- **Recipe.** The recipe lowers it to `split_screen_sections[].blanks: [{id, panel_index, start, end, color}]` (absolute seconds, omitted when empty). It adds no track clip, asset or audio. The compositor paints one flat sRGB layer in the panel viewport for each layout the window spans, above the section background and under text, the same solid-colour drawing as the speaker background fill. Requires the `splitBlankPanel` capability.
+- **Gating.** `SPLIT_BLANK_PANEL_PROTOCOL = 51`. The server offers `editor_capabilities.split_blank_panel` only to protocol 51 and with `splitBlankPanel` in `PHONE_RENDER_VERIFIED_FEATURES`. A build below 51 gets 426 `client_update_required` (`split_blank_panel`) when it saves, polls the timeline of, or renders an edit that holds a blank, because it cannot decode a slot with no `clip_index` and its Save would erase the block.
+- **Agent.** No chat op places a blank yet (the split ops own that). An unrelated op over a timeline that holds one keeps it untouched.

@@ -38,14 +38,21 @@
     "expect_intents": [
       {
         "op": "order",
-        "source_quote_keywords": ["order", "filmed"],
+        "source_quote_keywords": [
+          "order",
+          "filmed"
+        ],
         "order_by": "capture_time"
       },
       {
         "op": "label",
-        "source_quote_keywords": ["label", "landmark"]
+        "source_quote_keywords": [
+          "label",
+          "landmark"
+        ]
       }
     ],
     "expect_any": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

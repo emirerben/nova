@@ -142,7 +142,7 @@ def test_invalid_intents_are_dropped_and_named() -> None:
     out = _parse(intents)
     assert [intent.intent_id for intent in out.intents] == ["i1", "i2", "i3"]
     assert out.salvage_question is not None
-    assert "group: rooftop clips" in out.salvage_question
+    assert '"rooftop clips"' in out.salvage_question
     assert "3 of your clip instructions" in out.salvage_question
 
 
@@ -161,7 +161,9 @@ def test_over_long_creator_text_drops_only_that_intent() -> None:
     ]
     out = _parse(intents, request)
     assert [intent.intent_id for intent in out.intents] == ["i1", "i2"]
-    assert "caption: finale chapter" in (out.salvage_question or "")
+    # A caption is named by the words it would print, never as "caption: finale chapter".
+    assert '"xxxxxxxx' in (out.salvage_question or "")
+    assert "caption:" not in (out.salvage_question or "")
 
 
 def test_benign_shape_drift_is_repaired_not_rejected() -> None:
@@ -181,7 +183,7 @@ def test_all_rejected_raises_with_closed_vocabulary_class_and_dropped_previews()
     with pytest.raises(ClipIntentSchemaError) as info:
         _parse([_intent("bad", "group", "rooftop clips", "Group the rooftop clips")])
     assert info.value.error_class == "source_quote_not_creator_text"
-    assert info.value.dropped == ["group: rooftop clips"]
+    assert info.value.dropped == ["rooftop clips"]
 
 
 def test_retry_clarification_names_the_actual_schema_error() -> None:
@@ -271,7 +273,7 @@ async def test_terminal_failure_feeds_error_to_retry_names_dropped_and_logs_clas
     assert "Fix this schema error" in retry_prompt
     assert "source_quote is not an exact contiguous substring" in retry_prompt
     question = result.resolution.question or ""
-    assert "group: rooftop clips" in question
+    assert '"rooftop clips"' in question
     event = next(e for e in logs if e["event"] == "clip_intent_planner.terminal_schema")
     assert event["error_class"] == "source_quote_not_creator_text"
     assert event["request_chars"] == len(LONG_PROMPT)

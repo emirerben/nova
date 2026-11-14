@@ -173,5 +173,6 @@
     "lane": "kri-817-slide-legacy-seen",
     "case": "KRI-817 T09: three distinct post-caption ideas grounded in what each slide shows (parse path only; live distinctness is a paid eval)",
     "expected_intent": "describe"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

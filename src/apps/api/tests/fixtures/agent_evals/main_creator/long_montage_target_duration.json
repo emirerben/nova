@@ -6,12 +6,36 @@
     "creator_context": "Travel creator; warm and direct.",
     "item_context": "A week exploring Lisbon.",
     "media_context": [
-      {"media_id": "clip-1", "kind": "video", "creator_note": "arrival"},
-      {"media_id": "clip-2", "kind": "video", "creator_note": "old town streets"},
-      {"media_id": "clip-3", "kind": "video", "creator_note": "beach afternoon"},
-      {"media_id": "clip-4", "kind": "video", "creator_note": "sunset"},
-      {"media_id": "photo-1", "kind": "image", "creator_note": "city detail"},
-      {"media_id": "photo-2", "kind": "image", "creator_note": "food"}
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "creator_note": "arrival"
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "creator_note": "old town streets"
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "creator_note": "beach afternoon"
+      },
+      {
+        "media_id": "clip-4",
+        "kind": "video",
+        "creator_note": "sunset"
+      },
+      {
+        "media_id": "photo-1",
+        "kind": "image",
+        "creator_note": "city detail"
+      },
+      {
+        "media_id": "photo-2",
+        "kind": "image",
+        "creator_note": "food"
+      }
     ],
     "conversation": [],
     "capability_manifest": {
@@ -21,23 +45,66 @@
       "render_program": "guided",
       "has_voiceover": false,
       "media": [
-        {"media_id": "clip-1", "kind": "video", "label": "arrival"},
-        {"media_id": "clip-2", "kind": "video", "label": "old town streets"},
-        {"media_id": "clip-3", "kind": "video", "label": "beach afternoon"},
-        {"media_id": "clip-4", "kind": "video", "label": "sunset"},
-        {"media_id": "photo-1", "kind": "image", "label": "city detail"},
-        {"media_id": "photo-2", "kind": "image", "label": "food"}
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "label": "arrival"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "label": "old town streets"
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "label": "beach afternoon"
+        },
+        {
+          "media_id": "clip-4",
+          "kind": "video",
+          "label": "sunset"
+        },
+        {
+          "media_id": "photo-1",
+          "kind": "image",
+          "label": "city detail"
+        },
+        {
+          "media_id": "photo-2",
+          "kind": "image",
+          "label": "food"
+        }
       ],
       "catalog": [
-        {"catalog_id": "music-track-1", "kind": "music", "label": "Warm travel beat"}
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm travel beat"
+        }
       ],
       "capabilities": {
-        "dispatch_render": {"available": true},
-        "draft_guided_proposal": {"available": true},
-        "media_overlays": {"available": false, "reason_code": "disabled_by_setting"},
-        "sound_effects": {"available": false, "reason_code": "disabled_by_setting"},
-        "transitions": {"available": true},
-        "wide_looks": {"available": false, "reason_code": "disabled_by_setting"}
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "transitions": {
+          "available": true
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        }
       },
       "limits": {
         "max_media_refs": 50,
@@ -54,5 +121,6 @@
   "meta": {
     "source": "hand-authored-v1-safety",
     "contract": "target_duration_s above 60s is accepted end-to-end now that MAX_PROPOSAL_DURATION_S/MAX_CREATOR_OUTPUT_DURATION_S is 120; regression guard for the KRI-87 duration-cap raise so the 60s ceiling never silently regresses in the eval suite"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 from fastapi import HTTPException
 
+from app.kria.split_screen import is_blank_row
 from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
 
 AUTHORED_TIMELINE_MODE = "authored"
@@ -82,6 +83,10 @@ def sync_talking_source_lanes(
             {**row, "_speech_output_start_s": start}
             for row, start in zip(resolved, new_starts, strict=True)
         ]
+        # A blank has no audio and no source: it takes part in the layout above (it can lengthen a
+        # collapsing section) but never in the source-anchored speech clock.
+        old_slots = [row for row in old_slots if not is_blank_row(row)]
+        resolved = [row for row in resolved if not is_blank_row(row)]
     use_canvas = bool(old_sections or new_sections) or any(
         entry.get("anchor_space") == "canvas"
         for entries in (variant.get("speech_timing_basis") or {}).values()
@@ -516,6 +521,27 @@ def _fit_window_to_source(
     return fitted
 
 
+def _resolve_blank_slot(slot: Any, *, order: int) -> dict:
+    """A split panel's flat-colour block: no source, no receipt, only a window and a colour."""
+    import math
+    import uuid
+
+    if slot.split_section_id is None:
+        raise HTTPException(422, detail={"code": "TIMELINE_BLANK_OUTSIDE_SPLIT"})
+    duration = slot.duration_s
+    if slot.duration_beats is not None or duration is None:
+        raise HTTPException(422, detail={"code": "authored_seconds_required"})
+    if not math.isfinite(duration) or below_editor_minimum(duration):
+        raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+    return {
+        **slot.model_dump(mode="json", exclude={"tilt"}),
+        "slot_id": slot.slot_id or str(uuid.uuid4()),
+        "in_s": 0.0,
+        "order": order,
+        "duration_s": snap_to_editor_minimum(duration),
+    }
+
+
 def resolve_authored_phone_slots(
     job: Any, variant: dict, slots: list[Any], *, preserve_intent: bool = False
 ) -> list[dict]:
@@ -552,6 +578,11 @@ def resolve_authored_phone_slots(
                 raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
             if not client_occurrence_id:
                 slot = slot.model_copy(update={"slot_id": None})  # a new placement (KRI-773)
+        if slot.media_kind == "blank":
+            blank = _resolve_blank_slot(slot, order=len(resolved))
+            total += blank["duration_s"]
+            resolved.append(blank)
+            continue
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         source = catalog[slot.clip_index]

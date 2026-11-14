@@ -2495,10 +2495,13 @@ struct NativeMiniStrip: View {
                     guard frame.maxX >= 0, frame.minX <= size.width else { continue }
                     let visible = frame.intersection(CGRect(origin: .zero, size: size))
                     guard !visible.isNull, visible.width > 0 else { continue }
+                    // A blank block is drawn as its own flat colour; it has no frames to separate.
+                    let blank = clip.slotID.flatMap { id in session.document.clips.first { $0.id == id } }?.blankColor
                     context.fill(
                         Path(roundedRect: visible, cornerRadius: 8),
-                        with: .color(index.isMultiple(of: 2) ? KriaColor.mutedInk : KriaColor.zinc)
+                        with: .color(blank.map(nativeEditorColor) ?? (index.isMultiple(of: 2) ? KriaColor.mutedInk : KriaColor.zinc))
                     )
+                    if blank != nil { continue }
                     let frameCount = max(2, Int(frame.width / 24))
                     for frameIndex in 1..<frameCount {
                         let x = frame.minX + frame.width * CGFloat(frameIndex) / CGFloat(frameCount)
@@ -3263,9 +3266,15 @@ struct NativeMiniStrip: View {
     private static let coastMinimumSpeed: CGFloat = 200
     /// Per-millisecond velocity retention: the same deceleration UIScrollView uses.
     private static let coastRetention = 0.998
+    /// Editor UI tests drag in fast, exact steps and assert where each one lands, so the glide stays off in editor
+    /// test mode unless a test opts in with `-ui-testing-editor-timeline-glide` (KRI-1450).
+    private static let coastAllowed: Bool = {
+        let arguments = ProcessInfo.processInfo.arguments
+        return !arguments.contains("-ui-testing-editor") || arguments.contains("-ui-testing-editor-timeline-glide")
+    }()
 
     private func startCoast(pointsPerSecond: CGFloat) {
-        guard !reduceMotion, pointsPerSecond.isFinite, abs(pointsPerSecond) >= Self.coastMinimumSpeed else { return }
+        guard Self.coastAllowed, !reduceMotion, pointsPerSecond.isFinite, abs(pointsPerSecond) >= Self.coastMinimumSpeed else { return }
         let scale = max(1, Double(pixelsPerSecond))
         var velocity = -Double(pointsPerSecond) / scale
         stopCoast()

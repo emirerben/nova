@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
@@ -54,14 +55,59 @@ class SplitScreenSection(SplitLayout):
         return self
 
 
+BLANK_KIND = "blank"
+_BLANK_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")  # kri667: a hex colour field
+
+
+def is_blank_row(row: dict[str, Any]) -> bool:
+    return row.get("media_kind") == BLANK_KIND
+
+
+class RecipeSplitBlank(BaseModel):
+    """A flat-colour block drawn in one panel for one window (protocol 51, `splitBlankPanel`)."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    id: str = Field(min_length=1, max_length=160)
+    panel_index: int = Field(ge=0, le=2, strict=True)
+    start: float = Field(ge=0)
+    end: float = Field(gt=0, le=1800)
+    color: str = Field(pattern=_BLANK_COLOR.pattern)
+
+    @model_validator(mode="after")
+    def positive_window(self):
+        if self.end <= self.start:
+            raise ValueError("blank block must have a positive window")
+        self.color = self.color.upper()
+        return self
+
+
 class RecipeSplitScreenSection(SplitLayout):
     start: float = Field(ge=0)
     end: float = Field(gt=0, le=1800)
+    # Omitted from the wire when empty so every section without a blank keeps its exact bytes.
+    blanks: list[RecipeSplitBlank] = Field(default_factory=list, max_length=300)
+
+    @model_serializer(mode="wrap")
+    def omit_default_collapse(self, handler):
+        payload = handler(self)
+        if not self.collapse_empty_panels:
+            payload.pop("collapse_empty_panels", None)
+        if not self.blanks:
+            payload.pop("blanks", None)
+        return payload
 
     @model_validator(mode="after")
     def positive_window(self):
         if self.end <= self.start:
             raise ValueError("split section must have a positive window")
+        for blank in self.blanks:
+            if (
+                blank.panel_index >= len(self.panel_weights)
+                or blank.start < self.start - 1e-6
+                or blank.end > self.end + 1e-6
+            ):
+                raise ValueError("blank block must sit inside its section and panel")
         return self
 
 
@@ -130,6 +176,7 @@ def layout_split_timeline(
         for key, section in by_id.items()
     }
     placed: dict[str, RecipeSplitScreenSection] = {}
+    with_media: set[str] = set()
     coverage: dict[tuple[str, int], list[tuple[float, float, dict]]] = {}
     previous_row = None
     starts = []
@@ -145,6 +192,14 @@ def layout_split_timeline(
             row.get(key) for key in ("split_section_id", "split_panel_index", "split_offset_s")
         ]
         section_id, panel, offset = values
+        blank = is_blank_row(row)
+        if blank:
+            if all(value is None for value in values):
+                raise ValueError("a blank block belongs in a split panel")
+            if row.get("clip_index") is not None:
+                raise ValueError("a blank block has no source clip")
+            if not isinstance(row.get("color"), str) or not _BLANK_COLOR.match(row["color"]):
+                raise ValueError("a blank block needs a #RRGGBB colour")
         if any(value is not None for value in values):
             if any(value is None for value in values):
                 raise ValueError("split membership requires section, panel and offset")
@@ -177,6 +232,18 @@ def layout_split_timeline(
             windows = coverage.setdefault((section_id, panel), [])
             windows.append((offset, offset + duration, row))
             starts.append(placed[section_id].start + offset)
+            if blank:
+                placed[section_id].blanks.append(
+                    RecipeSplitBlank(
+                        id=str(row.get("slot_id") or f"blank-{len(placed[section_id].blanks)}"),
+                        panel_index=panel,
+                        start=placed[section_id].start + offset,
+                        end=placed[section_id].start + offset + duration,
+                        color=row["color"],
+                    )
+                )
+            else:
+                with_media.add(section_id)
         else:
             if previous_row is not None and previous_group is None:
                 cursor -= transition_overlap(previous_row, row)
@@ -190,6 +257,8 @@ def layout_split_timeline(
             for prior_index, (prior_start, prior_end, prior) in enumerate(ordered[:index]):
                 if start >= prior_end - 1e-6:
                     continue
+                if is_blank_row(prior) or is_blank_row(row):
+                    raise ValueError("a blank block cannot overlap another clip in its panel")
                 overlap = transition_overlap(prior, row)
                 if (
                     prior_index != index - 1
@@ -200,6 +269,8 @@ def layout_split_timeline(
                     raise ValueError("split panel overlap must match its preceding transition")
     if set(placed) != set(by_id):
         raise ValueError("every split section needs a timeline member")
+    if set(placed) != with_media:
+        raise ValueError("every split section needs a clip, not only blank blocks")
     return starts, list(placed.values()), cursor
 
 
