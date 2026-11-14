@@ -833,8 +833,47 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
     )
 
 
+def _floored_capacity_s(
+    manifest: ResolvedCreatorManifest | None, before: CreativeStrategy, after: CreativeStrategy
+) -> float | None:
+    """The clips' real length when the compiler's whole-second once-only cap
+    (`normalize_creator_strategy_media`) is what cut ``before``'s length to ``after``'s."""
+    planned = after.target_duration_s
+    if manifest is None or not planned < before.target_duration_s:
+        return None
+    durations = {media.media_id: media.duration_s for media in manifest.media}
+    capacity = sum(durations.get(media_id) or 0.0 for media_id in after.selected_media_ids)
+    return capacity if int(capacity) == planned else None
+
+
+def _length_lost(
+    before: CreativeStrategy,
+    after: CreativeStrategy,
+    manifest: ResolvedCreatorManifest | None,
+) -> bool:
+    """Whether the check moved a length the creator stated by more than a rounding.
+
+    A model-chosen length is no creator ask: the compiler's cap to what the clips can run
+    stays silent (prod thread aa36d140: 14.005 s planned on a 14.03 s clip, "can't be 14.005
+    seconds" on every turn). A stated one may move by max(0.5 s, 5 %), measured against the
+    clips' real length when the compiler's whole-second cap set the plan.
+    """
+    wanted, planned = before.target_duration_s, after.target_duration_s
+    if wanted == planned:
+        return False
+    if not before.target_duration_requested and before.creator_duration_s is None:
+        return False
+    capacity = _floored_capacity_s(manifest, before, after)
+    reached = min(wanted, capacity) if capacity is not None else planned
+    return abs(wanted - reached) > max(0.5, wanted * 0.05) + 1e-9
+
+
 def _dropped_fields(
-    before: CreativeStrategy, after: CreativeStrategy, *, stated_settings: bool = False
+    before: CreativeStrategy,
+    after: CreativeStrategy,
+    *,
+    stated_settings: bool = False,
+    manifest: ResolvedCreatorManifest | None = None,
 ) -> tuple[str, ...]:
     """The strategy fields a check lost (`selected_media_ids` = a selected clip left out)."""
     prior = before.model_dump(mode="json")
@@ -851,7 +890,6 @@ def _dropped_fields(
         "execution_contract",
         "mixed_media_timing",
         "licensed_sfx",
-        "target_duration_s",
     )
     if stated_settings:
         # KRI-476: the creator's own seconds for the title and their explicit ask for
@@ -863,6 +901,8 @@ def _dropped_fields(
         for key in fields
         if prior.get(key) not in (None, [], "") and prior.get(key) != next_values.get(key)
     ]
+    if _length_lost(before, after, manifest):
+        lost.append("target_duration_s")
     # PR 1556 review: a clip the strategy selected that the checked plan no longer has is
     # a lost ask (a reorder, or a clip added to the selection, is not).
     kept = set(next_values.get("selected_media_ids") or ())
@@ -1409,6 +1449,11 @@ def check_strategy_for_runtime_v2(
         # whole manifest for the guided specialist. Runtime-v2 dispatches without
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
+    capacity = _floored_capacity_s(manifest, strategy, checked)
+    if capacity is not None and strategy.target_duration_s <= capacity:
+        # A length the clips already run keeps its fraction, so approval readiness's
+        # re-check of this draft finds it unchanged.
+        checked = checked.model_copy(update={"target_duration_s": strategy.target_duration_s})
     # Some compiler paths already repair an unavailable optional treatment. Keep
     # their notices and apply the same first-turn policy as a typed refusal.
     if simplify_unsupported:
@@ -1418,7 +1463,9 @@ def check_strategy_for_runtime_v2(
                 omitted_fields.add(field)
     all_notices = (*notices, *(localize_known_message(n) for n in edit_plan.notices))
     dropped = (
-        _dropped_fields(baseline, checked, stated_settings=ask_about_stated_settings)
+        _dropped_fields(
+            baseline, checked, stated_settings=ask_about_stated_settings, manifest=manifest
+        )
         if ask_before_simplifying
         else ()
     )
