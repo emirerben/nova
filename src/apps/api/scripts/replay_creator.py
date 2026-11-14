@@ -5,6 +5,8 @@ captured source bytes into a fresh local namespace, seeds the isolated replay
 database, calls the real Creator controllers, and writes an auditable receipt.
 The default run stops after Main Creator planning.  ``--render`` is an explicit
 opt-in to proposal generation, queue dispatch, and worker rendering.
+``--thread-events`` replays a runtime-v2 chat instead: the creator's recorded
+messages go through the Kria runtime's submit and approve controllers in order.
 
 The module has no application imports at module load time.  That matters for
 the safety checks: a stale shell with production environment variables must be
@@ -115,6 +117,9 @@ def _safe_filename(value: object, *, field: str) -> str:
 
 
 _SCRATCH_DATABASE = re.compile(r"nova_creator_fidelity_test(?:_[a-z0-9]{1,16})?")
+# Only the dev server's port. `fly proxy 15432:5432 -a nova-db` (export-template-text-snapshots
+# runbook) puts the production cluster on localhost too, so the host alone proves nothing.
+LOCAL_POSTGRES_PORT = 5432
 
 
 def _database_target(database_url: str) -> tuple[str, str]:
@@ -125,6 +130,11 @@ def _database_target(database_url: str) -> tuple[str, str]:
         raise ReplaySafetyError("Replay database must be PostgreSQL on localhost")
     if host not in {"localhost", "127.0.0.1", "::1"}:
         raise ReplaySafetyError(f"Refusing non-local replay database host: {host or '<missing>'}")
+    if (parsed.port or LOCAL_POSTGRES_PORT) != LOCAL_POSTGRES_PORT:
+        raise ReplaySafetyError(
+            f"Refusing replay database port {parsed.port}; only the local dev server on "
+            f"{LOCAL_POSTGRES_PORT} (a tunnel such as fly proxy also listens on localhost)"
+        )
     if parsed.query:
         # libpq reads host, hostaddr and service from the query and they override the netloc.
         raise ReplaySafetyError("Refusing a replay database URL with a query string")
@@ -210,14 +220,22 @@ def _extract_transcript_cache(job_debug: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-RECEIPT_FIELDS = ("upload_contract", "manifest_identity", "has_audio", "duration_s", "pool_source")
+RECEIPT_FIELDS = (
+    "upload_contract",
+    "manifest_identity",
+    "has_audio",
+    "duration_s",
+    "pool_source",
+    "analysis",
+)
 
 
 def _extract_recorded_assignments(job_debug: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """The upload receipts the approved plan recorded (iPhone proxies need them to plan).
+    """The upload receipts and clip analysis the approved plan recorded.
 
     The admin item debug summarizes clip assignments without their receipts; the job's
-    brief binding keeps the full rows.
+    brief binding keeps the full rows. Its analysis is the one production planned with, so
+    the replay reuses it instead of paying for a second analysis of the same clip.
     """
 
     plan = (job_debug.get("job") or {}).get("assembly_plan") or {}
@@ -416,6 +434,70 @@ def _copy_source(source: dict[str, Any], object_path: str, storage: Any) -> dict
     }
 
 
+def _event_order(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(events, key=lambda event: int(event.get("sequence") or 0))
+
+
+def _sent_from_app(thread_events: list[dict[str, Any]]) -> bool:
+    """The iPhone app sends a client protocol with every message; the web sends none."""
+
+    return any(
+        (event.get("payload") or {}).get("client_protocol") is not None
+        for event in thread_events
+        if event.get("kind") == "user_message"
+    )
+
+
+def _with_recorded_media(
+    projection: list[dict[str, Any]], thread_events: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Each replayed medium as production's thread projected it (filename, upload receipt)."""
+
+    recorded: dict[str, dict[str, Any]] = {}
+    for event in _event_order(thread_events):
+        if event.get("kind") != "media_added":
+            continue
+        for entry in (event.get("payload") or {}).get("media") or []:
+            if isinstance(entry, dict) and entry.get("media_id"):
+                recorded[str(entry["media_id"]).removeprefix("asset-")] = entry
+    return [
+        {**entry, **recorded.get(str(entry["media_id"]).removeprefix("asset-"), {})}
+        for entry in projection
+    ]
+
+
+# Production events before the first message that the app's thread creation writes; media is
+# re-projected from the replayed sources instead of copied.
+SEEDED_THREAD_EVENTS = frozenset({"format_prompt", "action_select_format"})
+
+
+def _runtime_seed_events(
+    thread_events: list[dict[str, Any]], media: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    seeded = [{"role": "system", "event_type": "thread_created", "content": None, "payload": None}]
+    for event in _event_order(thread_events):
+        if event.get("kind") == "user_message":
+            break
+        if event.get("kind") in SEEDED_THREAD_EVENTS:
+            seeded.append(
+                {
+                    "role": str(event.get("actor") or "system"),
+                    "event_type": str(event["kind"]),
+                    "content": event.get("content"),
+                    "payload": event.get("payload"),
+                }
+            )
+    seeded.append(
+        {
+            "role": "user",
+            "event_type": "media_added",
+            "content": None,
+            "payload": {"media": media, "media_count": len(media)},
+        }
+    )
+    return seeded
+
+
 def seed_replay_database(
     *,
     inputs: ReplayInputs,
@@ -424,8 +506,15 @@ def seed_replay_database(
     thread_id: uuid.UUID,
     plan_id: uuid.UUID,
     item_id: uuid.UUID,
+    session_id: uuid.UUID | None = None,
+    thread_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Copy sources and create the minimum owned graph the real controllers need."""
+    """Copy sources and create the minimum owned graph the real controllers need.
+
+    With ``thread_events`` (a runtime-v2 production thread) the thread is a runtime-v2 one
+    with its own Creator session, set up the way the app's thread creation and media attach
+    leave it before the creator's first message.
+    """
 
     from app import storage
     from app.database import sync_session
@@ -433,6 +522,7 @@ def seed_replay_database(
         ContentPlan,
         CreationThread,
         CreationThreadEvent,
+        CreatorAgentSession,
         Persona,
         PlanItem,
         PlanItemAsset,
@@ -591,26 +681,58 @@ def seed_replay_database(
             theme=str(old_persona.get("theme") or "") or None,
             user_edited=True,
         )
-        thread = CreationThread(
-            id=thread_id,
-            creator_id=user_id,
-            content_plan_id=plan_id,
-            active_plan_item_id=item_id,
-            title="Creator prompt fidelity replay",
-            revision=1,
-            state={
+        if thread_events is None:
+            state: dict[str, Any] = {
                 "intent": inputs.seed_description,
                 "edit_format": item_format,
                 "media": media_projection,
                 "media_count": len(media_projection),
                 "title_source": "replay",
-            },
+            }
+            seed_events = [
+                {
+                    "role": "user",
+                    "event_type": "thread_created",
+                    "content": inputs.seed_description,
+                    "payload": {"source": "local_creator_replay"},
+                }
+            ]
+            session = None
+        else:
+            media_projection = _with_recorded_media(media_projection, thread_events)
+            state = {
+                "media": media_projection,
+                "media_count": len(media_projection),
+                "edit_format": item_format,
+            }
+            if _sent_from_app(thread_events):
+                from app.services.phone_destination import with_device_intent
+
+                state = with_device_intent(state, native_client=True, user_id=user_id) or state
+            seed_events = _runtime_seed_events(thread_events, media_projection)
+            session = CreatorAgentSession(
+                id=session_id or uuid.uuid4(),
+                creator_id=user_id,
+                plan_item_id=item_id,
+                ownership_epoch=0,
+            )
+        thread = CreationThread(
+            id=thread_id,
+            creator_id=user_id,
+            runtime_version=1 if session is None else 2,
+            content_plan_id=plan_id,
+            active_plan_item_id=item_id,
+            active_creator_agent_session_id=session.id if session is not None else None,
+            title="Creator prompt fidelity replay",
+            revision=len(seed_events),
+            state=state,
         )
         # The database enforces composite owner foreign keys that are not all
         # represented as ORM relationships. Flush in dependency order.
-        for row in (user, persona, plan, item, thread):
-            db.add(row)
-            db.flush()
+        for row in (user, persona, plan, item, session, thread):
+            if row is not None:
+                db.add(row)
+                db.flush()
         for row in asset_rows:
             db.add(
                 PlanItemAsset(
@@ -633,18 +755,16 @@ def seed_replay_database(
                     media_status="pending",
                 )
             )
-        db.add(
-            CreationThreadEvent(
-                thread_id=thread_id,
-                sequence=0,
-                client_event_id=f"replay-seed-{user_id.hex}",
-                role="user",
-                event_type="thread_created",
-                content=inputs.seed_description,
-                payload={"source": "local_creator_replay"},
-                revision=1,
+        for sequence, event in enumerate(seed_events):
+            db.add(
+                CreationThreadEvent(
+                    thread_id=thread_id,
+                    sequence=sequence,
+                    client_event_id=f"replay-seed-{sequence}-{user_id.hex}",
+                    revision=sequence + 1,
+                    **event,
+                )
             )
-        )
         db.commit()
 
     return {
@@ -652,6 +772,8 @@ def seed_replay_database(
         "content_plan_id": str(plan_id),
         "plan_item_id": str(item_id),
         "thread_id": str(thread_id),
+        "runtime_version": 1 if session is None else 2,
+        "seed_events": [event["event_type"] for event in seed_events],
         "source_count": len(imported),
         "imported": imported,
         "cached_clip_analysis_count": len(inputs.clip_analysis_cache),
@@ -843,6 +965,466 @@ async def confirm_creator_plan(
         return confirmed.model_dump(mode="json")
 
 
+TURN_SETTLED = frozenset({"awaiting_approval", "completed", "failed", "cancelled", "superseded"})
+# What the app sends beside the text of a message; the user_message event stores each one.
+ANSWER_FIELDS = (
+    "clip_selection",
+    "choice_selection",
+    "song_order",
+    "song_range",
+    "moment_order",
+    "protected_region",
+    "scope",
+    "manual_edits",
+)
+
+
+class TurnDiverged(ReplaySafetyError):
+    """The replayed turn ended where production's did not, so later turns cannot follow it."""
+
+    def __init__(self, detail: dict[str, Any]) -> None:
+        self.detail = detail
+        super().__init__(detail["reason"])
+
+
+@dataclass(frozen=True)
+class RecordedTurn:
+    """One creator message of the production thread, as its user_message event recorded it."""
+
+    turn_id: str
+    message: str
+    client_protocol: int | None
+    payload: dict[str, Any]
+    approved: bool
+    # The render the approval queued and the failure code the thread showed for it, if any.
+    job_id: str | None = None
+    render_failure: str | None = None
+
+
+def recorded_turns(thread_events: list[dict[str, Any]], target_turn_id: str) -> list[RecordedTurn]:
+    """The creator's messages in order, up to the one whose approval dispatched the job."""
+
+    def by_turn(kind: str, key: str) -> dict[str, Any]:
+        return {
+            str((event.get("payload") or {}).get("turn_id")): (event.get("payload") or {}).get(key)
+            for event in _event_order(thread_events)
+            if event.get("kind") == kind
+        }
+
+    approved = by_turn("approval_approved", "approval_id")
+    queued_jobs = by_turn("render_queued", "job_id")
+    render_failures = by_turn("assistant_render_failed", "code")
+    turns: list[RecordedTurn] = []
+    for event in _event_order(thread_events):
+        payload = event.get("payload") or {}
+        if event.get("kind") != "user_message" or not payload.get("turn_id"):
+            continue
+        protocol = payload.get("client_protocol")
+        turn = RecordedTurn(
+            turn_id=str(payload["turn_id"]),
+            message=str(event.get("content") or ""),
+            client_protocol=int(protocol) if isinstance(protocol, int) else None,
+            payload=payload,
+            approved=str(payload["turn_id"]) in approved,
+            job_id=queued_jobs.get(str(payload["turn_id"])),
+            render_failure=render_failures.get(str(payload["turn_id"])),
+        )
+        turns.append(turn)
+        if turn.turn_id == target_turn_id:
+            if not turn.approved:
+                raise ReplaySafetyError(
+                    f"Production turn {target_turn_id} dispatched the job without a recorded "
+                    "approval; only approval-dispatched jobs can be replayed turn by turn"
+                )
+            return turns
+    raise ReplaySafetyError(f"The thread records no creator message for turn {target_turn_id}")
+
+
+def _model_fields(field: str) -> set[str] | None:
+    from typing import get_args
+
+    from pydantic import BaseModel
+
+    from app.kria.api_schemas import SubmitTurnBody
+
+    annotation = SubmitTurnBody.model_fields[field].annotation
+    model = next(
+        (
+            arg
+            for arg in get_args(annotation)
+            if isinstance(arg, type) and issubclass(arg, BaseModel)
+        ),
+        None,
+    )
+    return set(model.model_fields) if model is not None else None
+
+
+def _turn_body(
+    turn: RecordedTurn, *, revision: int, replay_turn_of: dict[str, str]
+) -> tuple[Any, list[str]]:
+    """The request body the app sent, with production turn ids mapped to the replay's."""
+
+    from pydantic import ValidationError
+
+    from app.kria.api_schemas import SubmitTurnBody
+
+    answers: dict[str, Any] = {}
+    for field in ANSWER_FIELDS:
+        value = turn.payload.get(field)
+        if value is None:
+            continue
+        allowed = _model_fields(field)
+        if allowed is not None and isinstance(value, dict):
+            # The server stamps its own keys onto the stored answer (`delegated`, generations).
+            value = {key: item for key, item in value.items() if key in allowed}
+        answers[field] = value
+    link = turn.payload.get("request_outcome_link") or {}
+    context = {
+        key: link[key] for key in ("relation", "client_build", "client_version") if link.get(key)
+    }
+    if replay_turn_of.get(str(link.get("parent_turn_id"))):
+        context["parent_turn_id"] = replay_turn_of[str(link["parent_turn_id"])]
+    try:
+        body = SubmitTurnBody.model_validate(
+            {
+                "message": turn.message,
+                "client_event_id": f"replay-turn-{uuid.uuid4().hex}",
+                "expected_thread_revision": revision,
+                **({"outcome_context": context} if context.get("relation") else {}),
+                **answers,
+            }
+        )
+    except ValidationError as exc:
+        raise ReplaySafetyError(
+            f"Production message of turn {turn.turn_id} does not rebuild as a request "
+            f"({sorted(answers)}): {exc.errors()[:2]}"
+        ) from exc
+    return body, sorted(answers)
+
+
+async def submit_recorded_turn(
+    *,
+    thread_id: uuid.UUID,
+    user_id: uuid.UUID,
+    turn: RecordedTurn,
+    replay_turn_of: dict[str, str],
+) -> tuple[str, list[str]]:
+    """Send one recorded message the way `POST /creation-threads/<id>/turns` does."""
+
+    from app.database import AsyncSessionLocal
+    from app.kria.runtime import RuntimeFailure, submit_turn
+    from app.models import CreationThread
+    from app.routes.kria_runtime import _publish_turn
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    set_client_protocol(turn.client_protocol)
+    try:
+        async with AsyncSessionLocal() as db:
+            thread = await db.get(CreationThread, thread_id)
+            if thread is None:
+                raise ReplaySafetyError("Seeded replay thread disappeared")
+            body, answers = _turn_body(
+                turn, revision=int(thread.revision), replay_turn_of=replay_turn_of
+            )
+            try:
+                accepted, should_publish = await submit_turn(
+                    db, thread_id=thread_id, creator_id=user_id, body=body
+                )
+            except RuntimeFailure as failure:
+                await db.rollback()
+                raise TurnDiverged(
+                    {
+                        "production_turn_id": turn.turn_id,
+                        "reason": f"The runtime refused the creator's message of production turn "
+                        f"{turn.turn_id}: {failure.code}: {failure.message}",
+                    }
+                ) from failure
+    finally:
+        clear_request_context()
+    if should_publish:
+        _publish_turn(accepted.turn_id)
+    return accepted.turn_id, answers
+
+
+async def approve_replayed_turn(
+    *,
+    thread_id: uuid.UUID,
+    user_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    client_protocol: int | None,
+    render_shape: dict[str, str],
+) -> str:
+    """Approve the turn's pending approval the way the app's Approve tap does."""
+
+    from sqlalchemy import select
+
+    from app.database import AsyncSessionLocal
+    from app.kria.api_schemas import ApprovalDecisionBody
+    from app.kria.runtime import RuntimeFailure, approval_fingerprint, decide_approval
+    from app.models import CreationThread, CreatorAgentApproval
+    from app.routes.kria_runtime import _publish_approval, _publish_turn
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    set_client_protocol(client_protocol)
+    try:
+        async with AsyncSessionLocal() as db:
+            approval = (
+                (
+                    await db.execute(
+                        select(CreatorAgentApproval)
+                        .where(
+                            CreatorAgentApproval.turn_id == turn_id,
+                            CreatorAgentApproval.status == "pending",
+                        )
+                        .order_by(CreatorAgentApproval.created_at.desc())
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            thread = await db.get(CreationThread, thread_id)
+            if approval is None or thread is None:
+                raise ReplaySafetyError(f"Replay turn {turn_id} has no pending approval")
+            body = ApprovalDecisionBody(
+                expected_thread_revision=int(thread.revision),
+                expected_draft_revision=int(approval.draft_revision or 0),
+                expected_approval_fingerprint=approval_fingerprint(approval),
+                **render_shape,
+            )
+            try:
+                decided, successor = await decide_approval(
+                    db,
+                    thread_id=thread_id,
+                    approval_id=approval.id,
+                    creator_id=user_id,
+                    decision="approve",
+                    body=body,
+                )
+            except RuntimeFailure as failure:
+                await db.rollback()
+                raise ReplaySafetyError(
+                    f"The runtime refused the approval: {failure.code}: {failure.message}"
+                ) from failure
+    finally:
+        clear_request_context()
+    _publish_approval(decided.approval_id)
+    if successor is not None:
+        _publish_turn(successor)
+    return decided.approval_id
+
+
+def wait_for_turn(
+    turn_id: uuid.UUID, *, settled: frozenset[str], timeout_s: float, poll_interval_s: float
+) -> dict[str, Any]:
+    from app.database import sync_session
+    from app.models import CreatorAgentTurn
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, turn_id)
+            state = {"status": turn.status, "error": turn.error} if turn else {"status": None}
+        if state["status"] in settled:
+            return state
+        if time.monotonic() > deadline:
+            raise ReplaySafetyError(
+                f"Timed out waiting for Kria turn {turn_id}; last status {state['status']}"
+            )
+        time.sleep(min(max(poll_interval_s, 0.2), 30.0))
+
+
+def turn_reply(turn_id: uuid.UUID) -> dict[str, Any]:
+    """What the thread showed after the replayed message: event kinds and the last reply."""
+
+    from app.database import sync_session
+    from app.models import CreationThreadEvent, CreatorAgentTurn
+
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, turn_id)
+        source = db.get(CreationThreadEvent, turn.source_event_id) if turn else None
+        rows = (
+            db.query(CreationThreadEvent)
+            .filter(
+                CreationThreadEvent.thread_id == turn.thread_id,
+                CreationThreadEvent.sequence > source.sequence,
+            )
+            .order_by(CreationThreadEvent.sequence)
+            .all()
+            if source is not None
+            else []
+        )
+        reply = next((row for row in reversed(rows) if row.role == "assistant"), None)
+        return {
+            "events": [row.event_type for row in rows],
+            "reply_kind": reply.event_type if reply else None,
+            "reply": (reply.content or "")[:400] if reply else None,
+            "reply_code": (reply.payload or {}).get("code") if reply else None,
+        }
+
+
+def _item_job_id(item_id: uuid.UUID) -> str | None:
+    from app.database import sync_session
+    from app.models import PlanItem
+
+    with sync_session() as db:
+        item = db.get(PlanItem, item_id)
+        return str(item.current_job_id) if item and item.current_job_id else None
+
+
+def _render_shape(job_debug: dict[str, Any]) -> dict[str, str]:
+    """The shape the creator picked for the production job; a default is the server's own."""
+
+    shape = ((job_debug.get("job") or {}).get("all_candidates") or {}).get("creator_render_shape")
+    if not isinstance(shape, dict) or shape.get("origin") != "explicit_pick":
+        return {}
+    return {
+        **{key: shape[key] for key in ("output_orientation", "landscape_fit") if shape.get(key)},
+        "render_shape_origin": "explicit_pick",
+    }
+
+
+def replay_recorded_thread(
+    runner: asyncio.Runner,
+    *,
+    ids: dict[str, uuid.UUID],
+    turns: list[RecordedTurn],
+    render_shape: dict[str, str],
+    timeout_s: float,
+    poll_interval_s: float,
+    log: list[dict[str, Any]],
+    on_progress: Callable[[], None],
+) -> dict[str, Any]:
+    """Send the creator's messages in order and approve where the creator approved.
+
+    Each message waits for the previous turn (and any render it approved) to settle, as in
+    production. A turn that production approved must reach an approval in the replay too;
+    otherwise the replay stops with what the replay showed instead.
+    """
+
+    replay_turn_of: dict[str, str] = {}
+    worker_state: dict[str, Any] = {}
+    for index, recorded in enumerate(turns):
+        target = index == len(turns) - 1
+        replay_turn_id, answers = runner.run(
+            submit_recorded_turn(
+                thread_id=ids["thread_id"],
+                user_id=ids["user_id"],
+                turn=recorded,
+                replay_turn_of=replay_turn_of,
+            )
+        )
+        replay_turn_of[recorded.turn_id] = replay_turn_id
+        entry: dict[str, Any] = {
+            "production_turn_id": recorded.turn_id,
+            "replay_turn_id": replay_turn_id,
+            "message": recorded.message[:300],
+            "client_protocol": recorded.client_protocol,
+            "answers_sent": answers,
+            "production_approved": recorded.approved,
+        }
+        log.append(entry)
+        state = wait_for_turn(
+            uuid.UUID(replay_turn_id),
+            settled=TURN_SETTLED,
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+        )
+        entry.update(status=state["status"], **turn_reply(uuid.UUID(replay_turn_id)))
+        on_progress()
+        if not recorded.approved:
+            continue
+        if state["status"] != "awaiting_approval":
+            raise TurnDiverged(
+                {
+                    "production_turn_id": recorded.turn_id,
+                    "replay_turn_id": replay_turn_id,
+                    "replay_status": state["status"],
+                    "replay_reply": entry.get("reply"),
+                    "reason": f"Production approved a draft after the creator's message "
+                    f"{recorded.message[:80]!r}; the replay's turn ended {state['status']} "
+                    f"({entry.get('reply_kind')}: {str(entry.get('reply'))[:160]!r}) instead",
+                }
+            )
+        previous_job_id = _item_job_id(ids["item_id"])
+        entry["approval_id"] = runner.run(
+            approve_replayed_turn(
+                thread_id=ids["thread_id"],
+                user_id=ids["user_id"],
+                turn_id=uuid.UUID(replay_turn_id),
+                client_protocol=recorded.client_protocol,
+                render_shape=render_shape if target else {},
+            )
+        )
+        worker_state = wait_for_worker(
+            item_id=ids["item_id"],
+            session_id=ids["session_id"],
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+            previous_job_id=previous_job_id,
+            turn_id=uuid.UUID(replay_turn_id),
+        )
+        job = worker_state.get("job") or {}
+        entry["job"] = {key: job.get(key) for key in ("id", "status", "failure_reason")}
+        on_progress()
+        if target:
+            break
+        if stop := _stop_after_render(recorded, job):
+            worker_state["stopped_early"] = {
+                "after_production_turn": recorded.turn_id,
+                "messages_replayed": index + 1,
+                "messages_recorded": len(turns),
+                "production_render": {
+                    "job_id": recorded.job_id,
+                    "failure_reason": recorded.render_failure,
+                },
+                "replay_render": entry["job"],
+                "reason": stop,
+            }
+            return worker_state
+        # Both renders failed: the creator read that before the next message.
+        try:
+            wait_for_turn(
+                uuid.UUID(replay_turn_id),
+                settled=TURN_SETTLED - {"awaiting_approval"},
+                timeout_s=min(timeout_s, 300.0),
+                poll_interval_s=poll_interval_s,
+            )
+        except ReplaySafetyError:
+            entry["turn_settled_after_render"] = False
+    return worker_state
+
+
+FAILED_JOB_STATUSES = frozenset({"failed", "processing_failed"})
+
+
+def _stop_after_render(recorded: RecordedTurn, job: dict[str, Any]) -> str | None:
+    """Why the replay cannot send the creator's next message after this render, or None.
+
+    The next message answered what production's render did. When the replay's render did
+    something else, that message no longer fits; a render waiting for a phone also holds
+    every later turn of the thread, since only a phone finishes it.
+    """
+
+    replay_failed = job.get("status") in FAILED_JOB_STATUSES
+    if recorded.render_failure is not None and not replay_failed:
+        return (
+            f"Production's render after this message failed ({recorded.render_failure}); the "
+            f"replay's ended {job.get('status')}. The creator's later messages answered that "
+            "failure, so they are not sent and this render is the result."
+        )
+    if replay_failed and recorded.render_failure is None:
+        return (
+            f"The replay's render after this message failed ({job.get('failure_reason')}) "
+            "where production's did not; the later messages followed production's render."
+        )
+    if job.get("status") == "awaiting_device":
+        return (
+            "This render waits for a phone (awaiting_device) and the next message would queue "
+            "behind it, so the replay stops with this device plan."
+        )
+    return None
+
+
 def _row_snapshot(db: Any, *, item_id: uuid.UUID, session_id: uuid.UUID) -> dict[str, Any]:
     from app.models import CreatorAgentSession, Job, PlanItem
     from app.schemas.edit_proposal import parse_edit_proposal
@@ -934,9 +1516,18 @@ def wait_for_worker(
     timeout_s: float,
     poll_interval_s: float,
     on_snapshot: Callable[[dict[str, Any]], None] | None = None,
+    previous_job_id: str | None = None,
+    turn_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
+    """Wait for the job a confirmation (or, with ``turn_id``, a Kria approval) dispatched.
+
+    ``previous_job_id`` is the item's job before the approval: an earlier turn's render that
+    already ended must not be read as this one.
+    """
+
     from app import storage
     from app.database import sync_session
+    from app.models import CreatorAgentTurn
 
     deadline = time.monotonic() + timeout_s
     last: dict[str, Any] = {}
@@ -959,19 +1550,32 @@ def wait_for_worker(
             if on_snapshot is not None:
                 on_snapshot(last)
             job = last.get("job") or {}
-            proposal = last.get("proposal") or {}
-            session_state = last.get("session") or {}
-            if not job and session_state.get("status") in {"failed", "cancelled"}:
-                raise ReplaySafetyError(
-                    f"Creator execution stopped before dispatch: {session_state['status']}"
-                )
+            if previous_job_id is not None and job.get("id") == previous_job_id:
+                job = {}
+            if turn_id is not None:
+                turn = db.get(CreatorAgentTurn, turn_id)
+                turn_status = turn.status if turn is not None else None
+                if not job and turn_status in TURN_SETTLED - {"awaiting_approval"}:
+                    raise ReplaySafetyError(
+                        f"The approved Kria turn ended {turn_status} without dispatching a "
+                        f"render: {turn.error if turn is not None else None}"
+                    )
+            else:
+                proposal = last.get("proposal") or {}
+                session_state = last.get("session") or {}
+                if not job and session_state.get("status") in {"failed", "cancelled"}:
+                    raise ReplaySafetyError(
+                        f"Creator execution stopped before dispatch: {session_state['status']}"
+                    )
+                if proposal.get("status") == "failed" and not job:
+                    raise ReplaySafetyError(
+                        "Proposal worker failed before dispatch: "
+                        f"{proposal.get('failure') or proposal}"
+                    )
             if job.get("status") in TERMINAL_JOB_STATUSES:
+                last["job"] = job
                 last["outputs"] = _output_receipts(last, storage, source_paths)
                 return last
-            if proposal.get("status") == "failed" and not job:
-                raise ReplaySafetyError(
-                    f"Proposal worker failed before dispatch: {proposal.get('failure') or proposal}"
-                )
         time.sleep(min(max(poll_interval_s, 0.2), 30.0))
     raise ReplaySafetyError(f"Timed out waiting for proposal/worker; last state: {last}")
 
@@ -1127,6 +1731,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="flag snapshot (tests/prod_flags.snapshot.json); replaces --enable-fidelity",
     )
+    parser.add_argument(
+        "--thread-events",
+        type=Path,
+        default=None,
+        help="production runtime-v2 thread events ({'events': [...]}); replays its messages "
+        "turn by turn up to the job debug's kria_turn_id",
+    )
     parser.add_argument("--timeout-s", type=float, default=1800.0)
     parser.add_argument("--poll-interval-s", type=float, default=5.0)
     return parser
@@ -1150,6 +1761,9 @@ def main(argv: list[str] | None = None) -> int:
             "manifest": str(args.manifest.expanduser().resolve()),
             "job_debug": str(args.job_debug.expanduser().resolve()),
             "item_debug": str(args.item_debug.expanduser().resolve()),
+            "thread_events": str(args.thread_events.expanduser().resolve())
+            if args.thread_events
+            else None,
         },
     }
     runner = asyncio.Runner()
@@ -1177,7 +1791,20 @@ def main(argv: list[str] | None = None) -> int:
             "transcript": inputs.transcript_cache,
         }
         _write_receipt(receipt_path, receipt)
-        ids = {key: uuid.uuid4() for key in ("user_id", "thread_id", "plan_id", "item_id")}
+        thread_events = _read_json(args.thread_events).get("events") if args.thread_events else None
+        if thread_events is not None and not args.render:
+            raise ReplaySafetyError(
+                "A runtime-v2 thread replay approves and renders: pass --render"
+            )
+        turns = (
+            recorded_turns(thread_events, str(inputs.job_debug.get("kria_turn_id") or ""))
+            if thread_events is not None
+            else None
+        )
+        ids = {
+            key: uuid.uuid4()
+            for key in ("user_id", "thread_id", "plan_id", "item_id", "session_id")
+        }
         receipt["seed"] = seed_replay_database(
             inputs=inputs,
             output_dir=output_dir,
@@ -1185,10 +1812,33 @@ def main(argv: list[str] | None = None) -> int:
             thread_id=ids["thread_id"],
             plan_id=ids["plan_id"],
             item_id=ids["item_id"],
+            session_id=ids["session_id"],
+            thread_events=thread_events,
         )
         _write_receipt(receipt_path, receipt)
         receipt["analysis"] = analyze_replay_media(item_id=ids["item_id"])
         _write_receipt(receipt_path, receipt)
+        if turns is not None:
+            receipt["turns"] = []
+            worker_state = replay_recorded_thread(
+                runner,
+                ids=ids,
+                turns=turns,
+                render_shape=_render_shape(inputs.job_debug),
+                timeout_s=args.timeout_s,
+                poll_interval_s=args.poll_interval_s,
+                log=receipt["turns"],
+                on_progress=lambda: _write_receipt(receipt_path, receipt),
+            )
+            receipt["worker"] = worker_state
+            receipt["job"] = worker_state.get("job")
+            receipt["outputs"] = worker_state.get("outputs", [])
+            receipt["device_plan"] = device_plan_receipt(worker_state.get("job"), output_dir)
+            receipt["stopped_early"] = worker_state.get("stopped_early")
+            receipt["finished_at"] = datetime.now(UTC).isoformat()
+            _write_receipt(receipt_path, receipt)
+            print(json.dumps({"receipt": str(receipt_path), "mode": "thread", "status": "ok"}))
+            return 0
         plan = runner.run(
             run_creator_planning(
                 item_id=ids["item_id"],
@@ -1250,6 +1900,8 @@ def main(argv: list[str] | None = None) -> int:
         receipt["error"] = {"type": type(exc).__name__, "message": str(exc)}
         if isinstance(exc, MainCreatorQuestion):
             receipt["error"]["question"] = exc.question
+        if isinstance(exc, TurnDiverged):
+            receipt["error"]["diverged_turn"] = exc.detail
         try:
             _write_receipt(receipt_path, receipt)
         except OSError:

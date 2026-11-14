@@ -115,6 +115,22 @@ def build(previous: dict[str, Any] | None) -> dict[str, Any]:
     return {"schema": SCHEMA_VERSION, "sources": sources, "settings": settings}
 
 
+def type_error(field: Any, value: Any) -> str | None:
+    """Why ``value`` is not what ``Settings`` declares for the field, or None.
+
+    Strict, from the JSON the snapshot stores: a bare string is not a list, "true" is not a
+    boolean, so a mistyped ``set`` cannot reach a test profile or a replay environment.
+    """
+
+    from pydantic import TypeAdapter, ValidationError
+
+    try:
+        TypeAdapter(field.annotation).validate_json(json.dumps(value), strict=True)
+    except ValidationError as exc:
+        return f"expected {field.annotation}, found {value!r} ({exc.errors()[0]['msg']})"
+    return None
+
+
 def apply_evidence(
     snapshot: dict[str, Any], values: dict[str, Any], *, source: str, description: str | None
 ) -> None:
@@ -122,6 +138,8 @@ def apply_evidence(
     for name, value in values.items():
         if name not in known:
             raise SystemExit(f"unknown or out-of-scope setting: {name}")
+        if reason := type_error(known[name], _jsonable(value)):
+            raise SystemExit(f"{name}: {reason}")
         snapshot["settings"][name] = {"value": _jsonable(value), "source": source}
     if description:
         snapshot["sources"][source] = description
@@ -210,8 +228,8 @@ def problems(snapshot: dict[str, Any]) -> list[str]:
                 f"{name}: code default is now {_default_of(field)!r}, snapshot has "
                 f"{entry.get('value')!r}"
             )
-        if field.annotation is bool and not isinstance(entry.get("value"), bool):
-            found.append(f"{name}: expected a boolean, found {entry.get('value')!r}")
+        if reason := type_error(field, entry.get("value")):
+            found.append(f"{name}: {reason}")
     for name, where in documented_on_in_prod().items():
         entry = entries.get(name)
         if entry and entry.get("value") is not True:

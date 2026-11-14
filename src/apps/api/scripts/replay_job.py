@@ -5,23 +5,23 @@
 Done for a creation bug means the same prompt and footage produced a finished video under
 production settings with the real models. This command does that from a failed job id:
 
-1. Reads the job debug and the plan-item debug from production with
-   ``scripts/admin.py --prod GET`` (GET only) and copies the item's footage out of the storage
-   bucket with ``gcloud storage cp gs://... <local>`` (read only; nothing is ever written to it).
+1. Reads the job debug, the plan-item debug and, for a job the app's chat made (runtime v2),
+   the thread's events from production with ``scripts/admin.py --prod GET`` (GET only), and
+   copies the item's footage out of the storage bucket with ``gcloud storage cp gs://...
+   <local>`` (read only; nothing is ever written to it).
 2. Writes the source manifest ``replay_creator.py`` consumes.
 3. Recreates the scratch database, starts a Celery worker on its own queue namespace, and runs
-   ``replay_creator.py --render`` under ``tests/prod_flags.snapshot.json``.
-4. Prints the rendered video path, or the status and failure reason of the replayed job.
+   ``replay_creator.py --render`` under ``tests/prod_flags.snapshot.json``. A chat job is
+   replayed message by message through the Kria runtime, each with the app build's client
+   protocol, approving where the creator approved; an older job through the Main Creator.
+4. Prints the rendered video path or device plan, or the status and failure reason of the
+   replayed job, and whether it failed where production did.
 
 Everything the replay writes is local: scratch Postgres database, Redis database 14 under a
 private key namespace, and a directory below /private/tmp. ``replay_creator`` refuses any other
 target, and this driver hands it a clean environment so no production credential can reach it.
 
-Fidelity limits: the replay drives the Main Creator route and the real orchestrator task, from
-the footage the item holds in storage (the iPhone uploads analysis proxies, not the originals)
-and the creator request recorded on the job. It does not replay the chat turns that led to the
-request, and the snapshot approximates production settings (see
-``scripts/prod_flag_snapshot.py``).
+Fidelity limits are listed in ``docs/runbooks/replay-from-job-id.md``.
 """
 
 from __future__ import annotations
@@ -51,8 +51,9 @@ WORK_ROOT = Path("/private/tmp/nova-replay-job")
 SCRATCH_DATABASE_PREFIX = "nova_creator_fidelity_test_"
 WORKER_QUEUES = (
     "celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,agent-control,"
-    "creator-fidelity-v1"
+    "creator-fidelity-v1,speech-analysis,maintenance"
 )
+LOCAL_POSTGRES_PORT = 5432
 KEPT_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "SHELL")
 MODEL_KEY = re.compile(r"^(?:GEMINI|OPENAI|ANTHROPIC)_API_KEY$")
 REDIS_URL = "redis://localhost:6379/14"
@@ -195,9 +196,36 @@ def _source(
     }
 
 
+THREAD_EVENT_PAGES = 10
+
+
+def production_thread_events(thread_id: str) -> list[dict[str, Any]]:
+    """Every event of the production creation thread, oldest first (GET only)."""
+
+    events: list[dict[str, Any]] = []
+    cursor: str | None = None
+    for _ in range(THREAD_EVENT_PAGES):
+        suffix = f"&cursor={quote(cursor, safe='')}" if cursor else ""
+        page = prod_get(f"/admin/creation-threads/{uuid.UUID(thread_id)}/events?limit=500{suffix}")
+        events.extend(page.get("events") or [])
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return events
+    raise ReplayJobError(f"Thread {thread_id} has more than {THREAD_EVENT_PAGES * 500} events")
+
+
 def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]:
     job_debug = prod_get(f"/admin/jobs/{job_id}/debug")
     job = job_debug["job"]
+    thread_events: list[dict[str, Any]] | None = None
+    if job_debug.get("runtime_version") == 2:
+        # The app's chat thread made this job: its messages, not the compiled request, are
+        # what the replay sends.
+        if not job_debug.get("thread_id") or not job_debug.get("kria_turn_id"):
+            raise ReplayJobError(
+                "A runtime-v2 job without a thread and Kria turn id cannot be replayed turn by turn"
+            )
+        thread_events = production_thread_events(str(job_debug["thread_id"]))
     item_id = job.get("content_plan_item_id")
     if not item_id:
         raise ReplayJobError(
@@ -294,6 +322,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         ("source-manifest.json", manifest),
         ("job-debug.json", job_debug),
         ("item-debug.json", item_debug),
+        *((("thread-events.json", {"events": thread_events}),) if thread_events else ()),
     ):
         (inputs_dir / name).write_text(
             json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -302,6 +331,8 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         "job": job,
         "item": item,
         "item_id": str(item_id),
+        "thread_events": inputs_dir / "thread-events.json" if thread_events else None,
+        "creator_messages": sum(1 for e in thread_events or [] if e.get("kind") == "user_message"),
         "job_agent_names": sorted(
             {r["agent_name"] for r in job_debug.get("agent_runs") or [] if r.get("agent_name")}
         ),
@@ -511,7 +542,13 @@ def scratch_database_url(dotenv: dict[str, str], database: str) -> str:
     configured = urlsplit(dotenv.get("DATABASE_URL") or os.environ.get("DATABASE_URL") or "")
     if (configured.hostname or "").lower() not in {"localhost", "127.0.0.1", "::1"}:
         raise ReplayJobError("DATABASE_URL in .env is not local; refusing to derive a scratch URL")
-    host = f"localhost:{configured.port or 5432}"
+    if (configured.port or LOCAL_POSTGRES_PORT) != LOCAL_POSTGRES_PORT:
+        raise ReplayJobError(
+            f"DATABASE_URL in .env uses port {configured.port}, not the local dev server's "
+            f"{LOCAL_POSTGRES_PORT}; a tunnel (fly proxy) also listens on localhost, so the "
+            "scratch database is not created there"
+        )
+    host = f"localhost:{LOCAL_POSTGRES_PORT}"
     candidates = [
         configured._replace(scheme="postgresql", path=f"/{database}", query="", fragment="")
     ]
@@ -662,7 +699,7 @@ from app.models import AgentRun
 
 with sync_session() as db:
     runs = [
-        {"agent_name": r.agent_name, "outcome": r.outcome}
+        {"agent_name": r.agent_name, "outcome": r.outcome, "cost_usd": float(r.cost_usd or 0)}
         for r in db.query(AgentRun).order_by(AgentRun.created_at)
     ]
 print(json.dumps({"runs": runs, "success": sorted(SUCCESS_OUTCOMES)}))
@@ -727,7 +764,45 @@ def compare_routes(
         "replay_only_agents": sorted(set(ran) - production),
         "replay_failed_agents": failed,
         "diverged_failures": sorted(set(failed) - production) if trace_complete else [],
+        "replay_agent_runs": len(recorded["runs"]),
+        "replay_spend_usd": round(sum(r.get("cost_usd") or 0 for r in recorded["runs"]), 4),
     }
+
+
+def classify_failure(
+    result: dict[str, Any], route: dict[str, Any], production_reason: str | None
+) -> None:
+    """Say whether a failed replay is the production job's failure or one of its own.
+
+    A failure inside an agent production never ran, or a different failure reached after
+    such agents, did not happen where production failed: printing it as the job's
+    remaining failure would be stand-in evidence.
+    """
+
+    if result["outcome"] != "failed":
+        return
+    reproduced = result["failure_reason"] == production_reason
+    result["production_failure_reproduced"] = reproduced
+    if route["diverged_failures"]:
+        where = f"inside {', '.join(route['diverged_failures'])}, which production never ran"
+    elif not reproduced and route["production_trace_complete"] and route["replay_only_agents"]:
+        where = (
+            f"with {result['failure_reason']} after running "
+            f"{', '.join(route['replay_only_agents'])}, which production never ran (production "
+            f"failed with {production_reason})"
+        )
+    else:
+        return
+    result["replay_failure"] = {
+        "failure_reason": result["failure_reason"],
+        "error_detail": result["error_detail"],
+    }
+    result["outcome"] = "diverged_from_production"
+    result["failure_reason"] = (
+        f"The replay failed {where} for this plan item. It did not fail where production did, "
+        "so it is not the production job's failure: replay_failure is what the replay hit; "
+        "check the flag snapshot (scripts/prod_flag_snapshot.py unverified) and the turns."
+    )
 
 
 def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
@@ -740,11 +815,14 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
     ]
     error = (receipt.get("error") or {}).get("message")
     question = (receipt.get("error") or {}).get("question")
+    diverged_turn = (receipt.get("error") or {}).get("diverged_turn")
     device_plan = receipt.get("device_plan")
     if videos:
         outcome = "video_rendered"
     elif question:
         outcome = "main_creator_question"
+    elif diverged_turn:
+        outcome = "diverged_from_production"
     elif device_plan and device_plan.get("complete"):
         outcome = "device_plan_ready"
     elif device_plan:
@@ -762,6 +840,10 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
         "video_paths": videos,
         "device_plan": device_plan,
         "main_creator_question": question,
+        "diverged_turn": diverged_turn,
+        "creator_client_protocol": (job.get("all_candidates") or {}).get("creator_client_protocol"),
+        "turns": receipt.get("turns"),
+        "stopped_early": receipt.get("stopped_early"),
         "receipt": str(receipt_path),
     }
 
@@ -796,6 +878,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"job {job_id}: status={info['job']['status']} "
             f"reason={info['job'].get('failure_reason')} sources={info['source_count']} "
+            f"creator_messages={info['creator_messages']} "
             f"coverage={json.dumps(info['source_coverage'])}"
         )
         if args.fetch_only:
@@ -835,6 +918,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--render",
                 "--timeout-s",
                 str(args.timeout_s),
+                *(("--thread-events", str(info["thread_events"])) if info["thread_events"] else ()),
             ],
             cwd=API_ROOT,
             env=env,
@@ -844,19 +928,21 @@ def main(argv: list[str] | None = None) -> int:
         result["replay_exit_code"] = completed.returncode
         route = compare_routes(production, trace_complete, replay_agents(worker_env))
         result["route_comparison"] = route
-        if result["outcome"] == "failed" and route["diverged_failures"]:
-            result["replay_failure"] = {
-                "failure_reason": result["failure_reason"],
-                "error_detail": result["error_detail"],
-            }
-            result["outcome"] = "diverged_from_production"
-            result["failure_reason"] = (
-                f"The replay failed inside {', '.join(route['diverged_failures'])}, which "
-                "production never ran for this plan item. That failure is the replay's own, "
-                "not the production job's: check the flag snapshot "
-                "(scripts/prod_flag_snapshot.py unverified) for the setting that selects it."
-            )
-        result["source_job"] = {"id": job_id, "failure_reason": info["job"].get("failure_reason")}
+        # A replay that stopped at an earlier render is compared with production's render there.
+        compared = (result.get("stopped_early") or {}).get("production_render") or {
+            "job_id": job_id,
+            "failure_reason": info["job"].get("failure_reason"),
+        }
+        result["compared_production_render"] = compared
+        classify_failure(result, route, compared["failure_reason"])
+        result["source_job"] = {
+            "id": job_id,
+            "failure_reason": info["job"].get("failure_reason"),
+            "creator_client_protocol": (info["job"].get("all_candidates") or {}).get(
+                "creator_client_protocol"
+            ),
+            "replayed_route": "kria_thread_turns" if info["thread_events"] else "main_creator",
+        }
         print(json.dumps(result, indent=2, ensure_ascii=False))
         succeeded = result["outcome"] in {"video_rendered", "device_plan_ready"}
         return 0 if succeeded and completed.returncode == 0 else 1
