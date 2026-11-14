@@ -1,0 +1,238 @@
+{
+  "prompt_version": "be-1c1185bddc2d",
+  "test_run_id": "rf-kri1392-scope-20261114-a",
+  "spent_usd": 0.2891,
+  "reservation_total_usd": 0.9338,
+  "rows": {
+    "font-different": {
+      "message": "make the font different",
+      "expected": "edit",
+      "reservation_usd": 0.040587,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"make the font different\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 6.9
+    },
+    "title-different-color": {
+      "message": "give the title a different colour",
+      "expected": "edit",
+      "reservation_usd": 0.040594,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"change\",\n      \"target_requirement_id\": \"r1\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"Sunday harbour run\",\n      \"description\": \"different colour\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 9.06
+    },
+    "tr-font-different": {
+      "message": "yazı tipini farklı yap",
+      "expected": "edit",
+      "reservation_usd": 0.040588,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"yazı tipini farklı yap\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 6.29
+    },
+    "de-font-different": {
+      "message": "Nimm eine andere Schriftart",
+      "expected": "edit",
+      "reservation_usd": 0.04059,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Nimm eine andere Schriftart\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 6.05
+    },
+    "text-faster": {
+      "message": "Make the text faster",
+      "expected": "edit",
+      "reservation_usd": 0.040585,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"make the text faster\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 9.04
+    },
+    "video-shorter": {
+      "message": "Make the video shorter",
+      "expected": "edit",
+      "reservation_usd": 0.040586,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"change\",\n      \"target_requirement_id\": \"r2\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"make the video shorter\",\n      \"facts\": {\n        \"editor_timing_only\": true\n      }\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 7.07
+    },
+    "shorter-each-text": {
+      "message": "Make the video shorter, showing each text shorter",
+      "expected": "edit",
+      "reservation_usd": 0.040606,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"change\",\n      \"target_requirement_id\": \"r2\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Make the video shorter, showing each text shorter\",\n      \"facts\": {\n        \"editor_timing_only\": true\n      }\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 5.96
+    },
+    "revert": {
+      "message": "Revert to the old version",
+      "expected": "edit",
+      "reservation_usd": 0.040588,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\"brief_updates\":[],\"delegates_all_choices\":false,\"starts_fresh\":false,\"request_scope\":\"edit\"}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 3.39
+    },
+    "undo": {
+      "message": "undo that",
+      "expected": "edit",
+      "reservation_usd": 0.040576,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"remove\",\n      \"target_requirement_id\": \"r1\"\n    },\n    {\n      \"operation\": \"remove\",\n      \"target_requirement_id\": \"r2\"\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 6.83
+    },
+    "speech-cut-quote": {
+      "message": "Cut the part where I say 'um let me start over'.",
+      "expected": "edit",
+      "reservation_usd": 0.040606,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Cut the part where I say 'um let me start over'.\",\n      \"facts\": {\n        \"speech_cleanup\": true,\n        \"cut_lines\": [\n          \"um let me start over\"\n        ]\n      }\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 7.33
+    },
+    "title-again": {
+      "message": "make the title bigger again",
+      "expected": "edit",
+      "reservation_usd": 0.04059,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"change\",\n      \"target_requirement_id\": \"r1\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"Sunday harbour run\",\n      \"description\": \"make the title bigger again\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 5.01
+    },
+    "tr-title-again": {
+      "message": "başlığı tekrar yap",
+      "expected": "edit",
+      "reservation_usd": 0.040586,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 3.84
+    },
+    "long-edit": {
+      "message": "Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. ",
+      "expected": "edit",
+      "reservation_usd": 0.040828,
+      "request_scope": "edit",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"change\",\n      \"target_requirement_id\": \"r1\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"Sunday harbour run\",\n      \"description\": \"Make the title bigger\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"edit\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 7.53
+    },
+    "mixed": {
+      "message": "Make the title red and then redo the whole video from scratch",
+      "expected": "rebuild",
+      "reservation_usd": 0.040616,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"make the title red\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"rebuild\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 11.91
+    },
+    "start-over": {
+      "message": "start over",
+      "expected": "rebuild",
+      "reservation_usd": 0.040577,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": true,\n  \"request_scope\": \"rebuild\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 4.72
+    },
+    "redo-whole": {
+      "message": "redo the whole thing",
+      "expected": "rebuild",
+      "reservation_usd": 0.040585,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [],\n  \"delegates_all_choices\": false,\n  \"request_scope\": \"rebuild\",\n  \"starts_fresh\": false\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 5.31
+    },
+    "new-version": {
+      "message": "make me a new version",
+      "expected": "rebuild",
+      "reservation_usd": 0.040586,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\"brief_updates\": [], \"delegates_all_choices\": false, \"starts_fresh\": false, \"request_scope\": \"rebuild\"}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 6.44
+    },
+    "again-prompt": {
+      "message": "Create the video again based on my prompt",
+      "expected": "rebuild",
+      "reservation_usd": 0.0406,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"rebuild\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 2.91
+    },
+    "vibe": {
+      "message": "give me a completely different vibe",
+      "expected": "rebuild",
+      "reservation_usd": 0.040596,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"a completely different vibe\",\n      \"facts\": {}\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"rebuild\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 9.44
+    },
+    "tr-start-over": {
+      "message": "baştan yap",
+      "expected": "rebuild",
+      "reservation_usd": 0.040578,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"rebuild\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 5.84
+    },
+    "tr-new-version": {
+      "message": "yeni bir versiyon istiyorum",
+      "expected": "rebuild",
+      "reservation_usd": 0.04059,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"rebuild\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 5.66
+    },
+    "de-start-over": {
+      "message": "Mach das Video komplett neu",
+      "expected": "rebuild",
+      "reservation_usd": 0.04059,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"request_scope\": \"rebuild\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 4.86
+    },
+    "es-start-over": {
+      "message": "Hazlo de nuevo desde cero",
+      "expected": "rebuild",
+      "reservation_usd": 0.040588,
+      "request_scope": "rebuild",
+      "clarification": null,
+      "raw_text": "{\n  \"brief_updates\": [],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": true,\n  \"request_scope\": \"rebuild\"\n}",
+      "model": "gemini-3.6-flash",
+      "latency_s": 5.72
+    }
+  }
+}

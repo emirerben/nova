@@ -335,11 +335,125 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any
     return changed
 
 
+# The thread the extractor reads before each authored follow-up: one rendered video.
+_PRIOR_REQUEST = "Make a 20 second video of my Sunday harbour run with a title."
+_PRIOR_REPLY = "Your video is ready: 20 seconds, titled Sunday harbour run."
+# Accepting our own offer never reaches the extractor (`_accepts_redo_offer`).
+_OFFER_WORDS = {"redo", "yeniden yap", "nochmal"}
+
+
+def _extractor_input(message: str):  # noqa: ANN202
+    from app.agents._schemas.brief_extractor import BriefExtractionInput
+    from app.kria.brief import BriefUpdate, apply_updates, render_brief_request
+
+    prior = apply_updates(
+        None,
+        [
+            BriefUpdate(kind="text", scope="title", literal="Sunday harbour run", description="t"),
+            BriefUpdate(
+                kind="timing", scope="global", facts={"duration_s": 20}, description="20 s"
+            ),
+        ],
+        source_turn_id="t1",
+    )
+    return BriefExtractionInput(
+        creator_request=render_brief_request(prior, latest_message=message),
+        user_message=message,
+        conversation=[
+            {"role": "user", "content": _PRIOR_REQUEST},
+            {"role": "assistant", "content": _PRIOR_REPLY},
+            {"role": "user", "content": message},
+        ],
+        current_brief=prior,
+        require_request_scope=True,
+    )
+
+
+def extractor_scopes(*, live: bool, test_run_id: str | None, cap: float) -> dict[str, Any]:
+    """The brief extractor's request_scope per authored message (live), or its price (not)."""
+    import time
+
+    from app.agents._model_client import default_client
+    from app.agents.brief_extractor import BriefExtractorAgent
+    from app.services.ai_cost_control import estimate_call_cost_usd
+    from tests.evals.request_following.record_live import run_spend_usd
+    from tests.evals.runners.eval_runner import RecordingModelClient, build_eval_run_context
+
+    client = RecordingModelClient(default_client()) if live else None
+    agent = BriefExtractorAgent(client)
+    rows: dict[str, Any] = {}
+    for key, message, label in AUTHORED:
+        if message in _OFFER_WORDS:
+            continue
+        agent_input = _extractor_input(message)
+        estimate = estimate_call_cost_usd(
+            model=agent.spec.model,
+            prompt=agent.render_prompt(agent_input),
+            max_output_tokens=agent.max_output_tokens,
+            media_mime=None,
+        )
+        row: dict[str, Any] = {"message": message, "expected": label, "reservation_usd": estimate}
+        if live:
+            if run_spend_usd(test_run_id) + estimate > cap:
+                print(f"cap: stopped before {key}", file=sys.stderr)
+                break
+            started = time.perf_counter()
+            output = agent.run(
+                agent_input, ctx=build_eval_run_context(f"kri1392:{key}", is_live=True)
+            )
+            last = client.invocations[-1]
+            row.update(
+                request_scope=output.request_scope,
+                clarification=output.clarification,
+                raw_text=last.raw_text,
+                model=last.model_used or agent.spec.model,
+                latency_s=round(time.perf_counter() - started, 2),
+            )
+        rows[key] = row
+    return {
+        "prompt_version": agent.spec.prompt_version,
+        "test_run_id": test_run_id,
+        "spent_usd": round(run_spend_usd(test_run_id), 4) if live else 0.0,
+        "reservation_total_usd": round(sum(r["reservation_usd"] for r in rows.values()), 4),
+        "rows": rows,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BEFORE", "AFTER"))
+    parser.add_argument(
+        "--extractor",
+        choices=["price", "live"],
+        help="the brief extractor's request_scope on the authored corpus (paid when live)",
+    )
+    parser.add_argument("--usage-purpose", choices=["live_eval"], default=None)
+    parser.add_argument("--test-run-id", default=None)
+    parser.add_argument("--max-cost-usd", type=float, default=None)
+    parser.add_argument("--approve-reservation", action="store_true")
     args = parser.parse_args(argv)
+    if args.extractor:
+        api = Path.cwd()
+        sys.path.insert(0, str(api))
+        if args.extractor == "live":
+            from tests.evals.request_following.report import _require_live_guards
+
+            _require_live_guards(args, parser)
+            os.environ["AI_COST_CONTROL_ENABLED"] = "true"
+            os.environ.setdefault("AI_USAGE_ENVIRONMENT", "development")
+        result = extractor_scopes(
+            live=args.extractor == "live",
+            test_run_id=args.test_run_id,
+            cap=args.max_cost_usd or 0.0,
+        )
+        text = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
+        if args.out:
+            args.out.write_text(text, encoding="utf-8")
+        print(
+            text if not args.out else json.dumps({k: v for k, v in result.items() if k != "rows"})
+        )
+        return 0
     if args.compare:
         before, after = (json.loads(p.read_text(encoding="utf-8")) for p in args.compare)
         changed = compare(before, after)
