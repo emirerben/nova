@@ -1,0 +1,231 @@
+{
+  "source": "Prod thread 8044373b-b401-4b03-b13f-60d623e06ddb (ylab German Talking test, iPhone build 1977, 2026-11-13 19:16Z), job 1f2de191-0ec7-4c2b-8c2b-bec4f8e1f327; read-only admin GETs. Brief v1 = the job binding's v2 with r4-r6 back to open.",
+  "original_request": "Mach daraus ein „Talking“-Video: Ich spreche direkt in die Kamera, auf Deutsch. Nutze alle fünf Clips, in der Reihenfolge, in der ich sie aufgenommen habe. Jeder Clip ist ein Teil derselben Vorstellung, also nichts weglassen und nichts umstellen. Schneide alle meine Pausen heraus, damit es straff wirkt. Wenn ich einen Satz zweimal sage, behalte nur die letzte, saubere Version. Untertitel auf Deutsch, Wort für Wort, gut lesbar und nie über meinem Gesicht. Schreibe diese Namen und Zahlen in den Untertiteln genau so: Usersmagic, Nike, Delivery Hero, Mina Foundation, Mexico City, Kria, YLAB, 207.000 Nutzer, 72 Projekte, eine Million Dollar. Title: \"Ihr sucht eine Feuerwehr?\" Kein weiterer Text, keine Musik, keine Soundeffekte.",
+  "brief_v1": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "style",
+        "facts": {},
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Ein „Talking“-Video mit direkter Ansprache in die Kamera auf Deutsch.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r2",
+        "kind": "select",
+        "facts": {
+          "all": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Alle fünf Clips als Teile derselben Vorstellung nutzen und keine Inhalte weglassen, außer den ausdrücklich genannten Pausen und Wiederholungen.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r3",
+        "kind": "order",
+        "facts": {
+          "key": "capture_time"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Die fünf Clips in der Reihenfolge der Aufnahme verwenden und nichts umstellen.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r4",
+        "kind": "style",
+        "facts": {
+          "pauses": "tight",
+          "speech_cleanup": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Alle Sprechpausen herausschneiden, damit die Vorstellung straff wirkt.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r5",
+        "kind": "style",
+        "facts": {
+          "cut_restarts": true,
+          "speech_cleanup": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Bei zweimal gesprochenen Sätzen nur die letzte, saubere Version behalten.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r6",
+        "kind": "style",
+        "facts": {
+          "captions": "word_by_word",
+          "spellings": [
+            "Usersmagic",
+            "Nike",
+            "Delivery Hero",
+            "Mina Foundation",
+            "Mexico City",
+            "Kria",
+            "YLAB",
+            "207.000 Nutzer",
+            "72 Projekte",
+            "eine Million Dollar"
+          ],
+          "keep_text_off": [
+            {
+              "kind": "face"
+            }
+          ],
+          "caption_language": "de"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Deutsche Untertitel Wort für Wort, gut lesbar und nie über meinem Gesicht. Die angegebenen Namen und Zahlen exakt so schreiben.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r7",
+        "kind": "text",
+        "facts": {},
+        "scope": "title",
+        "status": "open",
+        "literal": "Ihr sucht eine Feuerwehr?",
+        "description": null,
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r8",
+        "kind": "style",
+        "facts": {},
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Kein weiterer Text außer dem Titel und den ausdrücklich gewünschten Untertiteln.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r9",
+        "kind": "audio",
+        "facts": {
+          "audio_intent": "no_music"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Keine Musik.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      },
+      {
+        "id": "r10",
+        "kind": "audio",
+        "facts": {},
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Keine Soundeffekte.",
+        "source_turn_id": "f1ad251d-8d81-4b81-b56d-4e32ba91c630"
+      }
+    ]
+  },
+  "turn_1_hold": {
+    "reply": "Das kann ich noch nicht:\n- Alle Sprechpausen herausschneiden, damit die Vorstellung straff wirkt.: Wenn beim Freigeben „Clean up speech“ angeboten wird, wähl es aus, dann wird jede Pause auf etwa 0,3 s gekürzt\n- Bei zweimal gesprochenen Sätzen nur die letzte, saubere Version behalten.: Wenn beim Freigeben „Clean up speech“ angeboten wird, wähl es aus, dann wird jede Pause auf etwa 0,3 s gekürzt; „Clean up speech“ schneidet auch einen Satz heraus, den du neu angefangen hast, falls es einen findet, und ich sag dir danach Bescheid\n- Deutsche Untertitel Wort für Wort, gut lesbar und nie über meinem Gesicht. Die angegebenen Namen und Zahlen exakt so schreiben.: Jede Stimme in deinem Take bekommt Untertitel, auch die außerhalb des Bildes; sie sind auf German; Ich s…\nIch habe diesen ersten Entwurf zurückgehalten. Die einfachere Version lässt weg: Alle Sprechpausen herausschneiden, damit die Vorstellung straff wirkt.; Bei zweimal gesprochenen Sätzen nur die letzte, saubere Version behalten.; Deutsche Untertitel Wort für Wort, gut lesbar und nie über meinem Gesicht. Die angegebenen Namen und Zahlen exakt so schreiben.. Soll ich es ohne diese erstellen, oder möchtest du deine Anfrage ändern?",
+    "omitted_requirement_ids": [
+      "r4",
+      "r5",
+      "r6"
+    ],
+    "approval_readiness": [
+      {
+        "reason": "Das kann ich nicht prüfen, bevor das Video erstellt ist; ich weise danach darauf hin.",
+        "disposition": "unverified",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r1"
+      },
+      {
+        "reason": "Das kann ich nicht prüfen, bevor das Video erstellt ist; ich weise danach darauf hin.",
+        "disposition": "unverified",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r2"
+      },
+      {
+        "reason": null,
+        "disposition": "executable",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r3"
+      },
+      {
+        "reason": "Wenn beim Freigeben „Clean up speech“ angeboten wird, wähl es aus, dann wird jede Pause auf etwa 0,3 s gekürzt",
+        "disposition": "needs_choice",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r4"
+      },
+      {
+        "reason": "Wenn beim Freigeben „Clean up speech“ angeboten wird, wähl es aus, dann wird jede Pause auf etwa 0,3 s gekürzt; „Clean up speech“ schneidet auch einen Satz heraus, den du neu angefangen hast, falls es einen findet, und ich sag dir danach Bescheid",
+        "disposition": "needs_choice",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r5"
+      },
+      {
+        "reason": "Jede Stimme in deinem Take bekommt Untertitel, auch die außerhalb des Bildes; sie sind auf German; Ich schreibe Usersmagic, Nike, Delivery Hero, Mina Foundation, Mexico City, Kria und 4 weitere so, wie du them geschrieben hast, und prüfe them im fertigen Video",
+        "disposition": "needs_choice",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r6"
+      },
+      {
+        "reason": null,
+        "disposition": "executable",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r7"
+      },
+      {
+        "reason": "Das kann ich nicht prüfen, bevor das Video erstellt ist; ich weise danach darauf hin.",
+        "disposition": "unverified",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r8"
+      },
+      {
+        "reason": "Keine Musik, wie gewünscht.",
+        "disposition": "executable",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r9"
+      },
+      {
+        "reason": "Das kann ich nicht prüfen, bevor das Video erstellt ist; ich weise danach darauf hin.",
+        "disposition": "unverified",
+        "evidence_owner": "brief_checks",
+        "requirement_id": "r10"
+      }
+    ]
+  },
+  "tap": {
+    "content": "Ohne diese erstellen",
+    "choice_selection": {
+      "option_key": "simpler_version",
+      "question_id": "7577d79d-f4f4-43f0-bdb9-58f756931e3f"
+    }
+  },
+  "turn_2_question": {
+    "reply": "Sollen die deutschen Wort-für-Wort-Untertitel mit deinen genauen Schreibweisen und außerhalb deines Gesichts bleiben, oder gehörten sie auch zu den akzeptierten Auslassungen?\n1. Untertitel wie gewünscht behalten\n2. Auch die Untertitel weglassen\nTipp auf eine Option oder sag es mir in deinen eigenen Worten.",
+    "conflict": "ask_user:clarify_accepted_caption_omission"
+  },
+  "keep_answer": {
+    "content": "Untertitel wie gewünscht behalten",
+    "choice_selection": {
+      "option_key": "option_1",
+      "question_id": "b49026ad-c4d8-4bb6-a6ec-003b50eaaa88"
+    }
+  },
+  "turn_3_draft_reply": "Hier ist die einfachere Version.\n- Teilweise: Die fünf Clips in der Reihenfolge der Aufnahme verwenden und nichts umstellen. (Ich kann die Reihenfolge, die dieser Entwurf nutzt, nicht bestätigen)\n- Erledigt: \"Ihr sucht eine Feuerwehr?\"\n- Erledigt: Keine Musik. (Keine Musik, wie gewünscht)\n- Wie besprochen weggelassen: Alle Sprechpausen herausschneiden, damit die Vorstellung straff wirkt.\n- Wie besprochen weggelassen: Bei zweimal gesprochenen Sätzen nur die letzte, saubere Version behalten.\n- Wie besprochen weggelassen: Deutsche Untertitel Wort für Wort, gut lesbar und nie über meinem Gesicht. Die angegebenen Namen und Zahlen exakt so schreiben.\nSchau dir diese Stellen im Video an:\n- Ein „Talking“-Video mit direkter Ansprache in die Kamera auf Deutsch. (Das kann ich noch nicht automatisch prüfen)\n- Alle fünf Clips als Teile derselben Vorstellung nutzen und keine Inhalte weglassen, außer den ausdrücklich genannten Pausen und Wiederholungen. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)\n- Kein weiterer Text außer dem Titel und den ausdrücklich gewünschten Untertiteln. (Das kann ich noch nicht automatisch prüfen)\n- Keine Soundeffekte. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)\nHinweis zu diesem Video:\n- Ich kann die Hook-Idee für den Anfang (\"Deine direkte Vorstellung mit dem gewünschten Titel eröffnen.\") in diesem Video noch nicht nutzen, deshalb wird sie nicht als Text angezeigt\n- Ich kann die geplante Story-Struktur (Vorstellung und Erfahrungen beim Produk…, Förderprogramm, Projekte und Veranstalt…, Die eigene KI-App und Erfahrungen beim…, Motivation für YLAB., Persönliche Eigenschaften und Verabschi…) in diesem Video noch nicht umsetzen, deshalb ändert sie die Reihenfolge der Clips nicht",
+  "render_cleanup_note": "Die Sprachbereinigung hat geschnitten, was sie als 45 pauses gehört hat (22.2 s)."
+}
