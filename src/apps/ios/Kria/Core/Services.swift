@@ -2331,6 +2331,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_TOO_LONG": "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here.",
             "TIMELINE_BEATS_EXHAUSTED": "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here.",
             "TIMELINE_INVALID_PARENT": timeline,
+            "TIMELINE_BLANK_OUTSIDE_SPLIT": "A blank block has to stay inside a split panel. Undo your last change and try again. Your edits are still here.",
             "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here.",
             "authored_seconds_required": timeline,
             "split_screen_unavailable": "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here.",

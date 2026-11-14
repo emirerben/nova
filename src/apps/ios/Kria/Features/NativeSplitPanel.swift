@@ -914,7 +914,9 @@ private struct NativeSplitBlankColorRow: View {
     let sectionBackground: String
 
     private var swatches: [(id: String, name: String, hex: String)] {
-        [("background", "Background", sectionBackground)] + NativeBackgroundPanel.colorSwatches
+        // The section background is a swatch of its own only when no standard one already is that colour.
+        let standard = NativeBackgroundPanel.colorSwatches
+        return (standard.contains { $0.hex == sectionBackground.uppercased() } ? [] : [("background", "Background", sectionBackground)]) + standard
     }
 
     var body: some View {
