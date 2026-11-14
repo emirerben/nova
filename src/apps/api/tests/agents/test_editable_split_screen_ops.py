@@ -9,7 +9,13 @@ from copy import deepcopy
 import pytest
 
 from app.agents.edit_copilot import _ParseState, parse_editor_operation
+from app.config import settings
 from app.services import kria_editor_ops as editor
+from app.services.client_protocol import (
+    SPLIT_BLANK_PANEL_PROTOCOL,
+    bind_sending_build,
+    unbind_sending_build,
+)
 from tests.services.test_kria_editor_ops import _job, _variant
 
 
@@ -1658,3 +1664,373 @@ def test_collapse_section_follows_the_added_clip_and_later_text_moves_once(docum
     )
     variant, payload = _add(job, variant, section, panel_index=1, clip_index=2)
     assert payload["split_screen_sections"][0]["duration_s"] == 5
+
+
+# add_split_blank / set_split_blank_color (KRI-1457). Failure modes, each pinned below:
+# * the blank lands on a panel clip or a stale offset instead of after the panel's last member,
+#   takes a colour other than the section's, or keeps a lowercase, short or named colour;
+# * an explicit offset or length overlaps a clip or another blank in its panel (Save refuses it);
+# * a full panel is given an invented length, or the section is stretched when the creator said to
+#   keep its length;
+# * the slot carries a clip_index, source, speed, crop, audio or transition field (Save refuses);
+# * the capability is closed (token unverified, build below 51, no stamp) and a blank is placed
+#   anyway, or is refused under a code other than the one Save uses;
+# * a recolour reaches a real clip, a removed blank or a bad colour, or moves the window;
+# * an unrelated chat edit drops or rewrites a blank;
+# * a section is left with only blanks, or Save accepts a shape the recipe compile refuses.
+@pytest.fixture
+def blank_document(document, monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "splitScreen", "splitBlankPanel"],
+    )
+    token = bind_sending_build(SPLIT_BLANK_PANEL_PROTOCOL)
+    yield document
+    unbind_sending_build(token)
+
+
+def _blank(job, variant, section, **fields):
+    return apply(job, variant, {"op": "add_split_blank", "section_id": section, **fields})
+
+
+def _blank_rows(variant):
+    return [
+        r
+        for r in variant["user_timeline"]["slots"]
+        if r.get("media_kind") == "blank" and not r.get("removed")
+    ]
+
+
+def _blank_stack(job, variant, **extra):
+    variant, payload = _stack(job, variant, **extra)
+    return variant, payload["split_screen_sections"][0]["id"]
+
+
+def _refusal(job, variant, raw, match):
+    before = deepcopy(variant)
+    with pytest.raises(editor.KriaEditorOpError, match=match):
+        editor.compile_editor_ops(job, variant, [raw])
+    assert variant == before
+
+
+def test_a_blank_follows_the_panels_last_member_in_the_section_colour_and_fills_the_room(
+    blank_document,
+):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant, duration_s=8, background_color="#1a2b3c")
+    top_before = deepcopy(_panel(variant, 0))
+    variant, payload = _blank(job, variant, section, panel_index=1)
+    (blank,) = _blank_rows(variant)
+    assert (blank["split_panel_index"], blank["split_offset_s"], blank["duration_s"]) == (1, 2, 6)
+    assert blank["color"] == "#1A2B3C"
+    assert blank["in_s"] == 0 and blank["transition_after"] == "cut"
+    for key in ("clip_index", "media_id", "playback_rate", "source_end_s", "muted", "tilt"):
+        assert blank.get(key) is None, key
+    assert _panel(variant, 0) == top_before
+    assert payload["split_screen_sections"][0]["duration_s"] == 8
+    assert editor.build_editor_snapshot(job, variant)["total_duration_s"] == 8
+    sent = [r for r in payload["timeline_slots"] if r.get("media_kind") == "blank"]
+    assert [(r["color"], r.get("clip_index")) for r in sent] == [("#1A2B3C", None)]
+
+
+def test_an_explicit_blank_takes_its_offset_length_and_colour_and_a_second_follows_the_first(
+    blank_document,
+):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant, duration_s=10)
+    variant, _ = _blank(
+        job, variant, section, panel_index=0, offset_s=5, duration_s=1.5, color="#ff0000"
+    )
+    variant, _ = _blank(job, variant, section, panel_index=0, duration_s=1, color="#00ff00")
+    rows = sorted(_blank_rows(variant), key=lambda r: r["split_offset_s"])
+    assert [(r["split_offset_s"], r["duration_s"], r["color"]) for r in rows] == [
+        (5, 1.5, "#FF0000"),
+        (6.5, 1, "#00FF00"),
+    ]
+    assert len({r["slot_id"] for r in variant["user_timeline"]["slots"]}) == 4
+
+
+def test_a_blank_never_overlaps_a_clip_or_a_blank_in_its_panel(blank_document):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant, duration_s=8)
+    variant, _ = _blank(job, variant, section, panel_index=0, offset_s=4, duration_s=2)
+    for offset, duration in ((0, 1), (1.9, 1), (3, 2), (5, 1), (4, 2)):
+        _refusal(
+            job,
+            variant,
+            {
+                "op": "add_split_blank",
+                "section_id": section,
+                "panel_index": 0,
+                "offset_s": offset,
+                "duration_s": duration,
+            },
+            "already has",
+        )
+    variant, _ = _blank(job, variant, section, panel_index=0, offset_s=2, duration_s=2)
+    assert len(_blank_rows(variant)) == 2
+
+
+def test_a_full_panel_needs_a_length_and_keeping_the_section_length_cuts_or_refuses(
+    blank_document,
+):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant)
+    base = {"op": "add_split_blank", "section_id": section, "panel_index": 0}
+    _refusal(job, variant, base, "full|room")
+    _refusal(job, variant, {**base, "grow_section": False, "duration_s": 3}, "full|room")
+    grown, payload = _blank(job, variant, section, panel_index=0, duration_s=3)
+    (blank,) = _blank_rows(grown)
+    assert (blank["split_offset_s"], blank["duration_s"]) == (2, 3)
+    assert payload["split_screen_sections"][0]["duration_s"] == 5
+
+
+def test_a_blank_that_keeps_the_section_length_is_cut_to_the_room_left(blank_document):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant, duration_s=4)
+    cut, payload = _blank(job, variant, section, panel_index=0, duration_s=5, grow_section=False)
+    (blank,) = _blank_rows(cut)
+    assert (blank["split_offset_s"], blank["duration_s"]) == (2, 2)
+    assert payload["split_screen_sections"][0]["duration_s"] == 4
+
+
+def test_bad_blank_arguments_are_refused_when_parsed(blank_document):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant, duration_s=8)
+    snapshot = editor.build_editor_snapshot(job, variant)
+    snapshot["editor_ops_version"] = 2
+    base = {"op": "add_split_blank", "section_id": section, "panel_index": 1}
+    for wrong in (
+        {"color": "red"},
+        {"color": "#FFF"},
+        {"color": "#GGGGGG"},
+        {"color": 123},
+        {"section_id": "gone"},
+        {"panel_index": 2},
+        {"panel_index": True},
+        {"duration_s": 0.05},
+        {"offset_s": -1},
+        {"clip_index": 2},
+        {"transition_after": "crossfade"},
+        {"playback_rate": 2},
+    ):
+        assert parse_editor_operation({**base, **wrong}, snapshot, _ParseState(0.99)) is None, wrong
+    assert parse_editor_operation(base, snapshot, _ParseState(0.99)) is not None
+
+
+@pytest.mark.parametrize(
+    ("protocol", "token", "code"),
+    [
+        (50, True, "client_update_required"),
+        (None, True, "client_update_required"),
+        (51, False, "split_blank_panel_unavailable"),
+    ],
+)
+def test_a_closed_blank_is_refused_under_the_code_save_uses(
+    document, monkeypatch, protocol, token, code
+):
+    job, variant = document
+    features = [*settings.phone_render_verified_features, "splitScreen"]
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        features + (["splitBlankPanel"] if token else []),
+    )
+    variant, section = _blank_stack(job, variant)
+    bound = bind_sending_build(protocol)
+    try:
+        snapshot = editor.build_editor_snapshot(job, variant)
+        snapshot["editor_ops_version"] = 2
+        assert snapshot.get("split_blank_available") is not True
+        state = _ParseState(0.99)
+        raw = {"op": "add_split_blank", "section_id": section, "panel_index": 0, "duration_s": 1}
+        assert parse_editor_operation(raw, snapshot, state) is None
+        assert state.rejection_reasons[-1]["reason"] == "capability_unavailable"
+        assert state.rejection_reasons[-1]["detail"] == code
+        assert state.reply_notes
+        _refusal(job, variant, raw, code)
+    finally:
+        unbind_sending_build(bound)
+
+
+def test_recolouring_a_blank_changes_only_its_colour(blank_document):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant, duration_s=6)
+    variant, _ = _blank(job, variant, section, panel_index=1, color="#112233")
+    before = deepcopy(variant["user_timeline"]["slots"])
+    index = next(
+        i
+        for i, slot in enumerate(editor.build_editor_snapshot(job, variant)["slots"])
+        if slot["media_kind"] == "blank"
+    )
+    variant, payload = apply(
+        job, variant, {"op": "set_split_blank_color", "slot_index": index, "color": "#abcdef"}
+    )
+    after = variant["user_timeline"]["slots"]
+    changed = [(b, a) for b, a in zip(before, after, strict=True) if b != a]
+    assert len(changed) == 1
+    old, new = changed[0]
+    assert new["color"] == "#ABCDEF"
+    assert {**old, "color": "#ABCDEF"} == new
+    assert [r["color"] for r in payload["timeline_slots"] if r.get("media_kind") == "blank"] == [
+        "#ABCDEF"
+    ]
+
+
+def test_recolouring_refuses_a_real_clip_a_removed_blank_and_a_bad_colour(blank_document):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant, duration_s=6)
+    variant, _ = _blank(job, variant, section, panel_index=1)
+    snapshot = editor.build_editor_snapshot(job, variant)
+    snapshot["editor_ops_version"] = 2
+    blank = next(i for i, s in enumerate(snapshot["slots"]) if s["media_kind"] == "blank")
+    real = next(i for i, s in enumerate(snapshot["slots"]) if s["media_kind"] != "blank")
+    for wrong in (
+        {"slot_index": real, "color": "#FF0000"},
+        {"slot_index": 99, "color": "#FF0000"},
+        {"slot_index": blank, "color": "red"},
+        {"slot_index": blank, "color": "#FFF"},
+        {"slot_index": blank},
+        {"slot_index": True, "color": "#FF0000"},
+        {"slot_index": blank, "color": "#FF0000", "duration_s": 3},
+    ):
+        raw = {"op": "set_split_blank_color", **wrong}
+        assert parse_editor_operation(raw, snapshot, _ParseState(0.99)) is None, wrong
+    _refusal(
+        job,
+        variant,
+        {"op": "set_split_blank_color", "slot_index": real, "color": "#FF0000"},
+        "blank",
+    )
+    gone, _ = apply(job, variant, {"op": "remove_clip", "slot_index": blank})
+    stale = editor.build_editor_snapshot(job, gone)
+    stale["editor_ops_version"] = 2
+    raw = {"op": "set_split_blank_color", "slot_index": blank, "color": "#FF0000"}
+    assert parse_editor_operation(raw, stale, _ParseState(0.99)) is None
+
+
+def test_recolouring_follows_the_same_closed_capability(document, monkeypatch):
+    job, variant = document
+    variant, section = _blank_stack(job, variant)
+    variant["user_timeline"]["slots"].append(
+        {
+            "slot_id": "kept",
+            "media_kind": "blank",
+            "color": "#112233",
+            "in_s": 0,
+            "duration_s": 1,
+            "removed": False,
+            "transition_after": "cut",
+            "split_section_id": section,
+            "split_panel_index": 0,
+            "split_offset_s": 2,
+        }
+    )
+    index = len(variant["user_timeline"]["slots"]) - 1
+    _refusal(
+        job,
+        variant,
+        {"op": "set_split_blank_color", "slot_index": index, "color": "#FF0000"},
+        "client_update_required",
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"op": "update_split_screen", "gutter": 0.02},
+        {"op": "update_split_screen", "background_color": "#abcdef"},
+        {"op": "edit_text", "bar_index": 0, "text": "Fresh hook"},
+    ],
+    ids=["gutter", "background", "text"],
+)
+def test_an_unrelated_chat_edit_keeps_every_blank_exactly(blank_document, raw):
+    job, variant = blank_document
+    variant, section = _blank_stack(job, variant, duration_s=6)
+    variant, _ = _blank(job, variant, section, panel_index=1, color="#112233")
+    kept = deepcopy(_blank_rows(variant))
+    if raw["op"] == "update_split_screen":
+        raw = {**raw, "section_id": section}
+    variant, payload = apply(job, variant, raw)
+    assert _blank_rows(variant) == kept
+    sent = [r for r in payload["timeline_slots"] if r["slot_id"] == kept[0]["slot_id"]]
+    assert [(r["color"], r.get("clip_index")) for r in sent] == [("#112233", None)]
+
+
+def test_a_section_never_keeps_only_blanks(blank_document):
+    job, variant = blank_document
+    variant, payload = apply(
+        job,
+        variant,
+        {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2, "duration_s": 4},
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant, _ = _blank(job, variant, section, panel_index=1, duration_s=1, offset_s=3)
+    variant, _ = apply(job, variant, {"op": "remove_clip", "slot_index": 0})
+    variant, payload = apply(job, variant, {"op": "remove_clip", "slot_index": 1})
+    assert not _blank_rows(variant)
+    assert not payload.get("split_screen_sections")
+
+
+def test_a_blank_collapse_section_follows_the_blank(blank_document, monkeypatch):
+    job, variant = blank_document
+    monkeypatch.setattr(editor, "split_collapse_available", lambda *args: True)
+    variant, section = _blank_stack(job, variant, collapse_empty_panels=True)
+    variant, payload = _blank(job, variant, section, panel_index=1, duration_s=4)
+    assert payload["split_screen_sections"][0]["duration_s"] == 6
+    assert editor.build_editor_snapshot(job, variant)["total_duration_s"] == 6
+
+
+def test_a_chat_blank_survives_the_real_save_and_recipe_compile(monkeypatch):
+    from app.routes import generative_jobs as gj
+    from app.services.device_render import device_status
+    from tests.routes.test_authored_playback_speed import _authored_phone_job
+
+    job, variant = _authored_phone_job(monkeypatch)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "splitScreen", "splitBlankPanel"],
+    )
+    token = bind_sending_build(SPLIT_BLANK_PANEL_PROTOCOL)
+    try:
+
+        def chat(raw):
+            nonlocal variant
+            snapshot = editor.build_editor_snapshot(job, variant)
+            snapshot["editor_ops_version"] = 2
+            parsed = parse_editor_operation(raw, snapshot, _ParseState(0.99))
+            assert parsed is not None, raw
+            draft = editor.compile_editor_ops(job, variant, [parsed])
+            gj.prepare_editor_commit(job, "original_text", draft.payload)
+            variant = job.assembly_plan["variants"][0]
+            return draft.payload
+
+        stacked = chat({"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2})
+        section = stacked.split_screen_sections[0].id
+        chat(
+            {
+                "op": "add_split_blank",
+                "section_id": section,
+                "panel_index": 1,
+                "offset_s": 3,
+                "duration_s": 2,
+                "color": "#ff8800",
+            }
+        )
+        recipe = device_status(job, "original_text").request.recipe
+        assert {"splitScreen", "splitBlankPanel"} <= recipe.required_capabilities
+        (blank,) = recipe.split_screen_sections[0].blanks
+        assert (blank.panel_index, blank.start, blank.end, blank.color) == (1, 3, 5, "#FF8800")
+        assert recipe.duration == 5
+        index = next(
+            i
+            for i, s in enumerate(editor.build_editor_snapshot(job, variant)["slots"])
+            if s["media_kind"] == "blank"
+        )
+        chat({"op": "set_split_blank_color", "slot_index": index, "color": "#00ff00"})
+        recipe = device_status(job, "original_text").request.recipe
+        assert [b.color for b in recipe.split_screen_sections[0].blanks] == ["#00FF00"]
+    finally:
+        unbind_sending_build(token)
