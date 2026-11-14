@@ -64,7 +64,7 @@ final class SplitScreenBlankTests: XCTestCase {
 
     func testValidationRefusesABlankThatCannotRender() throws {
         let ok = SplitScreenBlank(id: "f", panelIndex: 1, start: 1, end: 3, color: "#FF0000")
-        XCTAssertNoThrow(try recipe(section([ok])).validate())
+        XCTAssertNoThrow(try recipe(section([ok])).validateSplitScreen())
         let cases: [(String, SplitScreenSection, Bool)] = [
             ("panel outside the section", section([SplitScreenBlank(id: "f", panelIndex: 2, start: 1, end: 3, color: "#FF0000")]), false),
             ("window past the section end", section([SplitScreenBlank(id: "f", panelIndex: 1, start: 1, end: 5, color: "#FF0000")]), false),
@@ -78,13 +78,13 @@ final class SplitScreenBlankTests: XCTestCase {
             ("blank over the clip in its own panel", section([ok, SplitScreenBlank(id: "g", panelIndex: 0, start: 1, end: 3, color: "#00FF00")]), false)
         ]
         for (name, value, valid) in cases {
-            if valid { XCTAssertNoThrow(try recipe(value).validate(), name) } else { XCTAssertThrowsError(try recipe(value).validate(), name) }
+            if valid { XCTAssertNoThrow(try recipe(value).validateSplitScreen(), name) } else { XCTAssertThrowsError(try recipe(value).validateSplitScreen(), name) }
         }
         // A blank over a clip in the same panel is refused, and so is a section with nothing but blanks.
-        XCTAssertThrowsError(try recipe(section([ok]), panelOneClip: true).validate(), "a clip plays under the blank in panel 1")
+        XCTAssertThrowsError(try recipe(section([ok]), panelOneClip: true).validateSplitScreen(), "a clip plays under the blank in panel 1")
         var onlyBlanks = recipe(section([ok]))
         onlyBlanks.tracks = []
-        XCTAssertThrowsError(try onlyBlanks.validate())
+        XCTAssertThrowsError(try onlyBlanks.validateSplitScreen())
     }
 
     func testABlankCountsAsAnActivePanelForCollapse() {
