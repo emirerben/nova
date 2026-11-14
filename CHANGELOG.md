@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.198.0] - 2026-11-14
+
+### Changed
+- fix(ios): drag gestures reset on system cancel and finish with release-velocity physics (KRI-1410) (#2317) <!-- release-pr: 2317 -->
+
 ## [0.88.197.0] - 2026-11-13
 
 ### Changed
