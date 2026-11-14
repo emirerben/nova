@@ -25,6 +25,7 @@ struct NativeSplitPanel: View {
     @State private var skipped = Set<Int>()
     @State private var showsLayout = false
     @State private var confirmsRemove = false
+    @State private var pendingPanelCount: Int?
 
     init(session: NativeEditorSession, addRequest: Binding<NativeSplitAddRequest?>, onDone: @escaping () -> Void) {
         self.session = session
@@ -197,13 +198,35 @@ struct NativeSplitPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("Layout", selection: Binding(
                 get: { context.section.panelCount },
-                set: { session.setSplitScreenPanelCount($0) }
+                set: { count in
+                    if session.splitClipsRemoved(sectionID: sectionID, panelCount: count) > 0 {
+                        pendingPanelCount = count
+                    } else {
+                        session.setSplitScreenPanelCount(count)
+                    }
+                }
             )) {
                 Text("2 panels").tag(2)
                 Text("3 panels").tag(3)
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("native-editor-split-count")
+            .confirmationDialog("Remove footage?", isPresented: Binding(
+                get: { pendingPanelCount != nil }, set: { if !$0 { pendingPanelCount = nil } }
+            ), titleVisibility: .visible) {
+                Button("Remove footage", role: .destructive) {
+                    if let count = pendingPanelCount { session.setSplitScreenPanelCount(count) }
+                    pendingPanelCount = nil
+                }
+                .accessibilityIdentifier("native-editor-split-count-confirm")
+                Button("Cancel", role: .cancel) { pendingPanelCount = nil }
+                    .accessibilityIdentifier("native-editor-split-count-cancel")
+            } message: {
+                if let count = pendingPanelCount {
+                    let removed = session.splitClipsRemoved(sectionID: sectionID, panelCount: count)
+                    Text("Going to \(count) panels removes \(removed == 1 ? "1 clip" : "\(removed) clips") from the dropped panel. Undo brings \(removed == 1 ? "it" : "them") back.")
+                }
+            }
 
             if session.canCollapseSplitPanels || context.section.collapseEmptyPanels {
                 VStack(alignment: .leading, spacing: 6) {
@@ -311,28 +334,37 @@ struct NativeSplitPanel: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                let canAdd = session.canAddToSplitPanel(sectionID: sectionID, panel: panel)
+                let canLoop = Self.hasRoomToLoop(session: session, context: context, panel: panel)
+                let reason = session.canEditSplitScreen ? NativeEditorSession.splitPanelFullMessage : nil
                 HStack(spacing: 8) {
                     actionRow("Add to " + title, icon: "plus", id: "native-editor-split-add-\(panel)",
-                              enabled: session.canAddToSplitPanel(sectionID: sectionID, panel: panel)) {
+                              enabled: canAdd, reason: reason) {
                         target = panel
                     }
                     actionRow("Loop to fill", icon: "repeat", id: "native-editor-split-loop-\(panel)",
-                              label: "Loop \(title) to fill", enabled: Self.hasRoomToLoop(session: session, context: context, panel: panel)) {
+                              label: "Loop \(title) to fill", enabled: canLoop, reason: reason) {
                         session.loopFillSplitPanel(sectionID: sectionID, panel: panel)
                     }
+                }
+                if let reason, !canAdd || !canLoop {
+                    Text(reason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("native-editor-split-full-reason-\(panel)")
                 }
             }
         }
     }
 
     private func actionRow(_ title: String, icon: String, id: String, label: String? = nil, enabled: Bool = true,
-                           action: @escaping () -> Void) -> some View {
+                           reason: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon).lineLimit(1).minimumScaleFactor(0.8)
         }
         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
         .disabled(!enabled)
         .accessibilityLabel(label ?? title)
+        .accessibilityHint(enabled ? "" : reason ?? "")
         .accessibilityIdentifier(id)
     }
 
@@ -388,7 +420,7 @@ private struct NativeSplitFillView: View {
                 Text(caption).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 Spacer()
                 if explicit {
-                    Button("Cancel", action: cancel)
+                    Button("Back", action: cancel)
                         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
                         .accessibilityIdentifier("native-editor-split-add-cancel")
                 } else if remaining > 1 {
@@ -470,12 +502,12 @@ struct NativeSplitMediaPicker: View {
                     identifier: { "native-editor-split-tab-" + $0.rawValue.lowercased() }
                 )
             }
+            if working {
+                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Adding…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
+            }
             switch tab {
             case .gallery: gallery
             case .saved: saved
-            }
-            if working {
-                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Adding…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
             }
             if let error = session.addClipError {
                 Text(error).kriaType(.caption).foregroundStyle(KriaColor.failureText)

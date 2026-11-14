@@ -1816,6 +1816,7 @@ struct NativeMiniStrip: View {
     @State private var alignmentHaptic = UIImpactFeedbackGenerator(style: .medium)
     @State private var lastBoundaryFeedbackAt = Date.distantPast
     @State private var cachedClips: [EditorClip] = []
+    @State private var laneScrollOffset: CGFloat = 0
     @State private var footageRows = NativeSplitScreenRows(document: EditorDocument())
     @State private var splitGaps: [NativeSplitGap] = []
     @State private var didCacheItems = false
@@ -2012,8 +2013,15 @@ struct NativeMiniStrip: View {
                     .scrollBounceBehavior(.basedOnSize)
                     .accessibilityIdentifier("native-editor-lane-scroll")
                     .accessibilityHidden(isCovered)
+                    .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, offset in
+                        laneScrollOffset = offset
+                    }
                     .onChange(of: session.selectionRequest) { _, _ in
                         scrollSelectionClearOfIsland(proxy: proxy)
+                        scrollSelectedClipRowClearOfIsland(proxy: proxy, viewportHeight: viewport.size.height)
+                    }
+                    .onChange(of: bottomClearance) { _, _ in
+                        scrollSelectedClipRowClearOfIsland(proxy: proxy, viewportHeight: viewport.size.height)
                     }
                 }
             }
@@ -2540,6 +2548,8 @@ struct NativeMiniStrip: View {
                     .contentShape(Rectangle())
                     .onTapGesture { openSplitGap(gap) }
                     .position(x: visible.midX, y: visible.midY)
+                    // Above the unselected blocks: a panel end handle's overhang must not swallow the add target at its edge.
+                    .zIndex(1)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(gapLabel(gap))
                     .accessibilityAddTraits(.isButton)
@@ -2622,7 +2632,18 @@ struct NativeMiniStrip: View {
             }
         }
         .frame(height: filmstripContentHeight)
+        .background(alignment: .top) {
+            VStack(spacing: rowGap) {
+                ForEach(footageRows.titles.indices, id: \.self) { row in
+                    Color.clear.frame(height: filmstripHeight).id(Self.footageRowScrollID(row))
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
+
+    private static func footageRowScrollID(_ row: Int) -> String { "FOOTAGE-\(row)" }
 
     /// KRI-166: the end of the editable content, before the branded outro
     /// tail. Never `session.duration` — a rendered MP4's `duration` may
@@ -2757,21 +2778,32 @@ struct NativeMiniStrip: View {
         }
     }
 
-    /// Text selection floats the context capsule over the timeline
-    /// (`showsContext` in `NativeEditorView`). The clips/filmstrip row is
-    /// always the topmost row (right after the ruler), so it's never at
-    /// realistic risk of landing under the bottom-anchored island the way a
-    /// lone "TEXT" row can on a short timeline — scoping this to text only
-    /// avoids nudging scroll position on every clip tap, which isn't needed
-    /// and unsettles scrub-position-sensitive interactions. Other selection
-    /// kinds route to a lane panel instead and never overlap this scroll
-    /// view either.
+    /// Text and split-panel clip selections float a context capsule over the timeline (`showsContext` in
+    /// `NativeEditorView`), which can cover the selected row on a short timeline. The topmost footage row never
+    /// needs this, so an ordinary clip tap leaves the scroll position alone (it would unsettle scrubbing).
     private func scrollSelectionClearOfIsland(proxy: ScrollViewProxy) {
         guard session.selection?.kind == .text,
               session.document.textElements.first(where: { $0.id == session.selection?.id })?.isCaption != true
         else { return }
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
             proxy.scrollTo("TEXT", anchor: UnitPoint(x: 0.5, y: 0.15))
+        }
+    }
+
+    /// Scrolls a split panel's footage row up only when the clip toolbar and tool island would cover it. Rows are
+    /// 44 pt under an 18 pt ruler, separated by `rowGap`. The topmost row is never covered, and a row that is
+    /// already clear is left alone: a scroll would carry the ruler away from the finger that is scrubbing it.
+    private func scrollSelectedClipRowClearOfIsland(proxy: ScrollViewProxy, viewportHeight: CGFloat) {
+        guard let id = session.selection?.id,
+              let clip = clips.first(where: { $0.id.uuidString == id }),
+              footageRows.isMember(slotID: clip.slotID)
+        else { return }
+        let row = footageRows.row(slotID: clip.slotID)
+        guard row > 0 else { return }
+        let rowBottom = 18 + rowGap + CGFloat(row) * (filmstripHeight + rowGap) + filmstripHeight
+        guard rowBottom > laneScrollOffset + viewportHeight - bottomClearance else { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            proxy.scrollTo(Self.footageRowScrollID(row), anchor: .bottom)
         }
     }
 
@@ -3650,36 +3682,41 @@ private struct NativeClipSurface: View {
                 .accessibilityAction(named: "Move clip later") { onMove(1) }
 
             if isSelected {
+                let leading = NativeTrimHandleGeometry.selected(edge: .leading, blockWidth: max(44, frame.width))
+                let trailing = NativeTrimHandleGeometry.selected(edge: .trailing, blockWidth: max(44, frame.width))
                 NativeTrimHandle(
                     edge: .leading,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: -22,
+                    visualOffset: leading.capsuleOffset,
+                    touchWidth: leading.touchWidth,
                     onTrimStart: onTrimStart,
                     onTrimChange: onTrimChange,
                     onTrimEnd: onTrimEnd
                 )
-                    .offset(x: 0)
+                    .offset(x: leading.originX)
                 NativeTrimHandle(
                     edge: .trailing,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: 22,
+                    visualOffset: trailing.capsuleOffset,
+                    touchWidth: trailing.touchWidth,
                     onTrimStart: onTrimStart,
                     onTrimChange: onTrimChange,
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onTrailingDragXChange
                 )
-                    .offset(x: max(0, frame.width - 44))
+                    .offset(x: trailing.originX)
             } else if showsEndHandle {
-                // A narrow block keeps its middle for selecting it; the handle sits at the right end of its touch surface.
-                let width = min(44, max(14, frame.width * 0.3))
+                // A narrow block keeps its middle for selecting and reordering it: only this much of the handle's
+                // touch surface lies over the block, the rest hangs past its end.
+                let end = NativeTrimHandleGeometry.unselectedEnd(blockWidth: max(44, frame.width), insideWidth: min(44, max(14, frame.width * 0.3)))
                 NativeTrimHandle(
                     edge: .trailing,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: width / 2,
-                    touchWidth: width,
+                    visualOffset: end.capsuleOffset,
+                    touchWidth: end.touchWidth,
                     tint: .white,
                     identifier: "native-editor-split-end-\(index + 1)",
                     label: "Trim panel end",
@@ -3688,7 +3725,7 @@ private struct NativeClipSurface: View {
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onTrailingDragXChange
                 )
-                    .offset(x: max(0, max(44, frame.width) - width))
+                    .offset(x: end.originX)
             }
         }
         .frame(width: max(44, frame.width), height: frame.height)
@@ -3867,6 +3904,31 @@ private struct TimelinePinchCapture: UIViewRepresentable {
 /// strip before the next one (KRI-281). For rate-1 clips they are equal.
 /// Trim handles still edit the slot's source In/duration; only the drawn edge
 /// follows the window.
+/// Where an end handle's 44 pt touch box and its capsule sit, in block coordinates. A box that does not fit inside
+/// the block hangs outward past the edge it trims, so a short block still has two full-size, non-overlapping handles.
+struct NativeTrimHandleGeometry: Equatable {
+    var touchWidth: CGFloat
+    var originX: CGFloat
+    /// From the centre of the touch box, so the capsule sits exactly on the block edge.
+    var capsuleOffset: CGFloat
+
+    static let target: CGFloat = 44
+
+    static func selected(edge: NativeTrimEdge, blockWidth: CGFloat) -> NativeTrimHandleGeometry {
+        let inside = min(target, blockWidth / 2)
+        switch edge {
+        case .leading:
+            return .init(touchWidth: target, originX: inside - target, capsuleOffset: target / 2 - inside)
+        case .trailing:
+            return unselectedEnd(blockWidth: blockWidth, insideWidth: inside)
+        }
+    }
+
+    static func unselectedEnd(blockWidth: CGFloat, insideWidth: CGFloat) -> NativeTrimHandleGeometry {
+        .init(touchWidth: target, originX: blockWidth - insideWidth, capsuleOffset: insideWidth - target / 2)
+    }
+}
+
 enum NativeClipBlockGeometry {
     static func windowDuration(_ clip: EditorClip, minimum: TimeInterval = 0.1) -> TimeInterval {
         let window = clip.end - clip.start

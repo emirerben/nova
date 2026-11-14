@@ -54,6 +54,7 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
             .nativeEditorPanelResizeSurface()
             ScrollView { content().padding(.top, 8).padding(.bottom, 12) }
                 .scrollDismissesKeyboard(.interactively)
+                .kriaScrollEdgeFade()
                 .accessibilityIdentifier("native-editor-\(title.lowercased())-scroll")
                 .onScrollPhaseChange { _, phase, context in
                     onScrollPhase?(phase)

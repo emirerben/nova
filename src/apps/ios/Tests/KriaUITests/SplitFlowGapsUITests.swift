@@ -517,6 +517,12 @@ final class SplitFlowGapsUITests: XCTestCase {
 
     private func scrub(by seconds: Double, pixelsPerSecond: CGFloat, in app: XCUIApplication) {
         let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
+        // Closing the panel over a lower-row clip scrolls the lanes to keep it clear of the toolbar, which can carry the ruler off the top.
+        let lanes = app.scrollViews["native-editor-lane-scroll"]
+        for _ in 0..<3 where !playhead.isHittable {
+            let label = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: lanes.frame.minX + 24, dy: lanes.frame.minY + 60))
+            label.press(forDuration: 0.05, thenDragTo: label.withOffset(CGVector(dx: 0, dy: 90)))
+        }
         XCTAssertTrue(playhead.isHittable)
         let start = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: CGFloat(seconds) * pixelsPerSecond, dy: 0)),

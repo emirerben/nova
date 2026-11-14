@@ -5440,7 +5440,10 @@ enum EditorOpenIntent { case warm, open }
         }
         slot.durationBeats = nil; next.clips[index] = slot
         next.fitCollapseSectionDurations()
-        guard next.splitScreenIsValid else { return }
+        guard next.splitScreenIsValid else {
+            splitTrimHint = Self.refusedSplitTrimReason(next)
+            return
+        }
         if splitTrimHint != splitHint { splitTrimHint = splitHint }
         // A section that grew or shrank moves the canvas lanes behind it, exactly as setSplitScreenDuration does.
         if next.splitScreenSections != active.baseline.splitScreenSections { NativeSplitTimelineRebase.rebase(&next, from: active.baseline) }
@@ -5464,6 +5467,12 @@ enum EditorOpenIntent { case warm, open }
         activeTrim = active
         refreshDirtyState()
         refreshDuration()
+    }
+
+    private static func refusedSplitTrimReason(_ document: EditorDocument) -> String {
+        let total = NativeEditorInteraction.timelineProjection(
+            slots: document.clips, carousel: nil, splitSections: document.splitScreenSections).totalDuration
+        return total > 1800 ? "A video can't run longer than 30 minutes." : "That trim doesn't fit this split."
     }
 
     #if DEBUG
@@ -6491,7 +6500,7 @@ enum EditorOpenIntent { case warm, open }
                 transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: target.sectionID, panel: target.panel, offset: opening.start) }
                 guard document.clips.contains(where: { $0.id == placementID }) else { throw APIError.invalidResponse }
                 splitPanelPlacements[placement.id] = nil
-                select(.init(kind: .clip, id: placementID), seekToStart: false)
+                select(.init(kind: .clip, id: placementID))
                 mediaUploads?.acknowledgeEditorPlacement(placement.id)
                 await sourcePreviewTask?.value
                 return
@@ -11528,10 +11537,12 @@ extension NativeEditorSession {
         return opening
     }
 
+    static let splitPanelFullMessage = "This panel is full. Shorten a clip in it to make room."
+
     func addSplitPanelClip(sectionID: String, panel: Int, fileURL: URL) async {
         guard canEditSplitScreen, !isAddingClip else { return }
         guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
-            splitScreenActionError = "This panel is full. Shorten a clip in it to make room."
+            splitScreenActionError = Self.splitPanelFullMessage
             return
         }
         splitScreenActionError = nil
@@ -11544,7 +11555,7 @@ extension NativeEditorSession {
     func addSplitPanelClip(sectionID: String, panel: Int, sourceClipIndex: Int) {
         guard canEditSplitScreen, splitScreenSourceChoices.contains(where: { $0.clipIndex == sourceClipIndex }) else { return }
         guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
-            splitScreenActionError = "This panel is full. Shorten a clip in it to make room."
+            splitScreenActionError = Self.splitPanelFullMessage
             return
         }
         let traits = sourceTraits(sourceClipIndex)
@@ -11570,7 +11581,7 @@ extension NativeEditorSession {
         let traits = sourceTraits(clipIndex)
         let length = min(traits.isPhoto ? Self.addedClipDurationS : traits.measured ?? 0, opening.end - opening.start)
         guard length >= minimumClipDuration else {
-            splitScreenActionError = traits.isPhoto ? "This panel is full. Shorten a clip in it to make room." : "This video is too short to add."
+            splitScreenActionError = traits.isPhoto ? Self.splitPanelFullMessage : "This video is too short to add."
             return
         }
         splitScreenActionError = nil
@@ -11637,10 +11648,28 @@ extension NativeEditorSession {
         transactDocument(section: .timeline) { value in
             value.splitScreenSections[sectionIndex].panelCount = count
             value.splitScreenSections[sectionIndex].panelWeights = Array(repeating: 1, count: count)
-            value.clips.removeAll { $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) >= count }
+            value.clips.removeAll { Self.panelCountDropsClip($0, sectionID: id, count: count) }
         }
         if let selection, clipSlotIndex(selection.id) == nil,
            let slot = document.clips.first(where: { $0.splitSectionID == id }) { select(.init(kind: .clip, id: clipID(for: slot.id).uuidString)) }
+    }
+
+    /// How many clips `setSplitScreenPanelCount` would delete, so the view can ask first. Zero means nothing is lost.
+    func splitClipsRemoved(sectionID: String, panelCount: Int) -> Int {
+        document.clips.filter { !$0.removed && Self.panelCountDropsClip($0, sectionID: sectionID, count: panelCount) }.count
+    }
+
+    /// How many clips `setSplitScreenDuration` would delete. A clip that is only shortened stays.
+    func splitClipsRemoved(sectionID: String, duration: Double) -> Int {
+        document.clips.filter { !$0.removed && durationDropsClip($0, sectionID: sectionID, duration: duration) }.count
+    }
+
+    private static func panelCountDropsClip(_ clip: EditorTimelineSlot, sectionID: String, count: Int) -> Bool {
+        clip.splitSectionID == sectionID && (clip.splitPanelIndex ?? 0) >= count
+    }
+
+    private func durationDropsClip(_ clip: EditorTimelineSlot, sectionID: String, duration: Double) -> Bool {
+        clip.splitSectionID == sectionID && clip.splitOffsetS >= duration - minimumClipDuration + 0.000001
     }
 
     func setSplitScreenDuration(_ duration: Double) {
@@ -11654,7 +11683,7 @@ extension NativeEditorSession {
         splitScreenActionError = nil
         transactDocument(section: .timeline) { value in
             value.splitScreenSections[index].durationS = duration
-            value.clips.removeAll { $0.splitSectionID == id && $0.splitOffsetS >= duration - minimumClipDuration + 0.000001 }
+            value.clips.removeAll { self.durationDropsClip($0, sectionID: id, duration: duration) }
             for i in value.clips.indices where value.clips[i].splitSectionID == id {
                 value.clips[i] = Self.shortened(value.clips[i], to: min(value.clips[i].durationS ?? duration, duration - value.clips[i].splitOffsetS))
             }
