@@ -16,11 +16,6 @@
     ],
     "caption": [
       {
-        "file": "app/agents/clip_intent_planner.py",
-        "line": 264,
-        "tr": "yazı"
-      },
-      {
         "file": "app/kria/intent_review_copy.py",
         "line": 22,
         "tr": "altyazı"

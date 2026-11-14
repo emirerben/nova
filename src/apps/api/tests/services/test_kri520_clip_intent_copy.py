@@ -236,10 +236,11 @@ def test_salvage_question_in_turkish() -> None:
         )
 
 
-def test_preview_names_the_operation_in_turkish() -> None:
+def test_preview_never_names_the_internal_operation() -> None:
     raw = {"op": "caption", "attribute": "pub clips"}
-    assert _preview(raw) == "caption: pub clips"
-    assert _preview(raw, "tr") == "yazı: pub clips"
+    assert _preview(raw) == "pub clips"
+    assert _preview(raw, "tr") == "pub clips"
+    assert _preview({**raw, "creator_text": "Maç sonrası"}, "tr") == "Maç sonrası"
     assert _preview("nope", "tr") == "bir talimat"
     assert _preview("nope") == "an instruction"
 
@@ -272,10 +273,12 @@ def test_planner_parse_asks_the_salvage_question_in_the_input_language() -> None
 
     assert turkish.salvage_question is not None
     assert turkish.salvage_question.startswith("Klip talimatlarından 1 tanesini anladım.")
-    assert '"dahil etme: pub klipleri"' in turkish.salvage_question
+    assert '"pub klipleri"' in turkish.salvage_question
+    assert "dahil etme:" not in turkish.salvage_question
     assert english.salvage_question is not None
     assert english.salvage_question.startswith("I understood 1 of your clip instructions.")
-    assert '"include: pub klipleri"' in english.salvage_question
+    assert '"pub klipleri"' in english.salvage_question
+    assert "include:" not in english.salvage_question
 
 
 def test_planner_reads_turkish_placeholder_requests_and_position_prose() -> None:
