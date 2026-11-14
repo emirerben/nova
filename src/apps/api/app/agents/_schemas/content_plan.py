@@ -11,62 +11,23 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, EditFormat, coerce_edit_format
 from app.agents._schemas.persona import Persona
 
-# Bump when prompts/generate_content_plan.txt OR prompts/content_ideas.json OR
-# prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
-# idea bank + success-factor bank are part of the prompt).
-# 2026-05-31 — anti-cringe guardrails: ideas must be filmable real-life moments;
-#              banned thought-leadership / forced-insight framing (the "what the
-#              Champions League final taught me about business" class).
-# 2026-05-30.2 — added $preferences block (feedback-loop preference_summary) so a
-#                user-triggered regenerate biases new ideas toward what they liked.
-# 2026-05-30.1 — added per-item `rationale` (the AI's "why this video works",
-#                shown in the dashboard).
-# 2026-05-30 — added $success_factors block + performance-weighted idea ranking.
-# 2026-05-31.1 — emit per-item edit_format (montage|talking_head|day_vlog|
-#                single_hero) so the plan's intended shape reaches the render
-#                archetype dispatch instead of being inferred from clips alone.
-# 2026-06-01 — added $variety_constraint block: code detects near-duplicate ideas
-#              post-generation and re-invokes the generator once with the kept
-#              ideas as an explicit "avoid these" list (the model won't self-impose
-#              variety in one pass). Block is empty on the first pass, so that
-#              render stays the proven baseline.
-# 2026-06-05 — posts_per_week: plan now emits ~N items per 7-day window instead of
-#              one item per calendar day. Prompt uses $posts_per_week + $target_item_count;
-#              parse() enforces a per-week cap server-side. Also fixed the edit_format
-#              parse-threading bug (items were silently defaulting to montage regardless
-#              of what the model emitted).
-# 2026-06-01.1 — weekly research refresh: content_ideas.json bumped to 2026-05-31
-#                (new market-research ideas). Bump invalidates the planner cache so
-#                the new ideas take effect on top of the dedup block.
-# 2026-06-05.1 — per-item filming_guide: 2-4 shots each with {what, how, duration_s},
-#                keyed to edit_format so montage/day_vlog/talking_head/single_hero each
-#                get the right shot shape. Stored on PlanItem as JSONB; rendered on the
-#                item detail page. filming_suggestion stays (feeds clip_plan_matcher).
-# 2026-06-06 — added $tiktok_analysis block (deep TikTok profile analysis from
-#              analyze_tiktok_profile task — creator's own proven ideas/hooks/voice).
-#              Absent when analysis hasn't landed → prompt byte-identical to baseline.
-# 2026-06-07 — Creator Agent M3: added $instruction_level and $edit_format_mix
-#              placeholders (gated on user_style_enabled; empty string when style
-#              absent → byte-identical to pre-M3 baseline).
-# 2026-06-07.1 — weekly research refresh: content_ideas/persona/overlay/success-factors
-#                banks bumped (adventure-humor, implied-question, serial-brand-chapter,
-#                art-cultural-moment ideas; adventure-humor-scaleup-02 overlay).
-# 2026-06-08 — retrospective-footage rule: past-event ideas emit empty filming_guide
-#              + footage-selection filming_suggestion instead of a shot list.
-# 2026-06-11 — direction-aware planning: $direction_lines (goal + current situation in
-#              the persona block), $content_mode_block (existing_footage/mixed
-#              directives; "" for create_new → near-baseline), and the static
-#              past-trips-are-edit-material rule (the Buenos Aires incident: planner
-#              assumed the creator lives where past-trip footage was shot).
-# 2026-06-13 — M1 Bring-Your-Own-Ideas: $user_ideas block added above IDEA_BANK.
-#              The block is rendered ONLY when the user has provided idea seeds via
-#              Persona.idea_seeds → byte-identical to baseline when seeds are absent.
-#              Directive: prefer and deepen the user's own ideas first; use the
-#              market IDEA_BANK only to fill remaining slots.
-CONTENT_PLAN_PROMPT_VERSION = "2026-11-08-research-21"
+# Derived from the files the prompt is built from, so editing any of them moves the
+# version and no PR edits a shared line (docs/pipelines/prompt-version-history.md).
+# The banks are part of the prompt; the weekly research PR needs no version bump.
+CONTENT_PLAN_PROMPT_SOURCES: tuple[str, ...] = (
+    "app/agents/content_plan_generator.py",
+    "app/agents/persona_examples.py",
+    "app/agents/_schemas/content_plan.py",
+    "app/kria/reply_language.py",
+    "prompts/generate_content_plan.txt",
+    "prompts/content_ideas.json",
+    "prompts/tiktok_success_factors.json",
+)
+CONTENT_PLAN_PROMPT_VERSION = prompt_fingerprint("cp", CONTENT_PLAN_PROMPT_SOURCES)
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60

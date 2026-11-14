@@ -166,11 +166,10 @@ When you propose an edit to `prompts/generate_content_plan.txt`,
 your *Proposed edits* section must end with the prompt-change rule so whoever
 applies it doesn't ship a stale-cache bug (CLAUDE.md "Prompt-change rule"):
 
-- bump `CONTENT_PLAN_PROMPT_VERSION` (`app/agents/_schemas/content_plan.py`)
-  and/or `PERSONA_PROMPT_VERSION` (`app/agents/_schemas/persona.py`) to a fresh
-  date string (add `.1`/`.2` if today's is already committed);
-- if you touched a bank's `version`, bump the coupled constant too
-  (guarded by `tests/agents/test_market_research_banks.py`);
+- do not bump `CONTENT_PLAN_PROMPT_VERSION` or `PERSONA_PROMPT_VERSION`: they are
+  fingerprints of the prompt files and banks and move on their own;
+- if you touched `tiktok_success_factors.json`'s `version`, bump the intro writer's
+  `prompt_version` too (guarded by `tests/agents/test_market_research_banks.py`);
 - optionally (paid, not a merge requirement) re-run the eval and compare scores to the prior version:
   ```
   NOVA_EVAL_MODE=live GEMINI_API_KEY=… ANTHROPIC_API_KEY=… \

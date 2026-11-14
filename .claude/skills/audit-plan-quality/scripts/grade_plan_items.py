@@ -287,7 +287,7 @@ def _render_report(summary: dict, graded_plans: list[dict], data: dict) -> str:
     L.append("<!-- FILL: concrete minimal edits — quote the current line and the proposed line. Prefer ONE of: "
              "(a) tighten a clause, (b) add a banned-pattern example, (c) add a negative/positive example to "
              "content_ideas.json / persona_archetypes.json. Do NOT apply them. End with the prompt-change rule: "
-             "bump CONTENT_PLAN_PROMPT_VERSION / PERSONA_PROMPT_VERSION + the live eval re-run command. -->")
+             "the plan/persona prompt versions are fingerprints (no bump) + the live eval re-run command. -->")
     return "\n".join(L) + "\n"
 
 
