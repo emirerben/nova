@@ -998,6 +998,8 @@
     "Should I make a simpler version?": "Daha sade bir sürüm yapayım mı?",
     "Should I make it without these, or do you want to change your request?": "Bunlar olmadan mı hazırlayayım, yoksa isteğini mi değiştirmek istersin?",
     "Showed the text {text} with a simple fade-in: your iPhone can't play its animation yet": "{text} yazısını basit bir belirmeyle gösterdim: iPhone'un animasyonunu henüz oynatamıyor",
+    "Showed your text {text} later and smaller so it fits clearly next to the other text": "{text} yazını diğer yazıların yanına net sığsın diye daha sonra ve daha küçük gösterdim",
+    "Showed your text {text} later so it fits clearly next to the other text": "{text} yazını diğer yazıların yanına net sığsın diye daha sonra gösterdim",
     "Showed {count} texts with a simple fade-in: your iPhone can't play their animations yet": "{count} yazıyı basit bir belirmeyle gösterdim: iPhone'un animasyonlarını henüz oynatamıyor",
     "Showed {which} without {lost}: your iPhone can't draw that yet": "{which} {lost} olmadan gösterdim: iPhone'un bunu henüz çizemiyor",
     "Shown: ": "Gösterildi: ",

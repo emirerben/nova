@@ -4941,7 +4941,7 @@
       ],
       "status": "open_pr",
       "owner": "KRI-1376",
-      "symptom": "One row the phone cannot draw (an unsupported look or zoom on a clip, a transition after the last clip, right-to-left words in a staggered slice) refused the whole approved video as phone_plan_unsupported, and a confirmed text with no clear spot at its size (a guided text, or a word-timed text on a Voiceover edit) asked for a choice instead of shrinking.",
+      "symptom": "One row the phone cannot draw (an unsupported look or zoom on a clip, a transition after the last clip, right-to-left words in a staggered slice) refused the whole approved video as phone_plan_unsupported, and a confirmed text with no clear spot at its size (a guided text, or a word-timed text on a Voiceover edit) asked for a choice instead of shrinking; a confirmed text the contract does not pin in time (role any) with no spot at any readable size at 0 s asked for a choice although it fits later (prod 22d2bf99, ff749bf5).",
       "boundary": "compiler",
       "paths": [
         "src/apps/api/app/pipeline/phone_guided_plan.py",
@@ -4956,7 +4956,7 @@
       "harness": "real_pipeline",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "One bad row per gate (look, zoom, last-clip transition, right-to-left staggered text) and a look on every clip, through the real worker task (_run_generative_job -> unified montage planner -> guided compiler -> pin-time contract check); with the degrade patched to identity every gate's row refuses as phone_plan_unsupported. A word-timed text that crowds the captions renders smaller through _run_phone_narrated_job; with shrink_sizes pinned to its own size it stops to ask, typed spoken_text_unplaced.",
+        "offline_replay": "One bad row per gate (look, zoom, last-clip transition, right-to-left staggered text) and a look on every clip, through the real worker task (_run_generative_job -> unified montage planner -> guided compiler -> pin-time contract check); with the degrade patched to identity every gate's row refuses as phone_plan_unsupported. A word-timed text that crowds the captions renders smaller through _run_phone_narrated_job; with shrink_sizes pinned to its own size it stops to ask, typed spoken_text_unplaced. Prod 22d2bf99 and ff749bf5 replayed at plan level (scripts/replay_phone_contract_gate.py): the English any text moves to 3.2 s at 82 px and the text checks pass; with _later_starts patched to [] the walled any text refuses needs_choice.",
         "live_model": "Not run; the change is deterministic compile-time behaviour. replay_creator.py could not run on a prod job: admin.py --prod GET exposes no source bytes or signed URLs, and its --render needs a Celery worker on the shared Redis.",
         "native_output": "Not run; the degraded recipe passes verify_phone_recipe and the pilot check, no device export inspected.",
         "production": "Not deployed. All 42 prod phone_plan_unsupported jobs from 2026-09-18 to 2026-11-10 (admin.py --prod GET jobs/<id>/debug) failed on a contract refusal, another lane or a gate main already repairs; none on a gate this change degrades."
@@ -4971,6 +4971,7 @@
         "Photo notes name what the photo lost: zoom, look, color adjustments, freeze, speed change, crop on a card",
         "An animation the creator chose and a script face the build lacks still refuse, typed, with the same failure code",
         "A text size the creator chose never shrinks; the refusal stays a typed needs_choice",
+      "A confirmed any text with no spot at any size at its time shows later at its length, with one note and a moved recovery (and a shrunk one when it also shrinks), in Turkish for a Turkish chat; an opening text never moves off 0 s",
         "The compile records nothing; only the worker records the compile it keeps",
         "Turkish chat gets the notes in Turkish"
       ],

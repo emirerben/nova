@@ -421,12 +421,30 @@ def _new_text(plan, template, **updates: Any):  # noqa: ANN001
     )
 
 
-def _place_added_contract_text(plan, element):  # noqa: ANN001
-    """Reserve measured ink space without changing confirmed copy or time.
+def _later_starts(plan, element) -> list[float]:  # noqa: ANN001
+    """Later starts that keep ``element``'s length on the timeline, earliest first.
+
+    Each is the end of a text that ends after ``element`` starts.
+    """
+    total = float(plan.resolved_duration_s)
+    length = element.end_s - element.start_s
+    return sorted(
+        {
+            other.end_s
+            for other in _visible(plan)
+            if element.start_s < other.end_s and other.end_s + length <= total
+        }
+    )
+
+
+def _place_added_contract_text(plan, element, *, may_move: bool = False):  # noqa: ANN001
+    """Reserve measured ink space without changing confirmed copy.
 
     The text keeps its size when a clear spot exists; otherwise it shrinks
     (``phone_plan_degrade.shrink_sizes``, never a size in ``creator_style_fields``) until one
-    does. Only when no readable size fits is the creator asked to choose.
+    does. A text whose time the contract does not pin (``may_move``) then tries the same
+    steps at each later start (``_later_starts``), keeping its length. Only when nothing fits
+    is the creator asked to choose.
     """
     from app.pipeline.canvas import canvas_for_orientation  # noqa: PLC0415
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
@@ -456,31 +474,38 @@ def _place_added_contract_text(plan, element):  # noqa: ANN001
         return animation_box(text.model_dump(mode="json"), bounds, canvas)
 
     element = element.model_copy(update={"position": "custom"})
-    concurrent = [
-        ink(other)
-        for other in _visible(plan)
-        if other.start_s < element.end_s and other.end_s > element.start_s
-    ]
     origin = float(element.y_frac if element.y_frac is not None else _TITLE_Y)
     gap = 24 / canvas.height
     chosen = "size_px" in ((element.source_params or {}).get("creator_style_fields") or ())
-    for size in phone_plan_degrade.shrink_sizes(element.size_px, chosen=chosen):
-        sized = element.model_copy(update={"size_px": size})
-        box = ink(sized)
-        obstacles = [other for other in concurrent if other[0] < box[2] and box[0] < other[2]]
-        candidates = [origin]
-        candidates += sorted(origin + other[3] + gap - box[1] for other in obstacles)
-        candidates += sorted(
-            (origin + other[1] - gap - box[3] for other in obstacles), reverse=True
-        )
-        candidates += [origin + 0.05 - box[1], origin + 0.90 - box[3]]
-        for y in candidates:
-            top, bottom = box[1] + y - origin, box[3] + y - origin
-            if box[0] < 0 or box[2] > 1 or top < 0.05 or bottom > 0.90:
-                continue
-            if any(top < other[3] and other[1] < bottom for other in obstacles):
-                continue
-            return sized.model_copy(update={"y_frac": round(y, 6)})
+    length = element.end_s - element.start_s
+    windows = [(element.start_s, element.end_s)]
+    windows += [
+        (start, start + length) for start in (_later_starts(plan, element) if may_move else ())
+    ]
+    for start, end in windows:
+        timed = element.model_copy(update={"start_s": start, "end_s": end})
+        concurrent = [
+            ink(other)
+            for other in _visible(plan)
+            if other.start_s < timed.end_s and other.end_s > timed.start_s
+        ]
+        for size in phone_plan_degrade.shrink_sizes(element.size_px, chosen=chosen):
+            sized = timed.model_copy(update={"size_px": size})
+            box = ink(sized)
+            obstacles = [other for other in concurrent if other[0] < box[2] and box[0] < other[2]]
+            candidates = [origin]
+            candidates += sorted(origin + other[3] + gap - box[1] for other in obstacles)
+            candidates += sorted(
+                (origin + other[1] - gap - box[3] for other in obstacles), reverse=True
+            )
+            candidates += [origin + 0.05 - box[1], origin + 0.90 - box[3]]
+            for y in candidates:
+                top, bottom = box[1] + y - origin, box[3] + y - origin
+                if box[0] < 0 or box[2] > 1 or top < 0.05 or bottom > 0.90:
+                    continue
+                if any(top < other[3] and other[1] < bottom for other in obstacles):
+                    continue
+                return sized.model_copy(update={"y_frac": round(y, 6)})
     raise CreatorRenderContractError(
         "Your confirmed text cannot fit clearly alongside the other text at this size.",
         decline_reason="needs_choice",
@@ -498,22 +523,45 @@ def _added_on_clip_note(literal: str) -> str:
     )
 
 
-def _shrunk_notes(before, after, recoveries: list | None) -> list[str]:  # noqa: ANN001
-    if after.size_px == before.size_px:
-        return []
+def _fit_notes(before, after, recoveries: list | None) -> list[str]:  # noqa: ANN001
+    moved = after.start_s != before.start_s
+    shrunk = after.size_px != before.size_px
     if recoveries is not None:
-        recoveries.append(
+        recoveries.extend(
             phone_plan_degrade.Recovery(
-                reason="contract_text_fit", lane="text", item_id=after.id, action="shrunk"
+                reason="contract_text_fit", lane="text", item_id=after.id, action=action
             )
+            for action, done in (("moved", moved), ("shrunk", shrunk))
+            if done
         )
-    return [
-        say(
+    text = _quoted(after.text)
+    if moved and shrunk:
+        note = say(
+            en=(
+                "Showed your text {text} later and smaller so it fits clearly next to the "
+                "other text"
+            ),
+            tr=(
+                "{text} yazını diğer yazıların yanına net sığsın diye daha sonra ve daha küçük "
+                "gösterdim"
+            ),
+            text=text,
+        )
+    elif moved:
+        note = say(
+            en="Showed your text {text} later so it fits clearly next to the other text",
+            tr="{text} yazını diğer yazıların yanına net sığsın diye daha sonra gösterdim",
+            text=text,
+        )
+    elif shrunk:
+        note = say(
             en="Made your text {text} smaller so it fits clearly next to the other text",
             tr="{text} yazını diğer yazıların yanına net sığsın diye küçülttüm",
-            text=_quoted(after.text),
+            text=text,
         )
-    ]
+    else:
+        return []
+    return [note]
 
 
 def repair_plan_for_contract(  # noqa: ANN001
@@ -521,7 +569,8 @@ def repair_plan_for_contract(  # noqa: ANN001
 ) -> tuple[Any, list[str]]:
     """Put every confirmed exact text the plan lost back on screen; ``(plan, notes)``.
 
-    ``recoveries``, when given, gets one ``phone_plan_degrade.Recovery`` per text shrunk to fit.
+    ``recoveries``, when given, gets one ``phone_plan_degrade.Recovery`` per text moved or
+    shrunk to fit.
 
     Slots, in the contract's own words: an ``opening`` text becomes the title (retexted,
     or added at 0 s); a ``closing`` text is added over the last seconds; a ``clip`` text
@@ -530,7 +579,8 @@ def repair_plan_for_contract(  # noqa: ANN001
     an ``any`` text takes the title slot when the planner filled it with its own copy,
     otherwise it is added over the opening. A text already shown but too briefly or in the
     wrong place is held / moved, never duplicated, and a moved or added text is placed clear
-    of the text around it (or refused when it cannot fit). Nothing else in the plan changes.
+    of the text around it: smaller, or for an added ``any`` text later, when it has no spot
+    (refused when nothing fits). Nothing else in the plan changes.
     """
     if contract is None or not contract.exact_texts:
         return plan, []
@@ -663,7 +713,9 @@ def repair_plan_for_contract(  # noqa: ANN001
                 end_s=min(total, start + hold) if not closing else total,
                 y_frac=min(0.7, _TITLE_Y + _STACK_STEP_Y * (added if title else added - 1)),
             )
-            texts.append(_place_added_contract_text(current, element))
+            texts.append(
+                _place_added_contract_text(current, element, may_move=requirement.role == "any")
+            )
             notes.append(
                 say(
                     en="Added your text {text} on screen",
@@ -671,7 +723,7 @@ def repair_plan_for_contract(  # noqa: ANN001
                     text=_quoted(literal),
                 )
             )
-            notes.extend(_shrunk_notes(element, texts[-1], recoveries))
+            notes.extend(_fit_notes(element, texts[-1], recoveries))
         current = current.model_copy(update={"text_elements": texts})
     for done, element_id in enumerate(placed):
         index = next(i for i, e in enumerate(texts) if e.id == element_id)
@@ -681,7 +733,7 @@ def repair_plan_for_contract(  # noqa: ANN001
         texts[index] = _place_added_contract_text(
             current.model_copy(update={"text_elements": others}), before
         )
-        notes.extend(_shrunk_notes(before, texts[index], recoveries))
+        notes.extend(_fit_notes(before, texts[index], recoveries))
     current = current.model_copy(update={"text_elements": list(texts)})
     linked = _link_clip_texts(current, contract, frame_s)
     if not notes and linked is current:

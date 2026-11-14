@@ -2098,6 +2098,16 @@
   ],
   [
    "app/pipeline/phone_plan_repair.py",
+   "Showed your text {text} later and smaller so it fits clearly next to the other text",
+   "{text} yazını diğer yazıların yanına net sığsın diye daha sonra ve daha küçük gösterdim"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Showed your text {text} later so it fits clearly next to the other text",
+   "{text} yazını diğer yazıların yanına net sığsın diye daha sonra gösterdim"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
    "Made your text {text} smaller so it fits clearly next to the other text",
    "{text} yazını diğer yazıların yanına net sığsın diye küçülttüm"
   ],

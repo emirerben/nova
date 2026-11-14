@@ -26,7 +26,7 @@ _LISTED_NUMBERS = 4
 
 
 class Recovery(NamedTuple):
-    """One row kept drawable by a degrade (``"dropped"``) or a contract text shrink.
+    """One row kept drawable by a degrade (``"dropped"``) or a contract text shrink or move.
 
     The worker records it once it keeps the compile it came from (``record_recoveries``);
     ``lost`` (keys of ``_LOST``) is what the row gave up, so its note says exactly that.
@@ -35,7 +35,7 @@ class Recovery(NamedTuple):
     reason: str
     lane: str | None
     item_id: str | None
-    action: Literal["dropped", "shrunk"]
+    action: Literal["dropped", "shrunk", "moved"]
     lost: tuple[str, ...] = ()
     subject: Literal["clip", "photo", "text", "ending"] | None = None
     number: int | None = None
