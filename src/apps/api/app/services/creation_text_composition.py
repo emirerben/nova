@@ -1220,6 +1220,32 @@ def _ensure_text_look(snapshot: EditProposalSnapshot, look: Any) -> EditProposal
         return snapshot
 
 
+def _answered_by_later_text(
+    req: BriefRequirement, later: Sequence[BriefRequirement], facts: Any
+) -> bool:
+    """A bare "find the text and add it" ask the creator then answered by pasting the words.
+
+    The brief keeps both ("find the lyrics and add it as text" with no words, then the pasted
+    lyric as its literal). The first has nothing to check against, so it never reads as met,
+    though the words it asked for are the later requirement's literal and are drawn. Only a
+    requirement with no literal and no typed facts is covered, and only by a later text
+    requirement of the same scope whose literal is already met.
+    """
+    from app.kria.brief_checks import check_requirement  # noqa: PLC0415
+    from app.kria.text_shape_ask import words_only  # noqa: PLC0415
+
+    if req.kind != "text" or req.literal or req.facts or is_text_sequence(req):
+        return False
+    return any(
+        other.kind == "text"
+        and other.literal
+        and other.scope == req.scope
+        and not is_text_sequence(other)
+        and check_requirement(words_only(other), facts).status == "met"
+        for other in later
+    )
+
+
 def compose_creation_text(
     snapshot: EditProposalSnapshot,
     *,
@@ -1958,7 +1984,8 @@ def _compose_creation_text(
                 text_sequence_shown(req, facts)
                 if is_text_sequence(req)
                 else check_requirement(words_only(req), facts).status == "met"
-                for req in relevant
+                or _answered_by_later_text(req, relevant[i + 1 :], facts)
+                for i, req in enumerate(relevant)
             )
         ):
             return snapshot.model_copy(
