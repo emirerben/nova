@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.229.0] - 2026-11-14
+
+### Fixed
+- fix(ios): keep the timeline glide out of editor UI tests so main is green again (KRI-1450) (#2344) <!-- release-pr: 2344 -->
+
 ## [0.88.228.0] - 2026-11-14
 
 ### Changed
