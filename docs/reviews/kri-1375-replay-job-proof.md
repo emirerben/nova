@@ -5,6 +5,67 @@ with `scripts/admin.py --prod GET`, copies the footage the job's brief binding r
 read-only from the bucket, and runs the Main Creator route and the real worker locally under
 `src/apps/api/tests/prod_flags.snapshot.json`.
 
+## Run 6 (pass 3, round 2): e7bf7099 on production's Main Creator model
+
+Command: `make kria-replay-job JOB=e7bf7099-7006-4d3f-9f05-c8daeb83546d MAX_COST_USD=0.35`
+(2026-11-14, 15:10 UTC, live, settled cost $0.1062 from the scratch database's agent runs:
+`nova.creator.main` on `gpt-6.1-sol` $0.0473 and $0.0533, `nova.plan.clip_intent_planner` and
+`nova.plan.clip_request_resolver` on `gemini-2.5-flash` $0.0056 together). Same source job as run 5.
+
+What changed since run 5: the snapshot records production's Main Creator model and effort
+(`gpt-6.1-sol`, `medium`; `job-data:main-creator-sol-2026-11-14`), and the replay runs its
+paid-call ledger as a capped development manual-QA run, so a local Sol call is reserved instead of
+refused. Before the run the driver printed production's models for the item:
+`nova.creator.main` `gpt-6.1-sol`, the rest `gemini-2.5-flash` (`nova.edit.copilot`
+`gemini-3.1-pro-preview`). `route_comparison.model_differences` is empty: every agent the
+replay ran used the model production used for this item. The only difference is the Main
+Creator's prompt version (`mc-edead08c6c40` in production, `mc-53ad0915085a` here: the prompt
+changed since the job).
+
+What the replay did (`turns`):
+
+* Message 1 under client protocol 49: the reply asked for the lyrics in words ("Could you paste
+  the lines you want on the video?"). Production asked with a choice card
+  (`ask_user:lyrics_text_needed`), so `first_divergent_turn` names message 1
+  (`production_reply` `choice_question:ask_user:lyrics_text_needed`, `replay_reply` `reply`).
+  Run 5, on Gemini, went to `nova.research.public_facts` here instead.
+* Message 2 (the lyrics, no structured answer): `approval`, as in production
+  (`matches_production: true`). The replay approved it under protocol 49; job 4ed9173b ended
+  `awaiting_device` with `creator_client_protocol: 49` and one pinned `guided_story` variant
+  (4.0 s) whose text elements carry the lyric lines ("Vazgeçmem dünyalatı" ... "Seninle
+  Fenerbahçe").
+* The replay stopped there (`stopped_early`): production's render of message 2 (d6c58d7b) failed
+  `creation_text_failed`, the replay's did not, so "Fix it" (e7bf7099's own message) answered a
+  failure that no longer happens.
+
+Result: `outcome: device_plan_ready`, exit 0, on production's model. This is the run that the
+run-5 write-up predicted and did not make. The worker reported its prewarm after 5 s
+(`worker_warm_s`); no reconcile sweep was due in the 50 s the turns took. Afterwards the scratch
+database was gone and no Redis key of the run's namespace remained. No phone rendered the plan.
+
+## Offline proofs this round (no model calls)
+
+* Recorded taps, against the real runtime on Postgres
+  (`tests/scripts/test_replay_recorded_answers_postgres.py`, shapes from production jobs
+  07efa44c and 98eac78f): a tapped `simpler_version` reaches the replay's own
+  `simplification_requires_choice` card; a card of another kind is reported as a divergence with
+  both questions and nothing is sent; a tapped `asset-<id>` pool clip is sent as the replay's
+  asset; "you choose" is derived again against the replay's card. Red control: the branch head
+  before this round sent production's question id to the same seeded card and the runtime
+  refused it (`choice_selection_stale`).
+* Keyless end to end, `07efa44c-051f-43c2-99d9-ed567408034e` (every model key removed, so no
+  provider accepted a call): message 1 got no plan, and message 2's tapped `simpler_version`
+  was not sent. Outcome `diverged_from_production` with
+  `production_question.conflict: simplification_requires_choice`, `replay_question: null`, and
+  `first_divergent_turn` naming message 1. `input_differences.media_library_backed_media: 5`.
+* Lapsed lease (`tests/scripts/test_replay_lease_postgres.py`): the replay's sweep republishes a
+  `planning` turn whose lease lapsed, the way production's beat does, and a timeout on such a
+  turn ends `stalled` with `lease_lapsed: true`, never `diverged_from_production`.
+* Ledger envelope: with the replay's environment, a `gpt-6.1-sol` planning reservation in a
+  migrated scratch database is accepted; without it the ledger refuses it
+  (`paid_test_attribution_required`), and with a cap of $0.10 it refuses it
+  (`estimated_cost_exceeds_approval`).
+
 ## Run 5 (pass 3): e7bf7099, the creator's three messages, turn by turn
 
 Command: `make kria-replay-job JOB=e7bf7099-7006-4d3f-9f05-c8daeb83546d` (2026-11-14, 13:27 UTC,
@@ -47,9 +108,8 @@ cannot plan, which is the divergence path working.
 
 Gaps:
 
-* Production's Main Creator runs on `gpt-6.1-sol` (its agent runs, 2026-11-14); the snapshot and
-  the replay run the code default `gemini-3.1-pro-preview`. That is the likely cause of message
-  1's different route (research instead of a question). Not fixed here; see the runbook.
+* Production's Main Creator runs on `gpt-6.1-sol` (its agent runs, 2026-11-14); this run used the
+  code default `gemini-3.1-pro-preview`. Run 6 repeats it on Sol.
 * No phone rendered the device plan.
 
 ## Run 4 (pass 2, round 2): b5dadbce, device plan on this head

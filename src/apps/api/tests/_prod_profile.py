@@ -50,8 +50,15 @@ PROD_NARRATION_IDENTITY: dict[str, object] = {
 }
 
 
+# Which model an agent runs on and how hard it thinks (`main_creator_model`, ...). The snapshot
+# records production's choice for the replay (`scripts/replay_job.py`); tests replace the
+# model with recorded answers or stubs, so a production model name would only route those
+# stubs through another provider's client and paid-call ledger.
+MODEL_CHOICE_SUFFIXES = ("_model", "_thinking_level")
+
+
 def prod_setting_overrides() -> dict[str, object]:
-    """Every snapshot value backed by evidence, by `Settings` attribute.
+    """Every snapshot value backed by evidence, by `Settings` attribute, except model choices.
 
     Entries still at ``default`` are left to the running `Settings`: they carry no
     information about production, and a test's own environment may legitimately differ.
@@ -60,7 +67,9 @@ def prod_setting_overrides() -> dict[str, object]:
     return {
         name: entry["value"]
         for name, entry in PROD_SNAPSHOT.items()
-        if entry["source"] != "default" and hasattr(settings, name)
+        if entry["source"] != "default"
+        and hasattr(settings, name)
+        and not name.endswith(MODEL_CHOICE_SUFFIXES)
     }
 
 

@@ -227,15 +227,19 @@ RECEIPT_FIELDS = (
     "duration_s",
     "pool_source",
     "analysis",
+    "capture",
+    "shot_id",
+    "source_filename",
 )
 
 
 def _extract_recorded_assignments(job_debug: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """The upload receipts and clip analysis the approved plan recorded.
+    """The upload receipts, capture time and clip analysis the approved plan recorded.
 
     The admin item debug summarizes clip assignments without their receipts; the job's
     brief binding keeps the full rows. Its analysis is the one production planned with, so
-    the replay reuses it instead of paying for a second analysis of the same clip.
+    the replay reuses it instead of paying for a second analysis of the same clip. Storage
+    and media-library ids stay the replay's own: the replay seeds no library rows.
     """
 
     plan = (job_debug.get("job") or {}).get("assembly_plan") or {}
@@ -751,6 +755,7 @@ def seed_replay_database(
                     client_upload_id=f"replay:{row['source']['id']}",
                     aspect=float(row["aspect"]) if row["aspect"] else None,
                     analysis=row["analysis"],
+                    capture=row["source"].get("capture"),
                     status="uploaded",
                     media_status="pending",
                 )
@@ -779,6 +784,11 @@ def seed_replay_database(
         "cached_clip_analysis_count": len(inputs.clip_analysis_cache),
         "voiceover_duration_s": voiceover_duration,
         "storage_root": str(storage_root),
+        # Pool assets get a fresh id per run; clips keep production's media id.
+        "media_ids": {
+            f"asset-{str(row['source']['id']).removeprefix('asset-')}": f"asset-{row['id']}"
+            for row in asset_rows
+        },
     }
 
 
@@ -922,7 +932,13 @@ async def run_creator_planning(
         if question is not None:
             raise MainCreatorQuestion(question)
         if time.monotonic() > deadline:
-            raise ReplaySafetyError(f"Timed out waiting for a Main Creator plan; last: {plan}")
+            raise ReplayStalled(
+                {
+                    "lease_lapsed": False,
+                    "session_status": plan.get("status"),
+                    "reason": f"Timed out after {timeout_s:.0f} s waiting for a Main Creator plan",
+                }
+            )
         await asyncio.sleep(min(max(poll_interval_s, 0.2), 30.0))
         async with AsyncSessionLocal() as db:
             user = await db.get(User, user_id)
@@ -987,6 +1003,203 @@ class TurnDiverged(ReplaySafetyError):
         super().__init__(detail["reason"])
 
 
+class ReplayStalled(ReplaySafetyError):
+    """The replay stopped waiting: a statement about the local run, not about the route."""
+
+    def __init__(self, detail: dict[str, Any]) -> None:
+        self.detail = detail
+        super().__init__(detail["reason"])
+
+
+# The question each structured answer names. The server mints every question id (uuid4), so a
+# recorded id never names a question of the replay: the answer is sent to the replay's own open
+# question of the same kind, and only when that question offers what the creator tapped.
+ANSWER_QUESTION_KEYS = {
+    "clip_selection": "clip_question",
+    "choice_selection": "choice_question",
+    "song_order": "song_order_question",
+    "song_range": "song_range_question",
+    "moment_order": "moment_order_question",
+}
+
+
+@dataclass
+class ReplayIds:
+    """Production ids the recorded messages name, and what each one is in the replay.
+
+    ``turns`` grows as messages are replayed; ``media`` holds every medium whose replay id
+    differs (pool assets are re-minted per run; clips keep production's media id).
+    """
+
+    questions: dict[str, tuple[str, dict[str, Any]]]
+    media: dict[str, str]
+    turns: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+def production_questions(
+    thread_events: list[dict[str, Any]],
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    """Every question production's thread asked, by question id: (payload key, question)."""
+
+    asked: dict[str, tuple[str, dict[str, Any]]] = {}
+    for event in _event_order(thread_events):
+        payload = event.get("payload") or {}
+        for key in ANSWER_QUESTION_KEYS.values():
+            question = payload.get(key)
+            if isinstance(question, dict) and question.get("question_id"):
+                asked[str(question["question_id"])] = (key, question)
+    return asked
+
+
+def _question_summary(question: dict[str, Any] | None) -> dict[str, Any] | None:
+    if question is None:
+        return None
+    summary = {
+        key: question[key] for key in ("question_id", "conflict", "kind") if question.get(key)
+    }
+    if question.get("options"):
+        summary["options"] = [o.get("key") for o in question["options"] if isinstance(o, dict)]
+    if question.get("categories"):
+        summary["categories"] = [
+            c.get("key") for c in question["categories"] if isinstance(c, dict)
+        ]
+    return summary
+
+
+def reply_shape(events: list[tuple[str, dict[str, Any]]]) -> str:
+    """What a message got back, coarse enough to compare a replay with production.
+
+    ``events`` are ``(event_type, payload)`` after the creator's message.
+    """
+
+    kinds = [kind for kind, _ in events]
+    if "approval_requested" in kinds:
+        return "approval"
+    for _, payload in events:
+        for key in ANSWER_QUESTION_KEYS.values():
+            question = payload.get(key)
+            if isinstance(question, dict):
+                label = question.get("conflict") or question.get("kind")
+                return f"{key}:{label}" if label else key
+    if "draft_applied" in kinds:
+        return "draft"
+    if "assistant_error" in kinds:
+        return "error"
+    return "reply"
+
+
+def _replay_open_question(
+    key: str, events: list[tuple[str, dict[str, Any]]]
+) -> dict[str, Any] | None:
+    """The replay thread's question an answer of this kind can target, by the runtime's rules."""
+
+    from app.services.choice_questions import latest_open_choice_question
+    from app.services.clip_selection import latest_open_clip_question
+    from app.services.creative_copy_decisions import latest_open_creative_question
+
+    if key == "clip_question":
+        return latest_open_clip_question(events)
+    if key == "choice_question":
+        return latest_open_choice_question(events) or latest_open_creative_question(events)
+    return next(
+        (
+            payload[key]
+            for role, payload in reversed(events)
+            if role == "assistant" and isinstance(payload.get(key), dict)
+        ),
+        None,
+    )
+
+
+def _with_replay_media(value: Any, media: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        return media.get(value, value)
+    if isinstance(value, list):
+        return [_with_replay_media(item, media) for item in value]
+    if isinstance(value, dict):
+        return {key: _with_replay_media(item, media) for key, item in value.items()}
+    return value
+
+
+def _why_unanswerable(
+    field: str,
+    answer: dict[str, Any],
+    asked: dict[str, Any] | None,
+    open_question: dict[str, Any] | None,
+) -> str | None:
+    key = ANSWER_QUESTION_KEYS[field]
+    if open_question is None:
+        return f"the replay has no open {key} for it to answer"
+    if asked is not None and asked.get("conflict") != open_question.get("conflict"):
+        return (
+            f"production's question was {asked.get('conflict')!r}, the replay's open one is "
+            f"{open_question.get('conflict')!r}"
+        )
+    if field == "choice_selection":
+        offered = {o.get("key") for o in open_question.get("options") or [] if isinstance(o, dict)}
+        if answer.get("option_key") not in offered:
+            return f"the replay's question does not offer {answer.get('option_key')!r}"
+    if field == "clip_selection":
+        categories = {
+            c.get("key"): c for c in open_question.get("categories") or [] if isinstance(c, dict)
+        }
+        named = [a.get("key") for a in answer.get("answers") or []] + list(
+            answer.get("none_keys") or []
+        )
+        if missing := [k for k in named if k not in categories]:
+            return f"the replay's clip question has no {', '.join(map(str, missing))}"
+        for row in answer.get("answers") or []:
+            offered = set(categories[row["key"]].get("candidate_media_ids") or [])
+            if unoffered := sorted(set(row.get("media_ids") or []) - offered):
+                return f"the replay's {row['key']!r} does not offer {', '.join(unoffered)}"
+    return None
+
+
+class AnswerUnreplayable(ReplaySafetyError):
+    def __init__(self, detail: dict[str, Any]) -> None:
+        self.detail = detail
+        super().__init__(detail["reason"])
+
+
+def remap_answer(
+    field: str,
+    answer: dict[str, Any],
+    *,
+    ids: ReplayIds,
+    replay_events: list[tuple[str, dict[str, Any]]],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The recorded answer, aimed at the replay's own question and media.
+
+    Returns the answer and, for a question answer, which production question id it replaced.
+    Raises ``AnswerUnreplayable`` when the replay's open question is not the one production's
+    creator answered: the replay's previous reply already differed from production's.
+    """
+
+    answer = _with_replay_media(answer, ids.media)
+    key = ANSWER_QUESTION_KEYS.get(field)
+    if key is None:
+        return answer, None
+    recorded_id = str(answer.get("question_id") or "")
+    asked = ids.questions.get(recorded_id, (key, None))[1]
+    open_question = _replay_open_question(key, replay_events)
+    reason = _why_unanswerable(field, answer, asked, open_question)
+    if reason or open_question is None:
+        raise AnswerUnreplayable(
+            {
+                "answer": field,
+                "reason": f"The creator's {field} answered production's question {recorded_id}; "
+                f"{reason}, so the replay's previous reply already differed from production's",
+                "production_question": _question_summary(asked),
+                "replay_question": _question_summary(open_question),
+            }
+        )
+    replay_id = str(open_question["question_id"])
+    return {**answer, "question_id": replay_id}, {
+        "production_question_id": recorded_id,
+        "replay_question_id": replay_id,
+    }
+
+
 @dataclass(frozen=True)
 class RecordedTurn:
     """One creator message of the production thread, as its user_message event recorded it."""
@@ -999,6 +1212,24 @@ class RecordedTurn:
     # The render the approval queued and the failure code the thread showed for it, if any.
     job_id: str | None = None
     render_failure: str | None = None
+    # What production's thread showed after this message (`reply_shape`).
+    production_reply: str | None = None
+
+
+def _production_replies(thread_events: list[dict[str, Any]]) -> dict[str, str]:
+    """``reply_shape`` of production's events after each creator message, by turn id."""
+
+    replies: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    current: str | None = None
+    for event in _event_order(thread_events):
+        payload = event.get("payload") or {}
+        if event.get("kind") == "user_message":
+            current = str(payload.get("turn_id") or "") or None
+            if current is not None:
+                replies[current] = []
+        elif current is not None:
+            replies[current].append((str(event.get("kind")), payload))
+    return {turn_id: reply_shape(events) for turn_id, events in replies.items()}
 
 
 def recorded_turns(thread_events: list[dict[str, Any]], target_turn_id: str) -> list[RecordedTurn]:
@@ -1014,6 +1245,7 @@ def recorded_turns(thread_events: list[dict[str, Any]], target_turn_id: str) -> 
     approved = by_turn("approval_approved", "approval_id")
     queued_jobs = by_turn("render_queued", "job_id")
     render_failures = by_turn("assistant_render_failed", "code")
+    replies = _production_replies(thread_events)
     turns: list[RecordedTurn] = []
     for event in _event_order(thread_events):
         payload = event.get("payload") or {}
@@ -1028,6 +1260,7 @@ def recorded_turns(thread_events: list[dict[str, Any]], target_turn_id: str) -> 
             approved=str(payload["turn_id"]) in approved,
             job_id=queued_jobs.get(str(payload["turn_id"])),
             render_failure=render_failures.get(str(payload["turn_id"])),
+            production_reply=replies.get(str(payload["turn_id"])),
         )
         turns.append(turn)
         if turn.turn_id == target_turn_id:
@@ -1060,30 +1293,48 @@ def _model_fields(field: str) -> set[str] | None:
 
 
 def _turn_body(
-    turn: RecordedTurn, *, revision: int, replay_turn_of: dict[str, str]
-) -> tuple[Any, list[str]]:
-    """The request body the app sent, with production turn ids mapped to the replay's."""
+    turn: RecordedTurn,
+    *,
+    revision: int,
+    ids: ReplayIds,
+    replay_events: list[tuple[str, dict[str, Any]]],
+) -> tuple[Any, dict[str, Any]]:
+    """The request body the app sent, with production ids mapped to the replay's.
+
+    A choice the server derived from the creator's words (``delegated``: "you choose";
+    ``reanswer``: the label of another option of a closed question) is not sent: the replay's
+    server derives it again from the same words against its own questions.
+    """
 
     from pydantic import ValidationError
 
     from app.kria.api_schemas import SubmitTurnBody
 
     answers: dict[str, Any] = {}
+    sent: dict[str, Any] = {"answers": [], "remapped": {}, "rederived_from_text": []}
     for field in ANSWER_FIELDS:
         value = turn.payload.get(field)
         if value is None:
             continue
+        if field == "choice_selection" and isinstance(value, dict):
+            if value.get("delegated") or value.get("reanswer"):
+                sent["rederived_from_text"].append(field)
+                continue
         allowed = _model_fields(field)
         if allowed is not None and isinstance(value, dict):
             # The server stamps its own keys onto the stored answer (`delegated`, generations).
             value = {key: item for key, item in value.items() if key in allowed}
+        value, remapped = remap_answer(field, value, ids=ids, replay_events=replay_events)
+        if remapped is not None:
+            sent["remapped"][field] = remapped
         answers[field] = value
+    sent["answers"] = sorted(answers)
     link = turn.payload.get("request_outcome_link") or {}
     context = {
         key: link[key] for key in ("relation", "client_build", "client_version") if link.get(key)
     }
-    if replay_turn_of.get(str(link.get("parent_turn_id"))):
-        context["parent_turn_id"] = replay_turn_of[str(link["parent_turn_id"])]
+    if ids.turns.get(str(link.get("parent_turn_id"))):
+        context["parent_turn_id"] = ids.turns[str(link["parent_turn_id"])]
     try:
         body = SubmitTurnBody.model_validate(
             {
@@ -1099,7 +1350,33 @@ def _turn_body(
             f"Production message of turn {turn.turn_id} does not rebuild as a request "
             f"({sorted(answers)}): {exc.errors()[:2]}"
         ) from exc
-    return body, sorted(answers)
+    return body, sent
+
+
+async def _thread_events(db: Any, thread_id: uuid.UUID) -> list[tuple[str, dict[str, Any]]]:
+    """The replay thread as the runtime's question checks read it."""
+
+    from sqlalchemy import select
+
+    from app.models import CreationThreadEvent
+    from app.services.choice_questions import tag_event
+
+    rows = (
+        await db.execute(
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    return [tag_event(role, payload, kind, content) for role, payload, kind, content in rows]
 
 
 async def submit_recorded_turn(
@@ -1107,8 +1384,8 @@ async def submit_recorded_turn(
     thread_id: uuid.UUID,
     user_id: uuid.UUID,
     turn: RecordedTurn,
-    replay_turn_of: dict[str, str],
-) -> tuple[str, list[str]]:
+    ids: ReplayIds,
+) -> tuple[str, dict[str, Any]]:
     """Send one recorded message the way `POST /creation-threads/<id>/turns` does."""
 
     from app.database import AsyncSessionLocal
@@ -1123,9 +1400,17 @@ async def submit_recorded_turn(
             thread = await db.get(CreationThread, thread_id)
             if thread is None:
                 raise ReplaySafetyError("Seeded replay thread disappeared")
-            body, answers = _turn_body(
-                turn, revision=int(thread.revision), replay_turn_of=replay_turn_of
-            )
+            try:
+                body, sent = _turn_body(
+                    turn,
+                    revision=int(thread.revision),
+                    ids=ids,
+                    replay_events=await _thread_events(db, thread_id),
+                )
+            except AnswerUnreplayable as unreplayable:
+                raise TurnDiverged(
+                    {"production_turn_id": turn.turn_id, **unreplayable.detail}
+                ) from unreplayable
             try:
                 accepted, should_publish = await submit_turn(
                     db, thread_id=thread_id, creator_id=user_id, body=body
@@ -1135,6 +1420,7 @@ async def submit_recorded_turn(
                 raise TurnDiverged(
                     {
                         "production_turn_id": turn.turn_id,
+                        "answers_sent": sent,
                         "reason": f"The runtime refused the creator's message of production turn "
                         f"{turn.turn_id}: {failure.code}: {failure.message}",
                     }
@@ -1143,7 +1429,7 @@ async def submit_recorded_turn(
         clear_request_context()
     if should_publish:
         _publish_turn(accepted.turn_id)
-    return accepted.turn_id, answers
+    return accepted.turn_id, sent
 
 
 async def approve_replayed_turn(
@@ -1213,8 +1499,67 @@ async def approve_replayed_turn(
     return decided.approval_id
 
 
+class ReconcileBeat:
+    """Production's beat runs ``tasks.reconcile_kria_turns`` every minute; a replay has none.
+
+    Without it a turn whose lease lapsed (its worker was busy past the 15 s lease, as on a cold
+    start) stays ``planning`` until the replay's timeout. The sweep republishes it as
+    production's beat does.
+    """
+
+    def __init__(self, interval_s: float = 60.0) -> None:
+        self.interval_s = interval_s
+        self.last = time.monotonic()
+        self.sweeps = 0
+        self.published = 0
+        self.errors: list[str] = []
+
+    def tick(self) -> None:
+        if time.monotonic() - self.last < self.interval_s:
+            return
+        self.last = time.monotonic()
+        from app.tasks.kria_runtime import reconcile_kria_turns
+
+        try:
+            result = reconcile_kria_turns()
+        except Exception as exc:  # noqa: BLE001 - production's beat logs a failed sweep and goes on
+            self.errors.append(f"{type(exc).__name__}: {exc}"[:200])
+            return
+        self.sweeps += 1
+        self.published += int(result.get("published") or 0)
+
+    def receipt(self) -> dict[str, Any]:
+        return {"sweeps": self.sweeps, "published": self.published, "errors": self.errors}
+
+
+def _turn_lease(turn_id: uuid.UUID) -> dict[str, Any]:
+    from sqlalchemy import func, select
+
+    from app.database import sync_session
+    from app.models import CreatorAgentTurn
+
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, turn_id)
+        now = db.execute(select(func.now())).scalar_one()
+        if turn is None:
+            return {"turn_id": str(turn_id), "status": None, "lease_lapsed": False}
+        return {
+            "turn_id": str(turn_id),
+            "status": turn.status,
+            "lease_lapsed": turn.status in {"pending", "planning"}
+            and turn.lease_expires_at is not None
+            and turn.lease_expires_at < now,
+            "abandoned_claims": int(turn.abandoned_claims or 0),
+        }
+
+
 def wait_for_turn(
-    turn_id: uuid.UUID, *, settled: frozenset[str], timeout_s: float, poll_interval_s: float
+    turn_id: uuid.UUID,
+    *,
+    settled: frozenset[str],
+    timeout_s: float,
+    poll_interval_s: float,
+    beat: ReconcileBeat,
 ) -> dict[str, Any]:
     from app.database import sync_session
     from app.models import CreatorAgentTurn
@@ -1227,9 +1572,18 @@ def wait_for_turn(
         if state["status"] in settled:
             return state
         if time.monotonic() > deadline:
-            raise ReplaySafetyError(
-                f"Timed out waiting for Kria turn {turn_id}; last status {state['status']}"
+            lease = _turn_lease(turn_id)
+            lapsed = (
+                ", its lease lapsed and no worker took it back" if lease["lease_lapsed"] else ""
             )
+            raise ReplayStalled(
+                {
+                    **lease,
+                    "reason": f"Timed out after {timeout_s:.0f} s waiting for Kria turn "
+                    f"{turn_id}; last status {state['status']}{lapsed}",
+                }
+            )
+        beat.tick()
         time.sleep(min(max(poll_interval_s, 0.2), 30.0))
 
 
@@ -1254,11 +1608,22 @@ def turn_reply(turn_id: uuid.UUID) -> dict[str, Any]:
             else []
         )
         reply = next((row for row in reversed(rows) if row.role == "assistant"), None)
+        question = next(
+            (
+                _question_summary(row.payload[key])
+                for row in rows
+                for key in ANSWER_QUESTION_KEYS.values()
+                if isinstance((row.payload or {}).get(key), dict)
+            ),
+            None,
+        )
         return {
             "events": [row.event_type for row in rows],
             "reply_kind": reply.event_type if reply else None,
             "reply": (reply.content or "")[:400] if reply else None,
             "reply_code": (reply.payload or {}).get("code") if reply else None,
+            "replay_reply": reply_shape([(row.event_type, row.payload or {}) for row in rows]),
+            **({"question": question} if question else {}),
         }
 
 
@@ -1288,11 +1653,13 @@ def replay_recorded_thread(
     *,
     ids: dict[str, uuid.UUID],
     turns: list[RecordedTurn],
+    replay_ids: ReplayIds,
     render_shape: dict[str, str],
     timeout_s: float,
     poll_interval_s: float,
     log: list[dict[str, Any]],
     on_progress: Callable[[], None],
+    beat: ReconcileBeat,
 ) -> dict[str, Any]:
     """Send the creator's messages in order and approve where the creator approved.
 
@@ -1301,7 +1668,6 @@ def replay_recorded_thread(
     otherwise the replay stops with what the replay showed instead.
     """
 
-    replay_turn_of: dict[str, str] = {}
     worker_state: dict[str, Any] = {}
     for index, recorded in enumerate(turns):
         target = index == len(turns) - 1
@@ -1310,10 +1676,10 @@ def replay_recorded_thread(
                 thread_id=ids["thread_id"],
                 user_id=ids["user_id"],
                 turn=recorded,
-                replay_turn_of=replay_turn_of,
+                ids=replay_ids,
             )
         )
-        replay_turn_of[recorded.turn_id] = replay_turn_id
+        replay_ids.turns[recorded.turn_id] = replay_turn_id
         entry: dict[str, Any] = {
             "production_turn_id": recorded.turn_id,
             "replay_turn_id": replay_turn_id,
@@ -1321,6 +1687,7 @@ def replay_recorded_thread(
             "client_protocol": recorded.client_protocol,
             "answers_sent": answers,
             "production_approved": recorded.approved,
+            "production_reply": recorded.production_reply,
         }
         log.append(entry)
         state = wait_for_turn(
@@ -1328,8 +1695,10 @@ def replay_recorded_thread(
             settled=TURN_SETTLED,
             timeout_s=timeout_s,
             poll_interval_s=poll_interval_s,
+            beat=beat,
         )
         entry.update(status=state["status"], **turn_reply(uuid.UUID(replay_turn_id)))
+        entry["matches_production"] = entry["replay_reply"] == recorded.production_reply
         on_progress()
         if not recorded.approved:
             continue
@@ -1362,6 +1731,7 @@ def replay_recorded_thread(
             poll_interval_s=poll_interval_s,
             previous_job_id=previous_job_id,
             turn_id=uuid.UUID(replay_turn_id),
+            beat=beat,
         )
         job = worker_state.get("job") or {}
         entry["job"] = {key: job.get(key) for key in ("id", "status", "failure_reason")}
@@ -1388,8 +1758,9 @@ def replay_recorded_thread(
                 settled=TURN_SETTLED - {"awaiting_approval"},
                 timeout_s=min(timeout_s, 300.0),
                 poll_interval_s=poll_interval_s,
+                beat=beat,
             )
-        except ReplaySafetyError:
+        except ReplayStalled:
             entry["turn_settled_after_render"] = False
     return worker_state
 
@@ -1518,6 +1889,7 @@ def wait_for_worker(
     on_snapshot: Callable[[dict[str, Any]], None] | None = None,
     previous_job_id: str | None = None,
     turn_id: uuid.UUID | None = None,
+    beat: ReconcileBeat | None = None,
 ) -> dict[str, Any]:
     """Wait for the job a confirmation (or, with ``turn_id``, a Kria approval) dispatched.
 
@@ -1576,8 +1948,18 @@ def wait_for_worker(
                 last["job"] = job
                 last["outputs"] = _output_receipts(last, storage, source_paths)
                 return last
+        if beat is not None:
+            beat.tick()
         time.sleep(min(max(poll_interval_s, 0.2), 30.0))
-    raise ReplaySafetyError(f"Timed out waiting for proposal/worker; last state: {last}")
+    job = last.get("job") or {}
+    raise ReplayStalled(
+        {
+            **(_turn_lease(turn_id) if turn_id is not None else {"lease_lapsed": False}),
+            "job": {key: job.get(key) for key in ("id", "status", "failure_reason")},
+            "reason": f"Timed out after {timeout_s:.0f} s waiting for the dispatched job; last "
+            f"job status {job.get('status')}, session {(last.get('session') or {}).get('status')}",
+        }
+    )
 
 
 def device_plan_receipt(job: dict[str, Any] | None, output_dir: Path) -> dict[str, Any] | None:
@@ -1767,6 +2149,7 @@ def main(argv: list[str] | None = None) -> int:
         },
     }
     runner = asyncio.Runner()
+    beat = ReconcileBeat()
     try:
         receipt["runtime"] = _configure_environment(args, output_dir=output_dir)
         _write_receipt(receipt_path, receipt)
@@ -1824,12 +2207,18 @@ def main(argv: list[str] | None = None) -> int:
                 runner,
                 ids=ids,
                 turns=turns,
+                replay_ids=ReplayIds(
+                    questions=production_questions(thread_events or []),
+                    media=dict(receipt["seed"]["media_ids"]),
+                ),
                 render_shape=_render_shape(inputs.job_debug),
                 timeout_s=args.timeout_s,
                 poll_interval_s=args.poll_interval_s,
                 log=receipt["turns"],
                 on_progress=lambda: _write_receipt(receipt_path, receipt),
+                beat=beat,
             )
+            receipt["reconcile"] = beat.receipt()
             receipt["worker"] = worker_state
             receipt["job"] = worker_state.get("job")
             receipt["outputs"] = worker_state.get("outputs", [])
@@ -1880,7 +2269,9 @@ def main(argv: list[str] | None = None) -> int:
                         "updated_at": datetime.now(UTC).isoformat(),
                     },
                 ),
+                beat=beat,
             )
+            receipt["reconcile"] = beat.receipt()
             receipt["worker"] = worker_state
             receipt["job"] = worker_state.get("job")
             receipt["outputs"] = worker_state.get("outputs", [])
@@ -1898,10 +2289,13 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - receipt must capture driver failures
         receipt["finished_at"] = datetime.now(UTC).isoformat()
         receipt["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        receipt["reconcile"] = beat.receipt()
         if isinstance(exc, MainCreatorQuestion):
             receipt["error"]["question"] = exc.question
         if isinstance(exc, TurnDiverged):
             receipt["error"]["diverged_turn"] = exc.detail
+        if isinstance(exc, ReplayStalled):
+            receipt["error"]["stalled"] = exc.detail
         try:
             _write_receipt(receipt_path, receipt)
         except OSError:

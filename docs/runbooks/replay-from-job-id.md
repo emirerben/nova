@@ -31,9 +31,11 @@ make kria-replay-job JOB=<production job id>
    run, so two replays never wipe each other, dropped when the run ends), starts a
    Celery worker on Redis database 14 under a private `NOVA_CELERY_QUEUE_NAMESPACE`
    (`replay-<job>-<time>`; it never consumes the shared dev queues; the run deletes its own keys
-   when it ends), and runs
-   `replay_creator.py --render --prod-flags tests/prod_flags.snapshot.json` (with
+   when it ends), waits until the worker finished its startup CLIP prewarm (`worker_warm_s`),
+   and runs `replay_creator.py --render --prod-flags tests/prod_flags.snapshot.json` (with
    `--thread-events` for a chat job; see "Chat jobs: the creator's messages, turn by turn").
+   While it waits on a turn or a render, the replay runs `tasks.reconcile_kria_turns` once a
+   minute, as production's beat does (`reconcile` in the output). See "Stalls".
 4. Prints an `outcome`: `video_rendered` (local path of each output, `<run dir>/storage/<object
    path>`), `device_plan_ready` (an iPhone job: the worker built and pinned the device render
    plan and the job sits `awaiting_device`; the plan is in `<run dir>/device-plan.json`; this is
@@ -44,10 +46,12 @@ make kria-replay-job JOB=<production job id>
    code are printed and the run stops at once), or `diverged_from_production` (a chat turn
    production approved ended otherwise in the replay, or the replay failed inside, or after, an
    agent production never ran for this plan item; see "Chat jobs" and "Route comparison"). A chat
-   job answers its questions with the creator's own next messages. Exit code 0 for
+   job answers its questions with the creator's own next messages. `stalled`: the replay
+   stopped waiting (see "Stalls"); never read as a route result. Exit code 0 for
    `video_rendered` and `device_plan_ready` only, 1 for any other outcome, 3 when the local
    machine could not host the run (no PostgreSQL role, fewer than 20 free connections, scratch
-   database not creatable), which says nothing about the job.
+   database not creatable, a worker that never finished its prewarm, or a turn whose lease
+   lapsed and that no worker took back), which says nothing about the job.
 
 For a phone-first job, which is every failed creation job since 2026-10-08 (the snapshot records
 `IOS_DEVICE_ONLY_MODE=true`, `CLOUD_RENDER_EXECUTION_ENABLED=false`), the end-to-end artifact is
@@ -75,6 +79,24 @@ never asked. So a chat job is replayed the way the app drove it:
   ids mapped to the replay's) and any structured answer the event stored (`clip_selection`,
   `choice_selection`, `song_order`, `song_range`, `moment_order`, `protected_region`, `scope`,
   `manual_edits`). The replay's worker runs the turn (`run_kria_turn` on `agent-control`).
+* A structured answer names the question it answers, and the server mints every question id, so
+  a recorded id never names a question of the replay. The replay sends the answer to its own open
+  question of the same kind (the runtime's own "latest open question" rules), and only when that
+  question matches production's: the same `conflict` and the option the creator tapped (choice),
+  every category and candidate the creator tapped (clip picker). Pool assets get a fresh id per
+  replay; the creator's `asset-<id>` taps are mapped to it (clips keep production's media id).
+  `answers_sent.remapped` names each production and replay question id. When the replay's open
+  question differs, the outcome is `diverged_from_production` with `production_question` and
+  `replay_question`: the replay's previous reply already differed, and the message is not sent
+  (no model call for it). A choice the server derived from the creator's words (`delegated`,
+  "you choose"; `reanswer`) is sent as the words only, so the replay's server derives it again
+  against its own question (`answers_sent.rederived_from_text`).
+* Each entry of `turns` carries `production_reply` and `replay_reply` (`approval`, `draft`,
+  `reply`, `error`, or the question kind such as `choice_question:ask_user:lyrics_text_needed`)
+  and `matches_production`. `first_divergent_turn` names the first message whose reply differed.
+  A reply that differs on one message is not evidence about the job either way: it says the
+  replay left production's route there. `input_differences` lists what the replay could not give
+  the planner as production did (see "Route comparison").
 * Where production recorded `approval_approved` for a turn, the replay approves its pending
   approval through `decide_approval` under the same client protocol, so the runtime stamps
   `creator_client_protocol` on the job itself (production's 49 on e7bf7099; every app-version
@@ -110,8 +132,25 @@ agent no production item has run since 2026-10-19; the snapshot now records it o
 that succeeds after running agents production did not run is reported in `replay_only_agents` but
 keeps its outcome: a fix is expected to get past the production failure.
 
+`model_differences` and `prompt_version_differences` compare, per agent, the models and prompt
+versions the replay ran with those production's runs for the item recorded up to the job's end
+(later runs are left out: production may have switched model since). A failed replay with another
+failure than production's after running an agent on a model production did not use is a
+divergence too. A prompt version difference is expected (the code changed since the job); a model
+difference means the replay did not run on production's model, and `input_differences.models`
+repeats it. Before the run the driver prints production's models for the item next to the
+Main Creator model the replay will use.
+
+`input_differences` also counts production state the replay does not recreate:
+`media_library_backed_media` (media the thread took from the media library; the library's
+catalogue rows and facts are not seeded) and `visual_capture_times_not_restored` (a pool visual
+the binding recorded without a media id keeps its capture time only on the binding row). Clip
+capture times, shot ids and source filenames come from the binding rows and are restored.
+
 The replayed footage is exactly the media the job's brief binding recorded (its clip
-assignments and visuals), not whatever the plan item holds now: pool assets added after the job
+assignments and visuals), copied at the `storage_generation` the binding recorded (the bytes
+production analysed; the item debug often carries no generation), not whatever the plan item
+holds now: pool assets added after the job
 ran are left out, and a recorded media id that can no longer be recovered refuses the run before
 any model call. The same refusal applies to a creator song (`replay_creator.py` does not seed
 songs) or a voiceover the item no longer holds. A job with no brief binding (older than the
@@ -132,10 +171,28 @@ Precondition for jobs whose pool holds media-library assets: the production API 
 names the asset; pool assets under the item's own pool prefix still work.
 
 Costs real model calls (Main Creator per message, text agents, clip analysis only for a clip the
-brief binding recorded no analysis for). The clip analysis production planned with is restored
+brief binding recorded no analysis for). The paid-call ledger runs in the scratch database as a
+development manual-QA run (`AI_MANUAL_QA_TEST_RUN_ID` = the run's namespace) capped at
+`MAX_COST_USD` (`--max-cost-usd`, default 1.00, at most 2.00). The cap holds every call the ledger
+meters: Sol (OpenAI) planning always, Gemini calls only when the snapshot turns
+`AI_COST_CONTROL_ENABLED` on. A Sol Main Creator call reserves about $0.21 until it settles, so a
+cap under that refuses it and the Main Creator answers on its Gemini fallback, which
+`model_differences` then shows. The clip analysis production planned with is restored
 from the brief binding, so the replay does not analyse a clip twice. `route_comparison` prints
 `replay_agent_runs` and `replay_spend_usd` (the scratch database's agent-run costs); the worker log
 is `<run dir>/worker.log`.
+
+### Stalls
+
+A replay that times out waiting on a turn, a render or a Main Creator plan ends `stalled` with the
+turn's status, whether its lease lapsed, and its `abandoned_claims`. It is never compared with
+production's route: in verifier run 1 on 1cb33402 a turn that sat `planning` on a lapsed lease
+for the full timeout read as `diverged_from_production` because two planner agents were missing.
+Two things keep the local worker from losing a turn production would have finished. The driver
+waits for the worker's CLIP prewarm before the first message (that run's first turn lost its 15 s
+lease while torch and CLIP loaded), and the replay sweeps `tasks.reconcile_kria_turns` every
+minute, so a lapsed lease is republished as production's beat does. A `stalled` run with a lapsed
+lease exits 3.
 
 ## Safety
 
@@ -189,14 +246,15 @@ What is approximated:
 
 * A false flag whose entry says `default` may be on in production. `python
   scripts/prod_flag_snapshot.py unverified` lists the boolean flags still unconfirmed.
-* Model names (`main_creator_model`, `gemini_model`, ...) and protocol minimums hold the code
-  default; a Fly override of either goes unnoticed until someone records it with `set`. Known
-  gap: production's agent runs record `nova.creator.main` on `gpt-6.1-sol` (2026-11-14,
-  `MAIN_CREATOR_MODEL`, KRI-1390), while the snapshot and so the replay run it on the code
-  default `gemini-3.1-pro-preview`. Recording it is not enough: a local Sol call needs the
-  manual-QA ledger envelope (`docs/reviews/kri-1384/sol-main-creator.md`, Gaps), or every
-  reservation is refused and the turn falls back to Gemini. Until both are done, a replay's Main
-  Creator answers on another model than production's.
+* Model choices (`*_model`, `*_thinking_level`) and protocol minimums hold the code default
+  unless recorded. `main_creator_model` is `gpt-6.1-sol`, read from production's agent runs
+  (`job-data:main-creator-sol-2026-11-14`); `main_creator_thinking_level` `medium` is inferred
+  (agent runs do not record the effort; the KRI-1390 rollout command sets it with the model, and
+  those runs' tokens and latency match Sol at medium). The replay runs with both; the test
+  profile leaves model choices out (`tests/_prod_profile.py`), since tests replace the model.
+  Another agent's model override is caught after a run by `model_differences`; record it with
+  `set` once a job shows it. Production's agent runs are the evidence for a model:
+  `GET /admin/plan-items/<id>/proposal-trace` lists `model` per run.
 * Allowlists are Fly secrets. The snapshot holds the code default, not production membership.
   The gates differ in what an empty list means: `phone_render_user_ids` and
   `kria_runtime_v2_phone_user_ids` read empty as everyone, while the brief-binding, approval-
@@ -248,8 +306,9 @@ flag the snapshot has not seen, so a new flag cannot silently run at its default
   routes (minimum protocol, native client), the speech-cleanup fields of the approval body (the
   replay approves as a build without the cleanup card), messages sent while a turn was still
   running (each message waits for the previous turn), media attached after the first message
-  (all recorded media is seeded up front), and a structured answer whose question id the
-  replay's question does not share (the runtime decides; `turns` lists what was sent).
+  (all recorded media is seeded up front), and media-library catalogue rows. A structured
+  answer reaches the replay only when the replay asked the same kind of question (see "Chat
+  jobs").
 * The replay stops at an earlier render that waits for a phone or that did not fail where
   production's did (see "Chat jobs"), so the job id's own render is not always reached.
 * A device-render job (`native_device_only`) ends in a server-side plan, not an MP4. The replay

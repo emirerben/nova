@@ -83,6 +83,7 @@ def stubbed(monkeypatch, tmp_path):
         return replay_job.collect_inputs("89fefe4d-137a-409c-b846-760161dc5063", tmp_path, "b")
 
     run.copied = copied
+    run.tmp = tmp_path
     return run
 
 
@@ -235,11 +236,26 @@ def test_only_per_run_scratch_databases_can_be_dropped(name: str) -> None:
 
 
 SUCCESS = ["ok", "ok_fallback"]
-PRODUCTION_AGENTS = {"nova.creator.main", "nova.plan.clip_intent_planner"}
+GEMINI = "gemini-3.1-pro-preview"
+SOL = "gpt-6.1-sol"
 
 
-def _runs(*pairs: tuple[str, str]) -> dict:
-    return {"success": SUCCESS, "runs": [{"agent_name": n, "outcome": o} for n, o in pairs]}
+def _production(complete: bool = True, main_model: str = GEMINI):
+    return replay_job.ProductionAgents(
+        models={
+            "nova.creator.main": frozenset({main_model}),
+            "nova.plan.clip_intent_planner": frozenset({"gemini-2.5-flash"}),
+        },
+        prompt_versions={},
+        trace_complete=complete,
+    )
+
+
+def _runs(*pairs: tuple[str, str], model: str = GEMINI) -> dict:
+    return {
+        "success": SUCCESS,
+        "runs": [{"agent_name": n, "outcome": o, "model": model} for n, o in pairs],
+    }
 
 
 def test_a_failure_inside_an_agent_production_never_ran_is_a_divergence() -> None:
@@ -247,14 +263,14 @@ def test_a_failure_inside_an_agent_production_never_ran_is_a_divergence() -> Non
         ("nova.creator.main", "ok"),
         ("nova.plan.semantic_edit_proposal", "terminal_schema"),
     )
-    route = replay_job.compare_routes(PRODUCTION_AGENTS, True, recorded)
+    route = replay_job.compare_routes(_production(), recorded)
     assert route["diverged_failures"] == ["nova.plan.semantic_edit_proposal"]
     assert route["replay_only_agents"] == ["nova.plan.semantic_edit_proposal"]
 
 
 def test_a_failure_inside_an_agent_production_also_ran_is_comparable() -> None:
     recorded = _runs(("nova.creator.main", "ok"), ("nova.plan.clip_intent_planner", "timeout"))
-    route = replay_job.compare_routes(PRODUCTION_AGENTS, True, recorded)
+    route = replay_job.compare_routes(_production(), recorded)
     assert route["diverged_failures"] == []
 
 
@@ -263,16 +279,107 @@ def test_an_agent_that_failed_then_recovered_is_not_a_failure() -> None:
         ("nova.plan.semantic_edit_proposal", "schema_invalid"),
         ("nova.plan.semantic_edit_proposal", "ok"),
     )
-    route = replay_job.compare_routes(PRODUCTION_AGENTS, True, recorded)
+    route = replay_job.compare_routes(_production(), recorded)
     assert route["replay_failed_agents"] == []
     assert route["replay_only_agents"] == ["nova.plan.semantic_edit_proposal"]
 
 
 def test_a_cut_off_production_trace_never_claims_a_divergence() -> None:
     recorded = _runs(("nova.plan.semantic_edit_proposal", "terminal_schema"))
-    route = replay_job.compare_routes(PRODUCTION_AGENTS, False, recorded)
+    route = replay_job.compare_routes(_production(complete=False), recorded)
     assert route["diverged_failures"] == []
     assert route["production_trace_complete"] is False
+
+
+def test_a_main_creator_on_another_model_is_named_and_its_new_failure_is_not_productions() -> None:
+    route = replay_job.compare_routes(
+        _production(main_model=SOL), _runs(("nova.creator.main", "ok"), model=GEMINI)
+    )
+    assert route["model_differences"] == [
+        {"agent": "nova.creator.main", "production": [SOL], "replay": [GEMINI]}
+    ]
+    result = {"outcome": "failed", "failure_reason": "creation_text_failed", "error_detail": None}
+    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    assert result["outcome"] == "diverged_from_production"
+    assert result["replay_failure"]["failure_reason"] == "creation_text_failed"
+
+
+def test_a_reproduced_failure_stands_even_on_another_model() -> None:
+    route = replay_job.compare_routes(
+        _production(main_model=SOL), _runs(("nova.creator.main", "ok"), model=GEMINI)
+    )
+    result = {"outcome": "failed", "failure_reason": "phone_plan_unsupported", "error_detail": None}
+    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
+
+
+def test_a_stalled_turn_is_not_reported_as_a_route_divergence(tmp_path) -> None:
+    import json
+
+    # Verifier run 1 on 1cb33402: the cold worker lost the lease, the turn sat `planning`, and
+    # the timeout read as `diverged_from_production` because two planner agents were missing.
+    receipt = tmp_path / "replay-receipt.json"
+    stalled = {"status": "planning", "lease_lapsed": True, "reason": "Timed out"}
+    receipt.write_text(
+        json.dumps({"error": {"type": "ReplayStalled", "message": "x", "stalled": stalled}})
+    )
+    result = replay_job.summarize(receipt, tmp_path)
+    route = replay_job.compare_routes(_production(), _runs(("nova.creator.main", "ok")))
+    route["replay_only_agents"] = ["nova.edit.copilot"]
+    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    assert result["outcome"] == "stalled"
+    assert result["stalled"]["lease_lapsed"] is True
+
+
+def test_the_first_message_that_got_another_reply_is_named() -> None:
+    turns = [
+        {"production_turn_id": "a", "matches_production": True},
+        {
+            "production_turn_id": "b",
+            "matches_production": False,
+            "production_reply": "approval",
+            "replay_reply": "reply",
+        },
+        {"production_turn_id": "c", "matches_production": False},
+    ]
+    first = replay_job.first_divergent_turn(turns)
+    assert first["message_index"] == 2 and first["production_turn_id"] == "b"
+    assert (first["production_reply"], first["replay_reply"]) == ("approval", "reply")
+
+
+def test_clip_copies_are_pinned_to_the_generation_the_binding_recorded(
+    stubbed, monkeypatch
+) -> None:
+    pins: dict[str, str | None] = {}
+
+    def fake_copy(bucket, object_path, destination, generation=None):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"x")
+        pins[object_path] = generation
+
+    snapshot = {
+        "clip_assignments": [
+            {"media_id": CLIP, "kind": "video", "storage_generation": "1792969597555986"}
+        ],
+        "visuals": [],
+    }
+    job_debug, item_debug = _job(snapshot), _item()
+    monkeypatch.setattr(
+        replay_job, "prod_get", lambda path: job_debug if "/jobs/" in path else item_debug
+    )
+    monkeypatch.setattr(replay_job, "storage_copy", fake_copy)
+    replay_job.collect_inputs("89fefe4d-137a-409c-b846-760161dc5063", stubbed.tmp, "b")
+    assert pins[f"users/{USER}/creation-threads/t/{CLIP}"] == "1792969597555986"
+
+
+def test_the_replay_ledger_envelope_is_capped_and_local() -> None:
+    env = replay_job.replay_environment(
+        {}, "postgresql://x@localhost/y", "replay-abcd1234-z", max_cost_usd=0.35
+    )
+    assert env["AI_USAGE_ENVIRONMENT"] == "development"
+    assert env["AI_MANUAL_QA_TEST_RUN_ID"] == "replay-abcd1234-z"
+    assert env["AI_MANUAL_QA_MAX_COST_USD"] == "0.35"
+    assert env["AI_OPENAI_PLANNING_BUDGET_USD"] == "0.35"
 
 
 def test_only_model_provider_keys_reach_the_replay() -> None:
@@ -284,7 +391,9 @@ def test_only_model_provider_keys_reach_the_replay() -> None:
         "TYPESAFE_API_KEY": "t",
         "ADMIN_PROD_API_KEY": "p",
     }
-    env = replay_job.replay_environment(dotenv, "postgresql://x@localhost/y", "replay-abcd1234-z")
+    env = replay_job.replay_environment(
+        dotenv, "postgresql://x@localhost/y", "replay-abcd1234-z", max_cost_usd=1.0
+    )
     assert {k for k in env if k.endswith("_API_KEY")} == {
         "GEMINI_API_KEY",
         "OPENAI_API_KEY",

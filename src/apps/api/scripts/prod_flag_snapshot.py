@@ -60,12 +60,14 @@ LIVE_FIELDS = {
 
 def _setting_fields() -> dict[str, Any]:
     from app.config import Settings
+    from tests._prod_profile import MODEL_CHOICE_SUFFIXES
 
     fields: dict[str, Any] = {}
     for name, field in Settings.model_fields.items():
         if (
             field.annotation is bool
-            or name.endswith(("_user_ids", "_rollout_percent", "min_client_protocol", "_model"))
+            or name.endswith(MODEL_CHOICE_SUFFIXES + ("_user_ids", "_rollout_percent"))
+            or name.endswith("min_client_protocol")
             or name in {"phone_render_verified_features", "kria_minimum_client_protocol"}
         ):
             fields[name] = field

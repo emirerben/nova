@@ -139,20 +139,27 @@ def storage_copy(
         return
     destination.parent.mkdir(parents=True, exist_ok=True)
     pinned = f"#{generation}" if generation and str(generation).isdigit() else ""
-    subprocess.run(
-        [
-            "gcloud",
-            "storage",
-            "cp",
-            "--no-clobber",
-            f"gs://{bucket}/{object_path}{pinned}",
-            str(destination),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+    try:
+        subprocess.run(
+            [
+                "gcloud",
+                "storage",
+                "cp",
+                "--no-clobber",
+                f"gs://{bucket}/{object_path}{pinned}",
+                str(destination),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.CalledProcessError as exc:
+        what = f"generation {generation} of {object_path}" if pinned else object_path
+        raise ReplayJobError(
+            f"Could not copy {what} from the bucket ({exc.stderr.strip()[-200:]}); "
+            "a pinned generation production analysed may no longer exist"
+        ) from exc
 
 
 def storage_list(bucket: str, prefix: str) -> list[str]:
@@ -256,6 +263,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
     ]
     chosen = _select_recorded_media(recorded, clip_rows, pool_rows)
     _name_unnamed_binding_rows(job_debug, chosen)
+    bound = _bound_rows(job)
     for assignment in clip_rows:
         media_id = str(assignment["media_id"])
         kind = str(assignment.get("kind") or "video")
@@ -264,11 +272,13 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
             continue
         seen.add(media_id)
         local = inputs_dir / "media" / media_id
+        # The binding pins the bytes production analysed; the item debug often has no generation.
+        binding_row = bound.get(_media_key(media_id), {})
         storage_copy(
             bucket,
             _owned_object_path(object_path, user_id),
             local,
-            assignment.get("generation"),
+            assignment.get("generation") or binding_row.get("storage_generation"),
         )
         sources.append(_source(local, source_id=media_id, kind=kind, object_path=object_path))
     pool_prefix = f"users/{user_id}/plan/{item_id}/pool/"
@@ -295,19 +305,32 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
                     "API predates the gcs_path field on /admin/plan-items/<id>/debug"
                 )
         local = inputs_dir / "media" / f"{asset['id']}-{Path(object_path).name}"
-        storage_copy(bucket, _owned_object_path(object_path, user_id), local, generation)
-        sources.append(
-            _source(
-                local, source_id=str(asset["id"]), kind=kind, object_path=object_path, pool=True
-            )
+        binding_row = bound.get(_media_key(str(asset["id"])), {})
+        storage_copy(
+            bucket,
+            _owned_object_path(object_path, user_id),
+            local,
+            generation or binding_row.get("storage_generation") or binding_row.get("generation"),
         )
+        source = _source(
+            local, source_id=str(asset["id"]), kind=kind, object_path=object_path, pool=True
+        )
+        if isinstance(binding_row.get("capture"), dict):
+            source["capture"] = binding_row["capture"]
+        sources.append(source)
     voiceover_path = item.get("voiceover_gcs_path")
     snapshot = _binding_snapshot(job)
     job_used_voiceover = bool(snapshot.get("voiceover") or snapshot.get("voiceover_path"))
     if voiceover_path and (recorded is None or job_used_voiceover):
         voiceover_path = _owned_object_path(str(voiceover_path), user_id)
         local = inputs_dir / "media" / Path(voiceover_path).name
-        storage_copy(bucket, voiceover_path, local)
+        bound_voiceover = snapshot.get("voiceover_path") == voiceover_path
+        storage_copy(
+            bucket,
+            voiceover_path,
+            local,
+            snapshot.get("voiceover_generation") if bound_voiceover else None,
+        )
         sources.append(
             _source(
                 local, source_id=Path(voiceover_path).stem, kind="audio", object_path=voiceover_path
@@ -331,14 +354,44 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         "job": job,
         "item": item,
         "item_id": str(item_id),
+        "unseeded_state": _unseeded_state(job, recorded, thread_events),
         "thread_events": inputs_dir / "thread-events.json" if thread_events else None,
         "creator_messages": sum(1 for e in thread_events or [] if e.get("kind") == "user_message"),
-        "job_agent_names": sorted(
-            {r["agent_name"] for r in job_debug.get("agent_runs") or [] if r.get("agent_name")}
-        ),
+        "job_agent_runs": list(job_debug.get("agent_runs") or []),
         "source_count": len(sources),
         "source_coverage": coverage,
         "creator_request": creator_request,
+    }
+
+
+def _unseeded_state(
+    job: dict[str, Any],
+    recorded: RecordedMedia | None,
+    thread_events: list[dict[str, Any]] | None,
+) -> dict[str, int]:
+    """Production state the job's media leaned on that the replay does not recreate."""
+
+    snapshot = _binding_snapshot(job)
+    thread_media = [
+        entry
+        for event in thread_events or []
+        if event.get("kind") == "media_added"
+        for entry in (event.get("payload") or {}).get("media") or []
+        if isinstance(entry, dict)
+    ]
+    library_backed = {
+        str(row.get("media_id"))
+        for row in [*(snapshot.get("clip_assignments") or []), *thread_media]
+        if isinstance(row, dict) and row.get("library_asset_id")
+    }
+    return {
+        # Media-library catalogue rows (and the facts on them) are not seeded.
+        "media_library_backed_media": len(library_backed),
+        # A visual recorded without a media id keeps its capture time only on the binding row,
+        # and which pool asset it belongs to is unknown, so its capture time is not restored.
+        "visual_capture_times_not_restored": sum(
+            1 for row in (recorded.unnamed_visuals if recorded else ()) if row.get("capture")
+        ),
     }
 
 
@@ -351,6 +404,17 @@ def _media_key(media_id: str) -> str:
 def _binding_snapshot(job: dict[str, Any]) -> dict[str, Any]:
     plan = job.get("assembly_plan") or {}
     return ((plan.get("creator_brief_binding") or {}).get("media_snapshot")) or {}
+
+
+def _bound_rows(job: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The binding's clip and visual rows that name their medium, by media key."""
+
+    snapshot = _binding_snapshot(job)
+    return {
+        _media_key(str(row["media_id"])): row
+        for row in [*(snapshot.get("clip_assignments") or []), *(snapshot.get("visuals") or [])]
+        if isinstance(row, dict) and row.get("media_id")
+    }
 
 
 @dataclass(frozen=True)
@@ -513,8 +577,16 @@ def _check_source_coverage(
     }
 
 
-def replay_environment(dotenv: dict[str, str], scratch_url: str, namespace: str) -> dict[str, str]:
-    """Clean environment: model provider keys from .env, local scratch targets, nothing else."""
+def replay_environment(
+    dotenv: dict[str, str], scratch_url: str, namespace: str, *, max_cost_usd: float
+) -> dict[str, str]:
+    """Clean environment: model provider keys from .env, local scratch targets, nothing else.
+
+    The paid-call ledger runs in the scratch database as a development manual-QA run capped
+    at ``max_cost_usd``. Without that envelope every OpenAI planning reservation is refused
+    and a Main Creator configured on Sol (production since 2026-11-14) silently answers on its
+    Gemini fallback (``docs/reviews/kri-1384/sol-main-creator.md``, Gaps).
+    """
 
     env = {key: os.environ[key] for key in KEPT_ENV if key in os.environ}
     for key, value in dotenv.items():
@@ -522,6 +594,19 @@ def replay_environment(dotenv: dict[str, str], scratch_url: str, namespace: str)
             env[key] = value
     if dotenv.get("TOKEN_ENCRYPTION_KEY"):
         env["TOKEN_ENCRYPTION_KEY"] = dotenv["TOKEN_ENCRYPTION_KEY"]
+    cap = f"{max_cost_usd:.2f}"
+    env.update(
+        {
+            "AI_USAGE_ENVIRONMENT": "development",
+            "AI_MANUAL_QA_TEST_RUN_ID": namespace,
+            "AI_MANUAL_QA_MAX_COST_USD": cap,
+            "AI_MANUAL_QA_RESERVATION_APPROVED": "true",
+            "AI_OPENAI_MONTHLY_BUDGET_USD": cap,
+            "AI_OPENAI_PLANNING_BUDGET_USD": cap,
+            "AI_ANTHROPIC_MONTHLY_BUDGET_USD": cap,
+            "AI_ANTHROPIC_PLANNING_BUDGET_USD": cap,
+        }
+    )
     env["DATABASE_URL"] = scratch_url
     env["NOVA_CELERY_QUEUE_NAMESPACE"] = namespace
     env["PYTHONUNBUFFERED"] = "1"
@@ -681,6 +766,36 @@ def start_worker(env: dict[str, str], run_dir: Path, namespace: str) -> subproce
     )
 
 
+# Every way `app.worker._prewarm_clip_font_matcher` ends. A first turn that runs while torch
+# and CLIP still load lost its 15 s lease in verifier run 1 on 1cb33402 (2026-11-14 13:53).
+WORKER_WARM = re.compile(
+    r"\[worker_ready\] (?:CLIP font matcher prewarmed|CLIP matcher prewarm failed"
+    r"|no render queue consumed|queue introspection failed)"
+)
+WORKER_WARM_TIMEOUT_S = 600.0
+
+
+def wait_until_worker_warm(
+    worker: subprocess.Popen[bytes], log_path: Path, timeout_s: float = WORKER_WARM_TIMEOUT_S
+) -> float:
+    """Block until the worker finished its startup prewarm; return the seconds it took."""
+
+    started = time.monotonic()
+    while time.monotonic() - started < timeout_s:
+        if worker.poll() is not None:
+            raise ReplayInfrastructureError(
+                f"The replay worker exited with {worker.returncode} before it was ready; "
+                f"see {log_path}"
+            )
+        if log_path.is_file() and WORKER_WARM.search(log_path.read_text(errors="replace")):
+            return round(time.monotonic() - started, 1)
+        time.sleep(1.0)
+    raise ReplayInfrastructureError(
+        f"The replay worker did not finish its CLIP prewarm within {timeout_s:.0f} s "
+        f"(expected a `[worker_ready]` prewarm line in {log_path})"
+    )
+
+
 def stop_worker(worker: subprocess.Popen[bytes]) -> None:
     if worker.poll() is None:
         os.killpg(worker.pid, signal.SIGTERM)
@@ -699,29 +814,70 @@ from app.models import AgentRun
 
 with sync_session() as db:
     runs = [
-        {"agent_name": r.agent_name, "outcome": r.outcome, "cost_usd": float(r.cost_usd or 0)}
+        {
+            "agent_name": r.agent_name,
+            "outcome": r.outcome,
+            "cost_usd": float(r.cost_usd or 0),
+            "model": r.model,
+            "prompt_version": r.prompt_version,
+        }
         for r in db.query(AgentRun).order_by(AgentRun.created_at)
     ]
 print(json.dumps({"runs": runs, "success": sorted(SUCCESS_OUTCOMES)}))
 """
 
 
-def production_agents(item_id: str, job_agent_names: list[str]) -> tuple[set[str], bool]:
-    """Agent names production ran for the plan item (all pages of its proposal trace).
+@dataclass(frozen=True)
+class ProductionAgents:
+    """What production ran for the plan item up to the job's end: agents, models, prompts."""
 
-    The second value is False when the trace was cut off, so an absence proves nothing.
+    models: dict[str, frozenset[str]]
+    prompt_versions: dict[str, frozenset[str]]
+    trace_complete: bool
+
+    @property
+    def names(self) -> set[str]:
+        return set(self.models)
+
+
+def _by_agent(runs: list[dict[str, Any]], field: str) -> dict[str, frozenset[str]]:
+    found: dict[str, set[str]] = {}
+    for run in runs:
+        if run.get("agent_name"):
+            found.setdefault(run["agent_name"], set())
+            if run.get(field):
+                found[run["agent_name"]].add(str(run[field]))
+    return {name: frozenset(values) for name, values in found.items()}
+
+
+def production_agents(
+    item_id: str, job_runs: list[dict[str, Any]], until: str | None
+) -> ProductionAgents:
+    """Agent runs production recorded for the plan item (all pages of its proposal trace).
+
+    Runs after the job ended (``until``, its ``updated_at``) are left out: a later message may
+    have run on a model production switched to afterwards. ``trace_complete`` is False when
+    the trace was cut off, so an absence proves nothing.
     """
 
-    names = set(job_agent_names)
+    runs = list(job_runs)
     cursor: str | None = None
+    complete = False
     for _ in range(PRODUCTION_TRACE_PAGES):
         suffix = f"&cursor={quote(cursor, safe='')}" if cursor else ""
         page = prod_get(f"/admin/plan-items/{item_id}/proposal-trace?limit=100{suffix}")
-        names |= {r["agent_name"] for r in page.get("agent_runs") or [] if r.get("agent_name")}
+        runs.extend(page.get("agent_runs") or [])
         cursor = page.get("next_cursor")
         if not cursor:
-            return names, True
-    return names, False
+            complete = True
+            break
+    if until:
+        runs = [r for r in runs if not r.get("created_at") or str(r["created_at"]) <= until]
+    return ProductionAgents(
+        models=_by_agent(runs, "model"),
+        prompt_versions=_by_agent(runs, "prompt_version"),
+        trace_complete=complete,
+    )
 
 
 def replay_agents(env: dict[str, str]) -> dict[str, Any]:
@@ -741,14 +897,25 @@ def replay_agents(env: dict[str, str]) -> dict[str, Any]:
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
-def compare_routes(
-    production: set[str], trace_complete: bool, recorded: dict[str, Any]
-) -> dict[str, Any]:
-    """Did the replay fail inside an agent production never ran for this plan item?
+def _differences(
+    production: dict[str, frozenset[str]], replay: dict[str, frozenset[str]]
+) -> list[dict[str, Any]]:
+    """Agents both ran where the replay used a value production never used for this item."""
+
+    return [
+        {"agent": name, "production": sorted(production[name]), "replay": sorted(values)}
+        for name, values in sorted(replay.items())
+        if name in production and production[name] and values - production[name]
+    ]
+
+
+def compare_routes(production: ProductionAgents, recorded: dict[str, Any]) -> dict[str, Any]:
+    """Did the replay take production's route, on production's models?
 
     The replay drives the same controllers as the chat, but a flag the snapshot approximates
-    can send it down a planner production does not use. A failure there is the replay's own, so
-    it is reported as a divergence instead of as the production job's failure reason.
+    can send it down a planner production does not use, and a model setting the snapshot
+    misses plans on another model. A failure on such a route is the replay's own, so it is
+    reported as a divergence instead of as the production job's failure reason.
     """
 
     success = set(recorded["success"])
@@ -757,13 +924,21 @@ def compare_routes(
         last_outcome[run["agent_name"]] = run["outcome"]
     ran = sorted(last_outcome)
     failed = sorted(name for name, outcome in last_outcome.items() if outcome not in success)
+    names = production.names
     return {
-        "production_agents": sorted(production),
-        "production_trace_complete": trace_complete,
+        "production_agents": sorted(names),
+        "production_trace_complete": production.trace_complete,
         "replay_agents": ran,
-        "replay_only_agents": sorted(set(ran) - production),
+        "replay_only_agents": sorted(set(ran) - names),
         "replay_failed_agents": failed,
-        "diverged_failures": sorted(set(failed) - production) if trace_complete else [],
+        "diverged_failures": sorted(set(failed) - names) if production.trace_complete else [],
+        "replay_models": {
+            name: sorted(models) for name, models in _by_agent(recorded["runs"], "model").items()
+        },
+        "model_differences": _differences(production.models, _by_agent(recorded["runs"], "model")),
+        "prompt_version_differences": _differences(
+            production.prompt_versions, _by_agent(recorded["runs"], "prompt_version")
+        ),
         "replay_agent_runs": len(recorded["runs"]),
         "replay_spend_usd": round(sum(r.get("cost_usd") or 0 for r in recorded["runs"]), 4),
     }
@@ -791,6 +966,12 @@ def classify_failure(
             f"{', '.join(route['replay_only_agents'])}, which production never ran (production "
             f"failed with {production_reason})"
         )
+    elif not reproduced and route["model_differences"]:
+        models = ", ".join(
+            f"{d['agent']} on {'/'.join(d['replay'])} (production {'/'.join(d['production'])})"
+            for d in route["model_differences"]
+        )
+        where = f"with {result['failure_reason']} after running {models}"
     else:
         return
     result["replay_failure"] = {
@@ -816,9 +997,12 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
     error = (receipt.get("error") or {}).get("message")
     question = (receipt.get("error") or {}).get("question")
     diverged_turn = (receipt.get("error") or {}).get("diverged_turn")
+    stalled = (receipt.get("error") or {}).get("stalled")
     device_plan = receipt.get("device_plan")
     if videos:
         outcome = "video_rendered"
+    elif stalled:
+        outcome = "stalled"
     elif question:
         outcome = "main_creator_question"
     elif diverged_turn:
@@ -841,11 +1025,30 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
         "device_plan": device_plan,
         "main_creator_question": question,
         "diverged_turn": diverged_turn,
+        "stalled": stalled,
         "creator_client_protocol": (job.get("all_candidates") or {}).get("creator_client_protocol"),
         "turns": receipt.get("turns"),
+        "first_divergent_turn": first_divergent_turn(receipt.get("turns") or []),
         "stopped_early": receipt.get("stopped_early"),
+        "reconcile": receipt.get("reconcile"),
         "receipt": str(receipt_path),
     }
+
+
+def first_divergent_turn(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The first message whose reply differed from production's (a question, a draft, an
+    approval card), or None. Everything after it answered a reply the replay never gave."""
+
+    for index, turn in enumerate(turns):
+        if turn.get("matches_production") is False:
+            return {
+                "message_index": index + 1,
+                "production_turn_id": turn.get("production_turn_id"),
+                "production_reply": turn.get("production_reply"),
+                "replay_reply": turn.get("replay_reply"),
+                "replay_question": turn.get("question"),
+            }
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -857,12 +1060,21 @@ def main(argv: list[str] | None = None) -> int:
         "--bucket", default=None, help="production bucket (default: STORAGE_BUCKET in .env)"
     )
     parser.add_argument("--timeout-s", type=float, default=1800.0)
+    parser.add_argument(
+        "--max-cost-usd",
+        type=float,
+        default=1.0,
+        help="cap on the paid calls the ledger meters (OpenAI planning always), at most 2.00",
+    )
     parser.add_argument("--fetch-only", action="store_true", help="stop after writing the inputs")
     args = parser.parse_args(argv)
     try:
         job_id = str(uuid.UUID(args.job_id))
     except ValueError:
         print(f"not a job id: {args.job_id!r}", file=sys.stderr)
+        return 2
+    if not 0 < args.max_cost_usd <= 2.0:
+        print("--max-cost-usd must be above 0 and at most 2.00", file=sys.stderr)
         return 2
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
@@ -884,12 +1096,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.fetch_only:
             print(f"inputs: {inputs_dir}")
             return 0
-        production, trace_complete = production_agents(info["item_id"], info["job_agent_names"])
+        production = production_agents(
+            info["item_id"], info["job_agent_runs"], info["job"].get("updated_at")
+        )
+        planned = json.loads(SNAPSHOT.read_text(encoding="utf-8"))["settings"]
+        print(
+            "production models for this item: "
+            + json.dumps({name: sorted(m) for name, m in sorted(production.models.items())})
+            + f"; the replay's Main Creator: {planned['main_creator_model']['value']}"
+        )
         run_dir.mkdir(parents=True)
         scratch_url = scratch_database_url(
             dotenv, f"{SCRATCH_DATABASE_PREFIX}{uuid.uuid4().hex[:12]}"
         )
-        env = replay_environment(dotenv, scratch_url, namespace)
+        env = replay_environment(dotenv, scratch_url, namespace, max_cost_usd=args.max_cost_usd)
         worker_env = {**_creator_environment(env, run_dir, inputs_dir), **env}
         try:
             recreate_scratch_database(scratch_url, env)
@@ -898,6 +1118,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Could not create the scratch database: {type(exc).__name__}"
             ) from exc
         worker = start_worker(worker_env, run_dir, namespace)
+        warm_s = wait_until_worker_warm(worker, run_dir / "worker.log")
         completed = subprocess.run(
             [
                 sys.executable,
@@ -926,8 +1147,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         result = summarize(run_dir / "replay-receipt.json", run_dir)
         result["replay_exit_code"] = completed.returncode
-        route = compare_routes(production, trace_complete, replay_agents(worker_env))
+        result["worker_warm_s"] = warm_s
+        route = compare_routes(production, replay_agents(worker_env))
         result["route_comparison"] = route
+        result["input_differences"] = {
+            "models": route["model_differences"],
+            **info["unseeded_state"],
+        }
         # A replay that stopped at an earlier render is compared with production's render there.
         compared = (result.get("stopped_early") or {}).get("production_render") or {
             "job_id": job_id,
@@ -944,6 +1170,9 @@ def main(argv: list[str] | None = None) -> int:
             "replayed_route": "kria_thread_turns" if info["thread_events"] else "main_creator",
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
+        if result["outcome"] == "stalled" and (result["stalled"] or {}).get("lease_lapsed"):
+            # The local worker stopped running the turn; nothing was learned about the job.
+            return 3
         succeeded = result["outcome"] in {"video_rendered", "device_plan_ready"}
         return 0 if succeeded and completed.returncode == 0 else 1
     except ReplayInfrastructureError as exc:

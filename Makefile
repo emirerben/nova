@@ -32,9 +32,12 @@ kria-replay:
 # Real replay of a failed production creation job: its footage and request, the production
 # flag snapshot, real models, a local worker. Prints the video path or the failure reason.
 # Needs gcloud read access to the bucket and ADMIN_PROD_API_KEY (docs/runbooks/replay-from-job-id.md).
+# MAX_COST_USD (at most 2.00) caps the calls the paid-call ledger meters: Sol/OpenAI planning
+# always, Gemini only when the snapshot turns AI_COST_CONTROL_ENABLED on.
+MAX_COST_USD ?= 1.00
 kria-replay-job:
-	@test -n "$(JOB)" || { echo "usage: make kria-replay-job JOB=<production job id>"; exit 2; }
-	(cd $(API_DIR) && $(API_LOCAL_PYTHON) scripts/replay_job.py $(JOB))
+	@test -n "$(JOB)" || { echo "usage: make kria-replay-job JOB=<production job id> [MAX_COST_USD=1.00]"; exit 2; }
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) scripts/replay_job.py $(JOB) --max-cost-usd $(MAX_COST_USD))
 
 verify-kria:
 	KRIA_VERIFY_PYTHON="$(abspath $(API_PYTHON))" bash scripts/verify-kria.sh
