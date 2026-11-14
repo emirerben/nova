@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.199.0] - 2026-11-14
+
+### Fixed
+- fix(ios): split-screen editor UX, scroll hints, disabled reasons, delete confirm (KRI-1399) (#2315) <!-- release-pr: 2315 -->
+
 ## [0.88.198.0] - 2026-11-14
 
 ### Changed
