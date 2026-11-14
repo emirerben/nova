@@ -209,9 +209,17 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     "split_screen_clip_offset": _g(
         "agent_ops",
-        "setSelectedSplitScreenOffset addSplitPanelClip",
+        "setSelectedSplitScreenOffset",
         ("assign_split_panel",),
         fields=("offset_s",),
+    ),
+    # KRI-1420: Add to panel places a source after the panel's last clip. Unlike the phone, chat
+    # grows the section to hold it (grow_section false keeps the length and cuts the clip).
+    "split_screen_panel_add": _g(
+        "agent_ops",
+        "addSplitPanelClip",
+        ("add_split_panel_clip",),
+        fields=("clip_index", "offset_s", "duration_s", "grow_section"),
     ),
     "split_screen_remove": _g(
         "agent_ops", "removeSplitScreen", ("remove_split_screen",), fields=("keep_panel",)
@@ -224,6 +232,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("update_split_screen", "assign_split_panel"),
         fields=("duration_s", "slot_index", "offset_s"),
     ),
+    # Each copy is one assign_split_panel duplicate placed after the panel's last clip.
     "split_screen_loop_fill": _g(
         "agent_ops",
         "loopFillSplitPanel",
