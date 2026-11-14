@@ -727,13 +727,18 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "split_screen.panels[]",
         "split_screen.panels[].media_id",
         "split_screen.panels[].source_start_s",
+        "split_screen.panels[].clips[]",
+        "split_screen.panels[].clips[].media_id",
+        "split_screen.panels[].clips[].source_start_s",
+        "split_screen.panels[].clips[].duration_s",
         "split_screen.start_s",
         "split_screen.duration_s",
         "split_screen.panel_weights[]",
         "split_screen.gutter",
         "split_screen.background_color",
         note=(
-            "Capability policy validates availability and approved media; the initial phone "
+            "Capability policy validates availability and approved media for every clip of every "
+            "panel; the initial phone "
             "compiler lowers source clocks and layout through the editable section command "
             "before pinning the device request. This contract does not independently pin or "
             "verify panel placement."

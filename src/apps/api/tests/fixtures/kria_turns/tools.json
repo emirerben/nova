@@ -5974,9 +5974,23 @@
             "title": "MontageCadenceConstraint",
             "type": "object"
           },
-          "SplitPanelSource": {
+          "SplitPanelClip": {
             "additionalProperties": false,
             "properties": {
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "maximum": 1800,
+                    "minimum": 0.1,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration S"
+              },
               "media_id": {
                 "maxLength": 160,
                 "minLength": 1,
@@ -6001,6 +6015,59 @@
             "required": [
               "media_id"
             ],
+            "title": "SplitPanelClip",
+            "type": "object"
+          },
+          "SplitPanelSource": {
+            "additionalProperties": false,
+            "description": "One panel: a single `media_id`, or `clips` that play one after another.",
+            "properties": {
+              "clips": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/SplitPanelClip"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Clips"
+              },
+              "media_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 160,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Media Id"
+              },
+              "source_start_s": {
+                "anyOf": [
+                  {
+                    "maximum": 36000,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Start S"
+              }
+            },
             "title": "SplitPanelSource",
             "type": "object"
           }

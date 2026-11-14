@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.217.0] - 2026-11-14
+
+### Changed
+- fix(api): admit a picked photo once its bytes are verified (KRI-1419) (#2332) <!-- release-pr: 2332 -->
+
+## [0.88.216.0] - 2026-11-14
+
+### Changed
+- fix(api): the AI can put several clips in one split-screen panel (KRI-1420) (#2327) <!-- release-pr: 2327 -->
+
+## [0.88.215.0] - 2026-11-14
+
+### Changed
+- fix(ios): split picker tabs, tile progress and preview ghosts (KRI-1417) (#2331) <!-- release-pr: 2331 -->
+
+## [0.88.214.0] - 2026-11-14
+
+### Changed
+- fix(api): one table proves every editor capability saves (KRI-1423) (#2329) <!-- release-pr: 2329 -->
+
+## [0.88.213.0] - 2026-11-14
+
+### Changed
+- fix(ios): split divider moves the video panels while the finger is down (KRI-1418) (#2330) <!-- release-pr: 2330 -->
+
+## [0.88.212.0] - 2026-11-14
+
+### Changed
+- fix(api): a photo the creator cut or trimmed saves on the phone (KRI-1423) (#2328) <!-- release-pr: 2328 -->
+
 ## [0.88.211.0] - 2026-11-14
 
 ### Changed

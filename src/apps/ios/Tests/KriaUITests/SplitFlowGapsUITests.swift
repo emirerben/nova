@@ -10,7 +10,8 @@ import UIKit
 // - Full screen from / until the playhead cuts at the wrong time, drops footage, or keeps the wrong panel.
 // - Extending to the whole video leaves ordinary clips behind or reorders them.
 // - Remove split keeps another panel than the one chosen.
-// - A ghost tap fills the first empty panel instead of the one tapped.
+// - The preview draws an Add footage ghost over an empty panel (the picker and the timeline gap are the ways in).
+// - The picker's Saved tab appears late and pushes the grid down under the finger, or adding inserts a row above it.
 // - A timeline gap is drawn over footage, missing where a panel is free, or does not open the add flow.
 // Every assertion reads the persisted document, not only what is on screen.
 @MainActor
@@ -352,20 +353,56 @@ final class SplitFlowGapsUITests: XCTestCase {
         XCTAssertEqual(doc1.rows.count, 2)
     }
 
-    func testGhostTapOpensTheFillFlowForThatPanel() throws {
+    func testEmptyPanelsShowTheirRealLookInsteadOfAddFootageGhosts() throws {
         let app = launch(["-ui-testing-editor-split-screen"])
         createSplit(panels: 3, scope: .clip, in: app)
-        XCTAssertTrue(app.staticTexts["Add to Middle"].waitForExistence(timeout: 10), "Without a ghost tap the first empty panel leads")
-        let ghost = app.descendants(matching: .any)["native-editor-split-ghost-2"].firstMatch
-        XCTAssertTrue(ghost.waitForExistence(timeout: 10), "Every empty panel shows a ghost in the preview")
-        ghost.tap()
-        XCTAssertTrue(app.staticTexts["Add to Bottom"].waitForExistence(timeout: 10), "The tapped panel is the target")
-        XCTAssertFalse(app.staticTexts["Add to Middle"].exists)
-        source("Clip 2", in: app).tap()
-        let doc = try snapshot(app)
-        XCTAssertEqual(doc.members(2).count, 1, "The pick lands in the tapped Bottom panel")
-        XCTAssertTrue(doc.members(1).isEmpty, "Middle stays empty")
-        attach(app, "Ghost tap targets the Bottom panel")
+        XCTAssertTrue(app.staticTexts["Add to Middle"].waitForExistence(timeout: 10), "The first empty panel still leads the picker")
+        let panels = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'native-editor-split-ghost-'"))
+        XCTAssertEqual(panels.count, 0, "The preview draws no Add footage ghost over an empty panel")
+        XCTAssertFalse(app.staticTexts["Add photo or video"].exists)
+        attach(app, "Empty panels without ghosts")
+    }
+
+    func testSavedTabIsDrawnFromTheFirstFrameSoTheGridNeverMovesUnderTheFinger() throws {
+        let app = launch(["-ui-testing-editor-split-screen", "-ui-testing-editor-split-picker"], libraryDelay: 12)
+        createSplit(panels: 3, scope: .clip, in: app)
+        let tile = app.buttons["native-editor-split-gallery-tile-0"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 10))
+        let before = tile.frame
+        attach(app, "Picker before the library answers")
+
+        let saved = app.buttons["native-editor-split-tab-saved"]
+        XCTAssertTrue(saved.exists && !saved.isEnabled,
+                      "The tab row is drawn before the library check answers, with Saved waiting, not inserted above the grid after it")
+        XCTAssertEqual(tile.frame.minY, before.minY, accuracy: 0.5)
+
+        // A finger already heading for where Saved will be must never land on a photo.
+        let aimY = saved.exists ? saved.frame.midY : before.minY + 25
+        let aim = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.width * 0.75, dy: aimY))
+        aim.tap()
+        XCTAssertTrue(tile.isEnabled, "That tap started no add")
+
+        XCTAssertTrue(waitEnabled(saved, timeout: 30), "Saved turns on once the library answers")
+        XCTAssertEqual(tile.frame.minY, before.minY, accuracy: 0.5, "Nothing moved when Saved turned on")
+        attach(app, "Picker after the library answers")
+    }
+
+    func testAddingShowsOnTheTappedTileInsteadOfInsertingARowAboveTheGrid() throws {
+        let app = launch(["-ui-testing-editor-split-screen", "-ui-testing-editor-split-picker"], libraryDelay: 0)
+        createSplit(panels: 3, scope: .clip, in: app)
+        let tile = app.buttons["native-editor-split-gallery-tile-1"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 10))
+        let saved = app.buttons["native-editor-split-tab-saved"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitEnabled(saved, timeout: 10), "Let the library answer so the layout is settled")
+        let first = app.buttons["native-editor-split-gallery-tile-0"]
+        let before = first.frame
+        tile.tap()
+        let adding = app.descendants(matching: .any)["native-editor-split-adding-1"].firstMatch
+        XCTAssertTrue(adding.waitForExistence(timeout: 3), "The tapped tile shows its own progress")
+        XCTAssertEqual(first.frame.minY, before.minY, accuracy: 0.5, "No row is inserted above the grid")
+        XCTAssertTrue(tile.frame.insetBy(dx: -1, dy: -1).contains(adding.frame), "The spinner sits inside the tile, clear of the edge fade")
+        attach(app, "Tile mid-add")
     }
 
     func testGapInAPanelLaneOpensTheAddFlow() throws {
@@ -402,14 +439,20 @@ final class SplitFlowGapsUITests: XCTestCase {
 
     // MARK: Setup
 
-    private func launch(_ extra: [String]) -> XCUIApplication {
+    private func launch(_ extra: [String], libraryDelay: Double? = nil) -> XCUIApplication {
         let app = XCUIApplication()
+        if let libraryDelay { app.launchEnvironment["KRIA_SPLIT_PICKER_LIBRARY_DELAY_S"] = String(libraryDelay) }
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-live-preview",
                                "-ui-testing-editor-document-snapshot"] + extra
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
         return app
+    }
+
+    private func waitEnabled(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let enabled = NSPredicate(format: "isEnabled == true")
+        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: enabled, object: element)], timeout: timeout) == .completed
     }
 
     private func openSplitTool(_ app: XCUIApplication) {

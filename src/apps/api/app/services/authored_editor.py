@@ -649,6 +649,10 @@ def resolve_authored_phone_slots(
         resolved.append(
             {
                 **slot.model_dump(mode="json", exclude={"tilt"}),
+                # A photo has no source clock. The phone still moves `in_s` for the right half
+                # of a cut and for a left trim, and the recipe compile refuses a photo that
+                # does not start at 0 (KRI-1423).
+                **({"in_s": 0.0} if source["kind"] == "image" else {}),
                 **({"tilt": tilt} if tilt is not None else {}),
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
                 "source_gcs_path": source["gcs_path"],

@@ -1629,6 +1629,7 @@ enum EditorOpenIntent { case warm, open }
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
     private var splitDividerDrag: (sectionID: String, upper: Int, lower: Int, active: [Int], weights: [Double], ownsTransaction: Bool)?
+    private var splitDragRefusedInPlace = false
     /// Imports bound for a split panel, by placement id. In memory only: a relaunch places them as ordinary clips.
     private var splitPanelPlacements: [UUID: (sectionID: String, panel: Int, offset: Double)] = [:]
     private var draftProjectionCache: EditorDraft?
@@ -4754,7 +4755,10 @@ enum EditorOpenIntent { case warm, open }
         // whole composition — on a guided story that is ~170 caption layouts
         // per sample, seconds of main-thread work per drag. Coalesce samples
         // until the finger pauses; a standalone edit still rebuilds at once.
-        let coalesce = transactionBaseline != nil
+        // A divider drag is the exception while its update stays in place and moves only panel rects, so the picture
+        // follows the finger. One the composition refused (a card or a matted speaker in a panel) is a full rebuild
+        // per sample, so the rest of that drag coalesces like any gesture.
+        let coalesce = transactionBaseline != nil && (splitDividerDrag == nil || splitDragRefusedInPlace)
         sourcePreviewTask = Task { [weak self] in
             if coalesce {
                 try? await Task.sleep(for: .milliseconds(Self.previewCoalesceMilliseconds))
@@ -4981,6 +4985,7 @@ enum EditorOpenIntent { case warm, open }
             #if DEBUG
             NativePreviewDiagnostics.failure("live-update-refused", error: error)
             #endif
+            if splitDividerDrag != nil { splitDragRefusedInPlace = true }
             return false
         }
     }
@@ -11538,6 +11543,7 @@ extension NativeEditorSession {
         let owns = transactionBaseline == nil
         if owns { beginTransaction() }
         splitDividerDrag = (sectionID, upper, lower, active, section.panelWeights, owns)
+        splitDragRefusedInPlace = false
     }
 
     func updateSplitDividerDrag(deltaFraction: Double) {
