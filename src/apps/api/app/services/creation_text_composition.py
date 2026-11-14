@@ -31,6 +31,7 @@ from app.agents.edit_copilot import (
     EditCopilotOutput,
     _font_catalog,
     _format_snapshot,
+    _not_applied,
 )
 from app.kria.brief import BriefRequirement
 from app.kria.text_sequence import is_text_sequence
@@ -1687,9 +1688,17 @@ def uncovered_layer_asks(
     layers: Sequence[Any], requirements: Sequence[BriefRequirement] | None
 ) -> list[str]:
     """Live text asks with a requested position that no researched layer fills."""
+    return [
+        req.description or req.id for req in _uncovered_layer_requirements(layers, requirements)
+    ]
+
+
+def _uncovered_layer_requirements(
+    layers: Sequence[Any], requirements: Sequence[BriefRequirement] | None
+) -> list[BriefRequirement]:
     positions = {layer.position for layer in layers}
     return [
-        req.description or req.id
+        req
         for req in requirements or ()
         if req.live
         and (req.kind == "text" or is_text_sequence(req))
@@ -1712,7 +1721,7 @@ def _compose_from_research(
     constraints: Mapping[str, str],
     text_requirements: Sequence[BriefRequirement] | None,
     ctx: RunContext | None,
-) -> tuple[EditCopilotOutput, list[dict], dict[str, str], list[ResearchLayerShape]]:
+) -> tuple[EditCopilotOutput, list[dict], dict[str, str], list[ResearchLayerShape], list[TextDrop]]:
     """Reviewed research writes the words; the text composer only shapes them.
 
     The layers are either ``approved`` before render (KRI-881: replayed by
@@ -1723,8 +1732,10 @@ def _compose_from_research(
     binds a bar already in its snapshot), so the composer shapes the bars in the program's
     ``then`` bundle, with them held as confirmed copy and no way to add or reword text. Returns
     the shaping answer with the layers' ops as ``ops`` (full lane, after ``pinned_ops``), the
-    ``then`` ops, the researched bars' copy constraints, and the layer shapes the program
-    records so every replay keeps them as reviewed.
+    ``then`` ops, the researched bars' copy constraints, the layer shapes the program
+    records so every replay keeps them as reviewed, and one ``incomplete`` drop per asked
+    layer no reviewed layer fills. A layer the writer reported unmet stays a failure: the
+    writer's answer then skipped the evidence checks and the claim review.
     """
     from app.services.researched_text import (  # noqa: PLC0415
         ResearchUnavailable,
@@ -1762,11 +1773,22 @@ def _compose_from_research(
             )
     except ResearchUnavailable as exc:
         raise CreationTextCompositionError(str(exc)) from exc
-    uncovered = uncovered_layer_asks(layers, text_requirements)
-    if uncovered:
+    uncovered = _uncovered_layer_requirements(layers, text_requirements)
+    if uncovered and not layers:
         raise CreationTextCompositionError(
-            "Text composition is incomplete: no researched text for " + "; ".join(uncovered)
+            "Text composition is incomplete: no researched text for "
+            + "; ".join(req.description or req.id for req in uncovered)
         )
+    # KRI-1376: the reviewed layers render, and the note names each asked layer they miss.
+    drops = [
+        shrink(
+            CreationTextCompositionError(
+                "Text composition is incomplete: no researched text", reason="incomplete"
+            ),
+            text=req.description or None,
+        )
+        for req in uncovered
+    ]
     known = {row.get("id") for row in lane}
     written_lane = replay_text_composition(
         plan, TextCompositionProgram(base_digest=base_digest, operations=[*pinned_ops, *first])
@@ -1797,7 +1819,7 @@ def _compose_from_research(
     shapes = _layer_shapes(layer_rows, layers, text_requirements)
     # The caller's replay checks the shapes (`_check_research_layers`), the same rule a saved
     # program meets, and drops a shaping op that breaks one (KRI-1376).
-    return shaped.model_copy(update={"ops": first}), second, researched, shapes
+    return shaped.model_copy(update={"ops": first}), second, researched, shapes, drops
 
 
 _WRITING_OPS = frozenset({"add_text", "rewrite_text", "edit_text"})
@@ -2128,6 +2150,7 @@ def _compose_creation_text(
     full_lane_ops = False
     then: list[dict] = []
     shapes: list[ResearchLayerShape] = []
+    drops: list[TextDrop] = []
     owned = (
         _server_timed_sequences(texts_for_model, text_requirements)
         if approved_layers is None
@@ -2149,7 +2172,7 @@ def _compose_creation_text(
         and pinned_research is None
         and research_needs_text_layers(text_requirements)
     ):
-        output, then, researched, shapes = _compose_from_research(
+        output, then, researched, shapes, uncovered = _compose_from_research(
             output.research_request,
             approved=approved_layers,
             snapshot=snapshot,
@@ -2164,6 +2187,7 @@ def _compose_creation_text(
             ctx=ctx,
         )
         constraints = {**constraints, **researched}
+        drops.extend(uncovered)
         full_lane_ops = True
     elif output.research_request is not None and pinned_research is not None:
         # The creator approved this research before render: it is never searched again.
@@ -2192,7 +2216,6 @@ def _compose_creation_text(
             )
         except ResearchUnavailable as exc:
             raise CreationTextCompositionError(str(exc)) from exc
-    drops: list[TextDrop] = []
     unmet: CreationTextCompositionError | None = None
     if (
         output.needs_clarification
@@ -2209,7 +2232,7 @@ def _compose_creation_text(
         unmet = CreationTextCompositionError(
             "Text composition is incomplete: " + (details or output.reply), reason="incomplete"
         )
-        drops.append(shrink(unmet))
+        drops.append(shrink(unmet, **_unmet_ask(output)))
         log.info(
             "creation_text_incomplete_rendered",
             job_id=getattr(ctx, "job_id", None),
@@ -2336,6 +2359,24 @@ def _compose_creation_text(
     if not program.operations and not constraints:
         return snapshot, drops
     return snapshot.model_copy(update={"text_composition": program}), drops
+
+
+def _unmet_ask(output: EditCopilotOutput) -> dict[str, Any]:
+    """What the ``incomplete`` note names: her first unmet ask in her words, or that only ops
+    the parser refused are missing.
+
+    The parser appends one entry per refused op after the composer's own (KRI-1386), worded as
+    an action on that op's target ("change the text"), never as her ask.
+    """
+    refused = {_not_applied(item)[0]["request"] for item in output.not_applied}
+    for row in output.unmet_requests:
+        request = str(row.get("request") or "").strip()
+        if request in refused:
+            break
+        if request:
+            return {"text": request}
+    clarifying = output.needs_clarification or output.intent not in {"edit", "describe"}
+    return {"asked": bool(clarifying or not output.not_applied)}
 
 
 def _text_asks(requirements: Sequence[BriefRequirement] | None) -> list[BriefRequirement]:

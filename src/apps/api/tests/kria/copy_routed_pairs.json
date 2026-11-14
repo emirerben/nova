@@ -1550,6 +1550,21 @@
    "app/agents/editor_ops_v2/split_full_screen.py",
    "Part of a split screen can't go full screen from chat on this edit.",
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "I couldn't do {text}, so the video shows the rest of your text",
+   "{text} isteğini yapamadım, videoda yazının geri kalanı var"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out one text change I couldn't make",
+   "Yapamadığım bir yazı değişikliğini eklemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "Left out {count} text changes I couldn't make fit",
+   "Sığdıramadığım {count} yazı değişikliğini eklemedim"
   ]
  ],
  "retired": [

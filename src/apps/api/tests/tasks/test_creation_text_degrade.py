@@ -23,6 +23,14 @@ Review of #2314, written before the fixes:
   9. two rows bad the same way: every single drop still fails, so the video fails;
  10. a composer bundle rejected as a whole renders the planner's lane with a generic note;
  11. the stricter incomplete rule fails a pass where only an asked behavior was missing.
+
+Second review of #2314, written before the fixes:
+ 12. four or more rows bad the same way: a fixed round cap gives up and the video fails, or
+     each dropped row gets its own line and the finished reply fills with near-copies;
+ 13. the incomplete note never says which part of her ask is missing, though the composer
+     named it in her words;
+ 14. an op the parser refused, which no unmet ask of hers names, is reported as part of her
+     text request.
 """
 
 from __future__ import annotations
@@ -244,6 +252,13 @@ GATES = [
         reasons=("replay_failed", "replay_failed"),
     ),
     Gate(
+        "replay_failed_five_times",
+        lambda snap: [_add(GOOD), *(_past_end(f"Past {n}")(snap) for n in range(5))],
+        note="Left out 5 text changes I couldn't make fit",
+        gone="Past 4",
+        reasons=("replay_failed",) * 5,
+    ),
+    Gate(
         "layer_shape",
         _paired,
         note=f"Left out one text change for {_quoted(BOTTOM)} because I couldn't make it fit",
@@ -257,17 +272,27 @@ GATES = [
     Gate(
         "incomplete",
         lambda snap: [_add(GOOD)],
-        note="I couldn't do every part of your text request, so the video shows the parts I could",
+        note="I couldn't do “English word by word”, so the video shows the rest of your text",
         unmet=({"request": "English word by word", "reason": "No text holds the English yet"},),
     ),
     Gate(
         "incomplete_nothing_written",
         lambda snap: [],
-        note="I couldn't do every part of your text request, so the video shows the parts I could",
+        note="I couldn't do “make the title pop in”, so the video shows the rest of your text",
         kept=TITLE,
         unmet=({"request": "make the title pop in", "reason": "No pop-in for a title"},),
         reasons=("incomplete",),
         keeps_good=False,
+    ),
+    Gate(
+        "incomplete_refused_op",
+        lambda snap: [
+            _add(GOOD),
+            {"op": "remove_text", "selector": {"ids": [_title_id(snap)]}},
+        ],
+        note="Left out one text change I couldn't make",
+        kept=TITLE,
+        reasons=("incomplete",),
     ),
     Gate(
         "editorial_unmet",
@@ -410,7 +435,7 @@ def test_without_the_degrade_each_row_fails_the_video_as_in_prod(harness, monkey
     def no_degrade(ops, attempt, **_kwargs):
         return Degraded(attempt(ops), ops, [], None)
 
-    def no_shrink(error):
+    def no_shrink(error, **_kwargs):
         raise error
 
     monkeypatch.setattr(composition, "degrade_text_ops", no_degrade)

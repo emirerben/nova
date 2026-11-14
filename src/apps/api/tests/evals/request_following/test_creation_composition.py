@@ -172,9 +172,7 @@ def test_partial_composition_renders_what_it_could_and_says_so(monkeypatch):
     words = compile_proposal_execution_plan(snapshot)["text_elements"]
     assert [x["text"] for x in words if "::sequence-" in x["id"]] == TITLE.split()
     assert [(drop.reason, drop.action) for drop in drops] == [("incomplete", "shrunk")]
-    assert drops[0].note() == (
-        "I couldn't do every part of your text request, so the video shows the parts I could"
-    )
+    assert drops[0].note() == ("I couldn't do “sequence”, so the video shows the rest of your text")
 
 
 def test_disallowed_operations_cannot_change_source_timeline(monkeypatch):

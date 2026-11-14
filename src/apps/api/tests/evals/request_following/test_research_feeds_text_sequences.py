@@ -317,10 +317,42 @@ def test_translation_citing_other_facts_is_rejected(provider) -> None:
         _compose()
 
 
-def test_a_missing_translation_layer_fails_instead_of_silently_dropping(provider) -> None:
-    provider.layers = _layers()[:1]
+def test_a_missing_translation_layer_is_said_not_silently_dropped(provider) -> None:
+    """KRI-1376: the reviewed layer renders and the note names the asked layer no fact covers.
 
-    with pytest.raises(CreationTextCompositionError, match="no researched text for The same"):
+    Ways this could fail, written before the code: the video fails for one missing layer; the
+    missing layer is dropped with no note; the note quotes an internal requirement id.
+    """
+    provider.layers = _layers()[:1]
+    provider.shape_ops = lambda local, _english: [
+        {
+            "op": "replace_text_sequence",
+            "selector": {"ids": [local["id"]]},
+            "segments": LOCAL.split(),
+        }
+    ]
+    drops = []
+
+    composed = compose_creation_text(
+        _plan().snapshot, creator_request=REQUEST, text_requirements=REQUIREMENTS, drops=drops
+    )
+
+    rows = compile_proposal_execution_plan(composed)["text_elements"]
+    assert [row["text"] for row in _rows(rows, LOCAL)] == LOCAL.split()
+    assert _rows(rows, ENGLISH) == []
+    assert [(drop.reason, drop.action, drop.text) for drop in drops] == [
+        ("incomplete", "shrunk", REQUIREMENTS[1].description)
+    ]
+    assert drops[0].note() == (
+        "I couldn't do “The same in English at the bottom, word by word”, so the video shows "
+        "the rest of your text"
+    )
+
+
+def test_no_reviewed_layer_for_any_asked_place_still_fails(provider) -> None:
+    provider.layers = []
+
+    with pytest.raises(CreationTextCompositionError):
         _compose()
 
 
