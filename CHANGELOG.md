@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.218.0] - 2026-11-14
+
+### Changed
+- fix(kria): a "yes" reply keeps the caption quoted from earlier messages (KRI-1445) (#2340) <!-- release-pr: 2340 -->
+
 ## [0.88.217.0] - 2026-11-14
 
 ### Changed
