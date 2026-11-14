@@ -25,6 +25,7 @@ enum NativeSplitPickerFixture {
 
 struct NativeSplitPickerFixtureGrid: View {
     let disabled: Bool
+    let adding: String?
     let onTap: (String) -> Void
 
     var body: some View {
@@ -38,10 +39,11 @@ struct NativeSplitPickerFixtureGrid: View {
                         .clipped()
                 }
                 .buttonStyle(.plain)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
                 .disabled(disabled)
                 .accessibilityLabel("Photo")
                 .accessibilityIdentifier("native-editor-split-gallery-tile-\(index)")
+                .nativeSplitAdding(adding == id, identifier: "native-editor-split-adding-\(index)")
+                .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
     }
