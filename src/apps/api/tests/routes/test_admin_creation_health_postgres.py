@@ -23,6 +23,12 @@ Failure modes the numbers must survive (each has an assertion):
 * turns and renders are added together (one creation counted twice);
 * the render reason label comes from a second table that can drift from the sentence the client
   shows;
+* a failed iPhone render stops being counted once it is retried (the retry reuses the Job and
+  clears `failure_reason`), so a phone failure leaves no evidence; or the same failure is logged
+  twice, or a cancelled or admin test Job's retried failure counts, or a malformed log entry
+  crashes the report;
+* the top-reasons list is one shared top N, so a long tail of `failed` codes pushes every refusal
+  off it, the very rows the ticket is for;
 * the endpoint is readable without the admin token, or accepts a window it cannot afford.
 
 Days are far in the past and unique per test, so rows other tests or earlier runs left on the
@@ -36,7 +42,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.auth import SYNTHETIC_USER_ID
 from app.config import settings
@@ -44,7 +50,8 @@ from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
 from app.main import app
 from app.models import CreatorAgentTurn, Job, User
-from app.services.creation_health import MAX_DAYS, creation_health
+from app.services.creation_health import MAX_DAYS, TOP_REASONS, creation_health
+from app.services.device_render import apply_retry_variant_reset
 from app.services.job_failure_reasons import JOB_FAILURE_REASONS
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, _seed_user_turn
 
@@ -223,6 +230,83 @@ async def test_a_compensated_dispatch_is_a_failed_render_and_admin_test_renders_
     assert [(r["code"], r["count"]) for r in report["top_failure_reasons"]] == [
         ("kria_dispatch_aborted", 1)
     ]
+
+
+def _failed_phone_job(project, at, status="awaiting_device", user_id=None):
+    _job(project, at, status, "device_export_failed", user_id=user_id)
+    with sync_session() as db:
+        return (
+            db.execute(
+                select(Job.id).where(Job.created_at == at, Job.user_id == (user_id or project[0]))
+            )
+            .scalars()
+            .all()[-1]
+        )
+
+
+def _retry_phone_render(job_id, at, *, retries=1, log=None):
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        for _ in range(retries):
+            apply_retry_variant_reset(job, "v1")
+        plan = dict(job.assembly_plan)
+        plan["cleared_failures"] = [
+            {**entry, "at": at.isoformat()} for entry in plan["cleared_failures"]
+        ] + (log or [])
+        job.assembly_plan = plan
+        db.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_retried_phone_failure_stays_a_failed_attempt(project):
+    day = _day()
+    at = day.replace(hour=0, minute=0, second=0) + timedelta(seconds=1)
+    retried_ready = _failed_phone_job(project, at + timedelta(minutes=1))
+    retried_waiting = _failed_phone_job(project, at + timedelta(minutes=2))
+    cancelled = _failed_phone_job(project, at + timedelta(minutes=3))
+    admin_test = _failed_phone_job(project, at + timedelta(minutes=4), user_id=SYNTHETIC_USER_ID)
+    _failed_phone_job(project, at + timedelta(minutes=5))
+    for job_id in (retried_ready, retried_waiting, cancelled, admin_test):
+        _retry_phone_render(job_id, at + timedelta(hours=1), retries=2)
+    _retry_phone_render(
+        retried_waiting,
+        at,
+        log=[{"reason": "device_render_stale", "at": "not-a-time"}, "junk", {"at": 3}],
+    )
+    with sync_session() as db:
+        db.execute(update(Job).where(Job.id == retried_ready).values(status="variants_ready"))
+        db.execute(update(Job).where(Job.id == cancelled).values(status="cancelled"))
+        db.commit()
+
+    report = await _report(day, 1)
+
+    assert report["renders"] == {
+        "attempts": 4,
+        "successes": 1,
+        "success_rate": 0.25,
+        "in_progress": 1,
+        "failed": 3,
+    }
+    assert [(r["code"], r["count"]) for r in report["top_failure_reasons"]] == [
+        ("device_export_failed", 3)
+    ]
+    assert report["daily"][0]["renders"]["failed"] == 3
+
+
+@pytest.mark.asyncio
+async def test_each_kind_keeps_its_own_top_reasons(project):
+    day = _day()
+    at = day.replace(hour=0, minute=0, second=0) + timedelta(seconds=1)
+    for n in range(TOP_REASONS + 2):
+        for _ in range(2):
+            _turn(project, at, "failed", error={"code": f"runtime_failure_{n:02d}"})
+    _turn(project, at, "completed", plan=_outcome("refused", "pinned_text_too_many"))
+
+    report = await _report(day, 1)
+
+    top = report["top_failure_reasons"]
+    assert sum(1 for r in top if r["kind"] == "failed") == TOP_REASONS
+    assert [r["code"] for r in top if r["kind"] == "refused"] == ["pinned_text_too_many"]
 
 
 @pytest.mark.asyncio

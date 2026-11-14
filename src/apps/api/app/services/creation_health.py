@@ -22,14 +22,22 @@ out of the rate.
   finish planning.
 - failed: `status = 'failed'`, with `error.code`.
 
-Render attempt. One `jobs` row created in the window. `cancelled` and `draft` jobs are not attempts,
-and neither are admin test renders (jobs owned by the synthetic admin user).
-A re-render mints a new Job and counts as a new attempt.
+Render attempt. One `jobs` row created in the window, counted by its current outcome and its
+creation day, plus every failure a retry of that same Job erased (below). `cancelled` and `draft`
+jobs are not attempts, and neither are admin test renders (jobs owned by the synthetic admin user).
+A re-render from a plan item mints a new Job and counts as a new attempt. An iPhone retry, the
+auto-resume of a timed-out phone, an admin retry and the creator's Retry on a failed Create video
+reuse the Job and clear `Job.failure_reason`; each failure they clear was logged first
+(`cleared_failures`), and counts as its own failed attempt on the UTC day it was recorded, so a
+retried failure is not lost and the retry is its own attempt. Not counted: a failure a worker
+re-enqueue or an in-place variant re-render clears (the same attempt run again), an export the
+server repaired automatically (the creator never saw it fail; see `repair_history` on the device
+record), and a phone failure while an accepted video exists (the creator keeps that video).
 - success: a ready status, plus `posting_failed` / `posting_partial` / `clips_ready_partial` (the
   render finished; only publishing or some clips fell short).
 - failed: a failed status, or `awaiting_device` with `Job.failure_reason` set (an iPhone render
-  that failed; a retry clears the reason). The reason is `Job.failure_reason`, or
-  `no_reason_<status>` when the worker wrote none.
+  that failed). The reason is `Job.failure_reason`, or `no_reason_<status>` when the worker wrote
+  none. A logged, since-cleared failure carries the reason it was logged with.
 - anything else is `in_progress`.
 """
 
@@ -44,10 +52,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import SYNTHETIC_USER_ID
 from app.models import CreatorAgentTurn, Job
+from app.services.cleared_failures import CLEARED_FAILURES_FIELD
 from app.services.job_failure_reasons import JOB_FAILURE_REASONS
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY, JobStatus
 
 MAX_DAYS = 90
+# Per source and kind, so a large `failed` group cannot push every refusal off the list.
 TOP_REASONS = 10
 
 TURN_IN_PROGRESS = ("pending", "queued", "planning", "executing", "observing")
@@ -108,9 +118,15 @@ DEFINITIONS: dict[str, str] = {
         "error code."
     ),
     "render_attempt": (
-        "One Job created in the window (UTC day). A re-render is a new Job and a new attempt. "
-        "Cancelled and draft jobs, and admin test renders (synthetic user), are not attempts. "
-        "Jobs still running, and iPhone renders still waiting on the phone, are in_progress."
+        "One Job created in the window (UTC day), counted by its current outcome, plus every "
+        "failure a retry of that same Job cleared, counted as its own failed attempt on the UTC "
+        "day it was recorded (an iPhone retry or auto-resume, an admin retry and the creator's "
+        "Retry on a failed Create video reuse the Job and clear Job.failure_reason). A re-render "
+        "from a plan item is a new Job and a new attempt. Cancelled and draft jobs, and admin "
+        "test renders (synthetic user), are not attempts. Jobs still running, and iPhone renders "
+        "still waiting on the phone, are in_progress. Not counted: failures a worker re-enqueue "
+        "or an in-place variant re-render clears (the same attempt run again), exports the "
+        "server repaired automatically, and a phone failure while an accepted video exists."
     ),
     "render_success": (
         "A ready status, or posting_failed / posting_partial / clips_ready_partial (the render "
@@ -120,7 +136,9 @@ DEFINITIONS: dict[str, str] = {
     ),
     "share": (
         "A top_failure_reasons row's count divided by all failures of its own source (turn or "
-        "render). The two sources are never pooled into one denominator."
+        "render). The two sources are never pooled into one denominator. The list holds the top "
+        f"{TOP_REASONS} reasons for each source and kind (failed, refused, blocked, recovery), so "
+        "no kind is cut by another's volume."
     ),
     "success_rate": (
         "successes / attempts per stage, null when a day has no attempts. Turns and renders are "
@@ -205,6 +223,37 @@ async def _render_rows(
     return [(d, b, c, int(n)) for d, b, c, n in rows.all()]
 
 
+async def _cleared_failure_rows(
+    db: AsyncSession, since: datetime, until: datetime
+) -> list[tuple[date, str, str | None, int]]:
+    # `updated_at` only narrows the scan: a failure recorded at `at` bumped the row at or after it.
+    logs = await db.execute(
+        select(Job.assembly_plan[CLEARED_FAILURES_FIELD]).where(
+            Job.updated_at >= since,
+            Job.assembly_plan.has_key(CLEARED_FAILURES_FIELD),
+            Job.status.not_in(_RENDER_NOT_AN_ATTEMPT),
+            Job.user_id != SYNTHETIC_USER_ID,
+        )
+    )
+    counts: Counter[tuple[date, str]] = Counter()
+    for (log,) in logs.all():
+        for entry in log if isinstance(log, list) else []:
+            at = _entry_time(entry)
+            if at is not None and since <= at < until:
+                counts[(at.date(), str(entry.get("reason") or "no_reason"))] += 1
+    return [(day, "failed", reason, n) for (day, reason), n in counts.items()]
+
+
+def _entry_time(entry: Any) -> datetime | None:
+    if not isinstance(entry, dict) or not isinstance(entry.get("at"), str):
+        return None
+    try:
+        at = datetime.fromisoformat(entry["at"])
+    except ValueError:
+        return None
+    return at.astimezone(UTC) if at.tzinfo else None
+
+
 def _stage_totals(counts: Counter[str]) -> dict[str, Any]:
     attempts = sum(n for bucket, n in counts.items() if bucket != "in_progress")
     out: dict[str, Any] = {
@@ -232,7 +281,10 @@ async def creation_health(
     since, until, window_days = _window(days, now)
     stages = {
         "turns": await _turn_rows(db, since, until),
-        "renders": await _render_rows(db, since, until),
+        "renders": [
+            *await _render_rows(db, since, until),
+            *await _cleared_failure_rows(db, since, until),
+        ],
     }
 
     per_day: dict[str, dict[date, Counter[str]]] = {stage: defaultdict(Counter) for stage in stages}
@@ -250,19 +302,23 @@ async def creation_health(
     failures: Counter[str] = Counter()
     for (source, _kind, _code), n in reasons.items():
         failures[source] += n
-    top = [
-        {
-            "source": source,
-            "kind": kind,
-            "code": code,
-            "label": _reason_label(source, code),
-            "count": n,
-            "share": round(n / failures[source], 4),
-        }
-        for (source, kind, code), n in sorted(
-            reasons.items(), key=lambda item: (-item[1], item[0])
-        )[:TOP_REASONS]
-    ]
+    ranked = sorted(reasons.items(), key=lambda item: (-item[1], item[0]))
+    kept: Counter[tuple[str, str]] = Counter()
+    top = []
+    for (source, kind, code), n in ranked:
+        if kept[(source, kind)] >= TOP_REASONS:
+            continue
+        kept[(source, kind)] += 1
+        top.append(
+            {
+                "source": source,
+                "kind": kind,
+                "code": code,
+                "label": _reason_label(source, code),
+                "count": n,
+                "share": round(n / failures[source], 4),
+            }
+        )
     return {
         "window": {
             "days": days,

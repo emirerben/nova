@@ -29,6 +29,7 @@ from app.models import (
     Job,
     PlanItem,
 )
+from app.services.cleared_failures import record_cleared_failure
 from app.services.device_render import (
     approved_runtime_generation,
     device_record,
@@ -225,6 +226,7 @@ async def repair_failed_export(
     save_device_record(job, variant_id, fresh)
     source.result = {**source.result, "automatic_repair_grant": {**grant, "used": count}}
     job.status = "awaiting_device"
+    record_cleared_failure(job)
     job.failure_reason = None
     job.error_detail = None
     return True

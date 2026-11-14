@@ -42,6 +42,8 @@ _ANALYSIS_PENDING = "clip_analysis_pending"
 # brief_coverage reason is `KEEP_OPEN_REASON`).
 UNRESOLVED_CHOICE = KEEP_OPEN_REASON
 MOMENT_ORDER_QUESTION = "moment_order_question"
+# Title wording / authorship proposals are the normal hand-off to the creator, not a conflict.
+ROUTINE_CHOICE_PREFIX = "creative_copy_"
 
 
 def stamp_outcome(plan: KriaTurnPlan, kind: OutcomeKind, code: str) -> KriaTurnPlan:
@@ -88,8 +90,9 @@ def classify_response_turn(
 
     Every response-only turn ends in `_complete_response_turn`, so this is the one place that
     guarantees a coded outcome even for a reply path that did not stamp its own. An ordinary
-    question or answer matches nothing here and stays unstamped (a success); a conflict question
-    ("none of your clips has a filming time, so I can't order them") is a held-back draft.
+    question or answer matches nothing here and stays unstamped (a success), and so does a routine
+    creative-copy proposal ("I'd try this title. Does it work?"); a conflict question ("none of
+    your clips has a filming time, so I can't order them") is a held-back draft.
     """
     if read_outcome(plan.diagnostics) is not None:
         return plan
@@ -105,7 +108,12 @@ def classify_response_turn(
     if isinstance(pinned_reason, str) and pinned_reason:
         return stamp_outcome(plan, "refused", f"pin_{pinned_reason}")
     choice = plan.choice_question or {}
-    if isinstance(choice.get("kind"), str) and choice["kind"]:
+    choice_kind = choice.get("kind")
+    if (
+        isinstance(choice_kind, str)
+        and choice_kind
+        and not choice_kind.startswith(ROUTINE_CHOICE_PREFIX)
+    ):
         # A conflict question names its collector `kind`; a model's own question has none.
         return stamp_outcome(plan, "blocked", UNRESOLVED_CHOICE)
     if plan.moment_order_question:

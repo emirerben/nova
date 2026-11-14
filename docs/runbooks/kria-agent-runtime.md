@@ -76,7 +76,12 @@ cancelled turns, turns closed by a newer message, inert turns (a repeated send, 
 question), cancelled or draft jobs and admin test renders are not attempts; a creator's retry is
 a new attempt, a client resend or worker retry is not) and a success. Turns and renders are separate stages and are never added together, and a failure's `share` is within
 its own stage. An iPhone render that failed stays `awaiting_device` with `Job.failure_reason`
-set, so that pair counts as a failed render. Logic: `app/services/creation_health.py`.
+set, so that pair counts as a failed render. A retry of the same Job (iPhone retry or auto-resume,
+admin retry, the creator's Retry on a failed Create video) clears that field, so each failure it
+clears is first appended to `Job.assembly_plan["cleared_failures"]` (`app/services/cleared_failures.py`)
+and counts as its own failed attempt on the day it was recorded. Failures cleared by a worker
+re-enqueue or an in-place variant re-render are the same attempt run again and are not logged.
+The top reasons are the top 10 per stage and kind. Logic: `app/services/creation_health.py`.
 
 A refusal ("I can't make this yet", a strategy the check refused, "I couldn't turn that into a
 plan") completes as an assistant message, so the turn row has no `error`. Its reason is on

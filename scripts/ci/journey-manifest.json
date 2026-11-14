@@ -3951,6 +3951,7 @@
       "api_tests": "tests/kria/test_turn_outcome_postgres.py tests/routes/test_admin_creation_health_postgres.py",
       "paths": [
         "src/apps/api/app/kria/turn_outcome.py",
+        "src/apps/api/app/services/cleared_failures.py",
         "src/apps/api/app/services/creation_health.py",
         "src/apps/api/app/services/job_failure_reasons.py",
         "src/apps/api/tests/kria/test_turn_outcome_postgres.py",

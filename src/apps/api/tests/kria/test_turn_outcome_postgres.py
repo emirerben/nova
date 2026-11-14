@@ -21,6 +21,9 @@ Failure modes (written before the code):
 * the planner's own conflict question ("none of your clips has a filming time, so I can't put
   them in that order") completes as a plain `question` with no brief coverage, so it counts as a
   success while the same question asked by the commit gate is `blocked`;
+* the planner's routine title proposals (`creative_copy_wording`, `creative_copy_authorship`) carry
+  a choice `kind` too, so they are stamped `blocked` and the headline rate drops for the normal
+  title hand-off while a model's own clarifying question counts as a success;
 * a message that is no creation request (the same text sent again, a status question) is a
   completed turn with no code, so it inflates both attempts and successes.
 """
@@ -53,6 +56,7 @@ from app.services.choice_questions import (
     choice_question_text,
 )
 from app.services.creation_health import creation_health
+from app.services.creative_copy_decisions import authorship_question, wording_question
 from app.tasks.kria_runtime import run_kria_turn
 from tests.agents.test_main_creator_agent import _manifest
 from tests.kria.test_pinned_text_limits import TOP, _strategy
@@ -132,6 +136,30 @@ def _conflict_question() -> PlannedKriaTurn:
     )
 
 
+def _creative_copy_question(real_question) -> PlannedKriaTurn:
+    question = real_question()
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response="Does this wording work?",
+            choice_question=question,
+        ),
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+    )
+
+
+def _wording() -> dict:
+    return wording_question(
+        target="opening_title", candidate="Matcha mornings", dependency_digest="d"
+    )
+
+
+def _authorship() -> dict:
+    return authorship_question(target="opening_title", dependency_digest="d")
+
+
 def _moment_order_question() -> PlannedKriaTurn:
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
@@ -166,6 +194,8 @@ CASES = {
     "editor_unmet_request": (lambda: _editor_reply(True), ("refused", "editor_request_unmet")),
     "editor_plain_reply": (lambda: _editor_reply(False), None),
     "planner_conflict_question": (_conflict_question, ("blocked", "unresolved_choice")),
+    "creative_copy_wording_proposal": (lambda: _creative_copy_question(_wording), None),
+    "creative_copy_authorship_ask": (lambda: _creative_copy_question(_authorship), None),
     "moment_order_question": (_moment_order_question, ("blocked", "moment_order_question")),
     "ask_user_refusal": (
         lambda: _ask_user("unsupported_audio_intercut"),
@@ -228,8 +258,9 @@ async def test_the_health_report_counts_each_refusal_under_its_own_reason(
         report = await creation_health(db, days=1, now=day)
 
     assert report["turns"]["attempts"] == len(CASES)
-    assert report["turns"]["successes"] == 3
-    assert report["turns"]["success_rate"] == round(3 / len(CASES), 4)
+    successes = sum(1 for _build, expected in CASES.values() if expected is None)
+    assert report["turns"]["successes"] == successes == 5
+    assert report["turns"]["success_rate"] == round(successes / len(CASES), 4)
     reasons = {(r["kind"], r["code"]): r["count"] for r in report["top_failure_reasons"]}
     assert reasons == {
         ("refused", "pinned_text_too_many"): 1,
