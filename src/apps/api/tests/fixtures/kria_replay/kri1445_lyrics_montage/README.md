@@ -9,11 +9,14 @@ Prod thread 6db7ecd4 (2026-11-14). One 14 s clip, a montage, and the creator's p
 The scorecard is `scripts/kria/score_kri1445_lyrics_montage.py`. It runs the real phone worker
 (`_run_phone_unified_montage_job` to `compose_creation_text` to `_run_phone_guided_job` and the
 phone compile) offline on the recorded, scrubbed job. Only the text composer's model call is
-replaced, by a cassette.
+replaced, by a cassette. The stored strategy is not handed to the worker as it is: its pins and
+clip intents, and the resolved clip intents, go through the real `adapt_creator_action` first,
+the planning boundary every new request's strategy crosses.
 
 ## What the plan held
 
-The approved strategy carried the lyric twice. `clip_intents[0]` is a `caption` op with the
+The recorded approved strategy carried the lyric twice (what the replay hands the planning
+boundary; see `adapt_creator_action` for what comes out). `clip_intents[0]` is a `caption` op with the
 whole lyric as one block, and `pinned_texts` holds the same lyric as 3 lines at `bottom_center`.
 The real worker turns that into four text bars (a clip label with the whole lyric, then the 3
 lines) and protects all four as confirmed copy. The brief has `r1` ("find the lyrics and add
@@ -42,9 +45,10 @@ stored and may have differed. C and D are not from the incident.
    `_save_request_recovery` as the creator's question and the turn does not end as a failure.
    The read-back in `tasks/kria_runtime.py` needs a thread and a database and is not run here.
 4. `dropped_line_rejected`: negative control on the counter in check 1.
+5. `composer_not_called`: the lyric is already drawn and every ask is met, so the text composer
+   is never called and no cassette is consumed.
 
-Checks 1-3 are NOT VERIFIED on the code this was recorded against. The scorecard exits 1 until
-the product is fixed.
+The scorecard exits 1 until every check is VERIFIED.
 
 ## Scrubbing
 

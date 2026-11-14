@@ -25,9 +25,13 @@ Checks (VERIFIED / NOT VERIFIED / INCONCLUSIVE); 1 and 2 run once per cassette:
 3. clarification_becomes_question: a composer question is saved through the request-recovery
    channel as a creator-facing question, not raised as a failure (cassette A).
 4. dropped_line_rejected: negative control, a recipe with one lyric line removed fails check 1.
+5. composer_not_called: the lyric is already drawn and every ask met, so no cassette is consumed.
 
-Exits 1 unless every check is VERIFIED. Checks 1-3 are expected NOT VERIFIED until the product
-is fixed (KRI-1445).
+The strategy is not read from the fixture as stored: it goes through the real planning boundary
+(`adapt_creator_action`) first, as a new request's does.
+
+Exits 1 unless every check is VERIFIED. Check 3 stays NOT VERIFIED until a composer question
+is saved as the creator's question (KRI-1445).
 """
 
 from __future__ import annotations
@@ -124,8 +128,36 @@ def _cassette(raw_text: str):  # noqa: ANN202
     return _Recorded()
 
 
+def planned_strategy(fx: dict) -> dict:
+    """The strategy a new request approves: the recorded Main Creator strategy and its resolved
+    clip intents through the real planning boundary, ``adapt_creator_action``.
+
+    The fixture holds the strategy as it was approved. Its model-authored part (pins, clip
+    intents) goes in as the action; its server-owned part (`resolved_clip_intents`) goes in as
+    the resolver's result, exactly the two inputs the planner gets.
+    """
+    from app.agents._schemas.creator_agent import CreativeStrategy, ProposeStrategy
+    from app.kria.planner import adapt_creator_action
+    from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+
+    stored = copy.deepcopy(fx["strategy"])
+    resolved = [
+        ResolvedClipIntent.model_validate(row)
+        for row in stored.pop("resolved_clip_intents", None) or []
+    ]
+    intents = [ClipIntent.model_validate(row) for row in stored.get("clip_intents") or []]
+    action = ProposeStrategy(
+        kind="propose_strategy", strategy=CreativeStrategy.model_validate(stored)
+    )
+    plan = adapt_creator_action(
+        action, server_clip_intents=intents, server_resolved_clip_intents=resolved
+    )
+    apply = next(i for i in plan.intents if i.tool_name == "draft.apply_strategy")
+    return copy.deepcopy(apply.arguments["strategy"])
+
+
 def build_job(fx: dict) -> SimpleNamespace:
-    """The dispatched job: phone sources, pinned brief binding and render contract, the approved
+    """The dispatched job: phone sources, pinned brief binding and render contract, the planned
     strategy and the generation's phone text style policy (the recorded job's)."""
     from app.kria.brief import CreativeBrief
     from app.kria.brief_binding import BriefBinding
@@ -157,7 +189,7 @@ def build_job(fx: dict) -> SimpleNamespace:
         "best_parts_capacity_s": fx["length_plan"]["capacity_s"],
         "length_plan": copy.deepcopy(fx["length_plan"]),
     }
-    strategy = copy.deepcopy(fx["strategy"])
+    strategy = planned_strategy(fx)
     brief = CreativeBrief.model_validate(fx["brief"])
     original = clip["original"]
     source = PhoneSourceBinding(
@@ -491,6 +523,14 @@ def check_clarification_becomes_question(fx: dict, scenario: str, seen: dict) ->
     )
 
 
+def check_composer_not_called(runs: dict[str, dict]) -> dict:
+    """The lyric is already on screen and every ask is met, so the text composer has nothing to
+    compose: it must not be called under any cassette."""
+    calls = {name: seen["composer_calls"] for name, seen in runs.items()}
+    why = [f"the text composer was called {n} time(s) in {k}" for k, n in calls.items() if n]
+    return _result(5, "composer_not_called", None, why, {"composer_calls": calls})
+
+
 def check_dropped_line_rejected(fx: dict) -> dict:
     """Negative control on the counter itself: it accepts a recipe that draws each line once
     and rejects one that lost a line (or draws the lyric twice)."""
@@ -563,6 +603,9 @@ def run_offline() -> dict:
             4, "dropped_line_rejected", None, lambda: check_dropped_line_rejected(fx)
         )
     )
+    checks.append(
+        _guarded(5, "composer_not_called", None, lambda: check_composer_not_called(runs))
+    )
     checks.sort(key=lambda c: (c["id"], c["scenario"] or ""))
     inputs = (runs[asking].get("composer_inputs") or [{}])[0]
     return {
@@ -608,7 +651,7 @@ def main(argv: list[str] | None = None) -> int:
         for line in check["why"]:
             print(f"     - {line}")
         evidence = check["evidence"]
-        for key in ("raised_at", "cause_raised_at", "drawn_per_line"):
+        for key in ("raised_at", "cause_raised_at", "drawn_per_line", "composer_calls"):
             if evidence.get(key):
                 print(f"     . {key}: {evidence[key]}")
     print(json.dumps(report["summary"]))
