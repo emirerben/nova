@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.209.0] - 2026-11-14
+
+### Changed
+- fix(kria): the model, not word lists, picks edit or rebuild (KRI-1392) (#2324) <!-- release-pr: 2324 -->
+
 ## [0.88.208.0] - 2026-11-14
 
 ### Changed
