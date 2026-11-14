@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.201.0] - 2026-11-14
+
+### Changed
+- fix(ios): open the camera with the script and stop two UI test races (KRI-1379) (#2318) <!-- release-pr: 2318 -->
+
 ## [0.88.200.0] - 2026-11-14
 
 ### Changed
