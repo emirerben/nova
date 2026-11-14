@@ -38,6 +38,12 @@ A non-Gemini copilot now falls back to `gemini-3.1-pro-preview` inside the same 
 `cross_provider_fallback`); in tools mode the fallback also answers with tool calls. Rollback:
 unset the three copilot settings and restart. JSON mode is byte-identical to before this change.
 
+`EDIT_COPILOT_MODEL` also moves the slide-post chat edit and AI-prepared slide paths
+(`services/slide_post_chat_edit.py`, `services/slide_post_ai_prepared.py`). They build the copilot
+directly, so they stay in JSON mode, and Sonnet in JSON mode is unmeasured here (one invalid-JSON
+copilot answer in the earlier pilot). Check a slide post before the flip, or keep those paths on
+Gemini.
+
 ## The numbers
 
 Full set: the 74 authored request-following threads (30 conversation briefs, 44 per-action
@@ -187,6 +193,7 @@ for a full Gemini tools re-record (about $8); it is the open item below.
   Gemini tools mode has five turns of evidence.
 - **Canary before the flip**: the request-following set is synthetic footage and the copilot path
   only. Production turns add the planner, prompt caches that start cold, and the phone.
+- **Slide posts** follow `EDIT_COPILOT_MODEL` in JSON mode (see the flip section).
 - **Sol's one-call-per-response** makes multi-op edits slow; measure Sol again if OpenAI exposes a
   way to batch calls, or give Sol a larger round budget per turn.
 
