@@ -330,7 +330,6 @@ struct NativeEditorView: View {
 
     private func editorLifecycle<Content: View>(_ content: Content) -> some View {
         content
-            .modifier(NativeCaptionGestureScopeModifier(session: session))
             #if DEBUG
             .overlay(alignment: .topLeading) {
                 if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-gameday-add") {

@@ -117,6 +117,9 @@ enum EditorOpenIntent { case warm, open }
             // item, which the creator sees as a hitch. State that is not in the document (a staged chat draft, the
             // pending text) schedules its own rebuild through its own explicit call, not through this observer.
             guard document != oldValue else { return }
+            if let offer = captionGestureOffer, document != offer.result { captionGestureOffer = nil }
+            // A card or speaker still cut before this change shows the old scene; the next gesture waits for a fresh one.
+            if mediaInteractionFrame != nil { mediaInteractionFrame = nil }
             // KRI-432: a song volume change on a settled preview is applied to the player, not rebuilt.
             if liveSongVolumeActive, sourcePreviewSettled, let built = previewBuiltDocument,
                Self.differsOnlyBySongVolume(document, built) {
@@ -128,7 +131,12 @@ enum EditorOpenIntent { case warm, open }
     }
     /// Cross-kind selection is the source of truth. `selectedClipID` below is
     /// a source-compatible adapter for the first-pass clip views.
-    @Published private(set) var selection: EditorSelection? { didSet { prepareInteractionLayers() } }
+    @Published private(set) var selection: EditorSelection? {
+        didSet {
+            if let offer = captionGestureOffer, selection?.id != offer.change.id { captionGestureOffer = nil }
+            prepareInteractionLayers()
+        }
+    }
     @Published private(set) var selectionRequest = 0
     /// KRI-1162: bumped to ask the editor view to open the Background tool (from the lane or an inspector).
     @Published private(set) var backgroundToolRequest = 0
@@ -296,12 +304,20 @@ enum EditorOpenIntent { case warm, open }
     @Published private(set) var loadState: NativeEditorLoadState = .loaded
     @Published var player: AVPlayer?
     struct TextInteractionFrame {
-        let element: EditorTextElement
+        /// The authored text this still was cut for; nil for a caption cue (see `caption`).
+        let element: EditorTextElement?
+        /// A caption cue's id and the place and size it was drawn at: the still is stale once either changes.
+        var caption: CaptionStill? = nil
         let time: Double
         let below: UIImage
         let above: UIImage
         let text: UIImage
         let rect: CGRect
+    }
+    struct CaptionStill: Equatable {
+        let id: String
+        let position: CGPoint
+        let sizePx: Double
     }
     @Published private(set) var textInteractionFrame: TextInteractionFrame?
     struct MediaInteractionFrame {
@@ -324,7 +340,62 @@ enum EditorOpenIntent { case warm, open }
         textInteractionTask?.cancel()
         textInteractionSequence += 1
         prepareTextInteraction()
+        prepareCaptionInteraction()
         prepareMediaInteraction()
+    }
+
+    /// The drawn layer of a caption cue at `time`. A line with hidden parts (KRI-1344) draws each visible part as its own
+    /// layer (`caption-<id>`, `caption-<id>-1`, ...).
+    private func captionLayerID(_ id: String, at time: Double) -> String {
+        let base = "caption-" + id
+        guard let preview = sourcePreview, preview.textSelectionBounds(id: base, time: time) == nil else { return base }
+        return (1...16).lazy.map { base + "-\($0)" }.first { preview.textSelectionBounds(id: $0, time: time) != nil } ?? base
+    }
+
+    /// The caption the creator moves or resizes on the preview, in place and size right now.
+    func captionStill(id: String) -> CaptionStill {
+        CaptionStill(id: id, position: captionPosition(id: id), sizePx: captionStyleSize(.line(id)))
+    }
+
+    /// A selected caption cue gets the same frozen stills as authored text: the scene below it, the scene above it and
+    /// the caption alone, so a drag or pinch moves real caption pixels without rebuilding the preview on every sample.
+    private func prepareCaptionInteraction() {
+        guard !isDirectManipulating, !isPlaying, let selection, selection.kind == .captionCue, offersCaptionStyleScope,
+              let preview = sourcePreview, let item = player?.currentItem,
+              sourcePreviewState == .ready else { return }
+        let sequence = textInteractionSequence
+        let time = min(currentTime, max(0, duration - 1.0 / 600))
+        let renderFrame = previewFrameRenderer
+        let still = captionStill(id: selection.id)
+        let layerID = captionLayerID(selection.id, at: time)
+        textInteractionTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+                try Task.checkCancellation()
+                let layers = try preview.textInteractionLayers(id: layerID, time: time)
+                @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    try Task.checkCancellation()
+                    let generator = AVAssetImageGenerator(asset: item.asset)
+                    generator.videoComposition = composition
+                    generator.maximumSize = CGSize(width: 1080, height: 1920)
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+                    let frame = try await renderFrame(generator, CMTime(seconds: time, preferredTimescale: 600))
+                    return UIImage(cgImage: frame.image)
+                }
+                let below = try await image(layers.below)
+                let above = try await image(layers.above)
+                guard let self, !Task.isCancelled, self.textInteractionSequence == sequence,
+                      self.selection == selection, self.captionStill(id: selection.id) == still else { return }
+                self.textInteractionFrame = TextInteractionFrame(element: nil, caption: still, time: time,
+                    below: below, above: above, text: UIImage(cgImage: layers.text), rect: layers.rect)
+            } catch {
+                guard !Task.isCancelled else { return }
+                #if DEBUG
+                NativePreviewDiagnostics.failure("caption-interaction-prepare", error: error)
+                #endif
+            }
+        }
     }
 
     private func prepareTextInteraction() {
@@ -2245,8 +2316,15 @@ enum EditorOpenIntent { case warm, open }
         beginTransaction()
     }
     func endDirectManipulation() {
-        if captionGestureChange == nil { endTransaction() }
-        else { captionGestureChoicePresented = true }
+        // A caption gesture changes only that caption, at once: no question blocks the next drag. "Apply to all
+        // captions" stays on offer (a small button over the preview) until the next edit.
+        let captionChange = captionGestureChange
+        let baseline = transactionBaseline
+        captionGestureChange = nil
+        endTransaction()
+        if let captionChange, let baseline, document != baseline {
+            captionGestureOffer = CaptionGestureOffer(change: captionChange, baseline: baseline, result: document)
+        }
         isDirectManipulating = false
         // A drag that starts on an unselected speaker selects them mid-gesture, while the editor's routing waits for the
         // gesture to end: route that selection now so the speaker's panel opens on release.
@@ -5025,7 +5103,7 @@ enum EditorOpenIntent { case warm, open }
             // footprint for both selection handles and the danger-zone guide.
             return sourcePreview?.mediaSelectionBounds(id: "visual-\(selection.id)-\(selection.id)", time: time)
         }
-        let id = selection.kind == .captionCue ? "caption-" + selection.id : selection.id
+        let id = selection.kind == .captionCue ? captionLayerID(selection.id, at: time) : selection.id
         return sourcePreview?.textSelectionBounds(id: id, time: time)
     }
 
@@ -7941,12 +8019,22 @@ enum EditorOpenIntent { case warm, open }
 
     enum CaptionStyleScope: Equatable { case all, line(String) }
     @Published private(set) var captionPlacementMessage: String?
-    @Published var captionGestureChoicePresented = false
     private struct CaptionGestureChange {
         var id: String
         var values: [String: JSONValue]
     }
     private var captionGestureChange: CaptionGestureChange?
+    private struct CaptionGestureOffer {
+        var change: CaptionGestureChange
+        /// The document before the gesture (the gesture's undo step) and right after it.
+        var baseline: EditorDocument
+        var result: EditorDocument
+    }
+    private var captionGestureOffer: CaptionGestureOffer? {
+        didSet { captionGestureOfferID = captionGestureOffer?.change.id }
+    }
+    /// The caption whose last drag or pinch can still be applied to every caption. Cleared by any other edit.
+    @Published private(set) var captionGestureOfferID: String?
 
     func captionPosition(id: String) -> CGPoint {
         let appearance = document.captionMeta["appearance"]?.objectValue ?? [:]
@@ -7986,12 +8074,16 @@ enum EditorOpenIntent { case warm, open }
         captionGestureChange?.values.merge(values) { _, value in value }
     }
 
+    /// Answers the "Apply to all captions" offer. Applying folds into the gesture's own undo step, so one Undo
+    /// returns every caption to where it was before the drag. Stale offers (any edit since) do nothing.
     func finishCaptionGesture(applyToAll: Bool) {
-        guard let change = captionGestureChange else { return }
-        captionGestureChange = nil
-        captionGestureChoicePresented = false
-        if applyToAll { writeCaptionStyle(.all, values: change.values) }
-        endTransaction()
+        guard let offer = captionGestureOffer else { return }
+        captionGestureOffer = nil
+        guard applyToAll, !isDirectManipulating, transactionBaseline == nil,
+              document == offer.result, undoStack.last == offer.baseline else { return }
+        transactionBaseline = offer.baseline
+        writeCaptionStyle(.all, values: offer.change.values)
+        transactionBaseline = nil
     }
 
     var offersCaptionStyleScope: Bool { canEditCaptionAppearance && canEditCaptionMeta && canEdit("caption_style_scope") }
