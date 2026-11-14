@@ -31,7 +31,7 @@ struct ResearchCitation: Identifiable {
             guard case .object(let link) = item, case .string(let address) = link["url"],
                   let url = publicURL(address) else { return nil }
             let title: String
-            if case .string(let name) = link["title"] { title = name } else { title = url.host ?? "Source" }
+            if case .string(let name) = link["title"] { title = name } else { title = url.host ?? String(localized: "Source", comment: "Fallback title for a research link") }
             return Source(title: title, url: url)
         }
         guard !sources.isEmpty else { return nil }

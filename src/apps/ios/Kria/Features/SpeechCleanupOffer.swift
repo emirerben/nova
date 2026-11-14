@@ -49,9 +49,9 @@ struct SpeechCleanupStats: Equatable {
 
     var cleanupConsentSentence: String {
         if removesRetakes {
-            return "Clean up speech also removes the detected restarted sentence\(retakes == 1 ? "" : "s")."
+            return retakes == 1 ? String(localized: "Clean up speech also removes the detected restarted sentence.") : String(localized: "Clean up speech also removes the detected restarted sentences.")
         }
-        return "Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in."
+        return String(localized: "Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in.")
     }
 
     /// e.g. "Found 3 pauses and filler sounds (2 filler sounds, 1 long pause) — about 4.2s shorter."
@@ -59,17 +59,17 @@ struct SpeechCleanupStats: Equatable {
         var sentence = ""
         if let candidateCount, candidateCount > 0 {
             if removesRetakes {
-                sentence += "Found \(candidateCount) speech cleanup \(candidateCount == 1 ? "point" : "points")"
+                sentence += String(localized: "Found \(candidateCount) speech cleanup points")
             } else {
-                sentence += "Found \(candidateCount) \(candidateCount == 1 ? "pause or filler sound" : "pauses and filler sounds")"
+                sentence += String(localized: "Found \(candidateCount) pauses and filler sounds")
             }
             var categories: [String] = []
             if let fillerSounds, let longPauses, fillerSounds + longPauses > 0 {
-                categories.append("\(fillerSounds) filler \(fillerSounds == 1 ? "sound" : "sounds")")
-                categories.append("\(longPauses) long \(longPauses == 1 ? "pause" : "pauses")")
+                categories.append(String(localized: "\(fillerSounds) filler sounds"))
+                categories.append(String(localized: "\(longPauses) long pauses"))
             }
             if let retakes, retakes > 0 {
-                categories.append("\(retakes) restarted \(retakes == 1 ? "sentence" : "sentences")")
+                categories.append(String(localized: "\(retakes) restarted sentences"))
             }
             if !categories.isEmpty {
                 sentence += " (\(categories.joined(separator: ", ")))"
@@ -78,8 +78,8 @@ struct SpeechCleanupStats: Equatable {
         if let estimatedRemovedMs, estimatedRemovedMs > 0 {
             let seconds = (Double(estimatedRemovedMs) / 100).rounded() / 10
             let secondsText = seconds.truncatingRemainder(dividingBy: 1) == 0
-                ? String(Int(seconds)) : String(format: "%.1f", seconds)
-            sentence += sentence.isEmpty ? "About \(secondsText)s shorter" : " — about \(secondsText)s shorter"
+                ? String(Int(seconds)) : seconds.formatted(.number.precision(.fractionLength(1)))
+            sentence += sentence.isEmpty ? String(localized: "About \(secondsText)s shorter") : " — " + String(localized: "about \(secondsText)s shorter")
         }
         return sentence.isEmpty ? nil : sentence + "."
     }
@@ -107,11 +107,11 @@ struct SpeechCleanupChoiceButtons: View {
                 Text("You asked to keep the whole clip")
                     .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.ink)
                     .accessibilityIdentifier("speech-cleanup-keep-whole-note")
-                choiceButton("Keep original speech and create", id: "speech-cleanup-keep-original", primary: true, action: keepOriginal)
-                choiceButton("Clean up speech and create", id: "speech-cleanup-clean", primary: false, action: clean)
+                choiceButton(String(localized: "Keep original speech and create"), id: "speech-cleanup-keep-original", primary: true, action: keepOriginal)
+                choiceButton(String(localized: "Clean up speech and create"), id: "speech-cleanup-clean", primary: false, action: clean)
             } else {
-                choiceButton("Clean up speech and create", id: "speech-cleanup-clean", primary: true, action: clean)
-                choiceButton("Keep original speech and create", id: "speech-cleanup-keep-original", primary: false, action: keepOriginal)
+                choiceButton(String(localized: "Clean up speech and create"), id: "speech-cleanup-clean", primary: true, action: clean)
+                choiceButton(String(localized: "Keep original speech and create"), id: "speech-cleanup-keep-original", primary: false, action: keepOriginal)
             }
         }
     }
@@ -155,8 +155,8 @@ struct SpeechCleanupPreselectedChoice: View {
                 Text("Clean up speech")
                     .font(KriaFont.body(14).weight(.medium))
                 Text(stats.tightPauses
-                    ? "You asked me to cut your pauses, so this is on. I'll cut every pause down to about 0.3 s and tell you after if any stay longer."
-                    : "You asked me to clean up your speech, so this is on.")
+                    ? String(localized: "You asked me to cut your pauses, so this is on. I'll cut every pause down to about 0.3 s and tell you after if any stay longer.")
+                    : String(localized: "You asked me to clean up your speech, so this is on."))
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             }
             .disabled(isDisabled)

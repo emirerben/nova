@@ -94,6 +94,10 @@ jobs:
           cache-dependency-path: src/apps/api/pyproject.toml
       - name: Test iOS verification orchestration
         run: python3 -m unittest discover -s scripts/ios/tests -v
+      - name: iPhone screen text has German and Turkish
+        run: |
+          python3 scripts/ios/localization.py check
+          python3 scripts/ios/localization.py scan
       - name: Install contract generator dependencies
         working-directory: src/apps/api
         run: pip install -e .
@@ -1173,6 +1177,9 @@ jobs:
           KRIA_JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
+      - name: Every compiled screen string is in the String Catalog
+        if: matrix.leg == 'unit' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true')
+        run: python3 scripts/ios/localization.py built src/apps/ios/.derived-data
       # PR runs restore main's Xcode cache but never save their own. A PR
       # cache (~0.9 GB per push) is only usable by later pushes to the same PR,
       # and in the full 10 GB repo cache it evicted main's seed within 30-46

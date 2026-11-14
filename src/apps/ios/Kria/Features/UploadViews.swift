@@ -123,15 +123,15 @@ struct FootagePickerView: View {
 
     /// Non-blocking disclosure of what is uploaded, shown where the per-upload consent screen used to be.
     private var uploadDisclosure: String? {
-        if role == .song { return "Only use songs you have the rights to. Kria uploads the full file to analyze and render it with your video." }
+        if role == .song { return String(localized: "Only use songs you have the rights to. Kria uploads the full file to analyze and render it with your video.") }
         guard role != .voiceover else { return nil }
         switch destination {
-        case .phone: return libraryEnabled ? "Uploads are saved for reuse. Kria analyzes a smaller video copy; full-quality originals stay on this iPhone." : "Kria uploads a smaller copy of each video to plan your edit. Full-quality originals stay on this iPhone."
-        case .cloud: return "Kria uploads the full-quality originals you choose and keeps them with this project."
+        case .phone: return libraryEnabled ? String(localized: "Uploads are saved for reuse. Kria analyzes a smaller video copy; full-quality originals stay on this iPhone.") : String(localized: "Kria uploads a smaller copy of each video to plan your edit. Full-quality originals stay on this iPhone.")
+        case .cloud: return String(localized: "Kria uploads the full-quality originals you choose and keeps them with this project.")
         // A phone-rendered project still uploads Visuals at full quality (so the AI can plan around them)
         // and downloads them again to render. That is the disclosure the per-upload screen carried for
         // this case, so it must not be lost with the screen.
-        case .phoneVisuals: return "Kria uploads the full-quality visuals you choose and keeps them with this project so its AI can plan your edit. When your video renders on this iPhone, it downloads them again."
+        case .phoneVisuals: return String(localized: "Kria uploads the full-quality visuals you choose and keeps them with this project so its AI can plan your edit. When your video renders on this iPhone, it downloads them again.")
         default: return nil
         }
     }
@@ -189,7 +189,7 @@ struct FootagePickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if showsHeading { KriaSectionLabel(title: "Add \(displayTitle.lowercased())") }
+            if showsHeading { KriaSectionLabel(title: String(localized: "Add \(displayTitle.lowercased())")) }
             sourceControls
             if let message = destination.message {
                 Text(message).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
@@ -203,7 +203,7 @@ struct FootagePickerView: View {
             // Clips still being prepared: not yet an upload record, but already chosen. Shown at once, with
             // their thumbnail, so the user sees each pick land instead of waiting for it to finish uploading.
             ForEach(preparingUploads, id: \.id) { item in
-                KriaMediaRow(name: item.filename ?? "Preparing…", status: .preparing, onFill: true) {
+                KriaMediaRow(name: item.filename ?? String(localized: "Preparing…"), status: .preparing, onFill: true) {
                     CreationRecordThumbnail(recordID: item.id, version: uploads.previewVersion)
                 }
             }
@@ -213,8 +213,8 @@ struct FootagePickerView: View {
                     // the list forever, keeping Continue disabled.
                     KriaMediaRow(
                         name: BackgroundUploadCoordinator.displayFilename(record.filename),
-                        status: record.uploadFailed == true ? .failed("Upload failed") : .uploading(uploads.progress[record.id] ?? 0),
-                        trailing: .remove(label: record.uploadCompleted == true ? "Remove" : "Cancel") { Task { await uploads.cancel(recordID: record.id) } },
+                        status: record.uploadFailed == true ? .failed(String(localized: "Upload failed")) : .uploading(uploads.progress[record.id] ?? 0),
+                        trailing: .remove(label: record.uploadCompleted == true ? String(localized: "Remove") : String(localized: "Cancel")) { Task { await uploads.cancel(recordID: record.id) } },
                         onRetry: record.uploadFailed == true ? { Task { await uploads.retryUpload(recordID: record.id) } } : nil,
                         onFill: true
                     ) { CreationRecordThumbnail(recordID: record.id, version: uploads.previewVersion) }
@@ -237,7 +237,7 @@ struct FootagePickerView: View {
             // with uploads overlapping, a later clip's success would erase an earlier clip's failure.
             ForEach(failures) { failure in
                 KriaNoticeCard(tone: .failure, title: "\(failure.filename): \(failure.message)",
-                               link: KriaNoticeAction(title: "Dismiss") { uploads.dismissFailure(id: failure.id) })
+                               link: KriaNoticeAction(title: String(localized: "Dismiss")) { uploads.dismissFailure(id: failure.id) })
             }
             if let error = uploads.lastError, failures.isEmpty { Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
         }
@@ -256,7 +256,7 @@ struct FootagePickerView: View {
             filter: role == .visual ? visualPickerFilter : .videos,
             kinds: role == .visual ? visualGalleryKinds : .videos,
             libraryBacked: libraryAuthorized,
-            heading: role == .clip ? "Choose clips" : "Choose \(displayTitle.lowercased())",
+            heading: role == .clip ? String(localized: "Choose clips") : String(localized: "Choose \(displayTitle.lowercased())"),
             offersSaved: libraryEnabled,
             onFilled: onPickerFilled,
             didChooseNewFootage: $photosPickerHasNewFootage,
@@ -301,10 +301,10 @@ struct FootagePickerView: View {
 
     private var sourcesNoun: String {
         switch role {
-        case .song: "songs"
-        case .voiceover: "audio files"
-        case .visual: "photos and videos"
-        case .clip: "videos"
+        case .song: String(localized: "songs")
+        case .voiceover: String(localized: "audio files")
+        case .visual: String(localized: "photos and videos")
+        case .clip: String(localized: "videos")
         }
     }
 
@@ -317,17 +317,17 @@ struct FootagePickerView: View {
             let uploadsDirectly = role.isAudio && !libraryEnabled
             let options: [KriaSourceOption] = [
                 record.map { action in
-                    KriaSourceOption.record(caption: role == .voiceover ? "Use your mic" : "Film now", isEnabled: !blocked, action: action)
+                    KriaSourceOption.record(caption: role == .voiceover ? String(localized: "Use your mic") : String(localized: "Film now"), isEnabled: !blocked, action: action)
                 },
                 KriaSourceOption.upload(
-                    caption: role == .voiceover ? "Use an audio file" : role == .song ? "From Files" : "Use existing \(role == .visual ? "media" : "video")",
+                    caption: role == .voiceover ? String(localized: "Use an audio file") : role == .song ? String(localized: "From Files") : role == .visual ? String(localized: "Use existing media") : String(localized: "Use existing video"),
                     isEnabled: !blocked || (selectionCapacity.preselected > 0 && !role.isAudio),
                     action: { hostLaunched = false; if uploadsDirectly { beginImport(source: .files) } else { openSources() } }),
                 third
             ].compactMap { $0 }
             KriaSourceRow(options: options,
                           disabledReason: selectionCapacity.remaining == 0 && destination.canUpload
-                            ? "You’ve added \(FootageStageCopy.count(max(maximumClipCount, attachedClipCount), role == .visual ? "item" : "clip")), the most for this edit." : nil)
+                            ? (role == .visual ? String(localized: "You’ve added \(max(maximumClipCount, attachedClipCount)) items, the most for this edit.") : String(localized: "You’ve added \(max(maximumClipCount, attachedClipCount)) clips, the most for this edit.")) : nil)
         }
     }
 
@@ -489,7 +489,7 @@ struct FootagePickerView: View {
         let purpose = uploadPurpose
         let acceptedCount = selectionCapacity.acceptedCount(requested: items.count)
         if acceptedCount < items.count {
-            selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
+            selectionMessage = String(localized: "Only \(acceptedCount) more clips can be added in this format.")
         }
         let chosen = Array(items.prefix(acceptedCount))
         if role == .clip, !chosen.isEmpty {
@@ -512,7 +512,7 @@ struct FootagePickerView: View {
             Task {
                 guard let media = try? await item.loadTransferable(type: ImportedMedia.self) else {
                     uploads.clearInFlight(id)
-                    uploads.reportFailure(id: id, projectID: projectID, role: role, filename: "Selected item", message: "This file couldn’t be read. Try Files or choose it again.")
+                    uploads.reportFailure(id: id, projectID: projectID, role: role, filename: String(localized: "Selected item"), message: String(localized: "This file couldn’t be read. Try Files or choose it again."))
                     return
                 }
                 _ = await uploads.enqueue(fileURL: media.url, projectID: projectID, source: .photos, consentGiven: true, purpose: purpose, role: role, itemID: itemID, limit: limit, recordID: id)
@@ -532,7 +532,7 @@ struct FootagePickerView: View {
         let purpose = uploadPurpose
         let acceptedCount = selectionCapacity.acceptedCount(requested: urls.count)
         if acceptedCount < urls.count {
-            selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
+            selectionMessage = String(localized: "Only \(acceptedCount) more clips can be added in this format.")
         }
         let chosen = Array(urls.prefix(acceptedCount))
         if role == .clip, !chosen.isEmpty {
@@ -559,7 +559,7 @@ struct FootagePickerView: View {
         }
         let acceptedCount = selectionCapacity.acceptedCount(requested: urls.count)
         guard acceptedCount > 0, let source = urls.first else {
-            selectionMessage = "You’ve reached the limit for \(role.title.lowercased())."
+            selectionMessage = String(localized: "You’ve reached the limit for \(role.title.lowercased()).")
             return
         }
         let accessed = source.startAccessingSecurityScopedResource()
@@ -722,7 +722,7 @@ private struct LibraryPhotosPickerSheet: View {
             if onSwitch != nil {
                 HStack(spacing: 8) {
                     if offersSaved {
-                        KriaSegmentedControl(options: [("Photos", GallerySegment.photos), ("Saved uploads", .saved)], selection: Binding(
+                        KriaSegmentedControl(options: [(String(localized: "Photos"), GallerySegment.photos), (String(localized: "Saved uploads"), .saved)], selection: Binding(
                             get: { segment },
                             set: { next in
                                 segment = next
@@ -751,7 +751,12 @@ private struct LibraryPhotosPickerSheet: View {
                     .accessibilityIdentifier("gallery-count")
                 // Counts only what this visit added: clips that were already attached when it opened are not "added".
                 let changed = addedCount > 0 || removedAny
-                Button(addedCount > 0 ? "Add \(addedCount) \(addedCount == 1 ? noun : noun + "s")" : removedAny ? "Done" : "Choose \(noun)s") { close(addedCount > 0 && count >= limit) }
+                let primaryTitle: String = {
+                    if addedCount > 0 { return kinds == .videos ? String(localized: "Add \(addedCount) clips") : String(localized: "Add \(addedCount) items") }
+                    if removedAny { return String(localized: "Done") }
+                    return kinds == .videos ? String(localized: "Choose clips") : String(localized: "Choose items")
+                }()
+                Button(primaryTitle) { close(addedCount > 0 && count >= limit) }
                     .buttonStyle(KriaButtonStyle(role: changed ? .primary : .secondary, fullWidth: true))
                     .disabled(!changed).accessibilityIdentifier("photos-picker-done")
             }
@@ -823,9 +828,9 @@ struct UploadSourceRows: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            if offersPhotos { row("photo.on.rectangle.angled", "Photos", "Pick \(noun) from your library", .photos, id: "upload-source-photos") }
-            if offersSaved { row("play.rectangle", "Saved uploads", "\(noun.prefix(1).uppercased() + noun.dropFirst()) you have used before", .savedUploads, id: "saved-uploads-open") }
-            row("folder", "Files", "From Files or iCloud", .files, id: "upload-source-files")
+            if offersPhotos { row("photo.on.rectangle.angled", String(localized: "Photos"), String(localized: "Pick \(noun) from your library"), .photos, id: "upload-source-photos") }
+            if offersSaved { row("play.rectangle", String(localized: "Saved uploads"), String(localized: "\(noun.prefix(1).uppercased() + noun.dropFirst()) you have used before"), .savedUploads, id: "saved-uploads-open") }
+            row("folder", String(localized: "Files"), String(localized: "From Files or iCloud"), .files, id: "upload-source-files")
         }
     }
 

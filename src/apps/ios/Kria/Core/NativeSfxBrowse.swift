@@ -17,9 +17,9 @@ enum NativeSfxBrowse {
     ]
 
     static let categoryLabels: [String: String] = [
-        "transition": "Transitions", "impact": "Impacts", "comedy": "Comedy", "approval": "Approval",
-        "rejection": "Rejection", "suspense": "Suspense", "money": "Money", "sports": "Sports",
-        "ui": "Text & UI", "other": "Other",
+        "transition": String(localized: "Transitions"), "impact": String(localized: "Impacts"), "comedy": String(localized: "Comedy"), "approval": String(localized: "Approval"),
+        "rejection": String(localized: "Rejection"), "suspense": String(localized: "Suspense"), "money": String(localized: "Money"), "sports": String(localized: "Sports"),
+        "ui": String(localized: "Text & UI"), "other": String(localized: "Other", comment: "Catch-all sound effect category"),
     ]
 
     struct Group: Equatable {

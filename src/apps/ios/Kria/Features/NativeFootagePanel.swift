@@ -47,7 +47,7 @@ struct NativeFootagePanel: View {
                 Button("Reset crop") { session.setFootageCrop(selection, crop: nil) }
             }
             if selection.kind == .clip, session.serverOffersClipPlaybackRate {
-                LabeledContent("Speed", value: String(format: "%g×", session.footagePlaybackRate(for: selection)))
+                LabeledContent("Speed", value: String(localized: "\(session.footagePlaybackRate(for: selection), format: .number)×", comment: "Playback speed multiplier, e.g. 1.5×"))
                 NativeEditorSlider(
                     session: session,
                     value: Binding(
@@ -58,7 +58,7 @@ struct NativeFootagePanel: View {
                     step: 0.05
                 ) { Text("Playback rate") }
                 .accessibilityIdentifier("native-editor-playback-rate")
-                .accessibilityValue(String(format: "%.2fx", session.footagePlaybackRate(for: selection)))
+                .accessibilityValue(String(localized: "\(session.footagePlaybackRate(for: selection), format: .number.precision(.fractionLength(2)))x", comment: "Playback speed multiplier read by VoiceOver"))
                 .disabled(session.speedBlockedReason(for: selection) != nil || !session.canSetClipPlaybackRate)
                 if let clip = session.timelineClips.first(where: { $0.id.uuidString == selection.id }) {
                     LabeledContent("Clip duration", value: nativeTimecode(clip.end - clip.start))
@@ -141,16 +141,16 @@ struct NativeSplitScreenControls: View {
             }
             .accessibilityIdentifier("native-editor-clip-speaker-position")
         }
-        LabeledContent("Footage", value: session.splitScreenSourceChoices.first { $0.clipIndex == slot?.clipIndex }?.label ?? "Clip")
+        LabeledContent("Footage", value: session.splitScreenSourceChoices.first { $0.clipIndex == slot?.clipIndex }?.label ?? String(localized: "Clip"))
             .accessibilityIdentifier("native-editor-split-source")
         Button("Cut at playhead") { session.splitSelectedClip() }
             .disabled(!session.canSplitSelectedClip)
             .accessibilityIdentifier("native-editor-split-cut")
-            .accessibilityHint("Move the playhead inside this clip to cut it into two clips")
+            .accessibilityHint(String(localized: "Move the playhead inside this clip to cut it into two clips"))
         Button("Duplicate clip") { session.duplicateSelectedClip() }
             .disabled(!session.canDuplicateSelectedClip)
             .accessibilityIdentifier("native-editor-split-duplicate")
-            .accessibilityHint(isSplitMember ? "Requires enough unused time after this clip in the same panel" : "Adds another copy after this clip")
+            .accessibilityHint(isSplitMember ? String(localized: "Requires enough unused time after this clip in the same panel") : String(localized: "Adds another copy after this clip"))
         replaceFootage
         if let error = session.addClipError {
             Text(error).font(.footnote).foregroundStyle(KriaColor.failureText)

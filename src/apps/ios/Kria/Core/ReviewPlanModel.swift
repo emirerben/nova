@@ -132,7 +132,7 @@ final class ReviewPlanModel {
         if let text = snapshot?.updateSummary?.text, !text.isEmpty { return text }
         guard hasChanges else { return nil }
         let names = changedSections.map { $0.label.lowercased() }
-        return "Updated " + names.formatted(.list(type: .and)) + "."
+        return String(localized: "Updated \(names.formatted(.list(type: .and))).")
     }
 
     /// Fraction of the redone sections the server has decided again.
@@ -252,7 +252,7 @@ final class ReviewPlanModel {
         let newResult = fresh.jobID != nil && fresh.jobID != baselineJobID
             || fresh.turnID != nil && fresh.turnID != baselineTurnID && fresh.nextAfterSequence > baselineSequence
         guard !awaitNewResult || newResult else { return }
-        if fresh.status == .cancelled { finish(notice: "The update was stopped.") }
+        if fresh.status == .cancelled { finish(notice: String(localized: "The update was stopped.")) }
         if fresh.status == .ready { finish(notice: nil) }
     }
 
@@ -390,12 +390,12 @@ final class ReviewPlanModel {
             notice = review.message
         } else if let api = error as? APIError, api.isConflict {
             // Stale revision (the thread or the section moved on): show the latest plan and let them retry.
-            notice = "That changed in the meantime. Review the latest and try again."
+            notice = String(localized: "That changed in the meantime. Review the latest and try again.")
             await refresh()
         } else if let api = error as? APIError, case .requestFailed(let status, _) = api, status == 404 || status == 422 {
-            notice = api.requestFailureDetail ?? "Kria couldn’t make that change."
+            notice = api.requestFailureDetail ?? String(localized: "Kria couldn’t make that change.")
         } else {
-            notice = "Kria couldn’t send that. Check your connection and try again."
+            notice = String(localized: "Kria couldn’t send that. Check your connection and try again.")
         }
     }
 
@@ -427,14 +427,14 @@ final class ReviewPlanModel {
                 guard !dismissed, !Task.isCancelled, isCurrentScope() else { return }
                 if sequence == readSequence { failures += 1 }
                 if excessiveServerPause {
-                    notice = "Kria asked us to pause checking this plan. Your update remains saved."
+                    notice = String(localized: "Kria asked us to pause checking this plan. Your update remains saved.")
                     return
                 }
             }
             if failures >= 6 || readNow() - started >= giveUpAfter {
                 recovering = true
-                notice = phase == .updating ? "Your update keeps going. Review will check again automatically."
-                    : "Review will check the plan again automatically."
+                notice = phase == .updating ? String(localized: "Your update keeps going. Review will check again automatically.")
+                    : String(localized: "Review will check the plan again automatically.")
             }
             let delay = recovering ? recoveryInterval : min(pollInterval * (1 << min(failures, 4)), .seconds(30))
             do { try await readSleep(delay) } catch { return }

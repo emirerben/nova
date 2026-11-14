@@ -164,11 +164,11 @@ struct KriaSourceWindowStrip: View {
                         onChange(KriaSourceWindowGeometry.slid(window, by: step, rate: rate, sourceDuration: sourceDuration), true)
                     }
                 handle(systemImage: "chevron.compact.left", x: span.x - handleWidth + 14, id: "kria-source-window-leading",
-                       label: "Window start", perPoint: perPoint) { base, delta in
+                       label: String(localized: "Window start"), perPoint: perPoint) { base, delta in
                     KriaSourceWindowGeometry.resizedLeading(base, by: delta, rate: rate)
                 }
                 handle(systemImage: "chevron.compact.right", x: span.x + span.width - 14, id: "kria-source-window-trailing",
-                       label: "Window end", perPoint: perPoint) { base, delta in
+                       label: String(localized: "Window end"), perPoint: perPoint) { base, delta in
                     KriaSourceWindowGeometry.resizedTrailing(base, by: delta, rate: rate, sourceDuration: sourceDuration)
                 }
             }
@@ -357,7 +357,7 @@ struct NativeSourceWindowSheet: View {
     private var unavailable: some View {
         VStack(spacing: 8) {
             Image(systemName: "film").font(.system(size: 28)).foregroundStyle(KriaColor.zinc)
-            Text(session.sourceWindowBlockedReason(for: selection) ?? "Couldn’t load this clip to choose its range.")
+            Text(session.sourceWindowBlockedReason(for: selection) ?? String(localized: "Couldn’t load this clip to choose its range."))
                 .font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

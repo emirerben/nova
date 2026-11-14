@@ -45,9 +45,9 @@ struct NativeSplitPanel: View {
     }
 
     private var heading: String {
-        guard let context else { return "Split screen" }
-        guard let panel = explicitTarget ?? fillPanel else { return "Split screen" }
-        return "Add to " + NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount)
+        guard let context else { return String(localized: "Split screen") }
+        guard let panel = explicitTarget ?? fillPanel else { return String(localized: "Split screen") }
+        return String(localized: "Add to \(NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount)))")
     }
 
     var body: some View {
@@ -140,8 +140,8 @@ struct NativeSplitPanel: View {
                 layoutCard(3)
             }
             Text(scope == .wholeVideo
-                 ? "Your whole video becomes the Top panel."
-                 : "Starts with the clip under the playhead.")
+                 ? String(localized: "Your whole video becomes the Top panel.")
+                 : String(localized: "Starts with the clip under the playhead."))
                 .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -224,7 +224,7 @@ struct NativeSplitPanel: View {
             } message: {
                 if let count = pendingPanelCount {
                     let removed = session.splitClipsRemoved(sectionID: sectionID, panelCount: count)
-                    Text("Going to \(count) panels removes \(removed == 1 ? "1 clip" : "\(removed) clips") from the dropped panel. Undo brings \(removed == 1 ? "it" : "them") back.")
+                    Text(removed == 1 ? String(localized: "Going to \(count) panels removes 1 clip from the dropped panel. Undo brings it back.") : String(localized: "Going to \(count) panels removes \(removed) clips from the dropped panel. Undo brings them back."))
                 }
             }
 
@@ -244,7 +244,7 @@ struct NativeSplitPanel: View {
             }
 
             if session.canExtendSplitToWholeVideo(sectionID: sectionID) {
-                actionRow("Extend split to whole video", icon: "arrow.left.and.right", id: "native-editor-split-extend-whole") {
+                actionRow(String(localized: "Extend split to whole video"), icon: "arrow.left.and.right", id: "native-editor-split-extend-whole") {
                     session.extendSplitToWholeVideo(sectionID: sectionID)
                 }
             }
@@ -253,11 +253,11 @@ struct NativeSplitPanel: View {
                 panelActions(panel, context: context)
             }
 
-            actionRow("Full screen from playhead", icon: "arrow.up.left.and.arrow.down.right", id: "native-editor-split-full-from",
+            actionRow(String(localized: "Full screen from playhead"), icon: "arrow.up.left.and.arrow.down.right", id: "native-editor-split-full-from",
                       enabled: session.canMakeSplitFullScreen(sectionID: sectionID, side: .fromPlayhead)) {
                 session.makeSplitFullScreen(sectionID: sectionID, side: .fromPlayhead)
             }
-            actionRow("Full screen until playhead", icon: "arrow.up.left.and.arrow.down.right", id: "native-editor-split-full-until",
+            actionRow(String(localized: "Full screen until playhead"), icon: "arrow.up.left.and.arrow.down.right", id: "native-editor-split-full-until",
                       enabled: session.canMakeSplitFullScreen(sectionID: sectionID, side: .untilPlayhead)) {
                 session.makeSplitFullScreen(sectionID: sectionID, side: .untilPlayhead)
             }
@@ -277,12 +277,12 @@ struct NativeSplitPanel: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityValue(showsLayout ? "Expanded" : "Collapsed")
+            .accessibilityValue(showsLayout ? String(localized: "Expanded") : String(localized: "Collapsed"))
             .accessibilityIdentifier("native-editor-split-layout-toggle")
 
             if showsLayout {
                 VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("Divider spacing", value: String(format: "%.1f%%", context.section.gutter * 100))
+                    LabeledContent("Divider spacing", value: String(localized: "\(context.section.gutter * 100, format: .number.precision(.fractionLength(1)))%"))
                     NativeEditorSlider(session: session, value: Binding(
                         get: { session.splitContextAtPlayhead?.section.gutter ?? context.section.gutter },
                         set: { session.setSplitScreenGutter($0) }
@@ -309,7 +309,7 @@ struct NativeSplitPanel: View {
         .disabled(!session.canEditSplitScreen)
         .confirmationDialog("Remove split?", isPresented: $confirmsRemove, titleVisibility: .visible) {
             ForEach(withFootage, id: \.self) { panel in
-                Button("Keep " + NativeSplitScreenRows.panelTitle(index: panel, count: count)) {
+                Button(String(localized: "Keep \(NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: panel, count: count)))")) {
                     session.removeSplitScreen(sectionID: sectionID, keepPanel: panel)
                 }
                 .accessibilityIdentifier("native-editor-split-keep-\(panel)")
@@ -324,10 +324,10 @@ struct NativeSplitPanel: View {
     /// One panel's footage actions. An empty panel only offers Add (its id stays `-fill-`); a panel with footage
     /// offers Add to it (at the playhead gap, else after its last clip) and Loop to fill.
     @ViewBuilder private func panelActions(_ panel: Int, context: NativeSplitContext) -> some View {
-        let title = NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount)
+        let title = NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount))
         let sectionID = context.sectionID
         if context.emptyPanels.contains(panel) {
-            actionRow("Add to " + title, icon: "plus", id: "native-editor-split-fill-\(panel)") {
+            actionRow(String(localized: "Add to \(title)"), icon: "plus", id: "native-editor-split-fill-\(panel)") {
                 skipped.remove(panel)
                 target = panel
             }
@@ -338,12 +338,12 @@ struct NativeSplitPanel: View {
                 let canLoop = Self.hasRoomToLoop(session: session, context: context, panel: panel)
                 let reason = session.canEditSplitScreen ? NativeEditorSession.splitPanelFullMessage : nil
                 HStack(spacing: 8) {
-                    actionRow("Add to " + title, icon: "plus", id: "native-editor-split-add-\(panel)",
+                    actionRow(String(localized: "Add to \(title)"), icon: "plus", id: "native-editor-split-add-\(panel)",
                               enabled: canAdd, reason: reason) {
                         target = panel
                     }
-                    actionRow("Loop to fill", icon: "repeat", id: "native-editor-split-loop-\(panel)",
-                              label: "Loop \(title) to fill", enabled: canLoop, reason: reason) {
+                    actionRow(String(localized: "Loop to fill"), icon: "repeat", id: "native-editor-split-loop-\(panel)",
+                              label: String(localized: "Loop \(title) to fill"), enabled: canLoop, reason: reason) {
                         session.loopFillSplitPanel(sectionID: sectionID, panel: panel)
                     }
                 }
@@ -406,11 +406,11 @@ private struct NativeSplitFillView: View {
     let finished: () -> Void
 
     private var caption: String {
-        guard explicit else { return remaining > 1 ? "\(remaining) panels still empty" : "Pick a photo or video for this panel" }
+        guard explicit else { return remaining > 1 ? String(localized: "\(remaining) panels still empty") : String(localized: "Pick a photo or video for this panel") }
         switch NativeSplitPlayback.state(session: session, context: context, panel: panel) {
-        case .empty: return "Pick a photo or video for this panel"
-        case .gap: return "Goes in the free time at the playhead."
-        case .playing: return "Goes after this panel's last clip."
+        case .empty: return String(localized: "Pick a photo or video for this panel")
+        case .gap: return String(localized: "Goes in the free time at the playhead.")
+        case .playing: return String(localized: "Goes after this panel's last clip.")
         }
     }
 
@@ -527,7 +527,7 @@ struct NativeSplitMediaPicker: View {
                     .accessibilityIdentifier("native-editor-split-source-error")
             }
             if multi, !picked.isEmpty {
-                Button("Add \(picked.count) \(picked.count == 1 ? "clip" : "clips")") { add(picked.map { ($0, loader(for: $0)) }) }
+                Button(String(localized: "Add \(picked.count) clips")) { add(picked.map { ($0, loader(for: $0)) }) }
                     .buttonStyle(KriaButtonStyle(role: .primary, size: .large, fullWidth: true))
                     .disabled(working)
                     .accessibilityIdentifier("native-editor-split-add-picked")
@@ -564,7 +564,7 @@ struct NativeSplitMediaPicker: View {
             Button { showsSystemPicker = true } label: {
                 HStack(spacing: 8) {
                     if working { KriaSpinner(size: 18) } else { Image(systemName: "photo.on.rectangle.angled") }
-                    Text(working ? "Adding…" : "Choose from Photos")
+                    Text(working ? String(localized: "Adding…") : String(localized: "Choose from Photos"))
                 }
                     .kriaType(.button).foregroundStyle(KriaColor.ink)
                     .frame(maxWidth: .infinity, minHeight: 48)
@@ -647,7 +647,7 @@ struct NativeSplitMediaPicker: View {
             savedAssets = page.assets.filter { $0.kind != "audio" }
             savedError = nil
         } catch {
-            savedError = "Saved uploads couldn’t load. Try again in a moment."
+            savedError = String(localized: "Saved uploads couldn’t load. Try again in a moment.")
         }
         savedLoaded = true
     }
@@ -721,7 +721,7 @@ struct NativeSplitMediaPicker: View {
                 do {
                     url = try await entry.load()
                 } catch {
-                    session.addClipError = "This file couldn’t be read. Try another photo or video."
+                    session.addClipError = String(localized: "This file couldn’t be read. Try another photo or video.")
                     return
                 }
                 await onAdd(url)
@@ -780,7 +780,7 @@ private struct NativeSplitPhotoGrid: View {
         }
         .buttonStyle(.plain)
         .disabled(disabled)
-        .accessibilityLabel(isVideo ? "Video, \(GalleryTileChrome.duration(asset.duration))" : "Photo")
+        .accessibilityLabel(isVideo ? String(localized: "Video, \(GalleryTileChrome.duration(asset.duration))") : String(localized: "Photo"))
         .accessibilityAddTraits(number != nil ? .isSelected : [])
         .accessibilityIdentifier("native-editor-split-gallery-tile-\(index)")
         .nativeSplitAdding(adding == id, identifier: "native-editor-split-adding-\(index)")

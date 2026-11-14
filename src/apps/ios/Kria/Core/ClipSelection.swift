@@ -100,7 +100,7 @@ struct ClipTileInfo: Equatable {
 
     init(mediaID: String, position: Int, question: ClipQuestion, media: CreationAttachedMedia?) {
         isPhoto = question.isPhoto(mediaID) || media?.kind == "image"
-        name = question.candidateMedia[mediaID].flatMap { $0.kind == "image" ? $0.label : nil } ?? "Clip \(position)"
+        name = question.candidateMedia[mediaID].flatMap { $0.kind == "image" ? $0.label : nil } ?? String(localized: "Clip \(position)")
     }
 }
 
@@ -121,7 +121,7 @@ enum ClipPoolMedia {
             guard let visual = byID[String(candidateID.dropFirst("asset-".count)).lowercased()] else { return nil }
             // A video's `display_url` is the raw file, never a poster; a photo's is its signed preview.
             let thumbnail = visual.kind == "video" ? visual.previewURL : (visual.displayURL ?? visual.sourceURL)
-            return CreationAttachedMedia(id: candidateID, filename: visual.sourceFilename ?? "Visual", kind: visual.kind, previewURL: thumbnail)
+            return CreationAttachedMedia(id: candidateID, filename: visual.sourceFilename ?? String(localized: "Visual", comment: "Fallback name for a photo or video in the pool"), kind: visual.kind, previewURL: thumbnail)
         }
     }
 }
@@ -150,10 +150,10 @@ struct ClipSelectionSubmission: Encodable, Equatable, Sendable {
 
     /// Short read-only summary once answered, e.g. "Dodgeball: 2 clips · Football: 1 clip" or "Skipped".
     func summary(question: ClipQuestion) -> String {
-        if skipped { return "Skipped, Kria decides" }
+        if skipped { return String(localized: "Skipped, Kria decides") }
         let labels = Dictionary(question.categories.map { ($0.key, $0.label) }, uniquingKeysWith: { first, _ in first })
-        var parts = answers.map { "\(labels[$0.key] ?? $0.key): \($0.mediaIDs.count) clip\($0.mediaIDs.count == 1 ? "" : "s")" }
-        parts += noneKeys.map { "\(labels[$0] ?? $0): none" }
+        var parts = answers.map { String(localized: "\(labels[$0.key] ?? $0.key): \($0.mediaIDs.count) clips") }
+        parts += noneKeys.map { String(localized: "\(labels[$0] ?? $0): none") }
         return parts.joined(separator: " · ")
     }
 

@@ -17,15 +17,15 @@ struct IdeaFeedbackView: View {
     @State private var serverAcceptsExamples = false
     @State private var offeredExample: UUID?
     private var reasons: [(String, String)] {
-        if verdict == "would_post" { return [("good_observation", "Good observation"), ("useful_detail", "Useful detail"), ("good_mood", "Good atmosphere")] }
-        let general = [("too_generic", "Too generic"), ("forced_question", "Forced question"), ("not_my_voice", "Not my voice"), ("invented_experience", "Invented experience"), ("footage_mismatch", "Doesn’t fit the footage"), ("missing_point", "Missing the point")]
-        return story.research != nil && serverAcceptsWrongFacts ? general + [("wrong_facts", "The facts are wrong")] : general
+        if verdict == "would_post" { return [("good_observation", String(localized: "Good observation")), ("useful_detail", String(localized: "Useful detail")), ("good_mood", String(localized: "Good atmosphere"))] }
+        let general = [("too_generic", String(localized: "Too generic")), ("forced_question", String(localized: "Forced question")), ("not_my_voice", String(localized: "Not my voice")), ("invented_experience", String(localized: "Invented experience")), ("footage_mismatch", String(localized: "Doesn’t fit the footage")), ("missing_point", String(localized: "Missing the point"))]
+        return story.research != nil && serverAcceptsWrongFacts ? general + [("wrong_facts", String(localized: "The facts are wrong"))] : general
     }
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    ForEach([("would_post", "Would post"), ("needs_work", "Needs work"), ("not_for_me", "Not for me")], id: \.0) { value, label in
+                    ForEach([("would_post", String(localized: "Would post")), ("needs_work", String(localized: "Needs work")), ("not_for_me", String(localized: "Not for me"))], id: \.0) { value, label in
                         Button { verdict = value; reason = ""; eventID = UUID().uuidString } label: {
                             HStack { Text(label); Spacer(); if verdict == value { Image(systemName: "checkmark") } }.frame(minHeight: 44)
                         }.foregroundStyle(KriaColor.ink)
@@ -57,7 +57,7 @@ struct IdeaFeedbackView: View {
                     Button("Use as example") { Task { await useExample(id) } }.accessibilityIdentifier("idea-example-confirm")
                     Button("Not now", role: .cancel) { onSaved(); dismiss() }.accessibilityIdentifier("idea-example-decline")
                 } message: { _ in
-                    Text(rewrite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Kria can learn from this idea’s words when it writes future ideas for you. You can erase it any time with Forget editorial taste." : "Kria can learn from your version when it writes future ideas for you. You can erase it any time with Forget editorial taste.")
+                    Text(rewrite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "Kria can learn from this idea’s words when it writes future ideas for you. You can erase it any time with Forget editorial taste.") : String(localized: "Kria can learn from your version when it writes future ideas for you. You can erase it any time with Forget editorial taste."))
                 }
                 .onChange(of: note) { _, _ in eventID = UUID().uuidString }
                 .onChange(of: rewrite) { _, _ in eventID = UUID().uuidString }
@@ -79,6 +79,6 @@ struct IdeaFeedbackView: View {
         do {
             try await api.confirmIdeaExample(feedbackID: feedbackID, eventID: "example-\(feedbackID.uuidString)")
             onSaved(); dismiss()
-        } catch { self.error = "Your answer is saved, but it couldn’t be used as an example. Save again to retry." }
+        } catch { self.error = String(localized: "Your answer is saved, but it couldn’t be used as an example. Save again to retry.") }
     }
 }

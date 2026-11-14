@@ -6,8 +6,8 @@ import SwiftUI
 struct NativeFontPicker: View {
     let selection: String?
     var includeDefault = false
-    var defaultLabel = "Default · TikTok Sans"
-    var accessibilityLabelText = "Font"
+    var defaultLabel = String(localized: "Default · TikTok Sans")
+    var accessibilityLabelText = String(localized: "Font")
     let accessibilityID: String
     let onSelect: (String?) -> Void
 
@@ -48,7 +48,7 @@ struct NativeFontPicker: View {
 
         var label: String {
             switch self {
-            case .all: "All"
+            case .all: String(localized: "All", comment: "Font picker tab showing every font")
             case .group(let group): group.label
             }
         }

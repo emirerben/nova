@@ -8,7 +8,7 @@ enum NativeSfxFormat {
         let total = max(0, seconds)
         return String(format: "%d:%04.1f", Int(total) / 60, total.truncatingRemainder(dividingBy: 60))
     }
-    static func seconds(_ value: Double) -> String { String(format: "%.1fs", value) }
+    static func seconds(_ value: Double) -> String { String(localized: "\(value, format: .number.precision(.fractionLength(1)))s") }
 }
 
 struct NativeSoundEffectsPanelBody: View {
@@ -68,7 +68,7 @@ private func sfxGain(_ effect: EditorTimedEffect) -> Double {
     return 1
 }
 
-private func sfxName(_ effect: EditorTimedEffect) -> String { effect.raw["label"]?.stringValue ?? "Sound effect" }
+private func sfxName(_ effect: EditorTimedEffect) -> String { effect.raw["label"]?.stringValue ?? String(localized: "Sound effect") }
 
 private struct NativeSfxRowBackground: ViewModifier {
     func body(content: Content) -> some View {
@@ -111,11 +111,11 @@ struct NativeSfxHomeView: View {
 
     @ViewBuilder private var emptyState: some View {
         if canEdit {
-            stateCard(title: "No sounds yet", detail: "Add a sound effect to this edit.", button: "Add sound", id: "native-editor-sfx-add-sound") {
+            stateCard(title: String(localized: "No sounds yet"), detail: String(localized: "Add a sound effect to this edit."), button: String(localized: "Add sound"), id: "native-editor-sfx-add-sound") {
                 panelDrafts.sfxScreen = .library
             }
         } else {
-            stateCard(title: "Sound effects unavailable", detail: "Sound effects can’t be changed in this edit.", button: nil, id: "") {}
+            stateCard(title: String(localized: "Sound effects unavailable"), detail: String(localized: "Sound effects can’t be changed in this edit."), button: nil, id: "") {}
         }
     }
 
@@ -138,7 +138,7 @@ struct NativeSfxHomeView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(sfxName(effect)).font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                        Text(failed ? "Preview unavailable · Retry"
+                        Text(failed ? String(localized: "Preview unavailable · Retry")
                              : "\(NativeSfxFormat.clock(effect.startS)) · \(NativeSfxFormat.seconds(sfxKept(session, effect)))")
                             .font(KriaFont.body(12)).foregroundStyle(failed ? KriaColor.failureText : KriaColor.mutedInk)
                     }
@@ -218,11 +218,11 @@ struct NativeSfxLibraryView: View {
         if session.soundEffectCatalogLoading && session.soundEffectCatalog.isEmpty {
             ProgressView("Loading sounds…").frame(maxWidth: .infinity, minHeight: 44)
         } else if session.soundEffectCatalog.isEmpty {
-            stateCard(title: "Sounds couldn’t load", detail: "Your added sounds are still in this edit.", button: "Try again", id: "native-editor-sfx-retry-catalog") {
+            stateCard(title: String(localized: "Sounds couldn’t load"), detail: String(localized: "Your added sounds are still in this edit."), button: String(localized: "Try again"), id: "native-editor-sfx-retry-catalog") {
                 Task { await session.loadSoundEffectCatalog() }
             }
         } else if groups.isEmpty {
-            stateCard(title: "No sounds found", detail: "Try another word or clear your search.", button: "Clear search", id: "native-editor-sfx-clear-search") {
+            stateCard(title: String(localized: "No sounds found"), detail: String(localized: "Try another word or clear your search."), button: String(localized: "Clear search", comment: "Button that empties the sound search field"), id: "native-editor-sfx-clear-search") {
                 panelDrafts.sfxQuery = ""
             }
         } else {
@@ -248,7 +248,7 @@ struct NativeSfxLibraryView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(effect.name).font(KriaFont.body(15).weight(.semibold))
-                Text(failed ? "Preview unavailable · Retry" : (playing ? "Playing · \(duration)" : duration))
+                Text(failed ? String(localized: "Preview unavailable · Retry") : (playing ? String(localized: "Playing · \(duration)") : duration))
                     .font(KriaFont.body(12)).foregroundStyle(failed ? KriaColor.failureText : KriaColor.mutedInk)
             }
             Spacer(minLength: 8)
@@ -282,7 +282,7 @@ struct NativeSfxEditView: View {
         let window = NativeEditorSession.soundEffectTrimWindow(effect, minimum: NativeEditorSession.sfxMinimumTrim)
         let full = effect.raw["trim_start_s"] == nil && effect.raw["trim_end_s"] == nil
             || (window.start <= 0.001 && window.end >= window.source - 0.001)
-        return full ? "Full sound" : String(format: "%.2f–%.2fs", window.start, window.end)
+        return full ? String(localized: "Full sound") : String(localized: "\(window.start, format: .number.precision(.fractionLength(2)))–\(window.end, format: .number.precision(.fractionLength(2)))s")
     }
 
     var body: some View {
@@ -311,7 +311,7 @@ struct NativeSfxEditView: View {
                 }
                 HStack(spacing: 10) {
                     Text("0%").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                    NativePaperSlider(session: session, value: volume, bounds: 0...1, step: 0.01, label: "Sound volume")
+                    NativePaperSlider(session: session, value: volume, bounds: 0...1, step: 0.01, label: String(localized: "Sound volume"))
                         .frame(height: 44)
                     Text("100%").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 }
@@ -377,19 +377,19 @@ struct NativeSfxTrimView: View {
                              onBegin: { player.stop(); session.beginTransaction() },
                              onEnd: { session.endTransaction() })
             HStack {
-                Button(String(format: "From %.2fs", w.start)) { entry = String(format: "%.2f", w.start); entering = .from }
+                Button(String(localized: "From \(w.start, format: .number.precision(.fractionLength(2)))s")) { entry = String(format: "%.2f", w.start); entering = .from }
                     .frame(minHeight: 44).accessibilityIdentifier("native-editor-sfx-trim-from")
                 Spacer()
-                Text(String(format: "%.2fs kept", w.end - w.start)).foregroundStyle(KriaColor.mutedInk)
+                Text(String(localized: "\(w.end - w.start, format: .number.precision(.fractionLength(2)))s kept")).foregroundStyle(KriaColor.mutedInk)
                 Spacer()
-                Button(String(format: "To %.2fs", w.end)) { entry = String(format: "%.2f", w.end); entering = .to }
+                Button(String(localized: "To \(w.end, format: .number.precision(.fractionLength(2)))s")) { entry = String(format: "%.2f", w.end); entering = .to }
                     .frame(minHeight: 44).accessibilityIdentifier("native-editor-sfx-trim-to")
             }
             .font(KriaFont.body(13))
             Button {
                 player.toggle(id: effect.id, url: session.soundEffectPreviewURL(for: effect), range: w.start...w.end, gain: sfxGain(effect))
             } label: {
-                Label(player.playingID == effect.id ? "Stop preview" : "Preview trimmed sound",
+                Label(player.playingID == effect.id ? String(localized: "Stop preview") : String(localized: "Preview trimmed sound"),
                       systemImage: player.playingID == effect.id ? "stop.fill" : "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -398,7 +398,7 @@ struct NativeSfxTrimView: View {
         }
         .disabled(!session.canEdit(.soundEffects))
         .task(id: waveformKey) { await waveforms.load(key: waveformKey, url: session.soundEffectPreviewURL(for: effect)) }
-        .alert(entering == .from ? "Trim from (seconds)" : "Trim to (seconds)", isPresented: Binding(get: { entering != nil }, set: { if !$0 { entering = nil } })) {
+        .alert(entering == .from ? String(localized: "Trim from (seconds)") : String(localized: "Trim to (seconds)"), isPresented: Binding(get: { entering != nil }, set: { if !$0 { entering = nil } })) {
             TextField("Seconds", text: $entry).keyboardType(.decimalPad)
             Button("Set") {
                 if let value = Double(entry.replacingOccurrences(of: ",", with: ".")) {

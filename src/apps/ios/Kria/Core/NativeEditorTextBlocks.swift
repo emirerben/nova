@@ -25,10 +25,10 @@ struct EditorTextBlock: Equatable, Identifiable, Sendable {
     /// A short name for the row's second line.
     var kindLabel: String {
         switch kind {
-        case .title: return "Title"
-        case .clipLabel(let position): return "Clip \(position)"
-        case .closing: return "Closing"
-        case .other: return "Text"
+        case .title: return String(localized: "Title", comment: "Kind of on-video text block")
+        case .clipLabel(let position): return String(localized: "Clip \(position)")
+        case .closing: return String(localized: "Closing", comment: "Kind of on-video text block: closing line")
+        case .other: return String(localized: "Text", comment: "Kind of on-video text block")
         }
     }
 

@@ -186,13 +186,13 @@ struct SongTimelinePreview: View {
         case .clip(let id, _):
             clipContent(id)
         case .gap:
-            tile("Empty spot: nothing plays here", symbol: "plus.rectangle.on.rectangle")
+            tile(String(localized: "Empty spot: nothing plays here"), symbol: "plus.rectangle.on.rectangle")
         case .beforeFirst:
-            tile("Before your first clip", symbol: "backward.end")
+            tile(String(localized: "Before your first clip"), symbol: "backward.end")
         case .afterLast:
-            tile("After your last clip", symbol: "forward.end")
+            tile(String(localized: "After your last clip"), symbol: "forward.end")
         case .noClips:
-            tile("No clip is on the song yet", symbol: "film")
+            tile(String(localized: "No clip is on the song yet"), symbol: "film")
         }
     }
 
@@ -237,11 +237,11 @@ struct SongTimelinePreview: View {
         switch slot {
         case .clip(let id, _):
             let here = model.localURL(for: id, resolve: localURL) != nil
-            return here ? "Preview, clip \(clipNumber(id))" : "Preview, clip \(clipNumber(id)). This clip isn't on this iPhone"
-        case .gap: return "Preview. Empty spot: nothing plays here"
-        case .beforeFirst: return "Preview. Before your first clip"
-        case .afterLast: return "Preview. After your last clip"
-        case .noClips: return "Preview. No clip is on the song yet"
+            return here ? String(localized: "Preview, clip \(clipNumber(id))") : String(localized: "Preview, clip \(clipNumber(id)). This clip isn't on this iPhone")
+        case .gap: return String(localized: "Preview. Empty spot: nothing plays here")
+        case .beforeFirst: return String(localized: "Preview. Before your first clip")
+        case .afterLast: return String(localized: "Preview. After your last clip")
+        case .noClips: return String(localized: "Preview. No clip is on the song yet")
         }
     }
 
@@ -249,7 +249,7 @@ struct SongTimelinePreview: View {
     private func accessibilityValue(_ slot: SongTimelineMath.PreviewSlot) -> String {
         guard case .clip(let id, let takeTime) = slot else { return "" }
         let shown = model.videoTime ?? takeTime
-        return "Clip \(clipNumber(id)) · \(SongTimelineMath.timecode(takeTime)), video at \(SongTimelineMath.timecode(shown))"
+        return String(localized: "Clip \(clipNumber(id)) · \(SongTimelineMath.timecode(takeTime)), video at \(SongTimelineMath.timecode(shown))")
     }
 }
 

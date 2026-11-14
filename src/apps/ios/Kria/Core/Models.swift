@@ -6,7 +6,7 @@ enum UploadState: String, Codable, Sendable { case queued, uploading, uploaded, 
 enum AssetKind: String, Codable, Sendable { case video, photo, audio }
 enum CacheConflictError: Error, LocalizedError, Equatable {
     case staleProject(expected: Int, actual: Int)
-    var errorDescription: String? { "This project changed on another device. Refresh before saving again." }
+    var errorDescription: String? { String(localized: "This project changed on another device. Refresh before saving again.") }
 }
 
 struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {

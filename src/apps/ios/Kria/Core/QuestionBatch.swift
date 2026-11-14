@@ -35,11 +35,11 @@ struct QuestionBatch: Equatable {
 
     /// Under the choice card once it is answered and the clips are not.
     var choiceNote: String? {
-        choice != nil && clips == nil ? "Got it. Now choose your clips below, and I’ll send both." : nil
+        choice != nil && clips == nil ? String(localized: "Got it. Now choose your clips below, and I’ll send both.") : nil
     }
 
     /// Under the clip card once the clips are chosen and the choice is not.
     var clipsNote: String? {
-        clips != nil && choice == nil ? "Clips saved. Answer the question above and I'll send both." : nil
+        clips != nil && choice == nil ? String(localized: "Clips saved. Answer the question above and I'll send both.") : nil
     }
 }

@@ -36,7 +36,7 @@ struct NativeEditorOriginalAudioRow: View {
                 }
                 HStack(spacing: 10) {
                     Text("0%").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                    NativePaperSlider(session: session, value: levelBinding, bounds: 0...1, step: 0.01, label: "Original audio volume")
+                    NativePaperSlider(session: session, value: levelBinding, bounds: 0...1, step: 0.01, label: String(localized: "Original audio volume"))
                         .frame(height: 44)
                     Text("100%").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 }
@@ -52,8 +52,8 @@ struct NativeEditorOriginalAudioRow: View {
     }
 
     private var note: String {
-        guard session.canEditOriginalAudio else { return "Original audio can't be changed for this edit." }
-        return "Plays together with your song. Use the Audio button on a clip to hear just that clip."
+        guard session.canEditOriginalAudio else { return String(localized: "Original audio can't be changed for this edit.") }
+        return String(localized: "Plays together with your song. Use the Audio button on a clip to hear just that clip.")
     }
 }
 
@@ -66,12 +66,12 @@ struct NativeClipAudioSection: View {
         let isOn = session.isClipAudioOn(clipID: clipID)
         Section("Clip audio") {
             Button { session.toggleClipAudio(clipID: clipID) } label: {
-                Label(isOn ? "Original audio on" : "Original audio off", systemImage: isOn ? "speaker.wave.2" : "speaker.slash")
+                Label(isOn ? String(localized: "Original audio on") : String(localized: "Original audio off"), systemImage: isOn ? "speaker.wave.2" : "speaker.slash")
                     .frame(minHeight: 44, alignment: .leading)
             }
             .disabled(!session.canEditClipAudio || !session.canEditOriginalAudio)
             .accessibilityIdentifier("native-editor-clip-audio-toggle")
-            .accessibilityValue(isOn ? "On" : "Off")
+            .accessibilityValue(isOn ? String(localized: "On") : String(localized: "Off"))
             if session.selection?.id == clipID, session.canEditTimeline {
                 NativeEditorSlider(session: session, value: Binding(
                     get: { session.selectedClipSourceVolume },
@@ -79,7 +79,7 @@ struct NativeClipAudioSection: View {
                 ), in: 0...2, step: 0.05) { Text("Source volume") }
                 .disabled(!isOn)
                 .accessibilityIdentifier("native-editor-clip-source-volume")
-                .accessibilityValue(String(format: "%.0f percent", session.selectedClipSourceVolume * 100))
+                .accessibilityValue(String(localized: "\(Int((session.selectedClipSourceVolume * 100).rounded())) percent"))
             }
             if session.canEditClipAudio, session.originalAudioLevel <= 0 {
                 Text("Original audio is off for the whole video. Turning this clip on also turns the others off, so you hear just this one.")

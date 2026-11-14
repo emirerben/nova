@@ -276,7 +276,7 @@ struct SlidePostTextCanvas: View {
                 .position(x: rect.midX, y: rect.midY)
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("slidepost-text-selection")
-                .accessibilityValue("selected")
+                .accessibilityValue(String(localized: "selected"))
             Image(systemName: "arrow.up.left.and.arrow.down.right")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.white)
@@ -400,7 +400,7 @@ private struct SlidePostTextAccessibility: ViewModifier {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(element.text)
                 .accessibilityValue(value)
-                .accessibilityHint(selected ? "Drag to move, pinch to resize, twist to rotate" : "Double tap to select")
+                .accessibilityHint(selected ? String(localized: "Drag to move, pinch to resize, twist to rotate") : String(localized: "Double tap to select"))
                 .accessibilityAddTraits(selected ? .isSelected : [])
                 .accessibilityAction(named: "Select") { accessibility.onSelect(element.id) }
                 .accessibilityAction(named: "Edit text") { accessibility.onTapText(element.id) }
@@ -410,9 +410,9 @@ private struct SlidePostTextAccessibility: ViewModifier {
 
     private var value: String {
         let anchor = SlidePostTextLayout.anchor(for: element)
-        var parts = ["size \(element.sizePx)", "rotation \(Int(element.rotationDeg))",
-                     "position \(Int((anchor.x * 100).rounded()))%, \(Int((anchor.y * 100).rounded()))%"]
-        if selected { parts.append("selected") }
+        var parts = [String(localized: "size \(element.sizePx)"), String(localized: "rotation \(Int(element.rotationDeg))"),
+                     String(localized: "position \(Int((anchor.x * 100).rounded()))%, \(Int((anchor.y * 100).rounded()))%")]
+        if selected { parts.append(String(localized: "selected")) }
         return parts.joined(separator: ", ")
     }
 }

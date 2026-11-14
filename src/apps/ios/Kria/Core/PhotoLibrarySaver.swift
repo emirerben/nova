@@ -46,5 +46,5 @@ struct PhotoLibrarySaver: PhotoLibrarySaving {
 
 enum PhotoLibraryError: Error, LocalizedError {
     case notAuthorized
-    var errorDescription: String? { "Kria needs Photos access to save this video." }
+    var errorDescription: String? { String(localized: "Kria needs Photos access to save this video.") }
 }

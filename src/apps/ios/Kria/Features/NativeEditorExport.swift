@@ -16,9 +16,9 @@ enum NativeEditorSaveControl: Equatable {
 
     var accessibilityLabel: String {
         switch self {
-        case .saved: "Saved"
-        case .unsaved: "Save changes"
-        case .saving: "Saving"
+        case .saved: String(localized: "Saved")
+        case .unsaved: String(localized: "Save changes")
+        case .saving: String(localized: "Saving")
         }
     }
 }
@@ -116,7 +116,7 @@ private struct ResolvedExportFile {
             switch try session.videoDownloadRoute(deviceLocalFile: deviceLocalFile) {
             case .sourcePreview:
                 let runner = ContinuedProcessingExport(scheduler: scheduler, isForeground: isForeground)
-                let exported = try await runner.run(origin: origin, title: "Preparing your video", subtitle: "Exporting the current preview", operation: { progress in
+                let exported = try await runner.run(origin: origin, title: String(localized: "Preparing your video"), subtitle: String(localized: "Exporting the current preview"), operation: { progress in
                     try await session.exportDisplayedSourcePreview(progress: { fraction in
                         guard fraction.isFinite, (0...1).contains(fraction) else { return }
                         Task { @MainActor in progress(Int64(fraction * 1000), 1000) }
@@ -157,16 +157,16 @@ struct NativeEditorExportBanner: View {
             EmptyView()
         case .preparing:
             NativeEditorBannerRow(
-                title: "Preparing your video",
-                detail: "Exporting the video shown in the preview.",
+                title: String(localized: "Preparing your video"),
+                detail: String(localized: "Exporting the video shown in the preview."),
                 systemImage: "arrow.down.circle",
                 tint: KriaColor.ink,
                 identifier: "native-editor-export-state"
             )
         case .savedToPhotos:
             NativeEditorBannerRow(
-                title: "Saved to Photos",
-                detail: "Your video is in your photo library.",
+                title: String(localized: "Saved to Photos"),
+                detail: String(localized: "Your video is in your photo library."),
                 systemImage: "checkmark.circle",
                 tint: KriaColor.ink,
                 identifier: "native-editor-export-state"
@@ -174,7 +174,7 @@ struct NativeEditorExportBanner: View {
         case .failed(let message):
             Button(action: exporter.dismissStatus) {
                 NativeEditorBannerRow(
-                    title: "Couldn’t export this video",
+                    title: String(localized: "Couldn’t export this video"),
                     detail: message,
                     systemImage: "exclamationmark.triangle",
                     tint: .red,

@@ -22,9 +22,9 @@ struct RerecordCard: View {
             .buttonStyle(KriaSecondaryButtonStyle())
             .accessibilityIdentifier("ready-rerecord")
         case .replacing:
-            progress("Swapping in your new take…", note: "Your current video stays until the new one is ready.", id: "rerecord-replacing")
+            progress(String(localized: "Swapping in your new take…"), note: String(localized: "Your current video stays until the new one is ready."), id: "rerecord-replacing")
         case .planning:
-            progress("Making your video again…", note: nil, id: "rerecord-planning")
+            progress(String(localized: "Making your video again…"), note: nil, id: "rerecord-planning")
         case let .failed(failure):
             VStack(alignment: .leading, spacing: 10) {
                 Text(failure.message).font(KriaFont.body(14)).foregroundStyle(KriaColor.failureText)

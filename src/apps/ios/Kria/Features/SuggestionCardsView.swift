@@ -42,7 +42,7 @@ struct SuggestionCardChips: View {
                         state: selected ? .selected : .idle, isSuggestion: true, isLead: index == 0
                     ) { presentation.toggle(card) }
                     .accessibilityLabel(card.accessibilityText)
-                    .accessibilityHint(selected ? "Takes this out of your message" : "Adds this to your message")
+                    .accessibilityHint(selected ? String(localized: "Takes this out of your message") : String(localized: "Adds this to your message"))
                     .accessibilityIdentifier("\(idPrefix)-\(index)")
                 }
             }
@@ -63,10 +63,10 @@ struct GeneratedCardRow: View {
 
     private var message: String {
         switch result.phase {
-        case .making: "Making your image…"
-        case .ready: "Your image is ready"
-        case .unsure: "Kria isn't sure your image finished"
-        case .failed: "Kria couldn't make the image"
+        case .making: String(localized: "Making your image…")
+        case .ready: String(localized: "Your image is ready")
+        case .unsure: String(localized: "Kria isn't sure your image finished")
+        case .failed: String(localized: "Kria couldn't make the image")
         }
     }
 

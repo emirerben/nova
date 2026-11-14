@@ -58,7 +58,7 @@ struct NativeVisualPoolPicker: View {
     }
 
     private var importUnavailableMessage: String? {
-        if session.visualItemID == nil { return "Open a saved edit to add photos or videos." }
+        if session.visualItemID == nil { return String(localized: "Open a saved edit to add photos or videos.") }
         return nil
     }
 
@@ -91,7 +91,7 @@ struct NativeVisualPoolPicker: View {
     private func visualTile(_ asset: CreationVisual) -> some View {
         let selected = selectedID == asset.id
         let kind = VisualMediaKind(rawValue: asset.kind) ?? .image
-        let name = asset.sourceFilename ?? (kind == .video ? "Video" : "Photo")
+        let name = asset.sourceFilename ?? (kind == .video ? String(localized: "Video", comment: "Media kind") : String(localized: "Photo", comment: "Media kind"))
         return Button { onSelect(asset) } label: {
             tile(selected: selected, label: name) {
                 NativeVisualThumbnail(asset: asset)

@@ -69,7 +69,7 @@ struct SongOrderCard: View {
         let number = positions[mediaID] ?? 0
         let position = state.position(of: mediaID) ?? 0
         UIAccessibility.post(notification: .announcement,
-                             argument: "Clip \(number) moved to position \(position) of \(state.order.count)")
+                             argument: String(localized: "Clip \(number) moved to position \(position) of \(state.order.count)"))
     }
 
     var body: some View {
@@ -92,7 +92,7 @@ struct SongOrderCard: View {
                 header
                 if let selectedMediaID {
                     SongOrderPreview(mediaID: selectedMediaID, url: selectedPreviewURL,
-                                     title: "Clip \(positions[selectedMediaID] ?? 0)")
+                                     title: String(localized: "Clip \(positions[selectedMediaID] ?? 0)"))
                 }
                 list(isSending: isSending)
                 footer(isSending: isSending, submit: submit)
@@ -144,7 +144,7 @@ struct SongOrderCard: View {
         let position = state.position(of: mediaID) ?? 0
         let number = positions[mediaID] ?? 0
         let attached = media.first { $0.id == mediaID }
-            ?? CreationAttachedMedia(id: mediaID, filename: "Clip \(number)", kind: "video", previewURL: nil)
+            ?? CreationAttachedMedia(id: mediaID, filename: String(localized: "Clip \(number)"), kind: "video", previewURL: nil)
         let uncertain = item?.status.isUncertain ?? true
         let unplaced = isUnplaced(mediaID)
         let isSelected = selectedMediaID == mediaID
@@ -179,7 +179,7 @@ struct SongOrderCard: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Clip \(number), position \(position) of \(state.order.count). \(Self.caption(for: item))")
-            .accessibilityHint(isSelected ? "Stops the preview" : "Plays a preview")
+            .accessibilityHint(isSelected ? String(localized: "Stops the preview") : String(localized: "Plays a preview"))
             .accessibilityAddTraits(isSelected ? .isSelected : [])
             // The custom actions sit on the take itself, which is a real accessibility element. On the row they
             // were attached to a `.contain` container, which VoiceOver does not expose as an element, so they never
@@ -193,9 +193,9 @@ struct SongOrderCard: View {
                 Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
             } else {
                 VStack(spacing: 0) {
-                    arrow("chevron.up", label: "Move clip \(number) up", id: "song-order-up-\(mediaID)",
+                    arrow("chevron.up", label: String(localized: "Move clip \(number) up"), id: "song-order-up-\(mediaID)",
                           enabled: state.canMoveUp(mediaID) && !isSending) { reorder(mediaID) { $0.moveUp(mediaID) } }
-                    arrow("chevron.down", label: "Move clip \(number) down", id: "song-order-down-\(mediaID)",
+                    arrow("chevron.down", label: String(localized: "Move clip \(number) down"), id: "song-order-down-\(mediaID)",
                           enabled: state.canMoveDown(mediaID) && !isSending) { reorder(mediaID) { $0.moveDown(mediaID) } }
                 }
             }
@@ -244,36 +244,35 @@ struct SongOrderCard: View {
         guard let item else { return unplacedCaption }
         switch item.status {
         case .confident:
-            return item.songStartS.map { "Starts at \(DurationFormatter.clock($0)) in the song" } ?? "Placed in your song"
+            return item.songStartS.map { String(localized: "Starts at \(DurationFormatter.clock($0)) in the song") } ?? String(localized: "Placed in your song")
         case .ambiguous:
-            return item.songStartS.map { "Could fit a few places, about \(DurationFormatter.clock($0))" } ?? "Could fit a few places"
+            return item.songStartS.map { String(localized: "Could fit a few places, about \(DurationFormatter.clock($0))") } ?? String(localized: "Could fit a few places")
         case .unmatched:
             return unplacedCaption
         }
     }
 
     /// Honest about what happens to it: with no position in the song the server can only use the clip as filler.
-    static let unplacedCaption = "Kria couldn’t place this clip — it will be used as filler"
+    static var unplacedCaption: String { String(localized: "Kria couldn’t place this clip — it will be used as filler") }
 
     /// The sentence under the card title. The "drag or use the arrows" advice is only given when some take can
     /// actually be moved to fix a doubtful position; unplaced takes are explained instead.
     static func hint(ambiguous: Int, unmatched: Int) -> String {
-        func clips(_ n: Int) -> String { n == 1 ? "1 clip" : "\(n) clips" }
         var parts: [String] = []
         if ambiguous > 0 {
-            parts.append("Kria wasn’t sure where \(ambiguous == 1 ? "1 clip fits" : "\(ambiguous) clips fit") in your song. Tap a clip to watch it, then drag or use the arrows to fix the order.")
+            parts.append(String(localized: "Kria wasn’t sure where \(ambiguous) clips fit in your song. Tap a clip to watch it, then drag or use the arrows to fix the order."))
         } else {
-            parts.append("Tap a clip to watch it, then drag or use the arrows to change the order.")
+            parts.append(String(localized: "Tap a clip to watch it, then drag or use the arrows to change the order."))
         }
         if unmatched > 0 {
-            parts.append("\(clips(unmatched)) Kria couldn’t place will be used as filler.")
+            parts.append(String(localized: "\(unmatched) clips Kria couldn’t place will be used as filler."))
         }
         return parts.joined(separator: " ")
     }
 
     /// The collapsed line once answered. Without a nameable order it stays neutral rather than claiming a confirmation.
     static func answeredText(summary: String?) -> String {
-        summary.map { "Order confirmed: \($0)" } ?? "Order question closed"
+        summary.map { String(localized: "Order confirmed: \($0)") } ?? String(localized: "Order question closed")
     }
 }
 

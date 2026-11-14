@@ -129,16 +129,16 @@ struct SavedMediaEligibility: Equatable {
     let text: String
     var canAdd: Bool { action == .attach || action == .uploadOriginal || action == .locateOriginal }
 
-    static let onThisIPhone = "Original on this iPhone"
-    static let originalNeeded = "Full-quality original needed on this iPhone"
-    static let expired = "Cloud copy expired or unavailable. Restore it from the original to reuse it."
+    static let onThisIPhone = String(localized: "Original on this iPhone")
+    static let originalNeeded = String(localized: "Full-quality original needed on this iPhone")
+    static let expired = String(localized: "Cloud copy expired or unavailable. Restore it from the original to reuse it.")
 
     static func evaluate(_ asset: SavedMediaAsset, role: CreationMediaRole, destination: ProjectUploadDestination, signedIn: Bool, hasLocalOriginal: Bool) -> Self {
-        let status = asset.status == "failed" ? "Analysis needs retry" : asset.status == "ready" ? "Available to reuse" : "Analysis in progress"
+        let status = asset.status == "failed" ? String(localized: "Analysis needs retry") : asset.status == "ready" ? String(localized: "Available to reuse") : String(localized: "Analysis in progress")
         let deviceOnlyVideo = asset.kind == "video" && asset.originalAvailability == "device_only" && asset.fingerprint != nil
         let fits = role.isAudio ? asset.kind == "audio" : role == .clip ? asset.kind == "video" : asset.kind != "audio"
         if role == .visual, let kinds = destination.visualKinds, !kinds.contains(asset.kind == "image" ? .image : .video) {
-            return Self(action: .unavailable, text: asset.kind == "video" ? "Add videos to this post in Footage." : "Photos can’t be added to this post on iPhone.")
+            return Self(action: .unavailable, text: asset.kind == "video" ? String(localized: "Add videos to this post in Footage.") : String(localized: "Photos can’t be added to this post on iPhone."))
         }
         let source = asset.bindableSource(for: role, destination: destination)
         let result: Self
@@ -166,5 +166,5 @@ extension APIError {
 
 enum SavedMediaError: LocalizedError {
     case originalRequired
-    var errorDescription: String? { "Choose the matching full-quality original from Files to use this video on this iPhone." }
+    var errorDescription: String? { String(localized: "Choose the matching full-quality original from Files to use this video on this iPhone.") }
 }

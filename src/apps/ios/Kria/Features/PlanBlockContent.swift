@@ -18,8 +18,8 @@ extension PlanSectionID {
     /// The longer name the Paper -B cards use.
     var cardTitle: String {
         switch self {
-        case .clips: "Clips and order"
-        case .look: "Look and motion"
+        case .clips: String(localized: "Clips and order")
+        case .look: String(localized: "Look and motion")
         default: label
         }
     }
@@ -27,10 +27,10 @@ extension PlanSectionID {
     /// The verb on a deciding card's pill.
     var workingVerb: String {
         switch self {
-        case .title, .captions, .postCaption: "Writing"
-        case .music: "Finding a track"
-        case .clips, .sfx, .overlays: "Choosing"
-        case .look: "Styling"
+        case .title, .captions, .postCaption: String(localized: "Writing")
+        case .music: String(localized: "Finding a track")
+        case .clips, .sfx, .overlays: String(localized: "Choosing")
+        case .look: String(localized: "Styling")
         }
     }
 }
@@ -149,17 +149,17 @@ private struct PlanMusicRow: View {
     private var title: String {
         if let title = payload.title, !title.isEmpty { return title }
         switch payload.source {
-        case .userSong: return "Your song"
-        case .voiceover: return "Your voiceover"
-        case .catalog: return "Music"
+        case .userSong: return String(localized: "Your song")
+        case .voiceover: return String(localized: "Your voiceover")
+        case .catalog: return String(localized: "Music")
         }
     }
 
     private var detail: String {
         var parts: [String] = []
         if let artist = payload.artist, !artist.isEmpty { parts.append(artist) }
-        if let bpm = payload.bpm, bpm > 0 { parts.append("\(Int(bpm.rounded())) BPM") }
-        if let start = payload.startS, start > 0 { parts.append("starts at \(PlanTimeFormat.clock(start))") }
+        if let bpm = payload.bpm, bpm > 0 { parts.append(String(localized: "\(Int(bpm.rounded())) BPM")) }
+        if let start = payload.startS, start > 0 { parts.append(String(localized: "starts at \(PlanTimeFormat.clock(start))")) }
         return parts.joined(separator: " · ")
     }
 
@@ -251,13 +251,23 @@ private struct PlanOverlayRows: View {
         }
     }
 
+    private func kindTitle(_ kind: PlanOverlayItem.Kind) -> String {
+        switch kind {
+        case .image: String(localized: "Image", comment: "Overlay kind")
+        case .video: String(localized: "Video")
+        case .textCard: String(localized: "Text Card", comment: "Overlay kind")
+        case .motion: String(localized: "Motion")
+        case .visual: String(localized: "Visual")
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(items.prefix(4)) { item in
                 HStack(spacing: 10) {
                     Image(systemName: icon(item.kind)).font(.system(size: 12, weight: .semibold)).foregroundStyle(KriaColor.ink.opacity(0.7))
                         .frame(width: 18)
-                    Text(item.label ?? item.kind.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                    Text(item.label ?? kindTitle(item.kind))
                         .font(KriaFont.body(14)).foregroundStyle(KriaColor.ink).lineLimit(1)
                     Spacer(minLength: 4)
                     Text(PlanTimeFormat.clock(item.startS)).font(KriaFont.body(13)).foregroundStyle(KriaColor.ink.opacity(0.65))

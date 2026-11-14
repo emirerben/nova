@@ -66,25 +66,25 @@ extension CameraRollCollection {
 
 /// Collection failures must not inherit the editor's generic conflict wording.
 enum CameraRollCollectionFailure {
-    static let unavailable = "This footage needs analysis. Your collection is saved; new analysis is unavailable right now."
-    static let openQuestions = "Answer or skip this idea's questions before building it."
+    static let unavailable = String(localized: "This footage needs analysis. Your collection is saved; new analysis is unavailable right now.")
+    static let openQuestions = String(localized: "Answer or skip this idea's questions before building it.")
     static func isChanged(_ error: Error) -> Bool {
         guard let error = error as? APIError else { return false }
         return error.conflictCode == "collection_changed" || error.conflictDetail == "This collection changed. Refresh before continuing."
     }
     static func message(_ error: Error) -> String {
         guard let apiError = error as? APIError else { return error.localizedDescription }
-        if isChanged(error) { return "Your collection was updated. Your local changes are saved. Review the latest collection to continue." }
+        if isChanged(error) { return String(localized: "Your collection was updated. Your local changes are saved. Review the latest collection to continue.") }
         let reason: String
         if case let .requestFailed(_, detail) = apiError { reason = detail.code ?? detail.message ?? "" }
         else { reason = apiError.conflictCode ?? apiError.conflictDetail ?? "" }
         switch reason {
         case "collection_analysis_unavailable", "No eligible cached result; new model calls are disabled": return unavailable
-        case "collection_analysis_pending", "Stories are pending; retry shortly": return "Your story ideas are still being prepared. Your collection is saved; try again shortly."
+        case "collection_analysis_pending", "Stories are pending; retry shortly": return String(localized: "Your story ideas are still being prepared. Your collection is saved; try again shortly.")
         case "story_open_questions": return openQuestions
-        case "collection_media_unavailable", "Selected media is unavailable or its source changed. Remove or repair it.": return "Some footage is unavailable. Remove or restore it before finding ideas."
+        case "collection_media_unavailable", "Selected media is unavailable or its source changed. Remove or repair it.": return String(localized: "Some footage is unavailable. Remove or restore it before finding ideas.")
         default:
-            if case .conflict = apiError { return "Could not finish finding ideas. Your collection is saved. Try again." }
+            if case .conflict = apiError { return String(localized: "Could not finish finding ideas. Your collection is saved. Try again.") }
             return apiError.localizedDescription
         }
     }

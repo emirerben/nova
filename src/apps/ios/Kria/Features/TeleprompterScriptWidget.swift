@@ -115,7 +115,7 @@ struct TeleprompterScriptWidget: View {
     }
 
     private var moveGrip: some View {
-        KriaFloatingIconButton(kind: .move, label: "Move text window", identifier: "teleprompter-window-move", action: openSettings)
+        KriaFloatingIconButton(kind: .move, label: String(localized: "Move text window"), identifier: "teleprompter-window-move", action: openSettings)
             .highPriorityGesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
                 .onChanged { value in
                     if moveStartPreference == nil { moveStartPreference = preference }
@@ -126,7 +126,7 @@ struct TeleprompterScriptWidget: View {
     }
 
     private var resizeGrip: some View {
-        KriaFloatingIconButton(kind: .resize, label: "Resize text window", identifier: "teleprompter-window-resize", action: openSettings)
+        KriaFloatingIconButton(kind: .resize, label: String(localized: "Resize text window"), identifier: "teleprompter-window-resize", action: openSettings)
             .highPriorityGesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
                 .onChanged { value in
                     if resizeStartPreference == nil { resizeStartPreference = preference }
@@ -140,8 +140,8 @@ struct TeleprompterScriptWidget: View {
         TeleprompterTextLayout.scaledInterFont(size: model.fontSize, dynamicTypeSize: dynamicTypeSize)
     }
     private var accessibilityValue: String {
-        guard let index = TeleprompterVisualLine.index(containing: model.anchorUTF16, in: layout) else { return "No script" }
-        return "\(layout[index].text). Line \(index + 1) of \(layout.count)"
+        guard let index = TeleprompterVisualLine.index(containing: model.anchorUTF16, in: layout) else { return String(localized: "No script") }
+        return String(localized: "\(layout[index].text). Line \(index + 1) of \(layout.count)")
     }
 
     private func updateLayout(width: CGFloat) {

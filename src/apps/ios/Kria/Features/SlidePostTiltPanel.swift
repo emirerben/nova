@@ -76,8 +76,8 @@ struct SlidePostTiltControls: View {
                     .accessibilityLabel("Turn one degree left")
                 pill("+1\u{00B0}", id: "slidepost-tilt-plus") { set(degrees + 1) }
                     .accessibilityLabel("Turn one degree right")
-                pill("Turn 90\u{00B0}", id: "slidepost-tilt-quarter") { set(Self.quarterTurn(from: degrees)) }
-                pill("Reset", id: "slidepost-tilt-reset", enabled: tilt != nil) { onChange(nil, false) }
+                pill(String(localized: "Turn 90\u{00B0}"), id: "slidepost-tilt-quarter") { set(Self.quarterTurn(from: degrees)) }
+                pill(String(localized: "Reset"), id: "slidepost-tilt-reset", enabled: tilt != nil) { onChange(nil, false) }
             }
             .excludesDrawerGesture()
             backgroundRow
@@ -139,9 +139,9 @@ struct SlidePostTiltControls: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Background").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
             HStack(spacing: 8) {
-                kind("Blank", id: "slidepost-tilt-bg-blank", on: backdrop == .blank) { setBackdrop(.blank) }
-                kind("Colour", id: "slidepost-tilt-bg-colour", on: isColour) { setBackdrop(.color(colour.slideHexString)) }
-                kind("Blur", id: "slidepost-tilt-bg-blur", on: backdrop == .blur) { setBackdrop(.blur) }
+                kind(String(localized: "Blank", comment: "Slide background option: plain empty background"), id: "slidepost-tilt-bg-blank", on: backdrop == .blank) { setBackdrop(.blank) }
+                kind(String(localized: "Colour", comment: "Slide background option: solid colour"), id: "slidepost-tilt-bg-colour", on: isColour) { setBackdrop(.color(colour.slideHexString)) }
+                kind(String(localized: "Blur", comment: "Slide background option: blurred picture"), id: "slidepost-tilt-bg-blur", on: backdrop == .blur) { setBackdrop(.blur) }
                 if isColour {
                     ColorPicker("Background colour", selection: Binding(get: { colour }, set: { picked in
                         colour = picked
@@ -153,7 +153,7 @@ struct SlidePostTiltControls: View {
             }
             .excludesDrawerGesture()
             if tilt == nil {
-                Text(zoomEnabled ? "Shows behind the picture once you turn or shrink it." : "Shows behind the picture once you turn it.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                Text(zoomEnabled ? String(localized: "Shows behind the picture once you turn or shrink it.") : String(localized: "Shows behind the picture once you turn it.")).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             }
         }
     }
@@ -214,7 +214,7 @@ struct SlidePostTiltControls: View {
     }
 
     /// "1.3x" (one decimal), the label next to the slider and its VoiceOver value.
-    static func zoomReadout(_ zoom: Double) -> String { String(format: "%.1fx", zoom) }
+    static func zoomReadout(_ zoom: Double) -> String { String(localized: "\(zoom, format: .number.precision(.fractionLength(1)))x", comment: "Zoom factor, e.g. 1.3x") }
 
     /// The next multiple of 90 clockwise (so a repeated tap walks 0, 90, 180, -90, 0).
     static func quarterTurn(from degrees: Double) -> Double {
@@ -225,7 +225,7 @@ struct SlidePostTiltControls: View {
     /// "12\u{00B0} right", "30\u{00B0} left" or "Upright".
     static func readout(_ degrees: Double) -> String {
         let whole = Int(degrees.rounded())
-        if whole == 0 { return "Upright" }
-        return "\(abs(whole))\u{00B0} \(whole > 0 ? "right" : "left")"
+        if whole == 0 { return String(localized: "Upright") }
+        return whole > 0 ? String(localized: "\(abs(whole))\u{00B0} right") : String(localized: "\(abs(whole))\u{00B0} left")
     }
 }

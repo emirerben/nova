@@ -26,7 +26,7 @@ struct NativeSongReference: Equatable, Sendable {
 
     var songLine: String { artist.map { "\(title) — \($0)" } ?? title }
     var timeRange: String { "\(Self.timecode(startS)) – \(Self.timecode(endS))" }
-    var copyText: String { "\(title)\(artist.map { " by \($0)" } ?? ""), \(timeRange)" }
+    var copyText: String { artist.map { String(localized: "\(title) by \($0), \(timeRange)") } ?? "\(title), \(timeRange)" }
 
     func withEndS(_ endS: TimeInterval) -> NativeSongReference {
         NativeSongReference(trackID: trackID, title: title, artist: artist, startS: startS, endS: endS)

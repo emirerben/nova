@@ -6,11 +6,18 @@ import SwiftUI
 struct NativeAnimationPhasePicker<Session: NativeTransactionControlling>: View {
     enum Phase: String, CaseIterable {
         case entrance = "In", exit = "Out", loop = "Loop"
+        var title: String {
+            switch self {
+            case .entrance: String(localized: "In", comment: "Animation phase tab: how text enters")
+            case .exit: String(localized: "Out", comment: "Animation phase tab: how text leaves")
+            case .loop: String(localized: "Loop", comment: "Animation phase tab: repeating motion")
+            }
+        }
         var key: String { self == .entrance ? "entrance" : self == .exit ? "exit" : "loop" }
         /// (stored value, card title): In and Out offer every edge, the six designed ones included.
         var effects: [(value: String, title: String)] {
             self == .loop
-                ? ["None", "Pulse", "Bounce", "Float"].map { ($0.lowercased(), $0) }
+                ? [("none", String(localized: "None", comment: "Text animation: no motion")), ("pulse", String(localized: "Pulse")), ("bounce", String(localized: "Bounce")), ("float", String(localized: "Float", comment: "Text animation: gentle drifting motion"))]
                 : TextAnimationPhases.Edge.allCases.map { ($0.rawValue, $0.title) }
         }
     }
@@ -34,14 +41,14 @@ struct NativeAnimationPhasePicker<Session: NativeTransactionControlling>: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            NativeEditorPanelTabs(tabs: Phase.allCases, selection: $phase, accessibilityPrefix: identifierPrefix + "-phase")
+            NativeEditorPanelTabs(tabs: Phase.allCases, selection: $phase, accessibilityPrefix: identifierPrefix + "-phase", title: { $0.title })
             LazyVGrid(columns: [GridItem(.adaptive(minimum: usesAccessibilityLayout ? 118 : 92), spacing: 8)], spacing: 10) {
                 ForEach(phase.effects, id: \.value) { card(value: $0.value, title: $0.title) }
             }
             Button {
                 clock.toggleManually()
             } label: {
-                Label(clock.isPlaying ? "Pause previews" : "Play previews", systemImage: clock.isPlaying ? "pause.fill" : "play.fill")
+                Label(clock.isPlaying ? String(localized: "Pause previews") : String(localized: "Play previews"), systemImage: clock.isPlaying ? "pause.fill" : "play.fill")
                     .font(KriaFont.body(13).weight(.semibold))
                     .frame(minHeight: 44)
             }
@@ -82,7 +89,7 @@ struct NativeAnimationPhasePicker<Session: NativeTransactionControlling>: View {
                     .lineLimit(2).multilineTextAlignment(.center)
             }
         }
-        .accessibilityLabel("\(phase.rawValue) animation \(title)")
+        .accessibilityLabel(String(localized: "\(phase.title) animation \(title)"))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

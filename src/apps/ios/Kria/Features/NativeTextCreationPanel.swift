@@ -73,7 +73,7 @@ struct NativeTextCreationPanel: View {
                 Text("On screen").font(KriaFont.body(12).weight(.semibold))
                 if !interactive {
                     // The reason the rows are inert stays visible.
-                    Text(session.canEdit(.text) ? "Finish your new text first" : "Text editing is unavailable")
+                    Text(session.canEdit(.text) ? String(localized: "Finish your new text first") : String(localized: "Text editing is unavailable"))
                         .font(KriaFont.body(11))
                 }
                 Spacer(minLength: 0)

@@ -289,7 +289,7 @@ struct KriaInkCTAButtonStyle: ButtonStyle {
 /// sits on the button and never on or above the glass.
 struct KriaGlassCloseButton: View {
     var identifier: String?
-    var label = "Close"
+    var label = String(localized: "Close")
     let action: () -> Void
 
     var body: some View {

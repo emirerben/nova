@@ -86,8 +86,8 @@ private struct SongRangeActiveCard: View {
     private var chosenRange: SongFilmingRange? { draft?.range }
 
     var body: some View {
-        KriaQuestionCard(title: draft == nil ? nil : "Which part of the song?",
-                         helper: draft == nil ? nil : "Set where your filming starts and ends.") {
+        KriaQuestionCard(title: draft == nil ? nil : String(localized: "Which part of the song?"),
+                         helper: draft == nil ? nil : String(localized: "Set where your filming starts and ends.")) {
             if let draft {
                 SongRangeWheelPair(draft: draft, from: fromBinding, to: toBinding,
                                    fromID: "song-range-card-from", toID: "song-range-card-to", isEnabled: !isSending,

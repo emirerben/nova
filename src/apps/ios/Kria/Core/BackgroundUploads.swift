@@ -372,11 +372,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             await retryUpload(recordID: record.id)
         } else if let sourceID = placement.visual?.id {
             do { recordEditorSourceResult(placementID: placement.id, response: try await api.registerEditorSource(placement.target, sourceID: sourceID)) }
-            catch { failEditorPlacement(placement.id, error: "This import couldn’t be prepared. Try again.") }
+            catch { failEditorPlacement(placement.id, error: String(localized: "This import couldn’t be prepared. Try again.")) }
         } else if let staged = Self.restorePreparingUploads(key: defaultsKey).first(where: { $0.id == placement.id }) {
             if !activePreparationIDs.contains(placement.id) { await resumePreparation(staged).value }
         } else {
-            failEditorPlacement(placement.id, error: "Choose this file again to finish importing.", retryable: false)
+            failEditorPlacement(placement.id, error: String(localized: "Choose this file again to finish importing."), retryable: false)
         }
     }
 
@@ -805,7 +805,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 if let loaded { try? FileManager.default.removeItem(at: loaded) }
                 self.releaseSelection(recordID: recordID, projectID: request.projectID)
                 if !(error is CancellationError) {
-                    self.recordFailure(id: recordID, projectID: request.projectID, role: request.role, filename: "Selected item", message: "This file couldn’t be read. Try Files or choose it again.", selectionKey: key)
+                    self.recordFailure(id: recordID, projectID: request.projectID, role: request.role, filename: String(localized: "Selected item"), message: String(localized: "This file couldn’t be read. Try Files or choose it again."), selectionKey: key)
                 }
             }
         }
@@ -892,7 +892,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let latest = try await api.project(threadID: projectID)
             guard CreationAttachedMedia.parse(latest.state ?? [:]).contains(where: { $0.id == mediaID }) else { return .discarded }
         } catch {
-            return .refused("Couldn’t remove it. \(error.localizedDescription)")
+            return .refused(String(localized: "Couldn’t remove it. \(error.localizedDescription)"))
         }
         return await detach(mediaID: mediaID, role: .clip, projectID: projectID, itemID: nil, recordID: recordID)
     }
@@ -919,7 +919,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         await serialized(projectID: projectID) { [self] () async -> DeselectOutcome in
             do {
                 if role == .visual {
-                    guard let itemID else { return .refused("Kria can’t remove this right now.") }
+                    guard let itemID else { return .refused(String(localized: "Kria can’t remove this right now.")) }
                     try await api.removeVisual(itemID: itemID, assetID: mediaID)
                 } else {
                     let latest = try await api.project(threadID: projectID)
@@ -933,9 +933,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 return .detached
             } catch APIError.conflict {
                 // The server refuses removal while a render is running, and on a stale revision.
-                return .refused("Kria can’t remove this right now. Wait for the current step to finish and try again.")
+                return .refused(String(localized: "Kria can’t remove this right now. Wait for the current step to finish and try again."))
             } catch {
-                return .refused("Couldn’t remove it. \(error.localizedDescription)")
+                return .refused(String(localized: "Couldn’t remove it. \(error.localizedDescription)"))
             }
         }
     }
@@ -1049,7 +1049,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         )
         records.append(record)
         recordFailure(id: record.id, projectID: projectID, role: .clip, filename: record.filename,
-                      message: "The network connection was lost.", cause: .uploadFailed)
+                      message: String(localized: "The network connection was lost."), cause: .uploadFailed)
     }
     #endif
 
@@ -1197,7 +1197,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 if entry.replacesMediaID != nil {
                     recordFailure(id: entry.id, projectID: entry.projectID, role: entry.role,
                                   filename: Self.displayFilename(entry.filename),
-                                  message: "The new take couldn’t be resumed. Record it again. \(RerecordFailure.unchanged)",
+                                  message: String(localized: "The new take couldn’t be resumed. Record it again. \(RerecordFailure.unchanged)"),
                                   replacesMediaID: entry.replacesMediaID)
                 }
                 continue
@@ -1220,7 +1220,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
         Self.persistPreparingUploads(toKeep, key: defaultsKey)
         if missingStagedFile {
-            lastError = "An upload was interrupted before it could start. Choose the file again."
+            lastError = String(localized: "An upload was interrupted before it could start. Choose the file again.")
         }
         return toResume.map { resumePreparation($0) }
     }
@@ -1333,15 +1333,15 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // `.conflict`/`.sessionExpired`) drops the entry for good.
             if Self.isTransientResumeFailure(error) {
                 markPreparationRetryLater(recordID: recordID)
-                lastError = "Kria couldn't resume an interrupted upload. It will retry when you're back online."
+                lastError = String(localized: "Kria couldn't resume an interrupted upload. It will retry when you're back online.")
             } else {
-                lastError = "The original upload could not be resumed. Choose the file again."
+                lastError = String(localized: "The original upload could not be resumed. Choose the file again.")
                 Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true)
                 // Otherwise the claim survives with nothing behind it: it keeps counting as pending
                 // (Continue stays disabled) and the picker keeps showing the asset as chosen.
                 releaseSelection(recordID: recordID, projectID: entry.projectID)
                 recordFailure(id: recordID, projectID: entry.projectID, role: entry.role, filename: Self.displayFilename(entry.filename),
-                              message: entry.replacesMediaID == nil ? "It couldn’t be resumed. Choose it again." : RerecordFailure(error).message,
+                              message: entry.replacesMediaID == nil ? String(localized: "It couldn’t be resumed. Choose it again.") : RerecordFailure(error).message,
                               replacesMediaID: entry.replacesMediaID)
             }
         }
@@ -1419,7 +1419,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             case .retry:
                 await retry(record)
             case .chooseFileAgain:
-                lastError = "The original file is no longer available. Choose it again."
+                lastError = String(localized: "The original file is no longer available. Choose it again.")
                 releaseSelection(recordID: record.id, projectID: record.projectID)
                 ClipCaptureStore.shared.remove(record.id)
                 remove(record.id, deleteLocalFile: false)
@@ -1427,7 +1427,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // No task is running for it and the automatic retry is spent: hand it to the creator (Retry /
                 // Remove). Left as is, it counts as in progress forever and keeps Send disabled.
                 reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename,
-                              message: "This upload was interrupted. Tap Retry to try again.", cause: .uploadFailed)
+                              message: String(localized: "This upload was interrupted. Tap Retry to try again."), cause: .uploadFailed)
             }
         }
     }
@@ -1503,7 +1503,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         } else if UploadRecoveryPolicy().action(retryCount: record.retryCount, statusCode: status, fileExists: true) == .retry {
             await retry(record)
         } else {
-            let message = error?.localizedDescription ?? "The upload could not be completed."
+            let message = error?.localizedDescription ?? String(localized: "The upload could not be completed.")
             lastError = message
             // KRI-194: this was `lastError`-only, so a PUT failure for one clip could sit
             // hidden behind another clip's still-showing failure line.
@@ -1529,7 +1529,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         lastError = nil
         let localURL = URL(fileURLWithPath: record.localFilePath)
         guard FileManager.default.fileExists(atPath: localURL.path) else {
-            lastError = "The original file is no longer available. Choose it again."
+            lastError = String(localized: "The original file is no longer available. Choose it again.")
             releaseSelection(recordID: record.id, projectID: record.projectID)
             ClipCaptureStore.shared.remove(record.id)
             remove(record.id, deleteLocalFile: false)
@@ -1616,7 +1616,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                     for _ in 0..<360 where visual.status != "ready" {
                         guard containsEditorPlacement(record.id), !Task.isCancelled else { return }
                         if visual.status == "failed" {
-                            failEditorPlacement(record.id, error: "This visual couldn’t be prepared. Choose it again.", retryable: false)
+                            failEditorPlacement(record.id, error: String(localized: "This visual couldn’t be prepared. Choose it again."), retryable: false)
                             return
                         }
                         let library = try await api.visuals(itemID: itemID)
@@ -1625,7 +1625,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                         if visual.status != "ready" { try await Task.sleep(for: .seconds(1)) }
                     }
                     guard visual.status == "ready" else {
-                        failEditorPlacement(record.id, error: "Preparation is taking longer than expected. Try again.")
+                        failEditorPlacement(record.id, error: String(localized: "Preparation is taking longer than expected. Try again."))
                         return
                     }
                     _ = try await finishEditorSource(record, target: target, sourceID: visual.id)
@@ -1644,7 +1644,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             } catch {
                 lastError = error.localizedDescription
                 if record.editorSourceTarget != nil {
-                    failEditorPlacement(record.id, error: "This import couldn’t be prepared. Try again.")
+                    failEditorPlacement(record.id, error: String(localized: "This import couldn’t be prepared. Try again."))
                 } else {
                     // KRI-194: this was `lastError`-only, so an attach failure for one visual
                     // could sit hidden behind another clip's still-showing failure line.
@@ -1658,7 +1658,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let gcsPath = record.gcsPath,
             let contentType = record.contentType
         else {
-            let message = "This upload was created by an older build. Choose the file again."
+            let message = String(localized: "This upload was created by an older build. Choose the file again.")
             lastError = message
             reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message, cause: .cannotResume)
             return
@@ -1675,7 +1675,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 remove(record.id, deleteLocalFile: true)
             } catch {
                 lastError = error.localizedDescription
-                failEditorPlacement(record.id, error: "This import couldn’t be prepared. Try again.")
+                failEditorPlacement(record.id, error: String(localized: "This import couldn’t be prepared. Try again."))
             }
             return
         }
@@ -1742,7 +1742,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 lastAttachmentError = error
             }
         }
-        let message = lastAttachmentError.map { CreationUploadError.message(for: $0, role: record.role) } ?? "The uploaded footage could not be attached to this project."
+        let message = lastAttachmentError.map { CreationUploadError.message(for: $0, role: record.role) } ?? String(localized: "The uploaded footage could not be attached to this project.")
         lastError = message
         // KRI-194: this was `lastError`-only, so an attach failure for one clip could sit
         // hidden behind another clip's still-showing failure line.
@@ -2098,9 +2098,9 @@ enum CreationUploadError: LocalizedError {
         guard let api = error as? APIError else { return nil }
         switch api {
         case .requestFailed(404, let detail) where detail.message?.localizedCaseInsensitiveContains("song") == true:
-            return "Adding your own song isn’t available right now."
+            return String(localized: "Adding your own song isn’t available right now.")
         case .conflict(let detail) where detail.message == "song_exists" || detail.code == "song_exists":
-            return "This video already has a song. Remove it first to use a different one."
+            return String(localized: "This video already has a song. Remove it first to use a different one.")
         default:
             return nil
         }
@@ -2113,14 +2113,14 @@ enum CreationUploadError: LocalizedError {
     }
 
     /// What the creator reads when the server stayed busy through every retry. The file itself is fine.
-    static let busyMessage = "Kria’s servers were busy, so this didn’t upload. Tap Retry to send it."
+    static var busyMessage: String { String(localized: "Kria’s servers were busy, so this didn’t upload. Tap Retry to send it.") }
 
     case unsupportedType, tooLarge, proxyContractUnavailable
     var errorDescription: String? {
         switch self {
-        case .unsupportedType: "This file type is not supported here. Choose a different file."
-        case .proxyContractUnavailable: "On-device creation is not available yet. Your original stays on this device."
-        case .tooLarge: "This file exceeds the upload limit. Choose a smaller file."
+        case .unsupportedType: String(localized: "This file type is not supported here. Choose a different file.")
+        case .proxyContractUnavailable: String(localized: "On-device creation is not available yet. Your original stays on this device.")
+        case .tooLarge: String(localized: "This file exceeds the upload limit. Choose a smaller file.")
         }
     }
 }

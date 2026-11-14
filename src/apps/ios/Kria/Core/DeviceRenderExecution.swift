@@ -94,7 +94,7 @@ import UIKit
                 }
                 continuation = waiting
                 state = .awaitingLaunch
-                let accepted = scheduler.registerAndSubmit(identifier: identifier, title: "Rendering your video", subtitle: "Preparing and syncing your edit") { [weak self] task in
+                let accepted = scheduler.registerAndSubmit(identifier: identifier, title: String(localized: "Rendering your video"), subtitle: String(localized: "Preparing and syncing your edit")) { [weak self] task in
                     guard let self else { task.complete(success: false); return }
                     self.launched(task)
                 }

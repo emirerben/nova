@@ -105,13 +105,13 @@ struct CameraRollSurfaceView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            CameraRollCircleButton(identifier: "workspace-menu-toggle", label: drawerOpen ? "Close projects" : "Open projects", action: openProjects) {
+            CameraRollCircleButton(identifier: "workspace-menu-toggle", label: drawerOpen ? String(localized: "Close projects") : String(localized: "Open projects"), action: openProjects) {
                 KriaIcon(.menu)
             }
             Text("Camera roll").font(KriaFont.body(15).weight(.semibold)).lineLimit(1).frame(maxWidth: .infinity)
                 .accessibilityHidden(drawerOpen).accessibilityAddTraits(.isHeader).accessibilityIdentifier("camera-roll-title")
             if model.tasteAvailable {
-                CameraRollCircleButton(identifier: "camera-roll-taste", label: "Your taste", action: { path.append(.taste) }) {
+                CameraRollCircleButton(identifier: "camera-roll-taste", label: String(localized: "Your taste"), action: { path.append(.taste) }) {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 16, weight: .semibold)).foregroundStyle(KriaColor.ink)
                 }.accessibilityHidden(drawerOpen)
             } else { Color.clear.frame(width: 44, height: 44) }
@@ -157,7 +157,7 @@ struct CameraRollSurfaceView: View {
         CameraRollNoticeBanner(model: model)
         if model.accessRemovedCount > 0 {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Photos access was turned off. \(model.accessRemovedCount) \(model.accessRemovedCount == 1 ? "item was" : "items were") removed from this camera roll.")
+                Text("Photos access was turned off. \(model.accessRemovedCount) items were removed from this camera roll.")
                     .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.failureText)
                 Button {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
@@ -177,9 +177,9 @@ struct CameraRollSurfaceView: View {
                 Text("Kria can only see the \(model.sharedItemCount) items you shared. Everything else stays private.")
                     .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
                 HStack(spacing: 8) {
-                    Button { presentLimitedPicker() } label: { smallChip("Share more", muted: false) }
+                    Button { presentLimitedPicker() } label: { smallChip(String(localized: "Share more"), muted: false) }
                         .buttonStyle(.plain).accessibilityIdentifier("camera-roll-share-more")
-                    Button { limitedAcknowledged = true } label: { smallChip("Keep as is", muted: true) }
+                    Button { limitedAcknowledged = true } label: { smallChip(String(localized: "Keep as is"), muted: true) }
                         .buttonStyle(.plain).accessibilityIdentifier("camera-roll-keep-limited")
                 }
             }
@@ -220,7 +220,7 @@ struct CameraRollSurfaceView: View {
         let progress = model.progress
         if progress.isWorking || progress.needRetry > 0 {
             VStack(alignment: .leading, spacing: 10) {
-                Text(progress.isWorking ? "Looking at your footage" : "Almost there").font(KriaFont.body(17).weight(.bold)).foregroundStyle(KriaColor.ink)
+                Text(progress.isWorking ? String(localized: "Looking at your footage") : String(localized: "Almost there")).font(KriaFont.body(17).weight(.bold)).foregroundStyle(KriaColor.ink)
                 KriaProgressTrack(progress: progress.fraction)
                 HStack {
                     Text("\(progress.done) of \(progress.total) done").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
@@ -258,7 +258,7 @@ struct CameraRollSurfaceView: View {
     }
 
     private func undoMessage(_ undo: CameraRollIdeaBoard.Undo) -> String {
-        switch undo { case .idea: "Idea deleted"; case .event: "Event deleted" }
+        switch undo { case .idea: String(localized: "Idea deleted"); case .event: String(localized: "Event deleted") }
     }
 
     @ViewBuilder private func detail(_ route: CameraRollIdeaRoute) -> some View {
@@ -326,7 +326,7 @@ struct CameraRollEventEditor: View {
                             .padding(.horizontal, 16).frame(height: 44).kriaFloatingSurface(Capsule()).contentShape(Capsule())
                     }.buttonStyle(.plain).accessibilityIdentifier("camera-roll-edit-cancel")
                     Spacer()
-                    Text(selected.isEmpty ? "Select items" : "\(selected.count) selected").font(KriaFont.body(15).weight(.semibold))
+                    Text(selected.isEmpty ? String(localized: "Select items") : String(localized: "\(selected.count) selected")).font(KriaFont.body(15).weight(.semibold))
                         .accessibilityIdentifier("camera-roll-edit-count")
                     Spacer()
                     Button { commitName(); model.finishSelecting() } label: {
@@ -373,7 +373,7 @@ struct CameraRollEventEditor: View {
 
     private func movePanel(selectedCount: Int) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(selectedCount == 0 ? "Tap items to move them" : "Move \(selectedCount) to").cameraRollKicker().padding(.horizontal, 4)
+            Text(selectedCount == 0 ? String(localized: "Tap items to move them") : String(localized: "Move \(selectedCount) to")).cameraRollKicker().padding(.horizontal, 4)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(model.moveTargets(from: event.id)) { target in

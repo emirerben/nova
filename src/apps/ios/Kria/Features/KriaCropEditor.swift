@@ -192,7 +192,7 @@ enum KriaSourceWindowGeometry {
 
     /// "3.0s – 5.0s · 2.0s": the source range, then how long the slot lasts.
     static func label(_ window: Window, rate: Double) -> String {
-        func seconds(_ value: Double) -> String { String(format: "%.1fs", (value * 10).rounded() / 10) }
+        func seconds(_ value: Double) -> String { String(localized: "\((value * 10).rounded() / 10, format: .number.precision(.fractionLength(1)))s", comment: "Seconds with one decimal, e.g. 3.0s") }
         return "\(seconds(window.start)) – \(seconds(sourceEnd(window, rate: rate))) · \(seconds(window.length))"
     }
 }
@@ -260,6 +260,13 @@ struct KriaCropEditor: View {
     enum Mode: String, CaseIterable, Identifiable {
         case fill = "Fill frame", free = "Free", original = "Original"
         var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .fill: String(localized: "Fill frame", comment: "Crop mode: crop so the media fills the whole frame")
+            case .free: String(localized: "Free", comment: "Crop mode: any crop shape")
+            case .original: String(localized: "Original", comment: "Crop mode: keep the media's original shape")
+            }
+        }
         var identifier: String { "kria-crop-mode-\(rawValue.lowercased().replacingOccurrences(of: " ", with: "-"))" }
     }
 
@@ -309,9 +316,9 @@ struct KriaCropEditor: View {
 
     private var footnote: String {
         switch mode {
-        case .fill: "Drag to move, pinch to zoom. What you see is what exports."
-        case .free: "Any shape. Kria fits it to the frame, so the edges may trim a little."
-        case .original: "Kria centres your media in the frame."
+        case .fill: String(localized: "Drag to move, pinch to zoom. What you see is what exports.")
+        case .free: String(localized: "Any shape. Kria fits it to the frame, so the edges may trim a little.")
+        case .original: String(localized: "Kria centres your media in the frame.")
         }
     }
 
@@ -397,7 +404,7 @@ struct KriaCropEditor: View {
         .simultaneousGesture(pinchGesture(), isEnabled: mode != .original)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Crop area")
-        .accessibilityValue("\(Int(working.width * 100)) percent wide, \(Int(working.height * 100)) percent tall")
+        .accessibilityValue(String(localized: "\(Int(working.width * 100)) percent wide, \(Int(working.height * 100)) percent tall"))
         .accessibilityAdjustableAction { direction in
             guard mode != .original else { return }
             working = KriaCropGeometry.scaled(working, factor: direction == .increment ? 1.1 : 1 / 1.1)
@@ -490,7 +497,7 @@ struct KriaCropEditor: View {
         HStack(spacing: 8) {
             ForEach(Mode.allCases) { item in
                 Button { select(item) } label: {
-                    Text(item.rawValue).font(KriaFont.body(14)).lineLimit(1).minimumScaleFactor(0.8)
+                    Text(item.title).font(KriaFont.body(14)).lineLimit(1).minimumScaleFactor(0.8)
                         .padding(.horizontal, 14).frame(minHeight: 44)
                         .foregroundStyle(KriaColor.ink)
                         .background(mode == item ? KriaColor.butter : KriaColor.fill, in: Capsule())

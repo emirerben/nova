@@ -151,13 +151,13 @@ extension CreationVisual {
         guard status == "failed" else { return .init(explanation: preparationCaption() ?? status.capitalized) }
         var detail = errorDetail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if retryable == false {
-            return .init(explanation: detail.isEmpty ? "Failed" : detail, nextStep: "Choose it again.")
+            return .init(explanation: detail.isEmpty ? String(localized: "Failed") : detail, nextStep: String(localized: "Choose it again."))
         }
-        guard retryingAutomatically else { return .init(explanation: detail.isEmpty ? "Failed" : detail) }
+        guard retryingAutomatically else { return .init(explanation: detail.isEmpty ? String(localized: "Failed") : detail) }
         if detail.hasSuffix("Try again.") {
             detail = String(detail.dropLast("Try again.".count)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return .init(explanation: detail.isEmpty ? "Failed" : detail, nextStep: "Retrying automatically…")
+        return .init(explanation: detail.isEmpty ? String(localized: "Failed") : detail, nextStep: String(localized: "Retrying automatically…"))
     }
 
     /// The same caption as one line of text: the line under the filename in

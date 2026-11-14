@@ -35,8 +35,8 @@ extension CreationVisual {
     /// editor's narrow library tile.
     func preparationCaption(short: Bool = false) -> String? {
         switch preparationStage {
-        case .waiting: short ? "Waiting…" : "Uploaded, waiting to be analyzed"
-        case .analyzing: "Analyzing…"
+        case .waiting: short ? String(localized: "Waiting…") : String(localized: "Uploaded, waiting to be analyzed")
+        case .analyzing: String(localized: "Analyzing…")
         case nil: nil
         }
     }
@@ -100,38 +100,38 @@ struct VisualPreparationSummary: Equatable, Sendable {
         self.isSlow = counted.contains { $0.preparationStage != nil && slowIDs.contains($0.id) }
         self.waitingForConnection = !online && uploading > 0
         let kinds = Set(counted.map(\.kind))
-        self.noun = nounOverride ?? (kinds == ["image"] ? "photos" : kinds == ["video"] ? "videos" : "visuals")
+        self.noun = nounOverride ?? (kinds == ["image"] ? String(localized: "photos") : kinds == ["video"] ? String(localized: "videos") : String(localized: "visuals"))
         self.surface = surface
         self.resolvesBy = counted.filter { $0.preparationStage != nil }.compactMap(\.analysisDeadline).max()
     }
 
     /// The declared bound in the creator's words; nil when the server sent none (older API).
     private var boundSentence: String? {
-        resolvesBy.map { "Any not ready by \($0.formatted(date: .omitted, time: .shortened)) can be retried or removed." }
+        resolvesBy.map { String(localized: "Any not ready by \($0.formatted(date: .omitted, time: .shortened)) can be retried or removed.") }
     }
 
     var fraction: Double { total > 0 ? Double(ready) / Double(total) : 0 }
 
-    var title: String { isSlow ? "Still getting your \(noun) ready" : "Getting your \(noun) ready" }
+    var title: String { isSlow ? String(localized: "Still getting your \(noun) ready") : String(localized: "Getting your \(noun) ready") }
 
-    var count: String { "\(ready) of \(total) ready" }
+    var count: String { String(localized: "\(ready) of \(total) ready") }
 
     /// A Visual still preparing can't be placed in the editor, and a phone
     /// render approved while one is preparing is refused (`visuals_processing`),
     /// so the slow copy never suggests creating the video before they're ready.
     var detail: String {
         if waitingForConnection {
-            return "Waiting for an internet connection. Uploads pick up again on their own once you’re back online."
+            return String(localized: "Waiting for an internet connection. Uploads pick up again on their own once you’re back online.")
         }
         let base: String
         if !isSlow {
-            base = "Kria looks at each one before it can use it. This usually takes under a minute."
+            base = String(localized: "Kria looks at each one before it can use it. This usually takes under a minute.")
         } else {
             switch surface {
             case .addMediaSheet:
-                base = "This is taking longer than usual. Uploaded files are safe, so you can close this and keep chatting. Wait until they’re ready before you create the video."
+                base = String(localized: "This is taking longer than usual. Uploaded files are safe, so you can close this and keep chatting. Wait until they’re ready before you create the video.")
             case .editorLibrary:
-                base = "This is taking longer than usual. Uploaded files are safe and unlock here once they’re ready. You can keep editing meanwhile."
+                base = String(localized: "This is taking longer than usual. Uploaded files are safe and unlock here once they’re ready. You can keep editing meanwhile.")
             }
         }
         return boundSentence.map { base + " " + $0 } ?? base
@@ -146,10 +146,10 @@ struct VisualPreparationSummary: Equatable, Sendable {
 enum UploadProgressCaption {
     static func text(progress: Double?, completed: Bool, online: Bool) -> String {
         let fraction = min(max(progress ?? 0, 0), 1)
-        if completed || fraction >= 1 { return "Finishing up…" }
-        if !online { return "Waiting for an internet connection…" }
-        if fraction <= 0 { return "Waiting to upload…" }
-        return "Uploading… \(Int((fraction * 100).rounded(.down)))%"
+        if completed || fraction >= 1 { return String(localized: "Finishing up…") }
+        if !online { return String(localized: "Waiting for an internet connection…") }
+        if fraction <= 0 { return String(localized: "Waiting to upload…") }
+        return String(localized: "Uploading… \(Int((fraction * 100).rounded(.down)))%")
     }
 }
 

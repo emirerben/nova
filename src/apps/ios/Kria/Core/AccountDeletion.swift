@@ -42,11 +42,11 @@ enum AccountDeletionError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .appleAuthorizationRequired:
-            "Authorize with the Apple account linked to Kria, then try deleting again."
+            String(localized: "Authorize with the Apple account linked to Kria, then try deleting again.")
         case .invalidConfirmation:
-            "The confirmation code or Apple authorization is invalid or expired. Request a new code and try again."
+            String(localized: "The confirmation code or Apple authorization is invalid or expired. Request a new code and try again.")
         case .unavailable:
-            "Account deletion is temporarily unavailable. Your account has not been deleted. Please try again later or contact support."
+            String(localized: "Account deletion is temporarily unavailable. Your account has not been deleted. Please try again later or contact support.")
         }
     }
 }

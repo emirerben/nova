@@ -3,7 +3,7 @@ import SwiftUI
 enum AttachmentStep: String, CaseIterable, Identifiable {
     case footage, voiceover, song, overlays
     var id: String { rawValue }
-    var title: String { switch self { case .footage: "Footage"; case .voiceover: "Voiceover"; case .song: "Song"; case .overlays: "Overlays" } }
+    var title: String { switch self { case .footage: String(localized: "Footage"); case .voiceover: String(localized: "Voiceover"); case .song: String(localized: "Song"); case .overlays: String(localized: "Overlays") } }
     var role: CreationMediaRole { switch self { case .footage: .clip; case .voiceover: .voiceover; case .song: .song; case .overlays: .visual } }
     var accessibilityID: String { "attachment-step-\(rawValue)" }
 }
@@ -13,13 +13,13 @@ enum AttachmentStep: String, CaseIterable, Identifiable {
 /// role identifiers (`CreationMediaRole.visual`, `AttachmentStep.overlays`) stay as they are.
 /// Pinned by `SlidePostCopyTests`.
 enum SlideMediaCopy {
-    static let poolTitle = "Photos & videos"
-    static let addHeading = "Add photos & videos"
-    static let subtitle = "Add the photos and videos for your slides."
-    static let loading = "Loading photos & videos…"
-    static let retryLoading = "Retry loading photos & videos"
-    static let removeFallback = "photo or video"
-    static let preparingNoun = "photos & videos"
+    static let poolTitle = String(localized: "Photos & videos")
+    static let addHeading = String(localized: "Add photos & videos")
+    static let subtitle = String(localized: "Add the photos and videos for your slides.")
+    static let loading = String(localized: "Loading photos & videos…")
+    static let retryLoading = String(localized: "Retry loading photos & videos")
+    static let removeFallback = String(localized: "photo or video")
+    static let preparingNoun = String(localized: "photos & videos")
 }
 
 struct AttachmentHeading: View {
@@ -40,13 +40,13 @@ struct FootageDurationSummary {
     let hasUnavailableDuration: Bool
     var exactDuration: TimeInterval? { count > 0 && !hasPendingMetadata && !hasUnavailableDuration ? duration : nil }
     var label: String {
-        if count == 0 { return "Your footage" }
-        return "Your footage · \(count) \(count == 1 ? "clip" : "clips")"
+        if count == 0 { return String(localized: "Your footage") }
+        return String(localized: "Your footage · \(count) clips")
     }
     var value: String {
-        if count == 0 { return "Add footage" }
-        if hasPendingMetadata { return "Checking duration" }
-        if hasUnavailableDuration { return "Duration unavailable" }
+        if count == 0 { return String(localized: "Add footage") }
+        if hasPendingMetadata { return String(localized: "Checking duration") }
+        if hasUnavailableDuration { return String(localized: "Duration unavailable") }
         return DurationFormatter.clock(duration)
     }
 }
@@ -56,7 +56,7 @@ enum DurationFormatter {
         let rounded = max(0, Int(seconds.rounded()))
         return String(format: "%d:%02d", rounded / 60, rounded % 60)
     }
-    static func seconds(_ seconds: TimeInterval) -> String { "\(max(1, Int(seconds.rounded(.up)))) seconds" }
+    static func seconds(_ seconds: TimeInterval) -> String { String(localized: "\(max(1, Int(seconds.rounded(.up)))) seconds") }
 }
 
 struct RecordingVoiceoverView: View {
@@ -88,7 +88,7 @@ struct VoiceoverReviewView: View {
                     Image(systemName: recorder.isPlaying ? "pause.fill" : "play.fill").foregroundStyle(KriaColor.paper)
                         .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
                 }
-                .accessibilityIdentifier("voiceover-play").accessibilityLabel(recorder.isPlaying ? "Pause" : "Play")
+                .accessibilityIdentifier("voiceover-play").accessibilityLabel(recorder.isPlaying ? String(localized: "Pause") : String(localized: "Play"))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(recorder.displayName).font(KriaFont.body(15).weight(.semibold)).lineLimit(1)
                     Text("\(DurationFormatter.clock(recorder.playbackTime)) / \(DurationFormatter.clock(recorder.duration))")
@@ -123,7 +123,7 @@ struct VoiceoverReviewActions: View {
     let isUsing: Bool
     var body: some View {
         VStack(spacing: 8) {
-            Button(recorder.isImported ? "Use voiceover" : "Use recording", action: onUse)
+            Button(recorder.isImported ? String(localized: "Use voiceover") : String(localized: "Use recording"), action: onUse)
                 .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: isUsing))
                 .accessibilityIdentifier("voiceover-use").disabled(!canUse || isUsing)
             if recorder.isImported {
@@ -147,7 +147,7 @@ struct SongReviewView: View {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").foregroundStyle(KriaColor.paper)
                     .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
             }
-            .accessibilityIdentifier("song-play").accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+            .accessibilityIdentifier("song-play").accessibilityLabel(player.isPlaying ? String(localized: "Pause") : String(localized: "Play"))
             VStack(alignment: .leading, spacing: 3) {
                 Text(player.displayName).font(KriaFont.body(15).weight(.semibold)).lineLimit(1)
                 Text("\(DurationFormatter.clock(player.playbackTime)) / \(DurationFormatter.clock(player.duration))")
@@ -180,7 +180,7 @@ struct VoiceoverDurationWarning: View {
     let message: String
     let addFootage: () -> Void
     var body: some View {
-        KriaNoticeCard(tone: .warning, title: message, action: KriaNoticeAction(title: "Add more footage", handler: addFootage))
+        KriaNoticeCard(tone: .warning, title: message, action: KriaNoticeAction(title: String(localized: "Add more footage"), handler: addFootage))
     }
 }
 

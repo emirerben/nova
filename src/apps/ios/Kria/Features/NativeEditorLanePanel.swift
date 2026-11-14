@@ -11,9 +11,9 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
     var onAdd: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
     /// Add/Remove labels + ids default to the Visuals panel's; other lanes (Sounds) override them.
-    var addLabel = "Add visual"
+    var addLabel = String(localized: "Add visual")
     var addID = "native-editor-add-another-visual"
-    var removeLabel = "Remove visual"
+    var removeLabel = String(localized: "Remove visual")
     var removeID = "native-editor-remove-visual"
     /// Scroll-phase changes of the panel's own ScrollView (user drags, deceleration,
     /// idle). Lets a panel react to hand scrolling without a competing DragGesture.
@@ -146,7 +146,7 @@ struct NativeCaptionPanel: View {
             } else {
                 NativeEditorLanePanel(title: "Captions", tabs: tabs, tab: $tab, onDone: {
                     leaveLine(to: nil); onDone()
-                }, onScrollPhase: handleScrollPhase) {
+                }, heading: String(localized: "Captions"), onScrollPhase: handleScrollPhase) {
                     VStack(spacing: 8) {
                         switch tab {
                         // KRI-216: each tab is gated by its own server capability
@@ -236,7 +236,7 @@ struct NativeCaptionPanel: View {
                 captionSwitches
                 if let removal { removalNotice(removal) }
                 if !session.canEditCaptionLines, session.canEditCaptions {
-                    Text(session.capability(for: .captions)?.reason ?? "Caption lines can’t be edited for this video.")
+                    Text(session.capability(for: .captions)?.reason ?? String(localized: "Caption lines can’t be edited for this video."))
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("native-editor-caption-readonly-reason")
@@ -299,10 +299,10 @@ struct NativeCaptionPanel: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Line \(index + 1), \(cue.text), \(spokenTime(cue.startS)) to \(spokenTime(cue.endS))")
-        .accessibilityValue([playing ? "Playing" : nil, edited ? "Edited" : nil].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityValue([playing ? String(localized: "Playing") : nil, edited ? String(localized: "Edited") : nil].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { open(cue.id) }
-        .accessibilityAction(named: editable ? "Edit caption" : "Play from here") { open(cue.id) }
+        .accessibilityAction(named: editable ? String(localized: "Edit caption") : String(localized: "Play from here")) { open(cue.id) }
         .accessibilityActions {
             if editable { Button("Delete") { remove(cue.id, lineNumber: index + 1) } }
         }
@@ -317,7 +317,7 @@ struct NativeCaptionPanel: View {
             lineNumber: index + 1,
             lineCount: units.count,
             timeRange: "\(time(units[index].startS))–\(time(units[index].endS))",
-            spokenTimeRange: "\(spokenTime(units[index].startS)) to \(spokenTime(units[index].endS))",
+            spokenTimeRange: String(localized: "\(spokenTime(units[index].startS)) to \(spokenTime(units[index].endS))"),
             lineHeight: editLineHeight,
             lines: editLines,
             text: Binding(
@@ -375,7 +375,7 @@ struct NativeCaptionPanel: View {
         if let park = session.captionParkTime(id: id) { session.seek(to: park) }
         fieldFocused = true
         if let index = units.firstIndex(where: { $0.id == id }) {
-            CaptionLineAnnouncer.post("Line \(index + 1) of \(units.count)")
+            CaptionLineAnnouncer.post(String(localized: "Line \(index + 1) of \(units.count)"))
         }
     }
 
@@ -463,9 +463,9 @@ struct NativeCaptionPanel: View {
 
     private func spokenTime(_ base: Double) -> String {
         let seconds = Int(session.timelineProjection.projectBaseTime(base).rounded())
-        // English like the rest of the label ("Line 2, …, 1 second to 4 seconds"), not the device locale.
+        // Follows the device language, like the rest of the label ("Line 2, …, 1 second to 4 seconds").
         return Duration.seconds(seconds).formatted(
-            .units(allowed: [.minutes, .seconds], width: .wide).locale(Locale(identifier: "en_US"))
+            .units(allowed: [.minutes, .seconds], width: .wide)
         )
     }
 
@@ -477,7 +477,7 @@ struct NativeCaptionPanel: View {
                 NativeFontPicker(
                     selection: meta["font"]?.stringValue,
                     includeDefault: true,
-                    accessibilityLabelText: "Caption font",
+                    accessibilityLabelText: String(localized: "Caption font"),
                     accessibilityID: "native-editor-caption-font"
                 ) { session.setCaptionFont($0) }
                 HStack(spacing: 0) {
@@ -485,7 +485,7 @@ struct NativeCaptionPanel: View {
                         Button { session.setCaptionAppearance(key: "alignment", value: .string(value)) } label: {
                             Image(systemName: "text.align" + value).frame(width: 44, height: 44)
                                 .background((appearance["alignment"]?.stringValue ?? "center") == value ? KriaColor.selectionSoft : .clear)
-                        }.accessibilityLabel("Align captions " + value)
+                        }.accessibilityLabel(value == "left" ? String(localized: "Align captions left") : value == "right" ? String(localized: "Align captions right") : String(localized: "Align captions center"))
                     }
                 }.background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
                     .disabled(!session.canEditCaptionAppearance)
@@ -498,14 +498,14 @@ struct NativeCaptionPanel: View {
                             Circle().fill(nativeEditorColor(hex)).frame(width: 30, height: 30)
                                 .overlay(Circle().stroke((meta["color"]?.stringValue ?? "#FFFFFF") == hex ? KriaColor.sky : .clear, lineWidth: 2))
                                 .frame(minWidth: 44, minHeight: 44)
-                        }.accessibilityLabel("Caption color " + hex)
+                        }.accessibilityLabel(String(localized: "Caption color \(hex)"))
                     }
                     ColorPicker("Custom caption color", selection: color("color", fallback: "#FFFFFF"), supportsOpacity: false)
                         .labelsHidden().frame(minWidth: 44, minHeight: 44)
                 }
             }
-            effectRow("Outline", key: "stroke_width", colorKey: "stroke_color", fallback: captionBaseStyle["stroke_width"]?.numberValue ?? (session.document.isCueNative ? 4 : 0), range: 0...12)
-            effectRow("Shadow", key: "shadow_opacity", colorKey: "shadow_color", fallback: captionShadowOpacity, range: 0...1)
+            effectRow(String(localized: "Outline", comment: "Caption text outline"), key: "stroke_width", colorKey: "stroke_color", fallback: captionBaseStyle["stroke_width"]?.numberValue ?? (session.document.isCueNative ? 4 : 0), range: 0...12)
+            effectRow(String(localized: "Shadow", comment: "Caption text shadow"), key: "shadow_opacity", colorKey: "shadow_color", fallback: captionShadowOpacity, range: 0...1)
             captionSizeAndPosition
         }
     }
@@ -520,12 +520,12 @@ struct NativeCaptionPanel: View {
             if session.offersCaptionStyleScope {
                 Picker("Size and position apply to", selection: $stylesOneLine) {
                     Text("All captions").tag(false)
-                    Text(animationLine.map { "Line \($0.number)" } ?? "One line").tag(true)
+                    Text(animationLine.map { String(localized: "Line \($0.number)") } ?? String(localized: "One line")).tag(true)
                         .disabled(animationLine == nil)
                 }
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("native-editor-caption-style-scope")
-                Text(stylesOneLine ? "Only this line changes." : "Replaces size or position for every caption in this video. Other styling stays unchanged.")
+                Text(stylesOneLine ? String(localized: "Only this line changes.") : String(localized: "Replaces size or position for every caption in this video. Other styling stays unchanged."))
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
             }
             HStack {
@@ -535,7 +535,7 @@ struct NativeCaptionPanel: View {
                     set: { value in
                         if session.offersCaptionStyleScope { session.setCaptionStyleSize(styleScope, size: value) }
                         else { session.setCaptionSize(value) }
-                    }), bounds: 36...160, step: 1, label: "Caption font size in output pixels")
+                    }), bounds: 36...160, step: 1, label: String(localized: "Caption font size in output pixels"))
                 Text("\(Int(session.captionStyleSize(styleScope))) px").monospacedDigit().frame(width: 62)
             }.frame(minHeight: 44)
             Text("Output pixels on a \(NativeEditorRenderCompiler.canvas(for: session.document).width) × \(NativeEditorRenderCompiler.canvas(for: session.document).height) canvas. The preview scales to fit; letter height varies by font.")
@@ -545,7 +545,7 @@ struct NativeCaptionPanel: View {
                 ForEach([[NativeTextBlockPlacement.left, .center, .right], [.top, .middle, .bottom]], id: \.self) { placements in
                     HStack {
                         ForEach(placements, id: \.self) { placement in
-                            Button(placement.rawValue.capitalized) { session.placeCaptions(styleScope, at: placement) }
+                            Button(placementLabel(placement)) { session.placeCaptions(styleScope, at: placement) }
                                 .frame(maxWidth: .infinity, minHeight: 44)
                                 .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
                                 .accessibilityIdentifier("native-editor-caption-position-" + placement.rawValue)
@@ -556,6 +556,17 @@ struct NativeCaptionPanel: View {
                     Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 }
             }
+        }
+    }
+
+    private func placementLabel(_ placement: NativeTextBlockPlacement) -> String {
+        switch placement {
+        case .left: String(localized: "Left", comment: "Caption position")
+        case .center: String(localized: "Center", comment: "Caption position")
+        case .right: String(localized: "Right", comment: "Caption position")
+        case .top: String(localized: "Top", comment: "Caption position")
+        case .middle: String(localized: "Middle", comment: "Caption position")
+        case .bottom: String(localized: "Bottom", comment: "Caption position")
         }
     }
 
@@ -582,7 +593,8 @@ struct NativeCaptionPanel: View {
                 selection: Binding(get: { scope == .all ? all : one }, set: { animatesOneLine = $0 == one }),
                 accessibilityPrefix: "native-editor-caption-animation-scope",
                 identifier: { $0 == all ? "native-editor-caption-animation-scope-all" : "native-editor-caption-animation-scope-line" },
-                isEnabled: { $0 == all || line != nil }
+                isEnabled: { $0 == all || line != nil },
+                title: { $0 == all ? String(localized: "All captions") : (line.map { String(localized: "Line \($0.number)") } ?? String(localized: "Line")) }
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("native-editor-caption-animation-scope")
@@ -591,8 +603,7 @@ struct NativeCaptionPanel: View {
                     Text("To animate one line, tap it in Edit captions first.")
                         .accessibilityIdentifier("native-editor-caption-animation-line-reason")
                 } else if scope == .all, overrides > 0 {
-                    Text(overrides == 1 ? "1 line has its own animation. Changing all captions replaces it."
-                                        : "\(overrides) lines have their own animation. Changing all captions replaces them.")
+                    Text(String(localized: "\(overrides) lines have their own animation. Changing all captions replaces them."))
                         .accessibilityIdentifier("native-editor-caption-animation-overrides")
                 }
             }
@@ -601,7 +612,7 @@ struct NativeCaptionPanel: View {
             NativeAnimationPhasePicker(
                 session: session, clock: animationPreviewClock, phases: session.captionAnimationPhases(scope),
                 identifierPrefix: "native-editor-caption-animation",
-                speedNote: "Changes motion speed. Caption timing stays the same.",
+                speedNote: String(localized: "Changes motion speed. Caption timing stays the same."),
                 usesAccessibilityLayout: stacksControls,
                 onEffect: { session.setCaptionPhase(scope, phase: $0, effect: $1) },
                 onSpeed: { session.setCaptionAnimationSpeed(scope, speed: $0) }
@@ -618,11 +629,11 @@ struct NativeCaptionPanel: View {
     private var captionSwitches: some View {
         VStack(spacing: 0) {
             NativeEditorSwitchRow(
-                title: "Show captions", id: "native-editor-caption-visible",
+                title: String(localized: "Show captions"), id: "native-editor-caption-visible",
                 isOn: Binding(get: { showsCaptions }, set: { session.setCaptionEnabled($0) })
             )
             NativeEditorSwitchRow(
-                title: "Highlight spoken word", id: "native-editor-caption-highlight",
+                title: String(localized: "Highlight spoken word"), id: "native-editor-caption-highlight",
                 isOn: Binding(get: { highlightsWords }, set: {
                     session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool($0))
                 })
@@ -669,7 +680,7 @@ struct NativeCaptionPanel: View {
     private func effectRow(_ title: String, key: String, colorKey: String, fallback: Double, range: ClosedRange<Double>) -> some View {
         HStack(spacing: 12) {
             Text(title).frame(width: 66, alignment: .leading)
-            ColorPicker(title + " color", selection: color(colorKey, fallback: "#000000", nested: true), supportsOpacity: false)
+            ColorPicker(String(localized: "\(title) color"), selection: color(colorKey, fallback: "#000000", nested: true), supportsOpacity: false)
                 .labelsHidden().disabled(!session.canEditCaptionAppearance)
             NativePaperSlider(session: session, value: number(key, fallback: fallback, nested: key == "shadow_opacity"), bounds: range, step: key == "shadow_opacity" ? 0.01 : 1, label: title)
                 .disabled(key == "shadow_opacity" && !session.canEditCaptionAppearance)
@@ -726,7 +737,7 @@ struct CaptionRemovalNoticeView: View {
         // Grouped, not combined: Undo stays its own button for VoiceOver and tests.
         .accessibilityElement(children: .contain)
         .task(id: notice.id) {
-            CaptionLineAnnouncer.post("Line \(notice.lineNumber) removed")
+            CaptionLineAnnouncer.post(String(localized: "Line \(notice.lineNumber) removed"))
             do {
                 try await Task.sleep(for: .seconds(4))
                 onExpire()
@@ -805,11 +816,11 @@ struct CaptionEditBar: View {
                 }
                 Spacer(minLength: 8)
                 HStack(spacing: 8) {
-                    squareButton(symbol: "chevron.left", label: "Previous line", id: "native-editor-caption-previous",
+                    squareButton(symbol: "chevron.left", label: String(localized: "Previous line"), id: "native-editor-caption-previous",
                                  style: .outline, enabled: canGoPrevious, action: onPrevious)
-                    squareButton(symbol: "chevron.right", label: "Next line", id: "native-editor-caption-next",
+                    squareButton(symbol: "chevron.right", label: String(localized: "Next line"), id: "native-editor-caption-next",
                                  style: .outline, enabled: canGoNext, action: onNext)
-                    squareButton(symbol: "checkmark", label: "Done", id: "native-editor-caption-edit-done",
+                    squareButton(symbol: "checkmark", label: String(localized: "Done"), id: "native-editor-caption-edit-done",
                                  style: .approve, enabled: true, action: onDone)
                 }
             }

@@ -52,7 +52,7 @@ struct SlidePostAISheet: View {
             ChatComposer(
                 text: $prompt, isSending: session.isBusy || session.isChatting, canAttach: false,
                 blocksSubmission: !chatEnabled && !canRequestProposal,
-                placeholder: chatEnabled ? "Ask Kria to edit your slides…" : "Describe the post…",
+                placeholder: chatEnabled ? String(localized: "Ask Kria to edit your slides…") : String(localized: "Describe the post…"),
                 isFocused: $composerFocused, dictation: dictationEnabled ? dictation : nil, attach: {}, send: { Task { await send() } }
             )
         }
@@ -76,8 +76,8 @@ struct SlidePostAISheet: View {
             ChatMessageRow(message: .init(
                 id: "slidepost-ai-intro", role: .assistant,
                 content: chatEnabled
-                    ? "Tell me what to change: reorder the photos, add text, set a look or rewrite the caption."
-                    : "Tell me about the post and I'll propose an arrangement, cover and caption."
+                    ? String(localized: "Tell me what to change: reorder the photos, add text, set a look or rewrite the caption.")
+                    : String(localized: "Tell me about the post and I'll propose an arrangement, cover and caption.")
             ))
             .accessibilityIdentifier("slidepost-ai-empty")
         }

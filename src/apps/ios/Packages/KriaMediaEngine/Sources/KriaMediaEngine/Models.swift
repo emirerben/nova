@@ -327,10 +327,10 @@ public enum RecipeError: Error, Equatable, Sendable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .unsupportedSchema: "This edit was made with a newer version of Kria. Update the app to open it."
-        case .invalidFrameRate: "This video has an unsupported frame rate."
-        case .invalidTimeline: "This edit’s timeline couldn’t be read."
-        case .missingAssetReference: "One of the clips in this edit is missing."
+        case .unsupportedSchema: String(localized: "This edit was made with a newer version of Kria. Update the app to open it.")
+        case .invalidFrameRate: String(localized: "This video has an unsupported frame rate.")
+        case .invalidTimeline: String(localized: "This edit’s timeline couldn’t be read.")
+        case .missingAssetReference: String(localized: "One of the clips in this edit is missing.")
         }
     }
 }

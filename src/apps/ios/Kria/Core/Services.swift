@@ -130,7 +130,7 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
     private func deleteUnlocked() throws { let status = SecItemDelete(baseQuery as CFDictionary); guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError(status) } }
     private var baseQuery: [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] }
 }
-struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
+struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { String(localized: "Secure sign-in storage is unavailable.") } }
 
 /// The two calls needed while a slide-post proposal is in flight. Keeping
 /// this narrow lets fixtures control the reply and live poll independently.
@@ -2275,27 +2275,27 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .unsupportedPhoneEdit:
-            "This edit couldn’t be prepared for this iPhone. Your edits are still here. Undo the last change and try saving again."
+            String(localized: "This edit couldn’t be prepared for this iPhone. Your edits are still here. Undo the last change and try saving again.")
         case .phoneRenderingUnavailable:
-            "Rendering is temporarily unavailable. Your edits are still here."
+            String(localized: "Rendering is temporarily unavailable. Your edits are still here.")
         case .guidedStorySourceStale:
-            "The source changed or is unavailable. Your edits are still here."
+            String(localized: "The source changed or is unavailable. Your edits are still here.")
         case .invalidTextSettings:
-            "Text settings are invalid. Your edits are still here; review text, style, and timing."
+            String(localized: "Text settings are invalid. Your edits are still here; review text, style, and timing.")
         case .userSongUnavailable(let reason):
             reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyString
-                ?? "This edit no longer has a song. Reopen the editor to continue."
+                ?? String(localized: "This edit no longer has a song. Reopen the editor to continue.")
         case .userSongLipsyncLocked:
-            "Lip-sync keeps the song where you filmed it."
+            String(localized: "Lip-sync keeps the song where you filmed it.")
         case .userSongWindowOutOfRange(let reason):
             reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyString
-                ?? "That start point leaves less than a second of your song. Slide it earlier."
+                ?? String(localized: "That start point leaves less than a second of your song. Slide it earlier.")
         case .timeline(let code):
-            Self.timelineCopy[code] ?? "This save was rejected. Your edits are still here."
+            Self.timelineCopy[code] ?? String(localized: "This save was rejected. Your edits are still here.")
         case .serverMessage(let message):
             message
         case .rejected:
-            "This save was rejected. Your edits are still here."
+            String(localized: "This save was rejected. Your edits are still here.")
         }
     }
 
@@ -2310,10 +2310,10 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     /// `Tests/Fixtures/editor_save_codes.json`, which the API's `test_editor_save_code_catalog`
     /// keeps equal to what the server can raise: a new server code fails CI until it is worded here.
     static let timelineCopy: [String: String] = {
-        let tooShort = "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here."
-        let pastEnd = "A clip runs past the end of its footage. Shorten it or move its start earlier, then save again. Your edits are still here."
-        let reopen = "A clip’s footage is no longer available to this edit. Reopen the editor to continue."
-        let timeline = "This timeline couldn’t be saved. Undo your last change and try again. Your edits are still here."
+        let tooShort = String(localized: "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here.")
+        let pastEnd = String(localized: "A clip runs past the end of its footage. Shorten it or move its start earlier, then save again. Your edits are still here.")
+        let reopen = String(localized: "A clip’s footage is no longer available to this edit. Reopen the editor to continue.")
+        let timeline = String(localized: "This timeline couldn’t be saved. Undo your last change and try again. Your edits are still here.")
         return [
             "TIMELINE_INVALID_WINDOW": tooShort,
             "TIMELINE_INVALID_DURATION": tooShort,
@@ -2322,63 +2322,63 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_UNKNOWN_CLIP": reopen,
             "sources_expired": reopen,
             "authored_source_required": reopen,
-            "TIMELINE_EMPTY": "A video needs at least one clip. Keep a clip and save again. Your edits are still here.",
-            "TIMELINE_TOO_LONG": "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here.",
-            "TIMELINE_BEATS_EXHAUSTED": "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here.",
+            "TIMELINE_EMPTY": String(localized: "A video needs at least one clip. Keep a clip and save again. Your edits are still here."),
+            "TIMELINE_TOO_LONG": String(localized: "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here."),
+            "TIMELINE_BEATS_EXHAUSTED": String(localized: "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here."),
             "TIMELINE_INVALID_PARENT": timeline,
-            "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here.",
+            "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": String(localized: "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here."),
             "authored_seconds_required": timeline,
-            "split_screen_unavailable": "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here.",
-            "split_screen_requires_atomic_commit": "This edit’s clips and panel settings must be saved together. Update Kria and try saving again. Your edits are still here.",
+            "split_screen_unavailable": String(localized: "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here."),
+            "split_screen_requires_atomic_commit": String(localized: "This edit’s clips and panel settings must be saved together. Update Kria and try saving again. Your edits are still here."),
             "GUIDED_REVISION_INVALID": timeline,
             "GUIDED_TEXT_IDENTITY_MISMATCH": timeline,
-            "GUIDED_TOMBSTONE_LIMIT": "This edit has too many removed items to save. Restore or re-add a few and try again. Your edits are still here.",
-            "GUIDED_REVISION_WIRE_UNSUPPORTED": "Update Kria to save this edit.",
-            "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
-            "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
-            "TIMELINE_TILT_WITH_LOOK": "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here.",
-            "clip_backdrop_media_not_in_pool": "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here.",
-            "clip_backdrop_media_unavailable": "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here.",
-            "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
-            "clip_tilt_zoom_unavailable": "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here.",
-            "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
-            "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
-            "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",
+            "GUIDED_TOMBSTONE_LIMIT": String(localized: "This edit has too many removed items to save. Restore or re-add a few and try again. Your edits are still here."),
+            "GUIDED_REVISION_WIRE_UNSUPPORTED": String(localized: "Update Kria to save this edit."),
+            "LOOK_PRESET_NOT_AVAILABLE": String(localized: "That clip look isn’t available for this video. Remove it and save again. Your edits are still here."),
+            "phone_edit_unsupported": String(localized: "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here."),
+            "TIMELINE_TILT_WITH_LOOK": String(localized: "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here."),
+            "clip_backdrop_media_not_in_pool": String(localized: "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here."),
+            "clip_backdrop_media_unavailable": String(localized: "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here."),
+            "clip_tilt_unavailable": String(localized: "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here."),
+            "clip_tilt_zoom_unavailable": String(localized: "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here."),
+            "transitions_disabled": String(localized: "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here."),
+            "song_shorter_than_video": String(localized: "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here."),
+            "music_track_unavailable": String(localized: "That song isn’t available any more. Pick another song and save again. Your edits are still here."),
             "track_duration_unknown": timeline,
             "video_duration_unknown": timeline,
             "guided_story_revision_unavailable": reopen,
-            "speaker_background_unsupported": "A background isn’t available for this edit. Remove it and save again. Your edits are still here.",
-            "speaker_background_disabled": "Backgrounds aren’t available right now. Remove it and save again. Your edits are still here.",
-            "speaker_background_media_not_in_pool": "That photo or video isn’t in this edit’s uploads any more. Pick another background and save again. Your edits are still here.",
-            "speaker_background_media_unavailable": "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here.",
-            "speaker_background_kind_mismatch": "That background doesn’t match its file. Pick it again and save again. Your edits are still here.",
-            "speaker_background_start_out_of_range": "The background video starts past its end. Pick it again and save again. Your edits are still here.",
+            "speaker_background_unsupported": String(localized: "A background isn’t available for this edit. Remove it and save again. Your edits are still here."),
+            "speaker_background_disabled": String(localized: "Backgrounds aren’t available right now. Remove it and save again. Your edits are still here."),
+            "speaker_background_media_not_in_pool": String(localized: "That photo or video isn’t in this edit’s uploads any more. Pick another background and save again. Your edits are still here."),
+            "speaker_background_media_unavailable": String(localized: "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here."),
+            "speaker_background_kind_mismatch": String(localized: "That background doesn’t match its file. Pick it again and save again. Your edits are still here."),
+            "speaker_background_start_out_of_range": String(localized: "The background video starts past its end. Pick it again and save again. Your edits are still here."),
             // Range on a phone Talking edit. The four reasons are the `clips.source_window` leaf's own codes; the
             // server can also answer a Save with one when the edit changed after the app last looked.
             "talking_range_multi_clip": EditorSaveError.talkingRangeSaveCopy("talking_range_multi_clip"),
             "talking_range_word_cuts": EditorSaveError.talkingRangeSaveCopy("talking_range_word_cuts"),
             "talking_range_processed_audio": EditorSaveError.talkingRangeSaveCopy("talking_range_processed_audio"),
             "talking_range_cut_mismatch": EditorSaveError.talkingRangeSaveCopy("talking_range_cut_mismatch"),
-            "talking_range_structure_changed": "Only the range of each part can change in this video. Undo your last change and save again. Your edits are still here.",
-            "talking_range_overlap": "A part now reaches into the part next to it. Shorten it and save again. Your edits are still here.",
-            "talking_range_order": "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here.",
-            "talking_range_muted": "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here.",
-            "talking_range_captions_missing": "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here.",
-            "speaker_background_color_disabled": "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here.",
-            "speaker_background_color_invalid": "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here.",
-            "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
-            "speaker_full_opening_disabled": "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here.",
-            "speaker_full_opening_invalid": "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here.",
-            "background_focus_disabled": "Aiming the background isn’t available for this video yet. Your edits are still here.",
-            "background_focus_invalid": "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here.",
-            "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
+            "talking_range_structure_changed": String(localized: "Only the range of each part can change in this video. Undo your last change and save again. Your edits are still here."),
+            "talking_range_overlap": String(localized: "A part now reaches into the part next to it. Shorten it and save again. Your edits are still here."),
+            "talking_range_order": String(localized: "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here."),
+            "talking_range_muted": String(localized: "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here."),
+            "talking_range_captions_missing": String(localized: "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here."),
+            "speaker_background_color_disabled": String(localized: "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here."),
+            "speaker_background_color_invalid": String(localized: "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here."),
+            "speaker_background_windows_disabled": String(localized: "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here."),
+            "speaker_full_opening_disabled": String(localized: "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here."),
+            "speaker_full_opening_invalid": String(localized: "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here."),
+            "background_focus_disabled": String(localized: "Aiming the background isn’t available for this video yet. Your edits are still here."),
+            "background_focus_invalid": String(localized: "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here."),
+            "speaker_background_window_invalid": String(localized: "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here."),
             // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
-            "client_update_required": "Update Kria to save this edit. Your edits are still here.",
+            "client_update_required": String(localized: "Update Kria to save this edit. Your edits are still here."),
         ]
     }()
 
     private static func talkingRangeSaveCopy(_ code: String) -> String {
-        NativePhoneTalkingSource.rangeClosedCopy(reason: code) + " Your edits are still here."
+        String(localized: "\(NativePhoneTalkingSource.rangeClosedCopy(reason: code)) Your edits are still here.")
     }
 
     /// A plain-English sentence (not a machine code) short enough to show as is.
@@ -2425,7 +2425,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .code(let message, _) where Self.isReadableServerMessage(message):
             let sentence = message.trimmingCharacters(in: .whitespacesAndNewlines)
             let closed = sentence.hasSuffix(".") || sentence.hasSuffix("!") || sentence.hasSuffix("?") ? sentence : sentence + "."
-            return .serverMessage("\(closed) Your edits are still here.")
+            return .serverMessage(String(localized: "\(closed) Your edits are still here."))
         case .validation(let issues) where issues.contains(where: { $0.loc?.contains(.string("text_elements")) == true }):
             return .invalidTextSettings
         default: return .rejected
@@ -2510,7 +2510,7 @@ private struct LibraryResponse: Decodable {
             let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return ProjectSummary(
                 id: UUID(uuidString: id) ?? UUID(),
-                title: cleanedTitle.isEmpty ? "Untitled video" : cleanedTitle,
+                title: cleanedTitle.isEmpty ? String(localized: "Untitled video") : cleanedTitle,
                 status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering,
                 updatedAt: createdAt,
                 posterURL: posterURL.flatMap(URL.init(string:)),
@@ -2805,16 +2805,16 @@ enum APIError: Error, LocalizedError, Equatable {
     var requestFailureDetail: String? { if case let .requestFailed(_, detail) = self { detail.message } else { nil } }
     var errorDescription: String? {
         switch self {
-        case .sessionExpired: "Your session expired. Please sign in again."
-        case .conflict: "This edit changed elsewhere. Review your local changes before saving again."
-        case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."
-        case .editorNotReady: "This video has no ready edit to open."
-        case .nativeUpdateRequired: "Update Kria to continue creating projects."
-        case .unsupported: "This API client does not support native editor saves."
-        case .offline: "Kria couldn’t complete that request. Check your connection and try again."
+        case .sessionExpired: String(localized: "Your session expired. Please sign in again.")
+        case .conflict: String(localized: "This edit changed elsewhere. Review your local changes before saving again.")
+        case .contentPlanUnavailable: String(localized: "This video’s content plan is unavailable. Its editor cannot be opened.")
+        case .editorNotReady: String(localized: "This video has no ready edit to open.")
+        case .nativeUpdateRequired: String(localized: "Update Kria to continue creating projects.")
+        case .unsupported: String(localized: "This API client does not support native editor saves.")
+        case .offline: String(localized: "Kria couldn’t complete that request. Check your connection and try again.")
         case let .requestFailed(status, _) where RequestFailureCause(status: status) == .server:
-            "Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment."
-        case .requestFailed, .invalidResponse: "Kria couldn’t complete that request."
+            String(localized: "Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment.")
+        case .requestFailed, .invalidResponse: String(localized: "Kria couldn’t complete that request.")
         }
     }
 }
@@ -3032,7 +3032,7 @@ enum GoogleOAuth {
 
 enum AuthError: Error, LocalizedError, Equatable {
     case interactiveRequired, invalidCredential, cancelled, notConfigured, stateMismatch, authorizationCodeMissing, tokenExchangeFailed
-    var errorDescription: String? { switch self { case .notConfigured: "Google sign-in is not configured for this build."; default: "Sign-in didn’t finish. Please try again." } }
+    var errorDescription: String? { switch self { case .notConfigured: String(localized: "Google sign-in is not configured for this build."); default: String(localized: "Sign-in didn’t finish. Please try again.") } }
 }
 private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
 extension String { var sha256Hex: String { SHA256.hash(data: Data(utf8)).map { String(format: "%02x", $0) }.joined() } }
@@ -3560,7 +3560,7 @@ extension DraftSnapshot {
     }
 }
 
-enum UploadConsentError: Error, LocalizedError { case required; var errorDescription: String? { "Please confirm that you want Kria to use this cloud footage." } }
+enum UploadConsentError: Error, LocalizedError { case required; var errorDescription: String? { String(localized: "Please confirm that you want Kria to use this cloud footage.") } }
 struct UploadCoordinator: Sendable {
     func validate(source: UploadSource, purpose: UploadPurpose = .analysisProxy, consentGiven: Bool) throws {
         _ = source

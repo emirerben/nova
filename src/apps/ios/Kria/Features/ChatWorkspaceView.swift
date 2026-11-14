@@ -134,7 +134,7 @@ struct ChatWorkspaceView: View {
                             Button { setDrawerOpen(!showsProjects) } label: {
                                 KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle())
                             }
-                            .accessibilityLabel(showsProjects ? "Close projects" : "Open projects")
+                            .accessibilityLabel(showsProjects ? String(localized: "Close projects") : String(localized: "Open projects"))
                             .accessibilityIdentifier("workspace-menu-toggle")
                             Spacer()
                             KriaWordmark().accessibilityHidden(showsProjects)
@@ -471,7 +471,7 @@ private struct WorkspaceRecoveryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Your workspace couldn’t open.").font(KriaFont.headline(29))
-            Text(model.errorMessage ?? "Check your connection, then try again. Your projects are safe.")
+            Text(model.errorMessage ?? String(localized: "Check your connection, then try again. Your projects are safe."))
                 .font(KriaFont.body(14))
                 .foregroundStyle(KriaColor.zinc)
             Button("Try again", action: retry).buttonStyle(CanonicalPrimaryButtonStyle())
@@ -696,10 +696,10 @@ private struct CreationWorkspaceView: View {
 
     /// Why the composer's + cannot add media right now, in the words its tray shows. Nil = it can.
     private var attachBlockedReason: String? {
-        if selectedFormat == nil { return "Choose a video format first." }
-        if selectedFormat == .slides, !hasDedicatedSlideWorkspace { return "This post is still being set up." }
-        if isSending || isActing || isThinking { return "Kria is replying. Add media in a moment." }
-        if currentProject.status == .rendering { return "Your video is rendering. Add media once it’s ready." }
+        if selectedFormat == nil { return String(localized: "Choose a video format first.") }
+        if selectedFormat == .slides, !hasDedicatedSlideWorkspace { return String(localized: "This post is still being set up.") }
+        if isSending || isActing || isThinking { return String(localized: "Kria is replying. Add media in a moment.") }
+        if currentProject.status == .rendering { return String(localized: "Your video is rendering. Add media once it’s ready.") }
         return nil
     }
 
@@ -1156,7 +1156,7 @@ private struct CreationWorkspaceView: View {
             defer { isStoppingRender = false }
             func hideStop() {
                 stopUnavailableJobID = feed.jobID
-                stopMessage = "This render can’t be stopped any more."
+                stopMessage = String(localized: "This render can’t be stopped any more.")
             }
             do {
                 _ = try await stopRenderRequest(turnID: turnID)
@@ -1175,11 +1175,11 @@ private struct CreationWorkspaceView: View {
                     } catch let retry as APIError where retry.isConflict {
                         hideStop()
                     } catch {
-                        failure = ChatFailure("Kria couldn’t stop the render.", error: error)
+                        failure = ChatFailure(String(localized: "Kria couldn’t stop the render."), error: error)
                     }
                 }
             } catch {
-                failure = ChatFailure("Kria couldn’t stop the render.", error: error)
+                failure = ChatFailure(String(localized: "Kria couldn’t stop the render."), error: error)
             }
         }
     }
@@ -1362,7 +1362,7 @@ private struct CreationWorkspaceView: View {
     @ViewBuilder private var submissionStatus: some View {
         if let receipt = sendReceipt, receipt.phase != .accepted {
             HStack {
-                Text(isSending ? "Sending your message…" : "Message not confirmed")
+                Text(isSending ? String(localized: "Sending your message…") : String(localized: "Message not confirmed"))
                     .accessibilityIdentifier("chat-submission-status")
                 if !isSending {
                     Button { Task { await send(retrying: receipt) } } label: {
@@ -1469,7 +1469,7 @@ private struct CreationWorkspaceView: View {
             stageContent.id(entry.id)
         case .pendingUpload(let recordID):
             KriaMediaRow(name: uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
-                            ?? uploadInFlight[recordID]?.filename ?? "Preparing media…",
+                            ?? uploadInFlight[recordID]?.filename ?? String(localized: "Preparing media…"),
                          status: uploadRecords.contains { $0.id == recordID } ? .uploading(uploadProgress.values[recordID] ?? 0) : .preparing,
                          onFill: true) {
                 CreationRecordThumbnail(recordID: recordID, version: previewVersion)
@@ -1771,7 +1771,7 @@ private struct CreationWorkspaceView: View {
             if received.indices.contains(index) {
                 let attachment = CreationAttachedMedia.parse(threadState).last { $0.id == received[index].id } ?? received[index]
                 KriaMediaRow(name: attachment.displayName,
-                             status: .ready(attachment.isSong ? "Song · Ready" : attachment.isVoiceover ? "Voiceover · Ready" : "Video · Ready"),
+                             status: .ready(attachment.isSong ? String(localized: "Song · Ready") : attachment.isVoiceover ? String(localized: "Voiceover · Ready") : String(localized: "Video · Ready")),
                              trailing: .check, onFill: true) {
                     CreationAttachmentThumbnail(media: attachment)
                 }
@@ -2186,7 +2186,7 @@ private struct CreationWorkspaceView: View {
         .confirmationDialog("Re-record your take?", isPresented: rerecordConfirmation, titleVisibility: .visible) {
             if case let .confirming(targets) = rerecordLocal {
                 ForEach(targets) { target in
-                    Button(targets.count == 1 ? "Record new take" : "Re-record \(target.displayName)") { rerecordLocal = .swapping; rerecordCamera = target }
+                    Button(targets.count == 1 ? String(localized: "Record new take") : String(localized: "Re-record \(target.displayName)")) { rerecordLocal = .swapping; rerecordCamera = target }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -2273,7 +2273,7 @@ private struct CreationWorkspaceView: View {
                     canSendWithoutText: readyMediaCount > 0,
                     // be99a3f12 (origin/main): a failed attach never blocks Send.
                     blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0,
-                    placeholder: answeringQuestion != nil ? "Type your answer" : (readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…"),
+                    placeholder: answeringQuestion != nil ? String(localized: "Type your answer") : (readyMediaCount > 0 ? String(localized: "Add instructions (optional)") : String(localized: "Tell Kria what you want…")),
                     answering: answeringQuestion,
                     cancelAnswering: { answeringQuestion = nil },
                     isFocused: $composerFocused,
@@ -2485,11 +2485,11 @@ private struct CreationWorkspaceView: View {
             if let variants = fullThread?.job?.variants, variants.count > 1 {
                 ForEach(variants.compactMap { $0.variantID }, id: \.self) { variantID in
                     let variant = variants.first { $0.variantID == variantID }
-                    Button(variantID.replacingOccurrences(of: "_", with: " ").capitalized) {
+                    Button(chatVariantTitle(variantID)) {
                         performAction("select_variant", payload: ["variant_id": .string(variantID)])
                     }.disabled(isActing || variant?.isPlayable != true)
                     if variant?.renderStatus == "failed", currentProject.runtimeVersion == 1 {
-                        Button("Retry \(variantID.replacingOccurrences(of: "_", with: " "))") {
+                        Button(String(localized: "Retry \(chatVariantTitle(variantID))")) {
                             performAction("retry", payload: ["variant_id": .string(variantID)])
                         }.disabled(isActing)
                     }
@@ -2531,18 +2531,18 @@ private struct CreationWorkspaceView: View {
             } else {
                 if failedWorkspacePresentation == .preparationRetry {
                     FailedStage(
-                        title: "Clip preparation needs another try",
-                        bodyText: fullThread?.preparationMessage ?? fullThread?.lastAssistantErrorMessage ?? "Kria couldn’t prepare your clips. Your direction and footage are still saved.",
-                        retryLabel: "Retry preparing clips",
+                        title: String(localized: "Clip preparation needs another try"),
+                        bodyText: fullThread?.preparationMessage ?? fullThread?.lastAssistantErrorMessage ?? String(localized: "Kria couldn’t prepare your clips. Your direction and footage are still saved."),
+                        retryLabel: String(localized: "Retry preparing clips"),
                         retry: fullThread?.preparationRetryable == true ? { Task { await send(message: "Retry preparing my clips.") } } : nil
                     ).id("failed-preparation")
                 } else {
                     FailedStage(
-                        title: fullThread?.lastAssistantErrorTitle ?? "Your video wasn’t made",
+                        title: fullThread?.lastAssistantErrorTitle ?? String(localized: "Your video wasn’t made"),
                         bodyText: fullThread?.lastAssistantErrorContent
                             ?? fullThread?.job?.failureMessage
-                            ?? "Your direction and footage are saved. Send a message to try again or change direction.",
-                        retryLabel: "Retry approved edit",
+                            ?? String(localized: "Your direction and footage are saved. Send a message to try again or change direction."),
+                        retryLabel: String(localized: "Retry approved edit"),
                         retry: fullThread?.failedRenderExecutionID != nil ? { Task { await retryApprovedRender() } } : nil,
                         nonRetryableReasonCode: fullThread?.lastAssistantErrorCode,
                         declineReason: fullThread?.lastAssistantDeclineReason,
@@ -2820,7 +2820,7 @@ private struct CreationWorkspaceView: View {
             }
         } catch {
             ownsSendAttempt = false
-            failure = ChatFailure("Your message is still here. It could not be saved for recovery.", error: error)
+            failure = ChatFailure(String(localized: "Your message is still here. It could not be saved for recovery."), error: error)
             return
         }
         sendReceipt = receipt
@@ -2877,7 +2877,7 @@ private struct CreationWorkspaceView: View {
                 await editorSession.save()
                 guard !editorSession.hasUnsavedChanges else {
                     rejectSubmission(optimistic)
-                    failure = ChatFailure("Your message is still here. Save or resolve your editor changes before sending it.")
+                    failure = ChatFailure(String(localized: "Your message is still here. Save or resolve your editor changes before sending it."))
                     return
                 }
                 await refreshNow()
@@ -2897,7 +2897,7 @@ private struct CreationWorkspaceView: View {
         if receipt.runtimeVersion != 2 {
             receipt.phase = .unconfirmed
             do { try model.chatDrafts.setSubmission(receipt, for: project.id); sendReceipt = receipt }
-            catch { rejectSubmission(optimistic); failure = ChatFailure("Your message could not be saved for recovery.", error: error); return }
+            catch { rejectSubmission(optimistic); failure = ChatFailure(String(localized: "Your message could not be saved for recovery."), error: error); return }
             let requestSequence = projectionOrder.begin()
             do {
                 let thread = try await model.api.sendCreationMessage(threadID: project.id, message: message, expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID)
@@ -2921,18 +2921,18 @@ private struct CreationWorkspaceView: View {
                 submissionAnchor = nil
                 clearSubmissionReceipt()
                 await refreshNow()
-                failure = ChatFailure("This conversation changed. Your message is still here; review the latest direction and send again.")
+                failure = ChatFailure(String(localized: "This conversation changed. Your message is still here; review the latest direction and send again."))
             } catch {
                 thoughtRequestID = nil; liveThoughtSummaries = []
                 if ChatSendReceipt.isRejected(error) {
                     rejectSubmission(optimistic)
-                    failure = ChatFailure("Your message was not sent. Your draft is ready to edit.", error: error)
+                    failure = ChatFailure(String(localized: "Your message was not sent. Your draft is ready to edit."), error: error)
                     return
                 }
                 await refreshNow()
                 guard sendReceipt != nil else { return }
                 failure = ChatFailure(
-                    "Kria couldn’t confirm that message. Retry message checks the same submission safely.",
+                    String(localized: "Kria couldn’t confirm that message. Retry message checks the same submission safely."),
                     cause: RequestFailureCause(error)
                 )
             }
@@ -2985,7 +2985,7 @@ private struct CreationWorkspaceView: View {
                 return
             }
             if error.conflictCode == SongOrderSubmission.staleConflictCode {
-                failure = ChatFailure("Kria checked your clips again, so that order is out of date. Review the latest order and confirm it.")
+                failure = ChatFailure(String(localized: "Kria checked your clips again, so that order is out of date. Review the latest order and confirm it."))
                 return
             }
             // KRI-295: surface the server's real reason; stay quiet when the expired-approval notice already explains.
@@ -3029,12 +3029,12 @@ private struct CreationWorkspaceView: View {
             thoughtRequestID = nil; liveThoughtSummaries = []
             if sendReceipt?.phase == .preparing || ChatSendReceipt.isRejected(error) {
                 rejectSubmission(optimistic)
-                failure = ChatFailure("Your message was not sent. Your draft is ready to edit.", error: error)
+                failure = ChatFailure(String(localized: "Your message was not sent. Your draft is ready to edit."), error: error)
                 return
             }
             await refreshNow()
             guard sendReceipt != nil else { return }
-            failure = ChatFailure("Kria couldn’t confirm that message. Retry message checks the same submission safely.", error: error)
+            failure = ChatFailure(String(localized: "Kria couldn’t confirm that message. Retry message checks the same submission safely."), error: error)
             return
         }
         // A poll may already have acknowledged this identity while POST was returning.
@@ -3066,7 +3066,7 @@ private struct CreationWorkspaceView: View {
             settleThinking()
         }
         failure = await acceptedMutationRefreshError(
-            "Your message was sent, but the conversation couldn’t refresh.",
+            String(localized: "Your message was sent, but the conversation couldn’t refresh."),
             refresh: { try await refreshDelta() }
         )
         if !waitsUpNext { await fetchFinalThoughtSummary(requestID: submission.clientEventID) }
@@ -3086,7 +3086,7 @@ private struct CreationWorkspaceView: View {
     /// Why the project can't switch to `format` right now (the clips it already holds don't fit), or nil.
     private func formatSwitchBlock(_ format: CreationFormat) -> String? {
         if format.usesVisualPool, attachedClipCount > 0 {
-            return "Sliders use Photos & videos. Remove primary footage before switching formats."
+            return String(localized: "Sliders use Photos & videos. Remove primary footage before switching formats.")
         }
         let pendingClips = model.uploads.records.filter { $0.projectID == project.id && $0.role == .clip }.count
         return formatClipCapacityError(format: format, clipLimit: CreationFormat.maximumClipCount(for: format, serverLimits: maximumClipsByFormat), occupiedClipCount: attachedClipCount + pendingClips)
@@ -3116,7 +3116,7 @@ private struct CreationWorkspaceView: View {
                 pendingAction = nil
                 apply(thread, requestSequence: requestSequence)
                 if action == "select_format" { isChoosingFormat = false }
-                failure = await acceptedMutationRefreshError("Saved, but the conversation couldn’t refresh.", refresh: { try await refreshDelta() })
+                failure = await acceptedMutationRefreshError(String(localized: "Saved, but the conversation couldn’t refresh."), refresh: { try await refreshDelta() })
             } catch let error as APIError where error == .conflict {
                 pendingAction = nil
                 await refreshCapabilities()
@@ -3146,7 +3146,7 @@ private struct CreationWorkspaceView: View {
                 pendingAction = nil
                 await refreshCapabilities()
                 await refreshNow()
-                failure = ChatFailure("That change wasn’t saved.", error: error)
+                failure = ChatFailure(String(localized: "That change wasn’t saved."), error: error)
             }
         }
     }
@@ -3174,7 +3174,7 @@ private struct CreationWorkspaceView: View {
             availableFormats = formats.sorted { $0.carouselOrder < $1.carouselOrder }
             capabilities = response
             capabilitiesReadAt = Date()
-            capabilitiesFailure = formats.isEmpty ? ChatFailure("No creation formats are currently available. Try again in a moment.") : nil
+            capabilitiesFailure = formats.isEmpty ? ChatFailure(String(localized: "No creation formats are currently available. Try again in a moment.")) : nil
             maximumClipsByFormat = limits
             capabilitiesAreAuthoritative = true
             // Initial history and capabilities load independently. Reconcile
@@ -3190,7 +3190,7 @@ private struct CreationWorkspaceView: View {
             capabilitiesAreAuthoritative = false
             capabilities = nil
             availableFormats = []
-            capabilitiesFailure = ChatFailure("Kria couldn’t load creation options.", error: error)
+            capabilitiesFailure = ChatFailure(String(localized: "Kria couldn’t load creation options."), error: error)
         }
     }
 
@@ -3216,8 +3216,8 @@ private struct CreationWorkspaceView: View {
             } catch {
                 if !isUITesting {
                     failure = RequestFailureCause(error) == .connection
-                        ? ChatFailure("Kria lost the live connection. Your conversation is safe.", cause: .connection)
-                        : ChatFailure("Kria couldn’t refresh this conversation.", error: error)
+                        ? ChatFailure(String(localized: "Kria lost the live connection. Your conversation is safe."), cause: .connection)
+                        : ChatFailure(String(localized: "Kria couldn’t refresh this conversation."), error: error)
                 }
                 delay = min(delay * 2, 15_000_000_000)
             }
@@ -3302,7 +3302,7 @@ private struct CreationWorkspaceView: View {
         } catch {
             await refreshNow()
             failure = ChatFailure((error as? APIError)?.conflictDetail
-                ?? "Kria couldn’t prepare this exact retry. Your edit is still saved.", error: error)
+                ?? String(localized: "Kria couldn’t prepare this exact retry. Your edit is still saved."), error: error)
         }
     }
 
@@ -3370,10 +3370,10 @@ private struct CreationWorkspaceView: View {
         } catch let APIError.requestFailed(status, _) where status == 404 {
             // Deleted elsewhere: the saved copy must not outlive the chat.
             if let owner = auth.localStorageIdentity { await TranscriptCache.shared.remove(owner: owner, threadID: project.id) }
-            if !isUITesting { failure = ChatFailure("Kria couldn’t refresh this conversation.", error: APIError.requestFailed(status: 404)) }
+            if !isUITesting { failure = ChatFailure(String(localized: "Kria couldn’t refresh this conversation."), error: APIError.requestFailed(status: 404)) }
         } catch {
             if !isUITesting {
-                failure = ChatFailure("Kria couldn’t refresh this conversation.", error: error)
+                failure = ChatFailure(String(localized: "Kria couldn’t refresh this conversation."), error: error)
             }
         }
     }
@@ -3611,7 +3611,7 @@ private struct CreationWorkspaceView: View {
             if requestStillCurrent {
                 approval = fetched.status == "pending" && fetched.expiresAt > .now ? fetched : nil
                 approvalNotice = fetched.status == "expired" || fetched.expiresAt <= .now
-                    ? "This approval expired. Send a message to request an updated direction." : nil
+                    ? String(localized: "This approval expired. Send a message to request an updated direction.") : nil
             }
         }
     }
@@ -3641,11 +3641,11 @@ private struct CreationWorkspaceView: View {
         // Silent no-op only for a double tap (`isActing`); every other refusal
         // tells the creator why, so "Create this video" never appears dead.
         if approval.expiresAt <= .now {
-            failure = ChatFailure("This approval expired. Ask for the edit again.")
+            failure = ChatFailure(String(localized: "This approval expired. Ask for the edit again."))
             return
         }
         if pendingUploadCount > 0 {
-            failure = ChatFailure("Wait for your footage to finish uploading.")
+            failure = ChatFailure(String(localized: "Wait for your footage to finish uploading."))
             return
         }
         guard let identifier = UUID(uuidString: approval.approvalID),
@@ -3653,7 +3653,7 @@ private struct CreationWorkspaceView: View {
         else {
             Task {
                 await refreshNow()
-                failure = ChatFailure("Kria couldn’t start this yet. Pull to refresh and try again.")
+                failure = ChatFailure(String(localized: "Kria couldn’t start this yet. Pull to refresh and try again."))
             }
             return
         }
@@ -3699,7 +3699,7 @@ private struct CreationWorkspaceView: View {
                 if shouldSurfaceSpeechCleanupConflict(before: offerBefore, after: offerAfter) {
                     // The card didn't visibly change, so staying silent reads
                     // as a dead button. Say what the server said.
-                    failure = ChatFailure(error.conflictDetail ?? "Kria couldn’t start this yet. Pull to refresh and try again.")
+                    failure = ChatFailure(error.conflictDetail ?? String(localized: "Kria couldn’t start this yet. Pull to refresh and try again."))
                 }
                 return
             } catch {
@@ -3711,7 +3711,7 @@ private struct CreationWorkspaceView: View {
                    let detail = api.requestFailureDetail, !detail.isEmpty {
                     failure = ChatFailure(detail)
                 } else {
-                    failure = ChatFailure("Kria couldn’t record that decision.", error: error)
+                    failure = ChatFailure(String(localized: "Kria couldn’t record that decision."), error: error)
                 }
                 return
             }
@@ -3726,7 +3726,7 @@ private struct CreationWorkspaceView: View {
             // instead of staying stranded where the card used to be.
             if decision == "approve" { scrollRequest += 1 }
             failure = await acceptedMutationRefreshError(
-                "Kria recorded that decision, but the conversation couldn’t refresh.",
+                String(localized: "Kria recorded that decision, but the conversation couldn’t refresh."),
                 refresh: { try await refreshDelta() }
             )
         }
@@ -4038,20 +4038,20 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     }
     var title: String {
         switch self {
-        case .montage: "Montage"
-        case .lipsync: "Lip-sync"
-        case .narrated: "Voiceover"
-        case .talkingToCamera: "Talk to camera"
-        case .slides: "Slider"
+        case .montage: String(localized: "Montage", comment: "Video format name")
+        case .lipsync: String(localized: "Lip-sync", comment: "Video format name")
+        case .narrated: String(localized: "Voiceover", comment: "Video format name")
+        case .talkingToCamera: String(localized: "Talk to camera", comment: "Video format name")
+        case .slides: String(localized: "Slider", comment: "Video format name: swipeable photo post")
         }
     }
     var choiceSentence: String {
         switch self {
-        case .montage: "Let’s make a montage"
-        case .lipsync: "Let’s make a lip-sync video"
-        case .narrated: "Let’s make a voiceover video"
-        case .talkingToCamera: "Let’s make a talk to camera video"
-        case .slides: "Let’s make a slider"
+        case .montage: String(localized: "Let’s make a montage")
+        case .lipsync: String(localized: "Let’s make a lip-sync video")
+        case .narrated: String(localized: "Let’s make a voiceover video")
+        case .talkingToCamera: String(localized: "Let’s make a talk to camera video")
+        case .slides: String(localized: "Let’s make a slider")
         }
     }
     var imageName: String {
@@ -4174,12 +4174,14 @@ func acceptedMutationRefreshError(
 func clearChatRefreshRecoveryMessage(_ failure: inout ChatFailure?) {
     guard let current = failure?.message else { return }
     let recoveryPrefixes = [
-        "Kria lost the live connection.",
-        "Kria couldn’t refresh this conversation.",
-        "Your message was sent, but the conversation couldn’t refresh.",
-        "Saved, but the conversation couldn’t refresh.",
-        "Kria recorded that decision, but the conversation couldn’t refresh.",
-        "Kria couldn’t confirm that message."
+        String(localized: "Kria lost the live connection."),
+        String(localized: "Kria lost the live connection. Your conversation is safe."),
+        String(localized: "Kria couldn’t refresh this conversation."),
+        String(localized: "Your message was sent, but the conversation couldn’t refresh."),
+        String(localized: "Saved, but the conversation couldn’t refresh."),
+        String(localized: "Kria recorded that decision, but the conversation couldn’t refresh."),
+        String(localized: "Kria couldn’t confirm that message."),
+        String(localized: "Kria couldn’t confirm that message. Retry message checks the same submission safely.")
     ]
     if recoveryPrefixes.contains(where: current.hasPrefix) {
         failure = nil
@@ -4214,19 +4216,29 @@ func nonConfirmationConflictMessage(action: String, detail: String?, planIdentit
     return CreationConfirmationConflict(detail: detail, planIdentity: planIdentity).message
 }
 
+/// Display name for a legacy generative variant id (`song_lyrics` ...); unknown ids fall back to the id, spaced and capitalized.
+private func chatVariantTitle(_ variantID: String) -> String {
+    switch variantID {
+    case "song_lyrics": return String(localized: "Song Lyrics", comment: "Name of a video variant: song with lyrics")
+    case "song_text": return String(localized: "Song Text", comment: "Name of a video variant: song with on-screen text")
+    case "original_text": return String(localized: "Original Text", comment: "Name of a video variant: original audio with on-screen text")
+    default: return variantID.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+}
+
 func formatClipCapacityError(
     format: CreationFormat,
     clipLimit: Int,
     occupiedClipCount: Int
 ) -> String? {
     guard occupiedClipCount > clipLimit else { return nil }
-    return "\(format.title) supports \(clipLimit) \(clipLimit == 1 ? "clip" : "clips"). Keep your current format or remove extra footage first."
+    return String(localized: "\(format.title) supports \(clipLimit) clips. Keep your current format or remove extra footage first.")
 }
 
 extension ProjectSummary {
     var workspaceTitle: String {
         let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty || cleaned.lowercased() == "untitled project" ? "Untitled video" : cleaned
+        return cleaned.isEmpty || cleaned.lowercased() == "untitled project" ? String(localized: "Untitled video") : cleaned
     }
 
     var workspaceStatusLabel: String {
@@ -4234,10 +4246,10 @@ extension ProjectSummary {
         // `.ready`/`.failed` label left over from the last job, but never a
         // render actually in flight.
         switch status {
-        case .draft: "Shaping direction"
-        case .rendering: "Rendering"
-        case .ready: awaitsConfirmation ? "Shaping direction" : "Ready"
-        case .failed: awaitsConfirmation ? "Shaping direction" : "Needs attention"
+        case .draft: String(localized: "Shaping direction")
+        case .rendering: String(localized: "Rendering")
+        case .ready: awaitsConfirmation ? String(localized: "Shaping direction") : String(localized: "Ready")
+        case .failed: awaitsConfirmation ? String(localized: "Shaping direction") : String(localized: "Needs attention")
         }
     }
 }

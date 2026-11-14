@@ -21,8 +21,8 @@ struct NativeVisualPanel: View {
     /// A Talking picture card can still turn when the rest of the style is closed (KRI-1141).
     private var styleUnavailableNote: String {
         let canTurn = selected.map { session.canRotateVisual($0) } ?? false
-        if canTurn { return "Zoom, fit and animation aren’t available for this edit yet. Placement, timing and rotation are still editable." }
-        return "Advanced visual editing isn’t available for this edit yet. Placement and timing are still editable."
+        if canTurn { return String(localized: "Zoom, fit and animation aren’t available for this edit yet. Placement, timing and rotation are still editable.") }
+        return String(localized: "Advanced visual editing isn’t available for this edit yet. Placement and timing are still editable.")
     }
     private var raw: [String: JSONValue] { selected.flatMap(session.visualRaw) ?? [:] }
     private var block: EditorVisualBlock? { session.document.visualBlocks.first { $0.id == selected?.id } }
@@ -65,8 +65,8 @@ struct NativeVisualPanel: View {
     // show while browsing Cards/Motion/Camera FX/Transitions, which aren't
     // about adding a visual at all.
     private var editorHeading: String? {
-        if let selected { return "Edit " + label(selected).lowercased() }
-        return panelDrafts.visualCategory == .media ? "Add visual" : nil
+        if let selected { return String(localized: "Edit \(label(selected).lowercased())") }
+        return panelDrafts.visualCategory == .media ? String(localized: "Add visual") : nil
     }
     private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
 
@@ -87,7 +87,7 @@ struct NativeVisualPanel: View {
     var body: some View {
         NativeEditorLanePanel(title: "Visuals", tabs: editorTabs, tab: $panelDrafts.visualTab, onDone: {
             editingText = false; session.endTransaction(); onDone()
-        }, heading: editorHeading, onAdd: addAction,
+        }, heading: editorHeading ?? String(localized: "Visuals"), onAdd: addAction,
             onDelete: removeAction) {
             VStack(spacing: 12) {
                 if session.isAddingVisual { ProgressView("Opening visual…").frame(minHeight: 44) }
@@ -95,7 +95,7 @@ struct NativeVisualPanel: View {
                     HStack(spacing: 8) {
                         if pending.status == "failed" { Image(systemName: "exclamationmark.circle").foregroundStyle(KriaColor.failureText) }
                         else { ProgressView().controlSize(.small) }
-                        Text(pending.status == "failed" ? (pending.error ?? "Couldn’t prepare visual.") : "Preparing visual import…")
+                        Text(pending.status == "failed" ? (pending.error ?? String(localized: "Couldn’t prepare visual.")) : String(localized: "Preparing visual import…"))
                             .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                         Spacer()
                         if pending.status == "failed" && pending.retryable {
@@ -254,7 +254,7 @@ struct NativeVisualPanel: View {
                                         // so a tap can't send a duplicate request.
                                         Button("Retry") { Task { await session.retryLibraryVisual(asset.id) } }
                                             .disabled(!session.visualAutoRetry.canRetryManually(asset.id))
-                                            .accessibilityLabel("Retry " + (asset.sourceFilename ?? "visual"))
+                                            .accessibilityLabel(String(localized: "Retry \(asset.sourceFilename ?? String(localized: "visual"))"))
                                     }
                                 }.frame(maxWidth: .infinity)
                             } else {
@@ -272,7 +272,7 @@ struct NativeVisualPanel: View {
         VStack(spacing: 6) {
             NativeVisualThumbnail(asset: asset)
                 .frame(height: 76).clipped().clipShape(RoundedRectangle(cornerRadius: 9))
-            Text(asset.sourceFilename ?? "Visual").font(KriaFont.body(11)).lineLimit(1).frame(height: 14)
+            Text(asset.sourceFilename ?? String(localized: "Visual")).font(KriaFont.body(11)).lineLimit(1).frame(height: 14)
             if asset.status == "failed" {
                 // A 3-up tile fits only part of the server's explanation, so it
                 // truncates; the next step keeps its own line so truncation never
@@ -298,7 +298,7 @@ struct NativeVisualPanel: View {
     /// The library tile's VoiceOver label: its filename and, unless it's
     /// ready, the whole status caption the tile may only show in part.
     static func assetAccessibilityLabel(_ asset: CreationVisual, retryingAutomatically: Bool) -> String {
-        let name = asset.sourceFilename ?? "Visual"
+        let name = asset.sourceFilename ?? String(localized: "Visual")
         guard asset.status != "ready" else { return name }
         return name + ", " + asset.statusCaption(retryingAutomatically: retryingAutomatically)
     }
@@ -313,7 +313,7 @@ struct NativeVisualPanel: View {
                                 .foregroundStyle(preset == "Bold" ? .white : KriaColor.ink)
                                 .frame(maxWidth: .infinity, minHeight: 100)
                                 .background(preset == "Bold" ? KriaColor.ink : KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-                            Text(preset).font(KriaFont.body(13))
+                            Text(preset == "Bold" ? String(localized: "Bold", comment: "Text card style") : String(localized: "Simple", comment: "Text card style")).font(KriaFont.body(13))
                         }
                     }.disabled(!session.canAuthorVisuals || !session.canEdit(.text))
                         .accessibilityIdentifier("native-editor-card-preset-" + preset.lowercased())
@@ -356,7 +356,7 @@ struct NativeVisualPanel: View {
                                         .rotationEffect(.degrees(preset == "card_stack" ? 8 : 0))
                                 }.frame(height: 66).padding(.horizontal, 18)
                             }.frame(maxWidth: .infinity, minHeight: 100)
-                            Text(preset == "card_stack" ? "Card stack" : "Film strip")
+                            Text(preset == "card_stack" ? String(localized: "Card stack") : String(localized: "Film strip"))
                         }
                     }.disabled(!session.canEdit(.motionScenes))
                 }
@@ -394,14 +394,14 @@ struct NativeVisualPanel: View {
             cameraOption(
                 easing: CameraEmphasis.holdEasing,
                 icon: "plus.magnifyingglass",
-                title: "Zoom in",
-                detail: "Pushes in, holds through the moment, then eases back out."
+                title: String(localized: "Zoom in"),
+                detail: String(localized: "Pushes in, holds through the moment, then eases back out.")
             )
             cameraOption(
                 easing: CameraEmphasis.pulseEasing,
                 icon: "viewfinder",
-                title: "Zoom pulse",
-                detail: "A gentle push in and back out to emphasize a moment."
+                title: String(localized: "Zoom pulse"),
+                detail: String(localized: "A gentle push in and back out to emphasize a moment.")
             )
             Text("Applies to footage. Adjust its range on the timeline.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
         }
@@ -435,7 +435,7 @@ struct NativeVisualPanel: View {
             }
             .accessibilityIdentifier("native-editor-visuals-transition-picker")
             if panelDrafts.wholeVideoTransition != "cut" {
-                slider("Duration", value: $panelDrafts.wholeVideoTransitionDuration, range: 0.1...0.3)
+                slider(String(localized: "Duration"), value: $panelDrafts.wholeVideoTransitionDuration, range: 0.1...0.3)
             }
             Button {
                 session.setTransitionAcrossVideo(
@@ -460,7 +460,7 @@ struct NativeVisualPanel: View {
         if let selected {
             VStack(spacing: 8) {
                 if mediaSelected {
-                    NativeEditorMenuRow(title: "Display", value: displayMode == "overlay" ? "Overlay" : "Fullscreen") {
+                    NativeEditorMenuRow(title: String(localized: "Display", comment: "Visual placement: overlay or fullscreen"), value: displayMode == "overlay" ? String(localized: "Overlay") : String(localized: "Fullscreen")) {
                         Button("Overlay") {
                             if selected.kind == .mediaOverlay { session.setMediaOverlayDisplayMode(id: selected.id, mode: "pip") }
                             else { session.setVisualBlockDisplayMode(id: selected.id, mode: "overlay") }
@@ -470,7 +470,7 @@ struct NativeVisualPanel: View {
                             else { session.setVisualBlockDisplayMode(id: selected.id, mode: "fullscreen") }
                         }
                     }
-                    NativeEditorMenuRow(title: "Fit", value: style["fit_mode"] == .string("contain") ? "Fit" : "Fill") {
+                    NativeEditorMenuRow(title: String(localized: "Fit", comment: "Visual fit setting: whole frame or fill"), value: style["fit_mode"] == .string("contain") ? String(localized: "Fit", comment: "Video shape option: show whole frame with black bars") : String(localized: "Fill", comment: "Video shape option: fill the frame, cropping edges")) {
                         Button("Fill") { session.setVisualEditorStyle(selected, key: "fit_mode", value: .string("cover")) }
                         Button("Fit") { session.setVisualEditorStyle(selected, key: "fit_mode", value: .string("contain")) }
                     }.disabled(displayMode != "fullscreen" || !session.canEdit("visual_editor_style"))
@@ -480,15 +480,15 @@ struct NativeVisualPanel: View {
                     }
                     let peers = session.visualLayerSelections(for: selected)
                     let layerIndex = peers.firstIndex(of: selected) ?? 0
-                    NativeEditorMenuRow(title: "Layer", value: "\(layerIndex + 1) of \(peers.count)") {
+                    NativeEditorMenuRow(title: String(localized: "Layer", comment: "Visual layer order"), value: String(localized: "\(layerIndex + 1) of \(peers.count)")) {
                         Button("Bring forward") { session.moveVisualLayer(selected, by: 1) }.disabled(layerIndex >= peers.count - 1)
                         Button("Send backward") { session.moveVisualLayer(selected, by: -1) }.disabled(layerIndex == 0)
                     }
-                    slider("Zoom", value: Binding(get: { style["zoom"]?.numberValue ?? 1 }, set: { session.setVisualEditorStyle(selected, key: "zoom", value: .number($0)) }), range: 1...4).disabled(!session.canStyleVisual(selected))
-                    slider("Rotation", value: Binding(get: { style["rotation_deg"]?.numberValue ?? 0 }, set: { session.setVisualEditorStyle(selected, key: "rotation_deg", value: .number($0)) }), range: -180...180).disabled(!session.canRotateVisual(selected))
+                    slider(String(localized: "Zoom"), value: Binding(get: { style["zoom"]?.numberValue ?? 1 }, set: { session.setVisualEditorStyle(selected, key: "zoom", value: .number($0)) }), range: 1...4).disabled(!session.canStyleVisual(selected))
+                    slider(String(localized: "Rotation"), value: Binding(get: { style["rotation_deg"]?.numberValue ?? 0 }, set: { session.setVisualEditorStyle(selected, key: "rotation_deg", value: .number($0)) }), range: -180...180).disabled(!session.canRotateVisual(selected))
                     Text("Drag to position. Use the corner to resize or rotate.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 } else if selected.kind == .cameraEffect {
-                    slider("Intensity", value: Binding(get: { raw["intensity"]?.numberValue ?? 0.04 }, set: { session.setCameraEffectIntensity(id: selected.id, intensity: $0) }), range: 0.01...0.08)
+                    slider(String(localized: "Intensity"), value: Binding(get: { raw["intensity"]?.numberValue ?? 0.04 }, set: { session.setCameraEffectIntensity(id: selected.id, intensity: $0) }), range: 0.01...0.08)
                     Text("Applies to footage. Adjust its range on the timeline.").font(KriaFont.body(12))
                 } else if let element = cardElement {
                     TextField("Card text", text: Binding(get: { cardElement?.text ?? "" }, set: { session.updateTextContent(id: element.id, content: $0) }), axis: .vertical)
@@ -498,11 +498,11 @@ struct NativeVisualPanel: View {
                         accessibilityID: "native-editor-card-font"
                     ) { if let family = $0 { session.setTextStyle(id: element.id, style: family) } }
                     ColorPicker("Text color", selection: Binding(get: { nativeEditorColor(cardElement?.raw["color"]?.stringValue ?? "#FFFFFF") }, set: { session.setTextColor(id: element.id, color: nativeEditorHex($0)) }), supportsOpacity: false).frame(minHeight: 44)
-                    slider("Size", value: Binding(get: { cardElement.map(NativeEditorSession.textSize) ?? 72 }, set: { session.setTextSize(id: element.id, sizePX: $0) }), range: 8...240)
+                    slider(String(localized: "Size"), value: Binding(get: { cardElement.map(NativeEditorSession.textSize) ?? 72 }, set: { session.setTextSize(id: element.id, sizePX: $0) }), range: 8...240)
                 } else if selected.kind == .motionScene {
                     Text("Arrange the composition’s timing on the timeline.").font(KriaFont.body(13))
                     if session.canAdjustMotionSpeed(id: selected.id) {
-                    slider("Speed", value: Binding(get: { raw["motion"]?.objectValue?["speed"]?.numberValue ?? 1 }, set: { session.setMotionSpeed(id: selected.id, speed: $0) }), range: 0.5...4)
+                    slider(String(localized: "Speed"), value: Binding(get: { raw["motion"]?.objectValue?["speed"]?.numberValue ?? 1 }, set: { session.setMotionSpeed(id: selected.id, speed: $0) }), range: 0.5...4)
                     } else {
                         Text("This saved composition keeps its original animation.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     }
@@ -532,12 +532,12 @@ struct NativeVisualPanel: View {
                                     .font(.system(size: 22)).frame(maxWidth: .infinity, minHeight: 52)
                                     .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 9))
                                     .overlay(RoundedRectangle(cornerRadius: 9).stroke((animation[phase]?.stringValue ?? "none") == effect.lowercased() ? KriaColor.sky : .clear, lineWidth: 2))
-                                Text(effect).font(KriaFont.body(11))
+                                Text(Self.effectTitle(effect)).font(KriaFont.body(11))
                             }
-                        }.accessibilityLabel("\(phase == "entrance" ? "In" : phase == "exit" ? "Out" : "Loop") visual animation \(effect)")
+                        }.accessibilityLabel(phase == "entrance" ? String(localized: "In visual animation \(Self.effectTitle(effect))") : phase == "exit" ? String(localized: "Out visual animation \(Self.effectTitle(effect))") : String(localized: "Loop visual animation \(Self.effectTitle(effect))"))
                     }
                 }
-                slider("Animation speed", value: Binding(get: { animation["speed"]?.numberValue ?? 1 }, set: { setAnimation("speed", value: .number($0), selected: selected) }), range: 0.25...3)
+                slider(String(localized: "Animation speed"), value: Binding(get: { animation["speed"]?.numberValue ?? 1 }, set: { setAnimation("speed", value: .number($0), selected: selected) }), range: 0.25...3)
                 Text("Changes motion speed. Visual timing stays the same.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }.disabled(!session.canStyleVisual(selected))
         } else if let element = cardElement {
@@ -564,8 +564,8 @@ struct NativeVisualPanel: View {
         return HStack {
             ForEach([true, false], id: \.self) { start in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(start ? "Start (seconds)" : "End (seconds)").font(KriaFont.body(12))
-                    TextField(start ? "Start" : "End", value: Binding(get: { start ? item?.start ?? 0 : item?.end ?? 0 }, set: {
+                    Text(start ? String(localized: "Start (seconds)") : String(localized: "End (seconds)")).font(KriaFont.body(12))
+                    TextField(start ? String(localized: "Start", comment: "Field label: start time") : String(localized: "End", comment: "Field label: end time"), value: Binding(get: { start ? item?.start ?? 0 : item?.end ?? 0 }, set: {
                         session.setVisualTiming(selected, outputTime: $0, isStart: start)
                     }), format: .number.precision(.fractionLength(0...2)))
                         .keyboardType(.decimalPad).padding(10).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 8))
@@ -573,12 +573,25 @@ struct NativeVisualPanel: View {
             }
         }
     }
+    private static func effectTitle(_ effect: String) -> String {
+        switch effect {
+        case "None": String(localized: "None", comment: "Animation: no effect")
+        case "Pulse": String(localized: "Pulse", comment: "Animation effect")
+        case "Bounce": String(localized: "Bounce", comment: "Animation effect")
+        case "Float": String(localized: "Float", comment: "Animation effect")
+        case "Fade": String(localized: "Fade", comment: "Animation: fade in or out")
+        case "Pop": String(localized: "Pop", comment: "Animation effect")
+        case "Slide": String(localized: "Slide", comment: "Animation effect")
+        case "Zoom": String(localized: "Zoom", comment: "Animation effect")
+        default: effect
+        }
+    }
     private func label(_ selected: EditorSelection) -> String {
         switch selected.kind {
-        case .mediaOverlay: return (raw["media_kind"] ?? raw["kind"]) == .string("video") ? "Video" : "Photo"
-        case .motionScene: return session.document.motionScenes.first { $0.id == selected.id }?.preset?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Motion"
-        case .cameraEffect: return "Zoom pulse"
-        default: return session.document.visualBlocks.first { $0.id == selected.id }?.kind == "text_card" ? "Text card" : ((raw["media_kind"] ?? raw["kind"]) == .string("video") ? "Video" : "Photo")
+        case .mediaOverlay: return (raw["media_kind"] ?? raw["kind"]) == .string("video") ? String(localized: "Video") : String(localized: "Photo")
+        case .motionScene: return session.document.motionScenes.first { $0.id == selected.id }?.preset?.replacingOccurrences(of: "_", with: " ").capitalized ?? String(localized: "Motion")
+        case .cameraEffect: return String(localized: "Zoom pulse")
+        default: return session.document.visualBlocks.first { $0.id == selected.id }?.kind == "text_card" ? String(localized: "Text card") : ((raw["media_kind"] ?? raw["kind"]) == .string("video") ? String(localized: "Video") : String(localized: "Photo"))
         }
     }
     private func symbol(_ selected: EditorSelection) -> String {
