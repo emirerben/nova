@@ -91,8 +91,11 @@ enum ChatTimeline {
         uploads: [ChatPendingUpload] = [],
         thoughtSummaries: [String: [KriaThoughtSummary]] = [:]
     ) -> [ChatTimelineEntry] {
+        let removals = removalSequences(events)
         var entries = ChatTranscriptHistory.merge([], with: events).compactMap { event -> ChatTimelineEntry? in
             if event.eventType == "media_added" {
+                // A file the creator took out again is not part of the project any more, so its receipt goes too.
+                guard let event = event.droppingRemovedMedia(removals) else { return nil }
                 let id = uploadRecordID(event).map { "upload-\($0.uuidString)" } ?? event.id
                 return ChatTimelineEntry(id: id, sequence: event.sequence, position: 0, content: .media(event))
             }
@@ -122,6 +125,17 @@ enum ChatTimeline {
             if $0.position != $1.position { return $0.position < $1.position }
             return $0.id < $1.id
         }
+    }
+
+    /// For each media id, the sequence of its latest `action_remove_media`. The log is append-only, so a removal is
+    /// only ever visible as a later event, never as a change to the `media_added` event it undoes.
+    static func removalSequences(_ events: [ThreadEvent]) -> [String: Int] {
+        var latest: [String: Int] = [:]
+        for event in events where event.eventType == "action_remove_media" {
+            guard let id = event.payload?["media_id"]?.stringValue, !id.isEmpty else { continue }
+            latest[id] = max(latest[id] ?? Int.min, event.sequence)
+        }
+        return latest
     }
 
     static func uploadRecordID(_ event: ThreadEvent) -> UUID? {
@@ -169,5 +183,24 @@ enum ChatSubmission {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
         return readyMediaCount > 0 ? mediaOnlyMessage : nil
+    }
+}
+
+extension ThreadEvent {
+    /// This `media_added` event without the files removed after it was logged; nil when none are left. A removal
+    /// only hides a file added before it, so the same id attached again later shows again.
+    func droppingRemovedMedia(_ removals: [String: Int]) -> ThreadEvent? {
+        guard !removals.isEmpty, case .array(let media)? = payload?["media"] else { return self }
+        let kept = media.filter { entry in
+            guard case .object(let fields) = entry, let id = fields["media_id"]?.stringValue,
+                  let removedAt = removals[id] else { return true }
+            return removedAt < sequence
+        }
+        if kept.count == media.count { return self }
+        if kept.isEmpty { return nil }
+        var changed = payload ?? [:]
+        changed["media"] = .array(kept)
+        return ThreadEvent(id: id, sequence: sequence, revision: revision, role: role, eventType: eventType,
+                           content: content, payload: changed, createdAt: createdAt, clientEventID: clientEventID)
     }
 }
