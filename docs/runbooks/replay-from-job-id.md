@@ -27,7 +27,8 @@ make kria-replay-job JOB=<production job id>
 3. Creates a scratch database `nova_creator_fidelity_test_<run id>` (migrated to head; one per
    run, so two replays never wipe each other, dropped when the run ends), starts a
    Celery worker on Redis database 14 under a private `NOVA_CELERY_QUEUE_NAMESPACE`
-   (`replay-<job>-<time>`; it never consumes the shared dev queues), and runs
+   (`replay-<job>-<time>`; it never consumes the shared dev queues; the run deletes its own keys
+   when it ends), and runs
    `replay_creator.py --render --prod-flags tests/prod_flags.snapshot.json`.
 4. Prints an `outcome`: `video_rendered` (local path of each output, `<run dir>/storage/<object
    path>`), `device_plan_ready` (an iPhone job: the worker built and pinned the device render
@@ -37,7 +38,35 @@ make kria-replay-job JOB=<production job id>
    creator a clarifying question instead of proposing a plan; the question text and reason code
    are printed and the run stops at once). A replay does not answer it: production resolved that
    question in the chat, and the chat turns are not replayed, so a job whose request depends on
-   a clarification may end here. Exit code 0 for the first two only.
+   a clarification may end here, or `diverged_from_production` (the replay failed inside an agent
+   that production never ran for this plan item; see "Route comparison"). Exit code 0 for
+   `video_rendered` and `device_plan_ready` only, 1 for any other outcome, 3 when the local
+   machine could not host the run (no PostgreSQL role, fewer than 20 free connections, scratch
+   database not creatable), which says nothing about the job.
+
+For a phone-first job, which is every failed creation job since 2026-10-08 (the snapshot records
+`IOS_DEVICE_ONLY_MODE=true`, `CLOUD_RENDER_EXECUTION_ENABLED=false`), the end-to-end artifact is
+`device_plan_ready`: the pinned device render plan in `<run dir>/device-plan.json`, never an MP4.
+What the iPhone then renders is the iOS gates' job. A PR that fixes such a job states the plan
+(or the failure reason that remains) as its replay result, and pairs it with the iOS render gate
+when the change touches the render.
+
+### Route comparison
+
+The replay drives the same Main Creator start and confirm controllers the chat thread calls, but
+a snapshot value that is only approximated can send it down a planner production does not use.
+The driver reads every agent name production recorded for the plan item
+(`GET /admin/plan-items/<id>/proposal-trace`, all pages, plus the job's own agent runs) and the
+agent runs of the replay's scratch database, and prints `route_comparison`:
+`production_agents`, `replay_agents`, `replay_only_agents`, `replay_failed_agents` (an agent whose
+last run failed) and `diverged_failures` (failed in the replay, never run in production). When the
+replay ends `failed` with a non-empty `diverged_failures`, the outcome is
+`diverged_from_production`, the replay's own failure moves to `replay_failure`, and the run is not
+evidence about the production job. Example, pass 2: with `EDIT_PROPOSAL_SEMANTIC_ENABLED=true` (the
+2026-10-08 Fly digest comparison) job b5dadbce failed in `nova.plan.semantic_edit_proposal`, an
+agent no production item has run since 2026-10-19; the snapshot now records it off. A replay
+that succeeds after running agents production did not run is reported in `replay_only_agents` but
+keeps its outcome: a fix is expected to get past the production failure.
 
 The replayed footage is exactly the media the job's brief binding recorded (its clip
 assignments and visuals), not whatever the plan item holds now: pool assets added after the job
@@ -47,6 +76,19 @@ songs) or a voiceover the item no longer holds. A job with no brief binding (old
 binding) replays everything the item holds, and the printed coverage says
 `bound_to_recorded_media: false`.
 
+Bindings written since 2026-11-06 name no media: a clip row keeps its kind, duration and upload
+receipt, a visual row only its kind and capture time. Those rows are matched to the item's media by
+shape. A clip matches the item clip of the same kind whose duration agrees within 0.15 s (two
+equally close candidates, or none, refuse the run); the matched row receives that clip's media id
+so its upload receipt is restored. Visuals match the item's ready pool assets by kind, and the
+item must hold exactly as many of each kind as the binding recorded, otherwise which ones the job
+used is unknown and the run is refused. Coverage reports `matched_without_media_id`.
+
+Precondition for jobs whose pool holds media-library assets: the production API must serve
+`gcs_path` and `gcs_generation` on `GET /admin/plan-items/<id>/debug` (this PR's
+`admin_plan_items.py` change). Until that is deployed, such jobs are refused with a message that
+names the asset; pool assets under the item's own pool prefix still work.
+
 Costs real model calls (clip analysis, Main Creator, text agents). Check the receipt and the
 worker log (`<run dir>/worker.log`) for the agent runs.
 
@@ -54,8 +96,9 @@ worker log (`<run dir>/worker.log`) for the agent runs.
 
 * Production contact is a GET through `scripts/admin.py --prod` and a read-only
   `gcloud storage cp` from the bucket to a local path.
-* The replay subprocesses get a clean environment: `PATH`, `HOME`, and the `*_API_KEY` model
-  keys from `.env` (not `ADMIN_*`, `INTERNAL_*`). No production database, storage, Redis or
+* The replay subprocesses get a clean environment: `PATH`, `HOME`, and the `GEMINI_API_KEY`,
+  `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` model keys from `.env` (no `ADMIN_*`, `INTERNAL_*`,
+  `RESEND_*` or other keys). No production database, storage, Redis or
   admin credential reaches them.
 * `replay_creator.py` refuses anything but a local PostgreSQL database named
   `nova_creator_fidelity_test` or `nova_creator_fidelity_test_<run id>` with no query string
@@ -65,11 +108,12 @@ worker log (`<run dir>/worker.log`) for the agent runs.
 ## Production flag snapshot
 
 `src/apps/api/tests/prod_flags.snapshot.json` holds the effective production value of every
-boolean `Settings` field, every `*_user_ids` allowlist, every `*_rollout_percent` and
-`phone_render_verified_features`. `tests/_prod_profile.py` (the `prod_profile` fixture),
-`scripts/kria/score_route.py` and `replay_job.py` read it. Older score and iOS E2E scripts
-(`scripts/kria/score_29_ekim.py`, `scripts/ios/kri-1009-talking-title.py`,
-`scripts/ios/qendresa-caption-shape-e2e.py`) still carry their own hand-copied lists; they are
+boolean `Settings` field, every `*_user_ids` allowlist, every `*_rollout_percent`, every `*_model` name, every
+`*min_client_protocol` and `phone_render_verified_features`. `tests/_prod_profile.py` (the `prod_profile` fixture),
+`scripts/kria/score_route.py` and `replay_job.py` read it. `scripts/kria/score_29_ekim.py` reads it too. The iOS E2E scripts
+(`scripts/ios/kri-1009-talking-title.py`, `scripts/ios/qendresa-caption-shape-e2e.py`) still
+carry their own hand-copied lists, and `tests/kria/test_kri1009_talking_top_text_title.py` pins the
+verified-feature list production held on 2026-10-28 on purpose (a recorded incident); those are
 not production-faithful.
 `scripts/prod_flag_snapshot.py` writes it. Each entry carries its evidence:
 
@@ -85,6 +129,8 @@ What is approximated:
 
 * A false flag whose entry says `default` may be on in production. `python
   scripts/prod_flag_snapshot.py unverified` lists the boolean flags still unconfirmed.
+* Model names (`main_creator_model`, `gemini_model`, ...) and protocol minimums hold the code
+  default; a Fly override of either goes unnoticed until someone records it with `set`.
 * Allowlists are Fly secrets. The snapshot holds the code default, not production membership.
   The gates differ in what an empty list means: `phone_render_user_ids` and
   `kria_runtime_v2_phone_user_ids` read empty as everyone, while the brief-binding, approval-

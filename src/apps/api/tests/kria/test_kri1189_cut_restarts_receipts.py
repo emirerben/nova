@@ -125,7 +125,11 @@ _REQUIRED = {"speech_cleanup_contract": _FIXTURE["speech_cleanup_contract"]}
 
 
 @pytest.fixture(autouse=True)
-def _detection_off_unless_a_test_says_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
+def _detection_off_unless_a_test_says_otherwise(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    # Run after the prod profile `_gate` applies: production has both retake levers on.
+    request.getfixturevalue("_gate")
     monkeypatch.setattr(settings, "retake_cut_enabled", False)
     monkeypatch.setattr(settings, "speech_cleanup_retakes_enabled", False)
     # On in prod: job 9bad2d75 was stamped with `phone_text_style` (code default is off).
@@ -310,6 +314,7 @@ def test_c1_with_detection_on_green3_turn1_holds_nothing(monkeypatch):
 
 def test_c2_with_detection_off_the_restart_still_holds_the_draft(monkeypatch):
     _open_windows(monkeypatch)
+    _detection(monkeypatch, False)
 
     rows, report = _readiness(
         [R1, _r2(), R3, R4], _manifest(PHOTO, OTHER), background_media=GREEN3_BACKGROUND

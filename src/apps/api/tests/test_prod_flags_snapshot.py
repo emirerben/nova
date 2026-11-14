@@ -26,3 +26,23 @@ def test_snapshot_describes_current_settings() -> None:
         "`python scripts/prod_flag_snapshot.py refresh [--live]` and commit it:\n"
         + "\n".join(found)
     )
+
+
+def _claims(line: str) -> bool:
+    found = prod_flag_snapshot.ON_IN_PROD.search(line)
+    return bool(found) and not prod_flag_snapshot._is_not_a_current_claim(line, found)
+
+
+def test_a_current_on_in_prod_line_is_a_claim() -> None:
+    assert _claims("`X_ENABLED` and `Y_ENABLED`, both on in prod since 2026-11-04")
+    assert _claims("- `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`)")
+
+
+def test_negated_conditional_or_past_mentions_are_not_claims() -> None:
+    for line in (
+        "`X_ENABLED` is not on in prod yet",
+        "`X_ENABLED` was live in prod until the rollback",
+        "`X_ENABLED` is never ON in prod without the twin flag",
+        "turn `X_ENABLED` on only if it is ON in prod for the cohort",
+    ):
+        assert not _claims(line), line

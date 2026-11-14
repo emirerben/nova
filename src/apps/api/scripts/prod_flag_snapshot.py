@@ -65,8 +65,8 @@ def _setting_fields() -> dict[str, Any]:
     for name, field in Settings.model_fields.items():
         if (
             field.annotation is bool
-            or name.endswith(("_user_ids", "_rollout_percent"))
-            or name == "phone_render_verified_features"
+            or name.endswith(("_user_ids", "_rollout_percent", "min_client_protocol", "_model"))
+            or name in {"phone_render_verified_features", "kria_minimum_client_protocol"}
         ):
             fields[name] = field
     return fields
@@ -150,7 +150,17 @@ def read_live_phone_config() -> dict[str, Any]:
 
 CLAIM_SOURCES = ("CLAUDE.md", "agents/DECISIONS.md", "docs/runbooks", "docs/pipelines")
 ON_IN_PROD = re.compile(r"\b(?:ON|on|LIVE|live) in prod(?:uction)?\b")
+NOT_A_CURRENT_CLAIM = re.compile(
+    r"\b(?:not|never|no longer|was|were|until|before|rolled back|if)\b|n't", re.IGNORECASE
+)
 FLAG_NAME = re.compile(r"`([A-Z][A-Z0-9_]{3,})`")
+
+
+def _is_not_a_current_claim(line: str, found: re.Match[str]) -> bool:
+    """A negated, conditional or past-tense mention ("was live in prod until the rollback")."""
+
+    window = line[max(0, found.start() - 60) : found.start()] + " " + line[found.end() :][:40]
+    return bool(NOT_A_CURRENT_CLAIM.search(window))
 
 
 def documented_on_in_prod() -> dict[str, str]:
@@ -161,14 +171,15 @@ def documented_on_in_prod() -> dict[str, str]:
     ``set``; this catches the common case so a documented value cannot be ignored.
     """
 
-    names = set(_setting_fields())
+    names = {name for name, field in _setting_fields().items() if field.annotation is bool}
     claims: dict[str, str] = {}
     for entry in CLAIM_SOURCES:
         root = REPO_ROOT / entry
         files = [root] if root.is_file() else sorted(root.glob("*.md"))
         for path in files:
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                if not ON_IN_PROD.search(line):
+                found = ON_IN_PROD.search(line)
+                if not found or _is_not_a_current_claim(line, found):
                     continue
                 for flag in FLAG_NAME.findall(line):
                     if flag.lower() in names:
