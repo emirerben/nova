@@ -19,6 +19,12 @@ Repairs (all deterministic, all noted):
   unqualified font / text effect                 -> qualified default font / ``fade-in``
   a text window past the end of the timeline     -> clamped onto the timeline
   confirmed on-screen text the plan lost         -> placed back (``repair_plan_for_contract``)
+  confirmed text with no clear spot at its size  -> shrunk until one is clear, never below
+                                                    a readable size or a size the creator chose
+
+A reject no repair fixes and that names one row the phone cannot draw (a look, a zoom, a
+transition after the last clip, a text animation) degrades that row instead
+(``phone_plan_degrade``, KRI-1376).
 
 NOT repaired: a transition whose outgoing source is genuinely too short (a
 hole in the timeline). No plan-level edit can conjure footage; the reject keeps
@@ -35,7 +41,8 @@ from typing import Any, NamedTuple
 
 import structlog
 
-from app.pipeline import phone_guided_plan
+from app.kria.reply_language import say
+from app.pipeline import phone_guided_plan, phone_plan_degrade
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.services.phone_rollout import (
     PhoneCapabilityUnavailable,
@@ -68,6 +75,8 @@ class RepairedCompile(NamedTuple):
     notes: list[str]
     # The plan actually compiled: the input object itself when nothing was repaired.
     plan: Any
+    # The rows degraded or shrunk; the worker records them once it keeps this compile.
+    recoveries: tuple[phone_plan_degrade.Recovery, ...] = ()
 
 
 def _repair_sequence_effects(plan) -> tuple[Any, list[str]]:  # noqa: ANN001
@@ -87,7 +96,14 @@ def _repair_sequence_effects(plan) -> tuple[Any, list[str]]:  # noqa: ANN001
         return plan, []
     return (
         plan.model_copy(update={"text_elements": elements}),
-        ["Swapped a text animation your iPhone can't play yet for a simple fade-in"],
+        [_swapped_animation_note()],
+    )
+
+
+def _swapped_animation_note() -> str:
+    return say(
+        en="Swapped a text animation your iPhone can't play yet for a simple fade-in",
+        tr="iPhone'unun henüz oynatamadığı bir yazı animasyonunu basit bir belirmeyle değiştirdim",
     )
 
 
@@ -120,9 +136,15 @@ def _repair_unqualified_fonts(plan, exc: PhoneFontUnqualified) -> tuple[Any, lis
             elements.append(element.model_copy(update=updates) if updates else element)
         lanes[lane] = elements
     if refaced:
-        notes.append(f"Changed a text font to {default_family} so it renders on your iPhone")
+        notes.append(
+            say(
+                en="Changed a text font to {font} so it renders on your iPhone",
+                tr="Bir yazının yazı tipini iPhone'unda görünsün diye {font} yaptım",
+                font=default_family,
+            )
+        )
     if reanimated:
-        notes.append("Swapped a text animation your iPhone can't play yet for a simple fade-in")
+        notes.append(_swapped_animation_note())
     if not notes:
         return plan, []
     return plan.model_copy(update=lanes), notes
@@ -154,9 +176,19 @@ def _repair_text_past_timeline(plan) -> tuple[Any, list[str]]:  # noqa: ANN001
         lanes[lane] = elements
     notes: list[str] = []
     if clamped:
-        notes.append("Ended a text that ran past the end of your video with the video")
+        notes.append(
+            say(
+                en="Ended a text that ran past the end of your video with the video",
+                tr="Videonun sonunu aşan bir yazıyı videoyla birlikte bitirdim",
+            )
+        )
     if dropped:
-        notes.append("Left out a text that started after your video ends")
+        notes.append(
+            say(
+                en="Left out a text that started after your video ends",
+                tr="Videon bittikten sonra başlayan bir yazıyı çıkardım",
+            )
+        )
     if not notes:
         return plan, []
     return plan.model_copy(update=lanes), notes
@@ -390,7 +422,12 @@ def _new_text(plan, template, **updates: Any):  # noqa: ANN001
 
 
 def _place_added_contract_text(plan, element):  # noqa: ANN001
-    """Reserve measured ink space without changing confirmed copy, style or time."""
+    """Reserve measured ink space without changing confirmed copy or time.
+
+    The text keeps its size when a clear spot exists; otherwise it shrinks
+    (``phone_plan_degrade.shrink_sizes``, never a size in ``creator_style_fields``) until one
+    does. Only when no readable size fits is the creator asked to choose.
+    """
     from app.pipeline.canvas import canvas_for_orientation  # noqa: PLC0415
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
     from app.pipeline.phone_text_style import animation_box  # noqa: PLC0415
@@ -419,27 +456,31 @@ def _place_added_contract_text(plan, element):  # noqa: ANN001
         return animation_box(text.model_dump(mode="json"), bounds, canvas)
 
     element = element.model_copy(update={"position": "custom"})
-    box = ink(element)
-    obstacles = []
-    for other in _visible(plan):
-        if other.start_s >= element.end_s or other.end_s <= element.start_s:
-            continue
-        obstacle = ink(other)
-        if obstacle[0] < box[2] and box[0] < obstacle[2]:
-            obstacles.append(obstacle)
+    concurrent = [
+        ink(other)
+        for other in _visible(plan)
+        if other.start_s < element.end_s and other.end_s > element.start_s
+    ]
     origin = float(element.y_frac if element.y_frac is not None else _TITLE_Y)
     gap = 24 / canvas.height
-    candidates = [origin]
-    candidates += sorted(origin + other[3] + gap - box[1] for other in obstacles)
-    candidates += sorted((origin + other[1] - gap - box[3] for other in obstacles), reverse=True)
-    candidates += [origin + 0.05 - box[1], origin + 0.90 - box[3]]
-    for y in candidates:
-        top, bottom = box[1] + y - origin, box[3] + y - origin
-        if box[0] < 0 or box[2] > 1 or top < 0.05 or bottom > 0.90:
-            continue
-        if any(top < other[3] and other[1] < bottom for other in obstacles):
-            continue
-        return element.model_copy(update={"position": "custom", "y_frac": round(y, 6)})
+    chosen = "size_px" in ((element.source_params or {}).get("creator_style_fields") or ())
+    for size in phone_plan_degrade.shrink_sizes(element.size_px, chosen=chosen):
+        sized = element.model_copy(update={"size_px": size})
+        box = ink(sized)
+        obstacles = [other for other in concurrent if other[0] < box[2] and box[0] < other[2]]
+        candidates = [origin]
+        candidates += sorted(origin + other[3] + gap - box[1] for other in obstacles)
+        candidates += sorted(
+            (origin + other[1] - gap - box[3] for other in obstacles), reverse=True
+        )
+        candidates += [origin + 0.05 - box[1], origin + 0.90 - box[3]]
+        for y in candidates:
+            top, bottom = box[1] + y - origin, box[3] + y - origin
+            if box[0] < 0 or box[2] > 1 or top < 0.05 or bottom > 0.90:
+                continue
+            if any(top < other[3] and other[1] < bottom for other in obstacles):
+                continue
+            return sized.model_copy(update={"y_frac": round(y, 6)})
     raise CreatorRenderContractError(
         "Your confirmed text cannot fit clearly alongside the other text at this size.",
         decline_reason="needs_choice",
@@ -449,8 +490,38 @@ def _place_added_contract_text(plan, element):  # noqa: ANN001
     )
 
 
-def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tuple[Any, list[str]]:  # noqa: ANN001
+def _added_on_clip_note(literal: str) -> str:
+    return say(
+        en="Added your text {text} on its clip",
+        tr="{text} yazını kendi klibine ekledim",
+        text=_quoted(literal),
+    )
+
+
+def _shrunk_notes(before, after, recoveries: list | None) -> list[str]:  # noqa: ANN001
+    if after.size_px == before.size_px:
+        return []
+    if recoveries is not None:
+        recoveries.append(
+            phone_plan_degrade.Recovery(
+                reason="contract_text_fit", lane="text", item_id=after.id, action="shrunk"
+            )
+        )
+    return [
+        say(
+            en="Made your text {text} smaller so it fits clearly next to the other text",
+            tr="{text} yazını diğer yazıların yanına net sığsın diye küçülttüm",
+            text=_quoted(after.text),
+        )
+    ]
+
+
+def repair_plan_for_contract(  # noqa: ANN001
+    plan, contract, *, frame_s: float = 1 / 30, recoveries: list | None = None
+) -> tuple[Any, list[str]]:
     """Put every confirmed exact text the plan lost back on screen; ``(plan, notes)``.
+
+    ``recoveries``, when given, gets one ``phone_plan_degrade.Recovery`` per text shrunk to fit.
 
     Slots, in the contract's own words: an ``opening`` text becomes the title (retexted,
     or added at 0 s); a ``closing`` text is added over the last seconds; a ``clip`` text
@@ -493,7 +564,13 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             start = 0.0 if requirement.role == "opening" else element.start_s
             end = min(total, max(element.end_s - element.start_s + start, start + hold))
             texts[same[0]] = element.model_copy(update={"start_s": start, "end_s": end})
-            notes.append(f"Kept your text {_quoted(literal)} on screen longer")
+            notes.append(
+                say(
+                    en="Kept your text {text} on screen longer",
+                    tr="{text} yazını ekranda daha uzun tuttum",
+                    text=_quoted(literal),
+                )
+            )
         elif (
             requirement.role in {"opening", "any"}
             and title
@@ -507,7 +584,13 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             )
             texts = [e for i, e in enumerate(texts) if i not in title]
             texts.insert(title[0], replacement)
-            notes.append(f"Used your title {_quoted(literal)} exactly as you wrote it")
+            notes.append(
+                say(
+                    en="Used your title {text} exactly as you wrote it",
+                    tr="{text} başlığını tam yazdığın gibi kullandım",
+                    text=_quoted(literal),
+                )
+            )
         elif requirement.role not in PLACED_WITHOUT_PLAN:
             anchor = _clip_anchor(current, requirement, frame_s)
             if anchor is None:
@@ -540,10 +623,16 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
                     }
                 )
                 placed.append(texts[stray].id)
-                notes.append(f"Moved your text {_quoted(literal)} onto its clip")
+                notes.append(
+                    say(
+                        en="Moved your text {text} onto its clip",
+                        tr="{text} yazını kendi klibine taşıdım",
+                        text=_quoted(literal),
+                    )
+                )
             elif label is not None:
                 texts[label] = texts[label].model_copy(update={"text": literal, "text_case": None})
-                notes.append(f"Added your text {_quoted(literal)} on its clip")
+                notes.append(_added_on_clip_note(literal))
             else:
                 added += 1
                 texts.append(
@@ -559,7 +648,7 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
                     )
                 )
                 placed.append(texts[-1].id)
-                notes.append(f"Added your text {_quoted(literal)} on its clip")
+                notes.append(_added_on_clip_note(literal))
         else:
             added += 1
             closing = requirement.role == "closing"
@@ -575,15 +664,24 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
                 y_frac=min(0.7, _TITLE_Y + _STACK_STEP_Y * (added if title else added - 1)),
             )
             texts.append(_place_added_contract_text(current, element))
-            notes.append(f"Added your text {_quoted(literal)} on screen")
+            notes.append(
+                say(
+                    en="Added your text {text} on screen",
+                    tr="{text} yazını ekrana ekledim",
+                    text=_quoted(literal),
+                )
+            )
+            notes.extend(_shrunk_notes(element, texts[-1], recoveries))
         current = current.model_copy(update={"text_elements": texts})
     for done, element_id in enumerate(placed):
         index = next(i for i, e in enumerate(texts) if e.id == element_id)
         waiting = set(placed[done:])
         others = [e for e in texts if e.id not in waiting]
+        before = texts[index]
         texts[index] = _place_added_contract_text(
-            current.model_copy(update={"text_elements": others}), texts[index]
+            current.model_copy(update={"text_elements": others}), before
         )
+        notes.extend(_shrunk_notes(before, texts[index], recoveries))
     current = current.model_copy(update={"text_elements": list(texts)})
     linked = _link_clip_texts(current, contract, frame_s)
     if not notes and linked is current:
@@ -631,21 +729,36 @@ def compile_phone_guided_repaired(  # noqa: ANN001
 
     ``contract`` (the job's pinned ``CreatorRenderContract``, when it has one) first puts
     back any confirmed exact text the plan lost (``repair_plan_for_contract``). ``kwargs``
-    go to ``compile_phone_guided_plan`` verbatim. Raises the compile / validation error
-    unchanged when it is not repairable (or a repair did not help).
+    go to ``compile_phone_guided_plan`` verbatim. A reject no repair fixes may degrade the
+    one row it names (``phone_plan_degrade``). Raises the compile / validation error
+    unchanged when neither helps, or when the passes run out.
+
+    Every pass either raises or tries a reject it has not tried before. Repairs are capped
+    at ``_MAX_REPAIR_PASSES``; a degrade is keyed on its reason and row, so the plan's rows
+    times the reject reasons bound the passes and a stubborn plan always ends in its typed
+    error. Any number of rows may degrade: each is noted (rule KRI-129).
     """
     allow_editor_media = bool(kwargs.get("allow_editor_media", False))
-    current, contract_notes = repair_plan_for_contract(plan, contract)
+    shrunk: list[phone_plan_degrade.Recovery] = []
+    current, contract_notes = repair_plan_for_contract(plan, contract, recoveries=shrunk)
     if contract_notes:
         log.info("phone_plan_contract_repaired", notes=contract_notes)
     notes: list[str] = list(contract_notes)
     attempted: set[str] = set()
-    for _ in range(_MAX_REPAIR_PASSES + 1):
+    repairs = 0
+    degraded: list[phone_plan_degrade.Recovery] = []
+    while True:
         try:
             # Looked up on the module at call time so a patched compiler is honoured.
             recipe = phone_guided_plan.compile_phone_guided_plan(current, bindings, **kwargs)
             validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
-            return RepairedCompile(recipe, notes, current)
+            degrade_notes = phone_plan_degrade.degrade_notes(degraded)
+            return RepairedCompile(
+                recipe,
+                [*notes, *(note for note in degrade_notes if note not in notes)],
+                current,
+                (*shrunk, *degraded),
+            )
         except (UnsupportedPhonePlan, ValueError) as exc:
             # Keyed on the reject's payload, not just its type: a second pass may
             # legitimately hit the same exception class for a different cause.
@@ -653,6 +766,7 @@ def compile_phone_guided_repaired(  # noqa: ANN001
                 (
                     type(exc).__name__,
                     getattr(exc, "reason", None),
+                    getattr(exc, "item_id", None),
                     sorted(getattr(exc, "font_files", ())),
                     sorted(getattr(exc, "effects", ())),
                 )
@@ -660,13 +774,20 @@ def compile_phone_guided_repaired(  # noqa: ANN001
             if kind in attempted:
                 raise
             attempted.add(kind)
-            repaired, repair_notes = repair_plan_for_phone(current, exc)
-            if not repair_notes:
+            if repairs < _MAX_REPAIR_PASSES:
+                repaired, repair_notes = repair_plan_for_phone(current, exc)
+                if repair_notes:
+                    repairs += 1
+                    log.info("phone_plan_repaired", error=str(exc), notes=repair_notes)
+                    current = repaired
+                    notes.extend(note for note in repair_notes if note not in notes)
+                    continue
+            repaired, recoveries = phone_plan_degrade.degrade_plan_for_phone(current, exc)
+            if not recoveries:
                 raise
-            log.info("phone_plan_repaired", error=str(exc), notes=repair_notes)
+            log.info("phone_plan_degraded", error=str(exc), recoveries=recoveries)
             current = repaired
-            notes.extend(note for note in repair_notes if note not in notes)
-    raise AssertionError("unreachable")  # pragma: no cover
+            degraded.extend(recoveries)
 
 
 def compile_phone_guided_with_repairs(plan, bindings, **kwargs: Any) -> tuple[Any, list[str]]:  # noqa: ANN001
@@ -751,11 +872,14 @@ def validate_proposal_phone_compiles(snapshot, assignments, **compile_kwargs: An
     """Dry-run the phone compiler over a freshly planned proposal (KRI-286).
 
     compile_execution_plan -> bind_phone_sources -> compile_phone_guided_plan ->
-    validate_phone_pilot_recipe, with the deterministic repairs applied. Returns
-    the repair notes (``[]`` when the plan is already expressible, or when it
-    cannot be dry-run: the dispatch gate stays the authority there). Raises
-    ``PhoneProposalRejected`` for a plan the phone cannot render and no repair
-    fixes; the caller falls back to the deterministic plan. This is an advisory
+    validate_phone_pilot_recipe, with the deterministic repairs and degrades applied.
+    Returns their notes (``[]`` when the plan is already expressible, or when it
+    cannot be dry-run: the dispatch gate stays the authority there). A row the
+    worker would degrade (a look, a zoom, a transition after the last clip) is a
+    note here too, so the creator approves the model's draft with that note on the
+    card instead of the deterministic fallback (KRI-1376). Raises
+    ``PhoneProposalRejected`` for a plan the phone cannot render and neither a
+    repair nor a degrade fixes; the caller falls back to the deterministic plan. This is an advisory
     planning-time check: ONLY ``PhoneProposalRejected`` ever escapes; an
     unverified device capability (a rollout decision the dispatch gate and the
     worker own) and any unexpected error are logged and return ``[]``.
@@ -763,9 +887,9 @@ def validate_proposal_phone_compiles(snapshot, assignments, **compile_kwargs: An
     ``compile_kwargs`` (e.g. ``landscape_fit``) go to ``compile_phone_guided_plan``
     verbatim so the dry run matches the worker's call.
 
-    The repairs are NOT persisted on the proposal: approval recompiles from the
-    snapshot and the worker re-applies the same deterministic repairs
-    (``compile_phone_guided_with_repairs``). The notes just tell the creator.
+    The repairs and degrades are NOT persisted on the proposal: approval recompiles
+    from the snapshot and the worker re-applies the same deterministic ones
+    (``compile_phone_guided_repaired``). The notes just tell the creator.
     """
     try:
         return _validate_proposal_phone_compiles(snapshot, assignments, compile_kwargs)

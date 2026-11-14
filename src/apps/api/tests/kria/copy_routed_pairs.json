@@ -637,6 +637,166 @@
    "{shape} kurgusu için müzik gerekiyor; normal bir montaj yaptım."
   ],
   [
+   "app/pipeline/phone_plan_degrade.py",
+   "Ended your video on a cut instead of a transition",
+   "Videonu geçiş yerine düz bir kesmeyle bitirdim"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Left out the captions: your iPhone can't draw them yet",
+   "Altyazıları çıkardım: iPhone'un onları henüz çizemiyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Made your text {text} smaller so it fits clearly on screen",
+   "{text} yazını ekrana net sığsın diye küçülttüm"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed the text {text} with a simple fade-in: your iPhone can't play its animation yet",
+   "{text} yazısını basit bir belirmeyle gösterdim: iPhone'un animasyonunu henüz oynatamıyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed {count} texts with a simple fade-in: your iPhone can't play their animations yet",
+   "{count} yazıyı basit bir belirmeyle gösterdim: iPhone'un animasyonlarını henüz oynatamıyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "Showed {which} without {lost}: your iPhone can't draw that yet",
+   "{which} {lost} olmadan gösterdim: iPhone'un bunu henüz çizemiyor"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "card layout",
+   "kart yerleşimi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "clip {n}",
+   "{n}. klibi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "clips {n}",
+   "{n}. klipleri"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "color adjustments",
+   "renk ayarları"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "crop",
+   "kırpma"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "freeze effect",
+   "donma efekti"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "its {parts}",
+   "{parts}"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "look",
+   "görünüm"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "photo {n}",
+   "{n}. fotoğrafı"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "photos {n}",
+   "{n}. fotoğrafları"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "speed change",
+   "hız değişikliği"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "their {parts}",
+   "{parts}"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "zoom",
+   "yakınlaştırma"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{count} clips",
+   "{count} klibi"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{count} photos",
+   "{count} fotoğrafı"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
+   "{rest} and {last}",
+   "{rest} ve {last}"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Made your text {text} smaller so it fits clearly next to the other text",
+   "{text} yazını diğer yazıların yanına net sığsın diye küçülttüm"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Added your text {text} on its clip",
+   "{text} yazını kendi klibine ekledim"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Added your text {text} on screen",
+   "{text} yazını ekrana ekledim"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Changed a text font to {font} so it renders on your iPhone",
+   "Bir yazının yazı tipini iPhone'unda görünsün diye {font} yaptım"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Ended a text that ran past the end of your video with the video",
+   "Videonun sonunu aşan bir yazıyı videoyla birlikte bitirdim"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Kept your text {text} on screen longer",
+   "{text} yazını ekranda daha uzun tuttum"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Left out a text that started after your video ends",
+   "Videon bittikten sonra başlayan bir yazıyı çıkardım"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Moved your text {text} onto its clip",
+   "{text} yazını kendi klibine taşıdım"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Swapped a text animation your iPhone can't play yet for a simple fade-in",
+   "iPhone'unun henüz oynatamadığı bir yazı animasyonunu basit bir belirmeyle değiştirdim"
+  ],
+  [
+   "app/pipeline/phone_plan_repair.py",
+   "Used your title {text} exactly as you wrote it",
+   "{text} başlığını tam yazdığın gibi kullandım"
+  ],
+  [
    "app/routes/creation_threads.py",
    "Kria is rendering your video ({phase}). I’ll update this chat when it’s ready.",
    "Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım."

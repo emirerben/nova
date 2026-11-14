@@ -92,7 +92,15 @@ def resolve_legacy_glyphs(font: skia.Font, text: str, spacing_px: float) -> list
 
 
 class UnsupportedPortableText(ValueError):
-    """The caller must keep the recipe gated instead of dropping a treatment."""
+    """The caller must keep the recipe gated instead of dropping a treatment.
+
+    ``reason`` is ``"text_effect"`` when the text's animation alone is what the phone cannot
+    draw, so a plain fade-in of the same words would compile (``phone_plan_degrade``).
+    """
+
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 def phone_script_face_allowed(registry_name: str | None) -> bool:
@@ -348,7 +356,9 @@ def _compile_text_overlay_unbent(
         "staggered-slice",
         "handwriting",
     }:
-        raise UnsupportedPortableText("giant title is unsupported for this text painter")
+        raise UnsupportedPortableText(
+            "giant title is unsupported for this text painter", reason="text_effect"
+        )
     layer, font = _compile_text_overlay(
         {**overlay, "theme_transition": None},
         layer_id=layer_id,
@@ -421,7 +431,7 @@ def _compile_text_overlay(
         "karaoke-line",
         "lyric-line",
     }:
-        raise UnsupportedPortableText(f"unsupported text effect: {effect}")
+        raise UnsupportedPortableText(f"unsupported text effect: {effect}", reason="text_effect")
     if effect == "dissolve-out" and dissolve_seed is None:
         raise UnsupportedPortableText("dissolve requires its cloud overlay-index seed")
     # These fields invoke specialized drawing or timing outside the base line
@@ -700,7 +710,7 @@ def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion
         line_spacing=cloud.resolve_line_spacing(overlay.get("line_spacing")),
     )
     if not layout.strokes:
-        raise UnsupportedPortableText("handwriting has no drawable pen paths")
+        raise UnsupportedPortableText("handwriting has no drawable pen paths", reason="text_effect")
     cx, cy = cloud._resolve_anchor(overlay, canvas)
     anchor = cloud._resolve_text_anchor(overlay)
     top = cloud._vertical_block_top(
@@ -756,7 +766,9 @@ def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset,
 
     if needs_text_shaping(text):
         # One positioned glyph per letter cannot join Arabic or order it right to left.
-        raise UnsupportedPortableText("staggered slice cannot animate right-to-left text")
+        raise UnsupportedPortableText(
+            "staggered slice cannot animate right-to-left text", reason="text_effect"
+        )
 
     max_width = cloud._overlay_max_width_px(overlay, canvas)
     rows = [

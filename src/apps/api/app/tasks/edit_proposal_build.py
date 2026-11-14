@@ -238,6 +238,34 @@ def _locked_item(
     return item, plan.user_id
 
 
+def _chat_reply_language(item_id: uuid.UUID, owner_id: uuid.UUID | None) -> str | None:
+    """The language of the chat working on this item (KRI-520), so the phone notes this task
+    puts on the approval card read like the ones the render worker writes. None (English)
+    when no chat has told one, or the read fails."""
+    from app.kria.reply_language import thread_reply_language  # noqa: PLC0415
+
+    try:
+        with sync_session() as db:
+            thread = next(
+                iter(
+                    db.execute(
+                        select(CreationThread)
+                        .where(
+                            CreationThread.active_plan_item_id == item_id,
+                            CreationThread.creator_id == owner_id,
+                        )
+                        .order_by(CreationThread.updated_at.desc())
+                        .limit(1)
+                    ).scalars()
+                ),
+                None,
+            )
+            return thread_reply_language(thread) if thread is not None else None
+    except Exception:  # noqa: BLE001 - a missing language only means English notes
+        log.warning("edit_proposal.chat_language_failed", item_id=str(item_id), exc_info=True)
+        return None
+
+
 def _creator_dispatch_context_for_guided_attempt(
     db,
     *,
@@ -2443,6 +2471,7 @@ def _run_draft_attempt(
             )
             return snapshot
 
+        from app.kria.reply_language import reply_language_for  # noqa: PLC0415
         from app.pipeline.guided_story import (  # noqa: PLC0415
             GuidedStoryError,
             validate_proposal_compiles,
@@ -2477,14 +2506,19 @@ def _run_draft_attempt(
             native_device_only=native_device_only,
         )
         phone_repair_notes: list[str] = []
+        chat_language = _chat_reply_language(iid, owner_id) if phone_destination else None
+
+        def _phone_notes(candidate: EditProposalSnapshot) -> list[str]:
+            with reply_language_for(chat_language):
+                return validate_proposal_phone_compiles(
+                    candidate, analyzed_assignments or assignments
+                )
 
         def _advisory_phone_notes(candidate: EditProposalSnapshot) -> list[str]:
             # The deterministic fallback is already the last resort: surface what the
             # phone would still repair, but never block it on a phone-only reject.
             try:
-                return validate_proposal_phone_compiles(
-                    candidate, analyzed_assignments or assignments
-                )
+                return _phone_notes(candidate)
             except PhoneProposalRejected as phone_exc:
                 log.warning(
                     "edit_proposal.fallback_phone_dry_run_rejected",
@@ -2503,9 +2537,7 @@ def _run_draft_attempt(
             else:
                 validate_proposal_compiles(snapshot)
                 if phone_destination:
-                    phone_repair_notes = validate_proposal_phone_compiles(
-                        snapshot, analyzed_assignments or assignments
-                    )
+                    phone_repair_notes = _phone_notes(snapshot)
         except (GuidedStoryError, PhoneProposalRejected) as exc:
             if (
                 output is None

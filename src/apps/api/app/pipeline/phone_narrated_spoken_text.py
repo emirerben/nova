@@ -114,6 +114,31 @@ def _place_clear_of_text(
     return placed, {"status": "clear_of_text", "face_protection": face_protection, **decision}
 
 
+def _place_or_shrink(
+    row: dict,
+    avoid: Sequence[Any],
+    *,
+    canvas: _Canvas,
+    face_regions: Sequence[NormalizedBox] | None,
+) -> tuple[dict | None, dict]:
+    """`_place_clear_of_text` at the row's own size, else at the largest smaller readable size
+    that has a clear spot (KRI-1376: the creator's words render smaller instead of the video
+    stopping to ask). ``placement["shrunk_from_px"]`` names the size the row had."""
+    from app.pipeline.phone_plan_degrade import shrink_sizes  # noqa: PLC0415
+
+    placed, placement = _place_clear_of_text(row, avoid, canvas=canvas, face_regions=face_regions)
+    if placed is not None:
+        return placed, placement
+    own, *smaller = shrink_sizes(row.get("size_px"))
+    for size in smaller:
+        placed, fitted = _place_clear_of_text(
+            {**row, "size_px": size}, avoid, canvas=canvas, face_regions=face_regions
+        )
+        if placed is not None:
+            return placed, {**fitted, "shrunk_from_px": own}
+    return None, placement
+
+
 def narrated_spoken_text_rows(
     asks: Sequence[SpokenTextAsk],
     *,
@@ -181,7 +206,7 @@ def narrated_spoken_text_rows(
                         {**entry, "status": "error", "error": "caption_boxes_failed"}
                     )
                     continue
-            placed, placement = _place_clear_of_text(
+            placed, placement = _place_or_shrink(
                 row, avoid, canvas=canvas, face_regions=face_regions
             )
             if placed is None:
