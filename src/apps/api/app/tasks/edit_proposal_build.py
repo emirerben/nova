@@ -2600,11 +2600,13 @@ def _run_draft_attempt(
             drops=text_drops,
         )
         if text_drops:
+            from app.kria.reply_language import reply_language_for  # noqa: PLC0415
             from app.services.creation_text_degrade import text_drop_notes  # noqa: PLC0415
 
-            # KRI-1376: the approval card names what the text pass left out. Its lines keep
-            # their room under the card's cap; older lines give way, never these.
-            notes = text_drop_notes(text_drops)[:6]
+            # KRI-1376: the approval card names what the text pass left out, in the chat's
+            # language. Its lines keep their room under the card's cap; older lines give way.
+            with reply_language_for(_chat_reply_language(iid, owner_id)):
+                notes = text_drop_notes(text_drops)[:6]
             earlier = [message for message in snapshot.adjustments if message not in notes]
             snapshot = snapshot.model_copy(
                 update={

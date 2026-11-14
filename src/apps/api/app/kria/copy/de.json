@@ -2108,6 +2108,8 @@
     "I couldn't do {text}, so the video shows the rest of your text": "{text} konnte ich nicht umsetzen, das Video zeigt den Rest deines Textes",
     "Left out one text change I couldn't make": "Eine Textänderung, die ich nicht umsetzen konnte, habe ich weggelassen",
     "Left out {count} text changes I couldn't make fit": "{count} Textänderungen, die ich nicht unterbringen konnte, habe ich weggelassen",
-    "Left out {count} explanations that didn't fit their part of the video": "{count} Erklärungen, die nicht in ihren Teil des Videos passten, habe ich weggelassen"
+    "Left out {count} explanations that didn't fit their part of the video": "{count} Erklärungen, die nicht in ihren Teil des Videos passten, habe ich weggelassen",
+    "I couldn't add {text} the way you asked": "Ich konnte {text} nicht so hinzufügen, wie du es wolltest",
+    "I couldn't size {text} exactly as you asked": "Ich konnte {text} nicht genau in der gewünschten Größe einstellen"
   }
 }
