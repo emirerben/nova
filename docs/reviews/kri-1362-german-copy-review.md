@@ -50,7 +50,9 @@
 | Your voiceover | Dein Voiceover |
 | No music | Keine Musik |
 
-## Needs a code change for German grammar (125 lines)
+## Needs a code change for German grammar (125 lines) — fixed by KRI-1408
+
+**Fixed in code by KRI-1408 (2026-11-14); see "Added or changed by KRI-1408" at the end for the German that replaced these.**
 
 In these lines the code puts English words, English plural endings or English grammar into a `{...}` value, so the German can't come out right whatever the translation says: the creator will see English bits or odd grammar. Each needs a follow-up code change (pass a translated value or split the sentence per language). The German drafts are the best possible meanwhile.
 
@@ -1938,3 +1940,652 @@ These English keys have different Turkish wordings in different places (`conflic
 | Your clips follow your voice, so once the video is made I'll check what's on screen when you say those words | Deine Clips folgen deiner Stimme. Sobald das Video fertig ist, prüfe ich, was auf dem Bildschirm zu sehen ist, wenn du diese Worte sagst | Klipler sesini takip ediyor, video hazır olunca o sözleri söylediğinde ekranda ne olduğunu kontrol edeceğim | |
 | When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s) | Wenn du {v1} sagst, ist Clip {v2} von {len_steps} im Bild ({step_start_s:.1f}–{step_end_s:.1f} s) | {v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn) | |
 | I couldn't tell which clip is on screen when you say {v1} | Ich konnte nicht erkennen, welcher Clip im Bild ist, wenn du {v1} sagst | {v1} dediğinde ekranda hangi klibin olduğunu anlayamadım | |
+
+## Added or changed by KRI-1408 (2026-11-14, needs German review)
+
+KRI-1408 fixed the 125 lines above in code (Emir's 1B): every `{...}` value is now German text or creator data, and sentences that had English grammar bits are split into one whole sentence per case. `tests/kria/test_german_reply_values.py` fails on any new English value. Those 125 rows are kept above for history; their keys changed and the lines below replace them.
+
+### New lines (621)
+
+| English key | German draft |
+|---|---|
+| "{other}" for {name} | "{other}" statt {name} |
+| "{trigger}" at {at_s:.1f} s | "{trigger}" bei {at_s:.1f} s |
+| ; one photo or video sits over it | ; darüber liegt ein Foto oder Video |
+| ; you're {corner} | ; du bist {corner} |
+| ; {shown} photos or videos take turns over it | ; darüber wechseln sich {shown} Fotos oder Videos ab |
+| A plain {label} background sits behind you for the whole video | Ein einfarbiger Hintergrund in {label} ist das ganze Video über hinter dir |
+| Add longer footage | Längeres Material hinzufügen |
+| Added a Echo Stack animation to {who} | {who}: Animation „Echo Stack“ hinzugefügt |
+| Added a Elastic Condensed animation to {who} | {who}: Animation „Elastic Condensed“ hinzugefügt |
+| Added a Focus Pull animation to {who} | {who}: Animation „Focus Pull“ hinzugefügt |
+| Added a Ribbon Wipe animation to {who} | {who}: Animation „Ribbon Wipe“ hinzugefügt |
+| Added a Silk Reveal animation to {who} | {who}: Animation „Silk Reveal“ hinzugefügt |
+| Added a Word Relay animation to {who} | {who}: Animation „Word Relay“ hinzugefügt |
+| Added a fade-in animation to {who} | {who}: Einblende-Animation hinzugefügt |
+| Added a pop-in animation to {who} | {who}: Pop-in-Animation hinzugefügt |
+| Added a slide-in animation to {who} | {who}: Slide-in-Animation hinzugefügt |
+| Added a typewriter animation to {who} | {who}: Schreibmaschinen-Animation hinzugefügt |
+| Added an animation to {who} | {who}: Animation hinzugefügt |
+| Added the filming hour to {count} clip. | Aufnahmezeit zu {count} Clip hinzugefügt. |
+| Added the filming hour to {count} clips. | Aufnahmezeit zu {count} Clips hinzugefügt. |
+| Aligned {who} to the bottom | {who} unten ausgerichtet |
+| Aligned {who} to the center | {who} zentriert |
+| Aligned {who} to the left | {who} linksbündig ausgerichtet |
+| Aligned {who} to the middle | {who} mittig ausgerichtet |
+| Aligned {who} to the right | {who} rechtsbündig ausgerichtet |
+| Aligned {who} to the top | {who} oben ausgerichtet |
+| Arabic | Arabisch |
+| Balanced pacing | Tempo: Ausgewogen |
+| Bend | Biegung |
+| Black-and-white moments, flashes and the end fade are not available here yet. | Schwarz-Weiß-Momente, Blitze und das Ausblenden am Ende gibt es hier noch nicht. |
+| Captions are {looks}. | Die Untertitel sind {looks}. |
+| Captions are {looks}; they cover a face in places, as you asked. | Die Untertitel sind {looks}; sie verdecken wie gewünscht stellenweise ein Gesicht. |
+| Captions are {looks}; they sit over you in the corner, as you asked. | Die Untertitel sind {looks}; sie liegen wie gewünscht über dir in der Ecke. |
+| Captions are {looks}; they sit over you in the corner, as you asked; they cover a face in places, as you asked. | Die Untertitel sind {looks}; sie liegen wie gewünscht über dir in der Ecke; sie verdecken wie gewünscht stellenweise ein Gesicht. |
+| Captions on this video can't animate yet. | Die Untertitel in diesem Video lassen sich noch nicht animieren. |
+| Changed the background behind {who}: {behind} | {who}: Hintergrund geändert ({behind}) |
+| Changed the {label} of {who} | {who}: {label} geändert |
+| Changed {who} | {who} geändert |
+| Choose fewer clips | Weniger Clips auswählen |
+| Clip sound off | Clip-Ton aus |
+| Clip sound off: {where} | Clip-Ton aus: {where} |
+| Clip sound on | Clip-Ton an |
+| Clip sound on: {where} | Clip-Ton an: {where} |
+| Clip {names} doesn't look like "{words}" from what I saw, so I didn't put that wording on it. Tell me what it is, or ask me to describe what I see. | Clip {names} sieht nach dem, was ich gesehen habe, nicht nach "{words}" aus, deshalb habe ich diesen Text nicht daraufgesetzt. Sag mir, was zu sehen ist, oder bitte mich zu beschreiben, was ich sehe. |
+| Clip {n} | Clip {n} |
+| Clip {which} can't be in this edit. | Clip {which} kann nicht in diesem Edit sein. |
+| Clips {head} and {last} | Clips {head} und {last} |
+| Clips {names} don't look like "{words}" from what I saw, so I didn't put that wording on them. Tell me what they are, or ask me to describe what I see. | Die Clips {names} sehen nach dem, was ich gesehen habe, nicht nach "{words}" aus, deshalb habe ich diesen Text nicht daraufgesetzt. Sag mir, was zu sehen ist, oder bitte mich zu beschreiben, was ich sehe. |
+| Clips {which} can't be in this edit. | Die Clips {which} können nicht in diesem Edit sein. |
+| Couldn't aim or zoom a plain colour: only photos and videos can be aimed | Konnte eine einfarbige Fläche nicht ausrichten oder zoomen: nur Fotos und Videos lassen sich ausrichten |
+| Couldn't aim or zoom the recordings: it isn't available right now | Konnte die Aufnahmen nicht ausrichten oder zoomen: das geht gerade nicht |
+| Couldn't change the backgrounds behind you over time: it isn't available right now | Konnte die Hintergründe hinter dir nicht im Verlauf ändern: das geht gerade nicht |
+| Couldn't place that generated image: it isn't available right now | Konnte das erzeugte Bild nicht platzieren: das geht gerade nicht |
+| Couldn't place that generated image: it isn't in this video's Visuals | Konnte das erzeugte Bild nicht platzieren: es ist nicht in den Visuals dieses Videos |
+| Couldn't put a colour behind you: it isn't available right now | Konnte keine Farbe hinter dich legen: das geht gerade nicht |
+| Couldn't put a photo or video behind a clip: it isn't available right now | Konnte kein Foto oder Video hinter einen Clip legen: das geht gerade nicht |
+| Couldn't put a photo or video behind you on this edit | Konnte in diesem Edit kein Foto oder Video hinter dich legen |
+| Couldn't put a photo or video behind you: it isn't available right now | Konnte kein Foto oder Video hinter dich legen: das geht gerade nicht |
+| Couldn't read that photo or video | Konnte das Foto oder Video nicht lesen |
+| Couldn't start you full screen: it isn't available right now | Konnte dich nicht im Vollbild starten: das geht gerade nicht |
+| Couldn't use that colour as your background | Konnte diese Farbe nicht als deinen Hintergrund nehmen |
+| Couldn't use that photo or video as your background | Konnte dieses Foto oder Video nicht als deinen Hintergrund nehmen |
+| Couldn't use that photo or video behind a clip: it isn't in this video's Visuals | Konnte dieses Foto oder Video nicht hinter einem Clip nutzen: es ist nicht in den Visuals dieses Videos |
+| Couldn't use that photo or video: it isn't in this video's Visuals | Konnte dieses Foto oder Video nicht nutzen: es ist nicht in den Visuals dieses Videos |
+| Couldn't use that start point: it's outside the video | Konnte diesen Startpunkt nicht nutzen: er liegt außerhalb des Videos |
+| Couldn't use those background times: they overlap or are too short | Konnte diese Hintergrund-Zeiten nicht nutzen: sie überschneiden sich oder sind zu kurz |
+| Couldn't use those full-screen times: they overlap, are too short or run past the end | Konnte diese Vollbild-Zeiten nicht nutzen: sie überschneiden sich, sind zu kurz oder gehen über das Ende hinaus |
+| Danish | Dänisch |
+| Day Vlog format | Format: Tages-Vlog |
+| Don't cut it | Nicht schneiden |
+| Dutch | Niederländisch |
+| Each group plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Gruppe läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. |
+| Each sport plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Sportart läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. |
+| Each {noun} plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them. | Jede Gruppe ({noun}) läuft als ein Block; die Blöcke beginnen in der Reihenfolge, in der sie zuerst vorkommen, und die Clips in einem Block behalten die Reihenfolge, in der du sie gefilmt hast. |
+| Early in it ({seconds}s) | Eher am Anfang ({seconds} s) |
+| English | Englisch |
+| Every video clip | Jeder Videoclip |
+| Fast pacing | Tempo: Schnell |
+| Filming hour on {len_timed} of {total} clips; {missing} has no filming time. | Aufnahmezeit bei {len_timed} von {total} Clips; {missing} hat keine Aufnahmezeit. |
+| Filming hour on {len_timed} of {total} clips; {missing} have no filming time. | Aufnahmezeit bei {len_timed} von {total} Clips; {missing} haben keine Aufnahmezeit. |
+| For the {genre} song you asked for, I suggest {song}. Add it when you post. | Für den gewünschten {genre}-Song schlage ich {song} vor. Füg ihn beim Posten hinzu. |
+| Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds at least {seconds}s | Hält das Bild {seconds} s an, {where}, nicht die gewünschten {requested:g} s: Ein Standbild dauert mindestens {seconds} s |
+| Freezes the frame for {seconds}s {where}, not the {requested:g}s you asked for: a freeze holds at most {seconds}s | Hält das Bild {seconds} s an, {where}, nicht die gewünschten {requested:g} s: Ein Standbild dauert höchstens {seconds} s |
+| Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it longer than {previous:g}s | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich es länger als {previous:g} s gemacht |
+| Freezes the frame for {seconds}s {where}; you didn't say how long, so I made it shorter than {previous:g}s | Hält das Bild {seconds} s an, {where}; du hast nicht gesagt, wie lange, deshalb habe ich es kürzer als {previous:g} s gemacht |
+| French | Französisch |
+| German | Deutsch |
+| Greek | Griechisch |
+| Group by group, chronological inside each group | Nach Gruppen sortieren, innerhalb jeder Gruppe chronologisch |
+| Group by sport, chronological inside each sport | Nach Sportart sortieren, innerhalb jeder Sportart chronologisch |
+| Group by {noun}, chronological inside each {noun} | Nach {noun} sortieren, innerhalb jeder Gruppe ({noun}) chronologisch |
+| How short should the clips be? | Wie kurz sollen die Clips sein? |
+| How short should the images be? | Wie kurz sollen die Bilder sein? |
+| How short should the videos be? | Wie kurz sollen die Videos sein? |
+| I can't add songs from the music library, so this video won't have the {genres} song you asked for. | Ich kann keine Songs aus der Musikbibliothek hinzufügen, deshalb hat dieses Video nicht den gewünschten Song im Stil {genres}. |
+| I can't add songs from the music library, so this video won't have the {genres} song you asked for. Upload your own song if you want one. | Ich kann keine Songs aus der Musikbibliothek hinzufügen, deshalb hat dieses Video nicht den gewünschten Song im Stil {genres}. Lade deinen eigenen Song hoch, wenn du einen willst. |
+| I can't confirm one of the requests you approved in this edit. | Einen der Wünsche, die du freigegeben hast, kann ich in diesem Edit nicht bestätigen. |
+| I can't cut a line out of a video made of several takes yet | ich kann aus einem Video aus mehreren Takes noch keinen Satz herausschneiden |
+| I can't make this video the length you asked for yet: {instead} | Ich kann dieses Video noch nicht in der gewünschten Länge erstellen: {instead} |
+| I can't put a plain colour behind you: a plain colour behind you isn't available right now. | Ich kann keine einfarbige Fläche hinter dich legen: Das ist gerade nicht verfügbar. |
+| I can't put a plain colour behind you: a plain colour behind you isn't ready on this iPhone app yet. | Ich kann keine einfarbige Fläche hinter dich legen: Diese iPhone-App ist dafür noch nicht bereit. |
+| I can't put a plain colour behind you: this version of the app can't show a plain colour behind you yet. | Ich kann keine einfarbige Fläche hinter dich legen: Diese App-Version kann das noch nicht anzeigen. |
+| I can't safely make this edit with the requests you approved. | Mit den Wünschen, die du freigegeben hast, kann ich diesen Edit nicht sicher erstellen. |
+| I can't tell yet which clip is the talking one | ich kann noch nicht sagen, welcher Clip der sprechende ist |
+| I can't use the day vlog story archetype on this video yet | Ich kann das Story-Muster „Tagesvlog“ in diesem Video noch nicht nutzen |
+| I can't use the single hero story archetype on this video yet | Ich kann das Story-Muster „ein Clip im Mittelpunkt“ in diesem Video noch nicht nutzen |
+| I could fit {planned} moment, not {count}. | Ich konnte {planned} Moment unterbringen, nicht {count}. |
+| I could fit {planned} moments, not {count}. | Ich konnte {planned} Momente unterbringen, nicht {count}. |
+| I couldn't find it in your take | ich habe ihn in deinem Take nicht gefunden |
+| I couldn't find the one you picked in your take | ich habe die Stelle, die du gewählt hast, in deinem Take nicht gefunden |
+| I couldn't find “{quote}” in what's said in your video. | Ich habe „{quote}“ nicht in dem gefunden, was in deinem Video gesagt wird. |
+| I couldn't finish that step, but your project and saved draft are safe. Try the request again. | Ich konnte diesen Schritt nicht abschließen, aber dein Projekt und dein gespeicherter Entwurf sind sicher. Versuch die Anfrage nochmal. |
+| I couldn't leave out {clips}, so it is still in the video. | Ich konnte {clips} nicht weglassen, deshalb ist er noch im Video. |
+| I couldn't leave out {clips}, so they are still in the video. | Ich konnte {clips} nicht weglassen, deshalb sind sie noch im Video. |
+| I couldn't order them by filming time: none of your clips carries a filming time. | Ich konnte sie nicht nach Aufnahmezeit ordnen: Keiner deiner Clips hat eine Aufnahmezeit. |
+| I couldn't order them by filming time: only one of your clips carries a filming time. | Ich konnte sie nicht nach Aufnahmezeit ordnen: Nur einer deiner Clips hat eine Aufnahmezeit. |
+| I couldn't safely shorten {over} pause (the longest is {longest_s} s), so it stays | Ich konnte {over} Pause nicht sicher kürzen (die längste dauert {longest_s} s), deshalb bleibt sie |
+| I couldn't safely shorten {over} pause, so it stays | Ich konnte {over} Pause nicht sicher kürzen, deshalb bleibt sie |
+| I couldn't safely shorten {over} pauses (the longest is {longest_s} s), so they stay | Ich konnte {over} Pausen nicht sicher kürzen (die längste dauert {longest_s} s), deshalb bleiben sie |
+| I couldn't safely shorten {over} pauses, so they stay | Ich konnte {over} Pausen nicht sicher kürzen, deshalb bleiben sie |
+| I couldn't suggest a {names} track this time. | Diesmal konnte ich keinen Song im Stil {names} vorschlagen. |
+| I couldn't suggest an {names} track this time. | Diesmal konnte ich keinen Song im Stil {names} vorschlagen. |
+| I cut this as a fast montage instead of a {label}: {why}. | Ich habe das als schnelle Montage statt als {label} geschnitten: {why}. |
+| I didn't caption clip {join_skipped}. | Zu Clip {join_skipped} habe ich keinen Text geschrieben. |
+| I didn't caption clips {join_skipped}. | Zu den Clips {join_skipped} habe ich keinen Text geschrieben. |
+| I don't have any {names} tracks. The closest I have is {song}. Add it when you post if you like it. | Ich habe keine Songs im Stil {names}. Am nächsten kommt {song}. Füg ihn beim Posten hinzu, wenn er dir gefällt. |
+| I found that moment ({start}–{end}s into the clip) but not the exact frame to hold, so it plays normally. Tell me the second to freeze on, like "freeze at {middle} seconds" | Ich habe diesen Moment gefunden ({start}–{end} s im Clip), aber nicht das genaue Bild zum Anhalten, deshalb läuft er normal. Sag mir die Sekunde für das Standbild, zum Beispiel "Standbild bei {middle} Sekunden" |
+| I found “{heard}” in your video, but not “{unheard}” after it. | Ich habe „{heard}“ in deinem Video gefunden, aber nicht „{unheard}“ danach. |
+| I found “{heard}” in your video, but not “{unheard}” after it. The transcript has “{said}” there. | Ich habe „{heard}“ in deinem Video gefunden, aber nicht „{unheard}“ danach. Im Transkript steht dort „{said}“. |
+| I found “{heard}” in your video, but not “{unheard}” before it. | Ich habe „{heard}“ in deinem Video gefunden, aber nicht „{unheard}“ davor. |
+| I found “{heard}” in your video, but not “{unheard}” before it. The transcript has “{said}” there. | Ich habe „{heard}“ in deinem Video gefunden, aber nicht „{unheard}“ davor. Im Transkript steht dort „{said}“. |
+| I haven't planned a full-screen start in your own take | Ich habe keinen Vollbild-Start in deinem eigenen Take geplant |
+| I left out clip {join_unseen}: I can't tell what it shows. Tell me and I'll add it. | Clip {join_unseen} habe ich weggelassen: Ich erkenne nicht, was er zeigt. Sag es mir, dann füge ich ihn hinzu. |
+| I left out clip {which}. | Ich habe Clip {which} weggelassen. |
+| I left out clips {join_unseen}: I can't tell what they show. Tell me and I'll add them. | Die Clips {join_unseen} habe ich weggelassen: Ich erkenne nicht, was sie zeigen. Sag es mir, dann füge ich sie hinzu. |
+| I left out clips {which}. | Ich habe die Clips {which} weggelassen. |
+| I left out {clips} because it is too short to use. | Ich habe {clips} weggelassen, weil er zu kurz ist. |
+| I left out {clips} because they are too short to use. | Ich habe {clips} weggelassen, weil sie zu kurz sind. |
+| I matched {by_lyrics} take by your singing. | Ich habe {by_lyrics} Take anhand deines Gesangs zugeordnet. |
+| I matched {by_lyrics} takes by your singing. | Ich habe {by_lyrics} Takes anhand deines Gesangs zugeordnet. |
+| I moved your text just above your face so it doesn't cover it | Ich habe deinen Text direkt über dein Gesicht verschoben, damit er es nicht verdeckt |
+| I moved your text just below your face so it doesn't cover it | Ich habe deinen Text direkt unter dein Gesicht verschoben, damit er es nicht verdeckt |
+| I prepared {count} reversible editor change. | Ich habe {count} Änderung im Editor vorbereitet, die du rückgängig machen kannst. |
+| I prepared {count} reversible editor changes. | Ich habe {count} Änderungen im Editor vorbereitet, die du rückgängig machen kannst. |
+| I ticked the first clip you filmed for "{label}". | Ich habe für "{label}" den Clip angehakt, den du zuerst gefilmt hast. |
+| I ticked the last clip you filmed for "{label}". | Ich habe für "{label}" den Clip angehakt, den du zuletzt gefilmt hast. |
+| I used all {len_used} clips, including the {len_short} short one | Ich habe alle {len_used} Clips verwendet, auch den {len_short} kurzen |
+| I used all {len_used} clips, including the {len_short} short ones | Ich habe alle {len_used} Clips verwendet, auch die {len_short} kurzen |
+| I used {len_used} clips, including the {len_short} short one | Ich habe {len_used} Clips verwendet, darunter {len_short} kurzen |
+| I used {len_used} clips, including the {len_short} short ones | Ich habe {len_used} Clips verwendet, darunter {len_short} kurze |
+| I'll cut this as a fast montage instead of a {label}: {why} | Ich schneide das als schnelle Montage statt als {label}: {why} |
+| I'll keep your take from {at_start} on, if I find that line; if not, it opens at the start | Ich behalte deinen Take ab {at_start}, wenn ich diesen Satz finde; sonst beginnt das Video am Anfang |
+| I'll keep your take from {at_start} to right after {at_end}, if I find those lines | Ich behalte deinen Take von {at_start} bis kurz nach {at_end}, wenn ich diese Sätze finde |
+| I'll keep your take up to right after {at_end}, if I find that line; if not, it runs to the end | Ich behalte deinen Take bis kurz nach {at_end}, wenn ich diesen Satz finde; sonst läuft das Video bis zum Ende |
+| I'll show it on the {word} you picked, at {clock} in your take; if I can't find that one, it won't appear | Ich zeige den Text bei dem {word}, das du gewählt hast, bei {clock} in deinem Take; finde ich diese Stelle nicht, erscheint er nicht |
+| I'll spell {and_names_names} the way you wrote it and check it in the finished video | ich schreibe {and_names_names} so, wie du es geschrieben hast, und prüfe es im fertigen Video |
+| I'll spell {and_names_names} the way you wrote them and check them in the finished video | ich schreibe {and_names_names} so, wie du sie geschrieben hast, und prüfe sie im fertigen Video |
+| I'm using that clip's voice under the other clips. | Ich lege die Stimme aus diesem Clip unter die anderen Clips. |
+| Italian | Italienisch |
+| Keep "{text}" exactly as written | "{text}" genau so lassen, wie ich es geschrieben habe |
+| Keep it strictly chronological; groups may interleave | Streng chronologisch lassen; Gruppen dürfen sich mischen |
+| Keep it strictly chronological; sports may interleave | Streng chronologisch lassen; Sportarten dürfen sich mischen |
+| Keep it strictly chronological; {noun}s may interleave | Streng chronologisch lassen; Gruppen nach {noun} dürfen sich mischen |
+| Korean | Koreanisch |
+| Kria's AI service has reached its usage limit for now, so I couldn't work on this request. Your request, project and saved draft are safe. Trying again right away won't help; send it again later. | Krias KI-Dienst hat sein Nutzungslimit vorerst erreicht, deshalb konnte ich an dieser Anfrage nicht arbeiten. Deine Anfrage, dein Projekt und dein gespeicherter Entwurf sind sicher. Sofort nochmal versuchen hilft nicht; schick es später nochmal. |
+| Labelled {count} clip. | {count} Clip beschriftet. |
+| Labelled {count} clips. | {count} Clips beschriftet. |
+| Late in it ({seconds}s) | Eher am Ende ({seconds} s) |
+| Leave the text off | Text weglassen |
+| Lined up {who} on the center | {who} mittig ausgerichtet |
+| Lined up {who} on the left | {who} links ausgerichtet |
+| Lined up {who} on the right | {who} rechts ausgerichtet |
+| Made {who} bigger ({old:g}→{new:g}px) | {who} vergrößert ({old:g}→{new:g}px) |
+| Made {who} smaller ({old:g}→{new:g}px) | {who} verkleinert ({old:g}→{new:g}px) |
+| Middle ({seconds}s) | Mitte ({seconds} s) |
+| Montage format | Format: Montage |
+| Moved the captions to the bottom | Untertitel nach unten verschoben |
+| Moved the captions to the middle | Untertitel in die Mitte verschoben |
+| Moved the captions to the top | Untertitel nach oben verschoben |
+| Moved {who} to the bottom | {who} nach unten verschoben |
+| Moved {who} to the middle | {who} in die Mitte verschoben |
+| Moved {who} to the top | {who} nach oben verschoben |
+| Moved {who} to the {spot} | {who} verschoben ({spot}) |
+| Music | Musik |
+| Music volume | Musiklautstärke |
+| Muted {who} | {who} stummgeschaltet |
+| My answer was cut off before it was complete. Your request, footage and saved draft are safe. Ask for a smaller step, such as one change at a time, and I'll take it from there. | Meine Antwort wurde abgeschnitten, bevor sie fertig war. Deine Anfrage, dein Material und dein gespeicherter Entwurf sind sicher. Bitte um einen kleineren Schritt, zum Beispiel eine Änderung nach der anderen, dann mache ich von dort weiter. |
+| Narrated Planned format | Format: Narrated-Edit (geplant) |
+| Narrated Ready format | Format: Narrated-Edit (fertig) |
+| Narrated format | Format: Narrated-Edit |
+| No filming time for clip {join_untimed}. | Keine Aufnahmezeit für Clip {join_untimed}. |
+| No filming time for clip {number}. | Keine Aufnahmezeit für Clip {number}. |
+| No filming time for clips {join_untimed}. | Keine Aufnahmezeit für die Clips {join_untimed}. |
+| No filming time for clips {numbers}. | Keine Aufnahmezeit für die Clips {numbers}. |
+| None of the {total} clips got its own text in this draft. | In diesem Entwurf hat keiner der {total} Clips einen eigenen Text bekommen. |
+| On shot {shot} | Auf Einstellung {shot} |
+| Only clip {which} is in this edit and it runs about {possible:g} seconds, so the video can't be {wanted:g} seconds. | Nur Clip {which} ist in diesem Edit und dauert etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. |
+| Only clips {which} are in this edit and together they run about {possible:g} seconds, so the video can't be {wanted:g} seconds. | Nur die Clips {which} sind in diesem Edit und dauern zusammen etwa {possible:g} Sekunden, deshalb kann das Video nicht {wanted:g} Sekunden lang sein. |
+| Optional: move the {word} to the bottom so it's easier to read. | Optional: {word} nach unten verschieben, damit es leichter zu lesen ist. |
+| Optional: move the {word} to the middle so it's easier to read. | Optional: {word} in die Mitte verschieben, damit es leichter zu lesen ist. |
+| Optional: move the {word} to the top so it's easier to read. | Optional: {word} nach oben verschieben, damit es leichter zu lesen ist. |
+| Original sound | Originalton |
+| Pop-in on {item} | Einblendung bei {item} |
+| Pop-ins on {head} and {last} | Einblendungen bei {head} und {last} |
+| Pop-ins on {items} and {more} more | Einblendungen bei {items} und {more} weiteren |
+| Portuguese | Portugiesisch |
+| Relaxed pacing | Tempo: Ruhig |
+| Retime all {count} words in sequence over {end:g}s, keeping their wording and appearance. | Alle {count} Wörter nacheinander auf {end:g}s neu verteilen, Wortlaut und Aussehen bleiben gleich. |
+| Serbian | Serbisch |
+| Set the transition after {who} | {who}: Übergang danach geändert |
+| Set the transition after {who} to {kind} | {who}: Übergang danach → {kind} |
+| Set {who} to Title Case | {who} → Wörter Groß Am Anfang |
+| Set {who} to UPPERCASE | {who} → GROSSBUCHSTABEN |
+| Set {who} to a new case | {who} → neue Schreibweise |
+| Set {who} to its original case | {who} → ursprüngliche Schreibweise |
+| Set {who} to lowercase | {who} → kleinbuchstaben |
+| Single Hero format | Format: Ein Hauptclip |
+| Slides format | Format: Diashow |
+| Spanish | Spanisch |
+| Speech cleanup cut what it heard as {joined} ({seconds:.1f} s). | Die Sprachbereinigung hat geschnitten, was sie als {joined} gehört hat ({seconds:.1f} s). |
+| Speech cleanup cut what it heard as {joined}. | Die Sprachbereinigung hat geschnitten, was sie als {joined} gehört hat. |
+| Spread all {count} words in sequence across the video, keeping their wording and appearance. | Alle {count} Wörter nacheinander über das ganze Video verteilen, Wortlaut und Aussehen bleiben gleich. |
+| Subtitled format | Format: Untertitel-Edit |
+| Talking Head format | Format: Talking-Edit |
+| Tell me how you want the clips ordered, and I'll make a new draft. | Sag mir, in welcher Reihenfolge du die Clips willst, dann mache ich einen neuen Entwurf. |
+| Tell me which clip goes first or last, and I'll make a new draft. | Sag mir, welcher Clip an den Anfang oder ans Ende soll, dann mache ich einen neuen Entwurf. |
+| Tell me which clip that text goes on, and I'll make a new draft. | Sag mir, auf welchen Clip dieser Text soll, dann mache ich einen neuen Entwurf. |
+| Text landed on {count} of {total} clips. | Text ist auf {count} von {total} Clips gelandet. |
+| Text on {count} clips. | Text auf {count} Clips. |
+| That footage cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Material kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. |
+| That footage cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Material kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. |
+| That part can't make a {asked_s}-second edit without changing that line. | Mit diesem Teil kann ich keinen {asked_s}-Sekunden-Edit machen, ohne diesen Satz zu ändern. |
+| That part can't make a {asked_s}-second edit without changing those lines. | Mit diesem Teil kann ich keinen {asked_s}-Sekunden-Edit machen, ohne diese Sätze zu ändern. |
+| That part runs longer than {asked_s} seconds, and I can't shorten it without changing that line. | Dieser Teil ist länger als {asked_s} Sekunden, und ich kann ihn nicht kürzen, ohne diesen Satz zu ändern. |
+| That part runs longer than {asked_s} seconds, and I can't shorten it without changing those lines. | Dieser Teil ist länger als {asked_s} Sekunden, und ich kann ihn nicht kürzen, ohne diese Sätze zu ändern. |
+| That photo or video sits behind you for the whole video | Dieses Foto oder Video ist das ganze Video über hinter dir |
+| That song cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Song kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. |
+| That song cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Song kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. |
+| That spoken take cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem gesprochenen Take kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. |
+| That spoken take cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem gesprochenen Take kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. |
+| That voiceover with the selected footage cannot make a {asked_s}-second edit without changing the source timing. | Mit diesem Voiceover und dem ausgewählten Material kann ich keinen {asked_s}-Sekunden-Edit machen, ohne das Timing der Quelle zu ändern. |
+| That voiceover with the selected footage cannot make an edit of at most {asked_s} seconds without changing the source timing. | Mit diesem Voiceover und dem ausgewählten Material kann ich keinen Edit von höchstens {asked_s} Sekunden machen, ohne das Timing der Quelle zu ändern. |
+| The AI service ran out of time on that answer. Your choice, footage and saved draft are safe. Tap Try again. | Der KI-Dienst hat für diese Antwort zu lange gebraucht. Deine Auswahl, dein Material und dein gespeicherter Entwurf sind sicher. Tippe auf „Try again“. |
+| The AI service ran out of time on that one. Your request, footage and saved draft are safe. Send it again, or ask for one change at a time so each step is lighter. | Der KI-Dienst hat dafür zu lange gebraucht. Deine Anfrage, dein Material und dein gespeicherter Entwurf sind sicher. Schick es nochmal oder bitte um eine Änderung nach der anderen, damit jeder Schritt leichter wird. |
+| The balanced pacing isn't applied on this video yet: the cuts follow a fast pace | Das ausgewogene Tempo wird bei diesem Video noch nicht umgesetzt: die Schnitte folgen einem schnellen Tempo |
+| The balanced pacing isn't applied on this video yet: {instead} | Das ausgewogene Tempo wird bei diesem Video noch nicht umgesetzt: {instead} |
+| The captions show up to {drawn_words} words at a time, not one. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht nur eins. |
+| The captions show up to {drawn_words} words at a time, not three. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht drei. |
+| The captions show up to {drawn_words} words at a time, not two. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht zwei. |
+| The captions show up to {drawn_words} words at a time, not {n}. | Die Untertitel zeigen bis zu {drawn_words} Wörter auf einmal, nicht {n}. |
+| The captions sit higher than you asked so they stay off your face. | Die Untertitel sitzen höher als gewünscht, damit sie nicht über deinem Gesicht liegen. |
+| The captions sit lower than you asked so they stay off your face. | Die Untertitel sitzen tiefer als gewünscht, damit sie nicht über deinem Gesicht liegen. |
+| The captions won't be held to one words at a time. | Die Untertitel zeigen nicht nur ein Wort auf einmal. |
+| The captions won't be held to three words at a time. | Die Untertitel werden nicht auf drei Wörter auf einmal begrenzt. |
+| The captions won't be held to two words at a time. | Die Untertitel werden nicht auf zwei Wörter auf einmal begrenzt. |
+| The captions won't be held to {n} words at a time. | Die Untertitel werden nicht auf {n} Wörter auf einmal begrenzt. |
+| The captions write {written}. You can fix that in the editor. | In den Untertiteln steht {written}. Das kannst du im Editor korrigieren. |
+| The clips are already in chronological order. | Die Clips sind schon chronologisch geordnet. |
+| The clips are already in newest-first order. | Die Clips sind schon nach Neuestem zuerst geordnet. |
+| The fast montage direction isn't applied on this video yet: {instead} | Die Richtung „schnelle Montage“ wird bei diesem Video noch nicht umgesetzt: {instead} |
+| The fast pacing isn't applied on this video yet: {instead} | Das schnelle Tempo wird bei diesem Video noch nicht umgesetzt: {instead} |
+| The footage sound still plays at full volume alongside your voice; {fix} | Der Originalton läuft noch in voller Lautstärke neben deiner Stimme; {fix} |
+| The footage sound still plays softly under your voice (about {pct}%); {fix} | Der Originalton läuft noch leise unter deiner Stimme (etwa {pct} %); {fix} |
+| The footage sound still plays softly under your voice; {fix} | Der Originalton läuft noch leise unter deiner Stimme; {fix} |
+| The guided story direction isn't applied on this video yet: it is cut as a fast montage | Die Richtung „geführte Story“ wird bei diesem Video noch nicht umgesetzt: es wird als schnelle Montage geschnitten |
+| The guided story direction isn't applied on this video yet: {instead} | Die Richtung „geführte Story“ wird bei diesem Video noch nicht umgesetzt: {instead} |
+| The native direction isn't applied on this video yet: it is cut as a fast montage | Die Richtung „nativ“ wird bei diesem Video noch nicht umgesetzt: es wird als schnelle Montage geschnitten |
+| The native direction isn't applied on this video yet: {instead} | Die Richtung „nativ“ wird bei diesem Video noch nicht umgesetzt: {instead} |
+| The relaxed pacing isn't applied on this video yet: the cuts follow a fast pace | Das entspannte Tempo wird bei diesem Video noch nicht umgesetzt: die Schnitte folgen einem schnellen Tempo |
+| The relaxed pacing isn't applied on this video yet: {instead} | Das entspannte Tempo wird bei diesem Video noch nicht umgesetzt: {instead} |
+| The selected footage runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter footage. | Das ausgewählte Material dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm kürzeres Material. |
+| The selected footage runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Das ausgewählte Material dauert {natural_duration:g} Sekunden, kann ohne Wiederholungen aber nur {raw_duration:g} Sekunden liefern. Füg längeres Material hinzu. |
+| The selected song runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter song. | Der ausgewählte Song dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren Song. |
+| The selected song runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Der ausgewählte Song dauert {natural_duration:g} Sekunden, aber dein Material reicht ohne Wiederholungen nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. |
+| The selected take runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter take. | Der ausgewählte Take dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm einen kürzeren Take. |
+| The selected take runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Der ausgewählte Take dauert {natural_duration:g} Sekunden, aber dein Material reicht ohne Wiederholungen nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. |
+| The selected voiceover runs {natural_duration:g} seconds, but an edit can be at most {edit_cap:g} seconds. Use a shorter voiceover. | Das ausgewählte Voiceover dauert {natural_duration:g} Sekunden, aber ein Edit darf höchstens {edit_cap:g} Sekunden lang sein. Nimm ein kürzeres Voiceover. |
+| The selected voiceover runs {natural_duration:g} seconds, but the footage can provide only {raw_duration:g} seconds without reuse. Add longer footage. | Das ausgewählte Voiceover dauert {natural_duration:g} Sekunden, aber dein Material reicht ohne Wiederholungen nur für {raw_duration:g} Sekunden. Füg längeres Material hinzu. |
+| The text explainer direction isn't applied on this video yet: it is cut as a fast montage | Die Richtung „Text-Erklärvideo“ wird bei diesem Video noch nicht umgesetzt: es wird als schnelle Montage geschnitten |
+| The text explainer direction isn't applied on this video yet: {instead} | Die Richtung „Text-Erklärvideo“ wird bei diesem Video noch nicht umgesetzt: {instead} |
+| The video doesn't start full screen in your own take | Das Video startet nicht im Vollbild in deinem eigenen Take |
+| The video follows the footage without reuse or a silent extension. | Das Video folgt deinem Material, ohne Wiederholungen oder stumme Verlängerung. |
+| The video follows the song without reuse or a silent extension. | Das Video folgt dem Song, ohne Wiederholungen oder stumme Verlängerung. |
+| The video follows the spoken take without reuse or a silent extension. | Das Video folgt dem gesprochenen Take, ohne Wiederholungen oder stumme Verlängerung. |
+| The video has {len_lengths} moment, not {ask_count} | Das Video hat {len_lengths} Moment, nicht {ask_count} |
+| The video has {len_lengths} moments, not {ask_count} | Das Video hat {len_lengths} Momente, nicht {ask_count} |
+| The {words_value} direction isn't applied on this video yet: {instead} | Die Richtung {words_value} wird bei diesem Video noch nicht umgesetzt: {instead} |
+| The {words_value} pacing isn't applied on this video yet: {instead} | Das Tempo {words_value} wird bei diesem Video noch nicht umgesetzt: {instead} |
+| This day vlog edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Tagesvlog-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This draft is about {round_s_facts_duration_s}s{outro}; you asked for at most {asked}s. | Dieser Entwurf ist etwa {round_s_facts_duration_s} s{outro} lang; du wolltest höchstens {asked} s. |
+| This draft is about {round_s_facts_duration_s}s{outro}; you asked for {asked}s. | Dieser Entwurf ist etwa {round_s_facts_duration_s} s{outro} lang; du wolltest {asked} s. |
+| This draft is ordered by attachment order, not the order you asked for. | Dieser Entwurf ist in der Reihenfolge, in der du die Clips hinzugefügt hast, nicht in der gewünschten Reihenfolge. |
+| This draft is ordered by attachment, not the order you asked for. | Dieser Entwurf ist in der Reihenfolge, in der du die Clips hinzugefügt hast, nicht in der gewünschten Reihenfolge. |
+| This draft is ordered by confirmed, not the order you asked for. | Dieser Entwurf ist in der Reihenfolge, die du bestätigt hast, nicht in der gewünschten Reihenfolge. |
+| This draft is ordered by creator order, not the order you asked for. | Dieser Entwurf ist in der Reihenfolge, die du vorgegeben hast, nicht in der gewünschten Reihenfolge. |
+| This draft is ordered by editor, not the order you asked for. | Dieser Entwurf ist in der Reihenfolge aus dem Editor, nicht in der gewünschten Reihenfolge. |
+| This draft is ordered by route, not the order you asked for. | Dieser Entwurf ist nach der Route geordnet, nicht in der gewünschten Reihenfolge. |
+| This draft is ordered by song time, not the order you asked for. | Dieser Entwurf ist nach dem Ablauf des Songs geordnet, nicht in der gewünschten Reihenfolge. |
+| This kind of edit can't show "{closing_title}" at the end yet. Should I make everything else and leave that text out? | Diese Art von Edit kann "{closing_title}" am Ende noch nicht zeigen. Soll ich alles andere machen und diesen Text weglassen? |
+| This kind of edit can't show your own text on each shot or at the end yet. Should I make everything else and leave that text out? | Diese Art von Edit kann deinen eigenen Text auf jeder Einstellung oder am Ende noch nicht zeigen. Soll ich alles andere machen und diesen Text weglassen? |
+| This kind of edit can't show your own text on each shot yet. Should I make everything else and leave that text out? | Diese Art von Edit kann deinen eigenen Text auf jeder Einstellung noch nicht zeigen. Soll ich alles andere machen und diesen Text weglassen? |
+| This line belongs on shot {shot} of the draft. | Dieser Text gehört auf Einstellung {shot} des Entwurfs. |
+| This montage edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Montage-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This narrated edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Narrated-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This narrated planned edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Narrated-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This narrated ready edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Narrated-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This request stopped partway through several times in a row, so I stopped retrying it on my own. Your project and saved draft are safe. Send it again, or ask for one change at a time if it keeps happening. | Diese Anfrage ist mehrmals hintereinander mittendrin abgebrochen, deshalb versuche ich es nicht mehr von selbst. Dein Projekt und dein gespeicherter Entwurf sind sicher. Schick es nochmal oder bitte um eine Änderung nach der anderen, falls es weiter passiert. |
+| This single hero edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Single-Hero-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This slides edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Slides-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This subtitled edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Edit mit Untertiteln kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This talking head edit cuts your footage down; a Talking edit keeps the whole take. | Dieser Talking-Head-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take. |
+| This version leaves out the photo you asked for: "{ask}". | In dieser Version fehlt das Foto, das du dir gewünscht hast: "{ask}". |
+| This version leaves out the video you asked for: "{ask}". | In dieser Version fehlt das Video, das du dir gewünscht hast: "{ask}". |
+| Tilted {who} {amount} degrees left{rest} | {who} um {amount} Grad nach links gekippt{rest} |
+| Tilted {who} {amount} degrees right{rest} | {who} um {amount} Grad nach rechts gekippt{rest} |
+| Turkish | Türkisch |
+| Unmuted {who} | {who}: Ton wieder an |
+| Update the selected clips | Ausgewählte Clips aktualisieren |
+| Updated {sections}. | {sections} aktualisiert. |
+| Use a shorter voiceover | Ein kürzeres Voiceover verwenden |
+| Use a supported {capacity_s}-second window of the footage; the remaining source is left out. | Einen passenden {capacity_s}-Sekunden-Ausschnitt des Materials verwenden; der Rest fällt weg. |
+| Use a supported {capacity_s}-second window of the song; the remaining source is left out. | Einen passenden {capacity_s}-Sekunden-Ausschnitt des Songs verwenden; der Rest fällt weg. |
+| Use a supported {capacity_s}-second window of the spoken take; the remaining source is left out. | Einen passenden {capacity_s}-Sekunden-Ausschnitt des gesprochenen Takes verwenden; der Rest fällt weg. |
+| Use a supported {capacity_s}-second window of the voiceover with the selected footage; the remaining source is left out. | Einen passenden {capacity_s}-Sekunden-Ausschnitt des Voiceovers mit dem ausgewählten Material verwenden; der Rest fällt weg. |
+| Use the supported trim for this footage. | Den passenden Schnitt für dieses Material verwenden. |
+| Use the supported trim for this song. | Den passenden Schnitt für diesen Song verwenden. |
+| Use the supported trim for this spoken take. | Den passenden Schnitt für diesen gesprochenen Take verwenden. |
+| Use the supported trim for this voiceover with the selected footage. | Den passenden Schnitt für dieses Voiceover mit dem ausgewählten Material verwenden. |
+| Use {capacity_s} seconds of the recording and selected footage; the remaining recording is left out. | {capacity_s} Sekunden der Aufnahme und des ausgewählten Materials verwenden; der Rest der Aufnahme fällt weg. |
+| With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing that line. | Mit dem normalen Ende dauert dieser Teil {asked_s} Sekunden oder länger, und ich kann ihn nicht kürzen, ohne diesen Satz zu ändern. |
+| With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing those lines. | Mit dem normalen Ende dauert dieser Teil {asked_s} Sekunden oder länger, und ich kann ihn nicht kürzen, ohne diese Sätze zu ändern. |
+| You asked for a chronological video and for the clips grouped by group. | Du wolltest ein chronologisches Video und die Clips nach Gruppen sortiert. |
+| You asked for a chronological video and for the clips grouped by sport. | Du wolltest ein chronologisches Video und die Clips nach Sportart sortiert. |
+| You asked for a chronological video and for the clips grouped by {noun}. | Du wolltest ein chronologisches Video und die Clips nach {noun} sortiert. |
+| You asked me to freeze the frame on that moment. I found it in clip {number} ({span}s), but I can't tell the exact instant, and I won't guess it. | Du wolltest an diesem Moment ein Standbild. Ich habe ihn in Clip {number} gefunden ({span} s), kann aber den genauen Augenblick nicht erkennen und rate ihn nicht. |
+| You asked me to freeze the frame on that moment. I found it in your clip ({span}s), but I can't tell the exact instant, and I won't guess it. | Du wolltest an diesem Moment ein Standbild. Ich habe ihn in deinem Clip gefunden ({span} s), kann aber den genauen Augenblick nicht erkennen und rate ihn nicht. |
+| You asked me to freeze the frame on that moment. I found it in “{file_name}” ({span}s), but I can't tell the exact instant, and I won't guess it. | Du wolltest an diesem Moment ein Standbild. Ich habe ihn in „{file_name}“ gefunden ({span} s), kann aber den genauen Augenblick nicht erkennen und rate ihn nicht. |
+| You picked {clips} clip, so "{pin_text}" can't go on clip {pin_clip}. Which clip should it be on? | Du hast {clips} Clip ausgewählt, deshalb kann "{pin_text}" nicht auf Clip {pin_clip}. Auf welchen Clip soll es? |
+| You picked {clips} clips, so "{pin_text}" can't go on clip {pin_clip}. Which clip should it be on? | Du hast {clips} Clips ausgewählt, deshalb kann "{pin_text}" nicht auf Clip {pin_clip}. Auf welchen Clip soll es? |
+| You'll start full screen in your own room | Du startest im Vollbild in deinem eigenen Raum |
+| You're full screen in your own take for the first {seconds} s | In den ersten {seconds} s bist du in deinem eigenen Take im Vollbild |
+| You're {corner} from the start, not full screen first | Du bist von Anfang an {corner}, nicht zuerst im Vollbild |
+| You're {corner} over your background, so you don't fill the frame. | Du bist {corner} über deinem Hintergrund, deshalb füllst du das Bild nicht aus. |
+| Your brief says "{said}", but the available footage is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber das verfügbare Material ist {capacity_s} Sekunden lang. |
+| Your brief says "{said}", but the available song is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber der verfügbare Song ist {capacity_s} Sekunden lang. |
+| Your brief says "{said}", but the available spoken take is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber der verfügbare gesprochene Take ist {capacity_s} Sekunden lang. |
+| Your brief says "{said}", but the available voiceover with the selected footage is {capacity_s} seconds. | In deiner Anfrage steht "{said}", aber das verfügbare Voiceover mit dem ausgewählten Material ist {capacity_s} Sekunden lang. |
+| Your clips and photos have no filming time, so I can't put them in the order you filmed. | Deine Clips und Fotos haben keine Aufnahmezeit, deshalb kann ich nicht nach der Reihenfolge sortieren, in der du gefilmt hast. |
+| Your end line keeps about {kept_s} seconds of your take: from the start to right after {end}. | Dein Schlusssatz behält etwa {kept_s} Sekunden deines Takes: vom Anfang bis direkt nach {end}. |
+| Your start and end lines keep about {kept_s} seconds of your take: from {start} to right after {end}. | Dein Anfangs- und dein Schlusssatz behalten etwa {kept_s} Sekunden deines Takes: von {start} bis direkt nach {end}. |
+| Your start line keeps about {kept_s} seconds of your take: from {start} to the end. | Dein Anfangssatz behält etwa {kept_s} Sekunden deines Takes: von {start} bis zum Ende. |
+| Zoomed {who} to {zoom:g}x | {who} auf {zoom:g}x gezoomt |
+| a detail it needs was missing | eine nötige Angabe hat gefehlt |
+| a fast montage keeps its short cuts | eine schnelle Montage behält ihre kurzen Schnitte |
+| a slide post shows each slide for its own time | ein Slide-Post zeigt jede Folie so lange, wie sie selbst dauert |
+| a slide post shows your slides in order | ein Slide-Post zeigt deine Folien der Reihe nach |
+| a slide post's length follows its slides | die Länge eines Slide-Posts richtet sich nach seinen Folien |
+| and | und |
+| animation | Animation |
+| animation speed | Animationstempo |
+| at most {target}s | höchstens {target} s |
+| at the bottom | unten |
+| at the bottom left | unten links |
+| at the bottom right | unten rechts |
+| at the second you picked ({at}s into the clip) | bei der Sekunde, die du gewählt hast ({at} s im Clip) |
+| at the top | oben |
+| at the top left | oben links |
+| at the top right | oben rechts |
+| background | Hintergrund |
+| balanced | ausgewogenes Tempo |
+| behind-subject look | Look hinter der Person |
+| black | schwarz |
+| blue | blau |
+| blurred background | unscharfer Hintergrund |
+| caption {number} | Untertitel {number} |
+| clip {clip_number} | Clip {clip_number} |
+| clips {clip_numbers} and {last_clip} | Clips {clip_numbers} und {last_clip} |
+| colour | Farbe |
+| coloured {color} | in {color} |
+| cutting it out of your voiceover failed | das Herausschneiden aus deinem Voiceover ist fehlgeschlagen |
+| cutting it would leave too little video | ein Schnitt würde zu wenig Video übrig lassen |
+| day vlog | Tages-Vlog |
+| exit animation | Ausgangsanimation |
+| fast | schnelles Tempo |
+| focused | fokussiertes Tempo |
+| from {start} s | ab {start} s |
+| guided story | geführte Story |
+| highlight colour | Hervorhebungsfarbe |
+| in a black box | in einem schwarzen Kasten |
+| in a box | in einem Kasten |
+| in a grey box | in einem grauen Kasten |
+| in a light grey box | in einem hellgrauen Kasten |
+| in a white box | in einem weißen Kasten |
+| in the middle | in der Mitte |
+| it | es |
+| it goes together with a change I couldn't make | es gehört zu einer Änderung, die ich nicht machen konnte |
+| it is cut around the spoken lines | es wird um die gesprochenen Sätze herum geschnitten |
+| it is cut as a fast montage | es wird als schnelle Montage geschnitten |
+| it is cut as a montage under your voiceover | es wird als Montage unter deinem Voiceover geschnitten |
+| it is cut to your song | es wird passend zu deinem Song geschnitten |
+| its length follows your song | die Länge richtet sich nach deinem Song |
+| its length follows your speech | die Länge richtet sich nach deiner Rede |
+| its length follows your voiceover | die Länge richtet sich nach deinem Voiceover |
+| large | groß |
+| leave it out and end on the last clip you added | lasse ich es weg und beende das Video mit dem Clip, den du zuletzt hinzugefügt hast |
+| leave it out and end on the last clip you filmed | lasse ich es weg und beende das Video mit dem Clip, den du zuletzt gefilmt hast |
+| leave it out and start with the first clip you added | lasse ich es weg und beginne das Video mit dem Clip, den du zuerst hinzugefügt hast |
+| leave it out and start with the first clip you filmed | lasse ich es weg und beginne das Video mit dem Clip, den du zuerst gefilmt hast |
+| letter spacing | Buchstabenabstand |
+| line spacing | Zeilenabstand |
+| looping animation | Loop-Animation |
+| lowercase | kleingeschrieben |
+| montage | Montage |
+| narrated | Narrated-Edit |
+| narrated planned | Narrated-Edit (geplant) |
+| narrated ready | Narrated-Edit (fertig) |
+| on that moment ({at}s into the clip) | bei diesem Moment ({at} s im Clip) |
+| on that moment ({at}s into the clip; you left the exact frame to me) | bei diesem Moment ({at} s im Clip; das genaue Bild hast du mir überlassen) |
+| on the last frame of the last shot | beim letzten Bild der letzten Einstellung |
+| on the moment you picked, at its middle ({at}s into the clip) | bei dem Moment, den du gewählt hast, in seiner Mitte ({at} s im Clip) |
+| one word at a time | jeweils ein Wort |
+| outline | Kontur |
+| photo or video behind it | Foto oder Video dahinter |
+| photo {number} | Foto {number} |
+| picture {number} | Bild {number} |
+| plain | schlicht |
+| position | Position |
+| red | rot |
+| relaxed | ruhiges Tempo |
+| rotation | Drehung |
+| shadow | Schatten |
+| shot {shot} | Einstellung {shot} |
+| single hero | ein Hauptclip |
+| slides | Diashow |
+| small | klein |
+| small at the bottom left | klein unten links |
+| small at the bottom right | klein unten rechts |
+| small at the top left | klein oben links |
+| small at the top right | klein oben rechts |
+| small in a corner | klein in einer Ecke |
+| small in the bottom-left corner | klein in der Ecke unten links |
+| small in the bottom-right corner | klein in der Ecke unten rechts |
+| small in the top-left corner | klein in der Ecke oben links |
+| small in the top-right corner | klein in der Ecke oben rechts |
+| smaller text | kleinere Schrift |
+| so the video ends on the last clip you added. Tell me which clip to end on if you'd like a different one. | deshalb endet das Video mit dem Clip, den du zuletzt hinzugefügt hast. Sag mir, mit welchem Clip es enden soll, wenn du einen anderen möchtest. |
+| so the video ends on the last clip you filmed. Tell me which clip to end on if you'd like a different one. | deshalb endet das Video mit dem Clip, den du zuletzt gefilmt hast. Sag mir, mit welchem Clip es enden soll, wenn du einen anderen möchtest. |
+| so the video starts with the first clip you added. Tell me which clip to start with if you'd like a different one. | deshalb beginnt das Video mit dem Clip, den du zuerst hinzugefügt hast. Sag mir, mit welchem Clip es beginnen soll, wenn du einen anderen möchtest. |
+| so the video starts with the first clip you filmed. Tell me which clip to start with if you'd like a different one. | deshalb beginnt das Video mit dem Clip, den du zuerst gefilmt hast. Sag mir, mit welchem Clip es beginnen soll, wenn du einen anderen möchtest. |
+| sound effect {number} | Soundeffekt {number} |
+| subtitled | Untertitel-Edit |
+| talking head | Talking-Edit |
+| tell me to mute it and I'll take it out | sag mir, dass ich ihn stummschalten soll, dann nehme ich ihn raus |
+| text explainer | Text-Erklärvideo |
+| text grouping | Textgruppierung |
+| text hierarchy | Texthierarchie |
+| text width | Textbreite |
+| text {number} | Text {number} |
+| that line | diesen Satz |
+| that part is about {kept}s | dieser Teil dauert etwa {kept} s |
+| that part isn't in this edit | dieser Teil ist nicht in diesem Edit |
+| that value isn't one I can use | diesen Wert kann ich nicht verwenden |
+| the background | den Hintergrund |
+| the clips | die Clips |
+| the clips can't each be held long enough for it within the length you asked for | die Clips können in der gewünschten Länge nicht jeweils lange genug dafür gezeigt werden |
+| the clips' own spoken lines are kept whole, which only the fast-montage layout guarantees | die gesprochenen Sätze der Clips bleiben vollständig, und das garantiert nur das Layout der schnellen Montage |
+| the cuts between spoken lines keep a fixed length | die Schnitte zwischen den gesprochenen Sätzen haben eine feste Länge |
+| the cuts follow a fast pace | die Schnitte folgen einem schnellen Tempo |
+| the cuts follow your voiceover | die Schnitte folgen deinem Voiceover |
+| the cuts keep their usual length | die Schnitte behalten ihre übliche Länge |
+| the edit direction | die Richtung des Edits |
+| the first clip | der erste Clip |
+| the footage doesn't fit that layout | das Material passt nicht zu diesem Layout |
+| the last clip | der letzte Clip |
+| the look | den Look |
+| the media you picked | die Medien, die du ausgewählt hast |
+| the pictures | die Bilder |
+| the plan has no story outline to build chapters from | der Plan hat keinen Story-Ablauf, aus dem ich Kapitel bauen kann |
+| the same clip plays more than once, which only the fast-montage layout allows | derselbe Clip läuft mehr als einmal, und das erlaubt nur das Layout der schnellen Montage |
+| the story text couldn't be placed on it | der Story-Text konnte nicht darauf platziert werden |
+| the talking clip is {take}s | der sprechende Clip dauert {take} s |
+| the text | den Text |
+| the transitions | die Übergänge |
+| the video follows your speech | das Video folgt deiner Rede |
+| the video follows your voiceover | das Video folgt deinem Voiceover |
+| the whole video | das ganze Video |
+| the {label} | „{label}“ |
+| there are too many clips to lay out as story chapters | es sind zu viele Clips, um sie als Story-Kapitel anzuordnen |
+| this edit has no control to turn it down yet | dieser Edit hat noch keine Einstellung, um ihn leiser zu machen |
+| this editor can only restage it as a fast montage, so nothing changed. A different direction needs a fresh edit | dieser Editor kann den Edit nur als schnelle Montage neu zusammenstellen, deshalb hat sich nichts geändert. Für eine andere Richtung braucht es einen neuen Edit |
+| those words appear on {shots} of the draft, so I can't tell which shot you mean. | diese Wörter stehen auf {shots} des Entwurfs, deshalb weiß ich nicht, welche Einstellung du meinst. |
+| three words at a time | jeweils drei Wörter |
+| turn it down in the editor under Sounds > Original audio, or tell me to mute it | dreh ihn im Editor unter Sounds > Original audio leiser oder sag mir, dass ich ihn stummschalten soll |
+| two words at a time | jeweils zwei Wörter |
+| uppercase | großgeschrieben |
+| video | Video |
+| where "{line}" is said | wo "{line}" gesagt wird |
+| white | weiß |
+| yellow | gelb |
+| you asked for a freeze frame or a speed change, which only the fast-montage layout plays | du wolltest ein Standbild oder eine Tempoänderung, und das spielt nur das Layout der schnellen Montage ab |
+| you asked for curved text, which only the fast-montage layout draws | du wolltest gebogenen Text, und den zeichnet nur das Layout der schnellen Montage |
+| you asked for text on individual clips, which only the fast-montage layout places | du wolltest Text auf einzelnen Clips, und den platziert nur das Layout der schnellen Montage |
+| you asked me to keep a part of a clip out, which only the fast-montage layout can guarantee | du wolltest, dass ich einen Teil eines Clips weglasse, und das kann nur das Layout der schnellen Montage garantieren |
+| you don't say it that many times | so oft sagst du ihn nicht |
+| you named exact moments, which only the fast-montage layout plays as given | du hast genaue Momente genannt, und die spielt nur das Layout der schnellen Montage genau so ab |
+| you say it in more than one take, so I left it in; tell me which take to cut it from | du sagst ihn in mehr als einem Take, deshalb habe ich ihn drin gelassen; sag mir, aus welchem Take ich ihn schneiden soll |
+| you say it more than once, so tell me which one to cut: the first, second or last | du sagst ihn mehr als einmal, also sag mir, welchen ich schneiden soll: den ersten, zweiten oder letzten |
+| you set exact timing for photos or cuts, which only the fast-montage layout keeps | du hast genaue Zeiten für Fotos oder Schnitte festgelegt, und die hält nur das Layout der schnellen Montage ein |
+| your face | dein Gesicht |
+| your iPhone build can't draw the crossfades that layout uses yet | deine iPhone-Version kann die Überblendungen dieses Layouts noch nicht darstellen |
+| your own song sets the cut points, which only the fast-montage layout follows | dein eigener Song bestimmt die Schnittpunkte, und denen folgt nur das Layout der schnellen Montage |
+| your phone can't draw that layout for this footage | dein Handy kann dieses Layout für dieses Material nicht darstellen |
+| your song sets where the cuts fall | dein Song bestimmt, wo die Schnitte liegen |
+| your take has no word timings to find it in | dein Take hat keine Wort-Timings, um ihn zu finden |
+| your take is {take}s | dein Take dauert {take} s |
+| zoomed to {zoom:g}x | auf {zoom:g}x gezoomt |
+| {and_names_absent} doesn't appear in the captions, so I couldn't check its spelling. | {and_names_absent} kommt in den Untertiteln nicht vor, deshalb konnte ich die Schreibweise nicht prüfen. |
+| {and_names_absent} don't appear in the captions, so I couldn't check their spelling. | {and_names_absent} kommen in den Untertiteln nicht vor, deshalb konnte ich die Schreibweise nicht prüfen. |
+| {and_names_spelled} are spelled as you wrote them. | {and_names_spelled} sind so geschrieben, wie du sie geschrieben hast. |
+| {and_names_spelled} is spelled as you wrote it. | {and_names_spelled} ist so geschrieben, wie du es geschrieben hast. |
+| {at_s:.1f} s | {at_s:.1f} s |
+| {conflict_intro} {conflict_reason} I won't guess, so I haven't made an edit yet. To go ahead, reply {ways}, or type the words you want.{unchanged} | {conflict_intro} {conflict_reason} Ich rate nicht, deshalb habe ich noch nichts geschnitten. Um weiterzumachen, antworte mit {ways} oder schreib die Wörter, die du willst.{unchanged} |
+| {counts_head} and {counts_last} | {counts_head} und {counts_last} |
+| {count} camera effect | {count} Kameraeffekt |
+| {count} camera effects | {count} Kameraeffekte |
+| {count} caption | {count} Untertitel |
+| {count} caption · {seconds}s | {count} Untertitel · {seconds} s |
+| {count} captions | {count} Untertitel |
+| {count} captions · {seconds}s | {count} Untertitel · {seconds} s |
+| {count} clip | {count} Clip |
+| {count} clip · {seconds}s | {count} Clip · {seconds} s |
+| {count} clips | {count} Clips |
+| {count} clips · {seconds}s | {count} Clips · {seconds} s |
+| {count} filler sound | {count} Füllgeräusch |
+| {count} filler sounds | {count} Füllgeräusche |
+| {count} label | {count} Label |
+| {count} labels | {count} Labels |
+| {count} long pause | {count} lange Pause |
+| {count} long pauses | {count} lange Pausen |
+| {count} overlay | {count} Einblendung |
+| {count} overlay · {seconds}s | {count} Einblendung · {seconds} s |
+| {count} overlays | {count} Einblendungen |
+| {count} overlays · {seconds}s | {count} Einblendungen · {seconds} s |
+| {count} pause | {count} Pause |
+| {count} pauses | {count} Pausen |
+| {count} picture | {count} Bild |
+| {count} pictures | {count} Bilder |
+| {count} restarted sentence | {count} neu begonnenen Satz |
+| {count} restarted sentences | {count} neu begonnene Sätze |
+| {count} sound effect | {count} Soundeffekt |
+| {count} sound effect · {seconds}s | {count} Soundeffekt · {seconds} s |
+| {count} sound effects | {count} Soundeffekte |
+| {count} sound effects · {seconds}s | {count} Soundeffekte · {seconds} s |
+| {count} take has no usable singing or words, so it is in as short muted clip. Trim or remove it in the editor. | {count} Take hat keinen brauchbaren Gesang und keine brauchbaren Worte, deshalb ist er als kurzer stummer Clip drin. Kürze oder entferne ihn im Editor. |
+| {count} take is placed by my best guess and may be slightly off; check it in the editor. | {count} Take ist nach meiner besten Schätzung platziert und könnte leicht daneben liegen; prüf ihn im Editor. |
+| {count} take sits later in the song than a 2-minute video can hold. | {count} Take liegt später im Song, als ein 2-Minuten-Video fassen kann. |
+| {count} takes are placed by my best guess and may be slightly off; check them in the editor. | {count} Takes sind nach meiner besten Schätzung platziert und könnten leicht daneben liegen; prüf sie im Editor. |
+| {count} takes have no usable singing or words, so they are in as short muted clips. Trim or remove them in the editor. | {count} Takes haben keinen brauchbaren Gesang und keine brauchbaren Worte, deshalb sind sie als kurze stumme Clips drin. Kürze oder entferne sie im Editor. |
+| {count} takes sit later in the song than a 2-minute video can hold. | {count} Takes liegen später im Song, als ein 2-Minuten-Video fassen kann. |
+| {count} text | {count} Text |
+| {count} texts | {count} Texte |
+| {count} {kind}s | {count} × {kind} |
+| {head} except {exceptions} | {head}, außer {exceptions} |
+| {kind} background | Hintergrund {kind} |
+| {label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}" | {label}-Clips laufen von {start:.1f} s bis {end:.1f} s, unter: "{excerpt}" |
+| {label} {before} dB → {after} dB | {label} {before} dB → {after} dB |
+| {label} {before}% → {after}% | {label} {before} % → {after} % |
+| {label} → {after} dB | {label} → {after} dB |
+| {label} → {after}% | {label} → {after} % |
+| {lead} {over} still last longer than {limit} s | {lead} {over} dauern noch länger als {limit} s |
+| {lead} {over} still last longer than {limit} s (the longest is {longest_s} s) | {lead} {over} dauern noch länger als {limit} s (die längste dauert {longest_s} s) |
+| {lead} {over} still lasts longer than {limit} s | {lead} {over} dauert noch länger als {limit} s |
+| {lead} {over} still lasts longer than {limit} s (the longest is {longest_s} s) | {lead} {over} dauert noch länger als {limit} s (die längste dauert {longest_s} s) |
+| {lead}: {moments} | {lead}: {moments} |
+| {lead}; {tail} and you asked for {asked} | {lead}; {tail}, und du wolltest {asked} |
+| {len_off} of {len_rows} texts don't have the requested {names} yet | {len_off} von {len_rows} Texten haben die gewünschte Eigenschaft ({names}) noch nicht |
+| {len_off} of {total} text didn't end up reading exactly “{req_literal}”. | {len_off} von {total} Text lautet am Ende nicht genau „{req_literal}“. |
+| {len_off} of {total} texts didn't end up reading exactly “{req_literal}”. | {len_off} von {total} Texten lauten am Ende nicht genau „{req_literal}“. |
+| {length:.1f}s | {length:.1f} s |
+| {missed} aren't where you asked. | {missed} sind nicht dort, wo du es wolltest. |
+| {missed} isn't where you asked. | {missed} ist nicht dort, wo du es wolltest. |
+| {names} has no filming time, so I can't put it in the order you filmed. | {names} hat keine Aufnahmezeit, deshalb kann ich nicht nach der Reihenfolge sortieren, in der du gefilmt hast. |
+| {names} have no filming time, so I can't put them in the order you filmed. | {names} haben keine Aufnahmezeit, deshalb kann ich nicht nach der Reihenfolge sortieren, in der du gefilmt hast. |
+| {n} clip had no capture time, so I kept its attachment order. | {n} Clip hatte keine Aufnahmezeit, deshalb habe ich ihn an der Stelle gelassen, an der du ihn hinzugefügt hast. |
+| {n} clip is too short for its text to stay on screen long enough to read. | {n} Clip ist zu kurz, als dass sein Text lang genug zum Lesen zu sehen wäre. |
+| {n} clips are too short for its text to stay on screen long enough to read. | {n} Clips sind zu kurz, als dass ihr Text lang genug zum Lesen zu sehen wäre. |
+| {n} clips had no capture time, so I kept their attachment order. | {n} Clips hatten keine Aufnahmezeit, deshalb habe ich sie in der Reihenfolge gelassen, in der du sie hinzugefügt hast. |
+| {n} sideways clip | {n} Querformat-Clip |
+| {n} sideways clips | {n} Querformat-Clips |
+| {reason}; you didn't say how fast, so I used {rate:g}x | {reason}; du hast nicht gesagt, wie schnell, deshalb habe ich {rate:g}x genommen |
+| {refusal}, so I left the video as it was. | {refusal}, deshalb habe ich das Video so gelassen, wie es war. |
+| {sentence_case_words} is clip {v1} of {len_steps}, not the first one. | {sentence_case_words} ist Clip {v1} von {len_steps}, nicht der erste. |
+| {sentence_case_words} is clip {v1} of {len_steps}, not the last one. | {sentence_case_words} ist Clip {v1} von {len_steps}, nicht der letzte. |
+| {shown} photos or videos take turns behind you | {shown} Fotos oder Videos wechseln sich hinter dir ab |
+| {start}-{end:g} s | {start}–{end:g} s |
+| {still_in}: "{quote}" ({why}) | {still_in}: "{quote}" ({why}) |
+| {subject} play at {rate:g}x | {subject} laufen mit {rate:g}x |
+| {subject} play at {rate:g}x, as you asked later | {subject} laufen mit {rate:g}x, wie du später gesagt hast |
+| {subject} play at {rate:g}x, not the {requested:g}x you asked for: a clip plays at least {rate:g}x | {subject} laufen mit {rate:g}x, nicht mit den gewünschten {requested:g}x: Ein Clip läuft mindestens mit {rate:g}x |
+| {subject} play at {rate:g}x, not the {requested:g}x you asked for: a clip plays at most {rate:g}x | {subject} laufen mit {rate:g}x, nicht mit den gewünschten {requested:g}x: Ein Clip läuft höchstens mit {rate:g}x |
+| {subject} play at {rate:g}x, not the {requested:g}x you asked for: the clip ran out of footage | {subject} laufen mit {rate:g}x, nicht mit den gewünschten {requested:g}x: Der Clip hatte nicht genug Material |
+| {subject} plays at {rate:g}x | {subject} läuft mit {rate:g}x |
+| {subject} plays at {rate:g}x, as you asked later | {subject} läuft mit {rate:g}x, wie du später gesagt hast |
+| {subject} plays at {rate:g}x, not the {requested:g}x you asked for: a clip plays at least {rate:g}x | {subject} läuft mit {rate:g}x, nicht mit den gewünschten {requested:g}x: Ein Clip läuft mindestens mit {rate:g}x |
+| {subject} plays at {rate:g}x, not the {requested:g}x you asked for: a clip plays at most {rate:g}x | {subject} läuft mit {rate:g}x, nicht mit den gewünschten {requested:g}x: Ein Clip läuft höchstens mit {rate:g}x |
+| {subject} plays at {rate:g}x, not the {requested:g}x you asked for: the clip ran out of footage | {subject} läuft mit {rate:g}x, nicht mit den gewünschten {requested:g}x: Der Clip hatte nicht genug Material |
+| {sum_fails} of {len_rows} don't have the requested {label} | Bei {sum_fails} von {len_rows} fehlt die gewünschte {label} |
+| {target}s | {target} s |
+| {unnamed} of your recordings never show. | {unnamed} deiner Aufnahmen sind nie zu sehen. |
+| {unnamed} of your recordings never shows. | {unnamed} deiner Aufnahmen ist nie zu sehen. |
+| {v1}, then you're {corner} when you start on your first recording. | {v1}, dann bist du {corner}, sobald deine erste Aufnahme beginnt. |
+| {v1}, then {corner}. | {v1}, dann bist du {corner}. |
+| {v1}; {repeats} more repeated the label before, so I left it off. | {v1}; {repeats} weiteres wiederholte das vorige Label, deshalb habe ich es weggelassen. |
+| {v1}; {repeats} more repeated the label before, so I left them off. | {v1}; {repeats} weitere wiederholten das vorige Label, deshalb habe ich sie weggelassen. |
+| {ways} or {option} | {ways} oder {option} |
+| {width:g}px | {width:g} px |
+| {words} (clip {n}) | {words} (Clip {n}) |
+| “{title}” by {artist} | „{title}“ von {artist} |
+| “{what}” ({span}s) | „{what}“ ({span} s) |
+| “{what}” ({span}s, clip {number}) | „{what}“ ({span} s, Clip {number}) |
+| “{what}” ({span}s, “{file_name}”) | „{what}“ ({span} s, „{file_name}“) |
+
+### Changed German for an existing key (14)
+
+| English key | German draft |
+|---|---|
+| Aligned {who} to the {side} | {who} ausgerichtet ({side}) |
+| Cropped the {clips_n} to fill the vertical frame | {clips_n} aufs Hochformat zugeschnitten |
+| Cropped the {clips_n} to fill the vertical frame{follows} | {clips_n} aufs Hochformat zugeschnitten{follows} |
+| Cropped {cropped} of {clips_n} to vertical; kept black bars on {barred} because the face moves too far for one vertical crop to keep it | {cropped} von {clips_n} aufs Hochformat zugeschnitten; bei {barred} bleiben schwarze Balken, weil sich das Gesicht zu weit bewegt, als dass ein Hochformat-Ausschnitt es halten könnte |
+| I can't make {language} captions yet, so they'll be in the language that's spoken | ich kann noch keine Untertitel auf {language} erstellen, deshalb sind sie in der gesprochenen Sprache |
+| I prepared a {pacing} {edit_format} draft around the available footage. | Ich habe aus deinem vorhandenen Material einen Entwurf vorbereitet: {edit_format}, {pacing}. |
+| I translated the {language_name_translated} speech into {rendered_name} captions. | Ich habe das Gesprochene auf {language_name_translated} in Untertitel auf {rendered_name} übersetzt. |
+| Some text still covers {named}; there was no spot clear of it | Ein Text verdeckt {named} noch; es gab keine freie Stelle |
+| The captions are in {language_name_rendered}, translated from the {language_name_translated_from} speech. | Die Untertitel sind auf {language_name_rendered}, übersetzt aus dem Gesprochenen auf {language_name_translated_from}. |
+| You changed the edit after I placed the text, so I can't confirm it still stays off {named} | Du hast den Edit geändert, nachdem ich den Text platziert hatte, deshalb kann ich nicht bestätigen, dass er {named} immer noch nicht verdeckt |
+| You chose black bars, so the {clips_n} keep them | Du hast schwarze Balken gewählt, deshalb bleiben sie bei {clips_n} |
+| You chose crop, so the {clips_n} are cropped to fill the frame | Du hast Zuschneiden gewählt, deshalb habe ich {clips_n} aufs Hochformat zugeschnitten |
+| {candidate_intro} Unfortunately {after_connector_candidate_reason} The most I can do is: {only_label}. Reply "{only_label}" to go with that, or change your request. | {candidate_intro} Leider geht das so nicht: {after_connector_candidate_reason} Das Beste, was ich machen kann: {only_label}. Antworte mit "{only_label}", wenn das für dich passt, oder ändere deine Anfrage. |
+| {candidate_intro} Unfortunately {after_connector_candidate_reason} Which do you prefer? | {candidate_intro} Leider geht das so nicht: {after_connector_candidate_reason} Was ist dir lieber? |

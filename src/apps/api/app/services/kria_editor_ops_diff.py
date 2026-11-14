@@ -864,8 +864,14 @@ def describe_targets(entry: DiffEntry, live_text_count: int) -> str:
 
 
 # "Added a fade-in animation to 'Hi'" per entrance edge: a legacy edge keeps the name of the
-# `effect` it replaced ("a fade-in"); the rest use their label (`TEXT_ANIMATION_VOCAB`).
-_ENTRANCE_ADDED = {
+# `effect` it replaced ("a fade-in"); the rest use their label (`TEXT_ANIMATION_VOCAB`). One whole
+# sentence per edge (KRI-1408), so a catalog language never gets the English label as a value.
+_ENTRANCE_LINES = {
+    "none": lambda who: say(
+        en="Removed the entrance animation from {who}",
+        tr="{who} için giriş animasyonu kaldırıldı",
+        who=who,
+    ),
     "fade": lambda who: say(
         en="Added a fade-in animation to {who}", tr="{who} için solma animasyonu eklendi", who=who
     ),
@@ -911,10 +917,10 @@ _ENTRANCE_ADDED = {
         who=who,
     ),
 }
-_entrance_mismatch = (set(TEXT_ANIMATION_VOCAB) - {"none"}) ^ set(_ENTRANCE_ADDED)
+_entrance_mismatch = set(TEXT_ANIMATION_VOCAB) ^ set(_ENTRANCE_LINES)
 if _entrance_mismatch:
     raise AssertionError(
-        "_ENTRANCE_ADDED must have exactly one sentence per entrance edge but none; "
+        "_ENTRANCE_LINES must have exactly one sentence per entrance edge; "
         f"add or remove: {sorted(_entrance_mismatch)}"
     )
 _CASE_SET = {
@@ -1004,21 +1010,15 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
     if name == "removed":
         return say(en="Removed {who}", tr="{who} kaldırıldı", who=who)
     if name == "entrance":
-        if common in (None, "none"):
-            if common == "none":
-                return say(
-                    en="Removed the entrance animation from {who}",
-                    tr="{who} için giriş animasyonu kaldırıldı",
-                    who=who,
-                )
+        if common is None:
             return say(
                 en="Changed the entrance animation on {who}",
                 tr="{who} için giriş animasyonu değişti",
                 who=who,
             )
         edge = str(common)
-        if edge in _ENTRANCE_ADDED:
-            return _ENTRANCE_ADDED[edge](who)
+        if edge in _ENTRANCE_LINES:
+            return _ENTRANCE_LINES[edge](who)
         return say(
             en="Added an animation to {who}",
             tr="{who} için {animation} animasyonu eklendi",
