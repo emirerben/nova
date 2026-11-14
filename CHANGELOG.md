@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.212.0] - 2026-11-14
+
+### Changed
+- fix(api): a photo the creator cut or trimmed saves on the phone (KRI-1423) (#2328) <!-- release-pr: 2328 -->
+
 ## [0.88.211.0] - 2026-11-14
 
 ### Changed
