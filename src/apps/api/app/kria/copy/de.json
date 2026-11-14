@@ -718,6 +718,7 @@
     "Lip-sync keeps the song where you filmed it.": "Lip-Sync lässt den Song dort, wo du gefilmt hast.",
     "Longer: each clip stays on screen a little longer.": "Länger: Jeder Clip bleibt etwas länger im Bild.",
     "Made your text {text} smaller so it fits clearly next to the other text": "Dein Text {text} ist jetzt kleiner, damit er gut lesbar neben den anderen Texten passt",
+    "Made your text {text} smaller so it fits clearly on screen": "Dein Text {text} ist jetzt kleiner, damit er gut lesbar ins Bild passt",
     "Made {who} {word_en} ({old:g}→{new:g}px)": "{who} {word_en} gemacht ({old:g}→{new:g}px)",
     "Make it without these": "Ohne diese erstellen",
     "Make it {shown} seconds": "{shown} Sekunden lang machen",

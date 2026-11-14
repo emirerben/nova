@@ -643,6 +643,11 @@
   ],
   [
    "app/pipeline/phone_plan_degrade.py",
+   "Made your text {text} smaller so it fits clearly on screen",
+   "{text} yazını ekrana net sığsın diye küçülttüm"
+  ],
+  [
+   "app/pipeline/phone_plan_degrade.py",
    "Showed the text {text} with a simple fade-in: your iPhone can't play its animation yet",
    "{text} yazısını basit bir belirmeyle gösterdim: iPhone'un animasyonunu henüz oynatamıyor"
   ],

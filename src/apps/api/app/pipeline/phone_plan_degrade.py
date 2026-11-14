@@ -291,6 +291,27 @@ def _and(items: Sequence[str]) -> str:
     )
 
 
+def shrink_sizes(size_px: float | None, *, chosen: bool = False) -> list[float | None]:
+    """The sizes a text may take to find a clear spot, largest first: its own, then 2 px
+    smaller each step down to the readable floor. A size the creator ``chosen`` never shrinks.
+    """
+    from app.pipeline.phone_text_style import _READABLE_FLOOR_PX  # noqa: PLC0415
+
+    if size_px is None or chosen:
+        return [size_px]
+    return [size_px, *(float(px) for px in range(int(size_px) - 2, _READABLE_FLOOR_PX - 1, -2))]
+
+
+def shrunk_on_screen_note(text: str) -> str:
+    from app.pipeline.phone_plan_repair import _quoted  # noqa: PLC0415
+
+    return say(
+        en="Made your text {text} smaller so it fits clearly on screen",
+        tr="{text} yazını ekrana net sığsın diye küçülttüm",
+        text=_quoted(text),
+    )
+
+
 def record_recoveries(recoveries: Sequence[Recovery]) -> None:
     """The admin trace of the degrades and shrinks the worker kept, one event each."""
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415

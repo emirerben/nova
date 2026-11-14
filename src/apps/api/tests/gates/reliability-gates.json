@@ -4809,10 +4809,11 @@
       ],
       "status": "open_pr",
       "owner": "KRI-1376",
-      "symptom": "One row the phone cannot draw (an unsupported look or zoom on a clip, a transition after the last clip, right-to-left words in a staggered slice) refused the whole approved video as phone_plan_unsupported, and a confirmed text with no clear spot at its size asked for a choice instead of shrinking.",
+      "symptom": "One row the phone cannot draw (an unsupported look or zoom on a clip, a transition after the last clip, right-to-left words in a staggered slice) refused the whole approved video as phone_plan_unsupported, and a confirmed text with no clear spot at its size (a guided text, or a word-timed text on a Voiceover edit) asked for a choice instead of shrinking.",
       "boundary": "compiler",
       "paths": [
         "src/apps/api/app/pipeline/phone_guided_plan.py",
+        "src/apps/api/app/pipeline/phone_narrated_spoken_text.py",
         "src/apps/api/app/pipeline/phone_plan_degrade.py",
         "src/apps/api/app/pipeline/phone_plan_repair.py",
         "src/apps/api/app/pipeline/portable_text_layout.py"
@@ -4823,7 +4824,7 @@
       "harness": "real_pipeline",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "One bad row per gate (look, zoom, last-clip transition, right-to-left staggered text) and a look on every clip, through the real worker task (_run_generative_job -> unified montage planner -> guided compiler -> pin-time contract check); with the degrade patched to identity every gate's row refuses as phone_plan_unsupported.",
+        "offline_replay": "One bad row per gate (look, zoom, last-clip transition, right-to-left staggered text) and a look on every clip, through the real worker task (_run_generative_job -> unified montage planner -> guided compiler -> pin-time contract check); with the degrade patched to identity every gate's row refuses as phone_plan_unsupported. A word-timed text that crowds the captions renders smaller through _run_phone_narrated_job; with shrink_sizes pinned to its own size it stops to ask, typed spoken_text_unplaced.",
         "live_model": "Not run; the change is deterministic compile-time behaviour. replay_creator.py could not run on a prod job: admin.py --prod GET exposes no source bytes or signed URLs, and its --render needs a Celery worker on the shared Redis.",
         "native_output": "Not run; the degraded recipe passes verify_phone_recipe and the pilot check, no device export inspected.",
         "production": "Not deployed. All 42 prod phone_plan_unsupported jobs from 2026-09-18 to 2026-11-10 (admin.py --prod GET jobs/<id>/debug) failed on a contract refusal, another lane or a gate main already repairs; none on a gate this change degrades."
@@ -4831,7 +4832,9 @@
       "neighbours_covered": [
         "Unsupported look, zoom on a video clip, transition after the last clip, right-to-left words in a staggered slice",
         "A look on every clip renders with one note and one requirement_recovery per clip",
-        "Three kinds of reject render; a fourth refuses with its own typed error",
+        "Four kinds of reject in one plan all render with their notes; a degrade that does not fix its row ends in the row's typed refusal",
+        "A word-timed Voiceover text that fits keeps its size and gets no note; one that does not renders smaller with one note, in Turkish for a Turkish chat",
+        "The approval card's degrade notes follow the chat language",
         "A row degraded twice (zoom, then golden hour on a landscape clip) gets one note naming both",
         "Photo notes name what the photo lost: zoom, look, color adjustments, freeze, speed change, crop on a card",
         "An animation the creator chose and a script face the build lacks still refuse, typed, with the same failure code",
@@ -4841,8 +4844,9 @@
       ],
       "neighbours_gap": [
         "Photo treatment and a freeze on a still are covered at the compile call only: the worker fixture has no Visuals photo",
-        "Narrated compile rejects are typed but never degraded: the title, pins and spoken rows are creator-confirmed and the title's entrance already falls back to a plain fade",
-        "Subtitled, voiceover montage, speech montage, voiceover cut and caption gates are not swept"
+        "Narrated: only the word-timed text shrinks. The title is pinned exact text whose entrance already falls back to a plain fade; pins are the creator's; steps, voice tail and captions are footage or captions-lane limits",
+        "Subtitled, voiceover montage, speech montage, voiceover cut and caption gates are not swept",
+        "A planner-placed licensed sound effect that is unavailable now names its row (sfx_unpublished, sfx_format, sfx_duration) but still refuses the guided video"
       ],
       "red_control": "not_applicable"
     }

@@ -64,9 +64,6 @@ _REPAIR_EFFECT = "fade-in"
 
 # At most one repair pass per reject kind, bounded so a stubborn plan cannot loop.
 _MAX_REPAIR_PASSES = 3
-# Degrades for at most this many distinct reject reasons (`phone_plan_degrade`), each row once
-# per reason: a look every clip carries degrades clip by clip, a fourth kind of reject refuses.
-_MAX_DEGRADE_REASONS = 3
 
 
 class PhoneProposalRejected(ValueError):
@@ -424,26 +421,12 @@ def _new_text(plan, template, **updates: Any):  # noqa: ANN001
     )
 
 
-def _shrink_sizes(element) -> list[float | None]:  # noqa: ANN001
-    """The sizes a confirmed text may take to fit, largest first: its own, then smaller.
-
-    Never one the creator chose (``creator_style_fields``), never below the smallest size
-    the text style pass calls readable.
-    """
-    from app.pipeline.phone_text_style import _READABLE_FLOOR_PX  # noqa: PLC0415
-
-    size = element.size_px
-    chosen = "size_px" in ((element.source_params or {}).get("creator_style_fields") or ())
-    if size is None or chosen:
-        return [size]
-    return [size, *(float(px) for px in range(int(size) - 2, _READABLE_FLOOR_PX - 1, -2))]
-
-
 def _place_added_contract_text(plan, element):  # noqa: ANN001
     """Reserve measured ink space without changing confirmed copy or time.
 
-    The text keeps its size when a clear spot exists; otherwise it shrinks (``_shrink_sizes``)
-    until one does. Only when no readable size fits is the creator asked to choose.
+    The text keeps its size when a clear spot exists; otherwise it shrinks
+    (``phone_plan_degrade.shrink_sizes``, never a size in ``creator_style_fields``) until one
+    does. Only when no readable size fits is the creator asked to choose.
     """
     from app.pipeline.canvas import canvas_for_orientation  # noqa: PLC0415
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
@@ -480,7 +463,8 @@ def _place_added_contract_text(plan, element):  # noqa: ANN001
     ]
     origin = float(element.y_frac if element.y_frac is not None else _TITLE_Y)
     gap = 24 / canvas.height
-    for size in _shrink_sizes(element):
+    chosen = "size_px" in ((element.source_params or {}).get("creator_style_fields") or ())
+    for size in phone_plan_degrade.shrink_sizes(element.size_px, chosen=chosen):
         sized = element.model_copy(update={"size_px": size})
         box = ink(sized)
         obstacles = [other for other in concurrent if other[0] < box[2] and box[0] < other[2]]
@@ -749,9 +733,10 @@ def compile_phone_guided_repaired(  # noqa: ANN001
     one row it names (``phone_plan_degrade``). Raises the compile / validation error
     unchanged when neither helps, or when the passes run out.
 
-    Every pass either raises or tries a reject it has not tried before; repairs are capped
-    at ``_MAX_REPAIR_PASSES`` and degrades at ``_MAX_DEGRADE_REASONS`` reasons times the
-    plan's rows, so a stubborn plan always ends in its typed error.
+    Every pass either raises or tries a reject it has not tried before. Repairs are capped
+    at ``_MAX_REPAIR_PASSES``; a degrade is keyed on its reason and row, so the plan's rows
+    times the reject reasons bound the passes and a stubborn plan always ends in its typed
+    error. Any number of rows may degrade: each is noted (rule KRI-129).
     """
     allow_editor_media = bool(kwargs.get("allow_editor_media", False))
     shrunk: list[phone_plan_degrade.Recovery] = []
@@ -797,9 +782,6 @@ def compile_phone_guided_repaired(  # noqa: ANN001
                     current = repaired
                     notes.extend(note for note in repair_notes if note not in notes)
                     continue
-            reasons = {recovery.reason for recovery in degraded}
-            if getattr(exc, "reason", None) not in reasons and len(reasons) >= _MAX_DEGRADE_REASONS:
-                raise
             repaired, recoveries = phone_plan_degrade.degrade_plan_for_phone(current, exc)
             if not recoveries:
                 raise
