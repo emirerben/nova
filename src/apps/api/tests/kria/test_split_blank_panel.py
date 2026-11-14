@@ -561,6 +561,7 @@ def test_deleting_a_saved_blank_removes_it_and_keeps_the_section(monkeypatch):
     stored = next(row for row in saved if row.get("media_kind") == "blank")
 
     clip = next(row for row in saved if row.get("media_kind") != "blank")
+
     def wire(row, **changes):
         known = gj.TimelineSlotEdit.model_fields
         return gj.TimelineSlotEdit.model_validate(
