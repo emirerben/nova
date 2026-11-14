@@ -186,8 +186,15 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
             (WORKFLOW.parents[2] / "scripts/ios/ui-test-groups.json").read_text()
         )
         smoke = manifest["smoke"]
-        self.assertTrue(any("/CreationUITests/" in test for test in smoke))
-        self.assertTrue(any("/EditorUITests/" in test for test in smoke))
+
+        def group_of(test):
+            cls = test.split("/")[1]
+            return manifest["overrides"].get(test.removeprefix("KriaUITests/")) or (
+                manifest["classes"].get(cls)
+            )
+
+        self.assertTrue(any(group_of(test) == "creation" for test in smoke))
+        self.assertTrue(any(group_of(test) == "editor" for test in smoke))
         # The PR subset must stay bounded.
         self.assertLessEqual(len(smoke), 6)
 

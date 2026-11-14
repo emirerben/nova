@@ -847,7 +847,9 @@ by `preship-check.sh`) with the fix command; selection ignores the stale entry
 instead of failing the UI leg. After a rename, `make sync-test-registries`
 follows a renamed UI test file or app source, a renamed class and a renamed test
 method into the registry, the manifest's `xctests`, the `ci.yml` native steps and
-the `scripts/ios/tests` self-tests. A new unclassified class makes smoke larger
+the `scripts/ios/tests` self-tests (which borrow real test files from the tree through
+`ui_fixture.py`). If sync cannot follow an entry, its closing line says to edit or
+delete the entry by hand, not to run sync again. A new unclassified class makes smoke larger
 (the self-tests derive its size from the registry, never a fixed count).
 
 UI tests remain serial. The preparation builds both test bundles, executes all

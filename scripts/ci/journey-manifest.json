@@ -3804,14 +3804,7 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_speaker_full_opening.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_video_shape.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_full_screen.json",
-        "src/apps/api/app/pipeline/agentic_matcher.py",
-        "src/apps/api/tests/fixtures/agent_evals/shot_ranker/golden/hook_first.json",
-        "src/apps/api/tests/fixtures/agent_evals/shot_ranker/golden/thematic_pull.json",
-        "src/apps/api/tests/fixtures/agent_evals/shot_ranker/golden/variety_check.json",
-        "src/apps/api/tests/fixtures/agent_evals/transition_picker/golden/calm_dissolve.json",
-        "src/apps/api/tests/fixtures/agent_evals/transition_picker/golden/default_hard_cut.json",
-        "src/apps/api/tests/fixtures/agent_evals/transition_picker/golden/energy_chapter_break.json",
-        "src/apps/api/tests/fixtures/agent_evals/transition_picker/golden/whip_pan_match.json"
+        "src/apps/api/app/pipeline/agentic_matcher.py"
       ]
     },
     {

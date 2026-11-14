@@ -32,7 +32,7 @@ MANIFEST = Path(__file__).with_name("journey-manifest.json")
 FIX = "make sync-test-registries"
 STEP_CALL = re.compile(r"journey_registry\.py\s+step\s+([\w.-]+)")
 LITERAL_TEST_PATH = re.compile(
-    r"(?<![\w/.-])(?:src/apps/api/)?tests/[\w/.-]+/?test_\w+\.py"
+    r"(?<![\w/.-])(?:src/apps/api/)?tests/(?:[\w.-]+/)*test_\w+\.py"
 )
 TEST_REFERENCE = re.compile(
     r"(?<![\w/.-])((?:src/apps/api/)?tests/[\w/.-]+\.py)((?:::\w+)*)"
@@ -41,7 +41,7 @@ SWIFT_TESTS = "src/apps/ios/Tests"
 SWIFT_PACKAGE_TESTS = "src/apps/ios/Packages/*/Tests"
 ONLY_TESTING = re.compile(r"-only-testing:(\w+)/(\w+)(?:/(test\w+))?")
 XCTEST_ARG = re.compile(r"--xctest\s+(\w+)/(test\w+)")
-TESTS_CALL = re.compile(r"journey_registry\.py\s+tests\b")
+TESTS_CALL = re.compile(r"journey_registry(?:\.py\s+tests\b|\.api_tests\b)")
 # Files that name tests by path but are not derived from markers. `check` fails
 # when one names a test that no longer exists; `sync` follows git renames in.
 HAND_LISTS = (
@@ -55,7 +55,7 @@ HAND_LISTS = (
     ".github/workflows/*.yml",
     "src/apps/api/tests/gates/reliability-gates.json",
 )
-RENAME_FOLLOWERS = (*HAND_LISTS, "scripts/ci/test_*.py")
+RENAME_FOLLOWERS = (*HAND_LISTS, "scripts/ci/test_*.py", "scripts/ios/tests/*.py")
 NOT_REWRITTEN = ("scripts/ci/test_journey_registry.py",)
 
 
@@ -347,7 +347,10 @@ def swift_problems(rows: list[dict], root: Path) -> list[str]:
 
 
 def check(
-    root: Path = ROOT, manifest: Path = MANIFEST, base: str | None = None
+    root: Path = ROOT,
+    manifest: Path = MANIFEST,
+    base: str | None = None,
+    after_sync: bool = False,
 ) -> list[str]:
     """Every way the registries and the tests can disagree, named."""
     problems = []
@@ -413,11 +416,18 @@ def check(
     problems += hand_list_problems(root)
     problems += stale_after_rename(root, base, manifest)
     if len(problems) > declaration_problems:
-        problems.append(
-            f"Fix: run `{FIX}` to follow git renames (stage the rename first) into "
-            "scripts/ci/journey-manifest.json, the Makefile, scripts and workflows; "
-            "delete an entry whose file or test was removed"
-        )
+        if after_sync:
+            problems.append(
+                f"`{FIX}` followed every git rename it could and these remain: edit or "
+                "delete the named entry by hand in scripts/ci/journey-manifest.json or "
+                "the named file (a removed file or test, or a rename sync cannot see)"
+            )
+        else:
+            problems.append(
+                f"Fix: run `{FIX}` to follow git renames (stage the rename first) into "
+                "scripts/ci/journey-manifest.json, the Makefile, scripts and workflows; "
+                "delete an entry whose file or test was removed"
+            )
     return problems
 
 
@@ -492,7 +502,7 @@ def main(argv: list[str]) -> int:
                 if changed
                 else "journey registries already follow git renames"
             )
-            problems = check()
+            problems = check(after_sync=True)
             for problem in problems:
                 print(f"journey registry: {problem}", file=sys.stderr)
             return 1 if problems else 0

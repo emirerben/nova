@@ -258,8 +258,10 @@ verify-editor-timeline:
 # follows git renames of files, Swift classes and test methods into those
 # entries, the Makefile, scripts and workflows (stage a file rename first).
 check-test-registries:
-	$(PYTHON) scripts/ci/journey_registry.py check
-	$(PYTHON) scripts/ios/ui_tests.py check
+	@status=0; \
+	$(PYTHON) scripts/ci/journey_registry.py check || status=1; \
+	$(PYTHON) scripts/ios/ui_tests.py check || status=1; \
+	exit $$status
 
 sync-test-registries:
 	@status=0; \
