@@ -60,7 +60,7 @@ from app.kria.reply_language import (
     resolve_reply_language,
     say,
     short_reply_in,
-    switched_language,
+    switching_message_id,
     thread_reply_language,
 )
 from app.models import (
@@ -897,27 +897,25 @@ async def _answers_video_text_question(db: AsyncSession, thread: CreationThread)
     )
 
 
-async def _switched_by_video_text(db: AsyncSession, thread: CreationThread, language: str) -> bool:
-    """True when the message that moved the chat to ``language`` is now the video's text.
+async def _switched_by_video_text(db: AsyncSession, thread: CreationThread) -> bool:
+    """True when the message that made the chat's latest switch is now the video's text.
 
-    That message is the newest one that reads clearly as ``language``; the video's text is the
-    latest brief's exact words. Read only for a short reply in the chat's earlier language.
+    The video's text is the latest brief's exact words. Read only for a short reply in the
+    chat's earlier language.
     """
-    contents = (
+    client_event_id = switching_message_id(thread)
+    if client_event_id is None:
+        return False
+    switching = (
         await db.execute(
-            select(CreationThreadEvent.content)
-            .where(
+            select(CreationThreadEvent.content).where(
                 CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.client_event_id == client_event_id,
                 CreationThreadEvent.role == "user",
-                CreationThreadEvent.event_type == "user_message",
-                CreationThreadEvent.content.is_not(None),
             )
-            .order_by(CreationThreadEvent.sequence.desc())
-            .limit(20)
         )
-    ).scalars()
-    switching = next((text for text in contents if switched_language(text, language)), None)
-    if switching is None:
+    ).scalar_one_or_none()
+    if not switching:
         return False
     try:
         brief = await load_latest_brief(db, thread.id)
@@ -1182,12 +1180,14 @@ async def submit_turn(
         and reply_language == previous_language
         and earlier_language not in (None, previous_language)
         and short_reply_in(body.message, earlier_language)
-        and await _switched_by_video_text(db, thread, previous_language)
+        and await _switched_by_video_text(db, thread)
     )
     if restored:
         # Only pasted video text moved the chat: "Do it" in the earlier language takes it back.
         reply_language = earlier_language
-    remember_reply_language(thread, reply_language, restored=restored)
+    remember_reply_language(
+        thread, reply_language, restored=restored, switched_by=body.client_event_id
+    )
     inert_response: tuple[Literal["progress", "question"], str] | None = None
     with reply_language_for(reply_language):
         if scope is not None:

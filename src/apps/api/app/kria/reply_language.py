@@ -410,8 +410,10 @@ def asks_for_video_text(events: Any) -> bool:
     return latest_open_creative_question(events) is not None
 
 
-# Language the chat had before its latest switch, kept beside ``STATE_KEY``.
+# Language the chat had before its latest switch, and the client id of the message that made
+# it, kept beside ``STATE_KEY``.
 EARLIER_STATE_KEY = "reply_language_before"
+SWITCHED_BY_STATE_KEY = "reply_language_switched_by"
 # Share of a message's words the video's text must hold for the message to count as that text.
 _VIDEO_TEXT_COVERAGE = 0.8
 
@@ -423,18 +425,19 @@ def earlier_reply_language(thread: Any) -> str | None:
     return stored if stored in _supported() else None
 
 
+def switching_message_id(thread: Any) -> str | None:
+    """Client event id of the message that made the chat's latest switch, or None."""
+    state = getattr(thread, "state", None)
+    stored = state.get(SWITCHED_BY_STATE_KEY) if isinstance(state, Mapping) else None
+    return stored if isinstance(stored, str) and stored else None
+
+
 def short_reply_in(message: str | None, language: str | None) -> bool:
     """True for a clear reply in ``language`` too short to switch a chat ("Do it", "Yes")."""
     if language is None or not own_words_enabled():
         return False
     detected, strength = _detect(message)
     return detected == language and strength < _SWITCH_STRENGTH
-
-
-def switched_language(message: str | None, language: str) -> bool:
-    """True when ``message`` reads clearly enough as ``language`` to have switched a chat."""
-    detected, strength = _detect(message)
-    return detected == language and strength >= _SWITCH_STRENGTH
 
 
 def is_video_text(message: str | None, texts: Any) -> bool:
@@ -565,11 +568,17 @@ def thread_reply_language(thread: Any) -> str | None:
     return stored if stored in _supported() else None
 
 
-def remember_reply_language(thread: Any, language: str | None, *, restored: bool = False) -> None:
+def remember_reply_language(
+    thread: Any,
+    language: str | None,
+    *,
+    restored: bool = False,
+    switched_by: str | None = None,
+) -> None:
     """Store the chat's language on the locked thread row; a no-op when unchanged.
 
-    A switch also keeps the language it left (``EARLIER_STATE_KEY``); ``restored`` (going back
-    to it) forgets it, so a later short reply cannot flip the chat again.
+    A switch also keeps the language it left and ``switched_by``, the message that made it;
+    ``restored`` (going back) forgets both, so a later short reply cannot flip the chat again.
     """
     if language not in _supported() or not enabled():
         return
@@ -579,10 +588,11 @@ def remember_reply_language(thread: Any, language: str | None, *, restored: bool
     if before == language:
         return
     current[STATE_KEY] = language
-    if restored or before not in _supported():
-        current.pop(EARLIER_STATE_KEY, None)
-    else:
+    current.pop(EARLIER_STATE_KEY, None)
+    current.pop(SWITCHED_BY_STATE_KEY, None)
+    if not restored and before in _supported() and switched_by and own_words_enabled():
         current[EARLIER_STATE_KEY] = before
+        current[SWITCHED_BY_STATE_KEY] = switched_by
     thread.state = current
 
 

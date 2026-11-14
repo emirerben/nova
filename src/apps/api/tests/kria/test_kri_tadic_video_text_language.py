@@ -14,6 +14,8 @@ Failure modes covered here, through the real `submit_turn`:
 7. A short reply in the new language ("Yap") restores the earlier one.
 8. "make it pop" in a Turkish chat with no switch behind it turns the chat English.
 9. Once restored, a later short reply flips the chat again.
+10. After a real-sentence switch, pasting the lyrics (now the video's text) makes a later short
+    reply in the earlier language ("make it pop", "Do it") flip the chat back.
 """
 
 from __future__ import annotations
@@ -210,6 +212,19 @@ async def test_a_real_turkish_sentence_still_switches_for_good() -> None:
     assert await _turn(user_id, thread_id, sentence) == "tr"
     _brief_holds(thread_id, LYRICS)
 
+    assert await _turn(user_id, thread_id, "Do it") == "tr"
+
+
+@pytest.mark.asyncio
+async def test_lyrics_pasted_after_a_real_switch_do_not_undo_it() -> None:
+    user_id, thread_id, _ = _seed_runtime_project()
+    await _turn(user_id, thread_id, REQUEST)
+    sentence = "Bundan sonra Türkçe konuşalım, şarkı sözlerini sonra göndereceğim"
+    assert await _turn(user_id, thread_id, sentence) == "tr"
+    assert await _turn(user_id, thread_id, LYRICS) == "tr"
+    _brief_holds(thread_id, LYRICS)
+
+    assert await _turn(user_id, thread_id, "make it pop") == "tr"
     assert await _turn(user_id, thread_id, "Do it") == "tr"
 
 
