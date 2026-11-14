@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.227.0] - 2026-11-14
+
+### Changed
+- fix(kria): one requested text makes one on-screen text (KRI-1424) (#2341) <!-- release-pr: 2341 -->
+
 ## [0.88.226.0] - 2026-11-14
 
 ### Changed
