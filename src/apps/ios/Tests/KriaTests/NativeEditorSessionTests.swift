@@ -2906,10 +2906,10 @@ final class NativeEditorSessionTests: XCTestCase {
         session.replaceDocumentForTesting(document)
         let target = EditorSourceRegistrationTarget(itemID: footageTarget.itemID, variantID: footageTarget.variantID,
             clientImportID: UUID(), baseGeneration: footageTarget.baseGeneration, guidedRevisionNumber: 7, sourceKind: .visual)
-        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil,
+                                                     splitPanel: .init(sectionID: "s", panel: 1, offset: 0))
         uploads.beginEditorPlacement(placement)
         session.useMediaUploads(uploads)
-        session.stageSplitPanelPlacementForTesting(placement.id, sectionID: "s", panel: 1, offset: 0)
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "photo",
             sourceIndex: 4, source: nil, error: nil, reasonCode: nil, retryable: false)
         try await session.placeEditorSource(placement, response: response)
@@ -2945,10 +2945,10 @@ final class NativeEditorSessionTests: XCTestCase {
         session.replaceDocumentForTesting(document)
         let target = EditorSourceRegistrationTarget(itemID: footageTarget.itemID, variantID: footageTarget.variantID,
             clientImportID: UUID(), baseGeneration: footageTarget.baseGeneration, guidedRevisionNumber: 7, sourceKind: .visual)
-        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil,
+                                                     splitPanel: .init(sectionID: "s", panel: 1, offset: 0))
         uploads.beginEditorPlacement(placement)
         session.useMediaUploads(uploads)
-        session.stageSplitPanelPlacementForTesting(placement.id, sectionID: "s", panel: 1, offset: 0)
         session.currentTime = 0
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "photo",
             sourceIndex: 4, source: nil, error: nil, reasonCode: nil, retryable: false)
@@ -9029,7 +9029,7 @@ final class NativeEditorSessionTests: XCTestCase {
         return (session, uploads, target)
     }
 
-    private static func devicePlacementSessionWithSpy() async throws -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
+    static func devicePlacementSessionWithSpy() async throws -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
         let threadID = UUID()
         var authoritative = variant(duration: 2, generation: "generation-1")
         authoritative["render_destination"] = .string("device")

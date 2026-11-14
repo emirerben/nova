@@ -426,6 +426,9 @@ class RefusedStrategy:
     # reply that follows when the creator accepts the simpler version).
     fields: tuple[str, ...] = ()
     agreed: str = ""
+    # What the simplification changes, without the question that asks for it: said on its own
+    # when something else holds the edit too, so no reply asks a question it has no card for.
+    detail: str = ""
 
 
 SONG_CAPTIONS_NEED_SONG_CODE = "song_captions_need_song"
@@ -1513,6 +1516,7 @@ def check_strategy_for_runtime_v2(
             code="simplification_requires_choice",
             fields=(*dropped, *(("left_out_media",) if left_out_media else ())),
             agreed=agreed,
+            detail=details,
         )
     return CheckedStrategy(
         strategy=checked, notices=all_notices, omitted_fields=tuple(sorted(omitted_fields))

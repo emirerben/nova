@@ -67,7 +67,6 @@ from app.agents.audio_template import (
     AUDIO_TEMPLATE_PROMPT_VERSION,
     AudioTemplateAgent,
 )
-from app.agents.beat_aligner import BEAT_ALIGNER_PROMPT_VERSION, BeatAlignerAgent
 from app.agents.brief_extractor import (
     BRIEF_EXTRACTOR_PROMPT_SOURCES,
     BRIEF_EXTRACTOR_PROMPT_VERSION,
@@ -110,7 +109,6 @@ LOADS_PROMPT_FILES = {
 }
 ALL_SOURCES = [
     *LOADS_PROMPT_FILES.values(),
-    ("app/agents/beat_aligner.py",),
     _RESEARCH_PROMPT_SOURCES,
     _RESEARCH_LAYERS_PROMPT_SOURCES,
     CREATION_TEXT_COMPOSER_PROMPT_SOURCES,
@@ -201,7 +199,6 @@ def test_derived_specs_stamp_their_fingerprint() -> None:
             AUDIO_TEMPLATE_PROMPT_VERSION,
             AUDIO_TEMPLATE_PROMPT_SOURCES,
         ),
-        BeatAlignerAgent.spec: ("ba", BEAT_ALIGNER_PROMPT_VERSION, ("app/agents/beat_aligner.py",)),
         ResearchCopyAgent.spec: ("rc", None, _RESEARCH_PROMPT_SOURCES),
         ResearchLayersAgent.spec: ("rl", None, _RESEARCH_LAYERS_PROMPT_SOURCES),
         ResearchReviewAgent.spec: ("rr", None, _RESEARCH_PROMPT_SOURCES),

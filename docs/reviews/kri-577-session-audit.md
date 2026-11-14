@@ -128,7 +128,7 @@ loops; they are listed as gaps below.
 | `tests/gates/reliability-gates.json` + `test_reliability_gates.py` | One ledger per incident: boundary, fix PRs, tests, harness realness, evidence level, open neighbours. Documents which fixes already satisfy the gates (25 rows: 21 merged, 2 open PRs, 2 gaps). |
 | `scripts/reliability-gates.py` (`select`, `run`, `red-control`, `journey`) | `select` names the incidents that touched a diff (the sibling check 0113ceec, a8cd336c and the receipts chain skipped); `run` separates environment skips from failures; `red-control` proves the pre-fix tree fails the gate. |
 | CI journey `kri-577-reliability-gates` | Every merged gate runs in CI when one of its 37 incident paths changes (`scripts/ci/journey-manifest.json`, `ci.yml`). |
-| `preship-check.sh` step 6 | Runs the mapped gates before a PR. |
+| `preship-check.sh` step 5 | Runs the mapped gates before a PR. |
 | PR template "Reliability gates" block + `docs/runbooks/pr-acceptance-checklist.md` | The five acceptance lines: incident replay, neighbours, platforms/evidence level, resource envelope, environment vs regressions. |
 | `agent-navigation.md`, CLAUDE.md pointer, `agents/DECISIONS.md` | The workflow rules: replay first, enumerate siblings, one hot file per PR, no stacked PRs, device re-send before "done". |
 

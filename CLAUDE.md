@@ -89,7 +89,7 @@ Use `make local-render` for byte-equivalent output before merging a render-affec
 - Backend lint: `cd src/apps/api && ruff check . && ruff format --check .`
 - Frontend (only for an explicitly requested web change): `cd src/apps/web && npm run lint && npx tsc --noEmit && npm test`
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
-- Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain WARN. Run before every PR.
+- Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain BLOCK (3rd fix PR needs a failure-mode list). Run before every PR.
 - Reliability (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; evidence and scratch-DB steps: `docs/runbooks/pr-acceptance-checklist.md`.
 
 ## Testing rules

@@ -101,34 +101,12 @@ AGENT_NARRATIVE: dict[str, dict[str, str]] = {
         "status_badge": "PR #136 · in prod",
         "status_badge_kind": "has-fixtures",
     },
-    "nova.layout.transition_picker": {
-        "phase": "job",
-        "cardinality": "per-slot · shadow mode",
-        "what": "Picks the transition into each slot from the recipe's vocabulary (whip-pan, dissolve, zoom-in, cut). Still shadow-mode; production wiring deferred per PR2 scope decision.",
-        "status_badge": "shadow only",
-    },
-    "nova.video.shot_ranker": {
-        "phase": "job",
-        "cardinality": "per-clip · candidate ranking",
-        "what": "Moment ranking within a clip. Codified but not yet wired — deferred until <code>clip_router</code> proves itself in production.",
-        "status_badge": "codified · not wired",
-    },
     "nova.video.clip_router": {
         "phase": "job",
         "cardinality": "slot → clip · agentic templates",
         "what": "Slot → clip assignment. Newly wired into production for <code>is_agentic=true</code> templates (PR #136) with a greedy fallback via the new <code>agentic_matcher</code> module. Manual templates still use the rule-based matcher.",
         "status_badge": "PR #136 · in prod",
         "status_badge_kind": "has-fixtures",
-    },
-    "nova.audio.beat_aligner": {
-        "phase": "job",
-        "cardinality": "rule-based · per-job",
-        "what": "Snaps cumulative slot timestamps to the nearest beat. Pure Python — no LLM. Used only in music-template mode.",
-    },
-    "nova.qa.output_validator": {
-        "phase": "job",
-        "cardinality": "rule-based · per-job · post-render",
-        "what": "Validates the final assembly plan against structural invariants. Pure Python. Catches anything that would break FFmpeg before render.",
     },
 }
 
