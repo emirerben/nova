@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.224.0] - 2026-11-14
+
+### Changed
+- fix(kria): pasted lyrics no longer move the chat language (KRI-1448) (#2343) <!-- release-pr: 2343 -->
+
 ## [0.88.223.0] - 2026-11-14
 
 ### Changed
