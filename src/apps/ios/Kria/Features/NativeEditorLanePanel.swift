@@ -964,20 +964,36 @@ struct NativePaperSlider: UIViewRepresentable {
 }
 
 
-struct NativeCaptionGestureScopeModifier: ViewModifier {
+/// After a caption drag or pinch: the change already applies to that caption; this small, optional button over the
+/// preview carries it to every caption. It never blocks the next gesture, sits on the half of the preview away from
+/// the caption, and goes away on any other edit or selection (the Style tab keeps the same choice).
+struct NativeCaptionScopeOffer: View {
     @ObservedObject var session: NativeEditorSession
+    let captionID: String
 
-    func body(content: Content) -> some View {
-        content.confirmationDialog("Apply this caption change", isPresented: $session.captionGestureChoicePresented, titleVisibility: .visible) {
-            Button("Only this caption") { session.finishCaptionGesture(applyToAll: false) }
-            Button("All captions in this video") { session.finishCaptionGesture(applyToAll: true) }
-            Button("Keep this caption only", role: .cancel) { session.finishCaptionGesture(applyToAll: false) }
-        } message: {
-            Text("Choose one caption or all. Only the changed size or position is applied. Other styling stays unchanged.")
+    var body: some View {
+        // One short line: the preview can be only ~160pt wide while a panel is open.
+        HStack(spacing: 0) {
+            Button {
+                session.finishCaptionGesture(applyToAll: true)
+            } label: {
+                Text("Apply to all")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.leading, 12).padding(.trailing, 2)
+                    .frame(minHeight: 32)
+            }
+            .accessibilityLabel("Apply to all captions")
+            Button {
+                session.finishCaptionGesture(applyToAll: false)
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
+                    .frame(width: 30, height: 32)
+            }
+            .accessibilityLabel("Only this caption")
         }
-        .onChange(of: session.captionGestureChoicePresented) { _, presented in
-            if !presented { DispatchQueue.main.async { session.finishCaptionGesture(applyToAll: false) } }
-        }
-        .onDisappear { session.finishCaptionGesture(applyToAll: false) }
+        .foregroundStyle(.white)
+        .background(.black.opacity(0.72), in: Capsule())
     }
 }

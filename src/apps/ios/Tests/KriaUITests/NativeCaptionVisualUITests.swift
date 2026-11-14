@@ -38,14 +38,61 @@ final class NativeCaptionVisualUITests: XCTestCase {
         app.buttons["native-editor-captions-done"].tap()
         let caption = app.descendants(matching: .any)["native-editor-preview-caption_cue-native-caption-0"].firstMatch
         XCTAssertTrue(caption.waitForExistence(timeout: 10))
-        let start = caption.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 20, dy: -30)))
-        let choice = app.buttons["All captions in this video"]
+
+        // A caption drags like authored text. Ways this breaks, each checked below:
+        // 1. no frozen still is cut for a caption, so the picture stays put under the finger and jumps on release;
+        // 2. the drag rebuilds the preview per sample instead of moving the still (no live samples);
+        // 3. a scope sheet blocks the next gesture, or the change is lost / doubled on release;
+        // 4. a second drag right after the first does nothing.
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        func liveSamples() -> Int {
+            Int((preview.value as? String)?.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? "") ?? 0
+        }
+        let stillReady = NSPredicate { _, _ in (preview.value as? String ?? "").contains("captionStillReady:true") }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: stillReady, object: preview)], timeout: 15), .completed,
+                       "The selected caption's frozen still must be ready before the drag")
+        // The object's accessibility frame is canvas-sized (its hit shape); where it is drawn is in its value.
+        func position() -> CGPoint? {
+            guard let value = caption.value as? String, let range = value.range(of: "position ") else { return nil }
+            let numbers = value[range.upperBound...].split(separator: ",").prefix(2)
+                .map { Double($0.trimmingCharacters(in: CharacterSet(charactersIn: " %"))) }
+            guard numbers.count == 2, let x = numbers[0], let y = numbers[1] else { return nil }
+            return CGPoint(x: x, y: y)
+        }
+        func waitForMove(from start: CGPoint, by drag: CGVector, _ label: String) {
+            let canvas = preview.frame.size
+            let expected = CGPoint(x: drag.dx / canvas.width * 100, y: drag.dy / canvas.height * 100)
+            let moved = NSPredicate { _, _ in
+                guard let now = position() else { return false }
+                return abs(now.x - start.x - expected.x) <= 3 && abs(now.y - start.y - expected.y) <= 3
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moved, object: caption)], timeout: 10), .completed,
+                           "\(label): caption at \(String(describing: position())) from \(start), expected a move of \(expected)%")
+        }
+        let samplesBefore = liveSamples()
+        guard let first = position() else { return XCTFail("caption position unreadable: \(String(describing: caption.value))") }
+        let start = caption.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: first.y / 100))
+            .withOffset(CGVector(dx: (first.x / 100 - 0.5) * preview.frame.width, dy: 0))
+        let drag = CGVector(dx: 20, dy: -30)
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(drag), withVelocity: 20, thenHoldForDuration: 0.1)
+        XCTAssertGreaterThan(liveSamples() - samplesBefore, 4, "The caption's own pixels must follow the finger, like text")
+        // The drag applies to this caption at once; carrying it to every caption is an optional button, never a sheet.
+        XCTAssertFalse(app.buttons["All captions in this video"].exists)
+        waitForMove(from: first, by: drag, "first drag")
+        let choice = app.buttons["Apply to all captions"]
         XCTAssertTrue(choice.waitForExistence(timeout: 5))
         let choiceShot = XCTAttachment(screenshot: app.screenshot())
         choiceShot.name = "caption-gesture-scope-choice"; choiceShot.lifetime = .keepAlways; add(choiceShot)
+        // A second drag works straight away, with the offer still up: nothing blocks it.
+        guard let second = position() else { return XCTFail("caption position unreadable after the first drag") }
+        let again = caption.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: second.y / 100))
+            .withOffset(CGVector(dx: (second.x / 100 - 0.5) * preview.frame.width, dy: 0))
+        let back = CGVector(dx: -16, dy: 24)
+        again.press(forDuration: 0.1, thenDragTo: again.withOffset(back))
+        waitForMove(from: second, by: back, "second drag")
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
         choice.tap()
-        XCTAssertFalse(choice.exists)
+        XCTAssertFalse(choice.waitForExistence(timeout: 1))
     }
 
     func testLegacyServerAllowsOpeningVisualImporterAndAddingCard() {

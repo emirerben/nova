@@ -113,6 +113,13 @@ struct NativeVideoPreview: View {
     /// Scale / rotation / translation of the in-flight text gesture (shared transform layer).
     @State private var liveText = NativeTextLiveTransform()
     @State private var liveTextSampleCount = 0
+    /// A caption cue under the finger: it moves and scales like authored text (frozen stills, one commit on release).
+    @State private var liveCaption: NativeEditorSession.CaptionStill?
+    @State private var captionCornerActive = false
+    /// A picture card's box under the finger (and until the preview redraws it), so the handles follow the live still.
+    @State private var liveMediaBox: NativeLiveMediaBox?
+    /// The one document write a media gesture makes, on release (the live still shows every sample before that).
+    @State private var pendingMediaCommit: (() -> Void)?
     @State private var liveMediaFrame: NativeEditorSession.MediaInteractionFrame?
     @State private var liveMediaScale: CGFloat = 1
     @State private var liveMediaRotation: Double = 0
@@ -277,7 +284,10 @@ struct NativeVideoPreview: View {
         let stillReady = !session.isPlaying && session.scrubPreviewFrame != nil
             && session.scrubPreviewTime.map { abs($0 - target) < 0.05 } == true
         let frameTime = textFrame.map { String($0.time) } ?? "none"
-        return "liveTextSamples:\(liveTextSampleCount);liveTextReady:\(textReady);stillFrameReady:\(stillReady);textFramePresent:\(textFrame != nil);textElementMatches:\(elementMatches);textTimeMatches:\(timeMatches);textFrameTime:\(frameTime);previewClockTime:\(clock.currentTime);dangerGuideSamples:\(dangerGuideSamples);dangerGuideLast:\(dangerGuideLast)"
+        let captionStillReady = session.selection.map { selection in
+            selection.kind == .captionCue && textFrame?.caption == session.captionStill(id: selection.id) && timeMatches
+        } ?? false
+        return "liveTextSamples:\(liveTextSampleCount);captionStillReady:\(captionStillReady);liveTextReady:\(textReady);stillFrameReady:\(stillReady);textFramePresent:\(textFrame != nil);textElementMatches:\(elementMatches);textTimeMatches:\(timeMatches);textFrameTime:\(frameTime);previewClockTime:\(clock.currentTime);dangerGuideSamples:\(dangerGuideSamples);dangerGuideLast:\(dangerGuideLast)"
     }
 
     private func refreshObjects() {
@@ -308,6 +318,14 @@ struct NativeVideoPreview: View {
     }
 
     private func commitLiveText() {
+        if let caption = liveCaption {
+            if liveText.translation != .zero {
+                session.setCaptionGesturePosition(id: caption.id, position: CGPoint(x: caption.position.x + liveText.translation.x,
+                                                                                    y: caption.position.y + liveText.translation.y))
+            }
+            if liveText.scale != 1 { session.setCaptionGestureSize(id: caption.id, size: caption.sizePx * liveText.scale) }
+            return
+        }
         guard let baseline = liveTextBaseline else { return }
         #if DEBUG
         NativePreviewDiagnostics.record("live-text-gesture", fields: ["samples": String(liveTextSampleCount), "scale": String(liveText.scale)])
@@ -322,15 +340,53 @@ struct NativeVideoPreview: View {
         }
     }
 
+    /// Pins a caption cue for a drag, pinch or corner resize: the gesture moves its frozen still (when prepared for it
+    /// exactly as it is drawn now) and commits once on release, the same as authored text.
+    private func beginLiveCaption(_ id: String) {
+        guard liveCaption == nil else { return }
+        let still = session.captionStill(id: id)
+        liveCaption = still
+        liveText.begin(baseline: TextTransformBaseline(id: id, anchor: still.position, sizePx: still.sizePx, widthFrac: 1, rotationDeg: 0),
+                       bounds: session.previewSelectionBounds(for: EditorSelection(kind: .captionCue, id: id), at: clock.currentTime)
+                           .map(TextTransformBounds.init))
+        if let prepared = session.textInteractionFrame, prepared.caption == still,
+           abs(prepared.time - clock.currentTime) < 0.01 { liveTextFrame = prepared }
+    }
+
+    /// The caption sizes `NativeEditorSession.setCaptionGestureSize` stores, so the live still never shows a size Save
+    /// would not keep.
+    private func resizeLiveCaption(by requested: Double, in canvas: CGSize) {
+        guard let caption = liveCaption, caption.sizePx > 0, requested.isFinite else { return }
+        let scale = min(max(requested, 36 / caption.sizePx), 160 / caption.sizePx)
+        let baseline = TextTransformBaseline(id: caption.id, anchor: caption.position, sizePx: caption.sizePx, widthFrac: 1, rotationDeg: 0)
+        liveText.resize(current: baseline, scale: scale, rotation: 0, snapRotation: false)
+        if liveTextFrame != nil { liveTextSampleCount += 1 }
+        updateTextAlignment(in: canvas)
+    }
+
+    /// Records a media sample: the live still and box follow it now, the document gets the last one on release.
+    private func stageMedia(_ object: NativeEditorPreviewObject, scale: CGFloat, rotation: Double, translation: CGPoint, commit: @escaping () -> Void) {
+        liveMediaScale = scale
+        liveMediaRotation = rotation
+        liveMediaTranslation = translation
+        pendingMediaCommit = commit
+        if let baseline = dangerBaseline {
+            liveMediaBox = NativeLiveMediaBox(id: object.id,
+                footprint: baseline.transformed(scale: scale, rotation: rotation, translation: translation),
+                rotation: object.rotation + rotation)
+        }
+    }
+
     private func frame(for object: NativeEditorPreviewObject, in size: CGSize) -> CGRect {
         if object.item.kind == .speaker { return speakerBox(for: object.item.selection, in: size) }
+        if let box = liveMediaBox, box.id == object.id { return box.footprint.frame(in: size) }
         if object.item.kind == .drawing {
             guard let drawing = session.drawing(id: object.item.id) else { return .zero }
             let box = NativeDrawingTransformLayer.boxSize(of: drawing, in: size)
             let centre = NativeDrawingTransformLayer.centre(of: drawing, in: size)
             return CGRect(x: centre.x - box.width / 2, y: centre.y - box.height / 2, width: box.width, height: box.height)
         }
-        if object.item.id == liveTextBaseline?.id, let live = liveText.frame(in: size) {
+        if object.item.id == (liveTextBaseline?.id ?? liveCaption?.id), let live = liveText.frame(in: size) {
             return live
         }
         if let geometry = session.previewSelectionBounds(for: object.item.selection, at: clock.currentTime) {
@@ -399,7 +455,17 @@ struct NativeVideoPreview: View {
         speakerStillHeld = false
         liveMediaFrame = nil
         liveMediaScale = 1
+        liveMediaRotation = 0
         liveMediaTranslation = .zero
+        liveMediaBox = nil
+    }
+
+    /// Starts a picture-card gesture on the still prepared for it (a still held from the last gesture is dropped first:
+    /// it was cut before that move and would jump).
+    private func beginMediaStill(_ object: NativeEditorPreviewObject) {
+        releaseSpeakerStill()
+        if let prepared = session.mediaInteractionFrame, prepared.selection == object.item.selection,
+           abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
     }
 
     /// Starts moving or resizing the speaker: pins the baseline frame and the live still (when prepared for it).
@@ -502,7 +568,7 @@ struct NativeVideoPreview: View {
             return speakerCorners(for: selection, in: size).contains { NativeTextTransformMath.inGrabZone(point, corner: $0) }
         }
         let bounds = frame(for: selected, in: size)
-        let reach = selected.item.kind == .text
+        let reach = selected.item.kind == .text || selected.item.kind == .captionCue
             ? [NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)]
             : NativeTextTransformMath.corners(of: bounds, rotationDegrees: selected.rotation)
         return reach.contains { NativeTextTransformMath.inGrabZone(point, corner: $0) }
@@ -596,6 +662,21 @@ struct NativeVideoPreview: View {
                 }
             }
         }
+        // A caption cue: its one corner handle resizes (captions do not rotate), like the text handle.
+        if directMoveObjectID == nil, let selection = session.selection, selection.kind == .captionCue,
+           let selected = objects.first(where: { $0.item.selection == selection }), canDirectlyPosition(selected) {
+            let bounds = frame(for: selected, in: size)
+            let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: 0)
+            if NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: corner, bounds: bounds) {
+                beginDangerGuide(for: selected, in: size)
+                directMoveObjectID = selected.id
+                captionCornerActive = true
+                transformCenter = CGPoint(x: bounds.midX, y: bounds.midY)
+                transformStartVector = CGVector(dx: value.startLocation.x - bounds.midX, dy: value.startLocation.y - bounds.midY)
+                session.beginDirectManipulation()
+                beginLiveCaption(selected.item.id)
+            }
+        }
         // The framed speaker: any corner resizes about the centre (no rotation; the wire has none).
         if directMoveObjectID == nil, let selection = session.selection, selection.kind == .speaker,
            let speaker = objects.first(where: { $0.item.selection == selection }), canDirectlyPosition(speaker),
@@ -613,7 +694,7 @@ struct NativeVideoPreview: View {
         }
         if directMoveObjectID == nil, let selection = session.selection,
            let selected = objects.first(where: { $0.item.selection == selection }),
-           selected.item.kind != .text, selected.item.kind != .speaker, canDirectlyPosition(selected), session.canRotateVisual(selected.item.selection) {
+           selected.item.kind == .mediaOverlay || selected.item.kind == .visualBlock, scaleHandler(for: selected) != nil {
             let bounds = frame(for: selected, in: size)
             // All four drawn handles are grabbable (44pt zones), not only the bottom-right one.
             if NativeTextTransformMath.corners(of: bounds, rotationDegrees: selected.rotation).contains(where: {
@@ -622,9 +703,7 @@ struct NativeVideoPreview: View {
                 beginDangerGuide(for: selected, in: size)
                 directMoveObjectID = selected.id
                 visualTransformBaseline = selected
-                if let prepared = session.mediaInteractionFrame,
-                   prepared.selection == selected.item.selection,
-                   abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
+                beginMediaStill(selected)
                 transformCenter = CGPoint(x: bounds.midX, y: bounds.midY)
                 transformStartVector = CGVector(dx: value.startLocation.x - bounds.midX, dy: value.startLocation.y - bounds.midY)
                 session.beginDirectManipulation()
@@ -636,16 +715,28 @@ struct NativeVideoPreview: View {
             resizeSpeaker(to: startWidth * hypot(value.location.x - center.x, value.location.y - center.y) / radius)
             return
         }
+        if captionCornerActive, let center = transformCenter, let start = transformStartVector {
+            let radius = hypot(start.dx, start.dy)
+            guard radius > 1 else { return }
+            resizeLiveCaption(by: Double(hypot(value.location.x - center.x, value.location.y - center.y) / radius), in: size)
+            return
+        }
         if let baseline = visualTransformBaseline, let center = transformCenter, let start = transformStartVector {
             let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
             let radius = hypot(start.dx, start.dy)
             guard radius > 1 else { return }
-            let scale = baseline.scale * hypot(next.dx, next.dy) / radius
-            scaleHandler(for: baseline)?(scale)
-            let rotation = NativeTextRotationSnap.angle(baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi)
-            liveMediaScale = scale / max(0.001, baseline.scale)
-            liveMediaRotation = rotation - baseline.rotation
-            session.setVisualEditorStyle(baseline.item.selection, key: "rotation_deg", value: .number(max(-360, min(360, rotation))))
+            // Corners always resize; they also turn the card where this edit may rotate it.
+            let scale = min(max(baseline.scale * hypot(next.dx, next.dy) / radius, 0.05), 1.5)
+            let rotates = session.canRotateVisual(baseline.item.selection)
+            let rotation = rotates
+                ? NativeTextRotationSnap.angle(baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi)
+                : baseline.rotation
+            let onResize = scaleHandler(for: baseline)
+            let selection = baseline.item.selection
+            stageMedia(baseline, scale: scale / max(0.001, baseline.scale), rotation: rotation - baseline.rotation, translation: .zero) {
+                onResize?(scale)
+                if rotates { session.setVisualEditorStyle(selection, key: "rotation_deg", value: .number(max(-360, min(360, rotation)))) }
+            }
             return
         }
         if let baseline = transformBaseline, let center = transformCenter, let start = transformStartVector {
@@ -663,10 +754,9 @@ struct NativeVideoPreview: View {
             directMoveBaseline = position
             session.select(object.item, seekToStart: false)
             if object.item.kind == .speaker { beginSpeakerGesture(object.item.selection) }
-            else if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
-               prepared.selection == object.item.selection,
-               abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
+            else if object.item.kind == .mediaOverlay || object.item.kind == .visualBlock { beginMediaStill(object) }
             session.beginDirectManipulation()
+            if object.item.kind == .captionCue { beginLiveCaption(object.item.id) }
         }
         guard let objectID = directMoveObjectID,
               let baseline = directMoveBaseline,
@@ -682,6 +772,12 @@ struct NativeVideoPreview: View {
         } else if object.item.kind == .speaker {
             guard let viewport = session.speakerViewport(for: object.item.selection, at: clock.currentTime) else { return }
             onMove(NativeSpeakerPanelGeometry.movedPosition(from: baseline, translation: value.translation, canvas: size, viewport: viewport))
+        } else if object.item.kind == .captionCue {
+            guard liveCaption != nil else { return }
+            // The same safe range `setCaptionGesturePosition` stores.
+            liveText.move(to: CGPoint(x: min(0.95, max(0.05, position.x)), y: min(0.90, max(0.10, position.y))))
+            if liveTextFrame != nil { liveTextSampleCount += 1 }
+            updateTextAlignment(in: size)
         } else {
             var landed = position
             if object.item.kind == .mediaOverlay || object.item.kind == .visualBlock {
@@ -695,8 +791,10 @@ struct NativeVideoPreview: View {
                let raw = session.document.mediaOverlays.first(where: { $0.id == object.item.id })?.raw {
                 landed.y = clampedCardY(landed.y, raw: raw)
             }
-            onMove(landed)
-            liveMediaTranslation = CGPoint(x: landed.x - baseline.x, y: landed.y - baseline.y)
+            let target = landed
+            stageMedia(object, scale: 1, rotation: 0, translation: CGPoint(x: landed.x - baseline.x, y: landed.y - baseline.y)) {
+                onMove(target)
+            }
         }
     }
 
@@ -704,6 +802,11 @@ struct NativeVideoPreview: View {
         let hasActiveManipulation = directMoveObjectID != nil || directResizeObjectID != nil || session.isDirectManipulating
         guard hasActiveManipulation else { return }
         commitLiveText()
+        let committedMedia = pendingMediaCommit != nil
+        pendingMediaCommit?()
+        pendingMediaCommit = nil
+        liveCaption = nil
+        captionCornerActive = false
         dangerBaseline = nil
         directMoveObjectID = nil
         directMoveBaseline = nil
@@ -717,12 +820,16 @@ struct NativeVideoPreview: View {
         if let target = speakerGestureSelection, speakerGestureBaseline != nil, liveMediaFrame != nil,
            session.speakerFrame(for: target) != speakerGestureBaseline {
             holdSpeakerStill()
+        } else if committedMedia {
+            // The moved card (still and box) stays where it was dropped until the preview has redrawn it there.
+            holdSpeakerStill()
         } else {
             liveMediaFrame = nil
             liveMediaScale = 1
+            liveMediaRotation = 0
             liveMediaTranslation = .zero
+            liveMediaBox = nil
         }
-        liveMediaRotation = 0
         speakerGestureBaseline = nil
         speakerGestureSelection = nil
         speakerCornerStartWidth = nil
@@ -761,11 +868,11 @@ struct NativeVideoPreview: View {
                         directResizeTextBaseline = session.document.textElements.first { $0.id == object.item.id }
                     }
                     speakerCornerStartWidth = nil
+                    captionCornerActive = false
                     if object.item.kind == .speaker { beginSpeakerGesture(object.item.selection) }
-                    else if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
-                       prepared.selection == object.item.selection,
-                       abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
+                    else if object.item.kind == .mediaOverlay || object.item.kind == .visualBlock { beginMediaStill(object) }
                     session.beginDirectManipulation()
+                    if object.item.kind == .captionCue { beginLiveCaption(object.item.id) }
                 }
                 guard let objectID = directResizeObjectID,
                       let baseline = directResizeBaseline,
@@ -774,11 +881,13 @@ struct NativeVideoPreview: View {
                 if let text = directResizeTextBaseline {
                     resizeText(text, scale: value, rotation: 0, canvas: size)
                     updateTextAlignment(in: size)
+                } else if object.item.kind == .captionCue {
+                    resizeLiveCaption(by: Double(value), in: size)
                 } else if object.item.kind == .speaker {
                     onResize(baseline * value)
                 } else {
-                    onResize(baseline * value)
-                    liveMediaScale = value
+                    let target = min(max(baseline * value, 0.05), 1.5)
+                    stageMedia(object, scale: target / max(0.001, baseline), rotation: 0, translation: .zero) { onResize(target) }
                 }
             }
             .onEnded { _ in
@@ -1005,9 +1114,8 @@ struct NativeVideoPreview: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
-            if let frozen = liveTextFrame, let baseline = liveTextBaseline {
+            if let frozen = liveTextFrame, let anchor = liveText.baseline?.anchor {
                 GeometryReader { proxy in
-                    let anchor = nativeTextPosition(baseline)
                     ZStack(alignment: .topLeading) {
                         Image(uiImage: frozen.below).resizable().frame(width: proxy.size.width, height: proxy.size.height)
                         ZStack(alignment: .topLeading) {
@@ -1055,7 +1163,8 @@ struct NativeVideoPreview: View {
                             onMove: positionHandler(for: object),
                             onResize: scaleHandler(for: object),
                             showsContent: !session.hasSourcePreview,
-                            rotationOverride: object.item.id == liveTextBaseline?.id ? (liveTextBaseline?.raw["rotation_deg"]?.numberValue ?? 0) + liveText.rotation : nil
+                            rotationOverride: object.item.id == liveTextBaseline?.id ? (liveTextBaseline?.raw["rotation_deg"]?.numberValue ?? 0) + liveText.rotation
+                                : liveMediaBox?.id == object.id ? liveMediaBox?.rotation : nil
                         )
                     }
                 }
@@ -1109,6 +1218,15 @@ struct NativeVideoPreview: View {
                     .transition(.opacity)
                     .accessibilityIdentifier("native-editor-edit-applied")
                     .onAppear { UIAccessibility.post(notification: .announcement, argument: "Edit applied") }
+            }
+
+            if let captionID = session.captionGestureOfferID, !session.isDirectManipulating, !session.isPlaying {
+                // On the half of the picture away from the caption, so it never covers the next grab.
+                NativeCaptionScopeOffer(session: session, captionID: captionID)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: session.captionPosition(id: captionID).y > 0.5 ? .top : .bottom)
+                    .transition(.opacity)
             }
 
             if session.sourcePreviewState == .ready, session.previewSkippedMediaCount > 0 {
@@ -1210,6 +1328,10 @@ struct NativeVideoPreview: View {
         .onChange(of: session.mediaInteractionFrame?.rect) { _, _ in
             if speakerStillHeld, preparedSpeakerFrame() != nil { releaseSpeakerStill() }
         }
+        .onChange(of: session.mediaInteractionFrame?.below) { _, still in
+            // A card's held still lets go once the rebuilt preview has cut a fresh one (it draws the card's new place).
+            if still != nil, speakerStillHeld, liveMediaBox != nil, !session.isDirectManipulating { releaseSpeakerStill() }
+        }
         .onChange(of: session.speakerFrame) { _, _ in if !session.isDirectManipulating { releaseSpeakerStill() } }
         .onChange(of: session.isPlaying) { _, playing in if playing { releaseSpeakerStill() } }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
@@ -1219,6 +1341,13 @@ struct NativeVideoPreview: View {
             }
         }
     }
+}
+
+/// A picture card's on-canvas box while a gesture moves its live still (`footprint` in canvas fractions).
+private struct NativeLiveMediaBox {
+    let id: String
+    let footprint: NativePreviewFootprint
+    let rotation: Double
 }
 
 final class NativeEditorPreviewDragClock {
@@ -1499,7 +1628,7 @@ private struct NativePreviewObjectView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(KriaColor.sky, lineWidth: 2)
-                    if onResize != nil, object.render == .text {
+                    if onResize != nil, object.render == .text || object.render == .caption {
                         VStack {
                             Spacer()
                             HStack {
@@ -1526,7 +1655,7 @@ private struct NativePreviewObjectView: View {
                                 resizeHandle
                             }
                         }
-                        .padding(-5)
+                        .padding(-9)
                     }
                 }
                 .allowsHitTesting(false)
@@ -1545,11 +1674,12 @@ private struct NativePreviewObjectView: View {
         .zIndex(Double(object.item.zIndex))
     }
 
+    /// Big enough to see and aim for under a thumb (the grab zone itself is 44pt).
     private var resizeHandle: some View {
         Circle()
             .fill(KriaColor.sky)
-            .overlay { Circle().stroke(.white, lineWidth: 1) }
-            .frame(width: 12, height: 12)
+            .overlay { Circle().stroke(.white, lineWidth: 1.5) }
+            .frame(width: 18, height: 18)
     }
 }
 

@@ -458,8 +458,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
-        "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
-        "tiltBackdropIsMissing "
+        "textElement textAnchor captionPosition captionStyleSize captionStill clipTilt "
+        "tiltBlockedReason tiltBackdropIsMissing "
         "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame "
         "speakerEditingFrame speakerFrame speakerFrameRect speakerSelection speakerViewport "
         "usesScopedSpeakerFrame ownsTimingGesture",

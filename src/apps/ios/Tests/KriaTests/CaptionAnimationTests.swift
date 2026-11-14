@@ -378,7 +378,7 @@ import CoreImage
         print("CAPTION_SCOPE_EXPORT_PROOF \(directory.path)")
     }
 
-    func testCaptionGestureAsksOnceOnReleaseAndAllIsOneUndoStep() async {
+    func testCaptionGestureAppliesAtOnceAndOptionalAllIsOneUndoStep() async {
         let (session, _) = await loaded()
         session.setCaptionStyleSize(.line("cue-2"), size: 120)
         let before = session.document
@@ -386,13 +386,17 @@ import CoreImage
         session.beginDirectManipulation()
         for value in [0.4, 0.45, 0.5] {
             session.setCaptionGesturePosition(id: "cue-1", position: CGPoint(x: 0.5, y: value))
-            XCTAssertFalse(session.captionGestureChoicePresented)
+            XCTAssertNil(session.captionGestureOfferID)
         }
         session.setCaptionGestureSize(id: "cue-1", size: 150)
         session.endDirectManipulation()
-        XCTAssertTrue(session.captionGestureChoicePresented)
+        // Released: this caption has the change, the others not yet; "all" is only offered.
+        XCTAssertEqual(session.captionGestureOfferID, "cue-1")
+        XCTAssertEqual(session.captionStyleSize(.line("cue-1")), 150)
+        XCTAssertEqual(session.captionStyleSize(.line("cue-2")), 120)
+        XCTAssertEqual(session.undoHistoryCount, undoBefore + 1)
         session.finishCaptionGesture(applyToAll: true)
-        XCTAssertFalse(session.captionGestureChoicePresented)
+        XCTAssertNil(session.captionGestureOfferID)
         XCTAssertEqual(session.captionStyleSize(.line("cue-1")), 150)
         XCTAssertEqual(session.captionStyleSize(.line("cue-2")), 150)
         XCTAssertEqual(session.undoHistoryCount, undoBefore + 1)
