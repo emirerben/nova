@@ -24,7 +24,7 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents.main_creator import CreativeCopyDecision
 from app.kria import planner
-from app.kria.brief import BriefCoverageError, wants_full_replan
+from app.kria.brief import BriefCoverageError
 from app.kria.contracts import KriaTurnPlan
 from app.kria.reply_language import reply_language_for
 from app.routes._copilot import CopilotTurnResponse, _honest_outcome
@@ -335,15 +335,6 @@ async def test_unsupported_refusal_carries_the_redo_offer_in_the_chat_language(
         assert english.response == "No." + planner._REDO_OFFER
 
 
-def test_turkish_redo_offer_names_a_reply_the_router_accepts() -> None:
-    quoted = re.findall(r'"([^"]+)"', planner._REDO_OFFER_TR)
-    assert quoted == ["yeniden yap"]
-    for reply in (quoted[0], "Yeniden yap", "YENİDEN YAP", "yeniden yap lutfen"):
-        assert wants_full_replan(reply), reply
-    # And the offer itself is not mistaken for a creator message.
-    assert planner._REDO_OFFER_TR.startswith(" ")
-
-
 @pytest.mark.asyncio
 async def test_saved_request_too_large_reply(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -392,7 +383,7 @@ async def test_speech_cut_needs_save_reply(monkeypatch: pytest.MonkeyPatch) -> N
         (
             "no_ready_variant",
             "I couldn't open your current edit to change it in place. Try again, "
-            "or ask me for a new version.",
+            "or ask me for a new version." + planner._REDO_OFFER,
             "Şu anki düzenlemeni açıp yerinde değiştiremedim",
         ),
     ],
@@ -642,104 +633,6 @@ def test_turkish_copy_constants_are_turkish_and_use_the_agreed_reply_words() -> 
     assert '"yeniden yap"' in planner._REDO_OFFER_TR
 
 
-# -- routing: text edits stay quick edits, new versions re-plan --------------------------
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "başlığı büyüt",
-        "Başlık: 'Hafta sonu kaçamağı' olsun",
-        "altyazıyı sarı yap",
-        "ALTYAZILARI KALIN YAP",
-        "yazıları ortala",
-        "yazı tipini değiştir",
-        "fontu küçült",
-        "metni kısalt",
-        "etiketleri sil",
-        "ifadeyi değiştir",
-        "baslik cok kucuk",  # ASCII-typed
-        "alt yazi sari olsun",
-    ],
-)
-def test_turkish_text_edit_asks_are_text_edits_not_replans(message: str) -> None:
-    assert planner._is_text_edit_ask(message), message
-    assert planner._fast_path_eligible(message), message
-    assert not wants_full_replan(message), message
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "ikinci klibi kısalt",
-        "müziği kıs",
-        "geçişleri hızlandır",
-        "videoyu 20 saniyeye indir",
-        "tamam",
-    ],
-)
-def test_turkish_non_text_asks_are_not_text_edits(message: str) -> None:
-    assert not planner._is_text_edit_ask(message), message
-    assert planner._fast_path_eligible(message), message  # still a quick edit, just not text
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "baştan yap",
-        "sıfırdan başla",
-        "farklı bir versiyon istiyorum",
-        "bana başka bir versiyon yap",
-        "yeni bir video istiyorum",
-        "yeni versiyon çıkar",
-        "yeni düzenleme yap",
-        "en iyi 5 klibi kullan",
-        "5 en iyi klip olsun",
-        "sadece en iyi klipleri koy",
-        "yalnızca en komik anları kullan",
-        "en komik kısımları seç",
-        "daha fazla klip koy",
-        "daha az klip olsun",
-        "daha çok klip istiyorum",
-        "tamamen yeniden kurgula",
-        "SIFIRDAN YAP",
-        "BAŞTAN YAP",
-        "YENİDEN YAP",
-        "farkli bir vibe",  # ASCII-typed
-        "sifirdan yap",
-    ],
-)
-def test_turkish_replan_cues_leave_the_quick_edit_path(message: str) -> None:
-    assert not planner._fast_path_eligible(message), message
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "make the title bigger",
-        "change the font",
-        "make the captions yellow",
-        "shorten the second clip",
-        "turn the music down",
-        "use the best 3 clips",
-        "give me a completely different vibe",
-        "shuffle the clips",
-        "I want a new version",
-    ],
-)
-def test_english_routing_is_unchanged(message: str) -> None:
-    text_ask = bool(planner._TEXT_EDIT_ASK.search(message.casefold()))
-    assert planner._is_text_edit_ask(message) == text_ask
-    replan = bool(planner._REPLAN_CUES.search(message.casefold())) or wants_full_replan(message)
-    assert planner._fast_path_eligible(message) == (not replan)
-
-
-def test_english_fonts_plural_keeps_its_old_non_match() -> None:
-    # Turkish "font" takes case endings only; English "fonts" was never a text-edit ask here.
-    assert not planner._is_text_edit_ask("make the fonts bigger")
-    assert planner._is_text_edit_ask("fontları büyüt")
-
-
 # -- routing: typed Turkish requirements select an available editing lane ----------------
 
 
@@ -809,18 +702,6 @@ async def test_turkish_timing_ask_without_timeline_capability_replans(
     assert result.brief_route == "replan"
     assert len(runs) == 1
     planner._plan_editor_revision.assert_not_awaited()
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "Yazın çektiğim klipleri başa al",  # "yazın" = in summer
-        "Metin'in olduğu klibi çıkar",  # Metin is a name
-        "En güzel yüz ifadelerini seç",  # a facial expression
-    ],
-)
-def test_turkish_words_that_only_look_like_text_asks(message: str) -> None:
-    assert not planner._is_text_edit_ask(message)
 
 
 def test_editor_failure_recovery_is_localized_without_calling_it_extraction_failure():

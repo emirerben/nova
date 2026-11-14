@@ -38,7 +38,7 @@ from app.agents._schemas.creator_policy import (
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.agents._skills import load_skill
 from app.agents._writing_context import turkish_audience_instruction
-from app.agents.model_registry import provider_of
+from app.agents.model_registry import cross_provider_fallback
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
 from app.kria.brief import LONG_REQUEST_MAX_UPDATES, BriefUpdate, parse_brief_updates
@@ -85,6 +85,7 @@ MAIN_CREATOR_PROMPT_SOURCES = (
     "app/agents/main_creator.py",
     "app/agents/prompt_vocab.py",
     "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/services/editor_limits.py",  # {{PLAYBACK_RATE_MIN}} {{PLAYBACK_RATE_MAX}}
     "app/agents/_writing_context.py",
     "app/kria/reply_language.py",
     "app/kria/brief.py",
@@ -1156,7 +1157,8 @@ in their words, or null>", "hold_s": 2.0 or null}}; a photo at a SPOKEN word is 
 timed_card. Play footage faster or
 slower ("speed the river shots up 2x", "slow motion on the pour", "klipleri 2 kat hızlandır",
 "time-lapse") => a `style` requirement with {"playback_rate": 2}: source seconds per output
-second, 2 = twice as fast, 0.5 = half speed, between 0.25 and 4; "slow motion" / "ağır çekim"
+second, 2 = twice as fast, 0.5 = half speed, between {{PLAYBACK_RATE_MIN}} and \
+{{PLAYBACK_RATE_MAX}}; "slow motion" / "ağır çekim"
 with no number = 0.5, "speed up" / "time-lapse" with no number = 2. Scope it `clip:<media_id>`
 when the creator names one attached clip, else "global" with the creator's words for the footage
 kept in `description` ("the river shots"); the server picks the clips from those words. Never
@@ -1456,9 +1458,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         model=settings.main_creator_model,
         # A plan is idempotent, so a model at another provider may answer after an outage, a
         # spend cap or an unknown outcome at the first (KRI-1385).
-        fallback_models=("gemini-3.6-flash",)
-        if provider_of(settings.main_creator_model) == "google"
-        else ("gemini-3.1-pro-preview",),
+        fallback_models=cross_provider_fallback(settings.main_creator_model)
+        or ("gemini-3.6-flash",),
         # KRI-118 item 4: bumped from 2 -> 3 alongside `schema_retry_limit`
         # below -- `_run_on_model`'s loop bounds EVERY retry path (transient/
         # refusal/schema) by `max_attempts`, so a `schema_retry_limit` above

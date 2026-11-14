@@ -29,6 +29,8 @@
      not_applicable checks need a concrete reason. A local_fix claim keeps broader gaps open.
      Passed checks need commands and immutable artifact references. Use safe repo-relative
      paths at this HEAD, or pinned GitHub blob/action artifact/run-attempt URLs.
+     patch_id: python3 scripts/ci/pr-evidence.py --patch-id --base origin/main --head HEAD
+     (it survives rebases and body edits; any change to the diff needs a new one).
      Passed incident/content checks also name expectation_source: a separate immutable
      source/acceptance artifact, not prose claiming the result is correct.
      Run: bash scripts/preship-check.sh --pr-body .dev/pr-body.md
@@ -37,7 +39,7 @@
 ```request-evidence
 {
   "schema_version": 1,
-  "head_sha": "",
+  "patch_id": "",
   "claim": "local_fix",
   "issue": "",
   "original_request": "",

@@ -95,12 +95,15 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("set_caption_meta",),
         fields=("animation_phases",),
     ),
+    # KRI-1394: one line (`line_overrides[<cue id>]`) or every line, as writeCaptionStyle writes
+    # it. A line is addressed by cue id, so captions kept as text rows (no cue list) are not
+    # offered the family. finishCaptionGesture's "apply to all" is the same op with all: true.
     "caption_style_scope": _g(
-        "agent_unsupported",
+        "agent_ops",
         "setCaptionGesturePosition setCaptionGestureSize finishCaptionGesture "
         "setCaptionStyleSize placeCaptions",
-        reason="Scope-aware caption size and placement are native-only; agent caption ops "
-        "do not select or clear per-line placement overrides.",
+        ("patch_caption_line",),
+        fields=("cue_id", "all", "size_px", "position_x_frac", "position_y_frac"),
     ),
     # --------------------------------------------------------------- timeline
     "clip_trim_and_move": _g(
@@ -147,7 +150,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "motion_speed": _g(
         "agent_unsupported",
         "setMotionSpeed",
-        reason="Generated motion-scene speed has no agent op; footage playback rate is separate.",
+        reason="It sets motion_scenes[].motion.speed, and a phone edit has no motion scenes: "
+        "validate_phone_pilot_recipe refuses them and the authored phone compile refuses "
+        "motion_scenes (see visual_blocks_and_motion). Footage speed is clip_speed.",
     ),
     "clip_crop": _g(
         "agent_ops",
@@ -204,9 +209,17 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     "split_screen_clip_offset": _g(
         "agent_ops",
-        "setSelectedSplitScreenOffset addSplitPanelClip",
+        "setSelectedSplitScreenOffset",
         ("assign_split_panel",),
         fields=("offset_s",),
+    ),
+    # KRI-1420: Add to panel places a source after the panel's last clip. Unlike the phone, chat
+    # grows the section to hold it (grow_section false keeps the length and cuts the clip).
+    "split_screen_panel_add": _g(
+        "agent_ops",
+        "addSplitPanelClip",
+        ("add_split_panel_clip",),
+        fields=("clip_index", "offset_s", "duration_s", "grow_section"),
     ),
     "split_screen_remove": _g(
         "agent_ops", "removeSplitScreen", ("remove_split_screen",), fields=("keep_panel",)
@@ -219,22 +232,35 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("update_split_screen", "assign_split_panel"),
         fields=("duration_s", "slot_index", "offset_s"),
     ),
+    # Each copy is one assign_split_panel duplicate placed after the panel's last clip.
     "split_screen_loop_fill": _g(
         "agent_ops",
         "loopFillSplitPanel",
         ("assign_split_panel",),
         fields=("duplicate", "offset_s"),
     ),
+    # KRI-1394: the server port of splitFullScreenResult (app/kria/split_full_screen.py), equal to
+    # the phone's on tests/fixtures/split_full_screen.json; at_s is the playhead and panel the
+    # selected clip's panel. Refused on Talking source and narrated edits and where text the phone
+    # re-times lies over the section.
     "split_screen_full_screen": _g(
-        "agent_unsupported",
+        "agent_ops",
         "makeSplitFullScreen",
-        reason="Cutting a section at the playhead into a split part and full-screen clips has no "
-        "agent op; chat can shorten a section (update_split_screen) or unstack it whole "
-        "(remove_split_screen).",
+        ("make_split_full_screen",),
+        fields=("section_id", "at_s", "side", "panel"),
+    ),
+    # KRI-1421: blank blocks are a person's action first. PR 2327 owns the split ops; until one
+    # places a blank (`add_split_panel_clip` with `blank: true`), the agent cannot.
+    "split_screen_blank": _g(
+        "agent_unsupported",
+        "fillSplitPanelWithBlank setSelectedBlankColor",
+        reason="A blank block in a split panel is placed and recoloured by hand; the split ops "
+        "(PR 2327) do not take a blank yet.",
     ),
     "split_screen_queries": _g(
         "not_an_edit",
-        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen",
+        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved "
+        "canFillSplitPanelWithBlank",
         reason="Read-only checks the Split panel uses to decide what to offer.",
     ),
     # ---------------------------------------------------------------- audio
@@ -251,13 +277,28 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "(phone_guided_plan, musicBed) and the Talking and Voiceover Saves have no music "
         "section. Chat can change the music level or remove it (set_mix, remove_music).",
     ),
+    # KRI-1394: the Sounds tab's Save section (`user_song`). A drag's move step writes the same
+    # start or end as setUserSongStart / setUserSongEnd.
     "creator_song": _g(
+        "agent_ops",
+        "setUserSongVolume setUserSongStart setUserSongEnd moveSongStart moveSongEnd "
+        "removeUserSong",
+        ("set_user_song",),
+        fields=("volume", "window_start_s", "window_end_s", "remove"),
+    ),
+    "creator_song_audition": _g(
+        "not_an_edit",
+        "beginSongStartDrag endSongStartDrag beginSongEndDrag endSongEndDrag "
+        "previewLipsyncSongTrim",
+        reason="Drag brackets (one undo step, the song audition) and the lip-sync trim preview "
+        "change nothing until the move or apply they bracket.",
+    ),
+    "creator_song_lipsync_trim": _g(
         "agent_unsupported",
-        "setUserSongVolume setUserSongStart setUserSongEnd beginSongStartDrag moveSongStart "
-        "endSongStartDrag beginSongEndDrag moveSongEnd endSongEndDrag previewLipsyncSongTrim "
-        "applyLipsyncSongTrim removeUserSong",
-        reason="The creator's own song window and volume are set on the phone; the agent has "
-        "only the licensed-music ops (swap_music, set_mix).",
+        "applyLipsyncSongTrim",
+        reason="A lip-sync song's range is trimmed by cutting the video at the song-matched "
+        "points the phone plans (NativeLipsyncSongTrim.plan); the Save locks a lip-sync window "
+        "(user_song_lipsync_locked), so set_user_song refuses it and no op plans those cuts.",
     ),
     "sound_effects": _g(
         "agent_ops",
@@ -272,10 +313,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "setMediaOverlayScale setMediaOverlayTiming pasteImage",
         ("add_overlay", "patch_overlay", "remove_overlay", "set_overlay_display"),
     ),
+    # KRI-1394: z orders peers of one renderer pass (setLayerZ writes a dense `z`): the picture
+    # cards on top of a Talking speaker and the uploaded picture blocks. Text is its own pass
+    # above both on the phone, so moving a text layer changes nothing there.
     "layer_order": _g(
-        "agent_unsupported",
+        "agent_ops",
         "moveLayer reorderLayer moveVisualLayer setMediaOverlayZIndex",
-        reason="Stacking order of overlapping layers has no agent op.",
+        ("set_layer_order",),
+        fields=("layer", "z", "direction"),
     ),
     "visual_blocks_and_motion": _g(
         "agent_unsupported",
@@ -298,7 +343,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "agent_unsupported",
         "addDrawing appendDrawingStrokes recolorDrawing setDrawingDrawDuration setDrawingEntrance "
         "setDrawingExit setDrawingTiming setDrawingTransform previewDrawingInPlace",
-        reason="Freehand strokes are drawn by hand; the agent has no stroke authoring op.",
+        reason="New strokes are finger paths a chat request cannot describe. Recolouring, "
+        "timing, the entrance and exit and moving an existing drawing have no op yet: the "
+        "snapshot shows drawings read-only (count and windows).",
     ),
     "carousel": _g(
         "agent_unsupported",
@@ -328,13 +375,10 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     # Qendresa item 16: the speaker full screen in their own take before the background / corner.
     # The planner writes it from the creator's first ask (`background_media.full_screen_opening`);
-    # the copilot ops keep it through every background change and `remove_background` clears it,
-    # but no chat op removes the opening alone yet.
+    # the copilot ops keep it through every background change. KRI-1394: chat takes the opening
+    # alone away (the full-screen window starting at 0, as removeFullScreenOpening does).
     "speaker_full_opening": _g(
-        "agent_unsupported",
-        "removeFullScreenOpening",
-        reason="Removing only the full-screen opening is editor-only; chat keeps it through every "
-        "background op and clears it with remove_background.",
+        "agent_ops", "removeFullScreenOpening", ("remove_full_screen_opening",)
     ),
     # Qendresa item 18: aim a screen-recording background at its text (left / centre / right and a
     # zoom). Chat reaches it with `set_background_focus`; the getter is a read-only query.
@@ -347,20 +391,23 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         reason="Selected occurrences accept custom frame geometry and the inherit preset. "
         "The legacy canvas-global overload still accepts named presets only in chat.",
     ),
+    # KRI-1394: the Save's `orientation` / `landscape_fit`, each axis where the editor opens it.
     "video_shape": _g(
-        "agent_unsupported",
+        "agent_ops",
         "setVideoShape",
-        reason="Portrait/landscape of a finished video is chosen on the phone; set_post_aspect "
-        "covers slide posts only.",
+        ("set_video_shape",),
+        fields=("orientation", "landscape_fit"),
     ),
     # --------------------------------------------------------------- history
-    "history": _g(
+    # KRI-1384: every chat edit turn stores its pre-edit lanes; undo_last_edit puts them back
+    # while the editor still holds what the turn wrote (app.services.kria_editor_undo), offered
+    # to app builds at chat_undo_min_client_protocol.
+    "history": _g("agent_ops", "undo", ("undo_last_edit",)),
+    "redo": _g(
         "agent_unsupported",
-        "undo redo",
-        reason="Chat undo needs the pre-edit lanes of the last chat turn. Only a flagged "
-        "plan-review update stores them (plan_review_before, KRI-442, behind "
-        "LIVE_PLAN_REVIEW_ENABLED); an ordinary chat turn stores none and the snapshot carries "
-        "no history_state, so undo_last_edit cannot compile. repeat_last_edit replays the web "
+        "redo",
+        reason="Redo after a chat undo is the editor's own redo stack; an undo turn stores no "
+        "restore record, so chat cannot redo or undo twice. repeat_last_edit replays the web "
         "client's local op log, which iPhone chat does not have.",
     ),
     # The creator's approval of a generated image stays native (the preview review). Chat places
@@ -400,7 +447,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "pollVisualLibrary retryLibraryVisual loadSoundEffectCatalog end set "
         "auditPreviewWindow configureClipAudioForTesting configureReplacementSourcesForTesting "
         "discardPlaybackForNewJobForTesting finishScrubFramesForTesting "
-        "setResolvedSourcesForTesting stageSplitPanelPlacementForTesting",
+        "setResolvedSourcesForTesting setPendingAddAdmissionForTesting previewSourceURLForTesting",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
     ),
     "background_tool_navigation": _g(

@@ -3892,7 +3892,7 @@ def test_copilot_route_clarification_empties_ops(client: TestClient, monkeypatch
                 needs_clarification=True,
             )
 
-    monkeypatch.setattr(copilot_route, "EditCopilotAgent", _FakeAgent)
+    monkeypatch.setattr(copilot_route, "ChatEditCopilotAgent", _FakeAgent)
     body = _payload()
     body["message"] = "x" * 12000
     body["original_request"] = "y" * 12000
@@ -4100,7 +4100,7 @@ def test_copilot_route_non_edit_intent_empties_ops(client: TestClient, monkeypat
                 needs_clarification=False,
             )
 
-    monkeypatch.setattr(copilot_route, "EditCopilotAgent", _FakeAgent)
+    monkeypatch.setattr(copilot_route, "ChatEditCopilotAgent", _FakeAgent)
     resp = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=_payload())
     assert resp.status_code == 200
     assert resp.json()["ops"] == []
@@ -4131,7 +4131,7 @@ def test_copilot_route_rate_limit_429(client: TestClient, monkeypatch) -> None:
                 needs_clarification=False,
             )
 
-    monkeypatch.setattr(copilot_route, "EditCopilotAgent", _FakeAgent)
+    monkeypatch.setattr(copilot_route, "ChatEditCopilotAgent", _FakeAgent)
     url = f"/plan-items/{item.id}/variants/v1/copilot/turn"
     headers = {"X-Forwarded-For": f"203.0.113.{uuid.uuid4().int % 200 + 1}"}
     statuses = [client.post(url, json=_payload(), headers=headers).status_code for _ in range(21)]
@@ -4807,7 +4807,7 @@ async def test_run_copilot_turn_threads_memory_and_unmet_requests(monkeypatch) -
                 unmet_requests=[{"request": "label each clip", "reason": "no place data"}],
             )
 
-    monkeypatch.setattr(_copilot, "EditCopilotAgent", _FakeAgent)
+    monkeypatch.setattr(_copilot, "ChatEditCopilotAgent", _FakeAgent)
     monkeypatch.setattr(_copilot, "default_client", lambda: None)
     response = await _copilot.run_copilot_turn(
         _copilot.CopilotTurnBody(

@@ -2,6 +2,12 @@ import SwiftUI
 import AVKit
 import PhotosUI
 
+/// One preview of a moment, holding the player the sheet shows.
+struct CameraRollMomentPreview: Identifiable {
+    let id = UUID()
+    let player: AVPlayer
+}
+
 struct CameraRollStoriesView: View {
     let api: any KriaAPIClient
     let collection: CameraRollCollection
@@ -27,11 +33,12 @@ struct CameraRollStoriesView: View {
     @State private var error: String?
     @State private var inspection: String?
     @State private var question = "What is clearly visible in this interval?"
-    @State private var player: AVPlayer?
-    @State private var showsPreview = false
+    /// The moment being previewed. The player travels inside it so the sheet never reads a separate value stale.
+    @State private var momentPreview: CameraRollMomentPreview?
     @State private var editingWording: CameraRollStory?
+    /// The idea's progress, kept after its sheet closes so reopening the same idea finds it still running.
     @State private var use: CameraRollIdeaUse?
-    @State private var showsUse = false
+    @State private var shownUse: CameraRollIdeaUse?
     @State private var taste: EditorialTasteProfile?
     @State private var showsTaste = false
     @State private var ratingStory: CameraRollStory?
@@ -52,7 +59,7 @@ struct CameraRollStoriesView: View {
         }
         .onDisappear {
             onReviewed(CameraRollStories(stories: stories, coverage: result.coverage, suggestedResearchTopic: result.suggestedResearchTopic))
-            player?.pause()
+            momentPreview?.player.pause()
         }
         .interactiveDismissDisabled(busy)
         .sheet(item: $ratingStory) { story in
@@ -60,8 +67,9 @@ struct CameraRollStoriesView: View {
                 feedbackSaved.insert("\(story.id)-\(story.revision)")
             }
         }
-        .sheet(isPresented: $showsPreview, onDismiss: { player?.pause(); player = nil }) {
-            if let player { VideoPlayer(player: player).ignoresSafeArea(edges: .bottom) }
+        .sheet(item: $momentPreview) { shown in
+            VideoPlayer(player: shown.player).ignoresSafeArea(edges: .bottom)
+                .onDisappear { shown.player.pause() }
         }
         .sheet(item: $editingWording) { story in
             if let plan = story.contentPlan {
@@ -72,7 +80,7 @@ struct CameraRollStoriesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsUse) { if let use { CameraRollUseSheet(use: use) } }
+        .sheet(item: $shownUse) { CameraRollUseSheet(use: $0) }
     }
 
     private var standaloneContent: some View {
@@ -406,17 +414,17 @@ struct CameraRollStoriesView: View {
             item.forwardPlaybackEndTime = CMTime(seconds: moment.end, preferredTimescale: 600)
             let created = AVPlayer(playerItem: item)
             await created.seek(to: CMTime(seconds: moment.start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
-            player = created; showsPreview = true
+            momentPreview = CameraRollMomentPreview(player: created)
         } catch { self.error = CameraRollCollectionFailure.message(error) }
     }
     /// Opens the idea's progress: on the owner that keeps it running, or here for the standalone review.
     @MainActor private func select(_ story: CameraRollStory) {
         if let onUse { onUse(story); return }
-        showsUse = true
-        if let use, use.story.id == story.id { return }
+        if let use, use.story.id == story.id { shownUse = use; return }
         let collection = collection
         let started = CameraRollIdeaUse(story: story, api: api, collection: { collection }, open: onSelected)
         use = started
+        shownUse = started
         started.start()
     }
 }

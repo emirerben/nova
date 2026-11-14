@@ -36,6 +36,8 @@ Rules:
 - When done, `git worktree remove ../nova-<topic>` after the PR merges. List active worktrees with `git worktree list`.
 - `.claude/worktrees/agent-*` are auto-managed by the Agent tool (`isolation: "worktree"`) — leave those alone.
 - Skip the worktree only for read-only investigation or one-file config tweaks.
+- At most three concurrent sessions, each on a separate area; never two on one branch.
+- Client protocol numbers: run `scripts/bump-protocol.py <feature> [--config-field <name>]` when rebasing, never hand-pick ([runbook](docs/runbooks/ios-development.md)).
 
 ## Stack
 - Frontend: Next.js (src/apps/web/) — **frozen**; only privacy/terms, landing, admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) are live. Archive tag: `web-archive-2026-11`.
@@ -48,7 +50,7 @@ Rules:
 ## Key paths
 - `src/apps/web/src/` — frozen web app; Claude Code denies reads there (`.claude/settings.json`). Don't search or open it unless the user explicitly asks for web/admin work.
 - `DESIGN.md` — design-system source of truth (tokens, loading rules, anti-slop, a11y); design reviews calibrate against it.
-- `src/apps/api/` — FastAPI/Celery; music routes live in `routes/{admin_music,music,music_jobs}.py` (`_validate_clip_count` stays public for admin reuse).
+- `src/apps/api/` — FastAPI/Celery; music routes live in `routes/{admin_music,music,music_jobs}.py` (`validate_clip_count` stays public for admin reuse).
 - `src/apps/api/app/routes/generative_jobs.py` — generative-edit submission + status + swap-song/retext; re-signs ready variant URLs on read (`_variants_for_response`)
 - `src/apps/api/app/routes/admin_generative.py` — `/admin/generative` dashboard list
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery task (see `docs/pipelines/generative.md`)
@@ -61,7 +63,7 @@ Rules:
 - `src/apps/api/app/services/seed_provenance.py` — links generated items to honoured idea seeds via `match_specs_to_seeds` and `PlanItem.source_idea_seed_id`.
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
-- `plans/` — implementation plans (`plans/README.md` has status; 001–023)
+- `plans/` — implementation plans (`plans/README.md` has status; 001–027)
 
 ## Local dev
 ```bash
@@ -89,7 +91,7 @@ Use `make local-render` for byte-equivalent output before merging a render-affec
 - Backend lint: `cd src/apps/api && ruff check . && ruff format --check .`
 - Frontend (only for an explicitly requested web change): `cd src/apps/web && npm run lint && npx tsc --noEmit && npm test`
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
-- Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain WARN. Run before every PR.
+- Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain BLOCK (3rd fix PR needs a failure-mode list). Run before every PR.
 - Reliability (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; evidence and scratch-DB steps: `docs/runbooks/pr-acceptance-checklist.md`.
 
 ## Testing rules
@@ -157,7 +159,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 ## Template pipeline
 - **Single-pass CFR-before-xfade invariant:** every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. It covers `avg_frame_rate=1/0` inputs (phone HEVC, screen recordings) where `framerate=fps=N` aborts. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. See agents/DECISIONS.md (2026-05-18).
 - **Renderer split:** agentic templates + music-job lyrics → `text_overlay_skia.py` (skia-python, HarfBuzz); classic non-music + non-agentic → Pillow + libass. Dispatch: `_burn_text_overlays(use_skia=...)` + `_pre_burn_curtain_slot_text(is_agentic=...)` in `template_orchestrate.py`. Kill switch: `TEXT_RENDERER_SKIA_ENABLED=false`.
-- **Renderer-parity invariant:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor_left` in `tests/pipeline/test_text_overlay_skia.py` — extend for any new anchor/position field. An agentic/music overlay change is NOT verified by the admin preview. Incident: agents/DECISIONS.md (2026-05 #296/#297).
+- **Renderer-parity invariant:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor` in `tests/pipeline/test_text_overlay_skia.py` — extend for any new anchor/position field. An agentic/music overlay change is NOT verified by the admin preview. Incident: agents/DECISIONS.md (2026-05 #296/#297).
 - **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders the REAL Skia path in the prod image, asserts overlays un-clipped, writes `.overlay-verify/{montage.png,report.json}`. Guard: `tests/pipeline/test_overlay_verify.py`. **Agent pre-PR gate:** run it, read both files, fix any FAIL, then `/ship`.
 - **Gemini metadata never becomes on-screen overlay text** (architectural invariant). Overlay substitution input is exclusively user-provided (`inputs.location`). `TestNoGeminiTextLeaks` in `tests/tasks/test_template_orchestrate.py` is the sentinel. See agents/DECISIONS.md (2026-05-13). Does NOT cover `copy_writer` captions.
 - Placeholder substitution: `_resolve_overlay_text()` + `_is_subject_placeholder()` in `template_orchestrate.py`. Literal overlays SHOULD set `"subject_substitute": False`; `tests/scripts/test_seed_overlays_literal.py` enforces this.
@@ -225,7 +227,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (replay only; needs `ANTHROPIC_API_KEY`). Paid live Gemini requires an approved development-ledger run (hard cap $2, no judge); see `tests/evals/README.md`.
-- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump `prompt_version` (Main Creator/brief extractor: auto); free replay evals must pass (live/judge optional, paid). Enums: `prompt_vocab.py` tokens; guard `test_prompt_vocab_drift.py`.
+- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump `prompt_version` (auto fingerprints, never bump: Main Creator, brief extractor, persona, content plan and the others listed in `docs/pipelines/prompt-version-history.md`); free replay evals must pass; a fixture whose prompt changed fails replay until re-recorded live (`tests/evals/README.md` "Fixture pins"; judge optional, paid). Enums: `prompt_vocab.py` tokens; guard `test_prompt_vocab_drift.py`.
 - **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh`. See `tests/evals/README.md` for the full prompt-iteration loop.
 - **Layer-2 cache-bump rule:** any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts must bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py`. Guard: `.github/workflows/layer2-cache-guard.yml`. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.
 - See `docs/pipelines/layer2-text-overlay.md` for Layer-2 stage details, OCR backend divergence (local Apple Vision ≠ prod Cloud Vision), and the template_text agent rubric.

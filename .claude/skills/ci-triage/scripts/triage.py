@@ -49,10 +49,10 @@ PR_GATE = (
     "metadata it names (docs/runbooks/pr-acceptance-checklist.md)"
 )
 
-# The log beats the check name: CI's `lint` gate also validates PR evidence.
+# The log beats the check name: `PR evidence` and local preship print the same lines.
 LOG_RULES: list[tuple[str, str]] = [
     (
-        r"PR request evidence|evidence receipt|head_sha must match|Lane C gate|local-test marker",
+        r"PR request evidence|evidence receipt|head_sha must match|patch_id does not match|Lane C gate|local-test marker",
         PR_GATE,
     ),
     (

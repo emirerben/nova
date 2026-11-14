@@ -44,7 +44,6 @@ from app.kria.brief import (
     plan_shape_from_editor_snapshot,
     render_brief_request,
     route_requirements,
-    wants_full_replan,
 )
 from app.kria.brief_checks import (
     PlanFacts,
@@ -394,7 +393,8 @@ WITH_LANE = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True)
         ([_upd("text", "title", literal="New title")], HAS_RENDER, None, "editor_ops"),
         ([_upd("style", "global")], HAS_RENDER, None, "editor_ops"),
         ([], HAS_RENDER, "make the title bigger", "editor_ops"),
-        ([], HAS_RENDER, "Do it again based on my prompt", "replan"),
+        # KRI-1392: wording never decides a re-plan; the rebuild verdict does (below).
+        ([], HAS_RENDER, "Do it again based on my prompt", "editor_ops"),
         ([_upd("style", "global")], CurrentPlanShape(has_render=False), None, "replan"),
         ([], None, "anything", "replan"),
     ],
@@ -422,7 +422,7 @@ CAN_EDIT = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True, can_ed
             "remove clip 4",
             "replan",
         ),
-        # semantic selection / basis ordering / mixed kinds / redo stay with the planner
+        # semantic selection / basis ordering / mixed kinds stay with the planner
         ([_upd("select", "global")], CAN_EDIT, "only keep the funniest clips", "replan"),
         (
             [_upd("order", "global", facts={"key": "capture_time"})],
@@ -436,7 +436,6 @@ CAN_EDIT = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True, can_ed
             "move a to the start",
             "replan",
         ),
-        ([_upd("order", "global")], CAN_EDIT, "do it again based on my prompt", "replan"),
     ],
 )
 def test_router_structural_asks_follow_timeline_capability(reqs, shape, message, expected) -> None:  # noqa: ANN001
@@ -448,29 +447,6 @@ def test_plan_shape_reads_clip_family_from_snapshot() -> None:
     off = plan_shape_from_editor_snapshot({"text_bars": [], "allowed_op_families": ["text"]})
     assert on.can_edit_timeline is True
     assert off.can_edit_timeline is False
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "do it again",
-        "Create the video again",
-        "redo this",
-        "start over please",
-        "please base it on the brief: based on my prompt",
-        "tekrar yap",
-        "Baştan kes",
-    ],
-)
-def test_redo_phrases_are_a_supported_replan(message: str) -> None:
-    assert wants_full_replan(message)
-
-
-@pytest.mark.parametrize(
-    "message", ["make the text bigger", "shorter intro", "yaz rengini değiştir"]
-)
-def test_ordinary_edits_are_not_replans(message: str) -> None:
-    assert not wants_full_replan(message)
 
 
 def test_plan_shape_reads_per_clip_lane_from_editor_snapshot() -> None:
@@ -828,7 +804,11 @@ def test_east_run_replay_carries_every_requirement_in_one_replan_with_receipts()
         assert len(updates) == len(turn["brief_updates"]), "fixture updates must all parse"
         effective = apply_updates(brief, updates, source_turn_id=f"turn-{index}")
         route = route_requirements(
-            new_requirements(brief, effective), shape, message=turn["user_message"]
+            new_requirements(brief, effective),
+            shape,
+            message=turn["user_message"],
+            # The brief extractor's verdict on the turn (KRI-1392: never the wording).
+            full_replan=turn.get("request_scope") == "rebuild" or None,
         )
         assert route == turn["expected_route"], turn["user_message"]
         assert [req.id for req in effective.live()] == turn["expected_live_ids"]
@@ -1472,29 +1452,6 @@ async def test_main_creator_failure_falls_back_to_the_copilot_for_plain_edits(
     assert result.plan.mode == "respond"
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "make the title bigger again",
-        "make it a bit shorter again",
-        "cut the intro again, it's too slow",
-        "don't do that again",
-        "the intro fades in from the top",
-        "tekrar kes",
-    ],
-)
-def test_small_edits_that_say_again_are_not_replans(message: str) -> None:
-    assert not wants_full_replan(message)
-
-
-@pytest.mark.parametrize(
-    "message",
-    ["Do it again", "make it again", "try again with my brief", "BAŞTAN YAPALIM", "YENİDEN YAP"],
-)
-def test_whole_edit_redo_phrases_including_turkish_inflections(message: str) -> None:
-    assert wants_full_replan(message)
-
-
 def test_clip_scoped_text_checks_only_that_clip() -> None:
     req = _req("text", "clip:c1", literal="Galata")
     one = plan_facts_from_strategy(
@@ -1961,7 +1918,7 @@ async def test_failed_job_without_an_assembly_plan_preserves_the_replan(monkeypa
 
     async def get(model, identifier, **kwargs):
         if model is Job:
-            return SimpleNamespace(status="processing_failed")
+            return SimpleNamespace(id=uuid.uuid4(), status="processing_failed")
         return await inner_get(model, identifier, **kwargs)
 
     db.get = AsyncMock(side_effect=get)

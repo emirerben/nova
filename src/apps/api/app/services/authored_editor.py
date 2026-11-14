@@ -13,7 +13,9 @@ from typing import Any
 import structlog
 from fastapi import HTTPException
 
+from app.kria.split_screen import is_blank_row
 from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
+from app.services.editor_limits import EDITOR_MIN_CLIP_S, FRAME_S, MOTION_FPS
 
 AUTHORED_TIMELINE_MODE = "authored"
 
@@ -82,6 +84,10 @@ def sync_talking_source_lanes(
             {**row, "_speech_output_start_s": start}
             for row, start in zip(resolved, new_starts, strict=True)
         ]
+        # A blank has no audio and no source: it takes part in the layout above (it can lengthen a
+        # collapsing section) but never in the source-anchored speech clock.
+        old_slots = [row for row in old_slots if not is_blank_row(row)]
+        resolved = [row for row in resolved if not is_blank_row(row)]
     use_canvas = bool(old_sections or new_sections) or any(
         entry.get("anchor_space") == "canvas"
         for entries in (variant.get("speech_timing_basis") or {}).values()
@@ -349,12 +355,12 @@ def prepare_authored_editor_commit(
 log = structlog.get_logger(__name__)
 
 SOURCE_BOUNDS_TOLERANCE_S = 0.05
-_TIMELINE_FRAME_S = 1 / 30
+_TIMELINE_FRAME_S = FRAME_S
 
 
 def _canonical_output_duration(source_span: float, rate: float) -> float:
     """Return the authored output clock on the shared 30 fps timeline grid."""
-    return round((source_span / rate) * 30) / 30
+    return round((source_span / rate) * MOTION_FPS) / MOTION_FPS
 
 
 def _source_end_for_authored_slot(
@@ -516,6 +522,27 @@ def _fit_window_to_source(
     return fitted
 
 
+def _resolve_blank_slot(slot: Any, *, order: int) -> dict:
+    """A split panel's flat-colour block: no source, no receipt, only a window and a colour."""
+    import math
+    import uuid
+
+    if slot.split_section_id is None:
+        raise HTTPException(422, detail={"code": "TIMELINE_BLANK_OUTSIDE_SPLIT"})
+    duration = slot.duration_s
+    if slot.duration_beats is not None or duration is None:
+        raise HTTPException(422, detail={"code": "authored_seconds_required"})
+    if not math.isfinite(duration) or below_editor_minimum(duration):
+        raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+    return {
+        **slot.model_dump(mode="json", exclude={"tilt"}),
+        "slot_id": slot.slot_id or str(uuid.uuid4()),
+        "in_s": 0.0,
+        "order": order,
+        "duration_s": snap_to_editor_minimum(duration),
+    }
+
+
 def resolve_authored_phone_slots(
     job: Any, variant: dict, slots: list[Any], *, preserve_intent: bool = False
 ) -> list[dict]:
@@ -552,6 +579,11 @@ def resolve_authored_phone_slots(
                 raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
             if not client_occurrence_id:
                 slot = slot.model_copy(update={"slot_id": None})  # a new placement (KRI-773)
+        if slot.media_kind == "blank":
+            blank = _resolve_blank_slot(slot, order=len(resolved))
+            total += blank["duration_s"]
+            resolved.append(blank)
+            continue
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         source = catalog[slot.clip_index]
@@ -608,7 +640,7 @@ def resolve_authored_phone_slots(
             if slot.slot_id
             and slot.slot_id.startswith("native-phone-talking-source")
             and slot.slot_id in known
-            else 0.1
+            else EDITOR_MIN_CLIP_S
         )
         if (
             not all(math.isfinite(value) for value in (slot.in_s, duration, rate))
@@ -649,6 +681,10 @@ def resolve_authored_phone_slots(
         resolved.append(
             {
                 **slot.model_dump(mode="json", exclude={"tilt"}),
+                # A photo has no source clock. The phone still moves `in_s` for the right half
+                # of a cut and for a left trim, and the recipe compile refuses a photo that
+                # does not start at 0 (KRI-1423).
+                **({"in_s": 0.0} if source["kind"] == "image" else {}),
                 **({"tilt": tilt} if tilt is not None else {}),
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
                 "source_gcs_path": source["gcs_path"],

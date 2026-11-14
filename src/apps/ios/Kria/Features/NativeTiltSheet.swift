@@ -306,6 +306,7 @@ struct TiltDial: View {
     var onEditingChanged: (Bool) -> Void = { _ in }
     let onChange: (Double) -> Void
     @State private var dragging = false
+    @GestureState private var dragActive = false
     @State private var lastDetent: Double?
     private let haptic = UISelectionFeedbackGenerator()
 
@@ -341,6 +342,7 @@ struct TiltDial: View {
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
+                    .updating($dragActive) { _, active, _ in active = true }
                     .onChanged { value in
                         if !dragging { dragging = true; haptic.prepare(); onEditingChanged(true) }
                         let next = Self.angle(atX: Double(value.location.x - inset), width: Double(travel))
@@ -358,6 +360,14 @@ struct TiltDial: View {
                         onEditingChanged(false)
                     }
             )
+            // A system-cancelled drag never reaches `onEnded`; close the editing transaction here.
+            .onChange(of: dragActive) { _, active in
+                if !active, dragging {
+                    dragging = false
+                    lastDetent = nil
+                    onEditingChanged(false)
+                }
+            }
         }
         .frame(height: 44)
         .accessibilityElement()

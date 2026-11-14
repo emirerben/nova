@@ -151,14 +151,16 @@ BASELINE: dict[str, int] = {
     "agents/semantic_edit_proposal.py": 1,
     "agents/spoken_script.py": 11,
     "agents/voiceover_script_writer.py": 9,
-    "kria/brief.py": 27,
+    # KRI-1392: the redo patterns left (the brief extractor's request_scope decides).
+    "kria/brief.py": 17,
     "kria/brief_checks.py": 70,
     "kria/brief_route.py": 4,
     "kria/clip_scope.py": 20,
     "kria/editor_receipts.py": 48,
     "kria/language.py": 1,
     "kria/opening_cut_ask.py": 8,
-    "kria/planner.py": 12,
+    # KRI-1392: the text-edit, re-plan and compound cue lists left.
+    "kria/planner.py": 6,
     "kria/reply_language.py": 8,
     "kria/speaker_framing_ask.py": 29,
     "kria/strategy_policy.py": 4,

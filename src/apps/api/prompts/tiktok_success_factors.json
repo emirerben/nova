@@ -1,6 +1,6 @@
 {
   "version": "2026-11-08-research-21",
-  "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
+  "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. PERSONA_PROMPT_VERSION and CONTENT_PLAN_PROMPT_VERSION are fingerprints of this file; bumping `version` still requires bumping IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
       "id": "hook-first-2s-public-01",

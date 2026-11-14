@@ -164,7 +164,7 @@ const LANE_B = [
   '       returns "" when mix is empty.',
   '   CRITICAL: NEVER return a "(none)" string. Empty string only. Inert blocks degrade agent output.',
   '   Thread both helpers into render_prompt via load_prompt("generate_content_plan", ...) as new kwargs.',
-  '   BUMP the CONTENT_PLAN_PROMPT_VERSION constant.',
+  '   The content-plan prompt version is a fingerprint of its source files: do not bump or hand-number it.',
   '',
   '   In src/apps/api/prompts/generate_content_plan.txt: add {instruction_level} and {edit_format_mix}',
   '   placeholders. Position them so that empty-string injection leaves the no-style case byte-identical.',

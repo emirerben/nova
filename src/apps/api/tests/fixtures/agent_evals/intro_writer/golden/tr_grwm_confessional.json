@@ -6,13 +6,13 @@
       "clip_id": "clip_tr_002",
       "media_type": "video",
       "duration_s": 6.0,
-      "subject": "kad\u0131n yatakta makyajs\u0131z selfie kamera, gece sohbet havas\u0131",
+      "subject": "kadın yatakta makyajsız selfie kamera, gece sohbet havası",
       "hook_text": "",
       "hook_score": 8.0,
       "energy": 3.0,
-      "description": "intimate handheld, low-light bedroom, makyajs\u0131z, samimi-konu\u015fma tonu, do\u011frudan kameraya bak\u0131yor"
+      "description": "intimate handheld, low-light bedroom, makyajsız, samimi-konuşma tonu, doğrudan kameraya bakıyor"
     },
-    "hero_transcript": "bug\u00fcn size \u00e7ok d\u00fcr\u00fcst bir \u015fey anlataca\u011f\u0131m",
+    "hero_transcript": "bugün size çok dürüst bir şey anlatacağım",
     "tone": "intimate",
     "form": {
       "effect": "fade-in",
@@ -34,14 +34,15 @@
     ],
     "language": "tr"
   },
-  "raw_text": "{\"text\": \"ke\u015fke daha \u00f6nce konu\u015fsayd\u0131m\", \"highlight_word\": \"ke\u015fke\"}",
+  "raw_text": "{\"text\": \"keşke daha önce konuşsaydım\", \"highlight_word\": \"keşke\"}",
   "output": {
-    "text": "ke\u015fke daha \u00f6nce konu\u015fsayd\u0131m",
-    "highlight_word": "ke\u015fke"
+    "text": "keşke daha önce konuşsaydım",
+    "highlight_word": "keşke"
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "TR confessional GRWM/night-talk \u2192 curiosity-gap hook in casual sen-form, lowercase, \u015f diacritic preserved. Mirrors 'gece sohbetleri' creator voice. The fade-in effect respects the intimate tone.",
+    "case": "TR confessional GRWM/night-talk → curiosity-gap hook in casual sen-form, lowercase, ş diacritic preserved. Mirrors 'gece sohbetleri' creator voice. The fade-in effect respects the intimate tone.",
     "language": "tr"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -51,6 +51,7 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "surprise reveal \u2192 original hook grounded in THIS clip (a mailed package), not a copy of the exemplar; lowercase in-voice, highlight_word is a real token"
-  }
+    "case": "surprise reveal → original hook grounded in THIS clip (a mailed package), not a copy of the exemplar; lowercase in-voice, highlight_word is a real token"
+  },
+  "prompt_sha": "unpinned"
 }

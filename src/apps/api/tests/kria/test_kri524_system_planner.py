@@ -102,7 +102,6 @@ async def test_compound_text_and_whole_source_request_cannot_commit_text_fast_pa
         snapshot={"text_bars": [], "allowed_op_families": ["text"]},
     )
     monkeypatch.setattr(planner.settings, "kria_copilot_first_enabled", True)
-    monkeypatch.setattr(planner, "_FAST_PATH_MAX_CHARS", 500)
 
     result = await plan_live_turn(
         db,
@@ -122,7 +121,8 @@ async def test_compound_text_and_whole_source_request_cannot_commit_text_fast_pa
 async def test_compound_request_does_not_report_editor_success_when_extraction_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Extraction failure must prevent a partial editor response for a compound ask."""
+    """Extraction failure must prevent a partial editor response for a compound ask: the
+    copilot names the part its ops do not do, so nothing is staged (KRI-1392)."""
 
     output = SimpleNamespace(
         action=AskUser(**_ASK),
@@ -131,10 +131,14 @@ async def test_compound_request_does_not_report_editor_success_when_extraction_f
             BriefUpdate(kind="timing", scope="global", description="whole take"),
         ],
     )
+    partial = _ops_plan("patch_text_style")
+    partial.intents[0].arguments["unmet_requests"] = [
+        {"request": "keep the whole video", "reason": "Needs a check of the whole take"}
+    ]
     db, item, creator_id, _copilot, _runs = _wire_planner(
         monkeypatch,
         output=output,
-        editor_plan=_ops_plan("patch_text_style"),
+        editor_plan=partial,
         snapshot={"text_bars": [], "allowed_op_families": ["text"]},
     )
     monkeypatch.setattr(planner.settings, "kria_copilot_first_enabled", True)
@@ -153,7 +157,7 @@ async def test_compound_request_does_not_report_editor_success_when_extraction_f
 
     assert result.plan.mode == "respond"
     assert result.brief_route is None
-    _copilot.assert_not_awaited()
+    _copilot.assert_awaited_once()
 
 
 def test_caption_and_music_changes_use_their_actual_lanes():

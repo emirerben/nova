@@ -10,16 +10,11 @@
       },
       {
         "file": "app/kria/planner.py",
-        "line": 6931,
+        "line": 7014,
         "tr": "{v1} güncellendi."
       }
     ],
     "caption": [
-      {
-        "file": "app/agents/clip_intent_planner.py",
-        "line": 264,
-        "tr": "yazı"
-      },
       {
         "file": "app/kria/intent_review_copy.py",
         "line": 22,
@@ -73,7 +68,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 256,
+        "line": 268,
         "tr": "başlık"
       },
       {

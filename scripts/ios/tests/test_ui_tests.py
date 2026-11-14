@@ -22,6 +22,9 @@ spec.loader.exec_module(ui)
 RETRIED_FIXTURE = json.loads(
     (Path(__file__).with_name("fixtures") / "retried-ui-results.json").read_text()
 )
+OVERRUN_FIXTURE = json.loads(
+    (Path(__file__).with_name("fixtures") / "overrun-ui-results.json").read_text()
+)
 
 
 def _report_without_test_case(report, method_name):
@@ -674,6 +677,76 @@ class VerifyCommandFlakyReportingTests(unittest.TestCase):
         report = json.loads((self.bundle.parent / "flaky-tests.json").read_text())
         self.assertEqual(report, [])
         self.assertFalse(self.summary.exists())
+
+
+class OverrunRerunTests(unittest.TestCase):
+    """Real xcresulttool output (fixtures/overrun-ui-results.json) from nightly
+    43415393573: one test ran past its 3 minute allowance, which xcodebuild never
+    retries, and verify.sh reruns it once (KRI-1379)."""
+
+    OVERRAN = "KriaUITests/NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow"
+    SIBLING = (
+        "KriaUITests/NativeEditorInspectorUITests/"
+        "testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt"
+    )
+    MESSAGE = "Test exceeded execution time allowance of 3 minutes"
+
+    def rerun(self, result="Passed", identifier=None, children=None):
+        case = {
+            "nodeType": "Test Case",
+            "nodeIdentifier": (identifier or self.OVERRAN).removeprefix("KriaUITests/")
+            + "()",
+            "result": result,
+        }
+        if children:
+            case["children"] = children
+        return {
+            "testNodes": [
+                {
+                    "nodeType": "UI test bundle",
+                    "name": "KriaUITests",
+                    "children": [case],
+                }
+            ]
+        }
+
+    def test_only_a_test_past_its_allowance_is_an_overrun(self):
+        self.assertEqual(ui.overrun_tests(OVERRUN_FIXTURE), [self.OVERRAN])
+        self.assertEqual(ui.overrun_tests(RETRIED_FIXTURE), [])
+
+    def test_a_passing_rerun_completes_coverage_and_is_reported_flaky(self):
+        expected = {self.OVERRAN, self.SIBLING}
+        with self.assertRaises(ValueError):
+            ui.verify_results(OVERRUN_FIXTURE, expected)
+        self.assertIn(
+            "Verified 2",
+            ui.verify_results(OVERRUN_FIXTURE, expected, rerun=self.rerun()),
+        )
+        flaky = ui.flaky_tests(OVERRUN_FIXTURE, rerun=self.rerun())
+        self.assertEqual(
+            flaky,
+            [
+                {
+                    "identifier": self.OVERRAN,
+                    "attempts": 2,
+                    "failure_messages": [self.MESSAGE],
+                }
+            ],
+        )
+
+    def test_a_rerun_cannot_excuse_anything_but_an_overrun(self):
+        expected = {self.OVERRAN, self.SIBLING}
+        overran_again = self.rerun(
+            "Failed", children=[{"nodeType": "Failure Message", "name": self.MESSAGE}]
+        )
+        for rerun in (
+            overran_again,
+            self.rerun(identifier=self.SIBLING),
+            {"testNodes": []},
+        ):
+            with self.subTest(rerun=rerun), self.assertRaises(ValueError):
+                ui.verify_results(OVERRUN_FIXTURE, expected, rerun=rerun)
+        self.assertEqual(ui.flaky_tests(OVERRUN_FIXTURE, rerun=overran_again), [])
 
 
 if __name__ == "__main__":

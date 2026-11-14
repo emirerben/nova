@@ -1424,7 +1424,16 @@ enum KriaClientProtocolContract {
     /// 49 (KRI-720): cuts every take of a several-take Talking preview from the receipt's `phone_talking_multi_clip.speaker_removed`
     /// rows. The server serves a build below 49 that receipt with no `speaker_media_ids`, so it previews the finished video
     /// instead of later takes uncut.
-    static let version = 49
+    ///
+    /// 50 (KRI-1384): a newer chat head that puts a staged lane back to the saved value (chat "undo that")
+    /// returns that lane to the saved document when the creator has not touched it since. The server offers
+    /// chat undo only to this protocol (`chat_undo_min_client_protocol`).
+    ///
+    /// 51 (KRI-1421): decodes, draws and edits a split panel's blank block (`media_kind: "blank"` + `color`, no `clip_index`)
+    /// and the `splitBlankPanel` capability. The server offers `editor_capabilities.split_blank_panel` only to this protocol
+    /// (and only with `splitBlankPanel` verified) and answers 426 `client_update_required` (`split_blank_panel`) to an older
+    /// build that saves, polls the timeline of, or renders an edit that holds one.
+    static let version = 51
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2306,7 +2315,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     /// `Tests/Fixtures/editor_save_codes.json`, which the API's `test_editor_save_code_catalog`
     /// keeps equal to what the server can raise: a new server code fails CI until it is worded here.
     static let timelineCopy: [String: String] = {
-        let tooShort = "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here."
+        let tooShort = "A clip is shorter than the \(String(format: "%g", EditorLimits.minClipSeconds)) second minimum. Lengthen it a little and save again. Your edits are still here."
         let pastEnd = "A clip runs past the end of its footage. Shorten it or move its start earlier, then save again. Your edits are still here."
         let reopen = "A clip’s footage is no longer available to this edit. Reopen the editor to continue."
         let timeline = "This timeline couldn’t be saved. Undo your last change and try again. Your edits are still here."
@@ -2322,6 +2331,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_TOO_LONG": "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here.",
             "TIMELINE_BEATS_EXHAUSTED": "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here.",
             "TIMELINE_INVALID_PARENT": timeline,
+            "TIMELINE_BLANK_OUTSIDE_SPLIT": "A blank block has to stay inside a split panel. Undo your last change and try again. Your edits are still here.",
             "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here.",
             "authored_seconds_required": timeline,
             "split_screen_unavailable": "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here.",
@@ -3086,7 +3096,7 @@ extension DraftSnapshot {
            variantBaseline(authoritativeVariant) == (baseGenerationID ?? "")
             || authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
            let payload = Self.object(snapshot["editor_payload"]), payload["editor_state_version"] == .number(2),
-           !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }) {
+           !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }), payload[Self.userSongKey] == nil {
             // A committed full snapshot owns authoring state. The variant is
             // a render projection and may lag this exact durable revision.
             var document = snapshot
@@ -3307,6 +3317,27 @@ extension DraftSnapshot {
         var sections: Set<EditorSection>
         /// `base` with the chat-changed lanes overlaid (decode with `EditorDocument`).
         var snapshot: [String: JSONValue]
+        /// The chat's song edit (`set_user_song`, KRI-1394). It is `EditorDocument.userSong`, which no snapshot
+        /// carries, so it travels beside `snapshot`. Set exactly when `sections` holds `.userSong`.
+        var userSong: EditorUserSongState?
+    }
+
+    /// The flat `user_song` key: the Save's `EditorCommitUserSong` section (`volume`, `window_start_s`,
+    /// `window_end_s`, `removed`), relative to the saved song like the editor's own song edits.
+    private static let userSongKey = "user_song"
+
+    /// The draft's song edit, nil when it holds none or a field is unreadable. Empty when the section
+    /// is the saved song (`removed: false`, no field set), as a chat undo of `set_user_song` writes it.
+    private static func stagedUserSong(_ value: JSONValue?) -> EditorUserSongState? {
+        guard let fields = object(value) else { return nil }
+        if fields["removed"] == .bool(true) { return EditorUserSongState(removed: true) }
+        var state = EditorUserSongState()
+        for (key, path) in [("volume", \EditorUserSongState.volume), ("window_start_s", \.windowStartS), ("window_end_s", \.windowEndS)] {
+            guard let field = fields[key], field != .null else { continue }
+            guard case let .number(number) = field, number.isFinite, number >= 0 else { return nil }
+            state[keyPath: path] = number
+        }
+        return state
     }
 
     /// Editor-commit key (flat draft key) -> lane. The server keeps the lanes a
@@ -3320,7 +3351,8 @@ extension DraftSnapshot {
         ("mix", .mix, ["mix"]), ("music_track_id", .music, ["music_track_id", "music_window"]),
         ("music_window", .music, ["music_track_id", "music_window"]), ("remove_music", .music, ["music_track_id", "music_window"]),
         ("background_music", .backgroundMusic, ["background_music"]), ("lyrics", .lyrics, ["lyrics"]),
-        ("orientation", .orientation, ["orientation"]), ("sound_effects", .soundEffects, ["sound_effects"]),
+        ("orientation", .orientation, ["orientation"]), ("landscape_fit", .landscapeFit, ["landscape_fit"]),
+        ("sound_effects", .soundEffects, ["sound_effects"]),
         ("media_overlays", .mediaOverlays, ["media_overlays"]), ("visual_blocks", .visualBlocks, ["visual_blocks"]),
         ("motion_scenes", .motionScenes, ["motion_scenes", "motion_runtime_hash"]),
         ("camera_effects", .cameraEffects, ["camera_effects"]),
@@ -3336,6 +3368,19 @@ extension DraftSnapshot {
     /// variant's current baseline — a save/render happened since; a head the server marked `head_current` is never stale),
     /// was already applied (`appliedRevision`), or changes nothing.
     func stagedChatEdit(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> StagedChatEdit? {
+        guard let lanes = chatLanes(over: base, variant: variant, appliedRevision: appliedRevision),
+              !lanes.changed.isEmpty else { return nil }
+        return StagedChatEdit(sections: lanes.changed, snapshot: lanes.snapshot, userSong: lanes.userSong)
+    }
+
+    /// KRI-1384: the lanes a newer chat head carries at the saved value, as chat "undo that" writes
+    /// them. `stagedChatEdit` stages nothing for them, so an editor holding the undone edit drops it here.
+    func restoredChatSections(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> Set<EditorSection> {
+        chatLanes(over: base, variant: variant, appliedRevision: appliedRevision)?.restored ?? []
+    }
+
+    private func chatLanes(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?)
+        -> (changed: Set<EditorSection>, restored: Set<EditorSection>, snapshot: [String: JSONValue], userSong: EditorUserSongState?)? {
         guard let variant, snapshot["kind"]?.stringValue == "editor" else { return nil }
         if let appliedRevision, draftRevision <= appliedRevision { return nil }
         guard let draftPayload = Self.object(snapshot["editor_payload"]) else { return nil }
@@ -3355,6 +3400,11 @@ extension DraftSnapshot {
         let baseSections = Self.object(payload["sections"]) ?? [:]
         var sections = baseSections
         var changed: Set<EditorSection> = []
+        var restored: Set<EditorSection> = []
+        // A video rendered before it stored its fit reports the saved fit only through its capability
+        // (`EditorDocument.effectiveLandscapeFit`), so a head writing that value puts the lane back.
+        let reportedFit = Self.object(Self.object(base["editor_capabilities"])?["landscape_fit"])?["value"]
+        func saved(_ key: String) -> JSONValue? { baseSections[key] ?? (key == "landscape_fit" ? reportedFit : nil) }
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
             let removesMusic = lane.section == .music && draftPayload["remove_music"] == .bool(true)
@@ -3376,15 +3426,18 @@ extension DraftSnapshot {
                     else if let value = draftValue(key) { candidate[key] = value }
                 }
             }
-            let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
+            let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(saved($0)) }
                 || (removesMusic && candidate["music"] != baseSections["music"])
-            guard differs else { continue }
+            guard differs else { restored.insert(lane.section); continue }
             sections = candidate; changed.insert(lane.section)
         }
-        guard !changed.isEmpty else { return nil }
+        var userSong: EditorUserSongState?
+        if let song = Self.stagedUserSong(draftPayload[Self.userSongKey]) {
+            if song.isEmpty { restored.insert(.userSong) } else { userSong = song; changed.insert(.userSong) }
+        }
         payload["sections"] = .object(sections)
         var next = base; next["editor_payload"] = .object(payload)
-        return StagedChatEdit(sections: changed, snapshot: next)
+        return (changed, restored.subtracting(changed), next, userSong)
     }
 
     /// Merge chat `TimelineSlotEdit` rows (wire shape) onto the editor's richer

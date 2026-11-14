@@ -118,7 +118,7 @@ These are the "why" behind invariants stated tersely in CLAUDE.md's pipeline sec
 
 ### [2026-05] Renderer-parity invariant (#296/#297 class — "looks right locally, clips in prod")
 **Incident:** the admin overlay-preview + classic templates render via Pillow, while agentic + music jobs render via Skia. #296 carried `text_anchor` through the burn dict and fixed Pillow + preview, but Skia's `_draw_centered_text`/`_draw_karaoke_line` kept centering every line on `position_x_frac`; prod job `ff0d2e1c` still rendered `text_anchor="left"` overlays clipped ("It's not just luck" → "s not just luck"). #297 fixed `_draw_centered_text`/`_draw_pop_in_with_suffix`; the karaoke path was fixed later.
-**Rule:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor_left`. Agentic/music overlay changes are NOT verified by the admin preview — verify the burned Skia video (`make verify-overlays`).
+**Rule:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor`. Agentic/music overlay changes are NOT verified by the admin preview — verify the burned Skia video (`make verify-overlays`).
 
 ### [2026-05-13] Gemini metadata never becomes on-screen overlay text
 **Incident:** job `a1091488` (Rule of Thirds) rendered "pilot in cockpit" — Gemini's `detected_subject` from a cockpit clip — in place of "The"/"Thirds".
@@ -2937,7 +2937,7 @@ reached and the neighbours still open. `scripts/reliability-gates.py` selects th
 gates for a diff, runs them (environment skips reported apart from failures) and runs
 the red control (the fix's parent must fail the gate). The CI journey
 `kri-577-reliability-gates` runs the whole union whenever one of those paths changes;
-`preship-check.sh` step 6 runs the mapped subset before a PR; the PR template asks for
+`preship-check.sh` step 5 (reliability gates) runs the mapped subset before a PR; the PR template asks for
 the five acceptance lines. `scripts/dev/test-db.sh` gives each worktree a migrated
 scratch database so the first test run is not thrown away. Rejected: a per-incident
 CI step (the kri-548 pattern) for each of 25 incidents -- the manifest union is one
@@ -3567,7 +3567,7 @@ watermark as hard obstacles, then raised.
   covered here.
 - Guard: `tests/pipeline/test_phone_text_fit_never_fails.py` (roles x saved positions x obstacle
   sets, text groups, replay of job 07efa44c conditions). No burn-dict field changed, so the
-  renderer-parity guard `test_both_renderers_honor_text_anchor_left` is untouched.
+  renderer-parity guard `test_both_renderers_honor_text_anchor` is untouched.
 
 ## [2026-11-01] Prompt fidelity wave 2: catalog
 

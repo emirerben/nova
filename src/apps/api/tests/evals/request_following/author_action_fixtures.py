@@ -154,6 +154,7 @@ BACKGROUND_OPEN = {
     "background_windows_open": lambda *_: True,
     "background_color_reason": lambda *_: None,
 }
+FULL_OPENING_OPEN = {**BACKGROUND_OPEN, "background_full_opening_open": lambda *_: True}
 BACKGROUND_POOL = [
     {"id": "bg-1", "kind": "image", "label": "beach.jpg"},
     {"id": "bg-2", "kind": "video", "label": "waves.mp4", "duration_s": 8.0},
@@ -184,6 +185,43 @@ def _cards(variant: dict[str, Any]) -> None:
     ]
 
 
+def _stacked_cards(variant: dict[str, Any]) -> None:
+    _cards(variant)
+    variant["media_overlays"][0]["z"] = 1
+    variant["media_overlays"].append(
+        {
+            "id": "card-2",
+            "kind": "image",
+            "label": "beach.jpg",
+            "start_s": 2.0,
+            "end_s": 5.0,
+            "x_frac": 0.7,
+            "y_frac": 0.3,
+            "scale": 0.4,
+            "display_mode": "pip",
+            "z": 0,
+        }
+    )
+
+
+def _stacked_pictures(variant: dict[str, Any]) -> None:
+    variant["visual_blocks"] = [
+        {
+            "id": f"photo-{index}",
+            "kind": "media",
+            "origin": "user",
+            "media_kind": "image",
+            "asset_id": f"photo-{index}",
+            "src_gcs_path": f"{SOURCE_PREFIX}photo-{index}.jpg",
+            "display_mode": "overlay",
+            "start_s": 1.0,
+            "end_s": 4.0,
+            "z": index,
+        }
+        for index in (1, 2)
+    ]
+
+
 def _placed_sfx(variant: dict[str, Any]) -> None:
     variant["sound_effects"] = [{"id": "s1", "effect_id": "whoosh_01", "at_s": 1.0, "gain": 1.0}]
 
@@ -197,9 +235,45 @@ def _cornered(variant: dict[str, Any]) -> None:
     }
 
 
+def _full_opening(variant: dict[str, Any]) -> None:
+    _talking(variant)
+    variant["speaker_background"]["full_screen_windows"] = [
+        {"start_s": 0.0, "end_s": 2.5},
+        {"start_s": 20.0, "end_s": 23.0},
+    ]
+
+
 def _speaker_take(variant: dict[str, Any]) -> None:
     _talking(variant)
     variant["user_timeline"]["slots"][0]["speaker_subject"] = True
+
+
+def _after_chat_recolor(variant: dict[str, Any]) -> None:
+    """The editor right after a chat turn turned the title red, as the planner offers undo for it
+    (KRI-1384): the turn's restore record, and the staged state still holding what it wrote."""
+    from app.services import kria_editor_undo
+
+    before = copy.deepcopy(variant["text_elements"])
+    after = [{**row, "color": "#FF0000"} if row.get("id") == "title" else row for row in before]
+    variant["text_elements"] = after
+    record = kria_editor_undo.chat_record(
+        {"text_elements": after}, {"text_elements": before}, turn_id="chat-turn", base_job_id="job"
+    )
+    changes = ["Patch text style"]
+    record[kria_editor_undo.MARK] = {
+        "v": 1,
+        "changes": changes,
+        "order": {"text_elements": [row["id"] for row in before]},
+    }
+    kria_editor_undo.attach(
+        variant,
+        {
+            "turn_id": "chat-turn",
+            "record": record,
+            "current": {"text_elements": after},
+            "changes": changes,
+        },
+    )
 
 
 def _one_unused(variant: dict[str, Any]) -> None:
@@ -217,6 +291,44 @@ def _picture_block(variant: dict[str, Any]) -> None:
             "end_s": 3.0,
         }
     ]
+
+
+def _song(mode: str) -> Callable[[dict[str, Any]], None]:
+    """The creator's own 60 s song under the edit (KRI-428), as the phone plan pins it."""
+
+    def apply(variant: dict[str, Any]) -> None:
+        variant["_phone_editor_plan_v1"] = {
+            "user_song": {
+                "mode": mode,
+                "plan_item_id": "item-1",
+                "generation": 1,
+                "duration_s": 60.0,
+                "window_start_s": 0.0,
+                "window_end_s": 23.0,
+            }
+        }
+
+    return apply
+
+
+SHAPE_CAPS = {
+    "orientation": {"editable": True, "reason": None},
+    "landscape_fit": {"editable": True, "value": "fill", "reason": None},
+}
+CAPTION_SCOPE_CAPS = {"caption_editor_style": True, "caption_style_scope": True}
+SONG_CAPS = {
+    "user_song": {
+        "volume": {"editable": True, "reason": None},
+        "window": {"editable": True, "reason": None},
+        "remove": {"editable": True, "reason": None},
+    }
+}
+LIPSYNC_CAPS = {
+    "user_song": {
+        **SONG_CAPS["user_song"],
+        "window": {"editable": False, "reason": "user_song_lipsync_locked"},
+    }
+}
 
 
 SCENARIOS: list[Scenario] = [
@@ -254,6 +366,15 @@ SCENARIOS: list[Scenario] = [
         [{"op": "set_caption_meta", "field": "animation_phases"}],
         [{"op": "set_caption_meta", "patch": {"animation_phases": {"entrance": "pop"}}}],
         variant=_cues,
+    ),
+    Scenario(
+        "caption_style_scope",
+        "Make the second caption bigger.",
+        [{"op": "patch_caption_line"}],
+        [{"op": "patch_caption_line", "cue_id": "cue-2", "size_px": 96}],
+        variant=_cues,
+        caps=CAPTION_SCOPE_CAPS,
+        note="Phone edits gained this op in KRI-1394.",
     ),
     Scenario(
         "clip_trim_and_move",
@@ -415,6 +536,16 @@ SCENARIOS: list[Scenario] = [
         needs_split=True,
     ),
     Scenario(
+        "split_screen_panel_add",
+        "In the split screen, play the finish arch clip after the Halden Hill clip on the top "
+        "panel and keep the Old Mill clip on the bottom.",
+        [{"op": "add_split_panel_clip", "field": "clip_index"}],
+        [{"op": "add_split_panel_clip", "section_id": "duo", "panel_index": 0, "clip_index": 2}],
+        variant=_split,
+        needs_split=True,
+        note="KRI-1420: A then B on the top panel, C on the bottom, on an existing split.",
+    ),
+    Scenario(
         "split_screen_remove",
         "Remove the split screen.",
         [{"op": "remove_split_screen"}],
@@ -448,6 +579,23 @@ SCENARIOS: list[Scenario] = [
         needs_split=True,
     ),
     Scenario(
+        "split_screen_full_screen",
+        "After two seconds, let the bottom video take over the whole screen.",
+        [{"op": "make_split_full_screen", "field": "panel"}],
+        [
+            {
+                "op": "make_split_full_screen",
+                "section_id": "duo",
+                "at_s": 2.0,
+                "side": "from",
+                "panel": 1,
+            }
+        ],
+        variant=_split,
+        needs_split=True,
+        note="Phone edits gained this op in KRI-1394.",
+    ),
+    Scenario(
         "music",
         "Lower the music volume.",
         [{"op": "set_mix"}],
@@ -463,6 +611,15 @@ SCENARIOS: list[Scenario] = [
         note="The snapshot never lists swap candidates; expected to fail.",
     ),
     Scenario(
+        "creator_song",
+        "Make my song quieter.",
+        [{"op": "set_user_song", "field": "volume"}],
+        [{"op": "set_user_song", "volume": 0.6}],
+        variant=_song("background"),
+        caps=SONG_CAPS,
+        note="Phone edits gained this op in KRI-1394.",
+    ),
+    Scenario(
         "sound_effects",
         "Add a whoosh at 2 seconds.",
         [{"op": "add_sfx"}],
@@ -476,6 +633,14 @@ SCENARIOS: list[Scenario] = [
         [{"op": "patch_overlay"}],
         [{"op": "patch_overlay", "overlay_index": 0, "patch": {"scale": 0.5}}],
         variant=_cards,
+    ),
+    Scenario(
+        "layer_order",
+        "Put the second photo in front of the first one.",
+        [{"op": "set_layer_order"}],
+        [{"op": "set_layer_order", "layer": "card-2", "direction": "front"}],
+        variant=_stacked_cards,
+        note="Phone edits gained this op in KRI-1394.",
     ),
     Scenario(
         "visual_blocks_and_motion",
@@ -534,6 +699,16 @@ SCENARIOS: list[Scenario] = [
         patches=BACKGROUND_OPEN,
     ),
     Scenario(
+        "speaker_full_opening",
+        "Start with the background behind me, no full-screen intro.",
+        [{"op": "remove_full_screen_opening"}],
+        [{"op": "remove_full_screen_opening"}],
+        variant=_full_opening,
+        context={"background_pool": BACKGROUND_POOL},
+        patches=FULL_OPENING_OPEN,
+        note="Phone edits gained this op in KRI-1394.",
+    ),
+    Scenario(
         "generated_overlay_approval",
         "Put the picture you made on top from 2 to 4 seconds.",
         [{"op": "add_overlay"}],
@@ -547,11 +722,32 @@ SCENARIOS: list[Scenario] = [
         pool_assets={"gen-1": f"{SOURCE_PREFIX}assets/gen-1.png"},
     ),
     Scenario(
+        "video_shape",
+        "Don't crop my landscape clips, I want to see the whole frame.",
+        [{"op": "set_video_shape", "field": "landscape_fit"}],
+        [{"op": "set_video_shape", "landscape_fit": "fit"}],
+        variant=_talking,
+        caps=SHAPE_CAPS,
+        note="Phone edits gained this op in KRI-1394.",
+    ),
+    Scenario(
         "history",
         "Undo that.",
         [{"op": "undo_last_edit"}],
         [{"op": "undo_last_edit"}],
-        note="Undo has no phone compile handler; expected to fail.",
+        note="Right after a chat turn turned the title red; the editor still holds it.",
+        plan_texts=(TITLE,),
+        variant=_after_chat_recolor,
+    ),
+    Scenario(
+        "history",
+        "Revert that, I liked it before.",
+        [{"op": "undo_last_edit"}],
+        [{"op": "undo_last_edit"}],
+        note="Revert phrasing of the same undo (KRI-1392 serves it as an in-place edit).",
+        suffix="revert",
+        plan_texts=(TITLE,),
+        variant=_after_chat_recolor,
     ),
 ]
 
@@ -623,6 +819,23 @@ PHONE_OP_PROBES: list[Scenario] = [
         {"op": "set_caption_emphasis", "cue_index": 0, "emphasis": True},
         variant=_cues,
     ),
+    _probe(
+        "caption_style_scope",
+        {
+            "op": "patch_caption_line",
+            "cue_id": "cue-3",
+            "position_x_frac": 0.3,
+            "position_y_frac": 0.2,
+        },
+        variant=_cues,
+        caps=CAPTION_SCOPE_CAPS,
+    ),
+    _probe(
+        "caption_style_scope",
+        {"op": "patch_caption_line", "all": True, "size_px": 64, "position_y_frac": 0.8},
+        variant=_cues,
+        caps=CAPTION_SCOPE_CAPS,
+    ),
     _probe("clip_trim_and_move", {"op": "set_clip_in", "slot_index": 1, "in_s": 0.5}),
     _probe("clip_trim_and_move", {"op": "trim_clip_start", "slot_index": 1, "start_s": 0.5}),
     _probe("clip_trim_and_move", {"op": "trim_output_start", "start_s": 0.5}),
@@ -663,8 +876,39 @@ PHONE_OP_PROBES: list[Scenario] = [
         patches={"split_collapse_available": lambda *_: True},
     ),
     _probe(
+        "split_screen_panel_add",
+        {
+            "op": "add_split_panel_clip",
+            "section_id": "duo",
+            "panel_index": 1,
+            "clip_index": 2,
+            "offset_s": 3.0,
+            "duration_s": 2.0,
+        },
+        variant=_split,
+        needs_split=True,
+    ),
+    _probe(
+        "split_screen_panel_add",
+        {
+            "op": "add_split_panel_clip",
+            "section_id": "duo",
+            "panel_index": 0,
+            "clip_index": 2,
+            "grow_section": False,
+        },
+        variant=_split_room_to_loop,
+        needs_split=True,
+    ),
+    _probe(
         "split_screen_remove",
         {"op": "remove_split_screen", "section_id": "duo", "keep_panel": 0},
+        variant=_split,
+        needs_split=True,
+    ),
+    _probe(
+        "split_screen_full_screen",
+        {"op": "make_split_full_screen", "section_id": "duo", "at_s": 1.0, "side": "until"},
         variant=_split,
         needs_split=True,
     ),
@@ -681,6 +925,30 @@ PHONE_OP_PROBES: list[Scenario] = [
         needs_split=True,
     ),
     _probe("music", {"op": "remove_music"}, variant=_music),
+    _probe(
+        "creator_song",
+        {"op": "set_user_song", "window_start_s": 12.0, "window_end_s": 40.0},
+        variant=_song("background"),
+        caps=SONG_CAPS,
+    ),
+    _probe(
+        "creator_song",
+        {"op": "set_user_song", "remove": True},
+        variant=_song("lipsync"),
+        caps=LIPSYNC_CAPS,
+    ),
+    _probe(
+        "creator_song",
+        {"op": "set_user_song", "volume": 0.4},
+        variant=_song("lipsync"),
+        caps=LIPSYNC_CAPS,
+    ),
+    _probe(
+        "creator_song_lipsync_trim",
+        {"op": "set_user_song", "window_start_s": 10.0, "window_end_s": 20.0},
+        variant=_song("lipsync"),
+        caps=LIPSYNC_CAPS,
+    ),
     _probe(
         "sound_effects",
         {"op": "patch_sfx", "sfx_index": 0, "gain": 0.5},
@@ -702,6 +970,12 @@ PHONE_OP_PROBES: list[Scenario] = [
     ),
     _probe("media_overlays", {"op": "remove_overlay", "overlay_index": 0}, variant=_cards),
     _probe(
+        "layer_order",
+        {"op": "set_layer_order", "layer": "photo-2", "z": 0},
+        variant=_stacked_pictures,
+        caps={"visual_blocks": True},
+    ),
+    _probe(
         "media_overlays",
         {"op": "set_overlay_display", "overlay_index": 0, "display_mode": "fullscreen"},
         variant=_cards,
@@ -713,6 +987,12 @@ PHONE_OP_PROBES: list[Scenario] = [
         **_BACKGROUND,
     ),
     _probe("speaker_background", {"op": "remove_background"}, variant=_talking, **_BACKGROUND),
+    _probe(
+        "video_shape",
+        {"op": "set_video_shape", "orientation": "landscape"},
+        variant=_talking,
+        caps=SHAPE_CAPS,
+    ),
     _probe(
         "speaker_background",
         {"op": "set_background_sequence", "asset_ids": ["bg-1", "bg-2"]},
@@ -805,7 +1085,14 @@ def build(scenario: Scenario) -> dict[str, Any]:
             except Exception as exc:  # noqa: BLE001 - the verdict is the message
                 probe["compiles"] = False
                 probe["compile_error"] = f"{type(exc).__name__}: {exc}"[:300]
-    return {"snapshot": snapshot, "probe": probe, "ops": parsed.ops, "compiled": compiled}
+    return {
+        "snapshot": snapshot,
+        "probe": probe,
+        "ops": parsed.ops,
+        "compiled": compiled,
+        "job": job,
+        "variant": variant,
+    }
 
 
 def fixture_for(scenario: Scenario, built: dict[str, Any]) -> dict[str, Any]:

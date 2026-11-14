@@ -98,7 +98,7 @@ CAPTION = "Ojo de bife 🥩"
 VIDEO = "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
 PHOTO = "pool-d17aeec6-ribeye.jpg"
 RESTATE = (
-    "I understood 6 of your clip instructions. I couldn't safely verify \"label: the ribeye "
+    "I understood 6 of your clip instructions. I couldn't safely verify \"the ribeye "
     'photo". Please restate just those so I can add them.'
 )
 QUEUE_KEY = "include:the-queue-under-the-striped-awning"

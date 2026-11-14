@@ -1,1 +1,49 @@
-{"agent":"nova.edit.copilot","prompt_version":"2026-08-08-v15","input":{"utterance":"remove the carousel","prior_turns":[],"variant_snapshot":{"allowed_op_families":["carousel"],"has_narrated_captions":false,"text_bars":[],"slots":[],"total_duration_s":20,"carousel":{"eligible":true,"reason":null,"current":{"position":"outro","mode":"focus","effect":"scale_sweep","focus_clip_index":1,"duration_s":6,"transition":"none"},"n_clips":4}}},"raw_text":"{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_carousel_moment\",\"config\":null}],\"confidence\":0.94,\"reply\":\"Removed the carousel.\",\"suggestions\":[],\"needs_clarification\":false}","output":{"intent":"edit","ops":[{"op":"set_carousel_moment","config":null}],"confidence":0.94,"reply":"Removed the carousel.","suggestions":[],"needs_clarification":false},"meta":{"source":"hand_authored_golden","case":"carousel remove"}}
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-08-v15",
+  "input": {
+    "utterance": "remove the carousel",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "carousel"
+      ],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [],
+      "total_duration_s": 20,
+      "carousel": {
+        "eligible": true,
+        "reason": null,
+        "current": {
+          "position": "outro",
+          "mode": "focus",
+          "effect": "scale_sweep",
+          "focus_clip_index": 1,
+          "duration_s": 6,
+          "transition": "none"
+        },
+        "n_clips": 4
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_carousel_moment\",\"config\":null}],\"confidence\":0.94,\"reply\":\"Removed the carousel.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_carousel_moment",
+        "config": null
+      }
+    ],
+    "confidence": 0.94,
+    "reply": "Removed the carousel.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "carousel remove"
+  },
+  "prompt_sha": "unpinned"
+}

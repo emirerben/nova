@@ -22,6 +22,7 @@ import structlog
 
 from app.agents import editor_ops_v2
 from app.agents._model_client import default_client
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import ProviderOutcomeUnknownError, RunContext
 from app.agents._schemas.text_element import TextElement
 from app.agents.edit_copilot import (
@@ -31,11 +32,13 @@ from app.agents.edit_copilot import (
     _font_catalog,
     _format_snapshot,
 )
+from app.agents.prompt_vocab import render_vocab_tokens
 from app.kria.brief import BriefRequirement
 from app.kria.text_sequence import is_text_sequence
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.research import PreparedResearch
 from app.schemas.text_composition import ResearchLayerShape, TextCompositionProgram
+from app.services.editor_limits import FRAME_S
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
 log = structlog.get_logger()
@@ -43,6 +46,27 @@ log = structlog.get_logger()
 # A `text_sequence` in these scopes is the opening title (`unified_montage.brief_view` seeds
 # the bar from its literal); the composer splits that bar rather than adding a text.
 _SEQUENCE_TITLE_SCOPES = frozenset({"title", "global"})
+
+# The text-tool documentation and snapshot formatting come from the editor copilot's files.
+# text.txt renders {{TOKEN}} vocabularies (prompt_vocab and the module behind each token),
+# and the font catalog is built from the allowlist and the font registry it reads.
+CREATION_TEXT_COMPOSER_PROMPT_SOURCES: tuple[str, ...] = (
+    "app/services/creation_text_composition.py",
+    "app/agents/edit_copilot.py",
+    "app/agents/editor_ops_v2/__init__.py",
+    "app/agents/prompt_vocab.py",
+    "app/agents/_schemas/text_animation_phases.py",
+    "app/agents/_schemas/text_element.py",
+    "app/services/editor_limits.py",
+    "assets/fonts/font-registry.json",
+    "prompts/edit_copilot_ops/text.txt",
+)
+# {{MOTION_FPS}} comes from motion-limits.json, which is outside the fingerprinted tree in the prod
+# image, so its rendered value is hashed in directly.
+CREATION_TEXT_COMPOSER_PROMPT_EXTRA = render_vocab_tokens("{{MOTION_FPS}}")
+CREATION_TEXT_COMPOSER_PROMPT_VERSION = prompt_fingerprint(
+    "ct", CREATION_TEXT_COMPOSER_PROMPT_SOURCES, extra=CREATION_TEXT_COMPOSER_PROMPT_EXTRA
+)
 
 # Same flash model `main_creator` / `brief_extractor` already fall back to.
 _FAST_COMPOSER_MODEL = "gemini-3.6-flash"
@@ -62,7 +86,8 @@ _TEXT_OPS = frozenset(
         "realign_labels",
     }
 )
-_INSTRUCTIONS = """CREATION TEXT COMPOSITION
+_INSTRUCTIONS = render_vocab_tokens(
+    """CREATION TEXT COMPOSITION
 If the creator asks for web research, fact checking or verified facts in any language,
 return research_request: {topic: public topic without URLs/private details,
 request_quote: exact creator words requesting research}, intent="describe", a short
@@ -87,7 +112,7 @@ THAT bar, never add another text for it. When the brief also has a title text wi
 wording, or a second sequence, that title keeps the opening bar and each sequence's exact words
 sit in their own bar (on a clip, or the clip a clip-scoped sequence names): split the bar
 holding them.
-Give every piece at least one video frame (1/30 s): when the bar is
+Give every piece at least one video frame (1/{{MOTION_FPS}} s): when the bar is
 shorter than that per piece, first lengthen it with set_texts_timing (about 0.45 s per word is a
 comfortable default, never a requirement; never past total_duration_s). Preserve the combined
 wording and choose readable timing inside the requested clip. Apply timing and shared style
@@ -128,6 +153,7 @@ unmet request if the planned timing cannot support the requested explanation.
 When a current text brief is present, add independent text only when a live non-title
 text requirement requests it. A title styling request never authorizes another caption.
 """
+)
 
 
 _RESEARCHED_COPY_INSTRUCTIONS = """RESEARCHED COPY
@@ -160,7 +186,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v21-researched-copy",
+        prompt_version=CREATION_TEXT_COMPOSER_PROMPT_VERSION,
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -231,7 +257,32 @@ class CreationTextComposer(EditCopilotAgent):
 
 
 class CreationTextCompositionError(ValueError):
-    pass
+    """The text pass could not produce the creator's text.
+
+    ``creator_detail`` is text written for the creator, or None when the message is ours (an
+    internal name, a wording clash). Only an exception that carries it may reach the creator.
+    """
+
+    creator_detail: str | None = None
+
+
+class CreationTextClarification(CreationTextCompositionError):
+    """The text composer asked the creator a question instead of composing.
+
+    A composer outcome is one of composed, nothing to do, a question for the creator, or
+    failed. This is the third: ``question`` is the composer's creator-facing reply and
+    ``unmet`` the requests it could not act on, each ``{"request", "reason"}``. A subclass of
+    the base error, so a caller that only knows failures still fails the way it always did.
+    """
+
+    def __init__(self, message: str, *, question: str, unmet: Sequence[Mapping[str, str]] = ()):
+        super().__init__(message)
+        self.question = question
+        self.unmet = tuple(dict(row) for row in unmet)
+
+    @property
+    def creator_detail(self) -> str:
+        return self.question
 
 
 class CreationTextTimeoutError(CreationTextCompositionError):
@@ -1075,10 +1126,10 @@ def _check_editorial_text(snapshot: EditProposalSnapshot, plan: dict) -> None:
             if not str(row.get("id", "")).startswith("guided-title")
             and not is_caption_text_bar(row)
             and str(row.get("text", "")).strip()
-            and float(row.get("start_s", 0)) >= start - 1 / 30
-            and float(row.get("end_s", 0)) <= end + 1 / 30
+            and float(row.get("start_s", 0)) >= start - FRAME_S
+            and float(row.get("end_s", 0)) <= end + FRAME_S
             and float(row.get("end_s", 0)) - float(row.get("start_s", 0))
-            >= min_display_s(len(str(row["text"]))) - 1 / 30
+            >= min_display_s(len(str(row["text"]))) - FRAME_S
         ]
         if not explanation:
             raise CreationTextCompositionError(
@@ -1200,6 +1251,95 @@ def _ensure_text_look(snapshot: EditProposalSnapshot, look: Any) -> EditProposal
     except Exception as exc:  # noqa: BLE001 - report-only: an animation ask never fails a render
         log.warning("creation_text_animation_skipped", error=str(exc)[:200])
         return snapshot
+
+
+def _wording_shown(relevant: Sequence[BriefRequirement], facts: Any) -> bool:
+    """Whether the lane already draws the wording every one of ``relevant`` asks for."""
+    from app.kria.brief_checks import check_requirement, text_sequence_shown  # noqa: PLC0415
+    from app.kria.text_shape_ask import words_only  # noqa: PLC0415
+
+    return all(
+        # A static title is not words shown a piece at a time, flag or not.
+        text_sequence_shown(req, facts)
+        if is_text_sequence(req)
+        else check_requirement(words_only(req), facts).status == "met"
+        or _answered_by_later_text(req, relevant[i + 1 :], facts)
+        for i, req in enumerate(relevant)
+    )
+
+
+def _as_planned(
+    snapshot: EditProposalSnapshot,
+    texts: list[dict],
+    slots: list[dict],
+    constraints: Mapping[str, str],
+) -> EditProposalSnapshot:
+    """The text lane exactly as planned, its copy held as confirmed (no composer call)."""
+    return snapshot.model_copy(
+        update={
+            "text_composition": TextCompositionProgram(
+                base_digest=_digest(texts, slots), copy_constraints=dict(constraints)
+            )
+        }
+    )
+
+
+def planned_text_if_shown(
+    snapshot: EditProposalSnapshot,
+    *,
+    copy_constraints: Mapping[str, str] | None,
+    text_requirements: Sequence[BriefRequirement] | None,
+) -> EditProposalSnapshot | None:
+    """The planned text lane, when it already draws every wording the creator asked for.
+
+    For a composer that asked a question instead of composing: the creator's own words are on
+    screen, so the video can be made as planned and the question (about layout or style) asked
+    beside it. None when a wording is missing or cannot be checked (no bound brief), because
+    then the question blocks the video. Uses the checks the composer's own skip path uses.
+    """
+    from app.kria.brief_checks import plan_facts_from_editor_payload  # noqa: PLC0415
+    from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
+
+    if text_requirements is None or snapshot.text_composition is not None:
+        return None
+    plan = compile_proposal_execution_plan(snapshot)
+    texts, slots = _lanes(plan)
+    constraints = {**snapshot_copy_constraints(snapshot, plan), **dict(copy_constraints or {})}
+    wording = [
+        req
+        for req in text_requirements
+        if req.kind == "text" or req.scope == "title" or is_text_sequence(req)
+    ]
+    facts = plan_facts_from_editor_payload({**plan, "title": snapshot.opening_title})
+    if not constraints or not wording or not _wording_shown(wording, facts):
+        return None
+    return _as_planned(snapshot, texts, slots, constraints)
+
+
+def _answered_by_later_text(
+    req: BriefRequirement, later: Sequence[BriefRequirement], facts: Any
+) -> bool:
+    """A bare "find the text and add it" ask the creator then answered by pasting the words.
+
+    The brief keeps both ("find the lyrics and add it as text" with no words, then the pasted
+    lyric as its literal). The first has nothing to check against, so it never reads as met,
+    though the words it asked for are the later requirement's literal and are drawn. Only a
+    requirement with no literal and no typed facts is covered, and only by a later text
+    requirement of the same scope whose literal is already met.
+    """
+    from app.kria.brief_checks import check_requirement  # noqa: PLC0415
+    from app.kria.text_shape_ask import words_only  # noqa: PLC0415
+
+    if req.kind != "text" or req.literal or req.facts or is_text_sequence(req):
+        return False
+    return any(
+        other.kind == "text"
+        and other.literal
+        and other.scope == req.scope
+        and not is_text_sequence(other)
+        and check_requirement(words_only(other), facts).status == "met"
+        for other in later
+    )
 
 
 def compose_creation_text(
@@ -1486,7 +1626,7 @@ def _shared_span(owned: list[_ServerTimedSequence], total: float) -> tuple[float
     (`_check_research_layers`); each one's pieces share the span equally. Words that cannot be
     read one at a time inside the video are reported, never squeezed into flicker.
     """
-    from app.services.sequence_pacing import MIN_TEXT_PIECE_S  # noqa: PLC0415
+    from app.services.editor_limits import MIN_TEXT_PIECE_S  # noqa: PLC0415
 
     longest = max(len(item.words) for item in owned)
     needed = longest * MIN_TEXT_PIECE_S
@@ -1823,7 +1963,7 @@ def _layer_name(shape: ResearchLayerShape, *, lead: bool = True) -> str:
     return f"The approved{where} text" if lead else f"the approved{where} text"
 
 
-_FRAME_S = 1 / 30
+_FRAME_S = FRAME_S
 
 
 def _compose_creation_text(
@@ -1904,12 +2044,7 @@ def _compose_creation_text(
         and pinned_research is None
         and approved_layers is None
     ):
-        from app.kria.brief_checks import (
-            check_requirement,
-            plan_facts_from_editor_payload,
-            text_sequence_shown,
-        )
-        from app.kria.text_shape_ask import words_only
+        from app.kria.brief_checks import plan_facts_from_editor_payload
 
         # A bound brief owns the current request, not the historical conversation.
         # Skip only when every requested text/style behavior is already proven.
@@ -1935,21 +2070,9 @@ def _compose_creation_text(
             and snapshot.title_animation is None
             and relevant
             and relationships_verified
-            and all(
-                # A static title is not words shown a piece at a time, flag or not.
-                text_sequence_shown(req, facts)
-                if is_text_sequence(req)
-                else check_requirement(words_only(req), facts).status == "met"
-                for req in relevant
-            )
+            and _wording_shown(relevant, facts)
         ):
-            return snapshot.model_copy(
-                update={
-                    "text_composition": TextCompositionProgram(
-                        base_digest=_digest(texts, slots), copy_constraints=constraints
-                    )
-                }
-            )
+            return _as_planned(snapshot, texts, slots, constraints)
     if pinned_research is not None:
         # KRI-881: the creator approved these sourced explanations with their citations.
         # They are replayed first, never searched or written again, and protected from the
@@ -2106,9 +2229,11 @@ def _compose_creation_text(
         details = "; ".join(
             str(row.get("reason", "")) for row in output.unmet_requests if row.get("reason")
         )
-        raise CreationTextCompositionError(
-            "Text composition is incomplete: " + (details or output.reply)
-        )
+        message = "Text composition is incomplete: " + (details or output.reply)
+        question = output.reply.strip() or details
+        if question and (output.needs_clarification or details):
+            raise CreationTextClarification(message, question=question, unmet=output.unmet_requests)
+        raise CreationTextCompositionError(message)
     operations = output.ops
     from app.config import settings  # noqa: PLC0415
 

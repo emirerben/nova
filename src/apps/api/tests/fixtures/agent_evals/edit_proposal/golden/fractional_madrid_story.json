@@ -46,5 +46,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Fractional total and reordered chapters retain all three clips without a schema retry"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

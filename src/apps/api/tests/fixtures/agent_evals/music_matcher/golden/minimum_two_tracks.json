@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "d48f6c12f0a65c98",
   "input": {
     "clip_summaries": [
       {
@@ -43,7 +44,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["driving", "uplifting", "pulsing"],
+          "vibe_tags": [
+            "driving",
+            "uplifting",
+            "pulsing"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "morning-run momentum",
@@ -61,7 +66,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "heroic", "hopeful"],
+          "vibe_tags": [
+            "sweeping",
+            "heroic",
+            "hopeful"
+          ],
           "energy": "high",
           "pacing": "medium",
           "mood": "underdog triumph",
@@ -74,33 +83,32 @@
     ],
     "n_variants": 2
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_electronic_run\", \"score\": 8.7, \"rationale\": \"Trail-run momentum profile names sunrise summit reveals and rhythmic motion directly; warm golden-hour grade aligns with the morning footage.\", \"predicted_strengths\": [\"warm golden hour grade matches the morning light\", \"beat_pulse transitions sync to the running shoes on dirt clip\", \"driving energy supports the steady stride pacing\"]}, {\"track_id\": \"track_cinematic_uplift\", \"score\": 8.3, \"rationale\": \"Underdog-triumph cinematic frames the same trail run as a hero arc — distinct enough from the electronic top pick to be a real second variant; 6 slots over 3 long clips supports each beat landing.\", \"predicted_strengths\": [\"distinct vibe from top pick — both variants will feel different\", \"sweeping mood elevates the ridge-crest and summit-overlook clips\", \"warm amber grade aligns with sunrise footage\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_electronic_run\",\n      \"score\": 9.5,\n      \"rationale\": \"This track perfectly captures the energy and momentum of a morning trail run with its driving beat and uplifting vibe.\",\n      \"predicted_strengths\": [\n        \"high energy and pacing match\",\n        \"theme aligns perfectly with running clips\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_uplift\",\n      \"score\": 8.0,\n      \"rationale\": \"The cinematic and heroic mood of this track would effectively underscore the scenic and triumphant aspects of the summit reveal.\",\n      \"predicted_strengths\": [\n        \"sweeping sound for landscape shots\",\n        \"uplifting mood for 'summit overlook' payoff\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_electronic_run",
-        "score": 8.7,
-        "rationale": "Trail-run momentum profile names sunrise summit reveals and rhythmic motion directly; warm golden-hour grade aligns with the morning footage.",
+        "score": 9.5,
+        "rationale": "This track perfectly captures the energy and momentum of a morning trail run with its driving beat and uplifting vibe.",
         "predicted_strengths": [
-          "warm golden hour grade matches the morning light",
-          "beat_pulse transitions sync to the running shoes on dirt clip",
-          "driving energy supports the steady stride pacing"
+          "high energy and pacing match",
+          "theme aligns perfectly with running clips"
         ]
       },
       {
         "track_id": "track_cinematic_uplift",
-        "score": 8.3,
-        "rationale": "Underdog-triumph cinematic frames the same trail run as a hero arc — distinct enough from the electronic top pick to be a real second variant; 6 slots over 3 long clips supports each beat landing.",
+        "score": 8.0,
+        "rationale": "The cinematic and heroic mood of this track would effectively underscore the scenic and triumphant aspects of the summit reveal.",
         "predicted_strengths": [
-          "distinct vibe from top pick — both variants will feel different",
-          "sweeping mood elevates the ridge-crest and summit-overlook clips",
-          "warm amber grade aligns with sunrise footage"
+          "sweeping sound for landscape shots",
+          "uplifting mood for 'summit overlook' payoff"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "minimum library — only 2 candidate tracks, n_variants=2 (track count edge)"
+    "source": "provider_smoke_capture",
+    "case": "minimum library — only 2 candidate tracks, n_variants=2 (track count edge)",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

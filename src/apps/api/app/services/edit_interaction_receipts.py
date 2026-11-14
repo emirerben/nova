@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.edit_copilot import EditCopilotAgent
+from app.agents.edit_copilot import ChatEditCopilotAgent
 from app.models import EditInteractionReceipt
 from app.routes._copilot import CopilotTurnBody, CopilotTurnResponse
 from app.services.training_eligibility import evaluate_training_eligibility_async
@@ -119,8 +119,8 @@ async def persist_copilot_proposal(
         internal_grant_id=eligibility.internal_grant_id,
         proposed_operations=list(response.ops),
         proposed_operations_digest=_operations_digest(response.ops),
-        prompt_version=EditCopilotAgent.spec.prompt_version,
-        model=EditCopilotAgent.spec.model,
+        prompt_version=ChatEditCopilotAgent.spec.prompt_version,
+        model=ChatEditCopilotAgent.spec.model,
         proposal_outcome=response.outcome,
         execution_outcome=None,
         rejection_reasons=list(response.rejection_reasons),

@@ -951,8 +951,9 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(picker.frame.contains(selectionPoint), "The selected video must be inside the visible Photos picker")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: selectionPoint.x, dy: selectionPoint.y)).tap()
-        // The gallery stays open until the creator confirms with the pinned Add button.
-        XCTAssertTrue(done.isEnabled)
+        // The gallery stays open until the creator confirms with the pinned Add button. PhotosUI hands the pick
+        // over from its own process, so Add turns on a moment after the tap, not within it.
+        XCTAssertTrue(eventually(timeout: 5) { done.isEnabled }, "picking a video turns on Add")
         XCTAssertEqual(done.label, "Add 1 clip")
         done.tap()
         // Filling the picker advances the attachment flow after dismissal.
@@ -2876,17 +2877,24 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(eventually(timeout: 10) { !app.descendants(matching: .any)["plan-feed.change.title"].exists },
                       "an older decision collapses to a one-line row")
         attach(app, "plan-feed-midway")
-        app.buttons["plan-feed.block.title"].tap()
-        XCTAssertTrue(eventually(timeout: 5) { app.descendants(matching: .any)["plan-feed.change.title"].exists }, "tapping a collapsed row expands it")
-        XCTAssertFalse(app.descendants(matching: .any)["plan-feed.change.title"].isEnabled && false)
-        app.buttons["plan-feed.block.title"].tap()
-        XCTAssertTrue(eventually(timeout: 5) { !app.descendants(matching: .any)["plan-feed.change.title"].exists })
 
         // Everything decided: the status line turns to "Making your video" on an indeterminate track, then the
         // Review plan entry that expands every block.
         let title = app.staticTexts["plan-feed.title"]
         XCTAssertTrue(eventually(timeout: 60) { title.label == "Making your video" })
         XCTAssertEqual(app.otherElements["plan-feed.progress"].value as? String ?? app.descendants(matching: .any)["plan-feed.progress"].value as? String, "in progress")
+        // Rows are tapped only once every section is decided: before that, each new section moves the rows between
+        // XCUITest reading a frame and tapping it (KRI-1379). The last section, and a row after each tap, still spring
+        // into place, so each tap waits for the row to hold still. Look is the newest, so it starts open, and it sits
+        // above the panel; the first rows are under the header by now.
+        let look = app.buttons["plan-feed.block.look"]
+        let lookChange = app.descendants(matching: .any)["plan-feed.change.look"]
+        XCTAssertTrue(holdsStill(look), "the newest row settles")
+        look.tap()
+        XCTAssertTrue(eventually(timeout: 5) { !lookChange.exists }, "tapping an open row collapses it")
+        XCTAssertTrue(holdsStill(look), "the collapsed row settles")
+        look.tap()
+        XCTAssertTrue(eventually(timeout: 5) { lookChange.exists }, "tapping the collapsed row expands it again")
         let review = app.buttons["plan-feed.review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"), "a skipped section counts as decided")
@@ -3585,5 +3593,16 @@ final class CreationUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return true
+    }
+
+    /// True once `element` reports the same frame on two reads in a row. XCUITest taps where the element was when it
+    /// last read the frame, so a tap on a row that is still animating can land on its neighbour.
+    private func holdsStill(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        var previous = CGRect.null
+        return eventually(timeout: timeout) {
+            let frame = element.frame
+            defer { previous = frame }
+            return frame == previous
+        }
     }
 }

@@ -1,0 +1,52 @@
+{
+  "_source": "Real 'xcrun xcresulttool get test-results tests --compact' output from nightly run 43415393573, shard 5/5 (Xcode 26.3, iOS 26.2), trimmed to the test that ran past its 3 minute allowance and one passing sibling. xcodebuild did not retry the overrun, so it has no Repetition children. Device info stripped. KRI-1379.",
+  "testNodes": [
+    {
+      "name": "Kria",
+      "nodeType": "Test Plan",
+      "result": "Failed",
+      "children": [
+        {
+          "name": "KriaUITests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests",
+          "nodeType": "UI test bundle",
+          "result": "Failed",
+          "children": [
+            {
+              "name": "NativeEditorInspectorUITests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/NativeEditorInspectorUITests",
+              "nodeType": "Test Suite",
+              "result": "Failed",
+              "children": [
+                {
+                  "children": [
+                    {
+                      "name": "Test exceeded execution time allowance of 3 minutes",
+                      "nodeType": "Failure Message"
+                    }
+                  ],
+                  "duration": "3m",
+                  "durationInSeconds": 180,
+                  "name": "testSoundEffectsHomeLibraryEditTrimFlow()",
+                  "nodeIdentifier": "NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow",
+                  "nodeType": "Test Case",
+                  "result": "Failed"
+                },
+                {
+                  "duration": "16s",
+                  "durationInSeconds": 16.819658994674683,
+                  "name": "testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt()",
+                  "nodeIdentifier": "NativeEditorInspectorUITests/testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/NativeEditorInspectorUITests/testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

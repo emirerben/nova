@@ -790,5 +790,6 @@
     "source": "Synthetic reproduction of a narrated guided story whose voiceover lines came back as chapter text bindings; media, copy, and word timings are generated test data.",
     "case": "Voiceover lines emitted as both chapter thoughts and chapter bindings, with one photo reused across two chapters, plan with only the title and narration captions.",
     "expected_title": "One light on the coast"
-  }
+  },
+  "prompt_sha": "6fb532a58112706e"
 }

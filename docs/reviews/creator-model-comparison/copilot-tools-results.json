@@ -1,0 +1,1969 @@
+{
+ "schema": "kri797-copilot-tools-v1",
+ "recorded_at_code": "ca60466c5 (+ the reply-round cap raised to 17 before Sol's re-record, 743ca26e4); gemini_fix at the PR head",
+ "prompt_version": "2026-11-13-v127+copilot-tools-v1 (tools arms, gemini-json rerun); control: 2026-11-11-v122 / 2026-11-13-v126 as recorded in the fixtures",
+ "arms": {
+  "json_gemini_control": "gemini-3.1-pro-preview, thinking high, JSON (committed baseline recordings, no repair loop)",
+  "gemini_tools": "gemini-3.1-pro-preview, thinking high, tools",
+  "sol_tools": "gpt-6.1-sol, reasoning medium, tools",
+  "sonnet_tools": "claude-sonnet-5-5, effort medium, tools",
+  "json_gemini_rerun": "gemini-3.1-pro-preview, thinking high, JSON with the repair loop, prompt v127"
+ },
+ "noise_subset": {
+  "json_gemini_control": {
+   "threads": 8,
+   "requirements": 22,
+   "met": 18,
+   "partial": 1,
+   "unmet": 3,
+   "met_share": 0.8182,
+   "overclaims": 1,
+   "conversation_threads": {
+    "threads": 6,
+    "requirements": 20,
+    "met": 16,
+    "partial": 1,
+    "unmet": 3,
+    "met_share": 0.8,
+    "overclaims": 1
+   },
+   "per_action_set": {
+    "threads": 2,
+    "requirements": 2,
+    "met": 2,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 1.0,
+    "overclaims": 0
+   },
+   "turns": 15,
+   "model_calls": 15,
+   "first_answer_latency_p50_s": 14.0,
+   "first_answer_latency_p95_s": 70.74,
+   "turn_latency_p50_s": 14.0,
+   "turn_latency_p95_s": 70.74,
+   "first_answer_tokens_in_mean": 27683,
+   "first_answer_tokens_cached_mean": 0,
+   "tokens_in_per_turn_mean": 27683,
+   "cost_total_usd": 1.2489,
+   "cost_per_turn_usd": 0.0833,
+   "rounds_per_turn_mean": 1.0,
+   "rounds_per_turn_max": 1,
+   "turns_with_reply_round": 0,
+   "turns_with_not_applied_op": 0,
+   "not_applied_ops": 0,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "met"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "met",
+     "reply-confirms": "unmet"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "met"
+    }
+   }
+  },
+  "json_gemini_rerun": {
+   "threads": 8,
+   "requirements": 22,
+   "met": 17,
+   "partial": 1,
+   "unmet": 4,
+   "met_share": 0.7727,
+   "overclaims": 2,
+   "conversation_threads": {
+    "threads": 6,
+    "requirements": 20,
+    "met": 15,
+    "partial": 1,
+    "unmet": 4,
+    "met_share": 0.75,
+    "overclaims": 2
+   },
+   "per_action_set": {
+    "threads": 2,
+    "requirements": 2,
+    "met": 2,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 1.0,
+    "overclaims": 0
+   },
+   "turns": 15,
+   "model_calls": 15,
+   "first_answer_latency_p50_s": 11.87,
+   "first_answer_latency_p95_s": 36.62,
+   "turn_latency_p50_s": 11.87,
+   "turn_latency_p95_s": 36.62,
+   "first_answer_tokens_in_mean": 27931,
+   "first_answer_tokens_cached_mean": 1682,
+   "tokens_in_per_turn_mean": 27931,
+   "cost_total_usd": 1.1222,
+   "cost_per_turn_usd": 0.0748,
+   "rounds_per_turn_mean": 1.0,
+   "rounds_per_turn_max": 1,
+   "turns_with_reply_round": 0,
+   "turns_with_not_applied_op": 0,
+   "not_applied_ops": 0,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "met"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "met",
+     "reply-confirms": "unmet"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "unmet"
+    }
+   }
+  },
+  "sol_tools": {
+   "threads": 8,
+   "requirements": 22,
+   "met": 16,
+   "partial": 2,
+   "unmet": 4,
+   "met_share": 0.7273,
+   "overclaims": 2,
+   "conversation_threads": {
+    "threads": 6,
+    "requirements": 20,
+    "met": 15,
+    "partial": 2,
+    "unmet": 3,
+    "met_share": 0.75,
+    "overclaims": 2
+   },
+   "per_action_set": {
+    "threads": 2,
+    "requirements": 2,
+    "met": 1,
+    "partial": 0,
+    "unmet": 1,
+    "met_share": 0.5,
+    "overclaims": 0
+   },
+   "turns": 15,
+   "model_calls": 58,
+   "first_answer_latency_p50_s": 2.42,
+   "first_answer_latency_p95_s": 15.41,
+   "turn_latency_p50_s": 5.8,
+   "turn_latency_p95_s": 60.3,
+   "first_answer_tokens_in_mean": 29339,
+   "first_answer_tokens_cached_mean": 25846,
+   "tokens_in_per_turn_mean": 115024,
+   "cost_total_usd": 0.3296,
+   "cost_per_turn_usd": 0.022,
+   "rounds_per_turn_mean": 3.87,
+   "rounds_per_turn_max": 11,
+   "turns_with_reply_round": 13,
+   "turns_with_not_applied_op": 1,
+   "not_applied_ops": 1,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "unmet"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "met",
+     "reply-confirms": "unmet"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "partial"
+    }
+   }
+  },
+  "sol_tools_rerun": {
+   "threads": 8,
+   "requirements": 22,
+   "met": 17,
+   "partial": 2,
+   "unmet": 3,
+   "met_share": 0.7727,
+   "overclaims": 2,
+   "conversation_threads": {
+    "threads": 6,
+    "requirements": 20,
+    "met": 15,
+    "partial": 2,
+    "unmet": 3,
+    "met_share": 0.75,
+    "overclaims": 2
+   },
+   "per_action_set": {
+    "threads": 2,
+    "requirements": 2,
+    "met": 2,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 1.0,
+    "overclaims": 0
+   },
+   "turns": 15,
+   "model_calls": 64,
+   "first_answer_latency_p50_s": 2.68,
+   "first_answer_latency_p95_s": 6.27,
+   "turn_latency_p50_s": 5.56,
+   "turn_latency_p95_s": 44.42,
+   "first_answer_tokens_in_mean": 29340,
+   "first_answer_tokens_cached_mean": 28792,
+   "tokens_in_per_turn_mean": 127919,
+   "cost_total_usd": 0.2658,
+   "cost_per_turn_usd": 0.0177,
+   "rounds_per_turn_mean": 4.27,
+   "rounds_per_turn_max": 14,
+   "turns_with_reply_round": 13,
+   "turns_with_not_applied_op": 1,
+   "not_applied_ops": 1,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "met"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "met",
+     "reply-confirms": "unmet"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "partial"
+    }
+   }
+  },
+  "sonnet_tools": {
+   "threads": 8,
+   "requirements": 22,
+   "met": 18,
+   "partial": 1,
+   "unmet": 3,
+   "met_share": 0.8182,
+   "overclaims": 1,
+   "conversation_threads": {
+    "threads": 6,
+    "requirements": 20,
+    "met": 16,
+    "partial": 1,
+    "unmet": 3,
+    "met_share": 0.8,
+    "overclaims": 1
+   },
+   "per_action_set": {
+    "threads": 2,
+    "requirements": 2,
+    "met": 2,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 1.0,
+    "overclaims": 0
+   },
+   "turns": 15,
+   "model_calls": 16,
+   "first_answer_latency_p50_s": 3.04,
+   "first_answer_latency_p95_s": 13.72,
+   "turn_latency_p50_s": 3.04,
+   "turn_latency_p95_s": 13.72,
+   "first_answer_tokens_in_mean": 49172,
+   "first_answer_tokens_cached_mean": 43345,
+   "tokens_in_per_turn_mean": 52698,
+   "cost_total_usd": 0.3824,
+   "cost_per_turn_usd": 0.0255,
+   "rounds_per_turn_mean": 1.0,
+   "rounds_per_turn_max": 1,
+   "turns_with_reply_round": 0,
+   "turns_with_not_applied_op": 0,
+   "not_applied_ops": 0,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 1,
+   "per_thread": {
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "met"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "unmet",
+     "reply-confirms": "met"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "met"
+    }
+   }
+  },
+  "sonnet_tools_rerun": {
+   "threads": 8,
+   "requirements": 22,
+   "met": 17,
+   "partial": 1,
+   "unmet": 4,
+   "met_share": 0.7727,
+   "overclaims": 1,
+   "conversation_threads": {
+    "threads": 6,
+    "requirements": 20,
+    "met": 16,
+    "partial": 1,
+    "unmet": 3,
+    "met_share": 0.8,
+    "overclaims": 1
+   },
+   "per_action_set": {
+    "threads": 2,
+    "requirements": 2,
+    "met": 1,
+    "partial": 0,
+    "unmet": 1,
+    "met_share": 0.5,
+    "overclaims": 0
+   },
+   "turns": 15,
+   "model_calls": 15,
+   "first_answer_latency_p50_s": 2.75,
+   "first_answer_latency_p95_s": 12.46,
+   "turn_latency_p50_s": 2.75,
+   "turn_latency_p95_s": 12.46,
+   "first_answer_tokens_in_mean": 49169,
+   "first_answer_tokens_cached_mean": 36919,
+   "tokens_in_per_turn_mean": 49169,
+   "cost_total_usd": 0.5992,
+   "cost_per_turn_usd": 0.0399,
+   "rounds_per_turn_mean": 1.0,
+   "rounds_per_turn_max": 1,
+   "turns_with_reply_round": 0,
+   "turns_with_not_applied_op": 0,
+   "not_applied_ops": 0,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "unmet"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "unmet",
+     "reply-confirms": "met"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "met"
+    }
+   }
+  }
+ },
+ "full_set": {
+  "json_gemini_control": {
+   "threads": 74,
+   "requirements": 112,
+   "met": 84,
+   "partial": 6,
+   "unmet": 22,
+   "met_share": 0.75,
+   "overclaims": 10,
+   "conversation_threads": {
+    "threads": 30,
+    "requirements": 68,
+    "met": 48,
+    "partial": 6,
+    "unmet": 14,
+    "met_share": 0.7059,
+    "overclaims": 9
+   },
+   "per_action_set": {
+    "threads": 44,
+    "requirements": 44,
+    "met": 36,
+    "partial": 0,
+    "unmet": 8,
+    "met_share": 0.8182,
+    "overclaims": 1
+   },
+   "turns": 85,
+   "model_calls": 85,
+   "first_answer_latency_p50_s": 10.89,
+   "first_answer_latency_p95_s": 28.23,
+   "turn_latency_p50_s": 10.89,
+   "turn_latency_p95_s": 28.23,
+   "first_answer_tokens_in_mean": 28319,
+   "first_answer_tokens_cached_mean": 0,
+   "tokens_in_per_turn_mean": 28319,
+   "cost_total_usd": 6.4232,
+   "cost_per_turn_usd": 0.0756,
+   "rounds_per_turn_mean": 1.0,
+   "rounds_per_turn_max": 1,
+   "turns_with_reply_round": 0,
+   "turns_with_not_applied_op": 0,
+   "not_applied_ops": 0,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_background_focus": {
+     "background_focus-op-applied": "met"
+    },
+    "action_camera_effects": {
+     "camera_effects-op-applied": "unmet"
+    },
+    "action_caption_animation": {
+     "caption_animation-op-applied": "met"
+    },
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_captions": {
+     "captions-op-applied": "met"
+    },
+    "action_carousel": {
+     "carousel-op-applied": "unmet"
+    },
+    "action_clip_add_remove": {
+     "clip_add_remove-op-applied": "met"
+    },
+    "action_clip_add_remove__visual_media": {
+     "clip_add_remove-op-applied": "met"
+    },
+    "action_clip_audio": {
+     "clip_audio-op-applied": "met"
+    },
+    "action_clip_crop": {
+     "clip_crop-op-applied": "met"
+    },
+    "action_clip_duplicate": {
+     "clip_duplicate-op-applied": "met"
+    },
+    "action_clip_look": {
+     "clip_look-op-applied": "unmet"
+    },
+    "action_clip_look__custom_effect": {
+     "clip_look-op-applied": "unmet"
+    },
+    "action_clip_source_gain": {
+     "clip_source_gain-op-applied": "met"
+    },
+    "action_clip_source_replacement": {
+     "clip_source_replacement-op-applied": "met"
+    },
+    "action_clip_speed": {
+     "clip_speed-op-applied": "met"
+    },
+    "action_clip_tilt": {
+     "clip_tilt-op-applied": "met"
+    },
+    "action_clip_transition": {
+     "clip_transition-op-applied": "met"
+    },
+    "action_clip_trim_and_move": {
+     "clip_trim_and_move-op-applied": "met"
+    },
+    "action_creator_song": {
+     "creator_song-op-applied": "met"
+    },
+    "action_generated_overlay_approval": {
+     "generated_overlay_approval-op-applied": "met"
+    },
+    "action_history": {
+     "history-op-applied": "unmet"
+    },
+    "action_layer_order": {
+     "layer_order-op-applied": "met"
+    },
+    "action_media_overlays": {
+     "media_overlays-op-applied": "met"
+    },
+    "action_music": {
+     "music-op-applied": "met"
+    },
+    "action_music_swap": {
+     "music_swap-op-applied": "unmet"
+    },
+    "action_sound_effects": {
+     "sound_effects-op-applied": "met"
+    },
+    "action_speaker_background": {
+     "speaker_background-op-applied": "met"
+    },
+    "action_speaker_frame_by_hand": {
+     "speaker_frame_by_hand-op-applied": "met"
+    },
+    "action_speaker_full_opening": {
+     "speaker_full_opening-op-applied": "met"
+    },
+    "action_split_screen_clip_offset": {
+     "split_screen_clip_offset-op-applied": "met"
+    },
+    "action_split_screen_clip_order": {
+     "split_screen_clip_order-op-applied": "met"
+    },
+    "action_split_screen_create": {
+     "split_screen_create-op-applied": "met"
+    },
+    "action_split_screen_layout": {
+     "split_screen_layout-op-applied": "met"
+    },
+    "action_split_screen_loop_fill": {
+     "split_screen_loop_fill-op-applied": "met"
+    },
+    "action_split_screen_panel_order": {
+     "split_screen_panel_order-op-applied": "met"
+    },
+    "action_split_screen_remove": {
+     "split_screen_remove-op-applied": "met"
+    },
+    "action_split_screen_section_order": {
+     "split_screen_section_order-op-applied": "unmet"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "met"
+    },
+    "action_text_authoring": {
+     "text_authoring-op-applied": "met"
+    },
+    "action_text_look": {
+     "text_look-op-applied": "met"
+    },
+    "action_text_timing": {
+     "text_timing-op-applied": "met"
+    },
+    "action_video_shape": {
+     "video_shape-op-applied": "met"
+    },
+    "action_visual_blocks_and_motion": {
+     "visual_blocks_and_motion-op-applied": "unmet"
+    },
+    "food_described_labels": {
+     "labeled": "met",
+     "names-the-dish": "met"
+    },
+    "food_exact_title": {
+     "title": "met"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "food_readability": {
+     "captioned": "met",
+     "readable": "met"
+    },
+    "harbor_label_dedupe": {
+     "labelled": "met",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "met",
+     "reply-confirms": "unmet"
+    },
+    "harbor_route_matches_filming": {
+     "filming-order": "met",
+     "no-false-reversal": "met"
+    },
+    "harbor_route_reversed": {
+     "keeps-filming-order": "unmet",
+     "receipt-names-the-reversal": "unmet"
+    },
+    "harbor_route_reversed_then_route_order": {
+     "route-order": "met",
+     "reordered": "unmet",
+     "says-route-order": "met"
+    },
+    "harbor_selection_duration_pacing": {
+     "skip-cliff": "met",
+     "sixteen-seconds": "met",
+     "fast": "met"
+    },
+    "harbor_title_from_brief": {
+     "title-has-the-run": "met",
+     "title-has-the-route": "unmet",
+     "receipt-names-the-source": "unmet"
+    },
+    "sport_activity_sequence_after_denied_plan": {
+     "goals-warmup-handshakes": "partial"
+    },
+    "sport_duration_pacing": {
+     "twenty-seconds": "met",
+     "fast-cuts": "partial"
+    },
+    "sport_exact_labels": {
+     "labels": "met"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "sport_explicit_order": {
+     "sequence": "met"
+    },
+    "sport_labels_without_place_facts": {
+     "no-invented-labels": "met",
+     "says-why": "partial"
+    },
+    "sport_title_font_only": {
+     "labels": "met",
+     "title-font": "met",
+     "labels-keep-font": "unmet",
+     "no-replan": "met"
+    },
+    "trip_chronological": {
+     "filmed-order": "met"
+    },
+    "trip_described_title_facts": {
+     "title-place": "met",
+     "title-length": "unmet"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "trip_landmark_labels_english": {
+     "english-names": "partial",
+     "no-turkish-mix": "met"
+    },
+    "trip_landmark_labels_turkish": {
+     "turkish-names": "unmet",
+     "no-english-mix": "unmet"
+    },
+    "trip_route_order": {
+     "route": "met"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_creator_facts": {
+     "facts": "partial"
+    },
+    "vlog_default_title_disclosed": {
+     "receipt-names-the-source": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "met"
+    },
+    "vlog_restructure": {
+     "cooking": "met",
+     "redo": "met",
+     "fifteen": "met",
+     "gym-then-cooking": "met"
+    },
+    "vlog_selection": {
+     "skip-laundry": "met",
+     "keep-gym": "met"
+    }
+   }
+  },
+  "sol_tools": {
+   "threads": 74,
+   "requirements": 112,
+   "met": 79,
+   "partial": 6,
+   "unmet": 27,
+   "met_share": 0.7054,
+   "overclaims": 9,
+   "conversation_threads": {
+    "threads": 30,
+    "requirements": 68,
+    "met": 48,
+    "partial": 6,
+    "unmet": 14,
+    "met_share": 0.7059,
+    "overclaims": 8
+   },
+   "per_action_set": {
+    "threads": 44,
+    "requirements": 44,
+    "met": 31,
+    "partial": 0,
+    "unmet": 13,
+    "met_share": 0.7045,
+    "overclaims": 1
+   },
+   "turns": 85,
+   "model_calls": 208,
+   "first_answer_latency_p50_s": 2.55,
+   "first_answer_latency_p95_s": 6.35,
+   "turn_latency_p50_s": 5.19,
+   "turn_latency_p95_s": 20.9,
+   "first_answer_tokens_in_mean": 30128,
+   "first_answer_tokens_cached_mean": 24963,
+   "tokens_in_per_turn_mean": 73594,
+   "cost_total_usd": 1.6466,
+   "cost_per_turn_usd": 0.0194,
+   "rounds_per_turn_mean": 2.45,
+   "rounds_per_turn_max": 11,
+   "turns_with_reply_round": 69,
+   "turns_with_not_applied_op": 1,
+   "not_applied_ops": 1,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_background_focus": {
+     "background_focus-op-applied": "met"
+    },
+    "action_camera_effects": {
+     "camera_effects-op-applied": "unmet"
+    },
+    "action_caption_animation": {
+     "caption_animation-op-applied": "met"
+    },
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_captions": {
+     "captions-op-applied": "met"
+    },
+    "action_carousel": {
+     "carousel-op-applied": "unmet"
+    },
+    "action_clip_add_remove": {
+     "clip_add_remove-op-applied": "met"
+    },
+    "action_clip_add_remove__visual_media": {
+     "clip_add_remove-op-applied": "met"
+    },
+    "action_clip_audio": {
+     "clip_audio-op-applied": "met"
+    },
+    "action_clip_crop": {
+     "clip_crop-op-applied": "met"
+    },
+    "action_clip_duplicate": {
+     "clip_duplicate-op-applied": "met"
+    },
+    "action_clip_look": {
+     "clip_look-op-applied": "unmet"
+    },
+    "action_clip_look__custom_effect": {
+     "clip_look-op-applied": "unmet"
+    },
+    "action_clip_source_gain": {
+     "clip_source_gain-op-applied": "met"
+    },
+    "action_clip_source_replacement": {
+     "clip_source_replacement-op-applied": "unmet"
+    },
+    "action_clip_speed": {
+     "clip_speed-op-applied": "met"
+    },
+    "action_clip_tilt": {
+     "clip_tilt-op-applied": "met"
+    },
+    "action_clip_transition": {
+     "clip_transition-op-applied": "met"
+    },
+    "action_clip_trim_and_move": {
+     "clip_trim_and_move-op-applied": "met"
+    },
+    "action_creator_song": {
+     "creator_song-op-applied": "met"
+    },
+    "action_generated_overlay_approval": {
+     "generated_overlay_approval-op-applied": "met"
+    },
+    "action_history": {
+     "history-op-applied": "unmet"
+    },
+    "action_layer_order": {
+     "layer_order-op-applied": "met"
+    },
+    "action_media_overlays": {
+     "media_overlays-op-applied": "met"
+    },
+    "action_music": {
+     "music-op-applied": "met"
+    },
+    "action_music_swap": {
+     "music_swap-op-applied": "unmet"
+    },
+    "action_sound_effects": {
+     "sound_effects-op-applied": "met"
+    },
+    "action_speaker_background": {
+     "speaker_background-op-applied": "met"
+    },
+    "action_speaker_frame_by_hand": {
+     "speaker_frame_by_hand-op-applied": "met"
+    },
+    "action_speaker_full_opening": {
+     "speaker_full_opening-op-applied": "met"
+    },
+    "action_split_screen_clip_offset": {
+     "split_screen_clip_offset-op-applied": "met"
+    },
+    "action_split_screen_clip_order": {
+     "split_screen_clip_order-op-applied": "met"
+    },
+    "action_split_screen_create": {
+     "split_screen_create-op-applied": "unmet"
+    },
+    "action_split_screen_layout": {
+     "split_screen_layout-op-applied": "met"
+    },
+    "action_split_screen_loop_fill": {
+     "split_screen_loop_fill-op-applied": "unmet"
+    },
+    "action_split_screen_panel_order": {
+     "split_screen_panel_order-op-applied": "unmet"
+    },
+    "action_split_screen_remove": {
+     "split_screen_remove-op-applied": "met"
+    },
+    "action_split_screen_section_order": {
+     "split_screen_section_order-op-applied": "unmet"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "unmet"
+    },
+    "action_text_authoring": {
+     "text_authoring-op-applied": "met"
+    },
+    "action_text_look": {
+     "text_look-op-applied": "met"
+    },
+    "action_text_timing": {
+     "text_timing-op-applied": "met"
+    },
+    "action_video_shape": {
+     "video_shape-op-applied": "met"
+    },
+    "action_visual_blocks_and_motion": {
+     "visual_blocks_and_motion-op-applied": "unmet"
+    },
+    "food_described_labels": {
+     "labeled": "met",
+     "names-the-dish": "met"
+    },
+    "food_exact_title": {
+     "title": "met"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "food_readability": {
+     "captioned": "met",
+     "readable": "met"
+    },
+    "harbor_label_dedupe": {
+     "labelled": "met",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "met",
+     "reply-confirms": "unmet"
+    },
+    "harbor_route_matches_filming": {
+     "filming-order": "met",
+     "no-false-reversal": "met"
+    },
+    "harbor_route_reversed": {
+     "keeps-filming-order": "unmet",
+     "receipt-names-the-reversal": "unmet"
+    },
+    "harbor_route_reversed_then_route_order": {
+     "route-order": "met",
+     "reordered": "unmet",
+     "says-route-order": "unmet"
+    },
+    "harbor_selection_duration_pacing": {
+     "skip-cliff": "met",
+     "sixteen-seconds": "met",
+     "fast": "met"
+    },
+    "harbor_title_from_brief": {
+     "title-has-the-run": "met",
+     "title-has-the-route": "met",
+     "receipt-names-the-source": "unmet"
+    },
+    "sport_activity_sequence_after_denied_plan": {
+     "goals-warmup-handshakes": "unmet"
+    },
+    "sport_duration_pacing": {
+     "twenty-seconds": "met",
+     "fast-cuts": "partial"
+    },
+    "sport_exact_labels": {
+     "labels": "met"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "sport_explicit_order": {
+     "sequence": "met"
+    },
+    "sport_labels_without_place_facts": {
+     "no-invented-labels": "met",
+     "says-why": "partial"
+    },
+    "sport_title_font_only": {
+     "labels": "met",
+     "title-font": "met",
+     "labels-keep-font": "unmet",
+     "no-replan": "met"
+    },
+    "trip_chronological": {
+     "filmed-order": "met"
+    },
+    "trip_described_title_facts": {
+     "title-place": "met",
+     "title-length": "met"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "trip_landmark_labels_english": {
+     "english-names": "partial",
+     "no-turkish-mix": "met"
+    },
+    "trip_landmark_labels_turkish": {
+     "turkish-names": "unmet",
+     "no-english-mix": "unmet"
+    },
+    "trip_route_order": {
+     "route": "partial"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_creator_facts": {
+     "facts": "met"
+    },
+    "vlog_default_title_disclosed": {
+     "receipt-names-the-source": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "partial"
+    },
+    "vlog_restructure": {
+     "cooking": "met",
+     "redo": "met",
+     "fifteen": "met",
+     "gym-then-cooking": "met"
+    },
+    "vlog_selection": {
+     "skip-laundry": "met",
+     "keep-gym": "met"
+    }
+   }
+  },
+  "sonnet_tools": {
+   "threads": 74,
+   "requirements": 112,
+   "met": 84,
+   "partial": 8,
+   "unmet": 20,
+   "met_share": 0.75,
+   "overclaims": 8,
+   "conversation_threads": {
+    "threads": 30,
+    "requirements": 68,
+    "met": 48,
+    "partial": 8,
+    "unmet": 12,
+    "met_share": 0.7059,
+    "overclaims": 8
+   },
+   "per_action_set": {
+    "threads": 44,
+    "requirements": 44,
+    "met": 36,
+    "partial": 0,
+    "unmet": 8,
+    "met_share": 0.8182,
+    "overclaims": 0
+   },
+   "turns": 85,
+   "model_calls": 87,
+   "first_answer_latency_p50_s": 3.04,
+   "first_answer_latency_p95_s": 7.89,
+   "turn_latency_p50_s": 3.11,
+   "turn_latency_p95_s": 7.89,
+   "first_answer_tokens_in_mean": 50698,
+   "first_answer_tokens_cached_mean": 41108,
+   "tokens_in_per_turn_mean": 51944,
+   "cost_total_usd": 2.7308,
+   "cost_per_turn_usd": 0.0321,
+   "rounds_per_turn_mean": 1.01,
+   "rounds_per_turn_max": 2,
+   "turns_with_reply_round": 1,
+   "turns_with_not_applied_op": 0,
+   "not_applied_ops": 0,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 1,
+   "per_thread": {
+    "action_background_focus": {
+     "background_focus-op-applied": "met"
+    },
+    "action_camera_effects": {
+     "camera_effects-op-applied": "unmet"
+    },
+    "action_caption_animation": {
+     "caption_animation-op-applied": "met"
+    },
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_captions": {
+     "captions-op-applied": "met"
+    },
+    "action_carousel": {
+     "carousel-op-applied": "unmet"
+    },
+    "action_clip_add_remove": {
+     "clip_add_remove-op-applied": "met"
+    },
+    "action_clip_add_remove__visual_media": {
+     "clip_add_remove-op-applied": "met"
+    },
+    "action_clip_audio": {
+     "clip_audio-op-applied": "met"
+    },
+    "action_clip_crop": {
+     "clip_crop-op-applied": "met"
+    },
+    "action_clip_duplicate": {
+     "clip_duplicate-op-applied": "met"
+    },
+    "action_clip_look": {
+     "clip_look-op-applied": "unmet"
+    },
+    "action_clip_look__custom_effect": {
+     "clip_look-op-applied": "unmet"
+    },
+    "action_clip_source_gain": {
+     "clip_source_gain-op-applied": "met"
+    },
+    "action_clip_source_replacement": {
+     "clip_source_replacement-op-applied": "met"
+    },
+    "action_clip_speed": {
+     "clip_speed-op-applied": "met"
+    },
+    "action_clip_tilt": {
+     "clip_tilt-op-applied": "met"
+    },
+    "action_clip_transition": {
+     "clip_transition-op-applied": "met"
+    },
+    "action_clip_trim_and_move": {
+     "clip_trim_and_move-op-applied": "met"
+    },
+    "action_creator_song": {
+     "creator_song-op-applied": "met"
+    },
+    "action_generated_overlay_approval": {
+     "generated_overlay_approval-op-applied": "met"
+    },
+    "action_history": {
+     "history-op-applied": "unmet"
+    },
+    "action_layer_order": {
+     "layer_order-op-applied": "met"
+    },
+    "action_media_overlays": {
+     "media_overlays-op-applied": "met"
+    },
+    "action_music": {
+     "music-op-applied": "met"
+    },
+    "action_music_swap": {
+     "music_swap-op-applied": "unmet"
+    },
+    "action_sound_effects": {
+     "sound_effects-op-applied": "met"
+    },
+    "action_speaker_background": {
+     "speaker_background-op-applied": "met"
+    },
+    "action_speaker_frame_by_hand": {
+     "speaker_frame_by_hand-op-applied": "met"
+    },
+    "action_speaker_full_opening": {
+     "speaker_full_opening-op-applied": "met"
+    },
+    "action_split_screen_clip_offset": {
+     "split_screen_clip_offset-op-applied": "met"
+    },
+    "action_split_screen_clip_order": {
+     "split_screen_clip_order-op-applied": "met"
+    },
+    "action_split_screen_create": {
+     "split_screen_create-op-applied": "met"
+    },
+    "action_split_screen_layout": {
+     "split_screen_layout-op-applied": "met"
+    },
+    "action_split_screen_loop_fill": {
+     "split_screen_loop_fill-op-applied": "unmet"
+    },
+    "action_split_screen_panel_order": {
+     "split_screen_panel_order-op-applied": "met"
+    },
+    "action_split_screen_remove": {
+     "split_screen_remove-op-applied": "met"
+    },
+    "action_split_screen_section_order": {
+     "split_screen_section_order-op-applied": "met"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "met"
+    },
+    "action_text_authoring": {
+     "text_authoring-op-applied": "met"
+    },
+    "action_text_look": {
+     "text_look-op-applied": "met"
+    },
+    "action_text_timing": {
+     "text_timing-op-applied": "met"
+    },
+    "action_video_shape": {
+     "video_shape-op-applied": "met"
+    },
+    "action_visual_blocks_and_motion": {
+     "visual_blocks_and_motion-op-applied": "unmet"
+    },
+    "food_described_labels": {
+     "labeled": "partial",
+     "names-the-dish": "partial"
+    },
+    "food_exact_title": {
+     "title": "met"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "food_readability": {
+     "captioned": "met",
+     "readable": "met"
+    },
+    "harbor_label_dedupe": {
+     "labelled": "met",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "unmet",
+     "reply-confirms": "met"
+    },
+    "harbor_route_matches_filming": {
+     "filming-order": "met",
+     "no-false-reversal": "met"
+    },
+    "harbor_route_reversed": {
+     "keeps-filming-order": "unmet",
+     "receipt-names-the-reversal": "partial"
+    },
+    "harbor_route_reversed_then_route_order": {
+     "route-order": "met",
+     "reordered": "met",
+     "says-route-order": "unmet"
+    },
+    "harbor_selection_duration_pacing": {
+     "skip-cliff": "met",
+     "sixteen-seconds": "met",
+     "fast": "met"
+    },
+    "harbor_title_from_brief": {
+     "title-has-the-run": "met",
+     "title-has-the-route": "unmet",
+     "receipt-names-the-source": "unmet"
+    },
+    "sport_activity_sequence_after_denied_plan": {
+     "goals-warmup-handshakes": "met"
+    },
+    "sport_duration_pacing": {
+     "twenty-seconds": "met",
+     "fast-cuts": "partial"
+    },
+    "sport_exact_labels": {
+     "labels": "met"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "sport_explicit_order": {
+     "sequence": "met"
+    },
+    "sport_labels_without_place_facts": {
+     "no-invented-labels": "met",
+     "says-why": "partial"
+    },
+    "sport_title_font_only": {
+     "labels": "met",
+     "title-font": "met",
+     "labels-keep-font": "unmet",
+     "no-replan": "met"
+    },
+    "trip_chronological": {
+     "filmed-order": "met"
+    },
+    "trip_described_title_facts": {
+     "title-place": "met",
+     "title-length": "met"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "trip_landmark_labels_english": {
+     "english-names": "partial",
+     "no-turkish-mix": "met"
+    },
+    "trip_landmark_labels_turkish": {
+     "turkish-names": "unmet",
+     "no-english-mix": "unmet"
+    },
+    "trip_route_order": {
+     "route": "met"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "met",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_creator_facts": {
+     "facts": "partial"
+    },
+    "vlog_default_title_disclosed": {
+     "receipt-names-the-source": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "met"
+    },
+    "vlog_restructure": {
+     "cooking": "met",
+     "redo": "met",
+     "fifteen": "met",
+     "gym-then-cooking": "met"
+    },
+    "vlog_selection": {
+     "skip-laundry": "met",
+     "keep-gym": "met"
+    }
+   }
+  },
+  "gemini_tools_described_nesting_INVALID": {
+   "threads": 74,
+   "requirements": 112,
+   "met": 74,
+   "partial": 4,
+   "unmet": 34,
+   "met_share": 0.6607,
+   "overclaims": 9,
+   "conversation_threads": {
+    "threads": 30,
+    "requirements": 68,
+    "met": 46,
+    "partial": 4,
+    "unmet": 18,
+    "met_share": 0.6765,
+    "overclaims": 8
+   },
+   "per_action_set": {
+    "threads": 44,
+    "requirements": 44,
+    "met": 28,
+    "partial": 0,
+    "unmet": 16,
+    "met_share": 0.6364,
+    "overclaims": 1
+   },
+   "turns": 85,
+   "model_calls": 187,
+   "first_answer_latency_p50_s": 9.56,
+   "first_answer_latency_p95_s": 27.7,
+   "turn_latency_p50_s": 13.5,
+   "turn_latency_p95_s": 43.29,
+   "first_answer_tokens_in_mean": 34251,
+   "first_answer_tokens_cached_mean": 1417,
+   "tokens_in_per_turn_mean": 78006,
+   "cost_total_usd": 8.4962,
+   "cost_per_turn_usd": 0.1,
+   "rounds_per_turn_mean": 2.19,
+   "rounds_per_turn_max": 11,
+   "turns_with_reply_round": 52,
+   "turns_with_not_applied_op": 11,
+   "not_applied_ops": 11,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 1,
+   "per_thread": {
+    "action_background_focus": {
+     "background_focus-op-applied": "met"
+    },
+    "action_camera_effects": {
+     "camera_effects-op-applied": "unmet"
+    },
+    "action_caption_animation": {
+     "caption_animation-op-applied": "unmet"
+    },
+    "action_caption_style_scope": {
+     "caption_style_scope-op-applied": "met"
+    },
+    "action_captions": {
+     "captions-op-applied": "met"
+    },
+    "action_carousel": {
+     "carousel-op-applied": "unmet"
+    },
+    "action_clip_add_remove": {
+     "clip_add_remove-op-applied": "met"
+    },
+    "action_clip_add_remove__visual_media": {
+     "clip_add_remove-op-applied": "met"
+    },
+    "action_clip_audio": {
+     "clip_audio-op-applied": "met"
+    },
+    "action_clip_crop": {
+     "clip_crop-op-applied": "unmet"
+    },
+    "action_clip_duplicate": {
+     "clip_duplicate-op-applied": "met"
+    },
+    "action_clip_look": {
+     "clip_look-op-applied": "unmet"
+    },
+    "action_clip_look__custom_effect": {
+     "clip_look-op-applied": "unmet"
+    },
+    "action_clip_source_gain": {
+     "clip_source_gain-op-applied": "unmet"
+    },
+    "action_clip_source_replacement": {
+     "clip_source_replacement-op-applied": "met"
+    },
+    "action_clip_speed": {
+     "clip_speed-op-applied": "unmet"
+    },
+    "action_clip_tilt": {
+     "clip_tilt-op-applied": "unmet"
+    },
+    "action_clip_transition": {
+     "clip_transition-op-applied": "met"
+    },
+    "action_clip_trim_and_move": {
+     "clip_trim_and_move-op-applied": "met"
+    },
+    "action_creator_song": {
+     "creator_song-op-applied": "met"
+    },
+    "action_generated_overlay_approval": {
+     "generated_overlay_approval-op-applied": "met"
+    },
+    "action_history": {
+     "history-op-applied": "unmet"
+    },
+    "action_layer_order": {
+     "layer_order-op-applied": "met"
+    },
+    "action_media_overlays": {
+     "media_overlays-op-applied": "unmet"
+    },
+    "action_music": {
+     "music-op-applied": "met"
+    },
+    "action_music_swap": {
+     "music_swap-op-applied": "unmet"
+    },
+    "action_sound_effects": {
+     "sound_effects-op-applied": "met"
+    },
+    "action_speaker_background": {
+     "speaker_background-op-applied": "met"
+    },
+    "action_speaker_frame_by_hand": {
+     "speaker_frame_by_hand-op-applied": "met"
+    },
+    "action_speaker_full_opening": {
+     "speaker_full_opening-op-applied": "met"
+    },
+    "action_split_screen_clip_offset": {
+     "split_screen_clip_offset-op-applied": "met"
+    },
+    "action_split_screen_clip_order": {
+     "split_screen_clip_order-op-applied": "met"
+    },
+    "action_split_screen_create": {
+     "split_screen_create-op-applied": "met"
+    },
+    "action_split_screen_layout": {
+     "split_screen_layout-op-applied": "met"
+    },
+    "action_split_screen_loop_fill": {
+     "split_screen_loop_fill-op-applied": "met"
+    },
+    "action_split_screen_panel_order": {
+     "split_screen_panel_order-op-applied": "met"
+    },
+    "action_split_screen_remove": {
+     "split_screen_remove-op-applied": "met"
+    },
+    "action_split_screen_section_order": {
+     "split_screen_section_order-op-applied": "unmet"
+    },
+    "action_split_screen_whole_video": {
+     "split_screen_whole_video-op-applied": "unmet"
+    },
+    "action_text_authoring": {
+     "text_authoring-op-applied": "met"
+    },
+    "action_text_look": {
+     "text_look-op-applied": "unmet"
+    },
+    "action_text_timing": {
+     "text_timing-op-applied": "met"
+    },
+    "action_video_shape": {
+     "video_shape-op-applied": "met"
+    },
+    "action_visual_blocks_and_motion": {
+     "visual_blocks_and_motion-op-applied": "unmet"
+    },
+    "food_described_labels": {
+     "labeled": "met",
+     "names-the-dish": "met"
+    },
+    "food_exact_title": {
+     "title": "met"
+    },
+    "food_fonts_then_forbid": {
+     "captioned": "met",
+     "all-playfair": "met",
+     "no-inter": "met"
+    },
+    "food_readability": {
+     "captioned": "met",
+     "readable": "partial"
+    },
+    "harbor_label_dedupe": {
+     "labelled": "met",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "harbor_landmark_correction": {
+     "labelled": "met",
+     "fix-clip-5": "met",
+     "reply-confirms": "unmet"
+    },
+    "harbor_route_matches_filming": {
+     "filming-order": "met",
+     "no-false-reversal": "met"
+    },
+    "harbor_route_reversed": {
+     "keeps-filming-order": "unmet",
+     "receipt-names-the-reversal": "unmet"
+    },
+    "harbor_route_reversed_then_route_order": {
+     "route-order": "met",
+     "reordered": "unmet",
+     "says-route-order": "unmet"
+    },
+    "harbor_selection_duration_pacing": {
+     "skip-cliff": "met",
+     "sixteen-seconds": "met",
+     "fast": "met"
+    },
+    "harbor_title_from_brief": {
+     "title-has-the-run": "met",
+     "title-has-the-route": "unmet",
+     "receipt-names-the-source": "unmet"
+    },
+    "sport_activity_sequence_after_denied_plan": {
+     "goals-warmup-handshakes": "met"
+    },
+    "sport_duration_pacing": {
+     "twenty-seconds": "met",
+     "fast-cuts": "partial"
+    },
+    "sport_exact_labels": {
+     "labels": "met"
+    },
+    "sport_exclude_then_duration": {
+     "no-missed-shot": "met",
+     "twelve-seconds": "met"
+    },
+    "sport_explicit_order": {
+     "sequence": "met"
+    },
+    "sport_labels_without_place_facts": {
+     "no-invented-labels": "met",
+     "says-why": "unmet"
+    },
+    "sport_title_font_only": {
+     "labels": "met",
+     "title-font": "unmet",
+     "labels-keep-font": "unmet",
+     "no-replan": "met"
+    },
+    "trip_chronological": {
+     "filmed-order": "met"
+    },
+    "trip_described_title_facts": {
+     "title-place": "met",
+     "title-length": "unmet"
+    },
+    "trip_label_each_clip_from_facts": {
+     "filmed-order": "met",
+     "labelled": "met",
+     "names-the-place": "partial",
+     "no-repeat": "met",
+     "says-what-it-left-off": "unmet"
+    },
+    "trip_landmark_labels_english": {
+     "english-names": "partial",
+     "no-turkish-mix": "met"
+    },
+    "trip_landmark_labels_turkish": {
+     "turkish-names": "unmet",
+     "no-english-mix": "unmet"
+    },
+    "trip_route_order": {
+     "route": "met"
+    },
+    "vlog_change_all_fonts": {
+     "captioned": "met",
+     "all-montserrat": "unmet",
+     "no-replan": "met",
+     "reply-not-a-replan": "unmet"
+    },
+    "vlog_creator_facts": {
+     "facts": "met"
+    },
+    "vlog_default_title_disclosed": {
+     "receipt-names-the-source": "unmet"
+    },
+    "vlog_exact_title_then_labels": {
+     "title": "met",
+     "captioned": "met",
+     "names-the-activity": "met"
+    },
+    "vlog_restructure": {
+     "cooking": "met",
+     "redo": "met",
+     "fifteen": "met",
+     "gym-then-cooking": "met"
+    },
+    "vlog_selection": {
+     "skip-laundry": "met",
+     "keep-gym": "met"
+    }
+   }
+  }
+ },
+ "gemini_fix_subset": {
+  "json_gemini_control": {
+   "threads": 5,
+   "requirements": 5,
+   "met": 5,
+   "partial": 0,
+   "unmet": 0,
+   "met_share": 1.0,
+   "overclaims": 0,
+   "conversation_threads": {
+    "threads": 0,
+    "requirements": 0,
+    "met": 0,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 0,
+    "overclaims": 0
+   },
+   "per_action_set": {
+    "threads": 5,
+    "requirements": 5,
+    "met": 5,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 1.0,
+    "overclaims": 0
+   },
+   "turns": 5,
+   "model_calls": 5,
+   "first_answer_latency_p50_s": 9.06,
+   "first_answer_latency_p95_s": 10.01,
+   "turn_latency_p50_s": 9.06,
+   "turn_latency_p95_s": 10.01,
+   "first_answer_tokens_in_mean": 29143,
+   "first_answer_tokens_cached_mean": 0,
+   "tokens_in_per_turn_mean": 29143,
+   "cost_total_usd": 0.3451,
+   "cost_per_turn_usd": 0.069,
+   "rounds_per_turn_mean": 1.0,
+   "rounds_per_turn_max": 1,
+   "turns_with_reply_round": 0,
+   "turns_with_not_applied_op": 0,
+   "not_applied_ops": 0,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_caption_animation": {
+     "caption_animation-op-applied": "met"
+    },
+    "action_clip_crop": {
+     "clip_crop-op-applied": "met"
+    },
+    "action_clip_speed": {
+     "clip_speed-op-applied": "met"
+    },
+    "action_media_overlays": {
+     "media_overlays-op-applied": "met"
+    },
+    "action_text_look": {
+     "text_look-op-applied": "met"
+    }
+   }
+  },
+  "gemini_tools_fixed": {
+   "threads": 5,
+   "requirements": 5,
+   "met": 5,
+   "partial": 0,
+   "unmet": 0,
+   "met_share": 1.0,
+   "overclaims": 0,
+   "conversation_threads": {
+    "threads": 0,
+    "requirements": 0,
+    "met": 0,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 0,
+    "overclaims": 0
+   },
+   "per_action_set": {
+    "threads": 5,
+    "requirements": 5,
+    "met": 5,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 1.0,
+    "overclaims": 0
+   },
+   "turns": 5,
+   "model_calls": 9,
+   "first_answer_latency_p50_s": 8.06,
+   "first_answer_latency_p95_s": 8.77,
+   "turn_latency_p50_s": 11.28,
+   "turn_latency_p95_s": 15.02,
+   "first_answer_tokens_in_mean": 38847,
+   "first_answer_tokens_cached_mean": 0,
+   "tokens_in_per_turn_mean": 70084,
+   "cost_total_usd": 0.4774,
+   "cost_per_turn_usd": 0.0955,
+   "rounds_per_turn_mean": 1.8,
+   "rounds_per_turn_max": 2,
+   "turns_with_reply_round": 4,
+   "turns_with_not_applied_op": 0,
+   "not_applied_ops": 0,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 0,
+   "per_thread": {
+    "action_caption_animation": {
+     "caption_animation-op-applied": "met"
+    },
+    "action_clip_crop": {
+     "clip_crop-op-applied": "met"
+    },
+    "action_clip_speed": {
+     "clip_speed-op-applied": "met"
+    },
+    "action_media_overlays": {
+     "media_overlays-op-applied": "met"
+    },
+    "action_text_look": {
+     "text_look-op-applied": "met"
+    }
+   }
+  },
+  "gemini_tools_described_nesting": {
+   "threads": 5,
+   "requirements": 5,
+   "met": 0,
+   "partial": 0,
+   "unmet": 5,
+   "met_share": 0,
+   "overclaims": 0,
+   "conversation_threads": {
+    "threads": 0,
+    "requirements": 0,
+    "met": 0,
+    "partial": 0,
+    "unmet": 0,
+    "met_share": 0,
+    "overclaims": 0
+   },
+   "per_action_set": {
+    "threads": 5,
+    "requirements": 5,
+    "met": 0,
+    "partial": 0,
+    "unmet": 5,
+    "met_share": 0,
+    "overclaims": 0
+   },
+   "turns": 5,
+   "model_calls": 34,
+   "first_answer_latency_p50_s": 7.53,
+   "first_answer_latency_p95_s": 12.59,
+   "turn_latency_p50_s": 42.32,
+   "turn_latency_p95_s": 43.61,
+   "first_answer_tokens_in_mean": 35479,
+   "first_answer_tokens_cached_mean": 0,
+   "tokens_in_per_turn_mean": 253517,
+   "cost_total_usd": 0.9297,
+   "cost_per_turn_usd": 0.1859,
+   "rounds_per_turn_mean": 6.6,
+   "rounds_per_turn_max": 7,
+   "turns_with_reply_round": 5,
+   "turns_with_not_applied_op": 5,
+   "not_applied_ops": 5,
+   "turns_failed": 0,
+   "failed": [],
+   "turns_with_schema_retry": 1,
+   "per_thread": {
+    "action_caption_animation": {
+     "caption_animation-op-applied": "unmet"
+    },
+    "action_clip_crop": {
+     "clip_crop-op-applied": "unmet"
+    },
+    "action_clip_speed": {
+     "clip_speed-op-applied": "unmet"
+    },
+    "action_media_overlays": {
+     "media_overlays-op-applied": "unmet"
+    },
+    "action_text_look": {
+     "text_look-op-applied": "unmet"
+    }
+   }
+  }
+ },
+ "noise_agreement": {
+  "json_gemini": {
+   "same_status": 21,
+   "requirements": 22
+  },
+  "sol_tools": {
+   "same_status": 21,
+   "requirements": 22
+  },
+  "sonnet_tools": {
+   "same_status": 21,
+   "requirements": 22
+  }
+ }
+}

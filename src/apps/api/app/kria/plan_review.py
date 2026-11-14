@@ -74,10 +74,12 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "create_split_screen",
             "update_split_screen",
             "assign_split_panel",
+            "add_split_panel_clip",
             "swap_split_panels",
             "remove_split_screen",
             "move_split_clip",
             "move_split_screen",
+            "make_split_full_screen",
             "add_unused_sources",
             "set_media_duration",
             "stack_images",
@@ -92,7 +94,7 @@ SECTION_OPS: dict[str, frozenset[str]] = {
     "captions": frozenset(
         {"edit_caption", "replace_caption_text", "set_caption_timing", "set_caption_emphasis"}
     ),
-    "music": frozenset({"swap_music", "remove_music", "set_mix"}),
+    "music": frozenset({"swap_music", "remove_music", "set_mix", "set_user_song"}),
     "sfx": frozenset({"add_sfx", "patch_sfx", "remove_sfx"}),
     "overlays": frozenset(
         {
@@ -101,6 +103,7 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "remove_overlay",
             "accept_overlay_suggestion",
             "set_overlay_display",
+            "set_layer_order",
             "remove_visual_media",
             "set_visual_fade",
             "add_motion_block",
@@ -126,6 +129,11 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "set_background_focus",
             # KRI-1350: black-and-white / warm / faded stretches, their flashes and the end fade.
             "set_color_moments",
+            # KRI-1394: one caption line's size and place is caption styling (the Save's
+            # `caption_meta.appearance`, a look key); the speaker's full-screen opening goes
+            # with the background.
+            "patch_caption_line",
+            "remove_full_screen_opening",
         }
     ),
 }
@@ -163,6 +171,9 @@ NEVER_IN_SCOPE = frozenset(
         "set_post_aspect",
         "set_slide_fit",
         "set_slide_tilt",
+        # KRI-1394: orientation / landscape_fit are unowned Save lanes (`_UNOWNED_LANES`),
+        # stripped from every scoped commit.
+        "set_video_shape",
     }
 )
 # Sections whose lanes include text bars.
@@ -177,7 +188,7 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
     "title": frozenset({"title", "text", "render"}),
     "clips": frozenset({"clip", "transition", "text"}),
     "captions": frozenset({"caption", "text"}),
-    "music": frozenset({"music"}),
+    "music": frozenset({"music", "user_song"}),
     "sfx": frozenset({"sfx"}),
     "overlays": frozenset({"overlay", "visual_media", "text", "motion", "visual"}),
     "look": frozenset(
@@ -192,6 +203,7 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
             "background_windows",
             "background_focus",
             "color_moments",
+            "caption_lines",
         }
     ),
 }
@@ -1082,6 +1094,10 @@ def build_restore_record(
             put("clips", lane, {"value": before.get(lane) or []})
         elif lane in before and lane in FIELD_SECTIONS:
             put(FIELD_SECTIONS[lane][0], lane, {"value": before[lane]})
+        elif lane in before and lane in _UNOWNED_LANES:
+            # A scoped commit never carries these (layer 3 strips them), so only an unscoped
+            # chat turn's record holds them, for "undo that". They put back with the look.
+            put("look", lane, {"value": before[lane]})
     for lane, (old, new) in dependencies.items():
         if lane in data and lane in original_before:
             sections.setdefault("clips", {}).setdefault(lane, {})["timing"] = [new, old]

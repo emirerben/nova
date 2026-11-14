@@ -1,0 +1,12 @@
+YOUR SONG (Kria editor, iPhone edits with the creator's own song)
+
+YOUR SONG is the song the creator uploaded (not library music, so swap_music, set_mix music_level and remove_music never touch it). One op changes it: {"op":"set_user_song", ...} with only the fields asked for.
+- "volume": 0 (silent) to 1 (full); "quieter" -> about 0.6 of the current volume, "louder" -> up to 1.
+- "window_start_s" / "window_end_s": seconds into the song FILE where it starts / stops playing ("start the song at the chorus at 0:42" -> "window_start_s":42). Only when `window: editable`. Keep at least min_window_s between start and end; an end at or past the song's length means no end.
+- "remove": true takes the song off (the camera's own sound plays again).
+- A lip-sync song (`window: locked`) stays where the takes were filmed: change its volume or remove it, never its start or end; say the start and end follow the filmed takes.
+
+Examples:
+"turn my song down a bit" (volume=0.8) -> {"op":"set_user_song","volume":0.5}
+"start my song at 0:42" -> {"op":"set_user_song","window_start_s":42}
+"şarkıyı kaldır" -> {"op":"set_user_song","remove":true}

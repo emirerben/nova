@@ -5,9 +5,18 @@
     "utterance": "change the title to 'corfu'",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["text"],
+      "allowed_op_families": [
+        "text"
+      ],
       "text_bars": [
-        {"index": 0, "id": "guided-title", "text": "Summer trip", "start_s": 0, "end_s": 2, "role": "generative_intro"}
+        {
+          "index": 0,
+          "id": "guided-title",
+          "text": "Summer trip",
+          "start_s": 0,
+          "end_s": 2,
+          "role": "generative_intro"
+        }
       ],
       "total_duration_s": 12,
       "revision": 7
@@ -16,7 +25,13 @@
   "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_title\",\"title\":\"corfu\"}],\"confidence\":0.99,\"reply\":\"I changed the title to corfu.\",\"suggestions\":[],\"needs_clarification\":false}",
   "output": {
     "intent": "edit",
-    "ops": [{"op": "edit_text", "bar_index": 0, "text": "corfu"}],
+    "ops": [
+      {
+        "op": "edit_text",
+        "bar_index": 0,
+        "text": "corfu"
+      }
+    ],
     "confidence": 0.99,
     "reply": "I changed the title to corfu.",
     "suggestions": [],
@@ -24,5 +39,9 @@
     "outcome": "proposed",
     "rejection_reasons": []
   },
-  "meta": {"source": "redacted_production_regression", "case": "semantic guided title alias"}
+  "meta": {
+    "source": "redacted_production_regression",
+    "case": "semantic guided title alias"
+  },
+  "prompt_sha": "unpinned"
 }

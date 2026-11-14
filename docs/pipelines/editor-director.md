@@ -13,8 +13,11 @@ for callers without semantic extraction. Scope does not grant render approval or
 bypass ownership, revision, or Save checks.
 
 - `nova.edit.copilot` defaults to Gemini 3.1 Pro via `EDIT_COPILOT_MODEL`, with
-  high thinking, a 40-second provider timeout and at most two attempts for
-  schema/refusal failures. An unknown provider outcome is terminal and is never
+  high thinking (`EDIT_COPILOT_THINKING_LEVEL`). Those settings and
+  `EDIT_COPILOT_OUTPUT_MODE` move only the chat turn (`run_copilot_turn`); slide posts,
+  creation text composition and research read `JSON_COPILOT_MODEL` in the model registry
+  and stay on Gemini JSON (KRI-1384). It has a 40-second provider timeout and at most
+  two attempts for schema/refusal failures. An unknown provider outcome is terminal and is never
   retried. The editor carries compatible accumulated brief constraints through
   follow-up edits; its negotiated operation capabilities remain authoritative.
   KRI-524 replay found Flash dropped fade constraints or chose a whole-title
@@ -49,7 +52,8 @@ placement, independent entrance/exit effects, and per-clip labels. Main Creator'
 brief prompt also preserves temporal relationships instead of reducing them to
 an animation enum.
 
-The model uses `EDIT_COPILOT_MODEL` and the shared text capability documentation,
+The model is `JSON_COPILOT_MODEL` (Gemini; `EDIT_COPILOT_MODEL` moves only the chat turn)
+with the shared text capability documentation,
 with a 90-second background-creation timeout. Complete component context retains
 long titles and currency characters. Clarification, unsupported requirements or
 invalid programs fail explicitly; there is no fallback that silently discards

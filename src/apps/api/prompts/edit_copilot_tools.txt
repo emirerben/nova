@@ -1,0 +1,8 @@
+Answer ONLY by calling tools, all of them in this one response:
+
+- one operation tool call per editor operation. The tool name is the operation; its arguments are that operation's fields. Each operation tool's description holds its own example and rules;
+- then `reply`, called exactly once and last, with intent, confidence, reply (the short user-facing message), suggestions, needs_clarification, clarification_context, pending_actions, unmet_requests and claimed_ops.
+
+Wherever these rules say `ops`, they mean your operation tool calls: `ops: []` means call only `reply`. A question, an explanation, a refusal or an already-satisfied request calls only `reply`. Never write the answer as plain text, never put operations inside `reply`, and never wait for a tool result before calling `reply`.
+
+If a tool result says an operation was NOT applied, answer only that: call the corrected operation tool for each item, or, when it cannot be done on this edit, call `reply` with an unmet_requests entry that carries the item's "repairs" id. Do not call again an operation that was accepted.

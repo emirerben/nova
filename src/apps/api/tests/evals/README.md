@@ -2,7 +2,7 @@
 
 Per-agent quality eval harness. Phase 1 covers the original Big 3 (`template_recipe`, `clip_metadata`, `creative_direction`); Phase 2 extends to the three additional in-pipeline agents (`transcript`, `platform_copy`, `audio_template`); the auto-music work then adds `song_classifier` (Phase 1 of auto-music) and `music_matcher` (Phase 2 of auto-music), taking the eval-covered Big set to 5.
 
-The other Phase 2 agent classes that exist in `app/agents/` (`text_designer`, `transition_picker`, `clip_router`, `shot_ranker`) are not yet wired into the pipeline — their evals will land alongside the PR that wires each into the runtime.
+The other Phase 2 agent classes that exist in `app/agents/` (`text_designer`, `clip_router`) are not yet wired into the pipeline — their evals will land alongside the PR that wires each into the runtime.
 
 ## Run modes
 
@@ -115,6 +115,8 @@ pytest tests/evals/ -v
 #      from a debug session.
 ```
 
+A new fixture needs a pin before it passes `test_fixture_prompt_pins.py`: capture it live, or for an exported or hand-written one run `python scripts/stamp_eval_fixtures.py --agent <dir>` after checking the answer fits today's prompt.
+
 ## Fixture format
 
 ```json
@@ -130,6 +132,14 @@ pytest tests/evals/ -v
 
 `raw_text` provenance: the export script serializes the persisted output dict back to JSON and uses that as `raw_text`. Replay re-parses it through the agent's `parse()`. This means replay validates the structural floor but does not validate Gemini's actual JSON-shape compliance — that's why we keep at least one hand-authored `golden/` fixture per agent recorded from a real model response.
 
+## Fixture pins
+
+Each fixture carries `prompt_sha`, a hash of the exact prompt the model was sent when the answer was recorded. Replay hashes the prompt the agent sends today and fails the fixture on a mismatch (`stale fixture ...`), so a prompt edit cannot pass on an answer given to the old prompt. Live captures (`NOVA_EVAL_CAPTURE_DIR`) write the pin themselves. To re-record, run the live command from "Live-mode cost cap" with `NOVA_EVAL_CAPTURE_DIR=<dir>`, then copy `<dir>/<golden|prod_snapshots>/*.json` over the fixture files.
+
+A fixture marked `"prompt_sha": "unpinned"` replays a historical answer through the parser and compiler and is not checked against the prompt. They are listed in `tests/fixtures/agent_evals/unpinned.json`, which may only shrink: `test_fixture_prompt_pins.py` fails on a fixture without a pin and on a stale list entry. If a prompt change cannot change a recorded answer, `python scripts/stamp_eval_fixtures.py --agent <dir>` re-stamps it and the diff shows the decision.
+
+Live re-records need a ledger database with migrations (`DATABASE_URL`, `alembic upgrade head`) and the Gemini key in the environment; `creative_direction` also needs Google Application Default Credentials to fetch its template videos.
+
 ## Iterating on a prompt
 
 Two workflows. The manual one (works on any prompt) and the automatic one (live-only).
@@ -138,7 +148,8 @@ Two workflows. The manual one (works on any prompt) and the automatic one (live-
 
 ```bash
 # 1) Edit the prompt file (e.g., prompts/analyze_clip.txt).
-# 2) Bump prompt_version in the agent's AgentSpec.
+# 2) Bump prompt_version in the agent's AgentSpec (hand-versioned agents).
+#    Replay now fails the agent's pinned fixtures; re-record them (see Fixture pins).
 # 3) Baseline the OLD prompt (replay is fine):
 git stash
 pytest tests/evals/test_clip_metadata_evals.py -v --with-judge | tee /tmp/old.log
@@ -178,7 +189,7 @@ How it works:
 
 Constraints:
 - Live-mode only. Replay's `raw_text` was recorded under the prod prompt; comparing it against a candidate prompt is meaningless. The harness errors clearly if `--shadow-prompts-dir` is set without `--eval-mode=live`.
-- Inline-prompt agents (`platform_copy`, `text_designer`, `transition_picker`, `clip_router`, `shot_ranker`) build their prompts from input rather than loading a file — shadow has no effect for those.
+- Inline-prompt agents (`platform_copy`, `text_designer`, `clip_router`) build their prompts from input rather than loading a file — shadow has no effect for those.
 
 ## Live-mode cost cap
 
@@ -245,7 +256,7 @@ python -m tests.evals.request_following.report --phase P0 \
   the op applied (`op_applied`, `request_type: action_parity`). `--probe` prints, without writing,
   what the real parser and compiler do with a reference op; `--only=<fixture_id>` authors one
   thread without touching the others' recordings. Groups KRI-1388 moved to `agent_unsupported`
-  (looks, custom effects, music swap, motion, camera, carousel, undo) keep their recorded thread
+  (looks, custom effects, music swap, motion, camera, carousel) keep their recorded thread
   with `reference_compiles: false`: no model can meet it, so the request stays unmet and the
   reply must say so. `PHONE_OP_PROBES` in the same file covers every other op the table claims;
   `tests/kria/test_editor_capability_parity.py` runs both on a phone snapshot.

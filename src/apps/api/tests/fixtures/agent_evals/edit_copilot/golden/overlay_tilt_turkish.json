@@ -68,5 +68,6 @@
     "source": "hand_authored_golden",
     "case": "Turkish: the same absolute tilt in the creator's language",
     "lane": "overlay_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -3,8 +3,10 @@
 Written before wiring: a body edit must recheck without rerunning native CI;
 candidate code must never execute in the independent evidence job; body text
 must stay in the event file; missing baseline policy must fail that job; the
-existing required lint check must cover code pushes; local checks must include
-uncommitted files and reject missing evidence for affected changes.
+required lint check must not repeat the evidence check (one gate, one verdict);
+a body edit must queue behind a running check for the same head, while a push
+must still supersede it; local checks must include uncommitted files and reject
+missing evidence for affected changes.
 """
 
 import json
@@ -70,7 +72,13 @@ class EvidenceWorkflowTests(unittest.TestCase):
             )
             gh.chmod(0o755)
             result = subprocess.run(
-                ["bash", "-euo", "pipefail", "-c", run_block(workflow, "Read current PR evidence")],
+                [
+                    "bash",
+                    "-euo",
+                    "pipefail",
+                    "-c",
+                    run_block(workflow, "Read current PR evidence"),
+                ],
                 cwd=root,
                 env=dict(
                     os.environ,
@@ -92,7 +100,7 @@ class EvidenceWorkflowTests(unittest.TestCase):
             )
 
     def evidence_workflows(self):
-        return [self.workflow(), (ROOT / ".github/workflows/ci.yml").read_text()]
+        return [self.workflow()]
 
     def test_current_body_replaces_stale_event_without_changing_immutable_base(self):
         for workflow in self.evidence_workflows():
@@ -109,13 +117,20 @@ class EvidenceWorkflowTests(unittest.TestCase):
                 {"head": {"sha": "d" * 40}},
                 {"number": 43},
                 {"base": {"ref": "dev"}},
-                {"body": None},
+                {"body": 5},
             ):
                 with self.subTest(change=change):
-                    result, event, injected = self.current_event(workflow, changes=change)
+                    result, event, injected = self.current_event(
+                        workflow, changes=change
+                    )
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIsNone(event)
                     self.assertFalse(injected)
+
+    def test_empty_pr_description_reaches_the_validator_as_an_empty_body(self):
+        result, event, _ = self.current_event(self.workflow(), changes={"body": None})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(event["pull_request"]["body"], "")
 
     def test_current_body_read_failure_never_uses_the_old_event(self):
         for workflow in self.evidence_workflows():
@@ -125,9 +140,15 @@ class EvidenceWorkflowTests(unittest.TestCase):
 
     def test_body_edits_have_a_small_independent_read_only_check(self):
         workflow = self.workflow()
-        self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review]", workflow)
+        self.assertIn(
+            "types: [opened, reopened, synchronize, edited, ready_for_review]", workflow
+        )
         self.assertIn("branches: [main, dev]", workflow)
         self.assertIn("name: PR evidence", workflow)
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event.action == 'synchronize' }}", workflow
+        )
+        self.assertNotIn("cancel-in-progress: true", workflow)
         self.assertIn("contents: read", workflow)
         self.assertNotIn("pull_request_target", workflow)
         self.assertNotIn("secrets.", workflow)
@@ -140,6 +161,17 @@ class EvidenceWorkflowTests(unittest.TestCase):
         self.assertIn('--event "$RUNNER_TEMP/pr-evidence-event.json"', workflow)
         main = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertNotIn("types: [opened, reopened, synchronize, edited", main)
+
+    def test_every_pr_body_gate_lets_a_body_edit_queue_instead_of_cancelling(self):
+        for name in ("pr-evidence", "migration-staging-guard", "require-local-test"):
+            workflow = (ROOT / f".github/workflows/{name}.yml").read_text()
+            with self.subTest(workflow=name):
+                self.assertIn("edited", workflow)
+                self.assertIn(
+                    "cancel-in-progress: ${{ github.event.action == 'synchronize' }}",
+                    workflow,
+                )
+                self.assertNotIn("cancel-in-progress: true", workflow)
 
     def check_bootstrap(self, base_files, head_files):
         """Execute the actual workflow shell against immutable local Git trees."""
@@ -249,15 +281,24 @@ class EvidenceWorkflowTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse((repo / "executed").exists())
 
-    def test_existing_required_lint_gate_also_checks_evidence(self):
+    def test_required_lint_gate_does_not_repeat_the_evidence_check(self):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         lint = ci.split("  lint:\n", 1)[1].split("  test-api:\n", 1)[0]
         self.assertIn("needs: [changes, lint-suites]", lint)
         self.assertIn("scripts/ci/select-tests.py gate lint lint-suites", lint)
-        self.assertIn("Validate request-to-output evidence", lint)
-        self.assertIn("if: github.event_name == 'pull_request'", lint)
-        self.assertIn('--event "$RUNNER_TEMP/pr-evidence-event.json"', lint)
-        self.assertIn("initial policy bootstrap", lint)
+        for fragment in ("evidence", "pr-evidence", "gh api", "pull-requests"):
+            self.assertNotIn(
+                fragment,
+                lint.replace(
+                    "PR request evidence is checked only by pr-evidence.yml.", ""
+                ),
+            )
+        self.assertNotIn(
+            "evidence",
+            ci.split("  test-api:\n", 1)[0].replace(
+                "PR request evidence is checked only by pr-evidence.yml.", ""
+            ),
+        )
 
     def test_preship_accepts_body_files_and_checks_working_changes(self):
         preship = (ROOT / "scripts/preship-check.sh").read_text()

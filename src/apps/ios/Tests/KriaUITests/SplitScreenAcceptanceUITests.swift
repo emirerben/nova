@@ -85,6 +85,156 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         XCTAssertFalse(reopened.buttons["native-editor-save"].isEnabled)
     }
 
+    func testBottomPanelClipStaysClearOfTheClipToolbarWhenSelected() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 3, in: app)
+        fillEmptyPanel("Middle", withFootage: "Clip 2", in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+        app.buttons["native-editor-split-done"].tap()
+        attach(app, name: "Rail at rest")
+
+        let bottom = clip(3, in: app)
+        XCTAssertTrue(bottom.waitForExistence(timeout: 10))
+        let toolbar = app.descendants(matching: .any)["native-editor-clip-context"].firstMatch
+        XCTAssertTrue(toolbar.waitForExistence(timeout: 5), "Closing the panel leaves the new bottom clip selected")
+        XCTAssertTrue(bottom.isSelected)
+        let settled = NSPredicate { _, _ in bottom.frame.maxY <= toolbar.frame.minY }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: nil)], timeout: 5), .completed,
+                       "The selected bottom-panel clip must scroll clear of the clip toolbar")
+        attach(app, name: "Bottom panel clip selected")
+    }
+
+    func testDisabledPanelActionsSayWhyAndTheFillExitIsCalledBack() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 3, in: app)
+        app.buttons["native-editor-split-skip"].tap()
+        fillEmptyPanel("Bottom", withFootage: "Clip 2", in: app)
+        let fill = app.buttons["native-editor-split-fill-1"]
+        XCTAssertTrue(fill.waitForExistence(timeout: 10))
+        fill.tap()
+        let back = app.buttons["native-editor-split-add-cancel"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        XCTAssertEqual(back.label, "Back", "The fill exit must not read like a second Done")
+        attach(app, name: "Fill mode: Back beside Done")
+        back.tap()
+        fillEmptyPanel("Middle", withFootage: "Clip 2", in: app)
+
+        let top = app.buttons["native-editor-split-add-0"]
+        XCTAssertTrue(top.waitForExistence(timeout: 10))
+        XCTAssertFalse(top.isEnabled, "The Top panel already holds the whole section")
+        let reason = app.staticTexts["native-editor-split-full-reason-0"]
+        XCTAssertTrue(reason.waitForExistence(timeout: 5), "A disabled Add and Loop must say why on screen")
+        XCTAssertEqual(reason.label, "This panel is full. Shorten a clip in it to make room.")
+        XCTAssertFalse(app.buttons["native-editor-split-loop-0"].isEnabled)
+        attach(app, name: "Full panel with its reason")
+    }
+
+    func testDroppingAPanelThatHoldsFootageAsksFirstAndAddingOneDoesNot() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 2", in: app)
+        let layout = app.segmentedControls["native-editor-split-count"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 10))
+        layout.buttons["3 panels"].tap()
+        XCTAssertFalse(app.buttons["native-editor-split-count-confirm"].waitForExistence(timeout: 1.5), "Adding a panel loses nothing")
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+
+        layout.buttons["2 panels"].tap()
+        let confirm = app.buttons["native-editor-split-count-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Dropping a panel that holds footage must ask first")
+        attach(app, name: "Drop-panel confirmation")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.1)).tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(try panelCount(app), 3, "Dismissing keeps the panel and its footage")
+
+        layout.buttons["2 panels"].tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.firstMatch.tap()
+        XCTAssertEqual(try panelCount(app), 2)
+    }
+
+    func testAShortSelectedClipKeepsTwoFullSizeEndHandles() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 2", in: app)
+        app.buttons["native-editor-split-done"].tap()
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        XCTAssertTrue(clip(2, in: app).isSelected, "Filling a panel leaves it selected, so only the Top panel shows its unselected end handle")
+        timeline.pinch(withScale: 0.35, velocity: -1)
+        let end = app.descendants(matching: .any)["native-editor-split-end-1"].firstMatch
+        XCTAssertTrue(end.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(end.frame.width, 44, "An unselected end handle keeps a full 44 pt touch target")
+        XCTAssertGreaterThanOrEqual(end.frame.height, 44)
+        attach(app, name: "Zoomed-out panel end handles")
+    }
+
+    // KRI-1418. The picture has to follow the divider while the finger is still down, not catch up after release.
+    // The frame is grabbed in the middle of a held drag, with the touch still on the screen.
+    func testPreviewFollowsTheDividerWhileTheFingerIsStillDown() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 2", in: app) // blue under the red top panel
+        app.buttons["native-editor-split-done"].tap()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        // The band's own identifier is overridden by the preview's, so it is found by its label.
+        let divider = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Panel divider'")).firstMatch
+        XCTAssertTrue(divider.waitForExistence(timeout: 10))
+
+        func rgb(_ shot: XCUIScreenshot, atFraction y: CGFloat) throws -> (r: Int, g: Int, b: Int) {
+            let image = try XCTUnwrap(shot.image.cgImage)
+            let scale = CGFloat(image.width) / app.frame.width
+            let rect = CGRect(x: (preview.frame.minX + preview.frame.width * 0.25 - 2) * scale,
+                              y: (preview.frame.minY + preview.frame.height * y - 2) * scale, width: 4 * scale, height: 4 * scale)
+            var bytes = [UInt8](repeating: 0, count: 4)
+            let crop = try XCTUnwrap(image.cropping(to: rect))
+            try XCTUnwrap(CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)).draw(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return (Int(bytes[0]), Int(bytes[1]), Int(bytes[2]))
+        }
+        // The selected bottom panel wears a light wash, so blue is "more blue than red", not a pure value.
+        let before = try rgb(app.screenshot(), atFraction: 0.6)
+        XCTAssertTrue(before.b > before.r + 40, "Before the drag the 60% line is still inside the blue bottom panel: \(before)")
+
+        // Off the centre, where the swap handle sits. Dragging 20% of the canvas down moves the boundary from 50% to 70%.
+        let grab = divider.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+        let release = grab.withOffset(CGVector(dx: 0, dy: preview.frame.height * 0.2))
+        var held: XCUIScreenshot?
+        let grabbed = expectation(description: "frame grabbed while the finger is down")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            held = XCUIScreen.main.screenshot()
+            grabbed.fulfill()
+        }
+        grab.press(forDuration: 0.1, thenDragTo: release, withVelocity: .slow, thenHoldForDuration: 5)
+        wait(for: [grabbed], timeout: 10)
+
+        let frame = try XCTUnwrap(held)
+        let attachment = XCTAttachment(screenshot: frame)
+        attachment.name = "Preview mid-drag, finger still down"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let band = try rgb(frame, atFraction: 0.6)
+        XCTAssertTrue(band.r > 190 && band.g < 120 && band.b < 130,
+                      "Between the old and the new boundary the top panel's red must already be on screen before release: \(band)")
+        let below = try rgb(frame, atFraction: 0.85)
+        XCTAssertTrue(below.b > below.r + 40, "Below the new boundary stays blue: \(below)")
+    }
+
+    private func panelCount(_ app: XCUIApplication) throws -> Int {
+        let authored = try sections(app)
+        let section = try XCTUnwrap((authored["split_screen_sections"] as? [[String: Any]])?.first)
+        return try XCTUnwrap(section["panel_weights"] as? [Double]).count
+    }
+
     private func checkGlobalBoundary(_ app: XCUIApplication, baseline: [String: Any]) throws {
         selectClip(3, in: app) // Serial full-screen clip starts at 4 seconds.
         let serial = clip(3, in: app)
@@ -199,13 +349,16 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
     private func selectClip(_ index: Int, in app: XCUIApplication) {
         let target = clip(index, in: app)
         let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        let lanes = app.scrollViews["native-editor-lane-scroll"]
         for _ in 0..<6 where !target.exists {
-            let ruler = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.03))
+            // The ruler scrolls out of the lane viewport when a lower row is lifted clear of the toolbar.
+            let revealY = max(timeline.frame.minY + timeline.frame.height * 0.03, lanes.frame.minY + 6)
+            let ruler = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: timeline.frame.minX + timeline.frame.width * 0.7, dy: revealY))
             ruler.press(forDuration: 0.05, thenDragTo: ruler.withOffset(
                 CGVector(dx: index == 1 ? 120 : -120, dy: 0)), withVelocity: 100, thenHoldForDuration: 0.2)
         }
         XCTAssertTrue(target.waitForExistence(timeout: 3), "Reveal the clip in the horizontal timeline before selecting it")
-        let lanes = app.scrollViews["native-editor-lane-scroll"]
         let toolbar = app.descendants(matching: .any)["native-editor-clip-context"].firstMatch
         let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
         let bottom = toolbar.exists ? toolbar.frame.minY : rail.frame.minY

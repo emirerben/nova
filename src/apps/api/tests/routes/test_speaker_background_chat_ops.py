@@ -270,6 +270,11 @@ def test_a_montage_variant_is_never_told_about_backgrounds(monkeypatch):
 def test_flag_off_is_byte_identical_to_legacy(monkeypatch):
     job = _job(monkeypatch)
     monkeypatch.setattr(settings, "speaker_background_enabled", False)
+    # The video-shape lane (KRI-1394) opens on this fit-editable phone edit by design, so close it
+    # here: the pin is the background lane's, and every other byte must still match the old one.
+    monkeypatch.setattr(
+        "app.agents.editor_ops_v2.video_shape.video_shape_snapshot", lambda *_a, **_k: None
+    )
     snapshot = _snapshot(job)
     digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, default=str).encode()).hexdigest()
     assert digest == PRE_LANE_SNAPSHOT_SHA256

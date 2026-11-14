@@ -28,6 +28,7 @@ from app.agents._runtime import (
 )
 from app.agents.edit_copilot import (
     UNSUPPORTED_REJECTIONS,
+    ChatEditCopilotAgent,
     CopilotOutcome,
     EditCopilotAgent,
     EditCopilotInput,
@@ -448,7 +449,7 @@ async def run_copilot_turn(
 
     from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
 
-    agent = configure_creator_agent(EditCopilotAgent(default_client()), "edit_copilot")
+    agent = configure_creator_agent(ChatEditCopilotAgent(default_client()), "edit_copilot")
     agent.compile_check = compile_check
     request_id = _paid_request_id(body, job_id=job_id)
 

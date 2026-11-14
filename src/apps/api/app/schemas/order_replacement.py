@@ -9,6 +9,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
+
 Identifier = Annotated[str, Field(strict=True, min_length=1, max_length=160)]
 Digest = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
 Seconds = Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
@@ -55,7 +57,9 @@ class CheckedOrderMoment(_Record):
     output_start_s: Seconds
     output_end_s: Seconds
     duration_s: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
-    playback_rate: Annotated[float, Field(strict=True, ge=0.25, le=4, allow_inf_nan=False)] = 1.0
+    playback_rate: Annotated[
+        float, Field(strict=True, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX, allow_inf_nan=False)
+    ] = 1.0
     freeze_hold_s: Seconds = 0.0
 
     @model_validator(mode="after")

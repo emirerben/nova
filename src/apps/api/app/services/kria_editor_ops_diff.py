@@ -642,11 +642,13 @@ def diff_compiled_state(
         ("sfx", lambda: _by_id_entries("sfx", "sound effect", before.sfx, state.sound_effects)),
         (
             "media_overlays",
+            # A card's `z` is announced once, by the layer order entry below.
             lambda: _by_id_entries(
                 "media_overlays",
                 "overlay",
                 before.overlays,
                 getattr(state, "media_overlays", []),
+                ignore=frozenset({"z"}),
             ),
         ),
     ]
@@ -698,12 +700,49 @@ def diff_compiled_state(
         if entry is not None:
             entries.append(entry)
     for key, value in (state.caption_patch or {}).items():
-        stored = variant.get("captions_enabled" if key == "enabled" else f"caption_{key}")
+        stored = variant.get(
+            "captions_enabled"
+            if key == "enabled"
+            else "caption_editor_style"
+            if key == "appearance"
+            else f"caption_{key}"
+        )
         entries.append(
             DiffEntry(
                 "caption_meta",
                 str(key),
                 (DiffTarget(str(key), "captions", None, "captions", stored, value),),
+            )
+        )
+    song = getattr(state, "user_song", None)
+    if isinstance(song, dict) and "user_song" in state.changed:
+        fields = (
+            ["removed"]
+            if song.get("removed")
+            else [
+                name
+                for name, keys in (
+                    ("volume", {"volume"}),
+                    ("window", {"window_start_s", "window_end_s"}),
+                )
+                if keys & song.keys()
+            ]
+        )
+        entries.extend(
+            DiffEntry(
+                "user_song", name, (DiffTarget("song", "song", None, "your song", None, None),)
+            )
+            for name in fields
+        )
+    if "video_shape" in state.changed:
+        entries.extend(
+            DiffEntry("video", key, (DiffTarget(key, "video", None, "the video", None, None),))
+            for key in sorted(getattr(state, "video_shape", None) or {})
+        )
+    if "layer_order" in state.changed:
+        entries.append(
+            DiffEntry(
+                "layers", "order", (DiffTarget("layers", "picture", None, "pictures", None, None),)
             )
         )
     if state.visual_blocks is not None and "visual_media" in state.changed:
@@ -975,7 +1014,21 @@ def _font_display(target: DiffTarget) -> str:
     return str(target.after) if isinstance(target.after, str) else "new font"
 
 
+# Lanes whose change is one fixed sentence, keyed "<lane>.<field>" (KRI-1394).
+_LANE_WORDS = {
+    "user_song.removed": ("Removed your song", "Şarkın kaldırıldı"),
+    "user_song.volume": ("Changed the volume of your song", "Şarkının ses düzeyi değişti"),
+    "user_song.window": ("Changed where your song plays", "Şarkının çalan kısmı değişti"),
+    "layers.order": ("Changed which picture is on top", "Hangi görselin üstte olduğu değişti"),
+    "video.orientation": ("Changed the video's shape", "Videonun biçimi değişti"),
+    "video.landscape_fit": (
+        "Changed how sideways clips fill the frame",
+        "Yan çekilmiş kliplerin kareyi doldurma biçimi değişti",
+    ),
+}
+
 _CAPTION_META_WORDS = {
+    "appearance": ("Changed where the captions sit", "Altyazıların yeri değişti"),
     "size_px": ("Changed the caption size", "Altyazı boyutu değişti"),
     "color": ("Changed the caption colour", "Altyazı rengi değişti"),
     "highlight_color": ("Changed the caption highlight colour", "Altyazı vurgu rengi değişti"),
@@ -1100,6 +1153,10 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
     """One short sentence for an entry, in the turn's language."""
     who = describe_targets(entry, live_text_count)
     lane, name, first = entry.lane, entry.field, entry.targets[0]
+    words = _LANE_WORDS.get(f"{lane}.{name}")
+    if words is not None:
+        en, tr = words
+        return say(en=en, tr=tr)
     if lane == "text":
         return _describe_text(entry, who)
     if lane == "timeline":

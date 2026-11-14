@@ -892,6 +892,31 @@
    "Gelecek videolarda {role} için gölge {state} olsun."
   ],
   [
+   "app/services/kria_editor_undo.py",
+   "I can't undo that from chat: the edit changed after my last change, or that change can't be put back exactly. Nothing was changed. Use Undo in the editor, or tell me what to change back.",
+   "Bunu sohbetten geri alamıyorum: son değişikliğimden sonra düzenleme değişti ya da o değişiklik tam olarak geri getirilemiyor. Hiçbir şey değişmedi. Editördeki Geri Al'ı kullan ya da neyi eski haline getireyim, söyle."
+  ],
+  [
+   "app/services/kria_editor_undo.py",
+   "I undid my last change ({what}). Save when you're happy with it.",
+   "Son değişikliğimi geri aldım ({what}). Memnun kaldığında kaydet."
+  ],
+  [
+   "app/services/kria_editor_undo.py",
+   "Undid: {what}",
+   "Geri alındı: {what}"
+  ],
+  [
+   "app/services/kria_editor_undo.py",
+   "Undo has to be its own request. Nothing was changed.",
+   "Geri alma ayrı bir istek olmalı. Hiçbir şey değişmedi."
+  ],
+  [
+   "app/services/kria_editor_undo.py",
+   "your last change",
+   "son değişikliğin"
+  ],
+  [
    "app/services/named_moments.py",
    "I showed you where each of my moments is.",
    "Anlarımın her birinin nerede olduğunu gösterdim."
@@ -1400,6 +1425,163 @@
    "app/tasks/kria_runtime.py",
    "Your video has no sound, so there's nothing to caption or cut. Record it again and check that nothing is covering the microphone.",
    "Videonda hiç ses yok, bu yüzden altyazı ekleyecek ya da kesecek bir şey bulamadım. Tekrar çek ve mikrofonun kapalı olmadığından emin ol."
+  ],
+  [
+   "app/agents/editor_ops_v2/background.py",
+   "Taking away the full-screen opening isn't available on this edit yet.",
+   "Tam ekran açılışı kaldırmak bu düzenlemede henüz yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/background.py",
+   "There is no full-screen opening of you to take away.",
+   "Kaldırılacak tam ekran bir açılışın yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/caption_lines.py",
+   "One caption line can't be sized or moved on its own from chat on this edit.",
+   "Bu düzenlemede tek bir altyazı satırını sohbetten ayrı boyutlandıramıyorum ya da taşıyamıyorum."
+  ],
+  [
+   "app/agents/editor_ops_v2/layer_order.py",
+   "A full-screen picture covers the video, so it has no place in front of or behind the pictures on top.",
+   "Tam ekran görsel videonun tamamını kaplar; üstteki görsellerin önünde ya da arkasında bir yeri yok."
+  ],
+  [
+   "app/agents/editor_ops_v2/user_song.py",
+   "Lip-sync keeps the song where you filmed it.",
+   "Dudak senkronu şarkıyı çektiğin yerde tutar."
+  ],
+  [
+   "app/agents/editor_ops_v2/user_song.py",
+   "Your own song can't be changed from chat on this edit.",
+   "Bu düzenlemede kendi şarkını sohbetten değiştiremiyorum."
+  ],
+  [
+   "app/agents/editor_ops_v2/user_song.py",
+   "Your song is already taken off this edit.",
+   "Şarkın bu düzenlemeden zaten kaldırıldı."
+  ],
+  [
+   "app/agents/editor_ops_v2/video_shape.py",
+   "The video's shape can't be changed from chat on this edit.",
+   "Bu düzenlemede videonun biçimini sohbetten değiştiremiyorum."
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed how sideways clips fill the frame",
+   "Yan çekilmiş kliplerin kareyi doldurma biçimi değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the video's shape",
+   "Videonun biçimi değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the volume of your song",
+   "Şarkının ses düzeyi değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed where the captions sit",
+   "Altyazıların yeri değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed where your song plays",
+   "Şarkının çalan kısmı değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed which picture is on top",
+   "Hangi görselin üstte olduğu değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed your song",
+   "Şarkın kaldırıldı"
+  ],
+  [
+   "app/agents/copilot_tools.py",
+   "Your current draft is unchanged.",
+   "Mevcut taslağın değişmedi."
+  ],
+  [
+   "app/agents/editor_ops_v2/split_full_screen.py",
+   "Part of a split screen can't go full screen from chat on this edit.",
+   "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
+  ],
+  [
+   "app/tasks/generative_build.py",
+   "Tell me how you'd like the text instead.",
+   "Metnin bunun yerine nasıl olmasını istediğini söyle."
+  ],
+  [
+   "app/tasks/generative_build.py",
+   "Your text is on the video as you wrote it. I didn't change how it looks because I wasn't sure what you meant. Tell me what you'd like and I'll change it.",
+   "Yazın videoda senin yazdığın gibi duruyor. Ne demek istediğinden emin olamadığım için görünümünü değiştirmedim. Ne istediğini söyle, değiştireyim."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't prepare the text while keeping your approved wording. Your draft and footage are saved.",
+   "Onayladığın yazıyı koruyarak metni hazırlayamadım. Taslağın ve çekimlerin kayıtlı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Our AI took too long to plan this edit, so your video wasn't made. Your edit and footage are saved.",
+   "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Something broke while planning this edit, so your video wasn't made. Your edit and footage are saved.",
+   "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit needs an iPhone rendering feature that's switched off right now. Your edit and footage are saved.",
+   "Bu düzenleme için gereken bir iPhone oluşturma özelliği şu anda kapalı. Düzenlemen ve çekimlerin kayıtlı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Writing the on-screen text for this many clips took longer than our AI allows, so your video wasn't made. Your edit and footage are saved. Fewer clips or less text would help.",
+   "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az klip ya da daha az yazı işe yarar."
+  ]
+ ],
+ "retired": [
+  [
+   "app/agents/clip_intent_planner.py",
+   "label",
+   "etiket"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "group",
+   "grup"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "order",
+   "sıra"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "include",
+   "dahil etme"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "caption",
+   "yazı"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "exclude",
+   "hariç tutma"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "hide_part",
+   "bölüm gizleme"
   ]
  ]
 }

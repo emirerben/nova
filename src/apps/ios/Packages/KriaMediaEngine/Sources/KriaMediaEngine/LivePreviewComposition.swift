@@ -333,6 +333,10 @@ public struct LivePreviewExportSnapshot: Sendable {
         expected.drawingLayers = next.drawingLayers
         expected.requiredCapabilities = next.requiredCapabilities
         if movesSpeakerFrame { expected.speakerBackground = next.speakerBackground }
+        // Dragging a split divider changes only a section's weights or gutter, so it stays in place: each member
+        // layer's panel viewport is recomputed below. Any other section change is a layout built into the layers.
+        let relayout = Self.movesOnlySplitDividers(from: recipe.splitScreenSections, to: next.splitScreenSections)
+        if relayout { expected.splitScreenSections = next.splitScreenSections }
         guard expected == next,
               let current = preview.playerItem.videoComposition,
               let replacement = current.mutableCopy() as? AVMutableVideoComposition else {
@@ -346,6 +350,14 @@ public struct LivePreviewExportSnapshot: Sendable {
         // needed) takes the full rebuild instead of silently drawing nothing.
         guard Set(AVPlayerPreviewComposer.mediaBackdrops(in: next).map(\.poolID)) == Set(instructions.flatMap(\.layers).compactMap(\.backdropAssetID)) else {
             throw NativePreviewFeatureError("LivePreviewComposition-media-backdrop")
+        }
+        // A card is drawn for its panel's size, and a matted speaker's layers were built for it, so resizing a
+        // panel under either one takes the full rebuild.
+        if relayout {
+            guard next.speakerBackground == nil else { throw NativePreviewFeatureError("LivePreviewComposition-split-relayout-speaker") }
+            guard !next.tracks.flatMap(\.clips).contains(where: { $0.splitScreen != nil && $0.stillLayout != nil }) else {
+                throw NativePreviewFeatureError("LivePreviewComposition-split-relayout-card")
+            }
         }
         let previous = first.text
         var painted = previous.filter { $0.portable == nil }
@@ -369,10 +381,27 @@ public struct LivePreviewExportSnapshot: Sendable {
             if let id = layer.clipID, oldFillIDs.contains(id) { return false }
             return seen.insert("\(layer.trackID ?? -1):\(layer.clipID ?? "clock"):\(layer.start)").inserted
         }
+        var relaidViewports: [String: [PanelPlacement]] = [:]
+        if relayout {
+            // The same placements a fresh build and the export compute, so every layer finds its own window.
+            let canvas = CGRect(origin: .zero, size: current.renderSize)
+            for (id, clip) in nextClips where clip.splitScreen != nil {
+                let own = sourceLayers.filter { $0.clipID == id }.sorted { $0.start < $1.start }
+                guard let start = own.first?.start, let end = own.map(\.end).max() else { continue }
+                let placements = next.panelPlacements(of: clip, start: start, end: end, canvas: canvas)
+                guard placements.map({ [$0.start, $0.end] }) == own.map({ [$0.start, $0.end] }) else {
+                    throw NativePreviewFeatureError("LivePreviewComposition-split-relayout-windows")
+                }
+                relaidViewports[id] = placements
+            }
+        }
         var layers = try sourceLayers.map { layer in
                 guard let id = layer.clipID, let clip = nextClips[id], let size = layer.naturalSize else { return layer }
                 var updated = layer
-                updated.transform = AVPlayerPreviewComposer.transform(naturalSize: size, preferred: layer.preferredTransform, canvas: layer.panelViewport?.size ?? current.renderSize, clip: clip)
+                if let placement = relaidViewports[id]?.first(where: { $0.start == layer.start && $0.end == layer.end }) {
+                    updated.panelViewport = placement.viewport
+                }
+                updated.transform = AVPlayerPreviewComposer.transform(naturalSize: size, preferred: layer.preferredTransform, canvas: updated.panelViewport?.size ?? current.renderSize, clip: clip)
                 if recipe.tracks.flatMap(\.clips).first(where: { $0.id == id })?.overlayDissolveSeed != clip.overlayDissolveSeed {
                     updated.overlayDissolve = try clip.overlayDissolveSeed.map { seed in
                         try NativeDissolveRenderer(width: next.canvas.width, height: next.canvas.height, seed: seed,
@@ -436,6 +465,20 @@ public struct LivePreviewExportSnapshot: Sendable {
         self.playbackRevision = playbackRevision
         assetURLs = urls
         recipe = next
+    }
+}
+
+extension LivePreviewComposition {
+    /// True when the sections differ, and only in the weights or gutter of sections that keep their ids, spans,
+    /// background, collapse flag and panel count.
+    fileprivate static func movesOnlySplitDividers(from old: [SplitScreenSection], to new: [SplitScreenSection]) -> Bool {
+        guard old != new, old.count == new.count else { return false }
+        return zip(old, new).allSatisfy { before, after in
+            var moved = before
+            moved.panelWeights = after.panelWeights
+            moved.gutter = after.gutter
+            return moved == after && before.panelWeights.count == after.panelWeights.count
+        }
     }
 }
 

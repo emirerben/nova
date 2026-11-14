@@ -23,6 +23,8 @@ from app.tasks import editor_sources as task
 from tests.services.test_phone_editor_sources import source
 from tests.services.test_phone_sources import receipt
 
+_prepare_visual = task._prepare_visual
+
 
 @pytest.fixture
 def world(monkeypatch):
@@ -492,3 +494,20 @@ def test_final_reservation_nowait_releases_failed_session_before_recording_busy(
     assert queries and all("FOR UPDATE NOWAIT" in query for query in queries)
     assert world.reservation.expires_at == expires
     assert world.variant[EDITOR_SOURCES_FIELD]["sources"] == []
+
+
+@pytest.mark.parametrize(("media", "admitted"), [("ready", True), ("pending", False)])
+def test_photo_with_verified_bytes_is_admitted_while_analysis_runs(
+    world, monkeypatch, media, admitted
+):
+    world.asset.status, world.asset.media_status = "analyzing", media
+    monkeypatch.setattr(task, "_prepare_visual", _prepare_visual)
+    bound = SimpleNamespace(**world.binding, duration_s=None, model_dump=lambda **_: world.binding)
+    monkeypatch.setattr(task, "bind_phone_visual_assets", lambda *args, **kwargs: [bound])
+    run(world)
+    if admitted:
+        assert result(world)["status"] == "ready"
+        assert result(world)["source_index"] is not None
+    else:
+        assert result(world)["status"] == "failed"
+        assert result(world)["reason_code"] == "visual_not_ready"

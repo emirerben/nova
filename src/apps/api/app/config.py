@@ -701,7 +701,10 @@ class Settings(BaseSettings):
     main_creator_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_copilot_model: str = "gemini-3.1-pro-preview"
     edit_copilot_thinking_level: str = "high"
-    edit_copilot_output_mode: Literal["json", "native", "json_guarded"] = "json"
+    # "tools" (KRI-1393): one typed tool per open editor operation, rules in a cached system
+    # block, rejected ops repaired through tool results. Needs a model whose registry entry
+    # `supports_tools`. Read at agent construction.
+    edit_copilot_output_mode: Literal["json", "native", "json_guarded", "tools"] = "json"
     edit_director_model: str = "gemini-3.1-pro-preview"
     # Eval-only comparison model. It is never contacted by the production
     # Director endpoint, whose explicit review is capped at one paid request.
@@ -1157,6 +1160,11 @@ class Settings(BaseSettings):
     # restart. Rollback: the flag false + restart, never a code revert.
     color_moments_enabled: bool = False
     color_moments_min_client_protocol: int = 48
+    # KRI-1384: chat "undo that" is offered only to app builds declaring
+    # `X-Kria-Client-Protocol` >= this. An older editor keeps a staged chat lane that a newer
+    # draft head puts back to the saved value, so its undo would say done and change nothing.
+    # Kill switch: `fly secrets set CHAT_UNDO_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
+    chat_undo_min_client_protocol: int = 50
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

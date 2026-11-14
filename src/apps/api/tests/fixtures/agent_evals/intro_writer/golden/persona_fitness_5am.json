@@ -47,6 +47,7 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "persona-threaded \u2014 fitness creator (discipline/morning-routine pillars), 5am-challenge theme. Hook coheres with the no-excuses tone + first-workout theme AND stays grounded in THIS clip (dark gym, nobody awake, the first set); invents nothing."
-  }
+    "case": "persona-threaded — fitness creator (discipline/morning-routine pillars), 5am-challenge theme. Hook coheres with the no-excuses tone + first-workout theme AND stays grounded in THIS clip (dark gym, nobody awake, the first set); invents nothing."
+  },
+  "prompt_sha": "unpinned"
 }

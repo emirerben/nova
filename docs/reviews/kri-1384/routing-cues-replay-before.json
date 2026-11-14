@@ -1,0 +1,1078 @@
+{
+  "authored/font-different": {
+    "message": "make the font different",
+    "expected": "edit",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/title-different-color": {
+    "message": "give the title a different colour",
+    "expected": "edit",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/tr-font-different": {
+    "message": "yazı tipini farklı yap",
+    "expected": "edit",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/de-font-different": {
+    "message": "Nimm eine andere Schriftart",
+    "expected": "edit",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/text-faster": {
+    "message": "Make the text faster",
+    "expected": "edit",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/video-shorter": {
+    "message": "Make the video shorter",
+    "expected": "edit",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/shorter-each-text": {
+    "message": "Make the video shorter, showing each text shorter",
+    "expected": "edit",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/revert": {
+    "message": "Revert to the old version",
+    "expected": "edit",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/undo": {
+    "message": "undo that",
+    "expected": "edit",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/speech-cut-quote": {
+    "message": "Cut the part where I say 'um let me start over'.",
+    "expected": "edit",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/title-again": {
+    "message": "make the title bigger again",
+    "expected": "edit",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/tr-title-again": {
+    "message": "başlığı tekrar yap",
+    "expected": "edit",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/long-edit": {
+    "message": "Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make the title bigger. Make ",
+    "expected": "edit",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/mixed": {
+    "message": "Make the title red and then redo the whole video from scratch",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/start-over": {
+    "message": "start over",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/redo-whole": {
+    "message": "redo the whole thing",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/new-version": {
+    "message": "make me a new version",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/again-prompt": {
+    "message": "Create the video again based on my prompt",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/vibe": {
+    "message": "give me a completely different vibe",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/tr-start-over": {
+    "message": "baştan yap",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/tr-new-version": {
+    "message": "yeni bir versiyon istiyorum",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/de-start-over": {
+    "message": "Mach das Video komplett neu",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/es-start-over": {
+    "message": "Hazlo de nuevo desde cero",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/accept-redo": {
+    "message": "redo",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/accept-redo-tr": {
+    "message": "yeniden yap",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "authored/accept-redo-de": {
+    "message": "nochmal",
+    "expected": "rebuild",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "action_background_focus/t0": {
+    "message": "Center the recording behind me and zoom in a little.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_camera_effects/t0": {
+    "message": "Add a camera pulse at 3 seconds.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "action_caption_animation/t0": {
+    "message": "Make the captions pop in.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_caption_style_scope/t0": {
+    "message": "Make the second caption bigger.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_captions/t0": {
+    "message": "Change the second caption to say 'then we ran the whole harbour'.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_carousel/t0": {
+    "message": "Add a photo carousel in the middle of the video.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "action_clip_add_remove/t0": {
+    "message": "Remove the third clip.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_add_remove__visual_media/t0": {
+    "message": "Remove the photo I added.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_audio/t0": {
+    "message": "Mute the original sound.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_crop/t0": {
+    "message": "Crop the second clip tighter on the left side.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_duplicate/t0": {
+    "message": "Duplicate the first clip.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_look/t0": {
+    "message": "Give the whole video a golden hour look.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "action_clip_look__custom_effect/t0": {
+    "message": "Add a glitch effect to the second clip.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "action_clip_source_gain/t0": {
+    "message": "Make the sound of the third clip louder.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_source_replacement/t0": {
+    "message": "Replace the second clip with the last one I uploaded.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_speed/t0": {
+    "message": "Play the third clip at half speed.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_tilt/t0": {
+    "message": "Tilt the second clip ten degrees to the right.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_transition/t0": {
+    "message": "Add a crossfade between the first and second clip.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_clip_trim_and_move/t0": {
+    "message": "Cut the first clip down to 2 seconds.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_creator_song/t0": {
+    "message": "Make my song quieter.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_generated_overlay_approval/t0": {
+    "message": "Put the picture you made on top from 2 to 4 seconds.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_history/t0": {
+    "message": "Undo that.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_history__revert/t0": {
+    "message": "Revert that, I liked it before.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_layer_order/t0": {
+    "message": "Put the second photo in front of the first one.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_media_overlays/t0": {
+    "message": "Make the photo on top bigger.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_music/t0": {
+    "message": "Lower the music volume.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_music_swap/t0": {
+    "message": "Swap the music for something calmer.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "action_sound_effects/t0": {
+    "message": "Add a whoosh at 2 seconds.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_speaker_background/t0": {
+    "message": "Put the beach photo behind me.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_speaker_frame_by_hand/t0": {
+    "message": "Move me to the small bottom left corner.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_speaker_full_opening/t0": {
+    "message": "Start with the background behind me, no full-screen intro.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_clip_offset/t0": {
+    "message": "Start the bottom clip of the split screen one second later.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_clip_order/t0": {
+    "message": "In the split screen, play the second clip of the top panel first.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_create/t0": {
+    "message": "Put the first two clips side by side on one screen.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_layout/t0": {
+    "message": "Make the split screen three panels with a thin gap.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_loop_fill/t0": {
+    "message": "Loop the top clip of the split screen so it fills its panel.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_panel_order/t0": {
+    "message": "Swap the top and bottom panels of the split screen.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_remove/t0": {
+    "message": "Remove the split screen.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_section_order/t0": {
+    "message": "Move the split screen to the end of the video.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_split_screen_whole_video/t0": {
+    "message": "Make the split screen last the whole video.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_text_authoring/t0": {
+    "message": "Change the title to 'Sunday harbour run'.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "action_text_look/t0": {
+    "message": "Make the title bigger and yellow.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_text_timing/t0": {
+    "message": "Keep the title on screen for the first four seconds.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "action_video_shape/t0": {
+    "message": "Don't crop my landscape clips, I want to see the whole frame.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "action_visual_blocks_and_motion/t0": {
+    "message": "Add a motion title card at the start.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "east_run/t1-brief": {
+    "message": "This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "east_run/t2-recreate": {
+    "message": "Create the video again based on my prompt",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "east_run/t3-keep15": {
+    "message": "Keep 15 seconds and include everything with faster pacing",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "east_run/t5-brief-again": {
+    "message": "This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "east_run/t6-no-fraunces": {
+    "message": "Never use fraunces again in my edits",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "food_described_labels/t0": {
+    "message": "Add a caption to every clip naming the dish or drink.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "food_exact_title/t0": {
+    "message": "Make a Sunday food-day video and call it exactly \"Kadıköy'de Pazar\".",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "food_fonts_then_forbid/t0": {
+    "message": "Caption every clip with what it is.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "food_fonts_then_forbid/t1": {
+    "message": "Change all fonts to Playfair Display.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery",
+      "degrade": "question"
+    }
+  },
+  "food_fonts_then_forbid/t2": {
+    "message": "And never use Inter again.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery",
+      "degrade": "question"
+    }
+  },
+  "food_readability/t0": {
+    "message": "Caption every clip, but keep each caption up long enough to read.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "harbor_label_dedupe/t0": {
+    "message": "Label every clip with the landmark it shows.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "harbor_landmark_correction/t0": {
+    "message": "Label every clip with the landmark it shows.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "harbor_landmark_correction/t1": {
+    "message": "Clip 5 isn't Halden Watchtower, it's Fort Halden.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "harbor_route_matches_filming/t0": {
+    "message": "I ran from Old Mill Pier out to Kestrel Point. Show the run in that order.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "harbor_route_reversed/t0": {
+    "message": "I ran from Kestrel Point to Old Mill Pier this morning. Show the run in that order.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "harbor_route_reversed_then_route_order/t0": {
+    "message": "I ran from Kestrel Point to Old Mill Pier this morning. Show the run in that order.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "harbor_route_reversed_then_route_order/t1": {
+    "message": "Yes, use my route order.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery",
+      "degrade": "question"
+    }
+  },
+  "harbor_selection_duration_pacing/t0": {
+    "message": "Skip the cliff path, keep it around 16 seconds, fast cuts.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "harbor_title_from_brief/t0": {
+    "message": "Make a video of my 14k harbour run from Kestrel Point to Old Mill Pier and give it a title.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "sport_activity_sequence_after_denied_plan/t0": {
+    "message": "Suggest an edit.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery",
+      "degrade": "question"
+    }
+  },
+  "sport_activity_sequence_after_denied_plan/t1": {
+    "message": "Start with the goals, then the warm-up, and finish on the handshakes.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "sport_duration_pacing/t0": {
+    "message": "20 seconds, fast cuts.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery+offer",
+      "degrade": "question"
+    }
+  },
+  "sport_exact_labels/t0": {
+    "message": "Label the goals: \"GOAL 1\" on the first goal, \"GOAL 2\" on the winning one, \"FULL TIME\" on the handshakes.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "sport_exclude_then_duration/t0": {
+    "message": "Cut the missed shot.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "sport_exclude_then_duration/t1": {
+    "message": "Make it 12 seconds.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "sport_explicit_order/t0": {
+    "message": "Open on the first goal, then the celebration, and end on the handshakes.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "sport_labels_without_place_facts/t0": {
+    "message": "Label each clip with where it was filmed.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "question",
+      "degrade": "question"
+    }
+  },
+  "sport_title_font_only/t0": {
+    "message": "Label the goals: \"GOAL 1\" on the first goal and \"FULL TIME\" on the handshakes, and add a title.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "sport_title_font_only/t1": {
+    "message": "Set the title in Playfair Display but leave the goal labels as they are.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "recovery",
+      "degrade": "question"
+    }
+  },
+  "trip_chronological/t0": {
+    "message": "Show everything in the order I filmed it.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "trip_described_title_facts/t0": {
+    "message": "Two days in Cappadocia, cave hotel and balloons. Give it a title that says where and how long.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "trip_label_each_clip_from_facts/t0": {
+    "message": "Two days in Cappadocia. Show it in the order I filmed it.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "trip_label_each_clip_from_facts/t1": {
+    "message": "Label each clip with where it was filmed.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "trip_landmark_labels_english/t0": {
+    "message": "Label the landmarks in each clip.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "trip_landmark_labels_turkish/t0": {
+    "message": "Her klibe gördüğü yerin adını yaz.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "trip_route_order/t0": {
+    "message": "Follow our route, from the balloons in Göreme down to the underground city in Kaymaklı.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "v2_food_title_cassette/title-edit": {
+    "message": "Call this exactly Kadıköy'de Pazar.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "v2_six_captions_one_correction/six-captions": {
+    "message": "Caption all six clips with the foods shown.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "v2_six_captions_one_correction/one-correction": {
+    "message": "The third one is a spice market, not a bazaar. Change only that caption.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "v2_speech_cut_at_word/cut-the-phrase": {
+    "message": "Cut the part where I say 'um let me start over'.",
+    "paths": {
+      "missing": "main_creator",
+      "offer": "recovery+offer"
+    }
+  },
+  "v2_talking_slides_unsupported/talking-unsupported": {
+    "message": "Turn this unsaved montage into a Talking edit with captions.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "v2_talking_slides_unsupported/slides-unsupported": {
+    "message": "Add a slide deck to this edit.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "v2_title_on_first_beat/title-on-first-beat": {
+    "message": "Move the title to the first beat.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer"
+    }
+  },
+  "vlog_change_all_fonts/t0": {
+    "message": "Make a Saturday reset vlog with a caption on every clip.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "vlog_change_all_fonts/t1": {
+    "message": "Change all fonts to Montserrat.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "vlog_creator_facts/t0": {
+    "message": "I'm Ece and this is day 3 of my Saturday reset. Put that in the edit.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "vlog_default_title_disclosed/t0": {
+    "message": "Give it a title.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "vlog_exact_title_then_labels/t0": {
+    "message": "Call it exactly \"Ece'nin Cumartesisi\".",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "vlog_exact_title_then_labels/t1": {
+    "message": "Now caption every clip with what I'm doing.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "edit"
+    }
+  },
+  "vlog_restructure/t0": {
+    "message": "Make a Saturday reset vlog. Make sure the cooking and the night walk are in.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "vlog_restructure/t1": {
+    "message": "Shorter please, 15 seconds. Open with the gym, then the cooking.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  },
+  "vlog_selection/t0": {
+    "message": "Skip the laundry, but the gym has to be in.",
+    "paths": {
+      "missing": "recovery",
+      "offer": "recovery+offer",
+      "ready": "edit",
+      "degrade": "question"
+    }
+  }
+}

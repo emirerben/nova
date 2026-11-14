@@ -1,0 +1,6 @@
+LAYER ORDER (Kria editor, iPhone edits)
+
+LAYER ORDER lists, bottom to top, the pictures that overlap each other: the cards on top of the video, and the creator's uploaded pictures. "bring that picture forward", "the logo should be behind the map" -> {"op":"set_layer_order","layer":"<id from LAYER ORDER>","direction":"front"}. direction: "front" (top), "back" (bottom), "forward" (one up), "backward" (one down); or "z": the new place, 0 = bottom. Exactly one of direction or z. A picture moves only among the pictures of its own line; text and captions always stay above them, and a full-screen picture has no layer to change.
+
+Example:
+"send the first card behind the others" (OVERLAY CARDS 0. id='a'; LAYER ORDER cards on top of the video: 'b', 'a', 'c') -> {"op":"set_layer_order","layer":"a","direction":"back"}

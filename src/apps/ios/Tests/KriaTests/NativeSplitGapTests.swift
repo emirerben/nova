@@ -279,6 +279,17 @@ final class NativeSplitGapTests: XCTestCase {
         XCTAssertTrue(capped.document.splitScreenIsValid)
     }
 
+    @MainActor
+    func testATrimThatWouldPassTheTimelineCapSaysWhyInsteadOfDoingNothing() throws {
+        let lead = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 0, inS: 0, durationS: 1700,
+                                      transitionAfter: "cut", raw: ["source_duration_s": .number(3000)])
+        let panel = member(0, offset: 0, duration: 4)
+        let original = document([lead, panel], sections: [.init(id: "s", durationS: 4, panelCount: 2)])
+        let session = makeSession(original)
+        XCTAssertEqual(try dragEnd(session, lead, by: 200), "A video can't run longer than 30 minutes.")
+        XCTAssertEqual(session.document, original, "A refused trim changes nothing")
+    }
+
     // MARK: Extend to whole video
 
     @MainActor

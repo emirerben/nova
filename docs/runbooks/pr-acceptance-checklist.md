@@ -78,8 +78,8 @@ themselves. Test: `cd scripts/ci && python3 -m pytest test_merge_guard.py`.
 ## Workflow rules
 
 - One worktree, one PR, one hot file: serialize changes to shared files such as
-  `brief_checks.py`. Main Creator / brief-extractor prompt versions are automatic
-  fingerprints: never bump or pin them (`docs/pipelines/prompt-version-history.md`).
+  `brief_checks.py`. Prompt versions listed in
+  `docs/pipelines/prompt-version-history.md` are automatic fingerprints: never bump or pin them.
 - Never stack a PR on an unmerged branch; verify the destination branch and base.
 - Name the evidence level in handoffs. “Implemented” is not “deployed”; a deployed
   revision is not proof that the creator's request succeeded.

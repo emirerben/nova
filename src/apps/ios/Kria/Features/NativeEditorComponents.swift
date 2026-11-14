@@ -535,7 +535,6 @@ struct NativeEditorContextStrip: View {
     /// KRI-717: opens the Range picker (which part of the source clip plays).
     var onRange: () -> Void = {}
     let onTransition: () -> Void
-    @State private var scrollState = NativeEditorActionScrollState()
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -626,36 +625,7 @@ struct NativeEditorContextStrip: View {
             }
             .padding(4)
         }
-        .onScrollGeometryChange(for: NativeEditorActionScrollState.self) { geometry in
-            NativeEditorActionScrollState(
-                hasEarlierActions: geometry.visibleRect.minX + geometry.contentInsets.leading > 1,
-                hasMoreActions: geometry.contentSize.width + geometry.contentInsets.trailing - geometry.visibleRect.maxX > 1
-            )
-        } action: { _, value in
-            scrollState = value
-        }
-        .overlay(alignment: .trailing) {
-            if scrollState.hasMoreActions {
-                LinearGradient(
-                    colors: [KriaColor.paper.opacity(0), KriaColor.paper],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: 28)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-        }
-        .overlay(alignment: .leading) {
-            if scrollState.hasEarlierActions {
-                LinearGradient(
-                    colors: [KriaColor.paper, KriaColor.paper.opacity(0)],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: 28)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-        }
+        .nativeEditorHorizontalScrollFade()
         .frame(height: NativeEditorIslandMetrics.contextHeight)
         .clipShape(Capsule())
         .nativeEditorIslandSurface()
@@ -667,6 +637,50 @@ struct NativeEditorContextStrip: View {
 private struct NativeEditorActionScrollState: Equatable {
     var hasEarlierActions = false
     var hasMoreActions = false
+}
+
+private struct NativeEditorHorizontalScrollFade: ViewModifier {
+    @State private var scrollState = NativeEditorActionScrollState()
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollGeometryChange(for: NativeEditorActionScrollState.self) { geometry in
+                NativeEditorActionScrollState(
+                    hasEarlierActions: geometry.visibleRect.minX + geometry.contentInsets.leading > 1,
+                    hasMoreActions: geometry.contentSize.width + geometry.contentInsets.trailing - geometry.visibleRect.maxX > 1
+                )
+            } action: { _, value in
+                scrollState = value
+            }
+            .overlay(alignment: .trailing) {
+                if scrollState.hasMoreActions {
+                    LinearGradient(
+                        colors: [KriaColor.paper.opacity(0), KriaColor.paper],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: 28)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
+            .overlay(alignment: .leading) {
+                if scrollState.hasEarlierActions {
+                    LinearGradient(
+                        colors: [KriaColor.paper, KriaColor.paper.opacity(0)],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: 28)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
+    }
+}
+
+extension View {
+    func nativeEditorHorizontalScrollFade() -> some View {
+        modifier(NativeEditorHorizontalScrollFade())
+    }
 }
 
 struct NativeEditorTextContextStrip: View {
@@ -765,6 +779,8 @@ struct NativeEditorToolRail: View {
                     .contentMargins(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding, for: .scrollContent)
                     .onChange(of: selected, initial: true) { _, tool in reveal(tool, in: scroller, animated: true) }
                     .onChange(of: layout) { _, _ in reveal(selected, in: scroller, animated: false) }
+                    .nativeEditorHorizontalScrollFade()
+                    .clipShape(Capsule())
                 }
             } else {
                 // A rail that fits stays a plain row, so nothing that swipes the screen can land on it.

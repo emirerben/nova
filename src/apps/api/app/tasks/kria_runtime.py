@@ -11,7 +11,7 @@ import dataclasses
 import threading
 import time
 import uuid
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -152,6 +152,7 @@ from app.routes.generative_jobs import (
     prepare_editor_commit,
     variant_render_baseline,
 )
+from app.services import kria_editor_undo
 from app.services.choice_questions import (
     CONFLICT_ORDER_BASIS,
     CONFLICT_SPEECH_OCCURRENCE,
@@ -168,6 +169,7 @@ from app.services.choice_questions import (
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_refusal_consent,
     simpler_version_answer,
     simpler_version_ask,
     simpler_version_question,
@@ -1812,6 +1814,103 @@ def _without_tap_removals(planned: PlannedKriaTurn, snapshot: Mapping[str, Any])
     )
 
 
+def _restates_live_asks(brief: CreativeBrief | None, updates: Iterable[BriefUpdate]) -> bool:
+    """Every update repeats a live ask unchanged: same kind, scope and literal, no fact the
+    ask lacks, and (for an ask with no literal) the same description. A remove never does."""
+    from app.kria.brief import _complete_change  # noqa: PLC0415
+
+    live = {req.id: req for req in brief.live()} if brief is not None else {}
+
+    def words(value: str | None) -> str:
+        return " ".join((value or "").casefold().split())
+
+    def same(req: BriefRequirement, update: BriefUpdate) -> bool:
+        return (
+            update.kind == req.kind
+            and update.scope == req.scope
+            and update.literal == req.literal
+            and all(key in req.facts and req.facts[key] == v for key, v in update.facts.items())
+            and (
+                bool(req.literal)
+                or not update.description
+                or words(update.description) == words(req.description)
+            )
+        )
+
+    for update in updates:
+        if update.operation == "remove":
+            return False
+        if update.operation == "change":
+            target = live.get(update.target_requirement_id or "")
+            if target is None or not same(target, _complete_change(target, update)):
+                return False
+        elif not any(same(req, update) for req in live.values()):
+            return False
+    return True
+
+
+def _consented_policy_simplification(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread_id: uuid.UUID,
+    strategy: Mapping[str, Any] | None,
+    planned: PlannedKriaTurn,
+    *,
+    source_event: CreationThreadEvent | None,
+) -> tuple[dict[str, Any], tuple[str, ...]] | None:
+    """Tadic (prod thread aa36d140): approval readiness's own re-check held the draft on a
+    "Should I make a simpler version?" refusal the planner's check never raised, so the
+    planner's KRI-759 consent never ran and each "Evet" re-planned into the same hold. The
+    simplified strategy (and its notices) when the creator took that card for exactly the
+    fields readiness drops now, at the brief revision it was offered at."""
+    from app.kria.approval_readiness import (  # noqa: PLC0415
+        simplification_refusal,
+        simplified_strategy,
+    )
+
+    if not settings.kria_choice_questions_enabled or source_event is None:
+        return None
+    manifest = planned.readiness_manifest
+    refusal = simplification_refusal(manifest, strategy)
+    if refusal is None:
+        return None
+    rows = db.execute(
+        select(
+            CreationThreadEvent.role,
+            CreationThreadEvent.payload,
+            CreationThreadEvent.event_type,
+            CreationThreadEvent.content,
+        )
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role.in_({"user", "assistant"}),
+            CreationThreadEvent.sequence <= source_event.sequence,
+        )
+        .order_by(CreationThreadEvent.sequence)
+    ).all()
+    card = simpler_refusal_consent(
+        [tag_event(*row) for row in rows],
+        refusal.fields,
+        carried=settings.narrated_simpler_consent_fixes_enabled,
+    )
+    if card is None:
+        return None
+    offered = card.get("brief_version")
+    if offered is not None:
+        latest = load_latest_brief_sync(db, thread_id)
+        # The card covers strategy fields only: a new, changed or withdrawn ask on this turn is
+        # a request it never answered. A plan that only restates the asks already saved (the
+        # model often repeats them beside an "Evet") changes nothing the card was offered on.
+        if offered != (latest.version if latest is not None else 0) or not _restates_live_asks(
+            latest, planned.brief_updates
+        ):
+            return None
+    simplified = simplified_strategy(manifest, strategy) if manifest is not None else None
+    if simplified is None:
+        return None
+    # The same done-deal line the planner's KRI-759 consent says.
+    return simplified[0], (*simplified[1], *([refusal.agreed] if refusal.agreed else []))
+
+
 def _simpler_version_consent(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -1873,6 +1972,13 @@ def _simpler_version_consent(
         }:
             continue
         question = payload.get("choice_question") or simpler_version_question()
+        if (
+            coverage.get("reason") == "approval_requirements_not_ready"
+            and question.get("dropped_fields") is not None
+        ):
+            # A readiness policy refusal's card agrees to strategy fields
+            # (`_consented_policy_simplification`), never to leaving brief asks out.
+            return None
         named = question.get(SIMPLER_OMITTED_IDS_KEY)
         if isinstance(named, list):
             # KRI-968: consent covers exactly what the reply named, at that revision. A
@@ -2205,6 +2311,7 @@ def _complete_draft_turn(
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
     restore_record: dict[str, Any] | None = None  # KRI-442: pre-update lanes for Undo
+    undo_turn = False  # KRI-1384: this turn is a chat "undo that"
     pointer_sync: dict[str, Any] | None = None  # where an editor draft moved the session pointer
     scope_note = ""  # KRI-441: "I left X alone." for what layer 3 took back
     if apply_intent.tool_name == "draft.apply_strategy":
@@ -2500,6 +2607,24 @@ def _complete_draft_turn(
                 head if head is not None and head.base_job_id == job.id else None,
                 client_state,
             )
+            undo_turn = kria_editor_undo.is_undo_bundle(arguments.operations)
+            if undo_turn and head is not None and head.source_execution_id is not None:
+                # KRI-1384: re-derived under the head lock; a hand edit, Save or turn that
+                # landed after planning takes the undo away (the compile then refuses).
+                undone = db.get(CreatorAgentExecution, head.source_execution_id)
+                kria_editor_undo.attach(
+                    editor_base.projected,
+                    kria_editor_undo.undo_point(
+                        head,
+                        undone.result if undone is not None else None,
+                        job=job,
+                        variant=variant,
+                        source=editor_base.source,
+                        prior=editor_base.prior_payload,
+                        client_state=client_state,
+                        client_protocol=client_protocol,
+                    ),
+                )
             from app.kria.editor_repair import verify_editor_repair, verify_editor_repair_ownership
 
             verify_editor_repair_ownership(planned, plan_row=plan_row, job=job, session=session)
@@ -2711,7 +2836,9 @@ def _complete_draft_turn(
                 intent=arguments.summary,
                 edit_format=str(item.edit_format or "montage"),
                 editor_payload=(
-                    merge_editor_draft(prior_payload, editor_payload_dump(compiled.payload))
+                    compiled.draft
+                    if isinstance(compiled, kria_editor_undo.CompiledUndo)
+                    else merge_editor_draft(prior_payload, editor_payload_dump(compiled.payload))
                     if isinstance(compiled.payload, EditorCommitRequest)
                     else compiled.payload
                 ),
@@ -2719,6 +2846,33 @@ def _complete_draft_turn(
                 changes=changes,
                 client_state_id=state_id,
             )
+            if (
+                not undo_turn
+                and planned.suggestion_pin is None
+                and isinstance(compiled.payload, EditorCommitRequest)
+            ):
+                # KRI-1384: what "undo that" puts back. A scoped turn keeps its section record
+                # for plan review either way; an unscoped one stores a record only when the
+                # undo it allows is exact. An undo turn stores none, so undo never chains.
+                sealed = kria_editor_undo.seal(
+                    restore_record
+                    if scoped_fields is not None
+                    else kria_editor_undo.chat_record(
+                        editor_payload_dump(compiled.payload),
+                        compiled.before,
+                        turn_id=str(turn.id),
+                        base_job_id=str(job.id),
+                        timeline_rebase=compiled.timeline_rebase,
+                        clip_bar_ids=frozenset(_clip_label_links(job, editor_base.projected)),
+                    ),
+                    job=job,
+                    saved=variant,
+                    prior=prior_payload,
+                    written=document.editor_payload or {},
+                    before=compiled.before,
+                    changes=changes,
+                )
+                restore_record = sealed if sealed is not None else restore_record
             snapshot, snapshot_hash = canonical_snapshot(document)
             if client_state is not None:
                 state_trace = {
@@ -2758,6 +2912,35 @@ def _complete_draft_turn(
             thread.creator_id
         )
         readiness_report = None
+        consented = None
+        if readiness_required and apply_intent.tool_name == "draft.apply_strategy":
+            consented = _consented_policy_simplification(
+                db,
+                thread.id,
+                document.strategy,
+                planned,
+                source_event=db.get(CreationThreadEvent, turn.source_event_id),
+            )
+            if consented is not None:
+                simplified, simplified_notices = consented
+                # Its brief updates only restate saved asks (`_restates_live_asks`): saving
+                # them would add a second copy of an ask, so the brief stays as the card saw it.
+                effective_brief_updates = ()
+                document = document.model_copy(update={"strategy": simplified})
+                snapshot, snapshot_hash = canonical_snapshot(document)
+                added = [n for n in simplified_notices if n not in planned.policy_notices]
+                planned = replace(planned, policy_notices=(*planned.policy_notices, *added))
+                # The reply says what the simpler version changed: receipts keep the summary,
+                # which carries the policy notices (as the planner's KRI-759 summary does).
+                arguments = arguments.model_copy(
+                    update={"summary": " ".join([arguments.summary.strip(), *added]).strip()[:1000]}
+                )
+                reply_text = " ".join([reply_text, *added]).strip()
+                log.info(
+                    "kria_readiness_simpler_version_drafted",
+                    thread_id=str(thread.id),
+                    turn_id=str(turn.id),
+                )
         # KRI-901: one answer for the mark gate and readiness (an app with the mark card and a
         # draft the phone Talking writer renders); off it neither asks nor promises.
         _marks_route = render_intent is not None and _marks_route_sync(
@@ -3191,6 +3374,10 @@ def _complete_draft_turn(
                         reply_text = reply_from_diff(
                             phrases, notices=planned.policy_notices, notes=arguments.notes
                         )
+        if undo_turn:
+            # KRI-1384: the receipt names what the undo put back, never the model's guess.
+            reply_text = kria_editor_undo.undo_reply(compiled)
+            reply_lead, also_changed, receipt_reply = None, [], None
         if speed_notice:
             reply_text = f"{reply_text}\n{speed_notice}"
         if draft_research is not None and draft_research.ready:
@@ -3657,7 +3844,24 @@ def _complete_draft_turn(
                 # brief revision this reply never writes.
                 reply_text = readiness_reply(brief, readiness_report)
                 requirement_receipts = receipts_before_omission
-            can_offer_simpler = (
+            # Tadic: readiness's own "Should I make a simpler version?" needs its card, or a
+            # "yes" re-plans into the same hold.
+            policy_refusal = (readiness_report or {}).get("policy_refusal")
+            refusal_card = (
+                bool(policy_refusal)
+                # The card answers only the refusal: every held ask must be one readiness
+                # says the refusal alone holds. An ask held for its own reason is not
+                # something "yes" can agree to (readiness then names it and asks nothing).
+                and all(
+                    row["disposition"] in APPROVABLE
+                    or row["requirement_id"] in policy_refusal.get("requirement_ids", ())
+                    for row in readiness_report["requirements"]
+                )
+                and _choice_questions_on
+                and not simpler_version_chosen
+                and planned.suggestion_pin is None
+            )
+            can_offer_simpler = refusal_card or (
                 simpler_keeps_an_ask
                 and not simpler_version_chosen
                 and (not readiness_required or bool(unmet_ids) and not policy_problem)
@@ -3668,7 +3872,15 @@ def _complete_draft_turn(
             # KRI-968: name what the simpler version leaves out before the creator picks it,
             # and record those ids on the question so a tap consents to exactly them.
             leaves_out, simpler_question = (
-                _simpler_version_offer(brief, unmet_ids, arrow_only_ids=arrow_only_ids)
+                (
+                    "",
+                    {
+                        **simpler_version_question(policy_refusal["fields"]),
+                        "brief_version": brief.version if brief is not None else 0,
+                    },
+                )
+                if refusal_card
+                else _simpler_version_offer(brief, unmet_ids, arrow_only_ids=arrow_only_ids)
                 if can_offer_simpler
                 else ("", None)
             )
@@ -3694,7 +3906,11 @@ def _complete_draft_turn(
                 mode="respond",
                 turn_value="question",
                 choice_question=simpler_question,
-                response=_fit_reply(
+                # The refusal names what the simpler version changes and asks once, as the
+                # planner's own refusal does; the brief rows under it are not what "yes" drops.
+                response=policy_problem
+                if refusal_card
+                else _fit_reply(
                     reply_text,
                     " ".join(part for part in (draft_state, leaves_out, ask) if part),
                     notice=route_notice,
@@ -8792,6 +9008,29 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
     "artifact_eligibility_revoked": "Bu dışa aktarma artık kullanılamıyor.",
     "eligibility_changed_during_export": "Dışa aktarma sırasında bir şey değişti. Tekrar dene.",
 }
+# `content_plan_build.JOB_FAILURE_REASONS` in Turkish: the sentences without their retry invitation.
+_JOB_FAILURE_REASONS_TR: dict[str, str] = {
+    "creation_text_failed": (
+        "Onayladığın yazıyı koruyarak metni hazırlayamadım. Taslağın ve çekimlerin kayıtlı."
+    ),
+    "phone_capability_unavailable": (
+        "Bu düzenleme için gereken bir iPhone oluşturma özelliği şu anda kapalı. Düzenlemen ve "
+        "çekimlerin kayıtlı."
+    ),
+    "creation_text_timeout": (
+        "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden "
+        "uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az "
+        "klip ya da daha az yazı işe yarar."
+    ),
+    "plan_ai_timeout": (
+        "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. "
+        "Düzenlemen ve çekimlerin kayıtlı."
+    ),
+    "phone_plan_failed": (
+        "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. "
+        "Düzenlemen ve çekimlerin kayıtlı."
+    ),
+}
 _JOB_FAILURE_DEFAULT_TR = (
     "Bir şeyler ters gitti ve bu video tamamlanmadı. Yönün ve çekimlerin hâlâ kayıtlı; tekrar dene."
 )
@@ -8821,30 +9060,40 @@ def _failure_title(failure_code: str | None, *, device_failed: bool = False) -> 
     return say(en=en, tr=tr)
 
 
-def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | None:
+def _job_failure_copy(
+    failure_code: str | None, creator_detail: str | None, *, retry: bool = True
+) -> str | None:
     """`content_plan_build.job_failure_message` in the chat's language.
 
-    A Turkish chat gets the Turkish line for the code. The job's own ``error_detail`` for
-    the creator-facing codes is English-only text, so Turkish prefers the code's line.
+    A Turkish chat gets the Turkish line for the code. The job's own ``creator_detail`` is free
+    text with no Turkish line, so Turkish prefers the code's line. ``retry`` is whether the
+    failure's final recovery is a retry: when it is not, the sentence never invites one.
     """
     from app.tasks.content_plan_build import (  # noqa: PLC0415
         DEFAULT_JOB_FAILURE_MESSAGE,
         JOB_FAILURE_MESSAGES,
+        JOB_FAILURE_REASONS,
         job_failure_message,  # noqa: PLC0415
     )
 
-    english = job_failure_message(failure_code, detail)
+    english = job_failure_message(failure_code, creator_detail, retry=retry)
     if english is None:
         return None
     code = failure_code or ""
     # The code's own sentence and the default are catalog keys (KRI-1362); the creator-facing
-    # ``error_detail`` is free English text with no key, so German shows it as written.
+    # ``creator_detail`` is free text with no key, so German shows it as written.
     if (
         code in JOB_FAILURE_MESSAGES
         and code in _JOB_FAILURE_MESSAGES_TR
         and english == JOB_FAILURE_MESSAGES[code]
     ):
         return say(en=JOB_FAILURE_MESSAGES[code], tr=_JOB_FAILURE_MESSAGES_TR[code])
+    if (
+        code in JOB_FAILURE_REASONS
+        and code in _JOB_FAILURE_REASONS_TR
+        and english == JOB_FAILURE_REASONS[code]
+    ):
+        return say(en=JOB_FAILURE_REASONS[code], tr=_JOB_FAILURE_REASONS_TR[code])
     if code not in _JOB_FAILURE_MESSAGES_TR and english == DEFAULT_JOB_FAILURE_MESSAGE:
         return say(en=DEFAULT_JOB_FAILURE_MESSAGE, tr=_JOB_FAILURE_DEFAULT_TR)
     return say(en=english, tr=_JOB_FAILURE_MESSAGES_TR.get(code, _JOB_FAILURE_DEFAULT_TR))
@@ -9386,17 +9635,19 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         session.status = "awaiting_feedback"
         session.last_error = execution.error
         from app.tasks.content_plan_build import (  # noqa: PLC0415
-            CREATOR_FACING_DETAIL_CODES,
             JOB_FAILURE_MESSAGES,
+            creator_failure_detail,
         )
 
         # KRI-673/KRI-765: every code with a sentence of its own says why the render stopped.
         cause_codes = {
             "phone_capability_unavailable",
             "creation_text_failed",
-            *CREATOR_FACING_DETAIL_CODES,
             *JOB_FAILURE_MESSAGES,
         }
+        # The sentence follows the recovery chosen above, never the other way round: a card that
+        # offers no Retry never reads "try again" (KRI-1456).
+        creator_detail = creator_failure_detail(job)
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
         raw_recovery = (job.assembly_plan or {}).get("request_recovery")
@@ -9511,7 +9762,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # No exact retry exists for this render, but the cause is known: name it, then
             # the real way forward (KRI-765: "creation_text_failed" read as a generic stop).
             failure_content = (
-                f"{_job_failure_copy(failure_code, getattr(job, 'error_detail', None))} "
+                f"{_job_failure_copy(failure_code, creator_detail, retry=recovery == 'retry')} "
                 + say(
                     en="To try again, ask for a new version and review its approval.",
                     tr="Tekrar denemek için yeni bir sürüm isteyip onayını gözden geçir.",
@@ -9573,7 +9824,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
             # KRI-673: every code with a table sentence says why; the generic line is
             # only for codes nothing has words for.
-            failure_content = _job_failure_copy(failure_code, getattr(job, "error_detail", None))
+            failure_content = _job_failure_copy(
+                failure_code, creator_detail, retry=recovery == "retry"
+            )
         else:
             failure_content = say(
                 en=(

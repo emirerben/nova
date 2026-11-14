@@ -681,7 +681,7 @@ def _planner_item(fx: dict, *, job_status: str | None):  # noqa: ANN202
             ContentPlan: plan,
             Persona: persona,
             CreationThread: thread,
-            Job: SimpleNamespace(status=job_status or "done"),
+            Job: SimpleNamespace(id=item.current_job_id, status=job_status or "done"),
         }[model]
 
     class _Rows(list):

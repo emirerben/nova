@@ -665,6 +665,130 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(session.document.userSong)
     }
 
+    // MARK: KRI-1394 chat `set_user_song` staged in the editor
+
+    /// A chat turn's song change (volume and window) opens as the AI's unsaved edit: the Sounds tab shows it,
+    /// Save sends it as the `user_song` section, a later hand edit overrides the field it touches, and Undo
+    /// returns to the saved song.
+    func testChatSongVolumeAndWindowOpenAsUnsavedEditsThatSaveAndYieldToAHandEdit() async throws {
+        let chatSong: JSONValue = .object(["volume": .number(0.4), "window_start_s": .number(1.5),
+                                           "window_end_s": .number(10), "removed": .bool(false)])
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps, chatSong: chatSong)
+        XCTAssertTrue(session.hasUnsavedChanges, "the chat's song change is an unsaved edit")
+        XCTAssertEqual(session.dirtySections, [.userSong])
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.4, windowStartS: 1.5, windowEndS: 10))
+        XCTAssertEqual(session.yourSongControls?.volume, 0.4)
+        XCTAssertEqual(session.yourSongControls?.startS ?? 0, 1.5, accuracy: 0.001)
+
+        session.setUserSongVolume(0.7)
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.7, windowStartS: 1.5, windowEndS: 10),
+                       "the hand edit wins its field and keeps the chat's window")
+        XCTAssertFalse(session.hasOnlyChatStagedChanges)
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(volume: 0.7, windowStartS: 1.5, windowEndS: 10))
+
+        let (chatOnly, chatOnlyFake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps, chatSong: chatSong)
+        chatOnlyFake.commitResponse = okResponse("generation-2")
+        await chatOnly.save()
+        XCTAssertEqual(chatOnlyFake.lastRequest?.userSong, EditorCommitUserSong(volume: 0.4, windowStartS: 1.5, windowEndS: 10),
+                       "Save without opening the Sounds tab still sends the chat's change")
+
+        let (undone, _, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps, chatSong: chatSong)
+        undone.undo()
+        XCTAssertFalse(undone.hasUnsavedChanges)
+        XCTAssertNil(undone.document.userSong)
+        XCTAssertEqual(undone.yourSongControls?.volume, 1)
+    }
+
+    /// A chat removal opens as the removed song (camera audio back), saves as only `removed`, and Undo brings
+    /// the song back.
+    func testChatSongRemovalOpensRemovedSavesTheRemovalAndUndoes() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "lipsync", caps: ["volume": true, "window": false, "remove": true],
+                                                           chatSong: .object(["removed": .bool(true)]))
+        XCTAssertTrue(session.userSongRemoved)
+        XCTAssertNil(session.yourSong)
+        XCTAssertEqual(session.dirtySections, [.userSong])
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(removed: true))
+
+        let (undone, _, _) = try await userSongSession(mode: "lipsync", caps: ["volume": true, "window": false, "remove": true],
+                                                       chatSong: .object(["removed": .bool(true)]))
+        undone.undo()
+        XCTAssertFalse(undone.userSongRemoved)
+        XCTAssertNotNil(undone.yourSong)
+        XCTAssertFalse(undone.hasUnsavedChanges)
+    }
+
+    /// A lip-sync song's window is where the takes were filmed: a draft window is not staged, its volume is.
+    func testChatSongWindowOnALipSyncSongStagesOnlyTheVolume() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "lipsync", caps: ["volume": true, "window": false, "remove": true],
+            chatSong: .object(["volume": .number(0.5), "window_start_s": .number(5), "removed": .bool(false)]))
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.5))
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(volume: 0.5))
+    }
+
+    /// A chat turn that lands while the editor is open stages its song change like any other lane.
+    func testChatSongArrivingAfterOpenStages() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        fake.draftSnapshot = Self.chatSongHead(.object(["volume": .number(0.3), "removed": .bool(false)]), revision: 2,
+                                               jobID: try XCTUnwrap(fake.draftSnapshot.baseJobID))
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.3))
+        XCTAssertEqual(session.yourSongControls?.volume, 0.3)
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+    }
+
+    /// KRI-1384: a newer chat head that puts the song back to the saved one (`removed: false`, nothing set, as
+    /// replaying a `set_user_song` restore record writes it) drops the staged song from the open editor.
+    func testANewerChatHeadThatPutsTheSongBackDropsTheStagedSong() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let jobID = try XCTUnwrap(fake.draftSnapshot.baseJobID)
+        fake.draftSnapshot = Self.chatSongHead(.object(["volume": .number(0.4), "removed": .bool(false)]), revision: 2, jobID: jobID)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.4))
+        fake.draftSnapshot = Self.chatSongHead(.object(["removed": .bool(false)]), revision: 3, jobID: jobID)
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.document.userSong, "the chat's undo reached the editor")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.yourSongControls?.volume, 1)
+        session.undo()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.4), "the editor's Undo brings the chat song back")
+        session.redo()
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.document.userSong, "the same head is not applied twice")
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    /// The creator changed the song after the chat staged it: their edit is not the chat's to undo.
+    func testANewerChatHeadThatPutsTheSongBackLeavesASongTheCreatorEditedSinceAlone() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let jobID = try XCTUnwrap(fake.draftSnapshot.baseJobID)
+        fake.draftSnapshot = Self.chatSongHead(.object(["volume": .number(0.4), "removed": .bool(false)]), revision: 2, jobID: jobID)
+        await session.synchronizePromptRevision()
+        session.setUserSongVolume(0.7)
+        fake.draftSnapshot = Self.chatSongHead(.object(["removed": .bool(false)]), revision: 3, jobID: jobID)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.7))
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    /// A chat turn's head (`merge_editor_draft`): the flat `user_song` section beside its nested copy, stamped
+    /// with the phone's editor state version like every chat head.
+    private static func chatSongHead(_ song: JSONValue, revision: Int, jobID: String) -> DraftSnapshot {
+        DraftSnapshot(draftID: "d\(revision)", itemID: "item", variantKey: "variant", draftRevision: revision,
+            snapshotHash: "h", etag: "e", baseJobID: jobID, baseGenerationID: "generation-1",
+            snapshot: ["kind": .string("editor"), "schema_version": .number(2), "editor_payload": .object([
+                "base_generation": .string("generation-1"), "editor_state_version": .number(2),
+                "user_song": song, "sections": .object(["user_song": song])])],
+            canUndo: true, createdAt: .now)
+    }
+
     private static let allSongCaps = ["volume": true, "window": true, "remove": true]
     private func okResponse(_ generation: String) -> EditorCommitResponse {
         EditorCommitResponse(ok: true, generation: generation,
@@ -1450,7 +1574,7 @@ final class NativeEditorSessionTests: XCTestCase {
     /// bed plays 1s...3s of it; `caps` are the nested `user_song.{volume,window,remove}` editable flags.
     private func userSongSession(mode: String, caps: [String: Bool], songDuration: Double = 200, videoDuration: Double = 2,
                                  originalAudio: Bool = false, savedOriginalLevel: Double? = nil,
-                                 pool: NativeEditorSourcePool? = nil,
+                                 pool: NativeEditorSourcePool? = nil, chatSong: JSONValue? = nil,
                                  editVariant: ((inout [String: JSONValue]) -> Void)? = nil) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
         let threadID = UUID(), jobID = UUID()
         let wav = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).wav")
@@ -1492,9 +1616,10 @@ final class NativeEditorSessionTests: XCTestCase {
             })),
         ])
         let fake = EditorCommitSpy(
-            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
-                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
-                snapshot: [:], canUndo: false, createdAt: .now),
+            draftSnapshot: chatSong.map { Self.chatSongHead($0, revision: 2, jobID: jobID.uuidString) }
+                ?? DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                    snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                    snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: authoritative
         )
         fake.sourcePoolResult = pool ?? NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
@@ -2781,10 +2906,10 @@ final class NativeEditorSessionTests: XCTestCase {
         session.replaceDocumentForTesting(document)
         let target = EditorSourceRegistrationTarget(itemID: footageTarget.itemID, variantID: footageTarget.variantID,
             clientImportID: UUID(), baseGeneration: footageTarget.baseGeneration, guidedRevisionNumber: 7, sourceKind: .visual)
-        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil,
+                                                     splitPanel: .init(sectionID: "s", panel: 1, offset: 0))
         uploads.beginEditorPlacement(placement)
         session.useMediaUploads(uploads)
-        session.stageSplitPanelPlacementForTesting(placement.id, sectionID: "s", panel: 1, offset: 0)
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "photo",
             sourceIndex: 4, source: nil, error: nil, reasonCode: nil, retryable: false)
         try await session.placeEditorSource(placement, response: response)
@@ -2807,6 +2932,30 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertNoThrow(try compiler.compile(document: extended, clips: session.timelineClips, items: [], sources: [0: footage, 4: still]),
                              "A photo extended to \(length) s must compile")
         }
+    }
+
+    func testAddedSplitPanelPhotoMovesThePlayheadOntoTheNewBlock() async throws {
+        let (session, uploads, footageTarget) = try await Self.devicePlacementSession()
+        let lead = EditorTimelineSlot(id: "lead", clipIndex: 0, inS: 0, durationS: 3, raw: ["source_duration_s": .number(4)])
+        var member = EditorTimelineSlot(id: "anchor", clipIndex: 0, inS: 0, durationS: 2, raw: ["source_duration_s": .number(4)])
+        member.setSplitMembership(sectionID: "s", panelIndex: 0, offset: 0)
+        var document = EditorDocument(clips: [lead, member], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.revision.baseGeneration = footageTarget.baseGeneration
+        document.splitScreenSections = [.init(id: "s", durationS: 9, panelCount: 2)]
+        session.replaceDocumentForTesting(document)
+        let target = EditorSourceRegistrationTarget(itemID: footageTarget.itemID, variantID: footageTarget.variantID,
+            clientImportID: UUID(), baseGeneration: footageTarget.baseGeneration, guidedRevisionNumber: 7, sourceKind: .visual)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil,
+                                                     splitPanel: .init(sectionID: "s", panel: 1, offset: 0))
+        uploads.beginEditorPlacement(placement)
+        session.useMediaUploads(uploads)
+        session.currentTime = 0
+        let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "photo",
+            sourceIndex: 4, source: nil, error: nil, reasonCode: nil, retryable: false)
+        try await session.placeEditorSource(placement, response: response)
+        let block = try XCTUnwrap(session.timelineClips.first { $0.slotID == placement.id.uuidString })
+        XCTAssertEqual(block.start, 3, accuracy: 1e-9, "The new block sits in the section, after the lead clip")
+        XCTAssertEqual(session.currentTime, block.start, accuracy: 1e-9, "The playhead lands on the block so the creator sees it")
     }
 
     func testInvalidTimelineIsAPermanentFailureThatTellsTheCreatorToUndo() {
@@ -8880,7 +9029,7 @@ final class NativeEditorSessionTests: XCTestCase {
         return (session, uploads, target)
     }
 
-    private static func devicePlacementSessionWithSpy() async throws -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
+    static func devicePlacementSessionWithSpy() async throws -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
         let threadID = UUID()
         var authoritative = variant(duration: 2, generation: "generation-1")
         authoritative["render_destination"] = .string("device")

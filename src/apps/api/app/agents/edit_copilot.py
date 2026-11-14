@@ -14,12 +14,13 @@ import math
 import re
 import unicodedata
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, Literal, NamedTuple, get_args
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.agents import editor_ops_v2 as _v2
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
@@ -29,9 +30,11 @@ from app.agents._schemas.text_animation_phases import (
     phases_patch,
 )
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.agents._tool_calls import ToolExchange
 from app.agents.editor_ops_v2 import overlays as _v2_overlays
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.length_options import length_options
+from app.agents.model_registry import JSON_COPILOT_MODEL, cross_provider_fallback
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
@@ -39,8 +42,10 @@ from app.kria.clip_tilt import ClipTilt
 from app.kria.reply_language import prompt_language_line, say
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
+from app.schemas.editor_window import below_editor_minimum
 from app.services.editor_limits import (
     EDITOR_MAX_TIMELINE_SLOTS,
+    EDITOR_MIN_CLIP_S,
     MAX_EDITOR_OPS,
     MOTION_FPS,
     MOTION_MAX_ACTIVE_FRAMES,
@@ -127,7 +132,23 @@ log = structlog.get_logger()
 # "repairs"; the first ask of a turn is byte-identical.
 # v125 (KRI-1388): with no HISTORY STATE (every iPhone chat) the copilot says it cannot undo or
 # replay from chat instead of claiming there is nothing to undo or repeat.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-13-v125"
+# v126 (KRI-1394): editor actions chat gained on iPhone edits, each taught in its own fragment and
+# printed only where the snapshot offers it, so every other prompt is byte-identical:
+# set_user_song (YOUR SONG, the creator's own song), patch_caption_line (one caption line's size
+# and place, `caption_line_placement`), set_layer_order (LAYER ORDER), remove_full_screen_opening
+# (BACKGROUND `full_screen_opening`) and set_video_shape (VIDEO SHAPE). An edit with a creator song
+# and the `user_song` family drops the AUDIO LIMITS line that said chat cannot change it.
+# v127 (KRI-1393): EDIT_COPILOT_OUTPUT_MODE=tools answers with a tool per open op. Its system block
+# is these rules with each op's definition bullet moved into that op's tool description and the
+# JSON output block replaced by prompts/edit_copilot_tools.txt; the turn block is the user
+# message. JSON mode (the default) is byte-identical.
+# v128 (KRI-1394): make_split_full_screen (SPLIT FULL SCREEN, prompts/edit_copilot_ops/
+# split_full_screen.txt), printed only where a split section can play part full screen from chat,
+# so every other prompt is byte-identical.
+# v129 (KRI-1420): add_split_panel_clip, a second clip in a split panel from the approved source
+# pool, taught in the SPLIT SCREEN fragment (prompts/edit_copilot_ops/split_screen.txt), printed
+# only where split_screen_available is true, so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v129"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -764,6 +785,10 @@ def _load_motion_preset_controls() -> dict[str, dict[str, dict[str, Any]]]:
 
 
 _MOTION_PRESET_CONTROLS = _load_motion_preset_controls()
+# The fields a patch_motion_block patch may change.
+MOTION_PATCH_FIELDS = frozenset(
+    {"start_s", "end_s", "palette", "intensity", "params", "speed", "easing", "hold_frames"}
+)
 _OVERLAY_PATCH_FIELDS = frozenset(
     {
         "start_s",
@@ -840,28 +865,55 @@ class RejectedOp(BaseModel):
 
 _MAX_REPAIR_ROUNDS = 2
 _MAX_REPAIR_OPS = 12
+# Typed tool transport: a model that calls one tool per response (Sol) needs a round per
+# operation before it calls `reply`: at most one per op of a bundle, then the reply. The turn
+# deadline bounds them too.
+MAX_TOOL_ROUNDS = MAX_EDITOR_OPS + 1
 
 
 class CopilotRepair(BaseModel):
     """One repair round (KRI-1387): re-ask for the rejected ops only, keep the rest."""
 
-    repair_round: int = Field(ge=1, le=_MAX_REPAIR_ROUNDS)
+    repair_round: int = Field(ge=1, le=MAX_TOOL_ROUNDS)
     # The first answer's own fields except its ops: its reply, claim, intent and confidence
     # describe the whole request, so every round keeps them.
     base: dict[str, Any]
     # Ops already accepted (and compiled, when the caller checks compile). Never re-parsed.
     kept_ops: list[dict[str, Any]] = Field(default_factory=list)
-    rejected: list[RejectedOp] = Field(min_length=1, max_length=_MAX_REPAIR_OPS)
+    rejected: list[RejectedOp] = Field(default_factory=list, max_length=_MAX_REPAIR_OPS)
     # Rejections with no op to re-ask (a pass over parsed ops dropped it): every round names them.
     unrepairable: list[RejectedOp] = Field(default_factory=list)
     # Server notes from earlier rounds (time zone, missing filming times) for the kept ops.
     notes: list[str] = Field(default_factory=list)
+    # Typed tool transport only (KRI-1393): every earlier answer of this turn with the tool
+    # results it got, sent back as the conversation. In memory only: never dumped or persisted.
+    exchanges: list[ToolExchange] = Field(default_factory=list, exclude=True)
+    # Typed tool transport only: the first answer called operations but not `reply`. This round
+    # hears what applied and writes the turn's reply, so its own fields become the answer's.
+    awaiting_reply: bool = Field(default=False, exclude=True)
+
+    @model_validator(mode="after")
+    def _has_work(self) -> CopilotRepair:
+        if not self.awaiting_reply and (
+            not self.rejected or self.repair_round > _MAX_REPAIR_ROUNDS
+        ):
+            raise ValueError("a repair round needs a rejected op, within the repair rounds")
+        return self
 
     def answer(self, response: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
         """This round's corrected ops under the first answer's fields, and the repair ids an
         unmet entry settled. The round's own intent, confidence and reply are ignored: an
-        unsure correction must not turn the kept edit into a question."""
+        unsure correction must not turn the kept edit into a question. A round awaiting the
+        reply is the exception: its fields are the turn's answer."""
         ops = response.get("ops")
+        if self.awaiting_reply:
+            unmet = response.get("unmet_requests")
+            settled = {
+                tag
+                for item in (unmet if isinstance(unmet, list) else [])
+                if (tag := _repair_tag(item)) is not None
+            }
+            return {**response, "ops": ops if isinstance(ops, list) else []}, settled
         own_unmet = response.get("unmet_requests")
         own_unmet = (
             [item for item in own_unmet if isinstance(item, dict)]
@@ -942,6 +994,9 @@ class EditCopilotOutput(BaseModel):
     )
     # KRI-1387: the next repair round, when an edit turn has rejected ops a round could fix.
     repair: CopilotRepair | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Every op that did not apply, as the parser saw it (the typed tool transport answers each
+    # call with its own result). In memory only: never dumped.
+    not_applied: list[RejectedOp] = Field(default_factory=list, exclude=True)
 
 
 _MAX_UNMET_REQUESTS = 6
@@ -1486,6 +1541,20 @@ def _format_snapshot(snapshot: dict) -> str:
                     },
                     sort_keys=True,
                 )
+            )
+    full_screen = snapshot.get("split_full_screen")
+    if isinstance(full_screen, list) and full_screen:
+        lines.append("SPLIT FULL SCREEN (part of a section full screen, make_split_full_screen):")
+        for row in full_screen[:20]:
+            if not isinstance(row, dict) or row.get("panel_count") not in (2, 3):
+                continue
+            lines.append(
+                f"section {_clean_prompt_data(row.get('section_id'), max_chars=160)!r} plays "
+                f"{_fmt_round3(_first_number(row, ('start_s',)))}-"
+                f"{_fmt_round3(_first_number(row, ('end_s',)))}s with "
+                f"{row['panel_count']} panels; at_s from "
+                f"{_fmt_round3(_first_number(row, ('at_s_min',)))} to "
+                f"{_fmt_round3(_first_number(row, ('at_s_max',)))}"
             )
     appearance = _text_appearance_inventory(snapshot)
     if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
@@ -2136,6 +2205,29 @@ def _format_snapshot(snapshot: dict) -> str:
         else:
             lines.append("(none)")
 
+    shape = snapshot.get("video_shape")
+    if isinstance(shape, dict):
+        axes = [
+            f"{key}={_field(shape.get(key), max_chars=20)} "
+            f"({'editable' if shape.get(f'{key}_editable') else 'not editable'})"
+            for key in ("orientation", "landscape_fit")
+        ]
+        lines.append("\nVIDEO SHAPE (change it with set_video_shape): " + "; ".join(axes))
+
+    layer_order = snapshot.get("layer_order")
+    if isinstance(layer_order, dict):
+        lines.append("\nLAYER ORDER (ids bottom to top; move one with set_layer_order):")
+        for name, label in (
+            ("cards", "cards on top of the video"),
+            ("pictures", "uploaded pictures"),
+        ):
+            ids = layer_order.get(name)
+            if isinstance(ids, list) and ids:
+                lines.append(
+                    f"{label}: "
+                    + ", ".join(repr(_field(value, max_chars=80)) for value in ids[:20])
+                )
+
     if isinstance(snapshot.get("color_moments"), dict):
         lane = snapshot["color_moments"]
         fade = _fmt_round3(lane.get("end_fade_s")) if lane.get("end_fade_s") else "none"
@@ -2187,6 +2279,23 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
             else:
                 lines.append("current: (none)")
+            if background.get("opening_removable") is True:
+                from app.agents.editor_ops_v2.background import is_opening  # noqa: PLC0415
+
+                opening = next(
+                    (
+                        span
+                        for span in background.get("full_screen_windows") or []
+                        if is_opening(span)
+                    ),
+                    {},
+                )
+                lines.append(
+                    "full_screen_opening: the speaker is full screen "
+                    f"{_fmt_round3(_first_number(opening, ('start_s',)))}-"
+                    f"{_fmt_round3(_first_number(opening, ('end_s',)))}s before the background "
+                    "(remove_full_screen_opening takes it away)"
+                )
             if background.get("color_available") is True:
                 lines.append("color: available (a plain colour can go behind the speaker)")
             elif background.get("color_available") is False:
@@ -2286,6 +2395,33 @@ def _format_snapshot(snapshot: dict) -> str:
             f"stroke={_fmt_round3(_first_number(meta, ('stroke_width',)))} "
             f"shadow={meta.get('shadow_enabled')!r}"
         )
+        placement = captions.get("line_placement")
+        if isinstance(placement, dict):
+            own = placement.get("lines") if isinstance(placement.get("lines"), dict) else {}
+            shared = {
+                key: _first_number(placement, (key,))
+                for key in ("size_px", "position_x_frac", "position_y_frac")
+            }
+            lines.append(
+                "caption_line_placement: available (patch_caption_line); every line: "
+                + " ".join(
+                    f"{key}={'default' if value is None else _fmt_round3(value)}"
+                    for key, value in shared.items()
+                )
+                + "; lines with their own: "
+                + (
+                    ", ".join(
+                        f"{_field(cue_id, max_chars=80)!r} "
+                        + " ".join(
+                            f"{key}={_fmt_round3(_safe_finite_float(value))}"
+                            for key, value in values.items()
+                        )
+                        for cue_id, values in list(own.items())[:20]
+                        if isinstance(values, dict)
+                    )
+                    or "(none)"
+                )
+            )
         capabilities = snapshot.get("editor_capabilities")
         if isinstance(capabilities, dict) and capabilities.get("caption_animation") is True:
             phases = meta.get("animation_phases")
@@ -2348,6 +2484,30 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
         else:
             lines.append("(none)")
+
+    song = snapshot.get("user_song")
+    if isinstance(song, dict):
+        lines.append("\nYOUR SONG (the creator's own song; change it with set_user_song):")
+        if song.get("removed"):
+            lines.append("removed in this draft (the camera's own sound plays)")
+        else:
+            least = _fmt_num(_first_number(song, ("min_window_s",)))
+            window = (
+                f"window: editable (keep at least {least}s)"
+                if song.get("window_editable")
+                else "window: locked (lip-sync)"
+                if song.get("mode") == "lipsync"
+                else "window: not editable"
+            )
+            lines.append(
+                f"mode={_field(song.get('mode'), max_chars=20)} "
+                f"length={_fmt_round3(_first_number(song, ('duration_s',)))}s "
+                f"plays {_fmt_round3(_first_number(song, ('window_start_s',)))}-"
+                f"{_fmt_round3(_first_number(song, ('window_end_s',)))}s of the song "
+                f"volume={_fmt_round3(_first_number(song, ('volume',)))} "
+                f"(volume {'editable' if song.get('volume_editable') else 'not editable'}); "
+                f"{window}; removable={song.get('removable') is True}"
+            )
 
     audio_notes = snapshot.get("audio_notes")
     if isinstance(audio_notes, list) and audio_notes:
@@ -2692,33 +2852,43 @@ def _kept_notes(state: _ParseState, repairable: Sequence[RejectedOp]) -> list[st
     return [note for note in dict.fromkeys(state.reply_notes) if note not in explaining]
 
 
-def repair_feedback(rejections: Sequence[RejectedOp]) -> str:
+_JSON_REPAIR_ANSWER = (
+    "For each item, return ONE corrected operation in `ops` carrying "
+    '`"repairs": "<id>"`, or, when it cannot be done on this edit, an `unmet_requests` '
+    'entry `{"request", "reason", "repairs": "<id>"}` written for the creator. Send no '
+    "other operations. Return the same JSON keys as before."
+)
+
+
+def repair_feedback(rejections: Sequence[RejectedOp], *, answer: str = _JSON_REPAIR_ANSWER) -> str:
     """The repair block for rejected ops (KRI-1387): each op, why it failed, how to fix it.
 
     Every rejection kind comes back so the model can swap a closed family for an open one,
     retarget a stale index, fill a missing field, fix a value, or say it can't be done.
-    ``rejections[i]`` is answered under the id ``r{i + 1}``.
+    ``rejections[i]`` is answered under the id ``r{i + 1}``. ``answer`` says how to reply: JSON
+    keys by default, tool calls for the typed tool transport (KRI-1393).
     """
     lines = [
         "## REPAIR: OPERATIONS THAT WERE NOT APPLIED",
         "",
         "Your previous answer to this message was checked. The operations below were NOT "
         "applied. Every other operation in it is accepted and will apply: do not send it "
-        "again. For each item, return ONE corrected operation in `ops` carrying "
-        '`"repairs": "<id>"`, or, when it cannot be done on this edit, an `unmet_requests` '
-        'entry `{"request", "reason", "repairs": "<id>"}` written for the creator. Send no '
-        "other operations. Return the same JSON keys as before.",
+        "again. " + answer,
         "",
     ]
     for index, item in enumerate(rejections, start=1):
-        label = _REJECTION_KINDS.get(item.reason, (item.reason, None))[0]
-        sent = json.dumps(item.raw, ensure_ascii=False, sort_keys=True)[:600] if item.raw else "{}"
-        why = " ".join(part.strip() for part in (item.detail, item.note, item.hint) if part)
-        lines.append(f"- r{index} `{item.op}` {sent}")
-        lines.append(f"  Not applied ({label}): {why}"[:900])
+        lines.extend(repair_item_lines(index, item))
     if any(item.reason in {"invalid_value", "missing_required"} for item in rejections):
         lines.extend(("", _VALUE_RULES))
     return "\n".join(lines)
+
+
+def repair_item_lines(index: int, item: RejectedOp) -> tuple[str, str]:
+    """One rejected op as the repair block shows it: what was sent, and why it did not apply."""
+    label = _REJECTION_KINDS.get(item.reason, (item.reason, None))[0]
+    sent = json.dumps(item.raw, ensure_ascii=False, sort_keys=True)[:600] if item.raw else "{}"
+    why = " ".join(part.strip() for part in (item.detail, item.note, item.hint) if part)
+    return f"- r{index} `{item.op}` {sent}", f"  Not applied ({label}): {why}"[:900]
 
 
 def _repair_tag(raw: object) -> str | None:
@@ -3496,7 +3666,11 @@ def _sanitize_pending_actions(
                 action["integrity"] = integrity
         if name == "set_media_duration" and "duration_s" in raw:
             duration = _as_float(raw.get("duration_s"))
-            if duration is None or not 0.1 <= duration <= MAX_PROPOSAL_DURATION_S:
+            if (
+                duration is None
+                or below_editor_minimum(duration)
+                or duration > MAX_PROPOSAL_DURATION_S
+            ):
                 continue
             action["duration_s"] = round(duration, 6)
         sanitized.append(action)
@@ -3738,7 +3912,7 @@ def _clean_bulk_operation(
         payload.pop("preset_id", None)
     if name == "set_media_duration":
         duration = _as_float(payload.get("duration_s"))
-        if duration is None or not 0.1 <= duration <= MAX_PROPOSAL_DURATION_S:
+        if duration is None or below_editor_minimum(duration) or duration > MAX_PROPOSAL_DURATION_S:
             state.invalid_value()
             return None
         payload["duration_s"] = round(duration, 6)
@@ -3938,12 +4112,17 @@ def _with_direction_fragment(prompt: str, snapshot: object) -> str:
 
 
 class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
+    """The copilot in plain JSON, on Gemini: slide posts and creation text composition.
+
+    The chat turn runs ``ChatEditCopilotAgent``, the only copilot ``EDIT_COPILOT_MODEL`` moves.
+    """
+
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.edit.copilot",
         prompt_id="edit_copilot",
         sensitive_io=True,
         prompt_version=EDIT_COPILOT_PROMPT_VERSION,
-        model=settings.edit_copilot_model,
+        model=JSON_COPILOT_MODEL,
         max_attempts=2,
         backoff_s=(2.0,),
         # Durable Kria turns supply a shared deadline and post-processing
@@ -3952,7 +4131,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # 124.3 s at 16,384) before this deadline, so it ends as a retryable truncation
         # and never as an outcome-unknown fence (same rule as the Main Creator).
         timeout_s=130.0,
-        thinking_level=settings.edit_copilot_thinking_level,
+        thinking_level="high",
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.012,
     )
@@ -3971,17 +4150,34 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # Cache-friendly order: everything stable across turns first (rules, catalogs,
         # lane fragments), per-turn data last, so Gemini's implicit prefix cache
         # can reuse the long shared head.
+        prompt = self.rules_prompt(input)
+        turn = self.turn_prompt(input)
+        prompt = f"{prompt.rstrip(chr(10))}\n\n{turn.rstrip(chr(10))}\n"
+        if input.repair is not None:
+            prompt = f"{prompt}\n{repair_feedback(input.repair.rejected)}\n"
+        # KRI-520: the reply-language instruction goes last, after every fragment.
+        # "" for English/unknown: byte-identical prompt.
+        language_line = prompt_language_line(input.reply_language)
+        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
+
+    def rules_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
+        """Rules, catalogs and the lane fragments this edit offers: the same for every turn of
+        an edit."""
         prompt = load_prompt(
             "edit_copilot",
             font_catalog=_font_catalog(),
             effect_catalog=_effect_catalog(),
             caption_font_catalog=_caption_font_catalog(),
             custom_effect_catalog=_custom_effect_catalog(),
+            min_clip_s=f"{EDITOR_MIN_CLIP_S:g}",
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         prompt = _with_scope_fragment(prompt, input.variant_snapshot)
-        prompt = _with_direction_fragment(prompt, input.variant_snapshot)
-        turn = load_prompt(
+        return _with_direction_fragment(prompt, input.variant_snapshot)
+
+    def turn_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
+        """This turn's message, draft and history."""
+        return load_prompt(
             "edit_copilot_turn",
             utterance=(
                 _clean_component_data(input.utterance)
@@ -3993,13 +4189,6 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             snapshot=_format_snapshot(input.variant_snapshot),
             max_ops=_operation_limit(input.variant_snapshot),
         )
-        prompt = f"{prompt.rstrip(chr(10))}\n\n{turn.rstrip(chr(10))}\n"
-        if input.repair is not None:
-            prompt = f"{prompt}\n{repair_feedback(input.repair.rejected)}\n"
-        # KRI-520: the reply-language instruction goes last, after every fragment.
-        # "" for English/unknown: byte-identical prompt.
-        language_line = prompt_language_line(input.reply_language)
-        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
         try:
@@ -4521,7 +4710,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 repair_round=next_round,
                 base=(
                     repair.base
-                    if repair is not None
+                    if repair is not None and not repair.awaiting_reply
                     else {
                         **{k: v for k, v in data.items() if k not in {"ops", "research_request"}},
                         "claimed_ops": model_claimed_ops,
@@ -4553,6 +4742,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 claimed_ops=claimed_ops,
                 length_options=offered_lengths if outcome == "clarification" else [],
                 repair=next_repair,
+                not_applied=not_applied,
             )
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc
@@ -4587,6 +4777,21 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
     def refusal_clarification(self) -> str:
         return self.schema_clarification()
+
+
+class ChatEditCopilotAgent(EditCopilotAgent):
+    """The chat turn's copilot (``run_copilot_turn``): EDIT_COPILOT_MODEL at
+    EDIT_COPILOT_THINKING_LEVEL, read at import. ``configure_creator_agent`` applies
+    EDIT_COPILOT_OUTPUT_MODE to it, so a non-Gemini model here can answer with tool calls."""
+
+    spec: ClassVar[AgentSpec] = replace(
+        EditCopilotAgent.spec,
+        model=settings.edit_copilot_model,
+        # An OpenAI or Anthropic copilot answers on Gemini after a provider failure (KRI-1393);
+        # the Gemini default has none, as before.
+        fallback_models=cross_provider_fallback(settings.edit_copilot_model),
+        thinking_level=settings.edit_copilot_thinking_level,
+    )
 
 
 _TR_REFERENT_NOUNS = {"images": "Görseller", "videos": "Videolar", "clips": "Klipler"}
@@ -6067,12 +6272,12 @@ def _coerce_payload(
         start, end = _slot_window(slot) if isinstance(slot, dict) else (None, None)
         if start is not None and end is not None:
             remaining = end - start - out["start_s"]
-            if remaining < 0.1:
+            if below_editor_minimum(remaining):
                 state.invalid_value()
                 return None
     if name == "trim_output_start":
         total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
-        if total_s is not None and total_s - out["start_s"] < 0.1:
+        if total_s is not None and below_editor_minimum(total_s - out["start_s"]):
             state.invalid_value()
             return None
     if name == "remove_music":
@@ -6292,17 +6497,7 @@ def _coerce_payload(
             if not isinstance(patch, dict) or not patch:
                 state.invalid_value()
                 return None
-            allowed_patch = {
-                "start_s",
-                "end_s",
-                "palette",
-                "intensity",
-                "params",
-                "speed",
-                "easing",
-                "hold_frames",
-            }
-            if any(key not in allowed_patch for key in patch):
+            if any(key not in MOTION_PATCH_FIELDS for key in patch):
                 state.invalid_value()
                 return None
             clean_patch: dict[str, Any] = {}
