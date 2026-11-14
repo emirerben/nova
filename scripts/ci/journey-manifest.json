@@ -3817,6 +3817,7 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_create.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_layout.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_loop_fill.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_panel_add.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_panel_order.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_remove.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_section_order.json",
