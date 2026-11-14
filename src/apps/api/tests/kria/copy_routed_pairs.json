@@ -793,6 +793,16 @@
   ],
   [
    "app/services/creation_text_degrade.py",
+   "I couldn't add {text} the way you asked",
+   "{text} metnini istediğin gibi ekleyemedim"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
+   "I couldn't size {text} exactly as you asked",
+   "{text} metnini tam istediğin boyutta ayarlayamadım"
+  ],
+  [
+   "app/services/creation_text_degrade.py",
    "Kept {text} exactly as you wrote it and left out the change I couldn't make to it",
    "{text} metnini yazdığın gibi bıraktım, ona yapamadığım değişikliği eklemedim"
   ],

@@ -35,7 +35,6 @@ TextGateReason = Literal[
     "copy_changed",
     "unasked_text",
     "replay_failed",
-    "research_missing",
     "layer_shape",
     "hierarchy_unmet",
     "editorial_unmet",
@@ -45,15 +44,16 @@ TextGateReason = Literal[
 # How a rejected program is narrowed, per typed reason. A reason not listed is not degraded.
 #   one_op       drop the single composer op whose absence lets the whole program pass;
 #   added_text   drop the composer's added lines no ask authorized (they are all unasked).
+# A missing approved layer (`research_missing`) is not listed: the parser refuses a composer
+# op that removes held copy, and a removed layer row fails `copy_changed` first.
 _STRATEGY: Mapping[str, Literal["one_op", "added_text"]] = {
     "copy_changed": "one_op",
     "replay_failed": "one_op",
-    "research_missing": "one_op",
     "layer_shape": "one_op",
     "unasked_text": "added_text",
 }
 
-# Rejections whose item renders in part: the words are on screen, one asked behavior is not.
+# Rejections where the rest of the text renders without one asked behavior or line.
 _SHRINKABLE = frozenset({"incomplete", "hierarchy_unmet", "editorial_unmet"})
 
 
@@ -116,9 +116,21 @@ class TextDrop:
                 tr="Yazı isteğinin her kısmını yapamadım, videoda yapabildiğim kısımlar var",
             )
         if self.reason == "hierarchy_unmet":
+            if quoted is None:
+                return say(
+                    en="I couldn't size your texts exactly as you asked",
+                    tr="Yazıları tam istediğin boyutlarda ayarlayamadım",
+                )
+            if self.action == "dropped":
+                return say(
+                    en="I couldn't add {text} the way you asked",
+                    tr="{text} metnini istediğin gibi ekleyemedim",
+                    text=quoted,
+                )
             return say(
-                en="I couldn't size your texts exactly as you asked",
-                tr="Yazıları tam istediğin boyutlarda ayarlayamadım",
+                en="I couldn't size {text} exactly as you asked",
+                tr="{text} metnini tam istediğin boyutta ayarlayamadım",
+                text=quoted,
             )
         if self.reason == "editorial_unmet":
             if count > 1:
@@ -178,7 +190,7 @@ class TextDrop:
 
 # Drops whose note is "Left out one text change for ... because I couldn't make it fit". Past
 # `_FIT_LINES` of them (a composer that mistimed every label), they share one counted line.
-_FIT_REASONS = frozenset({"replay_failed", "research_missing", "layer_shape"})
+_FIT_REASONS = frozenset({"replay_failed", "layer_shape"})
 _FIT_LINES = 3
 
 
@@ -257,13 +269,18 @@ class Degraded(Generic[T]):
 
 
 def shrink(
-    error: CreationTextCompositionError, *, text: str | None = None, asked: bool = True
+    error: CreationTextCompositionError,
+    *,
+    text: str | None = None,
+    asked: bool = True,
+    action: Literal["dropped", "shrunk"] = "shrunk",
 ) -> TextDrop:
     """Render without the one asked behavior ``error`` names, or re-raise it when it is not one
-    of the gates that may (``_SHRINKABLE``). ``text`` and ``asked`` are the drop's own."""
+    of the gates that may (``_SHRINKABLE``). ``text``, ``asked`` and ``action`` are the drop's
+    own: ``dropped`` when the words ``text`` names are not on screen at all."""
     if error.reason not in _SHRINKABLE:
         raise error
-    return TextDrop(reason=error.reason, action="shrunk", text=text, asked=asked)  # type: ignore[arg-type]
+    return TextDrop(reason=error.reason, action=action, text=text, asked=asked)  # type: ignore[arg-type]
 
 
 def literal_ops(

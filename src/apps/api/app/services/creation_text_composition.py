@@ -2355,16 +2355,21 @@ def _compose_creation_text(
             )
         ]
         final_facts = plan_facts_from_editor_payload(composed)
-        if any(
-            check_requirement(req, final_facts).status != "met" for req in hierarchy_requirements
-        ):
-            # The words are on screen; only their sizes miss the ask, and the receipt says so.
+        for req in hierarchy_requirements:
+            if check_requirement(req, final_facts).status == "met":
+                continue
             drops.append(
                 shrink(
                     CreationTextCompositionError(
                         "Text composition did not satisfy the requested hierarchy",
                         reason="hierarchy_unmet",
-                    )
+                    ),
+                    text=req.literal or None,
+                    action=(
+                        "dropped"
+                        if req.literal and not _literal_shown(composed, req.literal)
+                        else "shrunk"
+                    ),
                 )
             )
     if drops and not _shows_asked_text(composed, text_requirements):
@@ -2421,10 +2426,9 @@ def _may_own_added_text(requirements: Sequence[BriefRequirement] | None) -> bool
 
 
 def _meets_a_text_ask(plan: dict, requirements: Sequence[BriefRequirement] | None) -> bool:
-    """Whether her own words for one live text ask are on screen: her literal read word for word
-    across the visible rows in screen order (one row, or the stacked lines the planner split it
-    into, prod d6c58d7b), or her sequence shown piece by piece (``text_sequence_shown``). A
-    described ask has no words to find and is never counted.
+    """Whether her own words for one live text ask are on screen: her literal as whole visible
+    rows in screen order (``_literal_shown``), or her sequence shown piece by piece
+    (``text_sequence_shown``). A described ask has no words to find and is never counted.
     """
     from app.text_fold import fold_text  # noqa: PLC0415
 
@@ -2437,27 +2441,42 @@ def _meets_a_text_ask(plan: dict, requirements: Sequence[BriefRequirement] | Non
     )
 
     facts = plan_facts_from_editor_payload(plan)
-    rows = sorted(
-        (
+    return any(
+        text_sequence_shown(req, facts)
+        if is_text_sequence(req)
+        else _literal_shown(plan, req.literal or "")
+        for req in asks
+    )
+
+
+def _literal_shown(plan: dict, literal: str) -> bool:
+    """Whether ``literal`` reads word for word as one visible row, or as consecutive whole rows
+    in screen order (the stacked lines the planner split it into, prod d6c58d7b). A match that
+    starts or ends inside a row is another line's words, not hers.
+    """
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    rows = [
+        text
+        for _start, _index, text in sorted(
             (_screen_start(row), index, str(row.get("text") or ""))
             for index, row in enumerate(plan.get("text_elements") or [])
             if not row.get("removed") and not is_caption_text_bar(row)
-        ),
-    )
-    screen = tuple(word for _start, _index, text in rows for word in _ask_words(text))
-    folded_rows = {fold_text(text) for _start, _index, text in rows}
-
-    def shown(literal: str) -> bool:
-        words = _ask_words(literal)
-        if not words:
-            return fold_text(literal) in folded_rows
-        width = len(words)
-        return any(screen[k : k + width] == words for k in range(len(screen) - width + 1))
-
-    return any(
-        text_sequence_shown(req, facts) if is_text_sequence(req) else shown(req.literal or "")
-        for req in asks
-    )
+        )
+    ]
+    words = _ask_words(literal)
+    if not words:
+        return fold_text(literal) in {fold_text(text) for text in rows}
+    lines = [_ask_words(text) for text in rows]
+    for first in range(len(lines)):
+        read: tuple[str, ...] = ()
+        for line in lines[first:]:
+            read += line
+            if len(read) >= len(words):
+                break
+        if read == words:
+            return True
+    return False
 
 
 def _shows_asked_text(plan: dict, requirements: Sequence[BriefRequirement] | None) -> bool:
