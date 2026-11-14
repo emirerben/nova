@@ -80,6 +80,8 @@ _ANY = _phrases(
     "farketmez", "fark etmez", "gerek yok", "daha basit yap", "basit yap", "daha basit olsun",
     "basit olsun", "daha basit hazırla", "sadeleştir", "basitleştir", "daha sade yap",
     "onsuz yap", "onsuz hazırla", "onsuz devam et", "onsuz olsun",
+    # The word the German "reply 'skip it'" line asks for (KRI-1362).
+    "überspringen",
 )  # fmt: skip
 _VERBS_EN = (
     "skip", "drop", "forget", "forget about", "ignore", "never mind", "remove", "leave out",
@@ -333,6 +335,15 @@ def withdraw_stuck_pins(
     return PinWithdrawal(tuple(out), tuple(dict.fromkeys(notices)))
 
 
+# Whole phrases, not "the {v1} clip you {v2}": German needs them inflected (KRI-1362).
+_CLIP_YOU = {
+    "last_filmed": ("the last clip you filmed", "çektiğin son klip"),
+    "last_added": ("the last clip you added", "eklediğin son klip"),
+    "first_filmed": ("the first clip you filmed", "çektiğin ilk klip"),
+    "first_added": ("the first clip you added", "eklediğin ilk klip"),
+}
+
+
 def _ways_forward(position: str, words: str, basis: str | None) -> str:
     from app.services.creator_render_contract import _pin_not_found  # noqa: PLC0415
 
@@ -340,15 +351,8 @@ def _ways_forward(position: str, words: str, basis: str | None) -> str:
     if basis is None:
         then = say(en="leave it out", tr="onu çıkarayım")
     else:
-        filmed = basis == "filmed"
-        clip = say(
-            en="the {v1} clip you {v2}",
-            tr="{v3} {v4} klip",
-            v1="last" if last else "first",
-            v2="filmed" if filmed else "added",
-            v3="çektiğin" if filmed else "eklediğin",
-            v4="son" if last else "ilk",
-        )
+        key = ("last" if last else "first") + ("_filmed" if basis == "filmed" else "_added")
+        clip = say(en=_CLIP_YOU[key][0], tr=_CLIP_YOU[key][1])
         then = (
             say(
                 en="leave it out and end on {clip}",

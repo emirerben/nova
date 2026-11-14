@@ -649,15 +649,16 @@ def _join(words: list[str], word: str) -> str:
 
 def update_summary_text(changed: list[str]) -> str:
     """Deterministic, localized: composed from the changed sections only."""
+    from app.kria.plan_review import scope_phrase  # noqa: PLC0415
     from app.kria.reply_language import say  # noqa: PLC0415
 
     sections = [s for s in SECTION_ORDER if s in changed and s in _SECTION_WORDS]
-    en = _join([_SECTION_WORDS[s][0] for s in sections], "and")
     tr = _join([_SECTION_WORDS[s][1] for s in sections], "ve")
     return say(
         en="Updated {v1}.",
         tr="{capitalize_tr} güncelledim.",
-        v1=en,
+        # Same English words as _SECTION_WORDS, localized so German shows no English (KRI-1362).
+        v1=scope_phrase(sections),
         capitalize_tr=capitalize(tr, "tr"),
     )[:400]
 

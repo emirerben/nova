@@ -220,25 +220,78 @@ def detect_order_vs_group(
     names = _join_names([n for n, _m in live])
     word = noun if noun else "group"
     tr_word = _TR_GROUP_NOUNS.get(word, word)
+    # Whole sentences per planner noun, so German reads its own noun (KRI-1408); any other
+    # noun keeps the templated wording.
+    sport, grouped = word == "sport", word == "group"
     turkish = current_reply_language() == "tr"
-    return ConflictCandidate(
-        conflict_id=CONFLICT_ORDER_VS_GROUP,
-        reason=say(
-            en="your {names} clips were filmed mixed together, so I can't do both.",
-            tr=(
-                "{names} klipleri birbirine karışık çekilmiş, bu yüzden ikisini birden yapamıyorum."
+    group_aliases = ("grupla", "gruplandır", "önce grupla") if turkish else ()
+    chronological_aliases = ("kronolojik", "kronolojik kalsın", "tam kronolojik") if turkish else ()
+    if sport:
+        options = (
+            _option(
+                OPT_GROUP_FIRST,
+                label=(
+                    "Group by sport, chronological inside each sport",
+                    "Her {tr_word} bir blok olsun; blok içinde kronolojik sırala",
+                ),
+                description=(
+                    "Each sport plays as one block; blocks start in the order they first "
+                    "appear, and clips inside a block keep the order you filmed them.",
+                    "Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla "
+                    "başlar, blok içindeki klipler çektiğin sırayı korur.",
+                ),
+                values={"tr_word": tr_word},
+                recommended=True,
+                tr_aliases=group_aliases,
             ),
-            names=names,
-        ),
-        intro=say(
-            en="You asked for a chronological video and for the clips grouped by {word}.",
-            tr=(
-                "Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin."
+            _option(
+                OPT_CHRONOLOGICAL,
+                label=(
+                    "Keep it strictly chronological; sports may interleave",
+                    "Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir",
+                ),
+                values={"tr_word": tr_word},
+                description=(
+                    "Clips play in the exact order you filmed them.",
+                    "Klipler tam olarak çektiğin sırayla oynar.",
+                ),
+                tr_aliases=chronological_aliases,
             ),
-            word=word,
-            tr_word=tr_word,
-        ),
-        options=(
+        )
+    elif grouped:
+        options = (
+            _option(
+                OPT_GROUP_FIRST,
+                label=(
+                    "Group by group, chronological inside each group",
+                    "Her {tr_word} bir blok olsun; blok içinde kronolojik sırala",
+                ),
+                description=(
+                    "Each group plays as one block; blocks start in the order they first "
+                    "appear, and clips inside a block keep the order you filmed them.",
+                    "Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla "
+                    "başlar, blok içindeki klipler çektiğin sırayı korur.",
+                ),
+                values={"tr_word": tr_word},
+                recommended=True,
+                tr_aliases=group_aliases,
+            ),
+            _option(
+                OPT_CHRONOLOGICAL,
+                label=(
+                    "Keep it strictly chronological; groups may interleave",
+                    "Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir",
+                ),
+                values={"tr_word": tr_word},
+                description=(
+                    "Clips play in the exact order you filmed them.",
+                    "Klipler tam olarak çektiğin sırayla oynar.",
+                ),
+                tr_aliases=chronological_aliases,
+            ),
+        )
+    else:
+        options = (
             _option(
                 OPT_GROUP_FIRST,
                 label=(
@@ -253,7 +306,7 @@ def detect_order_vs_group(
                 ),
                 values={"word": word, "tr_word": tr_word},
                 recommended=True,
-                tr_aliases=("grupla", "gruplandır", "önce grupla") if turkish else (),
+                tr_aliases=group_aliases,
             ),
             _option(
                 OPT_CHRONOLOGICAL,
@@ -266,9 +319,33 @@ def detect_order_vs_group(
                     "Clips play in the exact order you filmed them.",
                     "Klipler tam olarak çektiğin sırayla oynar.",
                 ),
-                tr_aliases=("kronolojik", "kronolojik kalsın", "tam kronolojik") if turkish else (),
+                tr_aliases=chronological_aliases,
             ),
+        )
+    return ConflictCandidate(
+        conflict_id=CONFLICT_ORDER_VS_GROUP,
+        reason=say(
+            en="your {names} clips were filmed mixed together, so I can't do both.",
+            tr=(
+                "{names} klipleri birbirine karışık çekilmiş, bu yüzden ikisini birden yapamıyorum."
+            ),
+            names=names,
         ),
+        intro=say(
+            en=(
+                "You asked for a chronological video and for the clips grouped by sport."
+                if sport
+                else "You asked for a chronological video and for the clips grouped by group."
+                if grouped
+                else "You asked for a chronological video and for the clips grouped by {word}."
+            ),
+            tr=(
+                "Hem kronolojik bir video hem de kliplerin {tr_word} bazında gruplanmasını istedin."
+            ),
+            word=word,
+            tr_word=tr_word,
+        ),
+        options=options,
     )
 
 
@@ -312,8 +389,11 @@ def _after_connector(reason: str) -> str:
     """``reason`` as it reads after a connector word ("Maalesef ...", "Unfortunately ..."): a
     plain capitalised first word loses its capital (Turkish I / İ aware). Acronyms, camel-case
     names, quotes, digits and a name with a suffix ("Caro'nun") are the creator's words and stay
-    as written."""
+    as written. German follows a colon ("Leider gibt es einen Haken: ..."): its nouns keep their
+    capitals and the sentence starts with one."""
 
+    if current_reply_language() == "de":
+        return reason[:1].upper() + reason[1:]
     end = 0
     while end < len(reason) and reason[end].isalnum():
         end += 1
@@ -3067,20 +3147,51 @@ def _take_window_choice(
     target_s = kept_s if not strict else _clean_seconds(capacity)
     start = _line_label(window.start_line) if window.start_line else None
     end = _line_label(window.end_line) if window.end_line else None
-    if start and end:
-        subject_en, subject_tr = "Your start and end lines keep", "Başlangıç ve bitiş cümlelerin"
-        span_en = f"from {start} to right after {end}"
-        span_tr = f"{start} cümlesinden {end} cümlesinin hemen sonrasına kadar"
-        lines_en, lines_tr = "those lines", "bu cümleleri"
+    # Whole sentences per case, so German reads its own grammar (KRI-1408).
+    both = bool(start and end)
+    if both:
+        intro = say(
+            en=(
+                "Your start and end lines keep about {kept_s} seconds of your take: "
+                "from {start} to right after {end}."
+            ),
+            tr=(
+                "Başlangıç ve bitiş cümlelerin çekiminin yaklaşık {kept_s} saniyesini tutuyor: "
+                "{start} cümlesinden {end} cümlesinin hemen sonrasına kadar."
+            ),
+            kept_s=kept_s,
+            start=start,
+            end=end,
+        )
+        lines_tr = "bu cümleleri"
     elif start:
-        subject_en, subject_tr = "Your start line keeps", "Başlangıç cümlen"
-        span_en, span_tr = f"from {start} to the end", f"{start} cümlesinden sona kadar"
-        lines_en, lines_tr = "that line", "bu cümleyi"
+        intro = say(
+            en=(
+                "Your start line keeps about {kept_s} seconds of your take: "
+                "from {start} to the end."
+            ),
+            tr=(
+                "Başlangıç cümlen çekiminin yaklaşık {kept_s} saniyesini tutuyor: "
+                "{start} cümlesinden sona kadar."
+            ),
+            kept_s=kept_s,
+            start=start,
+        )
+        lines_tr = "bu cümleyi"
     else:
-        subject_en, subject_tr = "Your end line keeps", "Bitiş cümlen"
-        span_en = f"from the start to right after {end}"
-        span_tr = f"baştan {end} cümlesinin hemen sonrasına kadar"
-        lines_en, lines_tr = "that line", "bu cümleyi"
+        intro = say(
+            en=(
+                "Your end line keeps about {kept_s} seconds of your take: "
+                "from the start to right after {end}."
+            ),
+            tr=(
+                "Bitiş cümlen çekiminin yaklaşık {kept_s} saniyesini tutuyor: "
+                "baştan {end} cümlesinin hemen sonrasına kadar."
+            ),
+            kept_s=kept_s,
+            end=end,
+        )
+        lines_tr = "bu cümleyi"
     effects = {
         OPT_ACCEPT_NATURAL: {
             "strategy": {
@@ -3095,40 +3206,43 @@ def _take_window_choice(
         conflict_id=CONFLICT_LENGTH_VS_NATURAL,
         field_path="target_duration_s",
         requirement_ids=tuple(requirement_ids),
-        intro=say(
-            en="{subject_en} about {kept_s} seconds of your take: {span_en}.",
-            tr="{subject_tr} çekiminin yaklaşık {kept_s} saniyesini tutuyor: {span_tr}.",
-            subject_en=subject_en,
-            kept_s=kept_s,
-            span_en=span_en,
-            subject_tr=subject_tr,
-            span_tr=span_tr,
-        ),
+        intro=intro,
         reason=(
             say(
-                en="With the standard ending that part runs to {asked_s} seconds or more, and I "
-                "can't shorten it without changing {lines_en}.",
+                en=(
+                    "With the standard ending that part runs to {asked_s} seconds or more, and I "
+                    "can't shorten it without changing those lines."
+                    if both
+                    else "With the standard ending that part runs to {asked_s} seconds or more, "
+                    "and I can't shorten it without changing that line."
+                ),
                 tr="Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve "
                 "{lines_tr} değiştirmeden kısaltamam.",
                 asked_s=asked_s,
-                lines_en=lines_en,
                 lines_tr=lines_tr,
             )
             if strict
             else say(
-                en="That part runs longer than {asked_s} seconds, and I can't shorten it "
-                "without changing {lines_en}.",
+                en=(
+                    "That part runs longer than {asked_s} seconds, and I can't shorten it "
+                    "without changing those lines."
+                    if both
+                    else "That part runs longer than {asked_s} seconds, and I can't shorten it "
+                    "without changing that line."
+                ),
                 tr="O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam.",
                 asked_s=asked_s,
-                lines_en=lines_en,
                 lines_tr=lines_tr,
             )
             if ceiling
             else say(
-                en="That part can't make a {asked_s}-second edit without changing {lines_en}.",
+                en=(
+                    "That part can't make a {asked_s}-second edit without changing those lines."
+                    if both
+                    else "That part can't make a {asked_s}-second edit without changing that line."
+                ),
                 tr="{lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam.",
                 asked_s=asked_s,
-                lines_en=lines_en,
                 lines_tr=lines_tr.capitalize(),
             )
         ),
@@ -3161,6 +3275,88 @@ def _take_window_choice(
         effects=effects,
         answer_detail={OPT_ACCEPT_NATURAL: {"basis": TAKE_WINDOW_BASIS}},
     )
+
+
+# The length card's sentences per source, whole, so German gets each noun's article and case
+# (KRI-1408). The Turkish keeps its one template with the ``{source_tr}`` noun.
+_SOURCE_INTRO: dict[str, tuple[str, str]] = {
+    "song": (
+        'Your brief says "{said}", but the available song is {capacity_s} seconds.',
+        'İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye.',
+    ),
+    "voiceover": (
+        'Your brief says "{said}", but the available voiceover with the selected footage is '
+        "{capacity_s} seconds.",
+        'İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye.',
+    ),
+    "take": (
+        'Your brief says "{said}", but the available spoken take is {capacity_s} seconds.',
+        'İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye.',
+    ),
+    "footage": (
+        'Your brief says "{said}", but the available footage is {capacity_s} seconds.',
+        'İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye.',
+    ),
+}
+_SOURCE_AT_MOST: dict[str, tuple[str, str]] = {
+    "song": (
+        "That song cannot make an edit of at most {asked_s} seconds without changing the "
+        "source timing.",
+        "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam.",
+    ),
+    "voiceover": (
+        "That voiceover with the selected footage cannot make an edit of at most {asked_s} "
+        "seconds without changing the source timing.",
+        "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam.",
+    ),
+    "take": (
+        "That spoken take cannot make an edit of at most {asked_s} seconds without changing "
+        "the source timing.",
+        "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam.",
+    ),
+    "footage": (
+        "That footage cannot make an edit of at most {asked_s} seconds without changing the "
+        "source timing.",
+        "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam.",
+    ),
+}
+_SOURCE_EXACT: dict[str, tuple[str, str]] = {
+    "song": (
+        "That song cannot make a {asked_s}-second edit without changing the source timing.",
+        "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam.",
+    ),
+    "voiceover": (
+        "That voiceover with the selected footage cannot make a {asked_s}-second edit without "
+        "changing the source timing.",
+        "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam.",
+    ),
+    "take": (
+        "That spoken take cannot make a {asked_s}-second edit without changing the source timing.",
+        "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam.",
+    ),
+    "footage": (
+        "That footage cannot make a {asked_s}-second edit without changing the source timing.",
+        "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam.",
+    ),
+}
+_SOURCE_TRIM: dict[str, tuple[str, str]] = {
+    "song": (
+        "Use the supported trim for this song.",
+        "Bu {source_tr} için desteklenen kırpmayı kullanır.",
+    ),
+    "voiceover": (
+        "Use the supported trim for this voiceover with the selected footage.",
+        "Bu {source_tr} için desteklenen kırpmayı kullanır.",
+    ),
+    "take": (
+        "Use the supported trim for this spoken take.",
+        "Bu {source_tr} için desteklenen kırpmayı kullanır.",
+    ),
+    "footage": (
+        "Use the supported trim for this footage.",
+        "Bu {source_tr} için desteklenen kırpmayı kullanır.",
+    ),
+}
 
 
 def _length_vs_natural(
@@ -3307,10 +3503,7 @@ def _length_vs_natural(
             _option(
                 OPT_TRIM_TO_REQUESTED,
                 label=("Trim it to {asked_s} seconds", "{asked_s} saniyeye kısalt"),
-                description=(
-                    "Use the supported trim for this {source}.",
-                    "Bu {source_tr} için desteklenen kırpmayı kullanır.",
-                ),
+                description=_SOURCE_TRIM[owner],
                 values={"asked_s": asked_s, "source": source, "source_tr": source_tr},
                 recommended=True,
                 aliases=("trim it", "trim", "keep requested length"),
@@ -3330,35 +3523,87 @@ def _length_vs_natural(
         field_path="target_duration_s",
         requirement_ids=tuple(requirement_ids),
         intro=say(
-            en='Your brief says "{said}", but the available {source} is {capacity_s} seconds.',
-            tr='İsteğinde "{said}" yazıyor ama mevcut {source_tr} {capacity_s} saniye.',
+            en=_SOURCE_INTRO[owner][0],
+            tr=_SOURCE_INTRO[owner][1],
             said=said,
-            source=source,
             capacity_s=capacity_s,
             source_tr=source_tr,
         ),
         reason=(
-            say(
-                en="That {source} cannot make an edit of at most {asked_s} seconds without "
-                "changing the source timing.",
-                tr="kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video "
-                "yapamam.",
-                source=source,
-                asked_s=asked_s,
-            )
+            say(en=_SOURCE_AT_MOST[owner][0], tr=_SOURCE_AT_MOST[owner][1], asked_s=asked_s)
             if ceiling
-            else say(
-                en="That {source} cannot make a {asked_s}-second edit without changing the "
-                "source timing.",
-                tr="kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam.",
-                source=source,
-                asked_s=asked_s,
-            )
+            else say(en=_SOURCE_EXACT[owner][0], tr=_SOURCE_EXACT[owner][1], asked_s=asked_s)
         ),
         options=tuple(options),
         input_digest=_digest(CONFLICT_LENGTH_VS_NATURAL, owner, asked, capacity, snapshot),
         effects=effects,
     )
+
+
+# The natural-length source's sentences per owner, whole, so German gets each noun's article
+# (KRI-1408); the Turkish names no owner. ``"*"`` keeps the old wording for any other owner.
+_OWNER_CAP_TR = (
+    "Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla "
+    "{edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
+)
+_OWNER_RAW_TR = (
+    "Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar "
+    "olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle."
+)
+_OWNER_OVER_CAP: dict[str, tuple[str, str]] = {
+    "*": (
+        "The selected {natural_owner} runs {natural_duration:g} seconds, but an edit can be at "
+        "most {edit_cap:g} seconds. Use a shorter {natural_owner}.",
+        _OWNER_CAP_TR,
+    ),
+    "song": (
+        "The selected song runs {natural_duration:g} seconds, but an edit can be at most "
+        "{edit_cap:g} seconds. Use a shorter song.",
+        _OWNER_CAP_TR,
+    ),
+    "voiceover": (
+        "The selected voiceover runs {natural_duration:g} seconds, but an edit can be at most "
+        "{edit_cap:g} seconds. Use a shorter voiceover.",
+        _OWNER_CAP_TR,
+    ),
+    "take": (
+        "The selected take runs {natural_duration:g} seconds, but an edit can be at most "
+        "{edit_cap:g} seconds. Use a shorter take.",
+        _OWNER_CAP_TR,
+    ),
+    "footage": (
+        "The selected footage runs {natural_duration:g} seconds, but an edit can be at most "
+        "{edit_cap:g} seconds. Use a shorter footage.",
+        _OWNER_CAP_TR,
+    ),
+}
+_OWNER_OVER_RAW: dict[str, tuple[str, str]] = {
+    "*": (
+        "The selected {natural_owner} runs {natural_duration:g} seconds, but the footage can "
+        "provide only {raw_duration:g} seconds without reuse. Add longer footage.",
+        _OWNER_RAW_TR,
+    ),
+    "song": (
+        "The selected song runs {natural_duration:g} seconds, but the footage can provide "
+        "only {raw_duration:g} seconds without reuse. Add longer footage.",
+        _OWNER_RAW_TR,
+    ),
+    "voiceover": (
+        "The selected voiceover runs {natural_duration:g} seconds, but the footage can provide "
+        "only {raw_duration:g} seconds without reuse. Add longer footage.",
+        _OWNER_RAW_TR,
+    ),
+    "take": (
+        "The selected take runs {natural_duration:g} seconds, but the footage can provide "
+        "only {raw_duration:g} seconds without reuse. Add longer footage.",
+        _OWNER_RAW_TR,
+    ),
+    "footage": (
+        "The selected footage runs {natural_duration:g} seconds, but the footage can provide "
+        "only {raw_duration:g} seconds without reuse. Add longer footage.",
+        _OWNER_RAW_TR,
+    ),
+}
 
 
 _COVERAGE_LABELS_TR = {
@@ -3559,16 +3804,10 @@ def _source_coverage(
         natural_owner = envelope.get("natural_owner")
         natural_duration = envelope.get("natural_duration_s")
         edit_cap = edit_cap_s(natural_owner)
+        owner_key = str(natural_owner) if str(natural_owner) in _OWNER_OVER_CAP else "*"
         reason = say(
-            en=(
-                "The selected {natural_owner} runs {natural_duration:g} seconds, but an edit "
-                "can be at most {edit_cap:g} seconds. Use a shorter "
-                "{natural_owner}."
-            ),
-            tr=(
-                "Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla "
-                "{edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
-            ),
+            en=_OWNER_OVER_CAP[owner_key][0],
+            tr=_OWNER_OVER_CAP[owner_key][1],
             natural_owner=natural_owner,
             natural_duration=natural_duration,
             edit_cap=edit_cap,
@@ -3577,16 +3816,10 @@ def _source_coverage(
     elif "natural_source_capacity" in codes:
         natural_owner = envelope.get("natural_owner")
         natural_duration = envelope.get("natural_duration_s")
+        owner_key = str(natural_owner) if str(natural_owner) in _OWNER_OVER_RAW else "*"
         reason = say(
-            en=(
-                "The selected {natural_owner} runs {natural_duration:g} seconds, but the "
-                "footage can provide only {raw_duration:g} seconds without reuse. Add "
-                "longer footage."
-            ),
-            tr=(
-                "Seçili kaynak {natural_duration:g} saniye sürüyor ama çekimler tekrar "
-                "olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle."
-            ),
+            en=_OWNER_OVER_RAW[owner_key][0],
+            tr=_OWNER_OVER_RAW[owner_key][1],
             natural_owner=natural_owner,
             natural_duration=natural_duration,
             raw_duration=raw_duration,

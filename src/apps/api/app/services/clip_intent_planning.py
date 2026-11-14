@@ -942,11 +942,13 @@ def with_filming_end_ticks(
         last = position == "last"
         notes.append(
             say(
-                en='I ticked the {v1} clip you filmed for "{category_get}".',
-                tr='"{category_get}" için çektiğin {v2} klibi işaretledim.',
-                v1="last" if last else "first",
+                en='I ticked the last clip you filmed for "{category_get}".'
+                if last
+                else 'I ticked the first clip you filmed for "{category_get}".',
+                tr='"{category_get}" için çektiğin son klibi işaretledim.'
+                if last
+                else '"{category_get}" için çektiğin ilk klibi işaretledim.',
                 category_get=category.get("label"),
-                v2="son" if last else "ilk",
             )
         )
     if not notes:

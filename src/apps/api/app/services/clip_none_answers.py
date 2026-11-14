@@ -170,6 +170,15 @@ def _order_basis(req: Any) -> str | None:
     return None
 
 
+# Whole phrases, not "{v1} clip you {v2}": German needs them inflected (KRI-1362).
+_CLIP_YOU = {
+    "last_filmed": ("last clip you filmed", "çektiğin son klip"),
+    "last_added": ("last clip you added", "eklediğin son klip"),
+    "first_filmed": ("first clip you filmed", "çektiğin ilk klip"),
+    "first_added": ("first clip you added", "eklediğin ilk klip"),
+}
+
+
 def _pin_notice(
     position: str, words: str, basis: str | None, *, skipped: bool, withdrawn: bool = False
 ) -> str:
@@ -194,15 +203,8 @@ def _pin_notice(
         )
     last = position == "last"
     if basis is not None:
-        filmed = basis == "filmed"
-        clip = say(
-            en="{v1} clip you {v2}",
-            tr="{v3} {v4} klip",
-            v1="last" if last else "first",
-            v2="filmed" if filmed else "added",
-            v3="çektiğin" if filmed else "eklediğin",
-            v4="son" if last else "ilk",
-        )
+        key = ("last" if last else "first") + ("_filmed" if basis == "filmed" else "_added")
+        clip = say(en=_CLIP_YOU[key][0], tr=_CLIP_YOU[key][1])
         tail = (
             say(
                 en=(
