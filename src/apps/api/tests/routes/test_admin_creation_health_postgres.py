@@ -14,6 +14,9 @@ Failure modes the numbers must survive (each has an assertion):
   `posting_partial` / `clips_ready_partial` stay in progress forever instead of a success;
 * an iPhone render that failed (`awaiting_device` + `failure_reason`, the only trace the phone, the
   reaper and export verification leave) reads as still waiting, so phone failures never show;
+* a Job an approval minted and then compensated (`status="failed"`, not a JobStatus member) is
+  in progress forever and its `kria_dispatch_aborted` reason never shows;
+* an admin test render (the synthetic admin user) counts as a creation attempt;
 * a `draft` job, or a turn that ended with the `superseded` outcome, counts as an attempt;
 * the failure share pools turn and render failures into one denominator;
 * a day with no attempts is missing from the series or reports a 0% rate instead of null;
@@ -35,11 +38,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import update
 
+from app.auth import SYNTHETIC_USER_ID
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
 from app.main import app
-from app.models import CreatorAgentTurn, Job
+from app.models import CreatorAgentTurn, Job, User
 from app.services.creation_health import MAX_DAYS, creation_health
 from app.services.job_failure_reasons import JOB_FAILURE_REASONS
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, _seed_user_turn
@@ -70,11 +74,14 @@ def _turn(project, at, status, *, plan=None, error=None):
             db.commit()
 
 
-def _job(project, at, status, reason=None):
+def _job(project, at, status, reason=None, user_id=None):
     with sync_session() as db:
+        if user_id == SYNTHETIC_USER_ID and db.get(User, user_id) is None:
+            db.add(User(id=user_id, email="synthetic@test.local"))
+            db.flush()
         db.add(
             Job(
-                user_id=project[0],
+                user_id=user_id or project[0],
                 status=status,
                 job_type="default",
                 raw_storage_path="raw/test.mp4",
@@ -190,6 +197,31 @@ async def test_phone_render_failures_and_finished_partials_are_classified(projec
     }
     assert [(r["source"], r["code"], r["count"]) for r in report["top_failure_reasons"]] == [
         ("render", "device_render_stale", 2)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_compensated_dispatch_is_a_failed_render_and_admin_test_renders_are_not_attempts(
+    project,
+):
+    day = _day()
+    at = day.replace(hour=0, minute=0, second=0) + timedelta(seconds=1)
+    _job(project, at, "failed", "kria_dispatch_aborted")
+    _job(project, at, "variants_ready")
+    _job(project, at, "variants_ready", user_id=SYNTHETIC_USER_ID)
+    _job(project, at, "processing_failed", "ffmpeg_failed", user_id=SYNTHETIC_USER_ID)
+
+    report = await _report(day, 1)
+
+    assert report["renders"] == {
+        "attempts": 2,
+        "successes": 1,
+        "success_rate": 0.5,
+        "in_progress": 0,
+        "failed": 1,
+    }
+    assert [(r["code"], r["count"]) for r in report["top_failure_reasons"]] == [
+        ("kria_dispatch_aborted", 1)
     ]
 
 

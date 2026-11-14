@@ -4833,10 +4833,13 @@
         "A main-creator ask_user refusal is a refusal; an ordinary clarifying ask_user stays a success",
         "A turn closed by a newer message is not an attempt",
         "An iPhone render that failed (awaiting_device with a failure reason) is a failed render, not in progress",
-        "Finished-but-partial renders are successes and draft jobs are not attempts"
+        "Finished-but-partial renders are successes and draft jobs are not attempts",
+        "A planner conflict question and a moment-order question are blocked turns, the same code the commit gate records",
+        "A repeated send and a status or help question are inert turns, not attempts; admin test renders (synthetic user) are not attempts",
+        "A Job a failed approval dispatch compensated (status failed, kria_dispatch_aborted) is a failed render"
       ],
       "neighbours_gap": [
-        "A refusal reply the planner builds without a code outside the stamped sites counts as a success until it is stamped (editor copilot replies with no ops are not classified)"
+        "A refusal reply built outside the stamped sites and the central conflict-question markers still counts as a success until it is stamped; the editor-capacity and length-waiting replies and the editor copilot no-op refusal are stamped at their site and covered by no replay of their own"
       ],
       "red_control": "not_applicable"
     }

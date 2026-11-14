@@ -11,8 +11,10 @@ creation day. A creator message is one turn, so a creator who tries again counts
 resend of the same message is the same row (unique `client_event_id`), and a worker-side claim
 retry or continuation reuses the row, so neither counts twice. `superseded` and `cancelled` turns
 are not attempts: the creator replaced or withdrew them, and so is a turn that finished with the
-`superseded` outcome (a newer message arrived while it was still working). A turn still running
-is `in_progress` and is left out of the rate.
+`superseded` outcome (a newer message arrived while it was still working). So is an `inert` turn:
+a message that is not a creation request (the same text sent again, "what's happening", "what can
+you do"), answered without planning anything. A turn still running is `in_progress` and is left
+out of the rate.
 - success: the turn delivered its answer or draft (`completed`, or `awaiting_approval` once a
   draft is offered) and recorded no outcome code.
 - refused / blocked / recovery: `completed`, but the turn recorded an outcome code
@@ -20,7 +22,8 @@ is `in_progress` and is left out of the rate.
   finish planning.
 - failed: `status = 'failed'`, with `error.code`.
 
-Render attempt. One `jobs` row created in the window. `cancelled` and `draft` jobs are not attempts.
+Render attempt. One `jobs` row created in the window. `cancelled` and `draft` jobs are not attempts,
+and neither are admin test renders (jobs owned by the synthetic admin user).
 A re-render mints a new Job and counts as a new attempt.
 - success: a ready status, plus `posting_failed` / `posting_partial` / `clips_ready_partial` (the
   render finished; only publishing or some clips fell short).
@@ -39,6 +42,7 @@ from typing import Any
 from sqlalchemy import Date, String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import SYNTHETIC_USER_ID
 from app.models import CreatorAgentTurn, Job
 from app.services.job_failure_reasons import JOB_FAILURE_REASONS
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY, JobStatus
@@ -48,7 +52,7 @@ TOP_REASONS = 10
 
 TURN_IN_PROGRESS = ("pending", "queued", "planning", "executing", "observing")
 TURN_NOT_AN_ATTEMPT = ("superseded", "cancelled")
-SUPERSEDED_OUTCOME = "superseded"
+NOT_AN_ATTEMPT_OUTCOMES = ("superseded", "inert")
 TURN_FAILED = "failed"
 # Turn-completion statuses that delivered the draft or answer (the outcome code decides the rest).
 TURN_DELIVERED = ("completed", "awaiting_approval")
@@ -64,13 +68,19 @@ _RENDER_SUCCESS = tuple(
         }
     )
 )
+# `failed` is no JobStatus member: `_compensate_failed_dispatch` writes it (with the reason
+# `kria_dispatch_aborted`) on the Job an approval minted but could not settle.
+_RENDER_ABORTED_STATUS = "failed"
 _RENDER_FAILED = tuple(
     sorted(
-        PLAN_ITEM_JOB_FAILED
-        - {
-            JobStatus.CANCELLED.value,
-            JobStatus.POSTING_FAILED.value,
-        }
+        (
+            PLAN_ITEM_JOB_FAILED
+            - {
+                JobStatus.CANCELLED.value,
+                JobStatus.POSTING_FAILED.value,
+            }
+        )
+        | {_RENDER_ABORTED_STATUS}
     )
 )
 # An iPhone render that failed never leaves `awaiting_device`: the phone, the reaper and export
@@ -86,8 +96,10 @@ DEFINITIONS: dict[str, str] = {
         "One runtime-v2 chat turn created in the window (UTC day). A creator message is one turn, "
         "so trying again counts again; a client resend of the same message and a worker retry "
         "reuse the same turn and do not. Superseded and cancelled turns, and turns that ended "
-        "with the superseded outcome (a newer message arrived mid-turn), are not attempts; turns "
-        "still running are in_progress and left out of the rate."
+        "with the superseded outcome (a newer message arrived mid-turn), are not attempts; neither "
+        "are inert turns (the same text sent again with a new client event id, a status or help "
+        "question: answered without planning anything). Turns still running are in_progress and "
+        "left out of the rate."
     ),
     "turn_success": (
         "The turn delivered its answer or draft and recorded no outcome code. refused, blocked "
@@ -97,8 +109,8 @@ DEFINITIONS: dict[str, str] = {
     ),
     "render_attempt": (
         "One Job created in the window (UTC day). A re-render is a new Job and a new attempt. "
-        "Cancelled and draft jobs are not attempts. Jobs still running, and iPhone renders still "
-        "waiting on the phone, are in_progress."
+        "Cancelled and draft jobs, and admin test renders (synthetic user), are not attempts. "
+        "Jobs still running, and iPhone renders still waiting on the phone, are in_progress."
     ),
     "render_success": (
         "A ready status, or posting_failed / posting_partial / clips_ready_partial (the render "
@@ -157,7 +169,7 @@ async def _turn_rows(
             CreatorAgentTurn.created_at >= since,
             CreatorAgentTurn.created_at < until,
             status.not_in(TURN_NOT_AN_ATTEMPT),
-            or_(outcome_kind.is_(None), outcome_kind != SUPERSEDED_OUTCOME),
+            or_(outcome_kind.is_(None), outcome_kind.not_in(NOT_AN_ATTEMPT_OUTCOMES)),
         )
         .group_by(day, bucket, code)
     )
@@ -186,6 +198,7 @@ async def _render_rows(
             Job.created_at >= since,
             Job.created_at < until,
             status.not_in(_RENDER_NOT_AN_ATTEMPT),
+            Job.user_id != SYNTHETIC_USER_ID,
         )
         .group_by(day, bucket, code)
     )

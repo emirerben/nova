@@ -17,7 +17,12 @@ Failure modes (written before the code):
 * an ordinary question or answer is stamped as a refusal and the success rate drops for no reason;
 * the code is written to `turn.error`, and `media_collection_stories` reads a completed turn with
   an error as broken;
-* stamping replaces diagnostics a plan already carried (a pinned-card refusal).
+* stamping replaces diagnostics a plan already carried (a pinned-card refusal);
+* the planner's own conflict question ("none of your clips has a filming time, so I can't put
+  them in that order") completes as a plain `question` with no brief coverage, so it counts as a
+  success while the same question asked by the commit gate is `blocked`;
+* a message that is no creation request (the same text sent again, a status question) is a
+  completed turn with no code, so it inflates both attempts and successes.
 """
 
 from __future__ import annotations
@@ -37,9 +42,16 @@ from app.kria.planner import (
     _refused_turn,
     _request_recovery,
     adapt_creator_action,
+    adapt_editor_action,
 )
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import CreatorAgentTurn
+from app.services.choice_questions import (
+    CONFLICT_ORDER_BASIS,
+    ConflictCandidate,
+    build_choice_question,
+    choice_question_text,
+)
 from app.services.creation_health import creation_health
 from app.tasks.kria_runtime import run_kria_turn
 from tests.agents.test_main_creator_agent import _manifest
@@ -100,6 +112,48 @@ def _ask_user(reason_code: str) -> PlannedKriaTurn:
     )
 
 
+def _conflict_question() -> PlannedKriaTurn:
+    candidate = ConflictCandidate(
+        conflict_id="order_basis:1",
+        intro="Unfortunately none of your clips have a filming time,",
+        reason="so I can't put them in that order.",
+        options=(),
+        kind=CONFLICT_ORDER_BASIS,
+    )
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=choice_question_text(candidate),
+            choice_question=build_choice_question(candidate),
+        ),
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+    )
+
+
+def _moment_order_question() -> PlannedKriaTurn:
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response="Which clip has the goal?",
+            moment_order_question={"question_id": "q-1", "kind": "moment_order"},
+        ),
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+    )
+
+
+def _editor_reply(unmet: bool) -> PlannedKriaTurn:
+    plan = adapt_editor_action(
+        reply="I can't change the font on a photo.",
+        ops=[],
+        unmet_requests=[{"request": "font on photo", "reason": "not supported"}] if unmet else (),
+    )
+    return PlannedKriaTurn(plan=plan, manifest_hash="a" * 64, context_hash="b" * 64)
+
+
 CASES = {
     "strategy_refusal": (_real_strategy_refusal, ("refused", "pinned_text_too_many")),
     "request_recovery": (_real_request_recovery, ("recovery", "creator_planning_failed")),
@@ -109,6 +163,10 @@ CASES = {
         ("recovery", "unclassified_recovery"),
     ),
     "ordinary_question": (_ordinary_question, None),
+    "editor_unmet_request": (lambda: _editor_reply(True), ("refused", "editor_request_unmet")),
+    "editor_plain_reply": (lambda: _editor_reply(False), None),
+    "planner_conflict_question": (_conflict_question, ("blocked", "unresolved_choice")),
+    "moment_order_question": (_moment_order_question, ("blocked", "moment_order_question")),
     "ask_user_refusal": (
         lambda: _ask_user("unsupported_audio_intercut"),
         ("refused", "unsupported_audio_intercut"),
@@ -170,8 +228,8 @@ async def test_the_health_report_counts_each_refusal_under_its_own_reason(
         report = await creation_health(db, days=1, now=day)
 
     assert report["turns"]["attempts"] == len(CASES)
-    assert report["turns"]["successes"] == 2
-    assert report["turns"]["success_rate"] == round(2 / len(CASES), 4)
+    assert report["turns"]["successes"] == 3
+    assert report["turns"]["success_rate"] == round(3 / len(CASES), 4)
     reasons = {(r["kind"], r["code"]): r["count"] for r in report["top_failure_reasons"]}
     assert reasons == {
         ("refused", "pinned_text_too_many"): 1,
@@ -180,6 +238,9 @@ async def test_the_health_report_counts_each_refusal_under_its_own_reason(
         ("recovery", "unclassified_recovery"): 1,
         ("refused", "unsupported_audio_intercut"): 1,
         ("refused", "cannot_audio_intercut"): 1,
+        ("refused", "editor_request_unmet"): 1,
+        ("blocked", "unresolved_choice"): 1,
+        ("blocked", "moment_order_question"): 1,
     }
 
 
@@ -212,4 +273,43 @@ async def test_a_turn_closed_by_a_newer_message_is_not_an_attempt(
     async with AsyncSessionLocal() as db:
         report = await creation_health(db, days=1, now=day)
     assert report["turns"]["attempts"] == 0
+    assert report["top_failure_reasons"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_send_and_a_status_question_are_not_creation_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    day = _unique_day()
+    user_id, thread_id, _ = _seed_runtime_project()
+    _script_planner(monkeypatch, _respond(FINAL_REPLY, continuable=True))
+    _publishes(monkeypatch)
+    first = await _submit(user_id, thread_id, "Caption every clip with what happens", 2)
+    repeated = await _submit(
+        user_id, thread_id, "Caption every clip with what happens", first.thread_revision
+    )
+    status = await _submit(user_id, thread_id, "status", repeated.thread_revision)
+
+    with sync_session() as db:
+        rows = {
+            turn_id: db.get(CreatorAgentTurn, uuid.UUID(turn_id))
+            for turn_id in (first.turn_id, repeated.turn_id, status.turn_id)
+        }
+        db.execute(
+            update(CreatorAgentTurn)
+            .where(CreatorAgentTurn.id.in_([row.id for row in rows.values()]))
+            .values(created_at=day)
+        )
+        db.commit()
+        outcomes = {
+            key: (row.plan_json or {}).get("diagnostics", {}).get("outcome")
+            for key, row in rows.items()
+        }
+    assert outcomes[repeated.turn_id] == {"kind": "inert", "code": "duplicate_send"}
+    assert outcomes[status.turn_id] == {"kind": "inert", "code": "status_question"}
+
+    async with AsyncSessionLocal() as db:
+        report = await creation_health(db, days=1, now=day)
+    assert report["turns"]["attempts"] == 0
+    assert report["turns"]["in_progress"] == 1
     assert report["top_failure_reasons"] == []

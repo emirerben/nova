@@ -2099,7 +2099,16 @@ def adapt_editor_action(
 ) -> KriaTurnPlan:
     """Draft edits are reversible; rendering is a distinct, policy-gated action."""
     if not ops:
-        return KriaTurnPlan(mode="respond", turn_value="question", response=reply)
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=reply,
+            **(
+                {"diagnostics": refusal_diagnostics("editor_request_unmet")}
+                if unmet_requests
+                else {}
+            ),
+        )
     # "Change all fonts" arrives as one op per bar; merge identical per-bar style
     # patches so a many-bar edit fits the MAX_EDITOR_OPS tool bound instead of failing
     # the whole turn (KRI-203).
@@ -2108,6 +2117,7 @@ def adapt_editor_action(
         return KriaTurnPlan(
             mode="respond",
             turn_value="recovery",
+            diagnostics=outcome_diagnostics("recovery", "editor_too_many_ops"),
             response=say(
                 en=(
                     "That is more changes than I can apply in one go, so I left the video "
@@ -6535,6 +6545,7 @@ async def _gate_unresolved_choices(
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="question",
+                    diagnostics=outcome_diagnostics("blocked", "editorial_text_capacity"),
                     response=say(
                         en=(
                             "The planned explanations need more reading time than this edit "
@@ -6649,6 +6660,7 @@ async def _gate_unresolved_choices(
                 mode="respond",
                 turn_value="progress",
                 response=waiting,
+                diagnostics=outcome_diagnostics("recovery", "length_inputs_waiting"),
             ),
         )
     if not resolution.answers and not none_answers.answers:

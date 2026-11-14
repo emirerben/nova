@@ -13,6 +13,8 @@ Kinds:
 - `recovery`: the system could not finish planning, or its work is still not ready.
 - `superseded`: the creator sent a newer message while this turn was still working, so this
   turn's own answer was cut short. Not an attempt (see `creation_health`).
+- `inert`: the message was not a creation request (a repeated send, a "what's happening" or "what
+  can you do" question), answered without planning anything. Not an attempt.
 """
 
 from __future__ import annotations
@@ -21,8 +23,9 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 from app.kria.contracts import KriaTurnPlan
+from app.services.choice_questions import KEEP_OPEN_REASON
 
-OutcomeKind = Literal["refused", "blocked", "recovery", "superseded"]
+OutcomeKind = Literal["refused", "blocked", "recovery", "superseded", "inert"]
 
 OUTCOME_KEY = "outcome"
 UNCLASSIFIED_RECOVERY = "unclassified_recovery"
@@ -35,6 +38,10 @@ _COVERAGE_STAGE_KIND: dict[str, OutcomeKind] = {
     "analysis": "recovery",
 }
 _ANALYSIS_PENDING = "clip_analysis_pending"
+# A draft held back by a question reads the same whichever gate asked (the commit gate's
+# brief_coverage reason is `KEEP_OPEN_REASON`).
+UNRESOLVED_CHOICE = KEEP_OPEN_REASON
+MOMENT_ORDER_QUESTION = "moment_order_question"
 
 
 def stamp_outcome(plan: KriaTurnPlan, kind: OutcomeKind, code: str) -> KriaTurnPlan:
@@ -81,7 +88,8 @@ def classify_response_turn(
 
     Every response-only turn ends in `_complete_response_turn`, so this is the one place that
     guarantees a coded outcome even for a reply path that did not stamp its own. An ordinary
-    question or answer matches nothing here and stays unstamped (a success).
+    question or answer matches nothing here and stays unstamped (a success); a conflict question
+    ("none of your clips has a filming time, so I can't order them") is a held-back draft.
     """
     if read_outcome(plan.diagnostics) is not None:
         return plan
@@ -96,6 +104,12 @@ def classify_response_turn(
     pinned_reason = (pinned_refusal or {}).get("reason")
     if isinstance(pinned_reason, str) and pinned_reason:
         return stamp_outcome(plan, "refused", f"pin_{pinned_reason}")
+    choice = plan.choice_question or {}
+    if isinstance(choice.get("kind"), str) and choice["kind"]:
+        # A conflict question names its collector `kind`; a model's own question has none.
+        return stamp_outcome(plan, "blocked", UNRESOLVED_CHOICE)
+    if plan.moment_order_question:
+        return stamp_outcome(plan, "blocked", MOMENT_ORDER_QUESTION)
     if plan.turn_value == "recovery":
         diagnostic_reason = (plan.diagnostics or {}).get("reason")
         code = diagnostic_reason if isinstance(diagnostic_reason, str) else UNCLASSIFIED_RECOVERY
