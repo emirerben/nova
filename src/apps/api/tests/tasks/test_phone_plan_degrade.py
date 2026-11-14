@@ -51,6 +51,15 @@ Added with the third verifier's findings, before the fix:
      binds no chat language);
  23. four different kinds of degradable reject still refuse the whole video; or, with no cap,
      a degrade that does not fix its row loops instead of ending in the typed refusal.
+
+Added with the fourth verifier's findings, before the fix:
+ 24. two texts with the same words count as one row, so the note says fewer texts changed than
+     did (prod 5df2e3ec has two "Türkiye" labels);
+ 25. a guided or Voiceover render the job no longer owns (a stale owner, a cancel) records
+     ``requirement_recovery`` for a compile it never pins;
+ 26. a caption fault on a Voiceover edit refuses the whole video although captions are a
+     preference, or the captions go silently, or their receipt still names a caption language;
+ 27. a caption fault drops the beat cards and sound effects too, then refuses anyway.
 """
 
 from __future__ import annotations
@@ -732,3 +741,133 @@ def test_a_spoken_text_that_fits_keeps_its_size_and_says_nothing(monkeypatch):
     assert row["size_px"] == 120
     assert "phone_repair_notes" not in variant
     assert not [data for stage, _event, data in events if stage == "phone_plan"]
+
+
+# --- the fourth verifier's findings -----------------------------------------------------------
+
+OTHER_ARABIC = "شكرا جزيلا"
+
+
+@pytest.mark.usefixtures("_verified")
+@pytest.mark.parametrize(
+    ("words", "note"),
+    [
+        (
+            (ARABIC, ARABIC, OTHER_ARABIC),
+            "Showed 3 texts with a simple fade-in: your iPhone can't play their animations yet",
+        ),
+        (
+            (ARABIC, ARABIC),
+            "Showed 2 texts with a simple fade-in: your iPhone can't play their animations yet",
+        ),
+    ],
+)
+def test_two_texts_with_the_same_words_are_two_rows_in_the_note(words, note):
+    """Failure mode 24."""
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id=f"rtl-{index}",
+            text=text,
+            start_s=0.4 * index,
+            end_s=0.4 * index + 1.0,
+            effect="staggered-slice",
+        )
+        for index, text in enumerate(words)
+    ]
+
+    result = compile_phone_guided_repaired(plan, bindings)
+
+    assert sorted(r.item_id for r in result.recoveries) == [f"rtl-{i}" for i in range(len(words))]
+    assert result.notes == [note]
+
+
+def test_a_guided_render_the_job_no_longer_owns_records_no_recovery(harness, monkeypatch):  # noqa: F811
+    """Failure mode 25: the job is cancelled while its plan compiles."""
+    job, *_ = harness(brief=_brief())
+    _stamp_contract(job)
+    events = _captured_events(monkeypatch)
+    monkeypatch.setattr(gb, "_fail_job", Mock(return_value=True))
+    _injecting(monkeypatch, job, _set(BAD, look_preset="faded_analog"))
+    degrade = phone_plan_degrade.degrade_plan_for_phone
+    degraded: list[str] = []
+
+    def cancelled_meanwhile(plan, exc):  # noqa: ANN001
+        job.status = gb._CANCELLED_JOB_STATUS
+        result = degrade(plan, exc)
+        degraded.extend(r.item_id for r in result[1])
+        return result
+
+    monkeypatch.setattr(phone_plan_degrade, "degrade_plan_for_phone", cancelled_meanwhile)
+
+    gb._run_generative_job(str(job.id))
+
+    assert degraded, "the bad row degraded"
+    assert job.status == gb._CANCELLED_JOB_STATUS
+    assert not job.assembly_plan.get("variants")
+    assert [event for stage, event, _data in events if stage == "phone_plan"] == []
+
+
+def test_a_voiceover_render_the_job_no_longer_owns_records_no_recovery(monkeypatch):
+    """Failure mode 25, on the Voiceover worker's word-timed text shrink."""
+    job, snapshot = _spoken_job(monkeypatch)
+    events = _captured_events(monkeypatch)
+    sizes = phone_plan_degrade.shrink_sizes
+
+    def cancelled_meanwhile(size, **kwargs):  # noqa: ANN001
+        job.status = gb._CANCELLED_JOB_STATUS
+        return sizes(size, **kwargs)
+
+    monkeypatch.setattr(phone_plan_degrade, "shrink_sizes", cancelled_meanwhile)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == gb._CANCELLED_JOB_STATUS
+    assert not job.assembly_plan.get("variants")
+    assert not [data for stage, _event, data in events if stage == "phone_plan"]
+
+
+@pytest.mark.parametrize(
+    ("language", "note"),
+    [
+        ("en", "Left out the captions: your iPhone can't draw them yet"),
+        ("tr", "Altyazıları çıkardım: iPhone'un onları henüz çizemiyor"),
+    ],
+)
+def test_a_caption_fault_drops_the_captions_not_the_video_or_its_beats(language, note, monkeypatch):
+    """Failure modes 26 and 27, through the real Voiceover worker task with two beat cards."""
+    from app.kria.brief_checks import NARRATED_ALIGNMENT_FIELD
+    from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_voiceover_beats
+
+    job, snapshot, _bind_calls, _transcribe = _setup_voiceover_beats(monkeypatch)
+    snapshot["creator_reply_language"] = language
+    events = _captured_events(monkeypatch)
+
+    def unreadable(cues, **_kwargs):  # noqa: ANN001
+        raise ValueError("no face draws this cue")
+
+    monkeypatch.setattr("app.pipeline.phone_captions.compile_caption_layers", unreadable)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    [variant] = job.assembly_plan["variants"]
+    assert variant["caption_cues"] is None
+    receipt = variant["phone_beat_receipt"]
+    assert [entry["beat_id"] for entry in receipt["placed"]] == ["medal", "finish-time"]
+    assert receipt["unplaced"] == []
+    assert note in variant["phone_repair_notes"]
+    recipe = device_status(job, "narrated").request.recipe
+    assert not [layer for layer in recipe.text_layers if layer.id.startswith("caption")]
+    assert "subtitled-overlays" in {track.id for track in recipe.tracks}
+    assert job.assembly_plan[NARRATED_ALIGNMENT_FIELD]["caption_language"] is None
+    recovered = [data for stage, event, data in events if stage == "phone_plan"]
+    assert recovered == [
+        {
+            "decision": "render_with_notes",
+            "reason": "captions_compile",
+            "lane": "captions",
+            "item_id": None,
+            "action": "dropped",
+        }
+    ]
