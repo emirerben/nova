@@ -64,11 +64,24 @@ def prod_setting_overrides() -> dict[str, object]:
     }
 
 
-def apply_prod_profile(monkeypatch) -> list[str]:
+# Production values these suites were written without: the device-only cutover (DECISIONS.md
+# 2026-11-02) and the brief-binding writers. A suite that still exercises the cloud render lane or
+# the unbound draft path holds them at the code default with `prod_profile_pre_cutover`; each
+# such test is a place the "production profile" is not production.
+PRE_CUTOVER_SETTINGS = (
+    "ios_device_only_mode",
+    "cloud_render_execution_enabled",
+    "kria_brief_binding_enabled",
+)
+
+
+def apply_prod_profile(monkeypatch, *, hold_at_default: tuple[str, ...] = ()) -> list[str]:
     """Run with the settings production has; return the names actually applied."""
 
     applied: list[str] = []
     for name, value in prod_setting_overrides().items():
+        if name in hold_at_default:
+            continue
         monkeypatch.setattr(settings, name, value)
         applied.append(name)
     return applied

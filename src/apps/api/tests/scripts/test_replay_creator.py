@@ -48,6 +48,26 @@ def test_local_database_boundary_rejects_production_destination() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql://u@localhost:5432/nova_creator_fidelity_test?host=nova-video-db.flycast",
+        "postgresql://u@localhost:5432/nova_creator_fidelity_test?hostaddr=10.0.0.1",
+        "postgresql://u@localhost:5432/nova",
+        "postgresql://u@localhost:5432/nova_creator_fidelity_test_",
+    ],
+)
+def test_local_database_boundary_rejects_redirecting_or_foreign_urls(database_url: str) -> None:
+    with pytest.raises(replay_creator.ReplaySafetyError):
+        replay_creator._database_target(database_url)
+
+
+def test_local_database_boundary_accepts_per_run_scratch_name() -> None:
+    assert replay_creator._database_target(
+        "postgresql://u@localhost:5432/nova_creator_fidelity_test_a1b2c3d4e5f6"
+    ) == ("localhost", "nova_creator_fidelity_test_a1b2c3d4e5f6")
+
+
 @pytest.mark.parametrize("redis_url", ["redis://localhost:6379", "redis://localhost:6379/0"])
 def test_replay_redis_is_pinned_to_local_database_14(redis_url: str) -> None:
     with pytest.raises(replay_creator.ReplaySafetyError, match="database 14"):
