@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.230.0] - 2026-11-14
+
+### Fixed
+- fix(kria): a text question reaches the creator and failures show their reason (KRI-1456) (#2357) <!-- release-pr: 2357 -->
+
 ## [0.88.229.0] - 2026-11-14
 
 ### Fixed
