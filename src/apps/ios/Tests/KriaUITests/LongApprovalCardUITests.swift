@@ -6,8 +6,9 @@ import XCTest
 /// taller than the visible chat, swapped in at the end while the chat follows the end, leaves nothing drawn.
 ///
 /// Failure modes pinned here: the transcript is blank at any moment between Send and a few seconds after the card
-/// lands; the card is taller than the visible chat; the card keeps the stock filler; the approve button cannot be
-/// reached; the phone keeps re-reading the same approval on every poll.
+/// lands; the draft shows on its own first and is then swapped for the card (the chat jumps twice); the card is
+/// taller than the visible chat; the card keeps the stock filler, Kria's own plan notes ("Hinweis zu diesem Video")
+/// or one line per ask the creator just agreed to leave out; the approve button cannot be reached.
 @MainActor
 final class LongApprovalCardUITests: XCTestCase {
     private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement {
@@ -59,6 +60,10 @@ final class LongApprovalCardUITests: XCTestCase {
         // From Send until well after the card has swapped in, the chat always shows text. The card lands about two
         // seconds after the draft; the white chat in ylab lasted a few seconds after that.
         let approve = app.buttons["Create this video"]
+        // Only the draft message carries the plan notes; the card leaves them out. Seen at all, the draft was drawn
+        // on its own before the card replaced it.
+        let draftAlone = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Hinweis zu diesem Video")).firstMatch
+        var draftAloneSamples = 0
         var blankSamples = 0
         var cardSeenAt: Date?
         let start = Date()
@@ -67,11 +72,16 @@ final class LongApprovalCardUITests: XCTestCase {
                 blankSamples += 1
                 if blankSamples == 1 { attach(app, "Blank chat") }
             }
+            if draftAlone.exists {
+                draftAloneSamples += 1
+                if draftAloneSamples == 1 { attach(app, "Draft shown before its card") }
+            }
             if cardSeenAt == nil, approve.exists { cardSeenAt = Date() }
             if let cardSeenAt, Date().timeIntervalSince(cardSeenAt) > 6 { break }
         }
         XCTAssertNotNil(cardSeenAt, "the approval card arrived\n\(app.debugDescription)")
         XCTAssertEqual(blankSamples, 0, "the chat was blank in \(blankSamples) samples between Send and the card settling")
+        XCTAssertEqual(draftAloneSamples, 0, "the draft showed on its own in \(draftAloneSamples) samples before its card")
         attach(app, "Card settled")
 
         // The whole card, heading to approve button, fits in the visible chat.
@@ -81,14 +91,20 @@ final class LongApprovalCardUITests: XCTestCase {
         }
         let heading = labelled("BEGINSWITH", "Here’s the direction I’ll use")
         XCTAssertTrue(heading.exists, app.debugDescription)
-        let firstLine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Hier ist die einfachere Version")).firstMatch
-        XCTAssertTrue(firstLine.exists, "the card shows the draft's summary")
+        XCTAssertTrue(labelled("CONTAINS", "Hier ist die einfachere Version").exists, "the card shows the draft's summary")
+        XCTAssertTrue(labelled("CONTAINS", "Wie besprochen weggelassen: 3 deiner Wünsche").exists,
+                      "the three agreed omissions are one line")
         let cardHeight = approve.frame.maxY - heading.frame.minY
+        let measured = XCTAttachment(string: "approval card \(cardHeight) pt, visible chat \(visible.height) pt")
+        measured.name = "Card height"
+        measured.lifetime = .keepAlways
+        add(measured)
         XCTAssertLessThanOrEqual(cardHeight, visible.height,
                                  "the approval card (\(cardHeight) pt) is taller than the visible chat (\(visible.height) pt)")
 
         // The stock filler is gone: none of it said anything about this draft.
-        for filler in ["Natural, intentional", "The story, right away", "short-form", "Creative direction", "I’ve shaped a clear creative direction"] {
+        for filler in ["Natural, intentional", "The story, right away", "short-form", "Creative direction",
+                       "I’ve shaped a clear creative direction", "Hook-Idee", "automatisch prüfen"] {
             XCTAssertFalse(labelled("CONTAINS", filler).exists, "stock filler on the card: \(filler)")
         }
 

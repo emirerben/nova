@@ -117,6 +117,7 @@ from app.kria.request_budget import creator_request_text_sync, request_over_budg
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     Disclosure,
+    approval_card_text,
     card_disclosures,
     card_text,
     card_text_within,
@@ -4242,13 +4243,15 @@ def _complete_draft_turn(
             # KRI-689: the speed heads-up rides on the card too, unless the KRI-700 reply
             # (which already ends with it) became the summary. KRI-1352: words the server
             # restored to the brief are shown on the card before anyone approves them.
+            # KRI-1403: the card fits one screen: no plan notes the route won't use, and one
+            # line for the asks the creator just agreed to leave out.
             consequence_summary=" ".join(
                 part
                 for part in (
-                    f"Render this draft: {_card_summary(approval_summary)}",
+                    "Render this draft: "
+                    + approval_card_text(_card_summary(approval_summary), route_disclosures),
                     copy_notice,
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
-                    route_notice if route_notice and route_notice not in approval_summary else None,
                 )
                 if part
             ),

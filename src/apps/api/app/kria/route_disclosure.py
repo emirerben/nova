@@ -452,8 +452,34 @@ def _card_lines(whole: Sequence[Disclosure], rest: Sequence[Disclosure]) -> str:
     out += [f"- {item.text}" for item in rest if not lines.subject_label(item.subject)]
     if not out:
         return ""
-    heads_up = say(en="Heads-up for this video:", tr="Bu video için not:")
-    return "\n".join([heads_up, *out])
+    return "\n".join([_heads_up(), *out])
+
+
+def _heads_up() -> str:
+    return say(en="Heads-up for this video:", tr="Bu video için not:")
+
+
+def approval_card_text(reply: str, disclosures: Sequence[Disclosure]) -> str:
+    """``reply`` for the approval card: its heads-up block keeps only the research line (KRI-1403).
+
+    The strategy lines are Kria's own plan ideas the route won't use (a hook idea, a story
+    structure), not something the creator asked for, and the card has to fit one screen (ylab,
+    build 1977: a 14-line card blanked the chat). They stay in the draft reply and on the
+    approval's ``not_applied`` record. The research line says what will happen after approval,
+    so it stays.
+    """
+    lines = reply.split("\n")
+    header = _heads_up()
+    if header in lines:
+        start = lines.index(header)
+        end = start + 1
+        while end < len(lines) and lines[end].startswith("- "):
+            end += 1
+        lines = lines[:start] + lines[end:]
+    research = card_text([item for item in disclosures if item.code == RESEARCH_AFTER_APPROVAL])
+    if research:
+        lines.append(research)
+    return "\n".join(lines)
 
 
 # --- length -----------------------------------------------------------------------------------
