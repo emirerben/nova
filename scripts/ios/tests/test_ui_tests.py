@@ -245,7 +245,8 @@ class UISelectionTests(unittest.TestCase):
             self.assertIn("KriaUITests/NewTests/testNew", data["groups"]["smoke"])
             self.assertEqual(ui.select_groups([path], root)[0], "smoke,projects")
             self.assertIn(
-                "KriaUITests/NewTests/testNew", ui.expected_tests("smoke,projects", root)
+                "KriaUITests/NewTests/testNew",
+                ui.expected_tests("smoke,projects", root),
             )
 
     def test_stale_entries_are_reported_with_the_fix_command(self):
@@ -278,7 +279,9 @@ class UISelectionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ui.expected_tests("smoke,editor")
         data = json.loads(ui.MANIFEST.read_text())
-        data["overrides"]["SignInUITests/testSignInShowsEveryProviderAndLegalLink"] = "nope"
+        data["overrides"]["SignInUITests/testSignInShowsEveryProviderAndLegalLink"] = (
+            "nope"
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.json"
             path.write_text(json.dumps(data))
@@ -288,50 +291,77 @@ class UISelectionTests(unittest.TestCase):
                     ui.expected_tests("smoke,creation")
 
     def test_an_in_place_rename_is_named_by_check_and_followed_by_sync(self):
+        real = json.loads(ui.MANIFEST.read_text())
+        smoke = real["smoke"][0]
+        smoke_class, smoke_method = smoke.removeprefix("KriaUITests/").split("/")
+        override = next(
+            name for name in real["overrides"] if name.split("/")[0] != smoke_class
+        )
+        override_class, override_method = override.split("/")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tests = root / "src/apps/ios/Tests/KriaUITests"
             shutil.copytree(ui.ROOT / "src/apps/ios/Tests/KriaUITests", tests)
             groups = root / "ui-test-groups.json"
-            groups.write_text(json.dumps({**json.loads(ui.MANIFEST.read_text()), "sources": {}}))
+            groups.write_text(json.dumps({**real, "sources": {}}))
             journeys = root / "journey-manifest.json"
-            smoke = "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface"
-            override = "AccountPrivacyUITests/testATypeFollowsAllTextUntilItIsChangedByHand"
             journeys.write_text(json.dumps({"xctests": [smoke]}))
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                f"-only-testing:{smoke} \\\n--xctest {smoke_class}/{smoke_method}\n"
+            )
 
             def git(*args):
-                subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+                subprocess.run(
+                    ["git", *args], cwd=root, check=True, capture_output=True
+                )
+
+            def source(name):
+                return next(
+                    path
+                    for path in tests.rglob("*.swift")
+                    if re.search(rf"class {name}\b", path.read_text())
+                )
 
             git("init", "-q", "-b", "main")
             git("config", "user.email", "t@example.com")
             git("config", "user.name", "t")
             git("add", "-A")
             git("commit", "-qm", "base")
-            for name, old, new in (
-                ("EditorUITests", "testNativeEditorBackButtonReturnsToPreviousSurface", "testBackReturns"),
-                ("AccountPrivacyUITests", "testATypeFollowsAllTextUntilItIsChangedByHand", "testATypeFollows"),
+            for klass, old, new in (
+                (smoke_class, smoke_method, "testRenamedSmokeSubject"),
+                (override_class, override_method, "testRenamedOverrideSubject"),
             ):
-                file = tests / f"{name}.swift"
-                file.write_text(file.read_text().replace(f"func {old}(", f"func {new}("))
+                file = source(klass)
+                file.write_text(
+                    file.read_text().replace(f"func {old}(", f"func {new}(")
+                )
             with patch.object(ui, "MANIFEST", groups):
                 problems = ui.check(root)
-                self.assertTrue(any("testNativeEditorBack" in p for p in problems))
-                self.assertTrue(any("testATypeFollowsAll" in p for p in problems))
+                self.assertTrue(any(smoke_method in p for p in problems))
+                self.assertTrue(any(override_method in p for p in problems))
+                self.assertFalse(any("ci.yml" in p for p in problems))
                 self.assertIn("make sync-test-registries", problems[-1])
+                problems = ui.check(root, base="HEAD", journeys=journeys)
+                self.assertTrue(
+                    any(f"ci.yml still names '{smoke_class}/" in p for p in problems)
+                )
                 value, _ = ui.select_groups(
-                    ["src/apps/ios/Tests/KriaUITests/EditorUITests.swift"], root
+                    [source(smoke_class).relative_to(root).as_posix()], root
                 )
                 self.assertNotEqual(value, "full")
                 self.assertNotIn(smoke, ui.expected_tests("smoke", root))
-                ui.sync(root, base="HEAD", journeys=journeys)
-                self.assertEqual(ui.check(root), [])
-                self.assertIn(
-                    smoke.replace("testNativeEditorBackButtonReturnsToPreviousSurface", "testBackReturns"),
-                    ui.expected_tests("smoke", root),
-                )
-                self.assertIn("EditorUITests/testBackReturns", journeys.read_text())
+                changed = ui.sync(root, base="HEAD", journeys=journeys)
+                self.assertTrue(any(line.startswith("smoke ") for line in changed))
+                self.assertEqual(ui.check(root, base="HEAD", journeys=journeys), [])
+                renamed = smoke.replace(smoke_method, "testRenamedSmokeSubject")
+                self.assertIn(renamed, ui.expected_tests("smoke", root))
+                self.assertIn(renamed, journeys.read_text())
+                self.assertNotIn(smoke_method, workflow.read_text())
+                self.assertIn("testRenamedSmokeSubject", workflow.read_text())
                 overrides = json.loads(groups.read_text())["overrides"]
-                self.assertIn("AccountPrivacyUITests/testATypeFollows", overrides)
+                self.assertIn(f"{override_class}/testRenamedOverrideSubject", overrides)
                 self.assertNotIn(override, overrides)
 
     def test_focused_filters_preserve_smoke_and_deduplicate(self):

@@ -454,7 +454,8 @@ class VerifyShellTests(unittest.TestCase):
         result_dir = next((self.root / "test-results/ios").glob("ui.*"))
         flaky = json.loads((result_dir / "flaky-tests.json").read_text())
         self.assertEqual([test["identifier"] for test in flaky], [self.overran_first()])
-        self.assertIn("Verified 5 selected UI tests passed.", result.stdout)
+        smoke = len(ui.manifest(self.root)["groups"]["smoke"])
+        self.assertIn(f"Verified {smoke} selected UI tests passed.", result.stdout)
 
     def test_a_rerun_that_runs_past_the_allowance_again_stays_red(self):
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)

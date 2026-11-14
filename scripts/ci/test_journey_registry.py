@@ -171,14 +171,18 @@ class JourneyRegistryTests(unittest.TestCase):
         }
         for name, text in spellings.items():
             with self.subTest(name=name):
-                self.tree.write(f"{registry.API}/tests/kria/test_{name}.py", text + "\n\ndef test_it():\n    pass\n")
+                self.tree.write(
+                    f"{registry.API}/tests/kria/test_{name}.py",
+                    text + "\n\ndef test_it():\n    pass\n",
+                )
                 self.assertIn(
-                    f"tests/kria/test_{name}.py", registry.step_files("alpha", self.tree.root)
+                    f"tests/kria/test_{name}.py",
+                    registry.step_files("alpha", self.tree.root),
                 )
         refused = {
             "decorator": 'import pytest\n\n@pytest.mark.journey("alpha")\ndef test_it():\n    pass\n',
             "class_attribute": 'import pytest\n\nclass TestIt:\n    pytestmark = pytest.mark.journey("alpha")\n',
-            "bare": 'import pytest\n\npytestmark = pytest.mark.journey\n',
+            "bare": "import pytest\n\npytestmark = pytest.mark.journey\n",
         }
         for name, text in refused.items():
             with self.subTest(name=name):
@@ -191,7 +195,10 @@ class JourneyRegistryTests(unittest.TestCase):
 
     def test_other_hand_lists_fail_check_on_a_rename_and_sync_follows_it(self):
         self.tree.write("Makefile", "t:\n\tpytest tests/kria/test_listed.py::test_it\n")
-        self.tree.write("scripts/ci/test_selection.py", 'PATH = "src/apps/api/tests/kria/test_listed.py"\n')
+        self.tree.write(
+            "scripts/ci/test_selection.py",
+            'PATH = "src/apps/api/tests/kria/test_listed.py"\n',
+        )
         self.tree.write(
             "src/apps/api/tests/gates/reliability-gates.json",
             '{"gates": [{"regression_tests": ["tests/kria/test_listed.py"]}]}\n',
@@ -213,8 +220,12 @@ class JourneyRegistryTests(unittest.TestCase):
         stale = registry.check(self.tree.root, self.tree.manifest, base="HEAD")
         self.assertTrue(any("test_selection.py still names" in p for p in stale))
         registry.sync(self.tree.root, self.tree.manifest, base="HEAD")
-        self.assertEqual(registry.check(self.tree.root, self.tree.manifest, base="HEAD"), [])
-        self.assertIn("test_listed_renamed.py::test_it", (self.tree.root / "Makefile").read_text())
+        self.assertEqual(
+            registry.check(self.tree.root, self.tree.manifest, base="HEAD"), []
+        )
+        self.assertIn(
+            "test_listed_renamed.py::test_it", (self.tree.root / "Makefile").read_text()
+        )
         self.assertIn(
             "src/apps/api/tests/kria/test_listed_renamed.py",
             (self.tree.root / "scripts/ci/test_selection.py").read_text(),
@@ -230,7 +241,9 @@ class JourneyRegistryTests(unittest.TestCase):
             )
 
     def test_a_missing_hand_listed_test_node_is_reported(self):
-        self.tree.write("Makefile", "t:\n\tpytest tests/kria/test_listed.py::test_gone\n")
+        self.tree.write(
+            "Makefile", "t:\n\tpytest tests/kria/test_listed.py::test_gone\n"
+        )
         self.assertTrue(any("no such test" in problem for problem in self.tree.check()))
 
     def test_manifest_xctests_must_name_real_swift_tests(self):
@@ -244,7 +257,76 @@ class JourneyRegistryTests(unittest.TestCase):
         self.assertEqual(self.tree.check(), [])
         rows["journeys"][0]["xctests"] = ["KriaTests/AlphaTests/testRenamed"]
         self.tree.manifest.write_text(json.dumps(rows))
-        self.assertTrue(any("names no test" in problem for problem in self.tree.check()))
+        self.assertTrue(
+            any("names no test" in problem for problem in self.tree.check())
+        )
+
+    def test_a_journey_run_through_the_tests_command_can_carry_a_marker(self):
+        self.tree.write(
+            ".github/workflows/ci.yml",
+            WORKFLOW.format(step="alpha")
+            + '          tests="$(python3 scripts/ci/journey_registry.py tests beta)"\n',
+        )
+        rows = json.loads(self.tree.manifest.read_text())
+        rows["journeys"].append(
+            {
+                "id": "beta",
+                "needs_native": False,
+                "paths": [f"{registry.API}/app/alpha.py"],
+            }
+        )
+        self.tree.manifest.write_text(json.dumps(rows))
+        self.tree.write(
+            f"{registry.API}/tests/kria/test_beta.py", MARKED.format(id="beta", step="")
+        )
+        self.assertEqual(self.tree.check(), [])
+        beta = next(
+            row
+            for row in registry.journeys(self.tree.root, self.tree.manifest)
+            if row["id"] == "beta"
+        )
+        self.assertEqual(beta["api_tests"], "tests/kria/test_beta.py")
+
+    def test_workflow_native_test_names_must_name_real_tests_in_their_target(self):
+        self.tree.write(
+            "src/apps/ios/Tests/KriaUITests/AlphaUITests.swift",
+            "final class AlphaUITests: XCTestCase {\n    func testReal() {}\n}\n",
+        )
+        steps = (
+            "          -only-testing:KriaUITests/AlphaUITests/testReal \\\n"
+            "          --xctest AlphaUITests/testReal\n"
+        )
+        self.tree.write(
+            ".github/workflows/ci.yml", WORKFLOW.format(step="alpha") + steps
+        )
+        self.assertEqual(self.tree.check(), [])
+        for text in (
+            "          -only-testing:KriaTests/AlphaUITests/testReal\n",
+            "          -only-testing:KriaUITests/AlphaUITests/testRenamed\n",
+            "          --xctest AlphaUITests/testRenamed\n",
+        ):
+            self.tree.write(
+                ".github/workflows/ci.yml", WORKFLOW.format(step="alpha") + text
+            )
+            self.assertTrue(
+                any("names no native test" in p for p in self.tree.check()), text
+            )
+
+    def test_the_sync_hint_is_only_given_when_sync_can_fix_the_problem(self):
+        self.tree.write(".github/workflows/ci.yml", "jobs: {}\n")
+        problems = self.tree.check()
+        self.assertTrue(problems)
+        self.assertFalse(any("make sync-test-registries" in p for p in problems))
+
+    def test_a_trigger_path_may_be_a_filename_prefix(self):
+        self.tree.write(f"{registry.API}/app/alpha_two.py", "")
+        rows = json.loads(self.tree.manifest.read_text())
+        rows["journeys"][0]["paths"] = [f"{registry.API}/app/alpha_"]
+        self.tree.manifest.write_text(json.dumps(rows))
+        self.assertEqual(self.tree.check(), [])
+        rows["journeys"][0]["paths"] = [f"{registry.API}/app/omega_"]
+        self.tree.manifest.write_text(json.dumps(rows))
+        self.assertTrue(any("matches no file" in p for p in self.tree.check()))
 
 
 if __name__ == "__main__":

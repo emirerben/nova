@@ -126,7 +126,11 @@ instead of listing test paths, and `journey-manifest.json` rows gain the marked
 files as `api_tests` at load time (`journey_registry.journeys()`), so a new or
 renamed test needs no registry edit. CI self-tests assert properties of a step
 (non-empty, files exist), never a fixed path. Trigger `paths`, evidence tests
-without a marker and `xctests` stay in the manifest.
+without a marker and `xctests` stay in the manifest. A journey that `ci.yml`
+runs through `journey_registry.py tests <id>` (clip speed, camera-roll
+recommendations, the plaza title, recovery) takes a marker the same way. A
+trigger path may be a filename prefix (`.../SplitScreen`), so a new test file
+with that prefix selects its journey with no edit.
 
 `make check-test-registries` (also a `scripts/ci` unit test and
 `preship-check.sh`) fails on a manifest path, test or `xctests` entry that does
@@ -134,11 +138,18 @@ not exist, a Makefile, a script under `scripts/` or `formal/kria_turns`, the
 KRI-577 ledger `tests/gates/reliability-gates.json` or a non-`ci.yml` workflow
 that names a test that does not exist, a hand-kept file that still names a path git
 renamed, a marker whose step `ci.yml` never runs, a step with no marked test, an
-unknown journey id and a hand-listed test path in `ci.yml`; its last line names
-the fix. After a rename, `make sync-test-registries` rewrites the renamed paths
+unknown journey id, a hand-listed test path in `ci.yml` and a native test named
+in `ci.yml` (`-only-testing:Target/Class/test`, `--xctest Class/test`) that does
+not exist in that target; a problem `sync` cannot fix names its own fix, the rest
+end with `make sync-test-registries`. After a rename, `make sync-test-registries` rewrites the renamed paths
 in those files and follows Swift class and test-method renames into
-`ui-test-groups.json` and the manifest's `xctests` (stage a file rename first).
-Not derived yet: the manifest's `paths`, the Makefile, `verify-kria.sh`,
+`ui-test-groups.json`, the manifest's `xctests`, the `ci.yml` native steps and
+the `scripts/ios/tests` self-tests (stage a file rename first); `check` names a
+file that still holds the old name.
+Not derived yet: `api_tests` entries for the manifest's journeys that no marker
+declares (a new test for those still needs a manifest line or a marker), the
+native test names in `ci.yml` and the manifest's `xctests` (followed through
+renames, not generated), the manifest's `paths`, the Makefile, `verify-kria.sh`,
 `reliability-gates.json`, `request-following-regressions.py` and workflow test
 lists (validated and rename-followed, not generated), and
 `ui-test-durations.json` / `ui-test-measured-durations.json` (an unrecorded test
