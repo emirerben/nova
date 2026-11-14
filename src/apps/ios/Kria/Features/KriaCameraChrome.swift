@@ -335,6 +335,8 @@ struct ReviewTakePlayer: View {
     @State private var elapsed: Double = 0
     @State private var duration: Double = 0
     @State private var scrubbing = false
+    /// A system-cancelled drag never reaches `onEnded`; without this `scrubbing` stays true and playback position freezes.
+    @GestureState private var scrubActive = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var elapsedLabel: some View { Text(DurationFormatter.clock(elapsed)).kriaType(.label).monospacedDigit().fixedSize() }
@@ -398,15 +400,21 @@ struct ReviewTakePlayer: View {
             }
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+            .gesture(DragGesture(minimumDistance: 0).updating($scrubActive) { _, active, _ in active = true }.onChanged { value in
                 scrubbing = true
                 elapsed = duration * min(1, max(0, value.location.x / max(1, proxy.size.width)))
             }.onEnded { _ in
                 scrubbing = false
                 player.seek(to: CMTime(seconds: elapsed, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             })
+            .onChange(of: scrubActive) { _, active in
+                if !active, scrubbing {
+                    scrubbing = false
+                    player.seek(to: CMTime(seconds: elapsed, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            }
         }
-        .frame(height: 28)
+        .frame(height: 44)
         // VoiceOver gets a real slider, so the position can be swiped to seek instead of dragged.
         .accessibilityRepresentation {
             Slider(value: Binding(get: { elapsed }, set: { seek(to: $0) }), in: 0...max(duration, 1))

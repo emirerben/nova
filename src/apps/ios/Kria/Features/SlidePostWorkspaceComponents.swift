@@ -224,6 +224,7 @@ private struct SlidePostStripMetrics: Equatable {
 /// same 60x76 footprint and number-label row. Long-press a slide and drag to reorder; the strip
 /// auto-scrolls when the finger nears either edge.
 struct SlidePostStrip: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let slides: [SlidePostSlide]
     let coverIndex: Int
     let selectedID: String?
@@ -405,11 +406,11 @@ struct SlidePostStrip: View {
             Text("\(index + 1)").font(KriaFont.body(11).weight(selected ? .bold : .semibold)).foregroundStyle(selected ? KriaColor.ink : KriaColor.zinc)
         }
         .frame(width: Self.tileWidth)
-        .scaleEffect(lifted ? 1.06 : 1).rotationEffect(.degrees(lifted ? 4 : 0))
+        .scaleEffect(lifted && !reduceMotion ? 1.06 : 1).rotationEffect(.degrees(lifted && !reduceMotion ? 4 : 0))
         .shadow(color: .black.opacity(lifted ? 0.28 : 0), radius: 10, y: 6)
         .offset(x: lifted ? dragDelta : shift).zIndex(lifted ? 1 : 0)
-        .animation(.snappy(duration: 0.18), value: lifted)
-        .animation(.snappy(duration: 0.18), value: shift)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: lifted)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: shift)
         .accessibilityAction(named: "Move earlier") { if index > 0 { onMove(slide.id, index - 1) } }
         .accessibilityAction(named: "Move later") { if index < slides.count - 1 { onMove(slide.id, index + 1) } }
     }

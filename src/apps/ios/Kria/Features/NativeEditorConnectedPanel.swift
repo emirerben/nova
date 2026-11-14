@@ -94,7 +94,21 @@ struct NativeEditorPanelResizeDrag: ViewModifier {
     var dismiss: NativeEditorPanelDismiss?
     @State private var dragOrigin: CGFloat?
     @State private var feedback = 0
+    @State private var didDismiss = false
     @GestureState private var isDragging = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Springs the pulled-down panel back to rest, continuing at the finger's release speed.
+    /// The pull is a transform driver, so this is the only place its snap-back is animated.
+    private func snapBack(releaseVelocity: CGFloat = 0) {
+        guard let dismiss else { return }
+        let pull = dismiss.pull.wrappedValue
+        let offset = NativeEditorPanelDismissRule.offset(forPull: pull)
+        let velocity = KriaGesturePhysics.unitVelocity(
+            NativeEditorPanelDismissRule.offsetVelocity(forPull: pull, pullVelocity: releaseVelocity),
+            from: offset, to: 0)
+        withAnimation(DrawerMotion.settle(reduceMotion: reduceMotion, velocity: velocity)) { dismiss.pull.wrappedValue = 0 }
+    }
 
     private func clamp(_ value: CGFloat) -> CGFloat {
         min(bounds.upperBound, max(bounds.lowerBound, value))
@@ -131,13 +145,22 @@ struct NativeEditorPanelResizeDrag: ViewModifier {
                     }
                     .onEnded { value in
                         if let dismiss, let origin = dragOrigin {
-                            dismiss.pull.wrappedValue = 0
                             if NativeEditorPanelDismissRule.shouldDismiss(
                                 pull: pull(value.translation.height, origin: origin),
                                 projectedPull: pull(value.predictedEndTranslation.height, origin: origin),
                                 startedAtMinimum: origin <= bounds.lowerBound
                             ) {
+                                // Closing is not a snap-back: leave the panel where the finger left it so the
+                                // removal starts from there, then clear the pull once it is gone (or if it stayed).
+                                didDismiss = true
                                 dismiss.complete()
+                                Task { @MainActor in
+                                    try? await Task.sleep(for: .milliseconds(450))
+                                    didDismiss = false
+                                    if dismiss.pull.wrappedValue != 0 { snapBack() }
+                                }
+                            } else {
+                                snapBack(releaseVelocity: value.velocity.height)
                             }
                         }
                         dragOrigin = nil
@@ -146,7 +169,7 @@ struct NativeEditorPanelResizeDrag: ViewModifier {
             )
             // A cancelled drag never reaches onEnded; don't leave the panel pulled down.
             .onChange(of: isDragging) { _, dragging in
-                if !dragging, let dismiss, dismiss.pull.wrappedValue != 0 { dismiss.pull.wrappedValue = 0 }
+                if !dragging, !didDismiss, let dismiss, dismiss.pull.wrappedValue != 0 { snapBack() }
             }
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)
     }
@@ -185,8 +208,12 @@ enum NativeEditorPanelDismissRule {
 
     /// The panel follows the finger 1:1 at first, then resists.
     static func offset(forPull pull: CGFloat) -> CGFloat {
-        guard pull > 0 else { return 0 }
-        return maxOffset * pull / (pull + maxOffset)
+        KriaGesturePhysics.rubberBand(pull, limit: maxOffset)
+    }
+
+    /// How fast the panel is moving for a given finger speed, through the same resistance curve.
+    static func offsetVelocity(forPull pull: CGFloat, pullVelocity: CGFloat) -> CGFloat {
+        pullVelocity * KriaGesturePhysics.rubberBandSlope(pull, limit: maxOffset)
     }
 }
 

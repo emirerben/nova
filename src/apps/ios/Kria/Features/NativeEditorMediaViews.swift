@@ -1797,6 +1797,11 @@ struct NativeMiniStrip: View {
     @State private var panStartTime: TimeInterval?
     @State private var lastPanAt = Date.distantPast
     @State private var playheadStartTime: TimeInterval?
+    /// A system-cancelled drag never reaches `onEnded`; these let `onChange` clear the stale start times.
+    @GestureState private var panActive = false
+    /// A flick keeps the timeline gliding after release; any new touch, or leaving the screen, ends it.
+    @State private var coastTask: Task<Void, Never>?
+    @GestureState private var playheadActive = false
     @State private var cachedItems: [NativeEditorTimelineItem] = []
     @State private var cachedRows: [TrackRow] = []
     @State private var blockBoundaries: [TimeInterval] = []
@@ -1991,6 +1996,13 @@ struct NativeMiniStrip: View {
                                 .frame(width: laneLabelWidth, alignment: .leading)
                             timeline
                                 .simultaneousGesture(timelinePanGesture)
+                                .onChange(of: panActive) { _, active in
+                                    if !active, panStartTime != nil { lastPanAt = .now; panStartTime = nil }
+                                }
+                                .onChange(of: playheadActive) { _, active in
+                                    if active { stopCoast() } else { playheadStartTime = nil }
+                                }
+                                .onDisappear { stopCoast() }
                         }
                         .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - bottomClearance), alignment: .topLeading)
                         .contentShape(Rectangle())
@@ -2346,10 +2358,11 @@ struct NativeMiniStrip: View {
                     .position(x: playheadX, y: timelineHeight / 2)
                     .allowsHitTesting(false)
                 Color.clear
-                    .frame(width: 44, height: 24)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
-                    .position(x: playheadX, y: 12)
+                    .position(x: playheadX, y: 22)
                     .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                        .updating($playheadActive) { _, active, _ in active = true }
                         .onChanged { value in
                             let start = playheadStartTime ?? clock.currentTime
                             playheadStartTime = start
@@ -3196,18 +3209,54 @@ struct NativeMiniStrip: View {
 
     private var timelinePanGesture: some Gesture {
         DragGesture(minimumDistance: 10, coordinateSpace: .global)
+            .updating($panActive) { _, active, _ in active = true }
             .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height),
                       !session.isTimingGestureActive, clipReorder == nil, !isPinching, playheadStartTime == nil else { return }
+                if panStartTime == nil { stopCoast() }
                 let start = panStartTime ?? clock.currentTime
                 panStartTime = start
                 lastPanAt = .now
                 seek(to: start - Double(value.translation.width / pixelsPerSecond))
             }
-            .onEnded { _ in
-                if panStartTime != nil { lastPanAt = .now }
+            .onEnded { value in
+                let wasPanning = panStartTime != nil
+                if wasPanning { lastPanAt = .now }
                 panStartTime = nil
+                if wasPanning { startCoast(pointsPerSecond: value.velocity.width) }
             }
+    }
+
+    /// Dragging left moves later in the video, so the glide runs opposite to the finger.
+    private static let coastMinimumSpeed: CGFloat = 200
+    /// Per-millisecond velocity retention: the same deceleration UIScrollView uses.
+    private static let coastRetention = 0.998
+
+    private func startCoast(pointsPerSecond: CGFloat) {
+        guard !reduceMotion, pointsPerSecond.isFinite, abs(pointsPerSecond) >= Self.coastMinimumSpeed else { return }
+        let scale = max(1, Double(pixelsPerSecond))
+        var velocity = -Double(pointsPerSecond) / scale
+        stopCoast()
+        coastTask = Task { @MainActor in
+            var last = ContinuousClock.now
+            while !Task.isCancelled, abs(velocity) * scale > 20 {
+                try? await Task.sleep(for: .milliseconds(16))
+                guard !Task.isCancelled else { return }
+                let now = ContinuousClock.now
+                let elapsed = (now - last) / .seconds(1)
+                last = now
+                let before = clock.currentTime
+                seek(to: before + velocity * elapsed)
+                lastPanAt = .now
+                velocity *= pow(Self.coastRetention, elapsed * 1000)
+                if clock.currentTime == before { return }
+            }
+        }
+    }
+
+    private func stopCoast() {
+        coastTask?.cancel()
+        coastTask = nil
     }
 
     private func seek(to value: TimeInterval) {
@@ -3488,7 +3537,7 @@ private struct NativeTimelineBar: View {
         .scaleEffect(isMoving && !reduceMotion ? 1.04 : 1)
         .offset(y: isMoving && !reduceMotion ? -5 : 0)
         .shadow(color: .black.opacity(isMoving ? 0.22 : 0), radius: isMoving ? 5 : 0, y: 3)
-        .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.62), value: isMoving)
+        .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.86), value: isMoving)
         .offset(y: frame.midY)
         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.86), value: frame.midY)
         .position(x: frame.midX, y: 0)
@@ -3645,7 +3694,7 @@ private struct NativeClipSurface: View {
         .frame(width: max(44, frame.width), height: frame.height)
         .scaleEffect(isLifted && !reduceMotion ? 1.04 : 1)
         .shadow(color: .black.opacity(isLifted ? 0.22 : 0), radius: isLifted ? 5 : 0, y: 3)
-        .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.62), value: isLifted)
+        .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.86), value: isLifted)
         .position(x: frame.midX, y: frame.midY)
         // A selected clip owns both edge handles. Raise the whole surface so
         // the trailing handle at an adjacent clip boundary is not covered by
