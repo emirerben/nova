@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.204.0] - 2026-11-14
+
+### Changed
+- docs(KRI-1383): fix stale rule references and list text-only rules (#2303) <!-- release-pr: 2303 -->
+
 ## [0.88.203.0] - 2026-11-14
 
 ### Changed
