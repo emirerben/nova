@@ -115,6 +115,26 @@ def _split_two_in_panel(variant: dict[str, Any]) -> None:
     timeline["split_screen_sections"][0]["duration_s"] = 7.0
 
 
+def _split_with_blank(variant: dict[str, Any]) -> None:
+    _split_room_to_loop(variant)
+    variant["user_timeline"]["slots"].insert(
+        2,
+        {
+            "slot_id": "blank-1",
+            "media_kind": "blank",
+            "color": "#112233",
+            "in_s": 0.0,
+            "duration_s": 2.0,
+            "duration_beats": None,
+            "removed": False,
+            "transition_after": "cut",
+            "split_section_id": "duo",
+            "split_panel_index": 0,
+            "split_offset_s": 3.0,
+        },
+    )
+
+
 def _split(variant: dict[str, Any]) -> None:
     timeline = variant["user_timeline"]
     slots = timeline["slots"]
@@ -154,6 +174,7 @@ BACKGROUND_OPEN = {
     "background_windows_open": lambda *_: True,
     "background_color_reason": lambda *_: None,
 }
+BLANK_OPEN = {"split_blank_available": lambda *_: True}
 FULL_OPENING_OPEN = {**BACKGROUND_OPEN, "background_full_opening_open": lambda *_: True}
 BACKGROUND_POOL = [
     {"id": "bg-1", "kind": "image", "label": "beach.jpg"},
@@ -546,6 +567,24 @@ SCENARIOS: list[Scenario] = [
         note="KRI-1420: A then B on the top panel, C on the bottom, on an existing split.",
     ),
     Scenario(
+        "split_screen_blank",
+        "Fill the bottom panel of the split screen with a red block after its clip.",
+        [{"op": "add_split_blank", "field": "color"}],
+        [
+            {
+                "op": "add_split_blank",
+                "section_id": "duo",
+                "panel_index": 1,
+                "duration_s": 2.0,
+                "color": "#FF0000",
+            }
+        ],
+        variant=_split,
+        needs_split=True,
+        patches=BLANK_OPEN,
+        note="KRI-1457: a flat-colour block in a split panel, placed after its last clip.",
+    ),
+    Scenario(
         "split_screen_remove",
         "Remove the split screen.",
         [{"op": "remove_split_screen"}],
@@ -899,6 +938,34 @@ PHONE_OP_PROBES: list[Scenario] = [
         },
         variant=_split_room_to_loop,
         needs_split=True,
+    ),
+    _probe(
+        "split_screen_blank",
+        {
+            "op": "add_split_blank",
+            "section_id": "duo",
+            "panel_index": 1,
+            "offset_s": 3.0,
+            "duration_s": 2.0,
+            "color": "#112233",
+        },
+        variant=_split,
+        needs_split=True,
+        patches=BLANK_OPEN,
+    ),
+    _probe(
+        "split_screen_blank",
+        {"op": "add_split_blank", "section_id": "duo", "panel_index": 1, "grow_section": False},
+        variant=_split_room_to_loop,
+        needs_split=True,
+        patches=BLANK_OPEN,
+    ),
+    _probe(
+        "split_screen_blank",
+        {"op": "set_split_blank_color", "slot_index": 2, "color": "#FFAA00"},
+        variant=_split_with_blank,
+        needs_split=True,
+        patches=BLANK_OPEN,
     ),
     _probe(
         "split_screen_remove",

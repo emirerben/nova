@@ -485,8 +485,8 @@ def test_a_recipe_blank_must_sit_inside_its_section_and_panel():
             EditRecipeV2.model_validate(wire)
 
 
-def test_an_unrelated_chat_edit_keeps_a_blank_the_ai_cannot_place_itself(monkeypatch):
-    """PR 2327 owns the split ops; an edit over a timeline that holds a blank must not drop it."""
+def test_an_unrelated_chat_edit_keeps_a_blank_saved_by_hand(monkeypatch):
+    """An edit over a timeline that holds a blank the creator placed must not drop it."""
     from copy import deepcopy
 
     from app.agents.edit_copilot import _ParseState, parse_editor_operation
