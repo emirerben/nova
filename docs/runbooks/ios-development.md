@@ -111,9 +111,13 @@ rebase that brings in another protocol bump; re-running is idempotent.
 
 The script stops, rather than leave a gate behind, when:
 
-- a config field still holds the feature's old number but is not named. Pass
-  `--config-field <name>` to move it with the feature, or `--leave-config-field <name>`
-  when it belongs to another feature.
+- a config field is new since `origin/main`, or still holds the feature's old number, and
+  is not named. The feature's gate may not follow the `<feature>_min_client_protocol`
+  name (`media_card_style` vs `CARD_STYLE`), so a field nobody named is never left behind
+  silently. Pass `--config-field <name>` to move it with the feature, or
+  `--leave-config-field <name>` when it belongs to another feature.
+- `origin/main` does not resolve (no git, a remote under another name). Without it the
+  shipped checks below are off, so the run stops; `git fetch origin main`, or `--force`.
 - the feature's constant is already on `origin/main`. Shipped builds depend on that
   number; add a new constant for the new gate (`--force` only for one that has not
   shipped).
@@ -133,14 +137,18 @@ literal. `scripts/bump-protocol.py --check` (run by
 "protocol", the current number sits in a code position (after `=`, `==`, `:`, `(`, `,`,
 `[` or inside quotes), so `assert X_PROTOCOL == N`, `client_protocol=N`, `"Client-Protocol": "N"`,
 `str(N)` and `KriaClientProtocolContract.version == N` all fail. It also flags
-`set_client_protocol(N)`, `.default == N`, `requires_protocol: N`, `(N, True)` parametrize
-rows and `appProtocol: N`. It fails too when a `config.py` gate or server constant is above
+`set_client_protocol(N)` and `bind_sending_build(N)`, `.default == N`, `requires_protocol: N`, `(N, True)` parametrize
+rows and `appProtocol: N`. In a Python test that sets a client protocol it also flags a
+module-level `NAME = N` stand-in and a `{N: ...}` dict key, and in a Swift test that reads
+the contract an `XCTAssertEqual(header, "N")` on its own line. It fails too when a `config.py` gate or server constant is above
 the app's version. A floor such as `XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, N, ...)`
 is allowed, and `protocol-literal-ok` on a line marks a fixture number that is not the
 app's. Limit: a number on a line that never mentions "protocol" (for example an argument
 to a gate helper like `planned_for(47)`) is not seen, because every `50` in the suite would
 otherwise match; reference the constant there.
-The guard reads tests only: app code that gates on a number must read the
+The guard reads tests only, so `formal/` scripts that import the constants must derive
+their expectations from them too (`verify_split_protocol.py` does for the blank-panel
+number; its pin json is a hash of the `device_render` function and stays). App code that gates on a number must read the
 `client_protocol.py` constant (server) or the contract (iOS), as a literal there keeps
 its old value after a re-bump. The per-version doc comment above `static let version`
 stays a hand edit.

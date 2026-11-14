@@ -25,7 +25,7 @@ def test_no_test_hard_codes_the_current_client_protocol():
     assert not problems, "\n".join(problems)
 
 
-def _scratch_tree(tmp_path: Path) -> Path:
+def _scratch_tree(tmp_path: Path, *, git: bool = True) -> Path:
     for rel in (
         "src/apps/ios/Kria/Core/Services.swift",
         "src/apps/api/app/services/client_protocol.py",
@@ -34,6 +34,8 @@ def _scratch_tree(tmp_path: Path) -> Path:
         target = tmp_path / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text((REPO_ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    if git:
+        _as_origin_main(tmp_path)
     config = tmp_path / "src/apps/api/app/config.py"
     text = config.read_text(encoding="utf-8")
     anchor = re.search(
@@ -54,7 +56,8 @@ def _scratch_tree(tmp_path: Path) -> Path:
 def _as_origin_main(root: Path) -> None:
     """Commit the scratch tree and point origin/main at it, so its contents count as shipped."""
     git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t"]
-    subprocess.run([*git, "init", "-q"], check=True)
+    if not (root / ".git").exists():
+        subprocess.run([*git, "init", "-q"], check=True)
     subprocess.run([*git, "add", "-A"], check=True)
     subprocess.run([*git, "commit", "-q", "-m", "base"], check=True)
     subprocess.run([*git, "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
@@ -170,7 +173,10 @@ def test_colliding_features_rebase_with_one_plain_command(tmp_path):
         ),
         encoding="utf-8",
     )
-    assert _apply(script, root, "zz-feature") == 0
+    assert (
+        _apply(script, root, "zz-feature", "--leave-config-field", "zz_beta_min_client_protocol")
+        == 0
+    )
     taken = script.ios_version(script.read(root, script.IOS_FILE))
     py = root / script.PY_FILE
     py.write_text(
@@ -237,3 +243,74 @@ def test_guard_flags_assertion_assignment_kwarg_and_quoted_forms_but_not_prose(t
         [f"src/apps/api/tests/test_y.py:{n}" for n in (1, 2, 3, 4, 5, 6)]
         + [f"src/apps/ios/Tests/T.swift:{n}" for n in (1, 2)]
     ), "\n".join(flagged)
+
+
+def test_a_gate_whose_name_does_not_match_the_feature_stops_the_first_run(tmp_path):
+    script = _load_bump_script()
+    root = _scratch_tree(tmp_path)
+    config = root / script.CONFIG_FILE
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "    zz_feature_min_client_protocol: int = 1\n",
+            "    zz_feature_min_client_protocol: int = 1\n"
+            "    zz_card_style_min_client_protocol: int = 1\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    ios_before = script.read(root, script.IOS_FILE)
+    assert _apply(script, root, "zz-widget") == 1
+    assert script.read(root, script.IOS_FILE) == ios_before
+    assert (
+        _apply(
+            script,
+            root,
+            "zz-widget",
+            "--config-field",
+            "zz_card_style_min_client_protocol",
+            "--leave-config-field",
+            "zz_feature_min_client_protocol",
+        )
+        == 0
+    )
+    number = script.ios_version(script.read(root, script.IOS_FILE))
+    assert f"zz_card_style_min_client_protocol: int = {number}\n" in script.read(
+        root, script.CONFIG_FILE
+    )
+
+
+def test_without_origin_main_nothing_is_renumbered_unless_forced(tmp_path):
+    script = _load_bump_script()
+    root = _scratch_tree(tmp_path, git=False)
+    before = script.read(root, script.PY_FILE)
+    assert _apply(script, root, "split-blank-panel") == 1
+    assert script.read(root, script.PY_FILE) == before
+    assert _apply(script, root, "split-blank-panel", "--force") == 0
+
+
+def test_guard_flags_the_twin_and_stand_in_forms(tmp_path):
+    script = _load_bump_script()
+    root = _scratch_tree(tmp_path)
+    current = script.ios_version(script.read(root, script.IOS_FILE))
+    api_tests = root / "src/apps/api/tests"
+    api_tests.mkdir(parents=True)
+    (api_tests / "test_z.py").write_text(
+        f"token = bind_sending_build({current})\n"
+        f"APP_BUILD = {current}\n"
+        f"gates = {{{current - 1}: None, {current}: 'x'}}\n",
+        encoding="utf-8",
+    )
+    ios_tests = root / "src/apps/ios/Tests"
+    ios_tests.mkdir(parents=True)
+    (ios_tests / "T.swift").write_text(
+        "let header = r.value(forHTTPHeaderField: KriaClientProtocolContract.header)\n"
+        f'XCTAssertEqual(header, "{current}")\n',
+        encoding="utf-8",
+    )
+    flagged = sorted(line.split(": ", 1)[0] for line in script.check_hardcoded_literals(root))
+    assert flagged == [
+        "src/apps/api/tests/test_z.py:1",
+        "src/apps/api/tests/test_z.py:2",
+        "src/apps/api/tests/test_z.py:3",
+        "src/apps/ios/Tests/T.swift:2",
+    ]

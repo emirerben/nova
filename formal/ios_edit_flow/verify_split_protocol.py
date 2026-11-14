@@ -88,7 +88,7 @@ blank_branches = [
     == "'splitBlankPanel' in recipe.required_capabilities and protocol < SPLIT_BLANK_PANEL_PROTOCOL"
 ]
 assert len(blank_branches) == 1, "Mutation must remove exactly the blank floor branch"
-assert client_protocol.SPLIT_BLANK_PANEL_PROTOCOL == 51
+blank_protocol = client_protocol.SPLIT_BLANK_PANEL_PROTOCOL
 blank_raw = copy.deepcopy(raw)
 blank_raw["split_screen_sections"][0]["blanks"] = [
     {"id": "b", "panel_index": 0, "start": 1, "end": 2, "color": "#FF0000"}
@@ -97,7 +97,7 @@ blank_raw["tracks"][0]["clips"][0]["split_screen"] = {"section_id": "s", "panel_
 blank_recipe = EditRecipeV2.model_validate(blank_raw)
 assert {"splitScreen", "splitBlankPanel"} <= blank_recipe.required_capabilities
 blank_status = SimpleNamespace(request=SimpleNamespace(recipe=blank_recipe))
-for protocol, expected_blank in ((50, "split_blank_panel"), (51, None)):
+for protocol, expected_blank in ((blank_protocol - 1, "split_blank_panel"), (blank_protocol, None)):
     set_client_protocol(protocol)
     try:
         detail = device_render._client_update_detail(SimpleNamespace(assembly_plan={}), {}, blank_status)

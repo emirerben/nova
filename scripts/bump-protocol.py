@@ -17,11 +17,14 @@ and rewrites, in one step:
     `<feature>_min_client_protocol` / `<feature>_client_protocol` when it exists
 
 Re-running is safe: the feature keeps its constant and only the number moves. A config
-field that still holds the feature's old number but is not named stops the run
-(`--config-field` moves it, `--leave-config-field` says it belongs to another feature),
-so a gate is never left behind; a field whose `<name>_PROTOCOL` constant belongs to another
+field that is new since origin/main, or still holds the feature's old number, and is not
+named stops the run (`--config-field` moves it, `--leave-config-field` says it belongs to
+another feature), so a gate is never left behind, even when its name does not match the
+feature's; a field whose `<name>_PROTOCOL` constant belongs to another
 feature is left alone. A constant or a config field (named or derived) already on origin/main
-is refused (`--force` overrides): builds in the field depend on its number. Every config
+is refused (`--force` overrides): builds in the field depend on its number. The run needs
+`origin/main` to resolve (`git fetch origin main`); without it nothing shipped could be told
+from the branch's own, so it stops unless `--force`. Every config
 field moved is printed with its old and new value.
 Tests compare against `KriaClientProtocolContract.version` or the constant, never a
 literal; `--check` (run by tests/test_client_protocol_single_source.py) fails when one does.
@@ -94,13 +97,18 @@ def check_hardcoded_literals(root: Path) -> list[str]:
     ]
     py_patterns = [
         re.compile(rf"""requires_protocol["']?\s*[:=]\s*{n}"""),
-        re.compile(rf"set_client_protocol\(\s*{n}"),
+        re.compile(rf"(set_client_protocol|bind_sending_build)\(\s*{n}"),
         re.compile(rf"\.default\s*==\s*{n}"),
     ]
-    py_protocol_file_patterns = [re.compile(rf"\(\s*{current}\s*,\s*(True|False)\s*\)")]
+    py_protocol_file_patterns = [
+        re.compile(rf"\(\s*{current}\s*,\s*(True|False)\s*\)"),
+        re.compile(rf"^[ \t]*[A-Z_][A-Z0-9_]*[ \t]*=[ \t]*{n}", re.MULTILINE),
+        re.compile(rf"[{{,][ \t]*{n}[ \t]*:"),
+    ]
+    swift_header_file_patterns = [re.compile(rf'XCTAssertEqual\([^,\n]+,\s*"{current}"\)')]
     # On a line that talks about the protocol, a bare current number in code position
     # (after `=`, `:`, `(`, `,`, `[` or quoted) is a pin; prose like "protocol 50" is not.
-    literal_in_code = re.compile(rf"""([=:(,\[]\s*|["']){current}(?![\w.])""")
+    literal_in_code = re.compile(rf"""([=:(,\[{{]\s*|["']){current}(?![\w.])""")
     mentions_protocol = re.compile(r"protocol", re.IGNORECASE)
     scans = [
         (root / "src/apps/ios", "*.swift", swift_patterns, lambda p: "Tests" in p.parts),
@@ -114,8 +122,12 @@ def check_hardcoded_literals(root: Path) -> list[str]:
                 continue
             text = path.read_text(encoding="utf-8")
             active = list(patterns)
-            if glob == "*.py" and re.search(r"client_protocol|Client-Protocol", text):
+            if glob == "*.py" and re.search(
+                r"client_protocol|Client-Protocol|bind_sending_build", text
+            ):
                 active += py_protocol_file_patterns
+            if glob == "*.swift" and "KriaClientProtocolContract" in text:
+                active += swift_header_file_patterns
             hits = {text.count("\n", 0, m.start()) + 1 for p in active for m in p.finditer(text)}
             for number, line in enumerate(text.splitlines(), 1):
                 if (
@@ -125,7 +137,10 @@ def check_hardcoded_literals(root: Path) -> list[str]:
                     and "XCTAssertGreaterThanOrEqual" not in line
                 ):
                     hits.add(number)
+            lines = text.splitlines()
             for number in sorted(hits):
+                if ALLOW_LITERAL in lines[number - 1]:
+                    continue
                 problems.append(
                     f"{path.relative_to(root)}:{number}: hard-codes the current protocol {current}; "
                     "compare against KriaClientProtocolContract.version / the client_protocol constant "
@@ -147,18 +162,35 @@ def check_hardcoded_literals(root: Path) -> list[str]:
     return problems
 
 
-def _origin_main(root: Path, rel: str) -> str | None:
-    result = subprocess.run(
-        ["git", "-C", str(root), "show", f"origin/main:{rel}"],
-        capture_output=True,
-        text=True,
-        check=False,
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, text=True, check=False
     )
+
+
+def require_origin_main(root: Path) -> None:
+    """The shipped-gate refusal reads origin/main; without it the refusal would silently be off."""
+    try:
+        resolved = _git(root, "rev-parse", "--verify", "--quiet", "origin/main^{commit}")
+    except OSError as error:
+        raise BumpError(
+            f"cannot run git to read origin/main: {error}; pass --force to skip"
+        ) from error
+    if resolved.returncode != 0:
+        raise BumpError(
+            "origin/main does not resolve here (no git, a remote under another name, or --root "
+            "outside a checkout), so numbers already shipped cannot be told from this branch's own. "
+            "Run `git fetch origin main` in the checkout, or pass --force to skip the shipped check."
+        )
+
+
+def _origin_main(root: Path, rel: str) -> str | None:
+    result = _git(root, "show", f"origin/main:{rel}")
     return result.stdout if result.returncode == 0 else None
 
 
 def shipped_constants(root: Path) -> set[str]:
-    """`*_PROTOCOL` names already on origin/main; empty when git or the ref is unavailable."""
+    """`*_PROTOCOL` names already on origin/main."""
     text = _origin_main(root, PY_FILE)
     return {name for name, _ in PY_CONSTANT_RE.findall(text)} if text else set()
 
@@ -181,6 +213,8 @@ def plan(
 ) -> dict[str, str]:
     """Return {relative path: new text} for every file that changes."""
     const = constant_name(feature)
+    if not force:
+        require_origin_main(root)
     if not force and const in shipped_constants(root):
         raise BumpError(
             f"{const} is already on origin/main, so builds in the field depend on its number. "
@@ -211,6 +245,7 @@ def plan(
         )
     )
     left = set(leave_fields or [])
+    shipped_fields = {} if force else shipped_config_fields(root)
 
     own_config: dict[str, re.Pattern[str]] = {}
     for field in wanted_fields:
@@ -223,7 +258,6 @@ def plan(
         own_config[field] = pattern
 
     if not force:
-        shipped_fields = shipped_config_fields(root)
         moved_shipped = [f for f in own_config if f in shipped_fields]
         if moved_shipped:
             detail = ", ".join(f"{f} (shipped as {shipped_fields[f]})" for f in moved_shipped)
@@ -233,25 +267,25 @@ def plan(
                 "field for the new gate; pass --force only to renumber one that has not shipped."
             )
 
-    if own is not None:
-        py_owner = {
-            c[: -len("_PROTOCOL")].lower(): v for c, v in py_constants.items() if c != const
-        }
-        stranded = [
-            m.group(1)
-            for m in CONFIG_ANY_PROTOCOL_RE.finditer(cfg_text)
-            if int(m.group(2)) == own
-            and m.group(1) not in own_config
-            and m.group(1) not in left
-            and py_owner.get(re.sub(r"_(min_)?client_protocol$", "", m.group(1))) != own
-        ]
-        if stranded:
-            raise BumpError(
-                f"config field(s) {', '.join(stranded)} still hold {const}'s current number {own} but were not "
-                "named. Moving the number without them leaves the gate admitting builds that cannot decode the "
-                "feature. Pass --config-field <name> to move one with it, or --leave-config-field <name> "
-                "when it belongs to a different feature."
-            )
+    py_owner = {c[: -len("_PROTOCOL")].lower() for c in py_constants if c != const}
+    stranded = []
+    for m in CONFIG_ANY_PROTOCOL_RE.finditer(cfg_text):
+        name, value = m.group(1), int(m.group(2))
+        if name in own_config or name in left or value >= KILL_SWITCH_FLOOR:
+            continue
+        if re.sub(r"_(min_)?client_protocol$", "", name) in py_owner:
+            continue
+        holds_own_number = own is not None and value == own
+        new_since_main = not force and name not in shipped_fields
+        if holds_own_number or new_since_main:
+            stranded.append(name)
+    if stranded:
+        raise BumpError(
+            f"config field(s) {', '.join(stranded)} are not on origin/main or still hold {const}'s "
+            "current number, and were not named. Leaving one behind keeps a gate admitting builds "
+            "that cannot decode the feature. Pass --config-field <name> to move one with the "
+            "feature, or --leave-config-field <name> when it belongs to a different feature."
+        )
 
     pool += [
         int(m.group(2))
