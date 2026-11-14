@@ -16783,6 +16783,12 @@ def _label(status: str) -> str:
     return say(en=_LABEL[status], tr=_LABEL_TR[status])
 
 
+def failed_rows() -> tuple[str, ...]:
+    """The start of a reply row that says an ask failed ("- Couldn't: "), in the bound language:
+    `fit_lines` shortens its reason last (KRI-1408)."""
+    return (f"- {_label('not_possible')}: ",)
+
+
 def _receipt_label(receipt: RequirementReceipt) -> str:
     if _planned_at_render(receipt):
         return say(en=_PLANNED_LABEL, tr=_PLANNED_LABEL_TR)
@@ -17097,7 +17103,7 @@ def reply_and_lead_from_receipts(
                 compact.append(f"- {label}")
             text = prefix + "\n".join(compact) + suffix + "\n…"
     # KRI-1408: the longest reasons lose words first, never a word cut in half ("Ich s…").
-    return fit_lines(text, MAX_REPLY_CHARS), lead
+    return fit_lines(text, MAX_REPLY_CHARS, keep=failed_rows()), lead
 
 
 def outcome_lead(*, total: int, failed: int, completed: int, partial: bool, unchecked: bool) -> str:
@@ -17161,7 +17167,7 @@ def _reply_lead(
             unchecked=False,
         )
     text = " ".join(part for part in (lead, *notices) if part)
-    return fit_lines(text, MAX_REPLY_CHARS)
+    return fit_lines(text, MAX_REPLY_CHARS, keep=failed_rows())
 
 
 __all__ = [

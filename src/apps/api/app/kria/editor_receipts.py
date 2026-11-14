@@ -30,7 +30,13 @@ from typing import Any
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
 from app.config import settings
 from app.kria.brief import BriefRequirement
-from app.kria.brief_checks import MAX_REPLY_CHARS, TextStyleRow, is_judged, outcome_lead
+from app.kria.brief_checks import (
+    MAX_REPLY_CHARS,
+    TextStyleRow,
+    failed_rows,
+    is_judged,
+    outcome_lead,
+)
 from app.kria.contracts import RequirementReceipt
 from app.kria.reply_language import say
 from app.kria.style_asks import (
@@ -922,7 +928,7 @@ def reply_from_editor_receipts(
     if notes:
         parts.append(notes.strip())
     text = "\n".join(part for part in parts if part)
-    return fit_lines(text, MAX_REPLY_CHARS)
+    return fit_lines(text, MAX_REPLY_CHARS, keep=failed_rows())
 
 
 def receipt_lead(
@@ -948,7 +954,7 @@ def receipt_lead(
     )
     parts = [lead, *notices, (notes or "").strip()]
     text = " ".join(part for part in parts if part)
-    return fit_lines(text, MAX_REPLY_CHARS)
+    return fit_lines(text, MAX_REPLY_CHARS, keep=failed_rows())
 
 
 def reply_from_diff(

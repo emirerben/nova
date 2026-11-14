@@ -48,6 +48,12 @@ def test_trim_cases(text: str, limit: int, expected: str) -> None:
 # 6. One word longer than the limit (no space anywhere) cannot fit: it is still cut, never
 #    longer than the limit.
 # 7. So many lines that even shortened reasons cannot fit: the end is dropped at a whole word.
+# 9. A header or notice line ("Not everything you asked for made it in:") is shortened while
+#    reasons could still make room.
+# 10. Why an ask failed ("No phone font can draw "甜点"", KRI-1024) is cut as soon as a "Partly"
+#     reason, so the creator never learns what to change.
+# 8. A reply that lists the same receipt row twice (KRI-849 draft turn) trims every reason, so
+#    a fact at a reason's end ("around 0:09 in your clip") is lost while its copy survives.
 
 from app.kria.text_trim import fit_lines  # noqa: E402
 
@@ -114,3 +120,37 @@ def test_too_many_lines_drop_the_end_at_a_whole_word() -> None:
     assert len(out) <= 300  # 7
     assert out.endswith("…")
     assert all(w in _words(text) or w.endswith("…") for w in _words(out))
+
+
+def test_a_repeated_row_goes_before_any_reason_loses_a_word() -> None:
+    rows = [
+        "- Partly: Captions (I'll leave out the word I couldn't make out around 0:09 in your clip)",
+        '- Done: Title ("Sauce check")',
+    ]
+    text = "\n".join(rows * 2 + ["Have a look at these in the video:", "- About 15 seconds"])
+    out = fit_lines(text, len(text) - 10)
+
+    look = ["Have a look at these in the video:", "- About 15 seconds"]
+    assert out == "\n".join([*rows, *look])  # 8
+
+
+def test_headers_stay_whole_while_reasons_can_make_room() -> None:
+    header = "Not everything you asked for made it in:"
+    notice = "- Also not applied on this video yet: the planned story structure"
+    rows = [f"- Partly: Ask {i} (" + " ".join(["grund"] * 30) + ")" for i in range(4)]
+    text = "\n".join([header, *rows, "Heads-up for this video:", notice])
+    out = fit_lines(text, len(text) - 200)
+
+    assert out.split("\n")[0] == header  # 9
+    assert out.split("\n")[-1] == notice
+    assert all(f"- Partly: Ask {i} (" in out for i in range(4))
+
+
+def test_what_failed_keeps_its_reason_until_the_others_are_short() -> None:
+    failed = '- Couldn\'t: Title ("甜点") (No phone font can draw "甜点". Remove it or change)'
+    rows = [f"- Partly: Ask {i} (" + " ".join(["grund"] * 30) + ")" for i in range(4)]
+    text = "\n".join([*rows, failed])
+    out = fit_lines(text, len(text) - 600, keep=("- Couldn't: ",))
+
+    assert '"甜点"' in out.split("\n")[-1]  # 10
+    assert len(out) <= len(text) - 600

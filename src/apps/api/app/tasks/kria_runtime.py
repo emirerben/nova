@@ -52,6 +52,7 @@ from app.kria.brief_checks import (
     defers_to_narrated_render,
     defers_to_unified_montage,
     describe_text_look,
+    failed_rows,
     is_judged,
     judged_at_render,
     keeps_model_summary,
@@ -1648,7 +1649,7 @@ def _fit_reply(
         fitted = card_text_within(disclosures, room - len(head) - 1)
         body = f"{head}\n{fitted}" if head else fitted
     # KRI-1408: the longest receipt reasons lose words first, never a word cut in half.
-    body = fit_lines(body, max(0, room))
+    body = fit_lines(body, max(0, room), keep=failed_rows())
     return f"{body}\n{tail}"
 
 
