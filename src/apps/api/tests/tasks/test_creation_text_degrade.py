@@ -31,6 +31,13 @@ Second review of #2314, written before the fixes:
      named it in her words;
  14. an op the parser refused, which no unmet ask of hers names, is reported as part of her
      text request.
+
+Third review of #2314, written before the fixes:
+ 15. her literal drawn as stacked lines (prod d6c58d7b: three pinned lines, the composer wrote
+     no op and asked which layout she wanted) counts as missing, so her video fails;
+ 16. the stacked-lines reading counts her literal as shown when a line is missing or the lines
+     read out of order;
+ 17. two left-out story beats are said as one ("Left out one explanation").
 """
 
 from __future__ import annotations
@@ -98,20 +105,42 @@ def _title_id(snapshot: dict) -> str:
     return next(bar["id"] for bar in snapshot["text_bars"] if bar["text"] == TITLE)
 
 
-def _gone_beat(plan: Any) -> None:
-    """A planner row: the approved story's second beat names a clip the cut does not play."""
-    played = [cut.media_id for cut in plan.snapshot.fast_cuts]
-    plan.snapshot = plan.snapshot.model_copy(
-        update={
-            "editorial_plan": EditorialPlan(
-                viewer_goal="Show the route",
-                beats=[
-                    EditorialBeat(purpose="The route", media_ids=played, text_goal="Name it"),
-                    EditorialBeat(purpose="The finish", media_ids=["clip-gone"], text_goal="Why"),
-                ],
-            )
-        }
-    )
+def _gone_beats(count: int) -> Callable[[Any], None]:
+    """A planner row: after the first beat, ``count`` approved story beats name clips the cut
+    does not play."""
+
+    def planner(plan: Any) -> None:
+        played = [cut.media_id for cut in plan.snapshot.fast_cuts]
+        gone = [
+            EditorialBeat(purpose=f"The finish {n}", media_ids=[f"clip-gone-{n}"], text_goal="Why")
+            for n in range(count)
+        ]
+        plan.snapshot = plan.snapshot.model_copy(
+            update={
+                "editorial_plan": EditorialPlan(
+                    viewer_goal="Show the route",
+                    beats=[
+                        EditorialBeat(purpose="The route", media_ids=played, text_goal="Name it"),
+                        *gone,
+                    ],
+                )
+            }
+        )
+
+    return planner
+
+
+# Prod d6c58d7b (2026-11-14): her song lines are one brief literal that Main Creator pinned as
+# three stacked lines.
+LINES = ("Işıklar söndü İstanbul'da", "Yağmur yağdı sokaklarda", "Sabah oldu yine")
+_LYRICS = CreativeBrief(
+    version=1,
+    requirements=[
+        BriefRequirement(id="lyrics", kind="text", scope="global", literal=" ".join(LINES))
+    ],
+)
+# The composer wrote no op and asked which layout she wanted.
+_CLARIFY = {"intent": "clarify", "needs_clarification": True, "reply": "Which layout?"}
 
 
 # Prod thread 147eb928 (89fefe4d): a paragraph in the middle and its translation at the bottom,
@@ -183,6 +212,10 @@ class Gate:
     # The `requirement_recovery` reasons, in order; defaults to one drop named like the gate.
     reasons: tuple[str, ...] | None = None
     keeps_good: bool = True
+    # Main Creator's pinned lines (`creator_strategy.pinned_texts`), bottom centre.
+    pinned: tuple[str, ...] = ()
+    # Fields of the composer's answer that differ from a plain edit.
+    answer: dict = field(default_factory=dict)
 
 
 def _past_end(text: str) -> Callable[[dict], dict]:
@@ -295,10 +328,28 @@ GATES = [
         reasons=("incomplete",),
     ),
     Gate(
+        "incomplete_her_lines_stacked",
+        lambda snap: [],
+        note="I couldn't do every part of your text request, so the video shows the parts I could",
+        kept=LINES[0],
+        brief=_LYRICS,
+        pinned=LINES,
+        answer=_CLARIFY,
+        reasons=("incomplete",),
+        keeps_good=False,
+    ),
+    Gate(
         "editorial_unmet",
         lambda snap: [_add(GOOD)],
         note="Left out one explanation that didn't fit its part of the video",
-        planner=_gone_beat,
+        planner=_gone_beats(1),
+    ),
+    Gate(
+        "editorial_unmet_twice",
+        lambda snap: [_add(GOOD)],
+        note="Left out 2 explanations that didn't fit their part of the video",
+        planner=_gone_beats(2),
+        reasons=("editorial_unmet", "editorial_unmet"),
     ),
 ]
 
@@ -311,6 +362,7 @@ def _answer(gate: Gate) -> Callable[..., Any]:
             "reply": "Prepared.",
             "ops": gate.ops(input.variant_snapshot),
             "unmet_requests": list(gate.unmet),
+            **gate.answer,
         }
         return self.parse(json.dumps(reply), input)
 
@@ -323,6 +375,10 @@ def _job(harness, monkeypatch, gate: Gate):  # noqa: F811
     job.assembly_plan["creator_brief_binding"] = BriefBinding.create(THREAD, gate.brief).model_dump(
         mode="json"
     )
+    if gate.pinned:
+        job.all_candidates["creator_strategy"]["pinned_texts"] = [
+            {"text": line, "corner": "bottom_center"} for line in gate.pinned
+        ]
     contract = build_render_contract(
         job.all_candidates["creator_strategy"], generation_id="generation", brief=gate.brief
     )
@@ -496,6 +552,27 @@ def test_a_composer_bundle_rejected_as_a_whole_still_fails(harness, monkeypatch)
         lambda snap: [_add(f"Place {n}", 0.5, 1.5) for n in range(60)],
         note=None,
         unmet=({"request": "name each place", "reason": "Too many places"},),
+    )
+    job, _ = _job(harness, monkeypatch, gate)
+    failure = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", failure)
+
+    gb._run_generative_job(str(job.id))
+
+    assert failure.call_args.kwargs["failure_reason"] == "creation_text_failed"
+    assert job.assembly_plan.get("variants") is None
+
+
+@pytest.mark.parametrize(
+    "pinned",
+    [LINES[:2], (LINES[1], LINES[0], LINES[2])],
+    ids=["a_line_missing", "lines_out_of_order"],
+)
+def test_her_lines_not_all_shown_in_order_still_fail(harness, monkeypatch, pinned):  # noqa: F811
+    """Failure mode 16: the composer did nothing and her literal does not read word for word
+    across the lines on screen, so the pass failed as a whole."""
+    gate = Gate(
+        "partial", lambda snap: [], note=None, brief=_LYRICS, pinned=pinned, answer=_CLARIFY
     )
     job, _ = _job(harness, monkeypatch, gate)
     failure = Mock(return_value=True)
