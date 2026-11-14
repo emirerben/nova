@@ -30,6 +30,15 @@ Added with the verifier's findings, before the fix:
  14. a look every clip carries refuses the whole video, or fills the approval card's six lines
      with one note per clip;
  15. more kinds of reject than the cap still loop, or end in anything but the typed refusal.
+
+Added with the second verifier's findings, before the fix:
+ 16. a turned clip whose background picture is not bound refuses untyped, naming no reason or
+     row; or a degrade drops that background although the creator pinned it (the guided
+     worker binds only the visuals its timeline shows, so "not bound" is not "not pinned");
+ 17. the contract and phone repair notes ("Added your text", "Used your title", "Changed a
+     text font") stay English in a Turkish chat next to the Turkish shrink note;
+ 18. the planning dry run still answers a degradable row with ``PhoneProposalRejected``, so the
+     creator is offered the request-blind fallback instead of the model's draft and its note.
 """
 
 from __future__ import annotations
@@ -46,7 +55,11 @@ from app.kria.recipes import MediaCapability
 from app.kria.reply_language import reply_language_for
 from app.pipeline import phone_plan_degrade, phone_plan_repair
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
-from app.pipeline.phone_plan_repair import compile_phone_guided_repaired
+from app.pipeline.phone_plan_repair import (
+    PhoneProposalRejected,
+    compile_phone_guided_repaired,
+    validate_proposal_phone_compiles,
+)
 from app.services.creator_render_contract import (
     CreatorRenderContract,
     CreatorRenderContractError,
@@ -57,6 +70,7 @@ from app.services.device_render import device_status
 from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD
 from app.tasks import generative_build as gb
 from tests.pipeline.test_phone_guided_plan import fixture, photo_fixture
+from tests.pipeline.test_phone_plan_repair import _sequence, _snapshot_for, _stub_dry_run
 from tests.tasks.test_phone_plan_contract_repair import _captured_events, _stamp_contract
 from tests.tasks.test_unified_montage_dispatch import _brief, harness  # noqa: F401
 
@@ -397,6 +411,67 @@ def test_a_turkish_chat_gets_the_note_in_turkish():
         "2. fotoğrafı yakınlaştırma ve hız değişikliği olmadan gösterdim: iPhone'un bunu henüz "
         "çizemiyor",
     ]
+
+
+@pytest.mark.usefixtures("_verified")
+def test_a_turkish_chat_gets_every_repair_note_in_turkish():
+    """Failure mode 17: the contract and phone repair notes sit beside the Turkish shrink note."""
+    plan, bindings, contract = _crowded()
+    sequence, sequence_bindings = fixture()
+    sequence.text_elements = _sequence("pop-in")
+
+    with reply_language_for("tr"):
+        placed = compile_phone_guided_repaired(plan, bindings, contract=contract)
+        swapped = compile_phone_guided_repaired(sequence, sequence_bindings)
+
+    assert placed.notes == [
+        f"“{LONG}” yazını ekrana ekledim",
+        f"“{LONG}” yazını diğer yazıların yanına net sığsın diye küçülttüm",
+    ]
+    assert swapped.notes == [
+        "iPhone'unun henüz oynatamadığı bir yazı animasyonunu basit bir belirmeyle değiştirdim"
+    ]
+
+
+# --- the planning dry run ----------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("_verified")
+def test_the_planning_dry_run_offers_the_draft_with_the_note(monkeypatch):
+    """Failure mode 18: a row the worker degrades never sends the proposal to the fallback."""
+    plan, bindings = fixture()
+    plan.story_timeline = [
+        plan.story_timeline[0].model_copy(update={"look_preset": "faded_analog"})
+    ]
+    _stub_dry_run(monkeypatch, plan, bindings)
+
+    notes = validate_proposal_phone_compiles(_snapshot_for(plan, bindings), [])
+
+    assert notes == ["Showed clip 1 without its look: your iPhone can't draw that yet"]
+    monkeypatch.setattr(phone_plan_degrade, "degrade_plan_for_phone", lambda plan, _exc: (plan, []))
+    with pytest.raises(PhoneProposalRejected):
+        validate_proposal_phone_compiles(_snapshot_for(plan, bindings), [])
+
+
+# --- a background the worker did not bind ------------------------------------------------------
+
+
+@pytest.mark.usefixtures("_verified")
+def test_an_unbound_background_refuses_typed_and_is_never_dropped():
+    """Failure mode 16: the reject names the clip, and the background the creator may have
+    pinned is not silently traded for a plain one."""
+    plan, bindings = fixture()
+    tilt = {"rotation_deg": 10.0, "backdrop": {"kind": "media", "asset_id": "never-bound"}}
+    plan.story_timeline = [plan.story_timeline[0].model_copy(update={"tilt": tilt})]
+
+    with pytest.raises(UnsupportedPhonePlan) as refused:
+        compile_phone_guided_repaired(plan, bindings)
+
+    exc = refused.value
+    assert (exc.reason, exc.lane, exc.item_id) == ("backdrop_unbound", "moment", "moment")
+    assert str(exc) == "a media backdrop needs a photo or video pinned to this video"
+    assert phone_plan_degrade.degrade_plan_for_phone(plan, exc) == (plan, [])
+    assert gb._classify_phone_plan_failure(exc) == ("phone_plan_unsupported", "plan_defect")
 
 
 # --- text the phone cannot animate ------------------------------------------------------------
