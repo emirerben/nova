@@ -107,16 +107,13 @@ def requirement_capabilities(req: BriefRequirement) -> frozenset[str]:
 
 
 def reason_capability(reason: object) -> str | None:
-    """The capability a "can't" reason names, for the reasons that name one (both languages)."""
+    """The capability a "can't" reason names, for the reasons that name one (every language)."""
     if not isinstance(reason, str) or not reason:
         return None
     from app.kria import brief_checks as bc  # noqa: PLC0415
 
     def starts(*texts: str) -> bool:
-        return any(
-            reason.startswith(t) or reason.startswith(bc._REASON_TR.get(t, t))  # noqa: SLF001
-            for t in texts
-        )
+        return reason.startswith(bc.reasons_in_every_language(texts))
 
     if starts(
         bc._CC_NOT_TALKING,  # noqa: SLF001

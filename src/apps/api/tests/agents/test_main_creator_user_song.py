@@ -113,10 +113,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # KRI-1384: the base prompt says a limit is not a reason to ask, and the brief section records
 # every stated ask whatever the action: all four re-pinned (before: 5ac96e9a… / 42a19e30… /
 # 4ad9471f… / 68d42cab…).
+# KRI-1405: the brief section teaches `no_sound_effects` and restating a kept ask: the two
+# brief-on hashes re-pinned (before: 1dd7c57f… / 389e0842…); brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "1dd7c57f45df173ef0f7f308b96e15ede80e0c75ac2207d65ef24d9b3b69748d",
+    (True, True): "c017d2f4a74f003fcc6f6d0550d15ff81550adea85353283afff1c7e27f29ebb",
     (True, False): "67797ad5d4390601c8802c280fe68759ecdd697c64d2093aede2f1a7c4c063d1",
-    (False, True): "389e08425a857e387cd4670a010c9f6498e36bb4a4a6917db5beaf109cc8e1c7",
+    (False, True): "42af559e0ce1c14a60b9cedb4f88e0b89f8e152c43caeacfe8f82845ab5c8017",
     (False, False): "05f0b6f7a774d08fa47fe57ebc60baaab793b0cda14625cfbdef91d03bac09c2",
 }
 

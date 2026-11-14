@@ -20,8 +20,7 @@ from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.brief_checks import (
-    _REASON_TR,
-    RENDER_PROMISE_REASONS,
+    RENDER_PROMISE_TEXTS,
     _has_checker,
     _wants_source_sound_kept,
     _wants_whole_take,
@@ -32,6 +31,7 @@ from app.kria.brief_checks import (
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     speaker_background_waits_for_render,
+    talking_caption_promise,
     with_planned_cuts,
 )
 from app.kria.contracts import RequirementReceipt
@@ -121,12 +121,9 @@ async def resolve_readiness_manifest(db, item, strategy):  # noqa: ANN001, ANN20
     return manifest
 
 
-# Each promise in English and as its Turkish twin: a receipt is written in its turn's language.
-_PROMISE_TEXTS = frozenset(
-    text
-    for promise in RENDER_PROMISE_REASONS
-    for text in (promise, _REASON_TR.get(promise, promise))
-)
+# Each promise in every reply language (English, the Turkish twin, German...): a receipt is
+# written in its turn's language (KRI-1405: a German Talking draft held over its own promises).
+_PROMISE_TEXTS = RENDER_PROMISE_TEXTS
 
 
 def _selected_clip_audible(strategy: Mapping[str, Any], media: Mapping[str, Any]) -> bool:
@@ -158,10 +155,11 @@ def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, fact
     is always the "if offered" one; the draft reply's receipt can, and says when it does not.
 
     Only a `partial` receipt whose reason is entirely `RENDER_PROMISE_REASONS` texts (each part
-    exactly, joined by "; ") counts, or exactly the pinned spoken-text promise re-derived for
-    this requirement. Anything else keeps the hold: cleanup unavailable, a named line that "may
-    still be in your video", a restarted sentence that stays in because retake detection is off,
-    only the long pauses cut, an arrow the creator has to draw, a length the take cannot reach.
+    exactly, joined by "; ", in any reply language) counts, or exactly the pinned spoken-text
+    promise or (KRI-1405) the Talking captions plan re-derived for this requirement. Anything
+    else keeps the hold: cleanup unavailable, a named line that "may still be in your video", a
+    restarted sentence that stays in because retake detection is off, only the long pauses cut,
+    an arrow the creator has to draw, a length the take cannot reach.
     """
     # Receipts localize and cap public copy at 300 characters. Only complete evidence can
     # distinguish long triggers/times or retain a shortfall appended past that boundary.
@@ -171,6 +169,7 @@ def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, fact
     return (
         _only_promises(reason)
         or reason == _pinned_promise(req, facts)
+        or reason == talking_caption_promise(req, facts)
         or speaker_background_waits_for_render(req, facts)
     )
 
@@ -1071,7 +1070,9 @@ def readiness_matches(saved: object, current: dict[str, Any]) -> bool:
         return False
 
 
-def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
+def readiness_reply(
+    brief: CreativeBrief | None, report: dict[str, Any], *, offers_choice: bool = False
+) -> str:
     """Display identified blocked requirements; never derive execution from prose.
 
     A ``policy_problem`` blocks the whole draft and is every requirement's reason (KRI-1123:
@@ -1079,10 +1080,24 @@ def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
     "Skip the dark photo" and every label). It is said once, ahead of the list; a requirement
     whose reason is that problem is named without repeating it, and one with a reason of its
     own keeps it. A refused first / last clip says what to do next: name the clip.
+
+    KRI-1405: when the reply goes on to offer the "Make it without these" card
+    (``offers_choice``) and every blocked ask is a choice, not a refusal, it opens "Before I
+    make this, please choose:"; otherwise "I can't make this yet:".
     """
     by_id = {r.id: r for r in brief.live()} if brief else {}
-    lines = [say(en="I can't make this yet:", tr="Bunu henüz yapamıyorum:")]
     policy = report.get("policy_problem")
+    blocked = [r for r in report["requirements"] if r["disposition"] not in APPROVABLE]
+    lines = [
+        # KRI-1405: an ask Kria can do but the creator has to decide on ("only the long pauses
+        # are cut") is a choice, not a "can't"; "can't" stays for what truly can't be made.
+        say(en="Before I make this, please choose:", tr="Bunu yapmadan önce bir seçim yap:")
+        if offers_choice
+        and blocked
+        and not policy
+        and all(r["disposition"] == "needs_choice" for r in blocked)
+        else say(en="I can't make this yet:", tr="Bunu henüz yapamıyorum:")
+    ]
     if policy:
         lines.append(f"{policy} {_pin_next_step(brief, str(policy))}".rstrip())
     for row in report["requirements"]:

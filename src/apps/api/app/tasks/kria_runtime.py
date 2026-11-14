@@ -1628,12 +1628,15 @@ def _arrow_only_ids(
     Prod thread b931bc4e (Qendresa Q1): "Make it without these" removed r10, "End with comment
     REPO and an arrow", so the words went with the arrow.
     """
-    from app.kria.brief_checks import _CLOSING_ARROW_MISSING, _REASON_TR  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CLOSING_ARROW_MISSING,
+        reason_in_every_language,
+    )
     from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
 
     if brief is None:
         return frozenset()
-    missing = {_CLOSING_ARROW_MISSING, _REASON_TR.get(_CLOSING_ARROW_MISSING) or ""} - {""}
+    missing = set(reason_in_every_language(_CLOSING_ARROW_MISSING))
     reasons = {str(row.get("requirement_id")): row.get("reason") for row in rows}
     wanted = set(unmet_ids)
     return frozenset(
@@ -1747,6 +1750,31 @@ def _offered_brief_revision(
         and brief.version == offered + 1
         and bool(written)
         and written <= {str(req_id) for req_id in named}
+    )
+
+
+def _kept_after_tap(
+    updates: Sequence[BriefUpdate],
+    offered_ids: Sequence[str],
+    source_event: CreationThreadEvent | None,
+) -> frozenset[str]:
+    """KRI-1405: the offered asks the creator kept after tapping "Make it without these".
+
+    Prod thread 8044373b (ylab, 2026-11-13): the tap turn asked whether the captions go too,
+    the creator tapped "Untertitel wie gewünscht behalten", and the draft still left the
+    captions out under the earlier tap (KRI-1323) while the video had them. An answer on a
+    LATER card that restates an offered ask (a `change` of its id) keeps it: it comes off the
+    drop list and the rest stay left out. A restatement on the tap's own turn says nothing new
+    (KRI-1113), so only a choice on another card counts.
+    """
+    selection = (source_event.payload or {}).get("choice_selection") if source_event else None
+    if not isinstance(selection, Mapping) or selection.get("option_key") == "simpler_version":
+        return frozenset()
+    offered = {str(req_id) for req_id in offered_ids}
+    return frozenset(
+        str(update.target_requirement_id)
+        for update in updates
+        if update.operation == "change" and str(update.target_requirement_id) in offered
     )
 
 
@@ -2807,6 +2835,8 @@ def _complete_draft_turn(
             thread.creator_id
         )
         readiness_report = None
+        # KRI-1405: the readiness hold reply as first written, so the card can re-head it.
+        readiness_hold_text: str | None = None
         # KRI-901: one answer for the mark gate and readiness (an app with the mark card and a
         # draft the phone Talking writer renders); off it neither asks nor promises.
         _marks_route = render_intent is not None and _marks_route_sync(
@@ -3357,6 +3387,7 @@ def _complete_draft_turn(
             ]
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
+                readiness_hold_text = reply_text
             elif document.prepared_collection_story is not None:
                 # The frozen execution checker owns this selected requirement;
                 # persist its checked verdict in the receipt as well as approval.
@@ -3469,6 +3500,25 @@ def _complete_draft_turn(
             )
             else None
         )
+        kept_after_tap = (
+            _kept_after_tap(
+                planned.brief_updates,
+                unmet_ids,
+                db.get(CreationThreadEvent, turn.source_event_id),
+            )
+            if simpler_consent is not None
+            else frozenset()
+        )
+        if kept_after_tap:
+            # KRI-1405: what the creator kept after the tap is not left out; the rest still is.
+            log.info(
+                "kria_simpler_kept_after_tap",
+                thread_id=str(thread.id),
+                requirement_ids=sorted(kept_after_tap),
+            )
+            unmet_ids = [req_id for req_id in unmet_ids if req_id not in kept_after_tap]
+            if not unmet_ids:
+                simpler_consent = None
         simpler_version_chosen = simpler_consent is not None
         # KRI-968: only an offer that named these requirements lets a reply say "as agreed".
         agreed_omission_ids = list(unmet_ids) if simpler_consent == "named" else []
@@ -3727,6 +3777,9 @@ def _complete_draft_turn(
             )
             # KRI-1236: a list too long to name whole gets no card, never an unnamed one.
             can_offer_simpler = can_offer_simpler and simpler_question is not None
+            if can_offer_simpler and reply_text == readiness_hold_text:
+                # KRI-1405: the card follows, so asks it can leave out read as a choice.
+                reply_text = readiness_reply(brief, readiness_report, offers_choice=True)
             ask = (
                 simpler_version_ask()
                 if can_offer_simpler

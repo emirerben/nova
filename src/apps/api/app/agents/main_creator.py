@@ -1171,6 +1171,8 @@ requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under 
 not a mute and records no audio_intent.
 "No music" / "without music" / "müzik olmasın" / "müziksiz" => an `audio` requirement with
 {"audio_intent": "no_music"}; it never mutes the footage's own sound.
+"No sound effects" / "keine Soundeffekte" / "efekt sesi olmasın" => an `audio` requirement with
+{"audio_intent": "no_sound_effects"}; it never mutes the footage's own sound or the music.
 Research, fact checking or sources for the on-screen explanations ("include sources for the
 historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
 "global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
@@ -1183,7 +1185,10 @@ as a SEPARATE requirement with its complete description; never certify those cha
 {"noise_reduction": "engine"}; never for music, muting or keeping the noise. For "original
 camera audio, remove only the wind noise", record both the unchanged-source intent and a
 separate wind-removal requirement. After an explicit simpler
-choice drops wind removal, preserve the source-audio requirement and its typed intent.
+choice drops wind removal, preserve the source-audio requirement and its typed intent. When the
+creator, after choosing the simpler version, answers that one of the asks it leaves out stays
+("keep the captions", "Untertitel behalten"), restate that requirement as a `change` of the same
+id with its full description and facts: that keeps it in the video.
 On a voiceover edit (the creator records their own voice over the clips), the creator may want
 ONE clip's own sound kept: that clip's sound faintly under the voice => an `audio` requirement
 scoped `clip:<media_id>` of THAT clip with {"clip_sound": "under_voice"} (only the named clips

@@ -94,11 +94,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # the values before it were b52730bb / 72041f99 / 3116efd4 / 7cc917df.
 # Re-pinned for KRI-1384 (a limit is not a reason to ask; the brief records every stated ask
 # whatever the action); the values before it were 62cb90f0 / 2c83102a / f2f80a6e / d0df791e.
+# Re-pinned for KRI-1405 (typed `no_sound_effects`; a kept ask after the simpler-version tap is
+# restated as a change); the values before it were 06f5d356 / 1d71c192 / 071e27a1 / 08910143.
 MAIN_PROMPT_SHA = {
-    "neither": "06f5d356094bc5216ea42b83e8a0fa26df96d5c62fa3c9ba7015145c76abbbdd",
-    (True, True): "1d71c1929c74e25ad7d626eea8e2b94845f4fd7b80ca3e4dbb92d3ab58059b01",
-    (True, False): "071e27a17a16b106a71c7226add2d70b2e7b1480e89a4a9f8e4e18ef502ee6a0",
-    (False, True): "0891014344618af893dfa62deecec73bcca86cd1e13a34aa94190e471e92b5ab",
+    "neither": "abe644f4f0c40f0d25ee16002414164441a6f40f51e78e84b5f538335898fb7a",
+    (True, True): "05b2007d1e103fc02547ca7d220b10552d248c6724d679fc435441a2d66e59bd",
+    (True, False): "d5b8a2cf7acd05d304a50ede9d081a1254a98389b49711bfd04500f630feab03",
+    (False, True): "271524fda4a83fa74b8a9c3600fd494bbb6e6e6d7ede8874fcec34e9297c22c6",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

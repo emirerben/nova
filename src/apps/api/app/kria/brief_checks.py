@@ -28,7 +28,12 @@ from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, TextAnimationEdge
 from app.kria.animation_ask import animation_ask
 from app.kria.asset_holds import HOLD_TOLERANCE_S, hold_seconds
-from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
+from app.kria.brief import (
+    BriefRequirement,
+    CreativeBrief,
+    is_select_all_requirement,
+    normalize_style_intent,
+)
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
@@ -6872,6 +6877,8 @@ SOURCE_MUTED_INTENT = "source_muted"
 # nothing about the footage's own sound (that is `source_muted`), so none of the bed readers
 # below claim it; `_check_no_music` does.
 NO_MUSIC_INTENT = "no_music"
+# KRI-1405: "No sound effects." typed the same way; `_check_no_sound_effects` judges it.
+NO_SOUND_EFFECTS_INTENT = "no_sound_effects"
 
 
 def _typed_audio_intent(req: BriefRequirement) -> str | None:
@@ -6943,6 +6950,35 @@ def wants_no_music(req: BriefRequirement) -> bool:
     Only the typed fact counts, never the creator's words (KRI-667): a brief written before it
     existed keeps today's verdict. It never mutes the footage's own sound."""
     return req.kind == "audio" and _typed_audio_intent(req) == NO_MUSIC_INTENT
+
+
+def wants_no_sound_effects(req: BriefRequirement) -> bool:
+    """KRI-1405: "No sound effects." as the brief writer typed it (``no_sound_effects``).
+
+    Only the typed fact counts, never the words (KRI-667)."""
+    return req.kind == "audio" and _typed_audio_intent(req) == NO_SOUND_EFFECTS_INTENT
+
+
+def _check_no_sound_effects(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1405 (ylab thread 8044373b): "No sound effects" against the plan or the video.
+
+    A Talking edit adds a sound only as a pop-in the creator asked for (a reaction beat with a
+    sound), so with none the ask is how the video is made. It was "A Talking video can't do
+    this" because no checker owned it. Any other format has no way to judge it here (neutral).
+    """
+    if facts.beat_sound_triggers:
+        return _receipt(
+            req,
+            "partial",
+            say(en="This video has sound effects.", tr="Bu videoda ses efekti var."),
+        )
+    if facts.edit_format in _TALKING_FORMATS:
+        return _receipt(
+            req,
+            "met",
+            say(en="No sound effects, as asked.", tr="İstediğin gibi ses efekti yok."),
+        )
+    return _receipt(req, "partial", _NO_CHECKER)
 
 
 # The audio strategies whose music plays in (or is laid under) the video.
@@ -7787,9 +7823,37 @@ def _loc(reason: str) -> str:
     return say(en=reason, tr=_REASON_TR.get(reason, reason))
 
 
-# NO_TITLE_REASON is the English text; a receipt written in a Turkish turn carries the
-# Turkish twin, so compare with `is_no_title_reason`.
-_NO_TITLE_REASONS = frozenset({_NO_TITLE, _REASON_TR[_NO_TITLE]})
+def reason_in_every_language(reason: str) -> tuple[str, ...]:
+    """A static English reason as every reply language writes it into a receipt (KRI-1405).
+
+    `_loc` writes a reason in the turn's language: English, the Turkish twin, or a catalog
+    language's line (German). Anything that tells one stored reason from another (a render
+    promise, a format limit, a neutral "can't check") must accept all of them: an
+    English/Turkish-only list made a German Talking draft hold over its own promises and offer
+    to drop them. A catalog with no line for the reason falls back to English, which is listed.
+    """
+    from app.kria.copy_catalog import translate  # noqa: PLC0415
+    from app.kria.reply_language import CATALOG_REPLY_LANGUAGES  # noqa: PLC0415
+
+    texts = [reason, _REASON_TR.get(reason, reason)]
+    texts.extend(translate(language, reason) or reason for language in CATALOG_REPLY_LANGUAGES)
+    return tuple(dict.fromkeys(texts))
+
+
+def reasons_in_every_language(reasons: Iterable[str]) -> tuple[str, ...]:
+    """`reason_in_every_language` for each reason, in order, once each."""
+    return tuple(dict.fromkeys(t for r in reasons for t in reason_in_every_language(r)))
+
+
+# Every render promise as a receipt stores it, in each reply language (KRI-1235, KRI-1405).
+RENDER_PROMISE_TEXTS = frozenset(reasons_in_every_language(RENDER_PROMISE_REASONS))
+# A phone Talking edit's plain answers (KRI-705), as `is_judged` reads them by prefix.
+_TALKING_HONEST_PREFIXES = reasons_in_every_language(_TALKING_HONEST_EN)
+
+
+# NO_TITLE_REASON is the English text; a receipt written in another language carries its
+# twin, so compare with `is_no_title_reason`.
+_NO_TITLE_REASONS = frozenset(reason_in_every_language(_NO_TITLE))
 
 
 def is_no_title_reason(reason: object) -> bool:
@@ -7816,7 +7880,7 @@ _NEUTRAL_EN = frozenset(
         _NO_CHECKER,
     }
 )
-_NEUTRAL_REASONS = _NEUTRAL_EN | frozenset(_REASON_TR[reason] for reason in _NEUTRAL_EN)
+_NEUTRAL_REASONS = frozenset(reasons_in_every_language(_NEUTRAL_EN))
 
 # Reasons that describe what the format the creator chose does with an ask, not a
 # simplification Kria made instead of it: a Talking edit's length follows the take,
@@ -7883,10 +7947,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _VOICEOVER_SPOKEN_TEXT_PLAN,
     *_SB_FORMAT_LIMITS,
 )
-_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
-    *_FORMAT_LIMIT_EN,
-    *(_REASON_TR[reason] for reason in _FORMAT_LIMIT_EN),
-)
+_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = reasons_in_every_language(_FORMAT_LIMIT_EN)
 
 
 def is_format_limit(reason: str | None) -> bool:
@@ -13689,6 +13750,49 @@ def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     return _receipt(req, "partial", "; ".join(parts))
 
 
+def talking_caption_promise(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """KRI-1405: the captions plan a phone Talking draft states, when it is only a promise.
+
+    The Talking writer captions every take, in the asked language, with the creator's
+    spellings; the finished video's review checks them. So "German captions word by word, spell
+    these names" is how the video is made, not a shortfall to hold the draft over or offer to
+    drop (prod thread 8044373b held it and "Make it without these" listed it as left out though
+    the video had the captions). None when the plan falls short: sentence lines for a
+    word-by-word ask, a language Nova can't caption yet, or spellings the creator still has to
+    write out. Approval readiness compares the receipt's whole reason with this sentence.
+    """
+    look_ask = caption_look_ask(req)
+    if look_ask is None and not _plans_caption_words(req, facts):
+        return None
+    if look_ask is not None and not (
+        facts.caption_words_at_render
+        and not facts.rendered_variant
+        and not facts.editor
+        and _wants_captions(req)
+    ):
+        return None
+    if _wants_word_captions(req) and facts.caption_style not in {
+        None,
+        "auto",
+        "none",
+        "karaoke",
+        "kinetic",
+    }:
+        return None
+    asked = _asked_caption_language(req)
+    if asked is not None and not can_deliver_caption_language(asked):
+        return None
+    if not _spelled_names(req) and _asks_spelling(req):
+        return None
+    if look_ask is None:
+        return _caption_words_plan(req, facts).full_reason
+    # A typed look rides the same sentence (KRI-1177): a promise only when the writer draws it.
+    look = _check_caption_look(req, facts, look_ask)
+    if look is None or look.status != "met":
+        return None
+    return _with_caption_words(req, facts, look).full_reason
+
+
 def _plans_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
     """A phone Talking draft's captions ask about language or spelling (KRI-793)."""
     return (
@@ -15068,6 +15172,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True  # KRI-1161 / item 16: judged against the plan's / render's background
     if wants_no_music(req):
         return True  # KRI-1164: judged against the plan's / render's music
+    if wants_no_sound_effects(req):
+        return True  # KRI-1405: judged against the plan's / render's sound pop-ins
     if caption_look_ask(req) is not None:
         return True  # KRI-1177: the typed caption look, judged against the writer's receipt
     if _insert_clip_fact(req):
@@ -15758,6 +15864,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # KRI-1164: the typed "no music" is judged against the plan's / render's music, ahead of
         # the bed and source-sound readers (it says nothing about the footage's own sound).
         return _check_no_music(req, facts)
+    if wants_no_sound_effects(req):
+        return _check_no_sound_effects(req, facts)
     clip_sound = requirement_clip_sound(req)
     if clip_sound is not None:
         # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
@@ -16250,10 +16358,7 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
         req is not None
         and receipt.status in {"partial", "not_possible"}
         and receipt.reason
-        and any(
-            str(receipt.reason).startswith(prefix)
-            for prefix in (*_TALKING_HONEST_EN, *(_REASON_TR[r] for r in _TALKING_HONEST_EN))
-        )
+        and str(receipt.reason).startswith(_TALKING_HONEST_PREFIXES)
     ):
         # KRI-705: a phone Talking edit's plain "can't" is an answer, though no checker owns it.
         return True
@@ -16303,6 +16408,12 @@ def _talking_honest_receipt(
             return receipt  # the render's own `opening_cut` / `end_cut` receipts judge it
         return _receipt(req, "partial", _take_window_plan(req, facts.take_window))
     if is_judged(req, receipt):
+        return receipt
+    if is_select_all_requirement(req) and facts.video_clip_count:
+        # KRI-1405: "use all five clips" on a Talking edit that plays every clip (each a
+        # speaker or a cutaway, KRI-719) is how it is made, never "A Talking video can't".
+        if _talking_uses_every_clip(facts.video_clip_count):
+            return _receipt(req, "met", None)
         return receipt
     if _has_duration_target(req):
         target = float(req.facts["duration_s"])
@@ -16477,12 +16588,14 @@ def _planned_at_render(receipt: RequirementReceipt) -> bool:
     reason = receipt.full_reason
     if receipt.status != "partial" or not reason:
         return False
-    texts = {t for p in RENDER_PROMISE_REASONS for t in (p, _REASON_TR.get(p, p))}
+    pinned = reason_in_every_language(_TALKING_SPOKEN_TEXT_PINNED)
 
     def only(rest: str) -> bool:
-        if rest in texts or rest.startswith(_TALKING_SPOKEN_TEXT_PINNED):
+        if rest in RENDER_PROMISE_TEXTS or rest.startswith(pinned):
             return True
-        return any(rest.startswith(f"{t}; ") and only(rest[len(t) + 2 :]) for t in texts)
+        return any(
+            rest.startswith(f"{t}; ") and only(rest[len(t) + 2 :]) for t in RENDER_PROMISE_TEXTS
+        )
 
     return only(reason)
 
@@ -16608,6 +16721,8 @@ def ask_text(req: BriefRequirement) -> str:
     """
     if wants_no_music(req):
         return say(en="No music", tr="Müzik yok")
+    if wants_no_sound_effects(req):
+        return say(en="No sound effects", tr="Ses efekti yok")
     text = req.text()
     if req.literal and req.description and req.literal in req.description:
         text = req.description

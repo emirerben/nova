@@ -1510,6 +1510,26 @@
    "app/agents/editor_ops_v2/split_full_screen.py",
    "Part of a split screen can't go full screen from chat on this edit.",
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
+  ],
+  [
+   "app/kria/approval_readiness.py",
+   "Before I make this, please choose:",
+   "Bunu yapmadan önce bir seçim yap:"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "No sound effects",
+   "Ses efekti yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "No sound effects, as asked.",
+   "İstediğin gibi ses efekti yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This video has sound effects.",
+   "Bu videoda ses efekti var."
   ]
  ],
  "retired": [
