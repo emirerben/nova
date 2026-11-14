@@ -1840,8 +1840,7 @@
       "fix_prs": [],
       "paths": [
         "src/apps/api/app/kria/planner.py",
-        "src/apps/api/app/tasks/kria_runtime.py",
-        "src/apps/web/src/app/plan/_components/workspace/ChatCreationWorkspace.tsx"
+        "src/apps/api/app/tasks/kria_runtime.py"
       ],
       "regression_tests": [
         "tests/kria/test_turn_auto_continue_postgres.py",

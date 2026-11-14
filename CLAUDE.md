@@ -38,7 +38,7 @@ Rules:
 - Skip the worktree only for read-only investigation or one-file config tweaks.
 
 ## Stack
-- Frontend: Next.js (src/apps/web/) — **frozen**; only privacy/terms, landing, admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) are live. Archive tag: `web-archive-2026-11`.
+- Frontend: Next.js (src/apps/web/) — **frozen**; the web editor was removed (KRI-1398). Only landing, privacy/terms, /admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) remain. Restore old code from branch `archive/web-editor-2026-11` (commit `560f1f3`).
 - Native: SwiftUI + AVFoundation (src/apps/ios/) — iOS 18, XcodeGen
 - Backend: Python FastAPI + Celery (src/apps/api/) — video processing pipeline
 - Queue: Redis (job queue for async processing)
