@@ -709,11 +709,16 @@ def assess_readiness(
         if isinstance(answer, Mapping) and answer.get("source") == "creator_delegated"
         for req_id in answer.get("requirement_ids") or []
     }
+    # Tadic (KRI-1447): readiness's own "simpler version?" refusal still holds the draft. Each
+    # ask's own verdict is worked out beside it, so the card is offered only when that refusal
+    # is all that holds the draft, and an ask held for its own reason is still named.
+    simplification_hold = refusal is not None and policy_problem == refusal.question
+    own_verdicts = not policy_problem or simplification_hold
     # The unified montage draft says what its route cannot read (animated text outside the
     # title) and approves the closest thing instead of holding the draft.
     on_unified_montage = (
         settings.kria_route_disclosure_enabled
-        and not policy_problem
+        and own_verdicts
         and editor_payload is None
         and _defers_to_unified_montage(strategy, media, manifest, creator_id)
     )
@@ -727,15 +732,16 @@ def assess_readiness(
             clip_paths=[str(path) for path in media.get("clip_paths") or []],
             phone_montage=on_unified_montage,
         )
-        if settings.kria_route_disclosure_enabled and not policy_problem and editor_payload is None
+        if settings.kria_route_disclosure_enabled and own_verdicts and editor_payload is None
         else None
     )
     declined = (
         {d.requirement_id: d for d in ask_declines(requirements, strategy, route=decline_route)}
-        if not policy_problem
+        if own_verdicts
         else {}
     )
     rows = []
+    own_rows = []  # each ask's verdict without the policy problem (only a simplification's)
     for req in requirements:
         receipt = receipts.get(req.id)
         proven = (
@@ -770,10 +776,8 @@ def assess_readiness(
         ):
             proven, owner = True, FIELD_MATRIX["audio_strategy"].owner
         checked = receipt is not None and receipt.verification == "checked"
-        disposition = (
-            "unsupported"
-            if policy_problem
-            else "delegated"
+        own = (
+            "delegated"
             if proven and req.id in delegated
             else "executable"
             if proven
@@ -791,32 +795,33 @@ def assess_readiness(
             and _no_pre_render_checker(req, facts)
             else "evidence_missing"
         )
-        if req.id in declined and disposition in {"unverified", "evidence_missing"}:
+        if req.id in declined and own in {"unverified", "evidence_missing"}:
             # Nothing checked this ask, and the route cannot read it: said plainly, approvable.
             # (A checker's own verdict, e.g. the words are missing, is never hidden by this.)
-            disposition = "declined"
-        reason = policy_problem or (
+            own = "declined"
+        disposition = "unsupported" if policy_problem else own
+        own_reason = (
             declined[req.id].text
-            if disposition == "declined"
+            if own == "declined"
             else receipt.reason
             if checked
             else say(
                 en="I'll show these words one at a time when I prepare the video, then check.",
                 tr="Bu kelimeleri videoyu hazırlarken tek tek göstereceğim, sonra kontrol ederim.",
             )
-            if disposition == "unverified" and req.kind == "text_sequence"
+            if own == "unverified" and req.kind == "text_sequence"
             else say(
                 en="I can't check this before the video is made; I'll point it out after.",
                 tr="Bunu video hazırlanmadan önce kontrol edemiyorum; sonra sana göstereceğim.",
             )
-            if disposition == "unverified"
+            if own == "unverified"
             else say(
                 en="I can't confirm this draft does it yet.",
                 tr="Bu taslağın bunu yaptığını henüz doğrulayamıyorum.",
             )
         )
         if proven and owner == "prepared_collection_story":
-            reason = say(
+            own_reason = say(
                 en=(
                     "The reviewed story's source windows, wording and sound "
                     "match its frozen execution."
@@ -827,22 +832,37 @@ def assess_readiness(
                 ),
             )
         elif owner == "prepared_collection_story":
-            reason = policy_problem or say(
+            own_reason = say(
                 en="I need the selected idea's unchanged execution evidence before approval.",
                 tr="Onaydan önce seçilen fikrin değişmemiş düzen kanıtına ihtiyacım var.",
             )
         elif proven and owner != "brief_checks":
-            reason = say(
+            own_reason = say(
                 en="Original camera audio is required by the render contract.",
                 tr="Oluşturma sözleşmesi kameranın özgün sesini zorunlu tutuyor.",
             )
+        # A policy problem is every ask's reason, except the proofs that name their own owner.
+        reason = (
+            own_reason
+            if not policy_problem or (proven and owner != "brief_checks")
+            else policy_problem
+        )
         if req.id in order_problems:
             disposition, reason = "unsupported", order_problems[req.id]
+            own, own_reason = disposition, reason
         rows.append(
             {
                 "requirement_id": req.id,
                 "disposition": disposition,
                 "reason": reason,
+                "evidence_owner": owner,
+            }
+        )
+        own_rows.append(
+            {
+                "requirement_id": req.id,
+                "disposition": own,
+                "reason": own_reason,
                 "evidence_owner": owner,
             }
         )
@@ -857,7 +877,37 @@ def assess_readiness(
     if on_unified_montage:
         # Only the route whose render judges the ask itself (the phone unified montage) may
         # approve what no draft check can decide; every other route keeps its hold.
-        rows = _approve_undecidable(rows, requirements)
+        if policy_problem:
+            own_rows = _approve_undecidable(own_rows, requirements)
+        else:
+            rows = _approve_undecidable(rows, requirements)
+    refusal_ids: list[str] = []
+    if simplification_hold:
+        # The asks the refusal itself holds: every ask nothing else holds, and an ask about a
+        # setting the simpler version changes. Any other ask is held for its own reason.
+        refused = _refusal_requirement_ids(refusal.fields, requirements)
+        own_held = {
+            row["requirement_id"]
+            for row in own_rows
+            if row["disposition"] not in APPROVABLE and row["requirement_id"] not in refused
+        }
+        refusal_ids = [
+            row["requirement_id"] for row in rows if row["requirement_id"] not in own_held
+        ]
+        if own_held:
+            # No card can answer this hold, so say what the refusal changes without asking it,
+            # and keep each other blocker's own reason under it.
+            policy_problem = refusal.detail or policy_problem
+            own_by_id = {row["requirement_id"]: row for row in own_rows}
+            rows = [
+                {
+                    **row,
+                    "reason": own_by_id[row["requirement_id"]]["reason"]
+                    if row["requirement_id"] in own_held
+                    else policy_problem,
+                }
+                for row in rows
+            ]
     report = {
         "schema_version": 1,
         "ready": not policy_problem
@@ -885,9 +935,15 @@ def assess_readiness(
         "requirements": rows,
         "policy_problem": policy_problem,
         # Only while that refusal is still the problem: its fields are what a simpler-version
-        # card offers to leave out (`simplified_strategy` drafts them once the creator agrees).
-        "policy_refusal": {"code": refusal.code, "fields": list(refusal.fields)}
-        if refusal is not None and policy_problem == refusal.question
+        # card offers to leave out (`simplified_strategy` drafts them once the creator agrees),
+        # and `requirement_ids` the asks it alone holds. The card is offered only when that is
+        # every held ask (a mixed hold names its other blockers and asks nothing).
+        "policy_refusal": {
+            "code": refusal.code,
+            "fields": list(refusal.fields),
+            "requirement_ids": refusal_ids,
+        }
+        if simplification_hold
         else None,
         # KRI-901: an input, not a verdict (the dispositions above carry it into the
         # digest). Saved so approval re-checks with the client the draft was made for.
@@ -896,6 +952,21 @@ def assess_readiness(
     # Pydantic values in capability records are serialized without model text.
     report["digest"] = digest(_identity(report))
     return report
+
+
+def _refusal_requirement_ids(
+    fields: Sequence[str], requirements: Sequence[BriefRequirement]
+) -> set[str]:
+    """The asks about a setting a simplification refusal changes, by id.
+
+    Only the whole-video length today (a stated "30 seconds" the clips cannot fill is the
+    refusal's own subject). A field with no mapping maps to no ask, so an ask held for its own
+    reason always keeps the card away."""
+    from app.kria.brief_checks import _has_duration_target  # noqa: PLC0415
+
+    if "target_duration_s" not in fields:
+        return set()
+    return {req.id for req in requirements if req.kind == "timing" and _has_duration_target(req)}
 
 
 def _policy_check(manifest: ResolvedCreatorManifest, typed: CreativeStrategy):  # noqa: ANN202

@@ -11,7 +11,7 @@ import dataclasses
 import threading
 import time
 import uuid
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -1814,6 +1814,41 @@ def _without_tap_removals(planned: PlannedKriaTurn, snapshot: Mapping[str, Any])
     )
 
 
+def _restates_live_asks(brief: CreativeBrief | None, updates: Iterable[BriefUpdate]) -> bool:
+    """Every update repeats a live ask unchanged: same kind, scope and literal, no fact the
+    ask lacks, and (for an ask with no literal) the same description. A remove never does."""
+    from app.kria.brief import _complete_change  # noqa: PLC0415
+
+    live = {req.id: req for req in brief.live()} if brief is not None else {}
+
+    def words(value: str | None) -> str:
+        return " ".join((value or "").casefold().split())
+
+    def same(req: BriefRequirement, update: BriefUpdate) -> bool:
+        return (
+            update.kind == req.kind
+            and update.scope == req.scope
+            and update.literal == req.literal
+            and all(key in req.facts and req.facts[key] == v for key, v in update.facts.items())
+            and (
+                bool(req.literal)
+                or not update.description
+                or words(update.description) == words(req.description)
+            )
+        )
+
+    for update in updates:
+        if update.operation == "remove":
+            return False
+        if update.operation == "change":
+            target = live.get(update.target_requirement_id or "")
+            if target is None or not same(target, _complete_change(target, update)):
+                return False
+        elif not any(same(req, update) for req in live.values()):
+            return False
+    return True
+
+
 def _consented_policy_simplification(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -1862,9 +1897,12 @@ def _consented_policy_simplification(
     offered = card.get("brief_version")
     if offered is not None:
         latest = load_latest_brief_sync(db, thread_id)
-        # The card covers strategy fields only: any brief update on this turn (a new, changed
-        # or withdrawn ask) is a request it never answered.
-        if offered != (latest.version if latest is not None else 0) or planned.brief_updates:
+        # The card covers strategy fields only: a new, changed or withdrawn ask on this turn is
+        # a request it never answered. A plan that only restates the asks already saved (the
+        # model often repeats them beside an "Evet") changes nothing the card was offered on.
+        if offered != (latest.version if latest is not None else 0) or not _restates_live_asks(
+            latest, planned.brief_updates
+        ):
             return None
     simplified = simplified_strategy(manifest, strategy) if manifest is not None else None
     if simplified is None:
@@ -2885,6 +2923,9 @@ def _complete_draft_turn(
             )
             if consented is not None:
                 simplified, simplified_notices = consented
+                # Its brief updates only restate saved asks (`_restates_live_asks`): saving
+                # them would add a second copy of an ask, so the brief stays as the card saw it.
+                effective_brief_updates = ()
                 document = document.model_copy(update={"strategy": simplified})
                 snapshot, snapshot_hash = canonical_snapshot(document)
                 added = [n for n in simplified_notices if n not in planned.policy_notices]
@@ -3808,10 +3849,12 @@ def _complete_draft_turn(
             policy_refusal = (readiness_report or {}).get("policy_refusal")
             refusal_card = (
                 bool(policy_refusal)
-                # The card answers only the refusal; an ask held for its own reason is not
-                # something "yes" can agree to.
+                # The card answers only the refusal: every held ask must be one readiness
+                # says the refusal alone holds. An ask held for its own reason is not
+                # something "yes" can agree to (readiness then names it and asks nothing).
                 and all(
-                    row["disposition"] in APPROVABLE or row["reason"] == policy_problem
+                    row["disposition"] in APPROVABLE
+                    or row["requirement_id"] in policy_refusal.get("requirement_ids", ())
                     for row in readiness_report["requirements"]
                 )
                 and _choice_questions_on
