@@ -148,6 +148,15 @@ def immutable_video_source_duration(job: Any, variant: dict, clip_index: int) ->
     return matches[0]
 
 
+def visual_bytes_ready(asset: Any) -> bool:
+    """A pool visual the editor may place: analysis finished, or its bytes alone were verified.
+
+    The editor plays the bytes. Gemini analysis only feeds suggestions, so it must not hold
+    a pick back.
+    """
+    return asset.status == "ready" or getattr(asset, "media_status", None) == "ready"
+
+
 def authored_phone_sources_available(job: Any, variant: dict) -> bool:
     """Source admission for saved empty/authored device edits, never cloud fallback."""
     from app.config import settings
