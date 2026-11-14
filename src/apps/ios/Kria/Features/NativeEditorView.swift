@@ -19,7 +19,7 @@ struct NativeEditorView: View {
     @StateObject private var panelDrafts = NativeEditorPanelDrafts()
     @StateObject private var panelLifecycle = NativeEditorPanelLifecycle()
     @State private var panel: NativeEditorPanel?
-    /// A ghost tapped in the preview: the Split tool opens its picker aimed at that panel, then clears this.
+    /// A timeline gap tapped: the Split tool opens its picker aimed at that panel, then clears this.
     @State private var splitAddRequest: NativeSplitAddRequest?
     /// KRI-240: the caption line open in the caption editor (plan 026 D27: the
     /// source of truth for caption edit state; keyboard focus only follows it).
@@ -114,12 +114,6 @@ struct NativeEditorView: View {
         GeometryReader { viewport in
             editorLifecycle(editorExitControls(editorPresentations(editorSurface(viewport: viewport))))
         }
-        // The preview's split ghosts ("+" on an empty or gapped panel) open the Split tool aimed at that panel.
-        .environment(\.nativeSplitGhostTap, NativeSplitGhostTap { sectionID, panelIndex in
-            splitAddRequest = NativeSplitAddRequest(sectionID: sectionID, panel: panelIndex)
-            previewFullscreen = false
-            changePanel(to: .split)
-        })
         .overlay(alignment: .topLeading) {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-document-snapshot") {
