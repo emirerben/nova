@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.214.0] - 2026-11-14
+
+### Changed
+- fix(api): one table proves every editor capability saves (KRI-1423) (#2329) <!-- release-pr: 2329 -->
+
 ## [0.88.213.0] - 2026-11-14
 
 ### Changed
