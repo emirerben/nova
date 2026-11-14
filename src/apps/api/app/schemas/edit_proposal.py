@@ -370,7 +370,7 @@ class MontageCadenceConstraint(BaseModel):
         frame_count = round(value * MOTION_FPS)
         frame_aligned = frame_count / MOTION_FPS
         if abs(value - frame_aligned) > 0.001:
-            raise ValueError("montage cadence cut duration must align to 30fps frames")
+            raise ValueError(f"montage cadence cut duration must align to {MOTION_FPS}fps frames")
         return round(frame_aligned, 6)
 
     @model_validator(mode="after")

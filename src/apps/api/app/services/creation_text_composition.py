@@ -61,8 +61,11 @@ CREATION_TEXT_COMPOSER_PROMPT_SOURCES: tuple[str, ...] = (
     "assets/fonts/font-registry.json",
     "prompts/edit_copilot_ops/text.txt",
 )
+# {{MOTION_FPS}} comes from motion-limits.json, which is outside the fingerprinted tree in the prod
+# image, so its rendered value is hashed in directly.
+CREATION_TEXT_COMPOSER_PROMPT_EXTRA = render_vocab_tokens("{{MOTION_FPS}}")
 CREATION_TEXT_COMPOSER_PROMPT_VERSION = prompt_fingerprint(
-    "ct", CREATION_TEXT_COMPOSER_PROMPT_SOURCES
+    "ct", CREATION_TEXT_COMPOSER_PROMPT_SOURCES, extra=CREATION_TEXT_COMPOSER_PROMPT_EXTRA
 )
 
 # Same flash model `main_creator` / `brief_extractor` already fall back to.
@@ -1098,10 +1101,10 @@ def _check_editorial_text(snapshot: EditProposalSnapshot, plan: dict) -> None:
             if not str(row.get("id", "")).startswith("guided-title")
             and not is_caption_text_bar(row)
             and str(row.get("text", "")).strip()
-            and float(row.get("start_s", 0)) >= start - 1 / 30
-            and float(row.get("end_s", 0)) <= end + 1 / 30
+            and float(row.get("start_s", 0)) >= start - FRAME_S
+            and float(row.get("end_s", 0)) <= end + FRAME_S
             and float(row.get("end_s", 0)) - float(row.get("start_s", 0))
-            >= min_display_s(len(str(row["text"]))) - 1 / 30
+            >= min_display_s(len(str(row["text"]))) - FRAME_S
         ]
         if not explanation:
             raise CreationTextCompositionError(

@@ -1658,3 +1658,16 @@ def test_collapse_section_follows_the_added_clip_and_later_text_moves_once(docum
     )
     variant, payload = _add(job, variant, section, panel_index=1, clip_index=2)
     assert payload["split_screen_sections"][0]["duration_s"] == 5
+
+
+def test_output_trim_that_leaves_exactly_the_minimum_succeeds(document):
+    # 0.3 - 0.2 is 0.09999999999999998: float noise, not a too-short section (KRI-770 class).
+    job, variant = document
+    variant, _ = apply(
+        job,
+        variant,
+        {"op": "create_split_screen", "slot_indexes": [0, 1], "panel_count": 2, "duration_s": 0.3},
+    )
+    _, payload = apply(job, variant, {"op": "trim_output_start", "start_s": 0.2})
+    assert payload["split_screen_sections"][0]["duration_s"] == 0.1
+    assert [row["duration_s"] for row in payload["timeline_slots"]] == [0.1, 0.1]

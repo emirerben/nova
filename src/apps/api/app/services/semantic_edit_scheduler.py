@@ -154,7 +154,7 @@ def assess_semantic_feasibility(input: EditProposalAgentInput) -> Feasibility:
                 0,
                 0,
                 "infeasible",
-                "fixed cadence must align to complete 30fps frames",
+                f"fixed cadence must align to complete {FPS}fps frames",
             )
         if input.direction != "fast_montage":
             return Feasibility(
