@@ -10,6 +10,7 @@ import pytest
 
 from app.agents.edit_copilot import _ParseState, parse_editor_operation
 from app.services import kria_editor_ops as editor
+from app.services.editor_limits import EDITOR_MIN_CLIP_S
 from tests.services.test_kria_editor_ops import _job, _variant
 
 
@@ -1671,3 +1672,62 @@ def test_output_trim_that_leaves_exactly_the_minimum_succeeds(document):
     _, payload = apply(job, variant, {"op": "trim_output_start", "start_s": 0.2})
     assert payload["split_screen_sections"][0]["duration_s"] == 0.1
     assert [row["duration_s"] for row in payload["timeline_slots"]] == [0.1, 0.1]
+
+
+def _stored_durations(variant):
+    return [
+        row["duration_s"] for row in variant["user_timeline"]["slots"] if not row.get("removed")
+    ]
+
+
+def test_proportional_retarget_noise_below_the_minimum_snaps_and_stores_legal_rows(document):
+    # 0.3 / 3.0 * 1.0 is 0.09999999999999999: float noise, the same class as KRI-770.
+    job, variant = document
+    variant, _ = apply(
+        job,
+        variant,
+        {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2, "duration_s": 0.3},
+    )
+    plain = next(r for r in variant["user_timeline"]["slots"] if not r.get("split_section_id"))
+    plain["duration_s"] = 2.7
+    variant, payload = apply(
+        job, variant, {"op": "set_total_duration", "target_s": 1.0, "strategy": "proportional"}
+    )
+    assert payload["split_screen_sections"][0]["duration_s"] >= EDITOR_MIN_CLIP_S
+    assert all(duration >= EDITOR_MIN_CLIP_S for duration in _stored_durations(variant))
+
+
+def test_bounded_split_that_leaves_exactly_the_minimum_stores_legal_rows(document):
+    # 0.3 - 0.2 is 0.09999999999999998: the slice must be stored as 0.1, not the noisy value.
+    job, variant = document
+    variant, payload = apply(
+        job,
+        variant,
+        {
+            "op": "create_split_screen",
+            "slot_indexes": [0],
+            "panel_count": 2,
+            "start_s": 0.2,
+            "end_s": 0.3,
+        },
+    )
+    assert payload["split_screen_sections"][0]["duration_s"] >= EDITOR_MIN_CLIP_S
+    assert all(duration >= EDITOR_MIN_CLIP_S for duration in _stored_durations(variant))
+
+
+def test_full_length_split_whose_last_room_is_float_noise_stores_legal_rows(document):
+    job, variant = document
+    variant["user_timeline"]["slots"][0]["duration_s"] = 0.2
+    variant, payload = apply(
+        job,
+        variant,
+        {
+            "op": "create_split_screen",
+            "slot_indexes": [0, 1],
+            "panel_count": 2,
+            "full_length": True,
+            "duration_s": 0.3,
+        },
+    )
+    assert payload["split_screen_sections"][0]["duration_s"] >= EDITOR_MIN_CLIP_S
+    assert all(duration >= EDITOR_MIN_CLIP_S for duration in _stored_durations(variant))

@@ -6,6 +6,9 @@ the refusal in place. Ways a limit can be copied again, and the assertion that c
   `*_RATE = 0.25` constant (`test_python_does_not_retype_the_playback_rate`);
 * an editor-op, Save or split-screen module retypes the 0.1 s clip minimum or the 1/30 s frame
   (`test_editor_modules_do_not_retype_the_clip_minimum_or_frame`);
+* a planner defines its own `*FPS = 30` or a Python module retypes the 2e-6 text-piece tolerance
+  or a `0.25, 4` rate pair (`test_planners_do_not_define_their_own_frame_rate_constant`,
+  `test_python_does_not_retype_the_text_piece_tolerance_or_a_rate_pair`);
 * a Swift file retypes a range or the minimum clip length instead of reading `EditorLimits` /
   `TextAnimationPhases.speedRange` (`test_swift_does_not_retype_editor_limits`);
 * a prompt types a number the prompt renderer already knows
@@ -48,8 +51,26 @@ _PYTHON_PLAYBACK = re.compile(
 
 # A module-level `*MIN*CLIP* = 0.1` is a second copy of `EDITOR_MIN_CLIP_S`, wherever it lives.
 _MIN_CLIP_CONSTANT = re.compile(
-    r"^_?\w*MIN\w*CLIP\w*(?:: [^=]+)? = (?:0\.1|1(?:\.0)? ?/ ?10)\s*(?:#.*)?$", re.M
+    r"^_?\w*MIN\w*(?:CLIP|DURATION|SLOT)\w*(?:: [^=]+)? = (?:0\.1|1(?:\.0)? ?/ ?10)\s*(?:#.*)?$",
+    re.M,
 )
+_MIN_CLIP_CONSTANT_ALLOWED = {
+    "app/agents/_schemas/drawing.py": "a drawing stroke's own minimum duration",
+    "app/agents/_schemas/visual_block.py": "a visual block's own minimum media duration",
+}
+
+# A frame-rate constant in the editor planners is a copy of `MOTION_FPS`. Renderer modules under
+# app/pipeline and the proxy-transcode ceiling keep their own clocks (listed in the PR).
+_FPS_CONSTANT = re.compile(
+    r"^\s*_?\w*FPS\w*(?:: [^=]+)? = 30(?:\.0)?\s*(?:#.*)?$|^\s*fps = 30(?:\.0)?\s*$", re.M
+)
+_FPS_SCOPES = ("app/kria", "app/services", "app/agents")
+_FPS_ALLOWED = {
+    "app/services/image_to_video.py": "the image-to-video renderer clock",
+    "app/services/visual_talking_takes.py": "the proxy transcode fps ceiling",
+}
+_TOLERANCE_LITERAL = re.compile(r"\b0\.000002\b|\b2e-0?6\b|\b1 ?/ ?500000\b")
+_RATE_PAIR = re.compile(r"=\s*\(?0\.25, ?4(?:\.0)?\)?\s*$")
 
 # Modules where an editor clip window is validated, saved or cut. A bare `0.1` / `1/30` here is a
 # copy of `EDITOR_MIN_CLIP_S` / `FRAME_S`. Planner and renderer modules elsewhere keep their own
@@ -99,7 +120,7 @@ _SWIFT_LIMIT_LITERALS = re.compile(
     r"\bminimum\w*\b[^\n=]*=\s*0\.1\s*$|minimum: TimeInterval = 0\.1\b|"
     r"\bmax\(0\.1, \w+\.end - \w+\.start\)|\(duration \* 30\)|"
     r"\b\w*[rR]ate\w*(?:\.\w+)* ?[<>]=? ?(?:0\.25|4(?:\.0)?)\b(?![0-9.])|"
-    r"[<>]=? ?1 ?/ ?10\b",
+    r"[<>]=? ?1 ?/ ?10\b|min\(3, max\(0\.25",
     re.M,
 )
 
@@ -135,7 +156,8 @@ def test_no_module_defines_its_own_minimum_clip_constant() -> None:
     found = [
         f"{path.relative_to(API_ROOT)}:{n}: {match.group(0).strip()}"
         for path in _python_sources()
-        if path.relative_to(API_ROOT).as_posix() != "app/services/editor_limits.py"
+        if path.relative_to(API_ROOT).as_posix()
+        not in {"app/services/editor_limits.py", *_MIN_CLIP_CONSTANT_ALLOWED}
         for text in [path.read_text(encoding="utf-8")]
         for match in _MIN_CLIP_CONSTANT.finditer(text)
         for n in [text.count("\n", 0, match.start()) + 1]
@@ -143,6 +165,33 @@ def test_no_module_defines_its_own_minimum_clip_constant() -> None:
     assert not found, (
         "Import EDITOR_MIN_CLIP_S from app.services.editor_limits instead of redefining it:\n"
         + "\n".join(found)
+    )
+
+
+def test_planners_do_not_define_their_own_frame_rate_constant() -> None:
+    found = [
+        f"{rel}:{n}: {line.strip()}"
+        for path in _python_sources()
+        for rel in [path.relative_to(API_ROOT).as_posix()]
+        if rel.startswith(_FPS_SCOPES) and rel not in _FPS_ALLOWED
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _FPS_CONSTANT.search(line)
+    ]
+    assert not found, "Import MOTION_FPS from app.services.editor_limits:\n" + "\n".join(found)
+
+
+def test_python_does_not_retype_the_text_piece_tolerance_or_a_rate_pair() -> None:
+    found = [
+        f"{rel}:{n}: {line.strip()}"
+        for path in _python_sources()
+        for rel in [path.relative_to(API_ROOT).as_posix()]
+        if rel != "app/services/editor_limits.py" and rel not in _PYTHON_PLAYBACK_ALLOWED
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _TOLERANCE_LITERAL.search(line) or _RATE_PAIR.search(line)
+    ]
+    assert not found, (
+        "Import TEXT_PIECE_TOLERANCE_S / PLAYBACK_RATE_MIN / PLAYBACK_RATE_MAX from "
+        "app.services.editor_limits:\n" + "\n".join(found)
     )
 
 

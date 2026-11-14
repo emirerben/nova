@@ -58,7 +58,7 @@ class AddPanelClip(SectionCommand):
     panel_index: int = Field(ge=0, le=2, strict=True)
     clip_index: int = Field(ge=0, strict=True)
     offset_s: float | None = Field(default=None, ge=0, le=1800)
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
     grow_section: bool = True
 
 
@@ -219,6 +219,7 @@ def _bound_duration(row: dict, room: float, editor: Any) -> None:
         raise ValueError(
             f"The section leaves less than {EDITOR_MIN_CLIP_S:g} seconds for this clip"
         )
+    room = snap_to_editor_minimum(room)
     duration = editor._slot_duration(row)
     if duration <= room + 1e-6:
         return
@@ -439,7 +440,7 @@ def _add_panel_clip(state: Any, section: dict, members: list[dict], command: dic
         raise ValueError("The panel does not exist")
     photo = source["kind"] == "image"
     native = _ADDED_PHOTO_S if photo else source.get("duration_s")
-    if native is None or native < 0.1:
+    if native is None or below_editor_minimum(native):
         raise ValueError("The selected video needs an approved measured duration")
     length = command.get("duration_s", native)
     if not photo:
@@ -458,8 +459,9 @@ def _add_panel_clip(state: Any, section: dict, members: list[dict], command: dic
         section["duration_s"] = max(section["duration_s"], offset + length)
     else:
         length = min(length, section["duration_s"] - offset)
-        if length < 0.1:
+        if below_editor_minimum(length):
             raise ValueError("This panel is full. Shorten a clip in it to make room.")
+        length = snap_to_editor_minimum(length)
     row = {
         "slot_id": str(uuid4()),
         "clip_index": command["clip_index"],
@@ -901,6 +903,7 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
             "The requested length leaves a timeline unit shorter than "
             f"{EDITOR_MIN_CLIP_S:g} seconds"
         )
+    desired = [snap_to_editor_minimum(value) for value in desired]
     for _ in range(6):
         for index, ((section, rows), (old_section, old_rows)) in enumerate(
             zip(units, original, strict=True)
@@ -917,6 +920,7 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
                             "The requested length leaves a panel clip shorter than "
                             f"{EDITOR_MIN_CLIP_S:g} seconds"
                         )
+                    wanted = snap_to_editor_minimum(wanted)
                     row.update(resize_source_window(old, wanted))
                     row["split_offset_s"] = offset
             else:
@@ -933,6 +937,7 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
         desired[index] += target - reached
         if below_editor_minimum(desired[index]):
             break
+        desired[index] = snap_to_editor_minimum(desired[index])
     raise KriaEditorOpError("The requested duration cannot fit the available source footage")
 
 
