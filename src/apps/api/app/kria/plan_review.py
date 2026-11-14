@@ -75,6 +75,8 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "update_split_screen",
             "assign_split_panel",
             "add_split_panel_clip",
+            "add_split_blank",
+            "set_split_blank_color",
             "swap_split_panels",
             "remove_split_screen",
             "move_split_clip",
