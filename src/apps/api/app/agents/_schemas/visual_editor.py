@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.services.editor_limits import ANIMATION_SPEED_MAX, ANIMATION_SPEED_MIN
+
 
 class VisualAnimation(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -11,7 +13,7 @@ class VisualAnimation(BaseModel):
     entrance: Literal["none", "fade", "pop", "slide", "zoom"] = "none"
     exit: Literal["none", "fade", "pop", "slide", "zoom"] = "none"
     loop: Literal["none", "pulse", "bounce", "float"] = "none"
-    speed: float = Field(1, ge=0.25, le=3, allow_inf_nan=False)
+    speed: float = Field(1, ge=ANIMATION_SPEED_MIN, le=ANIMATION_SPEED_MAX, allow_inf_nan=False)
 
 
 class VisualEditorStyle(BaseModel):

@@ -1136,6 +1136,20 @@
       ]
     },
     {
+      "id": "kri-1456-composer-question-reaches-the-creator",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1456_text_question_journey.py tests/kria/test_kri520_task_copy.py tests/services/test_creation_text_copy_guard.py tests/services/test_creation_text_asked_only.py",
+      "paths": [
+        "scripts/kria/score_kri1445_lyrics_montage.py",
+        "src/apps/api/tests/fixtures/kria_replay/kri1445_lyrics_montage/",
+        "src/apps/api/tests/kria/test_kri1456_text_question_journey.py",
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/app/pipeline/phone_guided_plan.py",
+        "src/apps/api/app/kria/copy/tr.json"
+      ]
+    },
+    {
       "id": "kri-708-caption-correction",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_caption_correct.py",

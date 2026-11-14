@@ -80,6 +80,7 @@ from app.agents.main_creator import (
 )
 from app.agents.persona_generator import PersonaGeneratorAgent
 from app.services.creation_text_composition import (
+    CREATION_TEXT_COMPOSER_PROMPT_EXTRA,
     CREATION_TEXT_COMPOSER_PROMPT_SOURCES,
     CREATION_TEXT_COMPOSER_PROMPT_VERSION,
     CreationTextComposer,
@@ -156,6 +157,14 @@ def test_fingerprint_is_stable(tmp_path: Path) -> None:
     assert re.fullmatch(r"xx-[0-9a-f]{12}", first)
 
 
+def test_extra_value_moves_the_version(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("x")
+    plain = fp.prompt_fingerprint("p", ["a.txt"], root=tmp_path)
+    thirty = fp.prompt_fingerprint("p", ["a.txt"], root=tmp_path, extra="30")
+    assert thirty != plain
+    assert thirty != fp.prompt_fingerprint("p", ["a.txt"], root=tmp_path, extra="60")
+
+
 def test_any_byte_change_moves_the_version(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("Teach the planner one rule.\n")
     (tmp_path / "b.txt").write_text("Second file.\n")
@@ -209,7 +218,8 @@ def test_derived_specs_stamp_their_fingerprint() -> None:
         ),
     }
     for spec, (prefix, constant, sources) in expected.items():
-        assert spec.prompt_version == fp.prompt_fingerprint(prefix, sources), spec.name
+        extra = CREATION_TEXT_COMPOSER_PROMPT_EXTRA if prefix == "ct" else ""
+        assert spec.prompt_version == fp.prompt_fingerprint(prefix, sources, extra=extra), spec.name
         if constant is not None:
             assert spec.prompt_version == constant, spec.name
     versions = [spec.prompt_version for spec in expected]

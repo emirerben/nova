@@ -9070,6 +9070,29 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
     "artifact_eligibility_revoked": "Bu dışa aktarma artık kullanılamıyor.",
     "eligibility_changed_during_export": "Dışa aktarma sırasında bir şey değişti. Tekrar dene.",
 }
+# `content_plan_build.JOB_FAILURE_REASONS` in Turkish: the sentences without their retry invitation.
+_JOB_FAILURE_REASONS_TR: dict[str, str] = {
+    "creation_text_failed": (
+        "Onayladığın yazıyı koruyarak metni hazırlayamadım. Taslağın ve çekimlerin kayıtlı."
+    ),
+    "phone_capability_unavailable": (
+        "Bu düzenleme için gereken bir iPhone oluşturma özelliği şu anda kapalı. Düzenlemen ve "
+        "çekimlerin kayıtlı."
+    ),
+    "creation_text_timeout": (
+        "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden "
+        "uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az "
+        "klip ya da daha az yazı işe yarar."
+    ),
+    "plan_ai_timeout": (
+        "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. "
+        "Düzenlemen ve çekimlerin kayıtlı."
+    ),
+    "phone_plan_failed": (
+        "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. "
+        "Düzenlemen ve çekimlerin kayıtlı."
+    ),
+}
 _JOB_FAILURE_DEFAULT_TR = (
     "Bir şeyler ters gitti ve bu video tamamlanmadı. Yönün ve çekimlerin hâlâ kayıtlı; tekrar dene."
 )
@@ -9099,30 +9122,40 @@ def _failure_title(failure_code: str | None, *, device_failed: bool = False) -> 
     return say(en=en, tr=tr)
 
 
-def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | None:
+def _job_failure_copy(
+    failure_code: str | None, creator_detail: str | None, *, retry: bool = True
+) -> str | None:
     """`content_plan_build.job_failure_message` in the chat's language.
 
-    A Turkish chat gets the Turkish line for the code. The job's own ``error_detail`` for
-    the creator-facing codes is English-only text, so Turkish prefers the code's line.
+    A Turkish chat gets the Turkish line for the code. The job's own ``creator_detail`` is free
+    text with no Turkish line, so Turkish prefers the code's line. ``retry`` is whether the
+    failure's final recovery is a retry: when it is not, the sentence never invites one.
     """
     from app.tasks.content_plan_build import (  # noqa: PLC0415
         DEFAULT_JOB_FAILURE_MESSAGE,
         JOB_FAILURE_MESSAGES,
+        JOB_FAILURE_REASONS,
         job_failure_message,  # noqa: PLC0415
     )
 
-    english = job_failure_message(failure_code, detail)
+    english = job_failure_message(failure_code, creator_detail, retry=retry)
     if english is None:
         return None
     code = failure_code or ""
     # The code's own sentence and the default are catalog keys (KRI-1362); the creator-facing
-    # ``error_detail`` is free English text with no key, so German shows it as written.
+    # ``creator_detail`` is free text with no key, so German shows it as written.
     if (
         code in JOB_FAILURE_MESSAGES
         and code in _JOB_FAILURE_MESSAGES_TR
         and english == JOB_FAILURE_MESSAGES[code]
     ):
         return say(en=JOB_FAILURE_MESSAGES[code], tr=_JOB_FAILURE_MESSAGES_TR[code])
+    if (
+        code in JOB_FAILURE_REASONS
+        and code in _JOB_FAILURE_REASONS_TR
+        and english == JOB_FAILURE_REASONS[code]
+    ):
+        return say(en=JOB_FAILURE_REASONS[code], tr=_JOB_FAILURE_REASONS_TR[code])
     if code not in _JOB_FAILURE_MESSAGES_TR and english == DEFAULT_JOB_FAILURE_MESSAGE:
         return say(en=DEFAULT_JOB_FAILURE_MESSAGE, tr=_JOB_FAILURE_DEFAULT_TR)
     return say(en=english, tr=_JOB_FAILURE_MESSAGES_TR.get(code, _JOB_FAILURE_DEFAULT_TR))
@@ -9664,17 +9697,19 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         session.status = "awaiting_feedback"
         session.last_error = execution.error
         from app.tasks.content_plan_build import (  # noqa: PLC0415
-            CREATOR_FACING_DETAIL_CODES,
             JOB_FAILURE_MESSAGES,
+            creator_failure_detail,
         )
 
         # KRI-673/KRI-765: every code with a sentence of its own says why the render stopped.
         cause_codes = {
             "phone_capability_unavailable",
             "creation_text_failed",
-            *CREATOR_FACING_DETAIL_CODES,
             *JOB_FAILURE_MESSAGES,
         }
+        # The sentence follows the recovery chosen above, never the other way round: a card that
+        # offers no Retry never reads "try again" (KRI-1456).
+        creator_detail = creator_failure_detail(job)
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
         raw_recovery = (job.assembly_plan or {}).get("request_recovery")
@@ -9789,7 +9824,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # No exact retry exists for this render, but the cause is known: name it, then
             # the real way forward (KRI-765: "creation_text_failed" read as a generic stop).
             failure_content = (
-                f"{_job_failure_copy(failure_code, getattr(job, 'error_detail', None))} "
+                f"{_job_failure_copy(failure_code, creator_detail, retry=recovery == 'retry')} "
                 + say(
                     en="To try again, ask for a new version and review its approval.",
                     tr="Tekrar denemek için yeni bir sürüm isteyip onayını gözden geçir.",
@@ -9851,7 +9886,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
             # KRI-673: every code with a table sentence says why; the generic line is
             # only for codes nothing has words for.
-            failure_content = _job_failure_copy(failure_code, getattr(job, "error_detail", None))
+            failure_content = _job_failure_copy(
+                failure_code, creator_detail, retry=recovery == "retry"
+            )
         else:
             failure_content = say(
                 en=(

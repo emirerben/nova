@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
+from app.services.editor_limits import EDITOR_MIN_CLIP_S
+
 
 class SplitLayout(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -38,7 +40,7 @@ class SplitLayout(BaseModel):
 
 
 class SplitScreenSection(SplitLayout):
-    duration_s: float = Field(ge=0.1, le=1800)
+    duration_s: float = Field(ge=EDITOR_MIN_CLIP_S, le=1800)
     panel_count: Literal[2, 3]
 
     @model_validator(mode="before")
@@ -157,7 +159,7 @@ def sync_collapsed_section_durations(
     ends = collapsed_section_durations(rows, parsed)
     for section in sections:
         if section["id"] in ends:
-            section["duration_s"] = max(0.1, ends[section["id"]])
+            section["duration_s"] = max(EDITOR_MIN_CLIP_S, ends[section["id"]])
 
 
 def layout_split_timeline(
@@ -170,7 +172,7 @@ def layout_split_timeline(
         raise ValueError("split section ids must be unique")
     derived = collapsed_section_durations(rows, parsed)
     by_id = {
-        key: section.model_copy(update={"duration_s": max(0.1, derived[key])})
+        key: section.model_copy(update={"duration_s": max(EDITOR_MIN_CLIP_S, derived[key])})
         if key in derived
         else section
         for key, section in by_id.items()

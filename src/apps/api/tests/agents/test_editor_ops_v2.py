@@ -18,7 +18,7 @@ from app.agents.edit_copilot import (
 from app.agents.editor_ops_v2 import OpSpec, is_v2_snapshot, merge_into_parser
 from app.pipeline.prompt_loader import load_prompt
 from app.services import kria_editor_ops as ops_mod
-from app.services.editor_limits import MAX_EDITOR_OPS
+from app.services.editor_limits import EDITOR_MIN_CLIP_S, MAX_EDITOR_OPS
 from app.services.kria_editor_ops import KriaEditorOpError, compile_editor_ops
 from tests.services.test_kria_editor_ops import _job, _variant
 
@@ -80,6 +80,7 @@ def test_prompt_preserves_legacy_contract_and_uses_server_bound_with_marker(monk
             effect_catalog=edit_copilot._effect_catalog(),
             caption_font_catalog=edit_copilot._caption_font_catalog(),
             custom_effect_catalog=edit_copilot._custom_effect_catalog(),
+            min_clip_s=f"{EDITOR_MIN_CLIP_S:g}",
         ).rstrip("\n")
         + "\n\n"
         + load_prompt(
