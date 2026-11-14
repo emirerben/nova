@@ -32,3 +32,26 @@ and stays refused. Only `in_s` is void on a still, because no frame is ever read
 | `photo-cut-full-screen` | two full screen pieces of one photo, second at `in_s` 2.0 | saves; both stored at `in_s` 0 |
 | `photo-speed-refused` | a photo with `playback_rate` 2 | still `phone_edit_unsupported` |
 | `photo-source-end-refused` | a photo with `source_end_s` | still `phone_edit_unsupported` |
+
+## The guard that keeps every capability savable
+
+`src/apps/api/tests/routes/test_editor_capability_save_matrix.py` is one table. Each row is a
+capability the phone editor writes (split sections, panel layout, collapse, multi-clip panels,
+photos and photo cuts, trims, cuts, speed, freeze, audio, crop, transform, tilt, transitions,
+speaker frame, text, pinned text, captions, sound level, title, drawings, deleting a clip),
+sent as the phone sends it and Saved twice through `prepare_editor_commit`, the function the
+route calls: once as written, once from the timeline the first Save stored.
+
+Two more tests keep the table complete. Every section of the phone's `enum EditorSection` must
+be a row or name the suite that Saves it. Every field of `TimelineSlotEdit` must be written by a
+row, or say why the phone never writes it. A new editor capability is a new row.
+
+The phone's half is `EditorSaveCapabilityTests`. It replays `editor_save_capabilities.json`,
+generated from the same table, and fails if the phone's own guard (`splitScreenIsValid`) refuses a
+document the server saves. Regenerate with
+`UPDATE_EDITOR_CAPABILITY_FIXTURE=1 .venv/bin/python -m pytest tests/routes/test_editor_capability_save_matrix.py -k ios_fixture`.
+
+Not in the table: a plain colour or photo behind the speaker over a split edit
+(`test_authored_split_background_admission.py` covers the capability gate, and the Save of the
+background itself rides the speaker-background suites), and the sections with their own suites
+named in `OWNER_SUITE`.
