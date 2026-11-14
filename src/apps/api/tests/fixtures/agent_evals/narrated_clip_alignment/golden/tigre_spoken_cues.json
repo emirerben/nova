@@ -357,5 +357,6 @@
     "scenario": "Turkish phone Voiceover. The creator pinned the opening clip (river) and asked for three spoken-word cues ('when I say Deniz / kırkayak / mutfak, show ...'). Main Creator encoded the cues as unpositioned order intents in sentence order, so the worker sent them as a described sequence (Deniz, bathroom, kitchen). The voiceover says them as kitchen, Deniz, bathroom; the model placed each clip on its cue word and parse rejected the answer twice, failing the render.",
     "job": "prod ef8e35b8-43c6-4702-b747-f4fa3f7b4d49",
     "prod_error": "narrated_clip_alignment: clips ['files/fyt1gwgkciu0'] must all come before ['files/1oyxl8jkab4c']"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

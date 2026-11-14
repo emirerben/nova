@@ -37,25 +37,71 @@
       }
     ],
     "items": [
-      {"item_id": "item_day1", "theme": "Morning routine", "idea": "Show your real 5am gym routine and how you stay consistent", "filming_suggestion": "Film your workout in one continuous shot"},
-      {"item_id": "item_day2", "theme": "Budget travel", "idea": "Walk a local market and show how far a small budget goes", "filming_suggestion": "Handheld walkthrough with prices"},
-      {"item_id": "item_day3", "theme": "Productivity", "idea": "Your top 3 focus tips for deep work", "filming_suggestion": "Talking head at your desk"},
-      {"item_id": "item_day4", "theme": "Book recommendations", "idea": "Three books that changed how you think", "filming_suggestion": "Hold each book up to camera"},
-      {"item_id": "item_day5", "theme": "Cooking", "idea": "A 15-minute high-protein lunch", "filming_suggestion": "Overhead kitchen shot"},
-      {"item_id": "item_day6", "theme": "Mindset", "idea": "How you handle a bad day", "filming_suggestion": "Voiceover over b-roll"},
-      {"item_id": "item_day7", "theme": "Q&A", "idea": "Answer your most-asked question", "filming_suggestion": "Talking head"}
+      {
+        "item_id": "item_day1",
+        "theme": "Morning routine",
+        "idea": "Show your real 5am gym routine and how you stay consistent",
+        "filming_suggestion": "Film your workout in one continuous shot"
+      },
+      {
+        "item_id": "item_day2",
+        "theme": "Budget travel",
+        "idea": "Walk a local market and show how far a small budget goes",
+        "filming_suggestion": "Handheld walkthrough with prices"
+      },
+      {
+        "item_id": "item_day3",
+        "theme": "Productivity",
+        "idea": "Your top 3 focus tips for deep work",
+        "filming_suggestion": "Talking head at your desk"
+      },
+      {
+        "item_id": "item_day4",
+        "theme": "Book recommendations",
+        "idea": "Three books that changed how you think",
+        "filming_suggestion": "Hold each book up to camera"
+      },
+      {
+        "item_id": "item_day5",
+        "theme": "Cooking",
+        "idea": "A 15-minute high-protein lunch",
+        "filming_suggestion": "Overhead kitchen shot"
+      },
+      {
+        "item_id": "item_day6",
+        "theme": "Mindset",
+        "idea": "How you handle a bad day",
+        "filming_suggestion": "Voiceover over b-roll"
+      },
+      {
+        "item_id": "item_day7",
+        "theme": "Q&A",
+        "idea": "Answer your most-asked question",
+        "filming_suggestion": "Talking head"
+      }
     ],
     "max_assignments": 2
   },
   "raw_text": "{\"assignments\": [{\"item_id\": \"item_day1\", \"clip_gcs_path\": \"users/u1/plan/p1/seed/aaa1-gym.mp4\", \"score\": 9.0, \"rationale\": \"The empty-gym dawn workout is exactly the real 5am routine day 1 asks for, and its hook is strong enough to open on.\"}, {\"item_id\": \"item_day2\", \"clip_gcs_path\": \"users/u1/plan/p1/seed/bbb2-market.mp4\", \"score\": 8.5, \"rationale\": \"The crowded foreign-market walkthrough with prices in the transcript directly serves the budget-travel market idea.\"}]}",
   "output": {
     "assignments": [
-      {"item_id": "item_day1", "clip_gcs_path": "users/u1/plan/p1/seed/aaa1-gym.mp4", "score": 9.0, "rationale": "The empty-gym dawn workout is exactly the real 5am routine day 1 asks for, and its hook is strong enough to open on."},
-      {"item_id": "item_day2", "clip_gcs_path": "users/u1/plan/p1/seed/bbb2-market.mp4", "score": 8.5, "rationale": "The crowded foreign-market walkthrough with prices in the transcript directly serves the budget-travel market idea."}
+      {
+        "item_id": "item_day1",
+        "clip_gcs_path": "users/u1/plan/p1/seed/aaa1-gym.mp4",
+        "score": 9.0,
+        "rationale": "The empty-gym dawn workout is exactly the real 5am routine day 1 asks for, and its hook is strong enough to open on."
+      },
+      {
+        "item_id": "item_day2",
+        "clip_gcs_path": "users/u1/plan/p1/seed/bbb2-market.mp4",
+        "score": 8.5,
+        "rationale": "The crowded foreign-market walkthrough with prices in the transcript directly serves the budget-travel market idea."
+      }
     ]
   },
   "meta": {
     "source": "hand_authored_golden",
     "case": "clean match — two clips with obvious distinct item fits; the two weak clips (coffee, blank wall) are correctly omitted under max_assignments=2"
-  }
+  },
+  "prompt_sha": "2edf52d096588482"
 }

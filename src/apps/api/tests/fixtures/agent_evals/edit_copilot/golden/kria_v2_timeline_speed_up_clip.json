@@ -109,5 +109,6 @@
     "source": "hand_authored_golden",
     "case": "speed on one clip",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.227.0] - 2026-11-14
+
+### Changed
+- fix(kria): one requested text makes one on-screen text (KRI-1424) (#2341) <!-- release-pr: 2341 -->
+
+## [0.88.226.0] - 2026-11-14
+
+### Changed
+- test(evals): pin agent fixtures to the prompt they were recorded for (KRI-1428) (#2350) <!-- release-pr: 2350 -->
+
+## [0.88.225.0] - 2026-11-14
+
+### Changed
+- fix(kria): readiness's "simpler version?" hold carries its card and yes drafts it (KRI-1447) (#2342) <!-- release-pr: 2342 -->
+
+## [0.88.224.0] - 2026-11-14
+
+### Changed
+- fix(kria): pasted lyrics no longer move the chat language (KRI-1448) (#2343) <!-- release-pr: 2343 -->
+
 ## [0.88.223.0] - 2026-11-14
 
 ### Changed

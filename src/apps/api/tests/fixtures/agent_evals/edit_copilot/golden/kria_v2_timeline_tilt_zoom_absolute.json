@@ -126,5 +126,6 @@
     "source": "hand_authored_golden",
     "case": "absolute zoom: 'twice as close' is zoom 2",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

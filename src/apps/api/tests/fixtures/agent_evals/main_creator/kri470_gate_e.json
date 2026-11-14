@@ -358,5 +358,6 @@
     "contract": "Contract (v45): '20 second montage of my 6 best clips' => timing(duration_s 20) kept, select dropped, 6 selected clips fit 20 s so the gate stays silent.",
     "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
     "test_run_id": "kri470-v45-rerecord-20261007"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

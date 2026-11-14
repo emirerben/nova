@@ -99,5 +99,6 @@
     "source": "legacy_fixture_semantic_projection",
     "case": "source-aware alternating montage with source text and audio intent",
     "contract": "the specialist owns source windows, alternating order, per-source text, and source-audio intent within the generic fast-montage contract"
-  }
+  },
+  "prompt_sha": "349f41b47042cf99"
 }

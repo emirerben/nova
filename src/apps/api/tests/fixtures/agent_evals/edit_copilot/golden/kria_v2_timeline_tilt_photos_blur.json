@@ -124,5 +124,6 @@
     "source": "hand_authored_golden",
     "case": "typed selector over images, size word 'slightly crooked' (4-8 degrees), blur backdrop",
     "lane": "kria_v2_timeline_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

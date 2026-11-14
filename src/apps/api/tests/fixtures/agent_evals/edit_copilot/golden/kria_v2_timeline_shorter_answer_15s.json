@@ -112,5 +112,6 @@
     "source": "hand_authored_golden",
     "case": "answer to the vague-shorter question resolves to set_total_duration without another question",
     "lane": "copilot-vague-shorter"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

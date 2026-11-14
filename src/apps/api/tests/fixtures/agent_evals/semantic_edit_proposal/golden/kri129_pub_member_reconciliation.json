@@ -6,7 +6,7 @@
     "theme": "",
     "direction": "fast_montage",
     "goal": "Intro with title 'Emir Olympics London Edition' over park videos of individuals not playing sports; Montage of everyone playing, grouped by sport, with sport labels on screen; Include the creator talking to the camera, preserving the speech audio; End with the pub videos grouped together, styled with the theme 'post match pub'",
-    "creator_request": "Continue with 16 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say \u201cpost match pub\u201d. Add an intro title saying \u201cEmir Olympics London Edition\u201d. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech Keep 60 seconds and include everything with faster pacing",
+    "creator_request": "Continue with 16 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech Keep 60 seconds and include everything with faster pacing",
     "pace": "balanced",
     "target_duration_s": 60,
     "video_reuse_policy": "once",
@@ -460,5 +460,6 @@
       "clip-16.mp4": "Volleyball"
     },
     "expected_schedule_contract": true
-  }
+  },
+  "prompt_sha": "54e0989cb8fdd9db"
 }

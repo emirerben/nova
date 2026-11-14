@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from app.agents.narration_annotations import NarrationAnnotationAgent
-
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
 
 AGENT_DIR = "narration_annotations"
@@ -32,7 +30,6 @@ def test_narration_annotations_eval(
     fixture = load_fixture(fixture_path)
     if fixture.agent != AGENT_NAME:
         pytest.skip(f"fixture is for {fixture.agent}, not {AGENT_NAME}")
-    assert fixture.prompt_version == NarrationAnnotationAgent.spec.prompt_version
 
     result = run_eval(
         fixture,

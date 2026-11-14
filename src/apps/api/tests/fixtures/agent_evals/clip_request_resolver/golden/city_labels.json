@@ -93,5 +93,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Another never-coded-for request: 'label each city'. Grounds directly from the record's `setting` field for clips that name a city; the unlabeled alley clip (m003) has no city in its record and correctly goes to needs_vision rather than a guess."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

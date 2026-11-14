@@ -232,5 +232,6 @@
     "source": "hand-authored-phone-routing-regression",
     "phone_original_audio": true,
     "contract": "Phone provenance overrides the cloud-native model choice and preserves original audio globally for seventeen sources."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

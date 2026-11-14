@@ -76,5 +76,6 @@
     "source": "hand_authored_golden",
     "case": "Two speakers and no way to tell whose speech is meant: ask a specific question.",
     "expect": "question"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "84fd2485ed18dd9c",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["sweeping", "reverent", "majestic"],
+          "vibe_tags": [
+            "sweeping",
+            "reverent",
+            "majestic"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "quiet awe",
@@ -71,7 +76,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["patient", "ethereal", "spacious"],
+          "vibe_tags": [
+            "patient",
+            "ethereal",
+            "spacious"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "high-altitude stillness",
@@ -89,7 +98,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["wistful", "patient", "nostalgic"],
+          "vibe_tags": [
+            "wistful",
+            "patient",
+            "nostalgic"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "introspective journey",
@@ -107,7 +120,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["ambient", "ethereal", "patient"],
+          "vibe_tags": [
+            "ambient",
+            "ethereal",
+            "patient"
+          ],
           "energy": "medium",
           "pacing": "medium",
           "mood": "atmospheric drift",
@@ -125,7 +142,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["glossy", "anthemic", "upbeat"],
+          "vibe_tags": [
+            "glossy",
+            "anthemic",
+            "upbeat"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "weekend night-out",
@@ -143,7 +164,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["heavy", "swagger", "punchy"],
+          "vibe_tags": [
+            "heavy",
+            "swagger",
+            "punchy"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "street confidence",
@@ -156,68 +181,66 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_cinematic_orchestral\", \"score\": 9.4, \"rationale\": \"The clip set is exactly the content this orchestral cinematic track is labeled for — sweeping drone pulls over fog, ridge silhouettes, amber sunrise; 6 slots over 4 long clips lets each shot breathe.\", \"predicted_strengths\": [\"warm amber grade matches the dawn footage one-to-one\", \"dissolve transitions match slow drone pulls\", \"medium pacing fits 10-12s long-take clips\"]}, {\"track_id\": \"track_cinematic_ambient\", \"score\": 8.6, \"rationale\": \"Patient ethereal cinematic with cool-blue grade fits the mirrored alpine lake and cloud inversion shots specifically; lower than orchestral only because the dawn warmth and ridge silhouette read more amber than blue.\", \"predicted_strengths\": [\"static mirrored lake shot lands inside this profile\", \"5 slots over 4 clips is a clean fit\", \"low energy supports the long-take pacing\"]}, {\"track_id\": \"track_electronic_drone\", \"score\": 7.8, \"rationale\": \"Atmospheric synth drift offers a distinct top-K variant — same landscape content, different emotional register from the orchestral suite.\", \"predicted_strengths\": [\"distinct genre from cinematic picks adds variety\", \"ambient vibe still serves long-take landscape b-roll\", \"medium pacing matches the side-tracking ridge clip\"]}, {\"track_id\": \"track_acoustic_folk\", \"score\": 6.2, \"rationale\": \"Wistful folk works for the silhouette hiker but underserves the sweeping drone reveal — landscape epicness wants more orchestral lift than this track provides.\", \"predicted_strengths\": [\"hiker silhouette clip would still read well\", \"slow pacing matches the slow handheld shot\"]}, {\"track_id\": \"track_pop_party\", \"score\": 1.5, \"rationale\": \"Glossy neon nightlife pop has nothing to do with sunrise alpine landscapes; 12 slots would also shred the long-take pacing.\", \"predicted_strengths\": [\"no real fit\"]}, {\"track_id\": \"track_hiphop_grit\", \"score\": 1.5, \"rationale\": \"Street swagger and saturated urban grade are the wrong tonal universe for alpine drone footage; pacing fights the long-take clips.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_cinematic_orchestral\",\n      \"score\": 9.5,\n      \"rationale\": \"This track perfectly captures the sweeping, majestic, and reverent tone of the mountain and dawn footage.\",\n      \"predicted_strengths\": [\n        \"majestic mood alignment\",\n        \"cinematic sweep for drone shots\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_ambient\",\n      \"score\": 9.2,\n      \"rationale\": \"Its patient, ethereal vibe and focus on high-altitude stillness are an excellent match for the static lake and cloud inversion clips.\",\n      \"predicted_strengths\": [\n        \"stillness and reflection match\",\n        \"ethereal atmosphere\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_drone\",\n      \"score\": 8.5,\n      \"rationale\": \"The ambient, ethereal mood with subtle rhythmic pulses provides a modern, atmospheric backdrop for the drone and landscape shots.\",\n      \"predicted_strengths\": [\n        \"ambient drone compatibility\",\n        \"modern atmospheric feel\"\n      ]\n    },\n    {\n      \"track_id\": \"track_acoustic_folk\",\n      \"score\": 6.8,\n      \"rationale\": \"While a bit more intimate than the clips suggest, its introspective journey mood could work for a reflective edit of the hiker against the sunrise.\",\n      \"predicted_strengths\": [\n        \"introspective mood\",\n        \"natural sound pairing\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_grit\",\n      \"score\": 1.0,\n      \"rationale\": \"This track's energetic street confidence is a stark mismatch for the serene, high-altitude landscape clips.\",\n      \"predicted_strengths\": [\n        \"clear tone contrast\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_party\",\n      \"score\": 0.8,\n      \"rationale\": \"The upbeat, glossy party vibe of this track is entirely unsuitable for the quiet, majestic dawn and mountain imagery.\",\n      \"predicted_strengths\": [\n        \"clear tone contrast\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_cinematic_orchestral",
-        "score": 9.4,
-        "rationale": "The clip set is exactly the content this orchestral cinematic track is labeled for — sweeping drone pulls over fog, ridge silhouettes, amber sunrise; 6 slots over 4 long clips lets each shot breathe.",
+        "score": 9.5,
+        "rationale": "This track perfectly captures the sweeping, majestic, and reverent tone of the mountain and dawn footage.",
         "predicted_strengths": [
-          "warm amber grade matches the dawn footage one-to-one",
-          "dissolve transitions match slow drone pulls",
-          "medium pacing fits 10-12s long-take clips"
+          "majestic mood alignment",
+          "cinematic sweep for drone shots"
         ]
       },
       {
         "track_id": "track_cinematic_ambient",
-        "score": 8.6,
-        "rationale": "Patient ethereal cinematic with cool-blue grade fits the mirrored alpine lake and cloud inversion shots specifically; lower than orchestral only because the dawn warmth and ridge silhouette read more amber than blue.",
+        "score": 9.2,
+        "rationale": "Its patient, ethereal vibe and focus on high-altitude stillness are an excellent match for the static lake and cloud inversion clips.",
         "predicted_strengths": [
-          "static mirrored lake shot lands inside this profile",
-          "5 slots over 4 clips is a clean fit",
-          "low energy supports the long-take pacing"
+          "stillness and reflection match",
+          "ethereal atmosphere"
         ]
       },
       {
         "track_id": "track_electronic_drone",
-        "score": 7.8,
-        "rationale": "Atmospheric synth drift offers a distinct top-K variant — same landscape content, different emotional register from the orchestral suite.",
+        "score": 8.5,
+        "rationale": "The ambient, ethereal mood with subtle rhythmic pulses provides a modern, atmospheric backdrop for the drone and landscape shots.",
         "predicted_strengths": [
-          "distinct genre from cinematic picks adds variety",
-          "ambient vibe still serves long-take landscape b-roll",
-          "medium pacing matches the side-tracking ridge clip"
+          "ambient drone compatibility",
+          "modern atmospheric feel"
         ]
       },
       {
         "track_id": "track_acoustic_folk",
-        "score": 6.2,
-        "rationale": "Wistful folk works for the silhouette hiker but underserves the sweeping drone reveal — landscape epicness wants more orchestral lift than this track provides.",
+        "score": 6.8,
+        "rationale": "While a bit more intimate than the clips suggest, its introspective journey mood could work for a reflective edit of the hiker against the sunrise.",
         "predicted_strengths": [
-          "hiker silhouette clip would still read well",
-          "slow pacing matches the slow handheld shot"
-        ]
-      },
-      {
-        "track_id": "track_pop_party",
-        "score": 1.5,
-        "rationale": "Glossy neon nightlife pop has nothing to do with sunrise alpine landscapes; 12 slots would also shred the long-take pacing.",
-        "predicted_strengths": [
-          "no real fit"
+          "introspective mood",
+          "natural sound pairing"
         ]
       },
       {
         "track_id": "track_hiphop_grit",
-        "score": 1.5,
-        "rationale": "Street swagger and saturated urban grade are the wrong tonal universe for alpine drone footage; pacing fights the long-take clips.",
+        "score": 1.0,
+        "rationale": "This track's energetic street confidence is a stark mismatch for the serene, high-altitude landscape clips.",
         "predicted_strengths": [
-          "no real fit"
+          "clear tone contrast"
+        ]
+      },
+      {
+        "track_id": "track_pop_party",
+        "score": 0.8,
+        "rationale": "The upbeat, glossy party vibe of this track is entirely unsuitable for the quiet, majestic dawn and mountain imagery.",
+        "predicted_strengths": [
+          "clear tone contrast"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "cinematic alpine drone landscape — two cinematic tracks vie for top, electronic ambient fills diversity slot"
+    "source": "provider_smoke_capture",
+    "case": "cinematic alpine drone landscape — two cinematic tracks vie for top, electronic ambient fills diversity slot",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

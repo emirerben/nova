@@ -99,5 +99,6 @@
     "pins": "the output contract (a correct answer parses and has this shape) and the prompt content, not model behaviour",
     "case": "An UPLOADED 'Wine' photo at 'bira' (beer) is omitted: the loose cross-language rules apply to generated images only, so the upload keeps the 1.3.0 rules.",
     "unproven": "Recorded-response contract. The transcript and timings are synthetic. Whether the real model follows prompt 1.4.0 on this input is NOT measured here; only a live run measures it."
-  }
+  },
+  "prompt_sha": "6a35b456dfd1aff1"
 }

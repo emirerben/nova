@@ -25,5 +25,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "note": "KRI-1355 (de1 Leverkusen N3): an explicit no-title ask in German is typed facts {\"title\": \"off\"}. Hand-authored golden answer: replay re-parses this recorded answer and proves its shape only; it does not prove the live model writes it (a paid live run measures that)."
-  }
+  },
+  "prompt_sha": "unpinned"
 }
