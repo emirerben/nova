@@ -26,12 +26,16 @@ from pathlib import Path
 API_ROOT = Path(__file__).resolve().parents[2]
 
 
-def prompt_fingerprint(prefix: str, sources: Iterable[str], *, root: Path = API_ROOT) -> str:
+def prompt_fingerprint(
+    prefix: str, sources: Iterable[str], *, root: Path = API_ROOT, extra: str = ""
+) -> str:
     """Return ``"<prefix>-<12 hex>"`` over the named files (paths relative to ``root``).
 
     Order-independent and line-ending-independent, so every machine computes the
     same value for the same code. Each file's name is hashed with its bytes, so
-    moving text between files also changes the version.
+    moving text between files also changes the version. ``extra`` is hashed in as well, for a
+    value the prompt renders that no source file holds (it lives outside ``root`` in the prod
+    image, so it cannot be a source).
     """
     digest = hashlib.sha256()
     for rel in sorted(set(sources)):
@@ -41,4 +45,6 @@ def prompt_fingerprint(prefix: str, sources: Iterable[str], *, root: Path = API_
         # tests/agents/test_prompt_fingerprint.py fails on it in CI.
         data = path.read_bytes().replace(b"\r\n", b"\n") if path.is_file() else b"\0missing"
         digest.update(rel.encode("utf-8") + b"\0" + data + b"\0")
+    if extra:
+        digest.update(b"extra\0" + extra.encode("utf-8") + b"\0")
     return f"{prefix}-{digest.hexdigest()[:12]}"

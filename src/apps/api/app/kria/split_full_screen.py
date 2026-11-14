@@ -27,10 +27,10 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from app.kria.split_screen import SplitScreenSection, layout_split_timeline
+from app.services.editor_limits import EDITOR_MIN_CLIP_S, FRAME_S
 
 Side = Literal["from", "until"]
 SIDES: tuple[Side, ...] = ("from", "until")
-MIN_CLIP_S = 0.1
 # The playhead needs at least this much of the section on each side of it.
 MIN_SIDE_S = 0.5
 _EPS = 1e-6
@@ -134,7 +134,7 @@ def source_rate(row: dict[str, Any]) -> float:
     if explicit is not None and math.isfinite(explicit) and explicit > 0:
         return explicit
     length = _length(row)
-    moving = max(MIN_CLIP_S, length if length is not None else 0.0)
+    moving = max(EDITOR_MIN_CLIP_S, length if length is not None else 0.0)
     start = max(0.0, _num(row.get("in_s")) or 0.0)
     total = _stored_source_length(row)
     available = None if total is None else max(0.0, total - start)
@@ -145,7 +145,7 @@ def source_rate(row: dict[str, Any]) -> float:
     native = _num(row.get("native_source_span_s"))
     span = selected if selected is not None else native if native is not None else moving
     span = min(span, available if available is not None else math.inf)
-    derived = span / max(MIN_CLIP_S, length if length is not None else span)
+    derived = span / max(EDITOR_MIN_CLIP_S, length if length is not None else span)
     return derived if math.isfinite(derived) and derived > 0 else 1.0
 
 
@@ -199,7 +199,7 @@ class _Clock:
         )
         if result.end - result.start < _EPS and result.hold > 0 and self.frame is not None:
             result.end = self.frame
-            result.start = max(0.0, self.frame - 1.0 / 30)
+            result.start = max(0.0, self.frame - FRAME_S)
             result.rate = 1.0
             result.hold = max(0.0, upper - lower - result.moving)
         return result
@@ -303,7 +303,7 @@ def split_valid(rows: list[dict[str, Any]], sections: list[dict[str, Any]]) -> b
             or offset < 0
             or length is None
             or not math.isfinite(length)
-            or length < MIN_CLIP_S
+            or length < EDITOR_MIN_CLIP_S
             or offset + length > section.duration_s + _EPS
         ):
             return False
@@ -394,7 +394,7 @@ def _overlap(
     if _removed(row) or _section_of(row) != section_id or length is None:
         return None
     start, end = max(_offset(row), part[0]), min(_offset(row) + length, part[1])
-    return (start, end) if end - start >= MIN_CLIP_S else None
+    return (start, end) if end - start >= EDITOR_MIN_CLIP_S else None
 
 
 def _parts(duration: float, cut: float, side: Side) -> tuple[tuple[float, float], ...]:

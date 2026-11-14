@@ -14,7 +14,7 @@ from app.kria.split_screen import (
     layout_split_timeline,
     sync_collapsed_section_durations,
 )
-from app.schemas.editor_window import below_editor_minimum
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
 from app.services.editor_limits import EDITOR_MIN_CLIP_S
 
 
@@ -819,6 +819,7 @@ def _keep_output_window(state: Any, start: float, end: float) -> None:
             row["removed"] = True
             continue
         row.update(slice_source_window(row, left - row_start, right - row_start))
+        row["duration_s"] = snap_to_editor_minimum(float(row["duration_s"]))
         if row.get("split_section_id"):
             row["split_offset_s"] = left - windows[row["split_section_id"]][0]
     state.split_screen_sections[:] = [
@@ -828,7 +829,7 @@ def _keep_output_window(state: Any, start: float, end: float) -> None:
     ]
     for section in state.split_screen_sections:
         low, high = windows[section["id"]]
-        section["duration_s"] = high - low
+        section["duration_s"] = snap_to_editor_minimum(high - low)
         if not any(
             not r.get("removed") and r.get("split_section_id") == section["id"] for r in state.slots
         ):
