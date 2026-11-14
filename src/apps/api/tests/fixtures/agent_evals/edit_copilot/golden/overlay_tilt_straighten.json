@@ -69,5 +69,6 @@
     "source": "hand_authored_golden",
     "case": "straighten: rotation_deg 0 puts the card back upright",
     "lane": "overlay_tilt"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

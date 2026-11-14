@@ -98,5 +98,6 @@
   "meta": {
     "source": "hand-authored-kri815",
     "contract": "KRI-815 (Troya T03): with footage attached and no voiceover, a script request is answered with draft_voiceover_script (quoting the creator's ask) instead of a narrated proposal that can only be cancelled at approval; the server's writer drafts the script."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

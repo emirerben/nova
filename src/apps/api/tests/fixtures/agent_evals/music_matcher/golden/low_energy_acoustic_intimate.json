@@ -1,6 +1,7 @@
 {
   "agent": "nova.audio.music_matcher",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-10-15",
+  "prompt_sha": "d08ae968933995d7",
   "input": {
     "clip_summaries": [
       {
@@ -53,7 +54,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "acoustic",
-          "vibe_tags": ["intimate", "tender", "warm"],
+          "vibe_tags": [
+            "intimate",
+            "tender",
+            "warm"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "quiet love",
@@ -71,7 +76,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "cinematic",
-          "vibe_tags": ["tender", "reverent", "patient"],
+          "vibe_tags": [
+            "tender",
+            "reverent",
+            "patient"
+          ],
           "energy": "low",
           "pacing": "slow",
           "mood": "hushed reverence",
@@ -89,7 +98,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "pop",
-          "vibe_tags": ["upbeat", "glossy", "anthemic"],
+          "vibe_tags": [
+            "upbeat",
+            "glossy",
+            "anthemic"
+          ],
           "energy": "peaks_high",
           "pacing": "fast",
           "mood": "weekend night-out",
@@ -107,7 +120,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "hip_hop",
-          "vibe_tags": ["swagger", "punchy", "playful"],
+          "vibe_tags": [
+            "swagger",
+            "punchy",
+            "playful"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "confident street attitude",
@@ -125,7 +142,11 @@
         "labels": {
           "label_version": "2026-05-15",
           "genre": "electronic",
-          "vibe_tags": ["driving", "focused", "pulsing"],
+          "vibe_tags": [
+            "driving",
+            "focused",
+            "pulsing"
+          ],
           "energy": "high",
           "pacing": "fast",
           "mood": "late-night flow state",
@@ -138,57 +159,59 @@
     ],
     "n_variants": 3
   },
-  "raw_text": "{\"ranked\": [{\"track_id\": \"track_acoustic_intimate\", \"score\": 9.2, \"rationale\": \"Candlelit anniversary dinner b-roll lives exactly inside this track's ideal_content_profile — quiet love, hands, warm tungsten, low energy throughout.\", \"predicted_strengths\": [\"warm tungsten grade aligns with candle/wine bokeh\", \"slow pacing fits 5-8s handheld intimate shots\", \"sentimental copy_tone reads naturally over anniversary framing\"]}, {\"track_id\": \"track_cinematic_soft\", \"score\": 7.8, \"rationale\": \"Adds a reverent storytelling frame to the same content; the candle macro and woman-laughing push-in can carry an emotional cinematic edit instead of a pure acoustic ballad.\", \"predicted_strengths\": [\"distinct vibe from acoustic pick adds top-K variety\", \"slot count of 6 fits the 4-clip set cleanly\", \"dissolve transitions match handheld push-in shots\"]}, {\"track_id\": \"track_electronic_glow\", \"score\": 3.0, \"rationale\": \"Driving electronic pulse fights the candlelit slowness — picks up speed where the footage wants to settle.\", \"predicted_strengths\": [\"only useful as a contrarian variant if user pivots to chaotic edit\"]}, {\"track_id\": \"track_hiphop_swagger\", \"score\": 2.5, \"rationale\": \"Swagger and street attitude are wrong vibe for an intimate anniversary dinner; ranked above pop only because its slot count (10) is slightly less disruptive than 12.\", \"predicted_strengths\": [\"no real fit — present only to satisfy the full-ranking contract\"]}, {\"track_id\": \"track_pop_anthem\", \"score\": 2.0, \"rationale\": \"Neon weekend-out pop is the wrong tonal universe and 12 slots over 4 clips would produce a degenerate edit.\", \"predicted_strengths\": [\"contrast option if the user later expands to nightlife footage\"]}]}",
+  "raw_text": "{\n  \"ranked\": [\n    {\n      \"track_id\": \"track_acoustic_intimate\",\n      \"score\": 9.5,\n      \"rationale\": \"This track perfectly matches the intimate, warm, and tender moments captured in the clips, emphasizing a quiet love.\",\n      \"predicted_strengths\": [\n        \"intimate vibe match\",\n        \"slow pacing and low energy fit\"\n      ]\n    },\n    {\n      \"track_id\": \"track_cinematic_soft\",\n      \"score\": 9.0,\n      \"rationale\": \"Its tender and reverent mood would beautifully complement the quiet emotional storytelling of the dinner and clinking glasses.\",\n      \"predicted_strengths\": [\n        \"tender, reverent mood\",\n        \"cinematic emotional depth\"\n      ]\n    },\n    {\n      \"track_id\": \"track_electronic_glow\",\n      \"score\": 3.0,\n      \"rationale\": \"The track's high energy and fast pacing are a stark mismatch for the mellow, intimate dinner clips.\",\n      \"predicted_strengths\": [\n        \"strong contrast to clip energy\",\n        \"modern sound for intimate visuals\"\n      ]\n    },\n    {\n      \"track_id\": \"track_pop_anthem\",\n      \"score\": 2.5,\n      \"rationale\": \"The upbeat, high-energy anthem vibe completely clashes with the calm, romantic, and low-key atmosphere of the clips.\",\n      \"predicted_strengths\": [\n        \"mismatched energy\",\n        \"upbeat contrast\"\n      ]\n    },\n    {\n      \"track_id\": \"track_hiphop_swagger\",\n      \"score\": 2.0,\n      \"rationale\": \"The confident street attitude and high energy of this track are entirely inappropriate for the intimate, quiet dinner setting.\",\n      \"predicted_strengths\": [\n        \"major vibe conflict\",\n        \"energy mismatch\"\n      ]\n    }\n  ]\n}",
   "output": {
     "ranked": [
       {
         "track_id": "track_acoustic_intimate",
-        "score": 9.2,
-        "rationale": "Candlelit anniversary dinner b-roll lives exactly inside this track's ideal_content_profile — quiet love, hands, warm tungsten, low energy throughout.",
+        "score": 9.5,
+        "rationale": "This track perfectly matches the intimate, warm, and tender moments captured in the clips, emphasizing a quiet love.",
         "predicted_strengths": [
-          "warm tungsten grade aligns with candle/wine bokeh",
-          "slow pacing fits 5-8s handheld intimate shots",
-          "sentimental copy_tone reads naturally over anniversary framing"
+          "intimate vibe match",
+          "slow pacing and low energy fit"
         ]
       },
       {
         "track_id": "track_cinematic_soft",
-        "score": 7.8,
-        "rationale": "Adds a reverent storytelling frame to the same content; the candle macro and woman-laughing push-in can carry an emotional cinematic edit instead of a pure acoustic ballad.",
+        "score": 9.0,
+        "rationale": "Its tender and reverent mood would beautifully complement the quiet emotional storytelling of the dinner and clinking glasses.",
         "predicted_strengths": [
-          "distinct vibe from acoustic pick adds top-K variety",
-          "slot count of 6 fits the 4-clip set cleanly",
-          "dissolve transitions match handheld push-in shots"
+          "tender, reverent mood",
+          "cinematic emotional depth"
         ]
       },
       {
         "track_id": "track_electronic_glow",
         "score": 3.0,
-        "rationale": "Driving electronic pulse fights the candlelit slowness — picks up speed where the footage wants to settle.",
+        "rationale": "The track's high energy and fast pacing are a stark mismatch for the mellow, intimate dinner clips.",
         "predicted_strengths": [
-          "only useful as a contrarian variant if user pivots to chaotic edit"
-        ]
-      },
-      {
-        "track_id": "track_hiphop_swagger",
-        "score": 2.5,
-        "rationale": "Swagger and street attitude are wrong vibe for an intimate anniversary dinner; ranked above pop only because its slot count (10) is slightly less disruptive than 12.",
-        "predicted_strengths": [
-          "no real fit — present only to satisfy the full-ranking contract"
+          "strong contrast to clip energy",
+          "modern sound for intimate visuals"
         ]
       },
       {
         "track_id": "track_pop_anthem",
-        "score": 2.0,
-        "rationale": "Neon weekend-out pop is the wrong tonal universe and 12 slots over 4 clips would produce a degenerate edit.",
+        "score": 2.5,
+        "rationale": "The upbeat, high-energy anthem vibe completely clashes with the calm, romantic, and low-key atmosphere of the clips.",
         "predicted_strengths": [
-          "contrast option if the user later expands to nightlife footage"
+          "mismatched energy",
+          "upbeat contrast"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_swagger",
+        "score": 2.0,
+        "rationale": "The confident street attitude and high energy of this track are entirely inappropriate for the intimate, quiet dinner setting.",
+        "predicted_strengths": [
+          "major vibe conflict",
+          "energy mismatch"
         ]
       }
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
-    "case": "low-energy candlelit anniversary — acoustic top pick, cinematic for diversity, dance genres ranked low"
+    "source": "provider_smoke_capture",
+    "case": "low-energy candlelit anniversary — acoustic top pick, cinematic for diversity, dance genres ranked low",
+    "test_run_id": "kri1428-music-matcher-20261114"
   }
 }

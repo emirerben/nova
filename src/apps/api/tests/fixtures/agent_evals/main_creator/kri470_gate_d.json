@@ -367,5 +367,6 @@
     "contract": "Contract (v45): voice from the talk-to-camera clip behind a montage => only order{capture_time} recorded (audio and select requirements dropped vs v44), NO timing, montage_audio.source_media_ids=['clip-1']; KRI-469 route shape (cloud capability_unavailable on montage_audio.source_media_ids[], phone speech_montage) pinned for PR-H.",
     "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
     "test_run_id": "kri470-v45-rerecord-20261007"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

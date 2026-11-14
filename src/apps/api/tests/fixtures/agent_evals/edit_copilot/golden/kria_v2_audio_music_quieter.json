@@ -50,5 +50,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "music_quieter"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

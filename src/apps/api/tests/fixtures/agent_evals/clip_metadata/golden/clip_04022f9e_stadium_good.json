@@ -36,5 +36,6 @@
   "meta": {
     "source": "hand-authored golden",
     "purpose": "Demonstrates the same scene re-imagined under the new prompt rules: span ~21s, energy spread 6.0-9.5 (3.5), concrete actions, no fractional-second windows."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

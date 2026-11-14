@@ -99,5 +99,6 @@
     "source": "hand_authored_golden",
     "case": "unreachable retarget is a clarification, never a silent clamp",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

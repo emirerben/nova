@@ -19,5 +19,6 @@
     "source": "hand_authored_golden",
     "case": "The creator wrote in English, so the name is the English one, never a mix of a Turkish and an English name across clips (KRI-210).",
     "live_note": "Replay uses raw_text; live is structural only. The live pass for prompt 2026-09-25.1 runs in the KRI-212 eval lane."
-  }
+  },
+  "prompt_sha": "271c9c09eae1e76b"
 }

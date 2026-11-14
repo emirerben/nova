@@ -104,5 +104,6 @@
     "source": "hand_authored_golden",
     "case": "moment-anchored reorder keeps using the existing op",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }
