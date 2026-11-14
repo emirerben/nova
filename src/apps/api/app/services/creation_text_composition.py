@@ -249,7 +249,32 @@ class CreationTextComposer(EditCopilotAgent):
 
 
 class CreationTextCompositionError(ValueError):
-    pass
+    """The text pass could not produce the creator's text.
+
+    ``creator_detail`` is text written for the creator, or None when the message is ours (an
+    internal name, a wording clash). Only an exception that carries it may reach the creator.
+    """
+
+    creator_detail: str | None = None
+
+
+class CreationTextClarification(CreationTextCompositionError):
+    """The text composer asked the creator a question instead of composing.
+
+    A composer outcome is one of composed, nothing to do, a question for the creator, or
+    failed. This is the third: ``question`` is the composer's creator-facing reply and
+    ``unmet`` the requests it could not act on, each ``{"request", "reason"}``. A subclass of
+    the base error, so a caller that only knows failures still fails the way it always did.
+    """
+
+    def __init__(self, message: str, *, question: str, unmet: Sequence[Mapping[str, str]] = ()):
+        super().__init__(message)
+        self.question = question
+        self.unmet = tuple(dict(row) for row in unmet)
+
+    @property
+    def creator_detail(self) -> str:
+        return self.question
 
 
 class CreationTextTimeoutError(CreationTextCompositionError):
@@ -1220,6 +1245,69 @@ def _ensure_text_look(snapshot: EditProposalSnapshot, look: Any) -> EditProposal
         return snapshot
 
 
+def _wording_shown(relevant: Sequence[BriefRequirement], facts: Any) -> bool:
+    """Whether the lane already draws the wording every one of ``relevant`` asks for."""
+    from app.kria.brief_checks import check_requirement, text_sequence_shown  # noqa: PLC0415
+    from app.kria.text_shape_ask import words_only  # noqa: PLC0415
+
+    return all(
+        # A static title is not words shown a piece at a time, flag or not.
+        text_sequence_shown(req, facts)
+        if is_text_sequence(req)
+        else check_requirement(words_only(req), facts).status == "met"
+        or _answered_by_later_text(req, relevant[i + 1 :], facts)
+        for i, req in enumerate(relevant)
+    )
+
+
+def _as_planned(
+    snapshot: EditProposalSnapshot,
+    texts: list[dict],
+    slots: list[dict],
+    constraints: Mapping[str, str],
+) -> EditProposalSnapshot:
+    """The text lane exactly as planned, its copy held as confirmed (no composer call)."""
+    return snapshot.model_copy(
+        update={
+            "text_composition": TextCompositionProgram(
+                base_digest=_digest(texts, slots), copy_constraints=dict(constraints)
+            )
+        }
+    )
+
+
+def planned_text_if_shown(
+    snapshot: EditProposalSnapshot,
+    *,
+    copy_constraints: Mapping[str, str] | None,
+    text_requirements: Sequence[BriefRequirement] | None,
+) -> EditProposalSnapshot | None:
+    """The planned text lane, when it already draws every wording the creator asked for.
+
+    For a composer that asked a question instead of composing: the creator's own words are on
+    screen, so the video can be made as planned and the question (about layout or style) asked
+    beside it. None when a wording is missing or cannot be checked (no bound brief), because
+    then the question blocks the video. Uses the checks the composer's own skip path uses.
+    """
+    from app.kria.brief_checks import plan_facts_from_editor_payload  # noqa: PLC0415
+    from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
+
+    if text_requirements is None or snapshot.text_composition is not None:
+        return None
+    plan = compile_proposal_execution_plan(snapshot)
+    texts, slots = _lanes(plan)
+    constraints = {**snapshot_copy_constraints(snapshot, plan), **dict(copy_constraints or {})}
+    wording = [
+        req
+        for req in text_requirements
+        if req.kind == "text" or req.scope == "title" or is_text_sequence(req)
+    ]
+    facts = plan_facts_from_editor_payload({**plan, "title": snapshot.opening_title})
+    if not constraints or not wording or not _wording_shown(wording, facts):
+        return None
+    return _as_planned(snapshot, texts, slots, constraints)
+
+
 def _answered_by_later_text(
     req: BriefRequirement, later: Sequence[BriefRequirement], facts: Any
 ) -> bool:
@@ -1948,12 +2036,7 @@ def _compose_creation_text(
         and pinned_research is None
         and approved_layers is None
     ):
-        from app.kria.brief_checks import (
-            check_requirement,
-            plan_facts_from_editor_payload,
-            text_sequence_shown,
-        )
-        from app.kria.text_shape_ask import words_only
+        from app.kria.brief_checks import plan_facts_from_editor_payload
 
         # A bound brief owns the current request, not the historical conversation.
         # Skip only when every requested text/style behavior is already proven.
@@ -1979,22 +2062,9 @@ def _compose_creation_text(
             and snapshot.title_animation is None
             and relevant
             and relationships_verified
-            and all(
-                # A static title is not words shown a piece at a time, flag or not.
-                text_sequence_shown(req, facts)
-                if is_text_sequence(req)
-                else check_requirement(words_only(req), facts).status == "met"
-                or _answered_by_later_text(req, relevant[i + 1 :], facts)
-                for i, req in enumerate(relevant)
-            )
+            and _wording_shown(relevant, facts)
         ):
-            return snapshot.model_copy(
-                update={
-                    "text_composition": TextCompositionProgram(
-                        base_digest=_digest(texts, slots), copy_constraints=constraints
-                    )
-                }
-            )
+            return _as_planned(snapshot, texts, slots, constraints)
     if pinned_research is not None:
         # KRI-881: the creator approved these sourced explanations with their citations.
         # They are replayed first, never searched or written again, and protected from the
@@ -2151,9 +2221,11 @@ def _compose_creation_text(
         details = "; ".join(
             str(row.get("reason", "")) for row in output.unmet_requests if row.get("reason")
         )
-        raise CreationTextCompositionError(
-            "Text composition is incomplete: " + (details or output.reply)
-        )
+        message = "Text composition is incomplete: " + (details or output.reply)
+        question = output.reply.strip() or details
+        if question and (output.needs_clarification or details):
+            raise CreationTextClarification(message, question=question, unmet=output.unmet_requests)
+        raise CreationTextCompositionError(message)
     operations = output.ops
     from app.config import settings  # noqa: PLC0415
 
