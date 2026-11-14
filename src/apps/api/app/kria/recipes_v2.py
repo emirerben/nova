@@ -110,6 +110,8 @@ class EditRecipeV2(EditRecipeV1):
             self.required_capabilities |= {"splitScreen"}
         if any(section.collapse_empty_panels for section in sections.values()):
             self.required_capabilities |= {"splitCollapse"}
+        if any(section.blanks for section in sections.values()):
+            self.required_capabilities |= {"splitBlankPanel"}
         return self
 
     @model_validator(mode="after")

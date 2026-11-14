@@ -4,11 +4,6 @@
   "conflicts": {
     "caption": [
       {
-        "file": "app/agents/clip_intent_planner.py",
-        "line": 264,
-        "tr": "yazı"
-      },
-      {
         "file": "app/kria/intent_review_copy.py",
         "line": 22,
         "tr": "altyazı"
@@ -32,7 +27,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 269,
+        "line": 270,
         "tr": "altyazılar"
       }
     ],
@@ -44,7 +39,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 268,
+        "line": 269,
         "tr": "klipler"
       }
     ],
@@ -56,7 +51,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 273,
+        "line": 274,
         "tr": "görünüm"
       }
     ],
@@ -68,7 +63,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 270,
+        "line": 271,
         "tr": "müzik"
       }
     ],
@@ -80,7 +75,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 272,
+        "line": 273,
         "tr": "katmanlar"
       }
     ],
@@ -104,7 +99,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 271,
+        "line": 272,
         "tr": "ses efektleri"
       },
       {
@@ -143,7 +138,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 267,
+        "line": 268,
         "tr": "başlık"
       },
       {

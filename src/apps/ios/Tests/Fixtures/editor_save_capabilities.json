@@ -278,6 +278,84 @@
       }
     },
     {
+      "editor": "fill a panel with a blank block",
+      "id": "blank-in-panel",
+      "sections": {
+        "split_screen_sections": [
+          {
+            "duration_s": 4.0,
+            "id": "s",
+            "panel_count": 2
+          }
+        ],
+        "timeline_slots": [
+          {
+            "clip_index": 0,
+            "duration_s": 4.0,
+            "in_s": 0.0,
+            "slot_id": "bc45b530-b839-56e8-b91c-be02605aad9b",
+            "split_offset_s": 0.0,
+            "split_panel_index": 0,
+            "split_section_id": "s"
+          },
+          {
+            "color": "#112233",
+            "duration_s": 4.0,
+            "in_s": 0.0,
+            "media_kind": "blank",
+            "slot_id": "4ddb8b72-401b-599e-a110-b5f89f33f480",
+            "split_offset_s": 0.0,
+            "split_panel_index": 1,
+            "split_section_id": "s"
+          }
+        ]
+      }
+    },
+    {
+      "editor": "cut, trim and recolour a blank block",
+      "id": "blank-cut-trimmed-and-recoloured",
+      "sections": {
+        "split_screen_sections": [
+          {
+            "duration_s": 4.0,
+            "id": "s",
+            "panel_count": 2
+          }
+        ],
+        "timeline_slots": [
+          {
+            "clip_index": 0,
+            "duration_s": 4.0,
+            "in_s": 0.0,
+            "slot_id": "bc45b530-b839-56e8-b91c-be02605aad9b",
+            "split_offset_s": 0.0,
+            "split_panel_index": 0,
+            "split_section_id": "s"
+          },
+          {
+            "color": "#FF0000",
+            "duration_s": 1.5,
+            "in_s": 0.0,
+            "media_kind": "blank",
+            "slot_id": "4ddb8b72-401b-599e-a110-b5f89f33f480",
+            "split_offset_s": 0.0,
+            "split_panel_index": 1,
+            "split_section_id": "s"
+          },
+          {
+            "color": "#00FF00",
+            "duration_s": 1.0,
+            "in_s": 0.0,
+            "media_kind": "blank",
+            "slot_id": "c1ee0f90-2731-5ee2-8532-07c3a0c11582",
+            "split_offset_s": 2.0,
+            "split_panel_index": 1,
+            "split_section_id": "s"
+          }
+        ]
+      }
+    },
+    {
       "editor": "a photo in a panel",
       "id": "photo-in-panel",
       "sections": {
