@@ -11730,6 +11730,17 @@ def _run_phone_subtitled_job(
                     text_rows=title_rows + spoken_text_rows,
                     keep_segments=speaker_keep_segments,
                 )
+                # KRI-1478: the same context with the full-width strip opened, when planned
+                # for this build (`TALKING_CARD_STRIP_ENABLED`); otherwise the same object.
+                from app.services.phone_overlay_grounding import (  # noqa: PLC0415
+                    share_beat_windows,
+                    strip_card_windows,
+                    with_card_strip,
+                )
+
+                card_layout = with_card_strip(
+                    card_layout, all_candidates.get("creator_client_protocol")
+                )
                 if beats_enabled and (beats or closing):
                     if lane_request is not None:
                         beat_receipt = {
@@ -12014,6 +12025,13 @@ def _run_phone_subtitled_job(
                                     if protected_card_regions
                                     else {}
                                 ),
+                                # KRI-1478: a strip card's window may be shared by a second
+                                # visual for the same mention (none without the strip).
+                                **(
+                                    {"shareable": strip_windows}
+                                    if (strip_windows := strip_card_windows(beat_cards))
+                                    else {}
+                                ),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -12034,6 +12052,12 @@ def _run_phone_subtitled_job(
                             grounded_cards = list(grounded.cards)
                             grounded_media_ids = frozenset(card.media_id for card in grounded_cards)
                             overlay_receipt = grounded.receipt
+                            if shared_windows := getattr(grounded, "shared_windows", ()):
+                                # KRI-1478: the first card of a shared mention ends where the
+                                # second one starts (never two cards at once).
+                                beat_cards, beat_receipt = share_beat_windows(
+                                    beat_cards, beat_receipt, shared_windows
+                                )
 
                 overlay_cards: list = []
                 ending_clip: Any = None
@@ -12137,7 +12161,16 @@ def _run_phone_subtitled_job(
                         }
                         try:
                             overlay_visuals = bind_phone_visual_assets(
-                                _sync_session, job_id=job_id, pins=pins
+                                _sync_session,
+                                job_id=job_id,
+                                pins=pins,
+                                # KRI-1478: a strip is cut to the picture's text column,
+                                # measured while its bytes are on disk (never without one).
+                                **(
+                                    {"measure_text": True}
+                                    if strip_card_windows(overlay_cards)
+                                    else {}
+                                ),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop

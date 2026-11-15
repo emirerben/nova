@@ -606,6 +606,12 @@ def lanes_from_recipe(
                         )
                     )
                     continue
+                # KRI-1478: a strip card (the picture cut to its text column, `source_crop`)
+                # comes back as the whole-picture card it replaced. The editor draws a card
+                # from x / y / scale with no crop, so the strip's own width would show the whole
+                # page that wide, over her face. The whole picture at the strip's height is
+                # ``crop.height / crop.width`` of its width, and that card fades like any other.
+                crop = clip.source_crop
                 overlays.append(
                     SubtitledOverlayCard(
                         id=clip.id.removeprefix("subtitled-overlay-"),
@@ -616,8 +622,12 @@ def lanes_from_recipe(
                         end_s=placement.window_end,
                         x_frac=placement.x_fraction,
                         y_frac=placement.y_fraction,
-                        scale=placement.width_fraction,
-                        fade=bool(placement.fade_in or placement.fade_out),
+                        scale=(
+                            placement.width_fraction
+                            if crop is None
+                            else min(placement.width_fraction * crop.height / crop.width, 1.0)
+                        ),
+                        fade=bool(placement.fade_in or placement.fade_out) or crop is not None,
                         z=max(placement.order - 1, 0),
                         rotation_deg=wrap_degrees(float(clip.transform.rotation_degrees)),
                         **(

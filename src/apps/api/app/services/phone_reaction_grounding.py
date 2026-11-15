@@ -1356,6 +1356,8 @@ def ground_phone_reaction_beats(
                 kind="video" if card.asset.get("kind") == "video" else "image",
                 source_start_s=0.0,
                 caption_clear=card_id in layout_clear_ids,
+                # KRI-1478: the layout's full-width strip for this card, when it offered one.
+                **({"strip": resolved["strip"]} if resolved.get("strip") else {}),
             )
         )
 

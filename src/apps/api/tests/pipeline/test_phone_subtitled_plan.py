@@ -616,6 +616,92 @@ def test_overlay_fade_flag_sets_both_fade_in_and_fade_out():
     assert placement.fade_in is True and placement.fade_out is True
 
 
+# KRI-1478: a strip card (written before the code). Ways it goes wrong: the crop is emitted
+# without a measured text column (a photo cut at random); the strip keeps the 0.15 s fade; a
+# tilted, zoomed or animated card is cropped (the placement path draws those differently); a
+# card the layout did not clear of the captions is widened; a card without a strip changes.
+_STRIP_COLUMN = {
+    "left": 0.197,
+    "right": 0.613,
+    "line_pitch": 37 / 1080,
+    "source_width": 1920,
+    "source_height": 1080,
+}
+_STRIP_CARD = {
+    "x_frac": 0.5,
+    "y_frac": 0.1075,
+    "scale": 0.553,
+    "fade": True,
+    "caption_clear": True,
+    "strip": {"scale": 0.94, "height": 0.175},
+}
+
+
+def _overlay_clip(card, visual):
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),),
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[card]),
+    )
+    track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    return recipe, track.clips[0]
+
+
+@pytest.mark.parametrize("kind", ["image", "video"])
+def test_strip_card_compiles_wide_cropped_to_its_text_column_and_cuts_in(kind):
+    visual = (_photo_visual if kind == "image" else _pool_video_visual)(
+        text_column=_STRIP_COLUMN, **({"orientation_degrees": 0} if kind == "video" else {})
+    )
+    card = (_overlay_card if kind == "image" else _video_overlay_card)(**_STRIP_CARD)
+    recipe, clip = _overlay_clip(card, visual)
+    placement = clip.visual_placement
+    assert placement.width_fraction == pytest.approx(0.94)
+    assert (placement.x_fraction, placement.y_fraction) == (0.5, pytest.approx(0.1075))
+    assert placement.fade_in is False and placement.fade_out is False
+    crop = clip.source_crop
+    assert (crop.x, crop.y, crop.width) == (pytest.approx(0.177), 0.0, pytest.approx(0.456))
+    # Drawn 0.94 wide, the crop is as tall as the band the whole picture had (0.175).
+    assert 0.94 * (1080 / 1920) * (crop.height * 1080) / (crop.width * 1920) == pytest.approx(
+        0.175, abs=1e-4
+    )
+    assert "sourceCrop" in recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+@pytest.mark.parametrize(
+    ("card_changes", "visual_changes"),
+    [
+        ({}, {}),  # no text column was measured
+        ({}, {"text_column": _STRIP_COLUMN | {"line_pitch": None}}),
+        ({"rotation_deg": 8.0}, {"text_column": _STRIP_COLUMN}),
+        ({"zoom": 1.5}, {"text_column": _STRIP_COLUMN}),
+        ({"caption_clear": False}, {"text_column": _STRIP_COLUMN}),
+    ],
+)
+def test_strip_card_without_a_usable_column_is_todays_whole_picture_card(
+    card_changes, visual_changes
+):
+    visual = _photo_visual(**visual_changes)
+    plain = {k: v for k, v in _STRIP_CARD.items() if k != "strip"} | card_changes
+    recipe, clip = _overlay_clip(_overlay_card(**_STRIP_CARD | card_changes), visual)
+    today, _ = _overlay_clip(_overlay_card(**plain), visual)
+    assert clip.source_crop is None and clip.visual_placement.fade_in is True
+    assert recipe.model_dump_json() == today.model_dump_json()
+
+
+def test_a_card_without_a_strip_keeps_its_row_and_recipe_bytes():
+    card = _overlay_card(fade=True, caption_clear=True)
+    assert "strip" not in card.model_dump()
+    assert _overlay_card(**_STRIP_CARD).model_dump()["strip"] == {
+        "x_frac": 0.5,
+        "scale": 0.94,
+        "height": 0.175,
+    }
+    _, clip = _overlay_clip(card, _photo_visual(text_column=_STRIP_COLUMN))
+    assert clip.source_crop is None and clip.visual_placement.width_fraction == pytest.approx(0.35)
+
+
 def test_overlay_y_frac_clamped_into_caption_band_top():
     bindings = (_binding(duration_s=10.0),)
     visual = _photo_visual()

@@ -957,6 +957,16 @@ class Settings(BaseSettings):
     # byte-identical to before.
     # Apply: `fly secrets set TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart.
     talking_card_layout_enabled: bool = False
+    # KRI-1478: a wide screenshot / recording card (the item-15 layout above) is drawn as a
+    # full-width strip in the same band, cut to its measured text column so the page is
+    # readable, with a hard cut in and out; a second visual for the same mention shares the
+    # window instead of being dropped as "overlap". A card with no measurable column, a
+    # portrait picture and every edited card stay today's whole-picture card. Default FALSE
+    # (new look: one phone check first). Applied only when the card layout is, and `sourceCrop`
+    # and `mediaCards` are in PHONE_RENDER_VERIFIED_FEATURES. Otherwise byte-identical.
+    # Apply: `fly secrets set TALKING_CARD_STRIP_ENABLED=true` (api + worker) + restart.
+    # Rollback: `fly secrets set TALKING_CARD_STRIP_ENABLED=false` (api + worker) + restart.
+    talking_card_strip_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
