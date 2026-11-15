@@ -429,6 +429,16 @@ class BriefRequirement(_BriefModel):
             return f'"{self.literal}"'
         return self.description or ""
 
+    def listed(self) -> str:
+        """``text()`` for a reply that puts its own punctuation right after it (KRI-1465).
+
+        A requirement that is itself a sentence ("German captions, word by word.") read
+        "word by word.: I can't ..." and "word by word.; Keep ..." in a held draft's reply.
+        Only closing full stops go; a quoted literal or bracket ends the text and stays.
+        """
+        text = self.text()
+        return text.rstrip().rstrip(".").rstrip() or text
+
 
 class CreativeBrief(_BriefModel):
     version: int = Field(default=0, ge=0)

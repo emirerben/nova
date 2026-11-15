@@ -28,7 +28,12 @@ from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, TextAnimationEdge
 from app.kria.animation_ask import animation_ask
 from app.kria.asset_holds import HOLD_TOLERANCE_S, hold_seconds
-from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
+from app.kria.brief import (
+    BriefRequirement,
+    CreativeBrief,
+    is_select_all_requirement,
+    normalize_style_intent,
+)
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
@@ -289,7 +294,9 @@ class NarratedStepFact:
     ``labels`` are the creator's own words for the shot ("the balloons"), ``placed`` the
     first/last seats a resolved order intent gave it, and ``text`` what the voiceover says
     while the clip is on screen. ``out_of_sequence``: the clip is part of a described
-    sequence the voiceover placed in another order (KRI-590).
+    sequence the voiceover placed in another order (KRI-590). ``moment`` (KRI-1466): the
+    creator's words for a moment inside this clip that the worker located, and the second of
+    the video it starts showing at (None: the stretch that plays never reaches it).
     """
 
     media_id: str = ""
@@ -299,6 +306,7 @@ class NarratedStepFact:
     end_s: float = 0.0
     text: str = ""
     out_of_sequence: bool = False
+    moment: tuple[str, float | None] | None = None  # (words, shown at)
 
 
 @dataclass(frozen=True)
@@ -762,6 +770,10 @@ class PlanFacts:
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
+    # KRI-1465: the language a live brief row says the voiceover is spoken in, on a phone
+    # Voiceover DRAFT only (`build_receipts` reads it off the whole brief). Nothing has heard
+    # the voiceover yet, so it only ever withholds a promise, never proves one. None = unsaid.
+    stated_voice_language: str | None = None
     # KRI-1015: the spoken language a phone Talking render translated its captions out of
     # (`variant["caption_translated_from"]`, written only when it did). None = not translated.
     caption_translated_from: str | None = None
@@ -2400,6 +2412,14 @@ def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> Plan
             if isinstance(p, Mapping) and p.get("spot") and p.get("name")
         )
         start, end = row.get("start_s"), row.get("end_s")
+        located = row.get("moment")
+        moment = None
+        if isinstance(located, Mapping) and str(located.get("words") or "").strip():
+            at = located.get("at_s")
+            moment = (
+                str(located["words"]).strip(),
+                float(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else None,
+            )
         steps.append(
             NarratedStepFact(
                 media_id=str(row.get("media_id") or ""),
@@ -2409,6 +2429,7 @@ def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> Plan
                 end_s=float(end) if isinstance(end, (int, float)) else 0.0,
                 text=" ".join(str(row.get("text") or "").split()),
                 out_of_sequence=row.get("out_of_sequence") is True,
+                moment=moment,
             )
         )
     basis = record.get("ordering_basis")
@@ -4849,7 +4870,11 @@ def _caption_fact(req: BriefRequirement) -> str | None:
 
 def _caption_language_fact(req: BriefRequirement) -> str | None:
     """``facts["caption_language"]`` as a language code ("tr-TR", "Turkish" -> "tr")."""
-    value = req.facts.get("caption_language")
+    return _language_code(req.facts.get("caption_language"))
+
+
+def _language_code(value: object) -> str | None:
+    """A typed language fact as a code ("tr-TR", "Turkish" -> "tr"), else None."""
     if not isinstance(value, str) or not value.strip():
         return None
     code = canonical_caption_language(value.strip().casefold().replace("_", "-").split("-")[0])
@@ -6862,7 +6887,19 @@ _FOOTAGE_SOUND_LOOSE = (
     rf"(?:{_FOOTAGE_SOUND_STRICT}|(?:background|bg) {_SOUND_NOUN}"
     r"|arka ?plan\w* (?:ses|g[üu]r[üu]lt[üu])\w*)"
 )
-_BED_NOISE_RE = re.compile(rf"\b{_FOOTAGE_SOUND_LOOSE}\b|\bg[üu]r[üu]lt[üu]")
+# KRI-1465: a footage sound named by its source alone ("the crowd", "the wind"), the bare
+# siblings of `_FOOTAGE_SOUND_STRICT`, in a sentence that also names the creator's own voice
+# (before or after it). Sources that are also pictures ("the clips", "the video", "the
+# footage") are left out: "the clips under my voiceover" is which pictures play.
+_BED_BARE_SOURCE = r"(?:crowd|wind|traffic|street)"
+_OWN_VOICE = r"(?:my|the|our) (?:voice(?:[ -]?over)?|narration)"
+# The named sound first, so "crowd noise" is never the ``bare`` group; the bare alternatives
+# consume only their own word, so a named sound later in the sentence is still found.
+_BED_NOISE_RE = re.compile(
+    rf"\b{_FOOTAGE_SOUND_LOOSE}\b|\bg[üu]r[üu]lt[üu]"
+    rf"|(?P<bare>\b{_BED_BARE_SOURCE}\b(?=.*\b{_OWN_VOICE}\b)"
+    rf"|\b{_OWN_VOICE}\b(?=.*\b{_BED_BARE_SOURCE}\b))"
+)
 _BED_NAMED_RE = re.compile(rf"\b{_FOOTAGE_SOUND_STRICT}\b")
 # Quiet wording about the bed. Bare adjectives ("soft", "calm") only count with
 # under/beneath, which are in the list themselves.
@@ -6892,11 +6929,30 @@ SOURCE_MUTED_INTENT = "source_muted"
 # nothing about the footage's own sound (that is `source_muted`), so none of the bed readers
 # below claim it; `_check_no_music` does.
 NO_MUSIC_INTENT = "no_music"
+# KRI-1405: "No sound effects." typed the same way; `_check_no_sound_effects` judges it.
+NO_SOUND_EFFECTS_INTENT = "no_sound_effects"
 
 
 def _typed_audio_intent(req: BriefRequirement) -> str | None:
     value = req.facts.get("audio_intent") if isinstance(req.facts, Mapping) else None
     return value if isinstance(value, str) else None
+
+
+def _names_footage_sound(req: BriefRequirement, text: str) -> bool:
+    """``text`` names the footage's own sound, for a keep-it-low ask (`_BED_NOISE_RE`).
+
+    KRI-1465 (prod thread 78787267), "Keep the crowd quietly under my voice.": with no sound
+    noun after "crowd" this was no bed ask, and "my voice" made it a spoken-excerpt ask
+    nothing could check, so approval readiness held the draft for the mix every voiceover
+    edit makes anyway. A source named alone (the pattern's ``bare`` group, which also needs
+    the creator's own voice in the sentence) counts only on a row the brief filed as `audio`
+    (the crowd in a `style` or `select` row is a picture) and never beside mute wording (a
+    mute is `_wants_bed_muted`'s, KRI-821).
+    """
+    found = list(_BED_NOISE_RE.finditer(text))
+    if any(match.group("bare") is None for match in found):
+        return True
+    return bool(found) and req.kind == "audio" and not _BED_MUTE_RE.search(text)
 
 
 def _wants_bed_under_voice(req: BriefRequirement) -> bool:
@@ -6907,7 +6963,9 @@ def _wants_bed_under_voice(req: BriefRequirement) -> bool:
         return False
     text = _req_text(req)
     return bool(
-        _BED_NOISE_RE.search(text) and _BED_QUIET_RE.search(text) and not _BED_UP_RE.search(text)
+        _names_footage_sound(req, text)
+        and _BED_QUIET_RE.search(text)
+        and not _BED_UP_RE.search(text)
     )
 
 
@@ -6963,6 +7021,35 @@ def wants_no_music(req: BriefRequirement) -> bool:
     Only the typed fact counts, never the creator's words (KRI-667): a brief written before it
     existed keeps today's verdict. It never mutes the footage's own sound."""
     return req.kind == "audio" and _typed_audio_intent(req) == NO_MUSIC_INTENT
+
+
+def wants_no_sound_effects(req: BriefRequirement) -> bool:
+    """KRI-1405: "No sound effects." as the brief writer typed it (``no_sound_effects``).
+
+    Only the typed fact counts, never the words (KRI-667)."""
+    return req.kind == "audio" and _typed_audio_intent(req) == NO_SOUND_EFFECTS_INTENT
+
+
+def _check_no_sound_effects(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1405 (ylab thread 8044373b): "No sound effects" against the plan or the video.
+
+    A Talking edit adds a sound only as a pop-in the creator asked for (a reaction beat with a
+    sound), so with none the ask is how the video is made. It was "A Talking video can't do
+    this" because no checker owned it. Any other format has no way to judge it here (neutral).
+    """
+    if facts.beat_sound_triggers:
+        return _receipt(
+            req,
+            "partial",
+            say(en="This video has sound effects.", tr="Bu videoda ses efekti var."),
+        )
+    if facts.edit_format in _TALKING_FORMATS:
+        return _receipt(
+            req,
+            "met",
+            say(en="No sound effects, as asked.", tr="İstediğin gibi ses efekti yok."),
+        )
+    return _receipt(req, "partial", _NO_CHECKER)
 
 
 # The audio strategies whose music plays in (or is laid under) the video.
@@ -7339,6 +7426,14 @@ _NARRATED_FOOTAGE_CUE_PLAN = (
     "Your clips follow your voice, so once the video is made I'll check what's on screen when "
     "you say those words"
 )
+# KRI-1465: a captions ask on a phone Voiceover DRAFT that the draft cannot judge yet ("German
+# captions, word by word"). That writer always captions the voiceover's own words; which
+# language they come out in and whether they show a word at a time are only on the finished
+# video, so the draft promises the check and names neither (`_plans_narrated_captions`).
+_NARRATED_CAPTIONS_PLAN = (
+    "A voiceover edit always shows captions of what you say, and I'll check them against "
+    "your request in the finished video"
+)
 # KRI-1235: what a draft promises the render (or the approval card's Clean up speech choice)
 # does with an ask, and says after: never a shortfall to hold the first draft over. Approval
 # readiness approves a checked partial receipt whose reason is only these, each part exact and
@@ -7376,6 +7471,8 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     # KRI-1356 / KRI-1357: a phone Voiceover draft's word cues wait for the voice.
     _NARRATED_BEAT_PLAN,
     _NARRATED_FOOTAGE_CUE_PLAN,
+    # KRI-1465: a phone Voiceover draft's captions wait for the render too.
+    _NARRATED_CAPTIONS_PLAN,
 )
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
@@ -7732,6 +7829,10 @@ _REASON_TR: dict[str, str] = {
         "Klipler sesini takip ediyor, video hazır olunca o sözleri söylediğinde ekranda ne "
         "olduğunu kontrol edeceğim"
     ),
+    _NARRATED_CAPTIONS_PLAN: (
+        "Seslendirmeli düzenleme söylediklerini her zaman altyazı olarak gösterir, bitmiş "
+        "videoda da isteğine uyup uymadıklarını kontrol edeceğim"
+    ),
     _TALKING_CAPTIONS_EVERY_VOICE: (
         "Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de"
     ),
@@ -7820,9 +7921,34 @@ def _loc(reason: str) -> str:
     return say(en=reason, tr=_REASON_TR.get(reason, reason))
 
 
-# NO_TITLE_REASON is the English text; a receipt written in a Turkish turn carries the
-# Turkish twin, so compare with `is_no_title_reason`.
-_NO_TITLE_REASONS = frozenset({_NO_TITLE, _REASON_TR[_NO_TITLE]})
+def reason_in_every_language(reason: str) -> tuple[str, ...]:
+    """A static English reason as every reply language writes it into a receipt (KRI-1405).
+
+    `_loc` writes a reason in the turn's language: English, the Turkish twin, or a catalog
+    language's line (German). Anything that tells one stored reason from another (a render
+    promise, a format limit, a neutral "can't check") must accept all of them: an
+    English/Turkish-only list made a German Talking draft hold over its own promises and offer
+    to drop them. A catalog with no line for the reason falls back to English, which is listed.
+    """
+    texts = [reason, _REASON_TR.get(reason, reason)]
+    texts.extend(translate(language, reason) or reason for language in CATALOG_REPLY_LANGUAGES)
+    return tuple(dict.fromkeys(texts))
+
+
+def reasons_in_every_language(reasons: Iterable[str]) -> tuple[str, ...]:
+    """`reason_in_every_language` for each reason, in order, once each."""
+    return tuple(dict.fromkeys(t for r in reasons for t in reason_in_every_language(r)))
+
+
+# Every render promise as a receipt stores it, in each reply language (KRI-1235, KRI-1405).
+RENDER_PROMISE_TEXTS = frozenset(reasons_in_every_language(RENDER_PROMISE_REASONS))
+# A phone Talking edit's plain answers (KRI-705), as `is_judged` reads them by prefix.
+_TALKING_HONEST_PREFIXES = reasons_in_every_language(_TALKING_HONEST_EN)
+
+
+# NO_TITLE_REASON is the English text; a receipt written in another language carries its
+# twin, so compare with `is_no_title_reason`.
+_NO_TITLE_REASONS = frozenset(reason_in_every_language(_NO_TITLE))
 
 
 def is_no_title_reason(reason: object) -> bool:
@@ -7853,16 +7979,7 @@ _NEUTRAL_EN = frozenset(
 # KRI-1403: German was missing, and a German approval card wrote "(Das kann ich noch nicht
 # automatisch prüfen)" under "Have a look at these in the video", which English and Turkish
 # leave out.
-_NEUTRAL_REASONS = (
-    _NEUTRAL_EN
-    | frozenset(_REASON_TR[reason] for reason in _NEUTRAL_EN)
-    | frozenset(
-        text
-        for language in sorted(CATALOG_REPLY_LANGUAGES)
-        for reason in _NEUTRAL_EN
-        if (text := translate(language, reason))
-    )
-)
+_NEUTRAL_REASONS = frozenset(reasons_in_every_language(_NEUTRAL_EN))
 
 # Reasons that describe what the format the creator chose does with an ask, not a
 # simplification Kria made instead of it: a Talking edit's length follows the take,
@@ -7927,12 +8044,11 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLIP_SOUND_NEEDS_PHONE_VOICEOVER,
     *_TALKING_HONEST_EN,
     _VOICEOVER_SPOKEN_TEXT_PLAN,
+    # KRI-1465: that a Voiceover edit always captions is the format's, never a simpler plan.
+    _NARRATED_CAPTIONS_PLAN,
     *_SB_FORMAT_LIMITS,
 )
-_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
-    *_FORMAT_LIMIT_EN,
-    *(_REASON_TR[reason] for reason in _FORMAT_LIMIT_EN),
-)
+_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = reasons_in_every_language(_FORMAT_LIMIT_EN)
 
 
 def is_format_limit(reason: str | None) -> bool:
@@ -8937,7 +9053,7 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             elif no_beat_cues and len(no_beat_cues) == len(named):
                 # KRI-1357: no pop-in at all, every named cue possibly footage on the words.
                 if facts.rendered_variant:
-                    problems.extend(_footage_at_cue_problem(n, facts) for n in no_beat_cues)
+                    problems.extend(_footage_at_cue_problem(n, facts, req) for n in no_beat_cues)
                     delivered = True
                 else:
                     promises.append(_NARRATED_FOOTAGE_CUE_PLAN)
@@ -9027,7 +9143,7 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 )
                 delivered = delivered or bool(sequence_problem)
             if footage_cues and facts.rendered_variant:
-                problems.extend(_footage_at_cue_problem(n, facts) for n in footage_cues)
+                problems.extend(_footage_at_cue_problem(n, facts, req) for n in footage_cues)
                 delivered = True
             elif footage_cues:
                 promises.append(_NARRATED_FOOTAGE_CUE_PLAN)
@@ -9167,11 +9283,74 @@ def _footage_cues(facts: PlanFacts, names: Sequence[str]) -> list[str]:
     ]
 
 
-def _footage_at_cue_problem(name: str, facts: PlanFacts) -> str:
+# KRI-1466: a named moment that starts this long after its clip comes on screen is late.
+_MOMENT_LATE_AFTER_S = 1.0
+
+
+def _named_moment_note(
+    req: BriefRequirement | None, step: NarratedStepFact, name: str, index: int, count: int
+) -> str | None:
+    """KRI-1466: the cue's clip is on screen, but the moment the creator named in it is not.
+
+    Kria TikTok video 1: "show the TOR on the big screen when I say "Tor"". The goal clip was
+    on screen on the word and the receipt said so, while the big screen read TOR 7 s later.
+    Only a moment the worker located in the clip (``step.moment``) and that this requirement's
+    own words name is judged; a moment that starts as its clip comes on is on time."""
+    if req is None or step.moment is None:
+        return None
+    words, at_s = step.moment
+    core = _label_core(words)
+    if not core or not _contains_text(_loose_req(req), core):
+        return None
+    if at_s is None:
+        return say(
+            en=(
+                "When you say {v1}, clip {v2} of {len_steps} is on screen "
+                "({step_start_s:.1f}–{step_end_s:.1f} s), but the part you named "
+                "isn't in the stretch that plays"
+            ),
+            tr=(
+                "{v1} dediğinde ekranda {len_steps} klipten {v2}. klip var "
+                "({step_start_s:.1f}–{step_end_s:.1f} sn), ama söylediğin kısım "
+                "oynayan bölümde yok"
+            ),
+            v1=_names([name]),
+            v2=index + 1,
+            len_steps=count,
+            step_start_s=step.start_s,
+            step_end_s=step.end_s,
+        )
+    if at_s - step.start_s <= _MOMENT_LATE_AFTER_S:
+        return None
+    return say(
+        en=(
+            "When you say {v1}, clip {v2} of {len_steps} is on screen "
+            "({step_start_s:.1f}–{step_end_s:.1f} s), but the part you named "
+            "comes at {moment_at_s:.1f} s"
+        ),
+        tr=(
+            "{v1} dediğinde ekranda {len_steps} klipten {v2}. klip var "
+            "({step_start_s:.1f}–{step_end_s:.1f} sn), ama söylediğin kısım "
+            "{moment_at_s:.1f}. saniyede geliyor"
+        ),
+        v1=_names([name]),
+        v2=index + 1,
+        len_steps=count,
+        step_start_s=step.start_s,
+        step_end_s=step.end_s,
+        moment_at_s=at_s,
+    )
+
+
+def _footage_at_cue_problem(
+    name: str, facts: PlanFacts, req: BriefRequirement | None = None
+) -> str:
     """KRI-1357: which clip of the finished Voiceover edit plays while the cue is said.
 
     Read off the render's own steps (each clip's window and the words spoken over it), with the
-    matcher's folding; it names the clip, it never claims it is the one the creator meant."""
+    matcher's folding; it names the clip, it never claims it is the one the creator meant.
+    KRI-1466: when the worker located the moment ``req`` names inside that clip and it plays
+    late or not at all, the sentence says so (`_named_moment_note`)."""
     from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
 
     steps = facts.narrated_cue_steps or ()
@@ -9181,6 +9360,9 @@ def _footage_at_cue_problem(name: str, facts: PlanFacts) -> str:
         if wanted and any(
             said[i : i + len(wanted)] == wanted for i in range(len(said) - len(wanted) + 1)
         ):
+            late = _named_moment_note(req, step, name, index, len(steps))
+            if late is not None:
+                return late
             return say(
                 en=(
                     "When you say {v1}, clip {v2} of {len_steps} is on "
@@ -10185,6 +10367,92 @@ def _with_caption_words(
     return combine_receipts(look, rest)
 
 
+# ------------------------------------------- a phone Voiceover draft's captions (KRI-1465)
+#
+# Prod thread 78787267 (2026-11-14): "German captions, word by word." on a phone Voiceover
+# draft. A draft has no captions to read and the strategy holds no language, so the checker
+# answered "can't check"; approval readiness then held the first draft ("I can't confirm
+# this draft does it yet") and offered to make it without the captions. The video had them
+# anyway: that writer (`_run_phone_narrated_job`) always captions the voiceover's own words.
+# So the draft says that, and the finished video is judged: its language by the Voiceover
+# record, word by word by the captions the phone drew.
+
+# The language the creator said the voiceover is spoken in, as the brief typed it ("Use my
+# German voiceover." -> {"voiceover_language": "de"}). Nothing teaches the brief writer the
+# fact, so it is only ever a reason NOT to promise: captions asked in another language.
+_VOICE_LANGUAGE_FACT_KEYS = ("voiceover_language", "spoken_language", "narration_language")
+
+
+def _caption_details_only_name_languages(text: str) -> bool:
+    """Every `_CAPTION_DETAIL_RE` word in ``text`` names a language (the shared table), so
+    none of them is a look, a place or "translate"."""
+    return all(
+        found.group(0) == "language" or loose_text(found.group(0)) in LANGUAGE_WORDS
+        for found in _CAPTION_DETAIL_RE.finditer(text)
+    )
+
+
+def _narrated_caption_promise_on() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.narrated_caption_render_promise_enabled)
+
+
+def _stated_voice_language(requirements: Iterable[BriefRequirement]) -> str | None:
+    """The voiceover's language as a live brief row typed it, else None (unknown)."""
+    for req in requirements:
+        if not req.live:
+            continue
+        for key in _VOICE_LANGUAGE_FACT_KEYS:
+            code = _language_code(req.facts.get(key))
+            if code is not None:
+                return code
+    return None
+
+
+def _plans_narrated_captions(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """A captions ask a phone Voiceover draft cannot judge and its render settles.
+
+    Only what that render delivers by construction: captions on, of the words said. Never
+    "no captions" (it cannot turn them off), a look or a place (it draws its own), names to
+    spell, a "translate" ask, or captions in another language than the brief says the
+    voiceover is in; and never word by word on a draft whose style is sentence captions.
+    Those keep today's answer.
+    """
+    if not (_narrated_draft(facts) and _narrated_caption_promise_on()):
+        return False
+    if _wants_no_captions(req) or _keeps_spoken_languages(req) or _asks_spelling(req):
+        return False
+    text = _req_text(req)
+    if caption_look_ask(req) is not None or _CAPTION_LOOK_RE.search(text):
+        return False
+    if not _caption_details_only_name_languages(text):
+        return False
+    if _wants_word_captions(req) and facts.caption_style not in {
+        None,
+        "auto",
+        "karaoke",
+        "kinetic",
+    }:
+        return False
+    asked = _asked_caption_language(req)
+    stated = facts.stated_voice_language
+    return asked is None or stated is None or asked == stated
+
+
+def _record_cannot_judge_word_captions(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """A word-by-word ask read against a Voiceover record, which holds the captions'
+    language and not how they are drawn: "The captions are in German." would be the whole
+    answer to "German captions, word by word" over sentence captions. Left unjudged there,
+    the finished variant's review judges both parts (`_check_caption_words`)."""
+    return (
+        facts.narrated_steps is not None
+        and facts.caption_style is None
+        and _wants_word_captions(req)
+        and _narrated_caption_promise_on()
+    )
+
+
 def _check_captions(
     req: BriefRequirement, facts: PlanFacts, *, look_typed: bool = False
 ) -> RequirementReceipt:
@@ -10192,15 +10460,26 @@ def _check_captions(
 
     Only what the style settles is judged: an ask about a caption's look, place or
     language stays "can't check", and so does ``"auto"`` (the item's own style,
-    unknown here) for an on/off or word-by-word ask.
+    unknown here) for an on/off or word-by-word ask. KRI-1465: a phone Voiceover draft
+    says what its render does with such an ask instead (`_plans_narrated_captions`).
     """
     if facts.caption_language and not facts.editor:
         asked = _requested_caption_language(req)
         if asked is not None:
+            if _record_cannot_judge_word_captions(req, facts):
+                # KRI-1465: left to the finished variant's review (`_check_caption_words`).
+                return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
             return _check_caption_language(req, facts, asked)
     fmt = facts.edit_format
     text = _req_text(req)
     rendered = facts.rendered_variant
+
+    def cant_check() -> RequirementReceipt:
+        if not look_typed and _plans_narrated_captions(req, facts):
+            # KRI-1465: a phone Voiceover draft says what its render does with the ask.
+            return _receipt(req, "partial", _NARRATED_CAPTIONS_PLAN)
+        return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
+
     if facts.montage_captions == "placed" and not (facts.editor or _CAPTION_DETAIL_RE.search(text)):
         # KRI-569: a song montage that carries the song's lyrics as captions.
         if _wants_no_captions(req):
@@ -10247,7 +10526,7 @@ def _check_captions(
         or (not look_typed and _CAPTION_DETAIL_RE.search(text))
         or _keeps_spoken_languages(req)
     ):
-        return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
+        return cant_check()
     style = facts.caption_style
     if _wants_no_captions(req):
         if style == "none":
@@ -10279,7 +10558,7 @@ def _check_captions(
         if style in {"karaoke", "kinetic"}:
             return _receipt(req, "met", _CAPTIONS_WORD_BY_WORD)
         if style == "auto":
-            return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
+            return cant_check()
         return _receipt(
             req,
             "partial",
@@ -13882,6 +14161,49 @@ def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     return _receipt(req, "partial", "; ".join(parts))
 
 
+def talking_caption_promise(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """KRI-1405: the captions plan a phone Talking draft states, when it is only a promise.
+
+    The Talking writer captions every take, in the asked language, with the creator's
+    spellings; the finished video's review checks them. So "German captions word by word, spell
+    these names" is how the video is made, not a shortfall to hold the draft over or offer to
+    drop (prod thread 8044373b held it and "Make it without these" listed it as left out though
+    the video had the captions). None when the plan falls short: sentence lines for a
+    word-by-word ask, a language Nova can't caption yet, or spellings the creator still has to
+    write out. Approval readiness compares the receipt's whole reason with this sentence.
+    """
+    look_ask = caption_look_ask(req)
+    if look_ask is None and not _plans_caption_words(req, facts):
+        return None
+    if look_ask is not None and not (
+        facts.caption_words_at_render
+        and not facts.rendered_variant
+        and not facts.editor
+        and _wants_captions(req)
+    ):
+        return None
+    if _wants_word_captions(req) and facts.caption_style not in {
+        None,
+        "auto",
+        "none",
+        "karaoke",
+        "kinetic",
+    }:
+        return None
+    asked = _asked_caption_language(req)
+    if asked is not None and not can_deliver_caption_language(asked):
+        return None
+    if not _spelled_names(req) and _asks_spelling(req):
+        return None
+    if look_ask is None:
+        return _caption_words_plan(req, facts).full_reason
+    # A typed look rides the same sentence (KRI-1177): a promise only when the writer draws it.
+    look = _check_caption_look(req, facts, look_ask)
+    if look is None or look.status != "met":
+        return None
+    return _with_caption_words(req, facts, look).full_reason
+
+
 def _plans_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
     """A phone Talking draft's captions ask about language or spelling (KRI-793)."""
     return (
@@ -13907,6 +14229,17 @@ def brief_caption_spellings(brief: CreativeBrief | None) -> tuple[str, ...]:
         if _wants_captions(req) and not _wants_no_captions(req):
             names.extend(_spelled_names(req) or ())
     return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
+
+
+def brief_asks_no_captions(brief: CreativeBrief | None) -> bool:
+    """KRI-1465: a live ask of the brief wants the video without captions.
+
+    The strategy policy's captions repair ("none" -> "auto" on an edit that always captions)
+    asks the creator before dropping a no-captions choice only when they made one.
+    """
+    return brief is not None and any(
+        _wants_captions(req) and _wants_no_captions(req) for req in brief.live()
+    )
 
 
 _TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
@@ -15286,6 +15619,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True  # KRI-1161 / item 16: judged against the plan's / render's background
     if wants_no_music(req):
         return True  # KRI-1164: judged against the plan's / render's music
+    if wants_no_sound_effects(req):
+        return True  # KRI-1405: judged against the plan's / render's sound pop-ins
     if caption_look_ask(req) is not None:
         return True  # KRI-1177: the typed caption look, judged against the writer's receipt
     if _insert_clip_fact(req):
@@ -15981,6 +16316,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # KRI-1164: the typed "no music" is judged against the plan's / render's music, ahead of
         # the bed and source-sound readers (it says nothing about the footage's own sound).
         return _check_no_music(req, facts)
+    if wants_no_sound_effects(req):
+        return _check_no_sound_effects(req, facts)
     clip_sound = requirement_clip_sound(req)
     if clip_sound is not None:
         # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
@@ -16481,10 +16818,7 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
         req is not None
         and receipt.status in {"partial", "not_possible"}
         and receipt.reason
-        and any(
-            str(receipt.reason).startswith(prefix)
-            for prefix in (*_TALKING_HONEST_EN, *(_REASON_TR[r] for r in _TALKING_HONEST_EN))
-        )
+        and str(receipt.reason).startswith(_TALKING_HONEST_PREFIXES)
     ):
         # KRI-705: a phone Talking edit's plain "can't" is an answer, though no checker owns it.
         return True
@@ -16543,6 +16877,12 @@ def _talking_honest_receipt(
             return receipt  # the render's own `opening_cut` / `end_cut` receipts judge it
         return _receipt(req, "partial", _take_window_plan(req, facts.take_window))
     if is_judged(req, receipt):
+        return receipt
+    if is_select_all_requirement(req) and facts.video_clip_count:
+        # KRI-1405: "use all five clips" on a Talking edit that plays every clip (each a
+        # speaker or a cutaway, KRI-719) is how it is made, never "A Talking video can't".
+        if _talking_uses_every_clip(facts.video_clip_count):
+            return _receipt(req, "met", None)
         return receipt
     if _has_duration_target(req):
         target = float(req.facts["duration_s"])
@@ -16680,6 +17020,11 @@ def build_receipts(
     ):
         # KRI-1015: another requirement asked for this caption language.
         facts = dataclasses.replace(facts, caption_translation_asked=True)
+    if _narrated_draft(facts) and facts.stated_voice_language is None:
+        # KRI-1465: another requirement says which language the voiceover is in.
+        stated = _stated_voice_language(requirements)
+        if stated is not None:
+            facts = dataclasses.replace(facts, stated_voice_language=stated)
     checked = (
         (req, _talking_honest_receipt(req, check_requirement(req, facts), facts))
         for req in requirements
@@ -16750,12 +17095,14 @@ def _planned_at_render(receipt: RequirementReceipt) -> bool:
     reason = receipt.full_reason
     if receipt.status != "partial" or not reason:
         return False
-    texts = {t for p in RENDER_PROMISE_REASONS for t in (p, _REASON_TR.get(p, p))}
+    pinned = reason_in_every_language(_TALKING_SPOKEN_TEXT_PINNED)
 
     def only(rest: str) -> bool:
-        if rest in texts or rest.startswith(_TALKING_SPOKEN_TEXT_PINNED):
+        if rest in RENDER_PROMISE_TEXTS or rest.startswith(pinned):
             return True
-        return any(rest.startswith(f"{t}; ") and only(rest[len(t) + 2 :]) for t in texts)
+        return any(
+            rest.startswith(f"{t}; ") and only(rest[len(t) + 2 :]) for t in RENDER_PROMISE_TEXTS
+        )
 
     return only(reason)
 
@@ -17117,6 +17464,8 @@ def ask_text(req: BriefRequirement) -> str:
     """
     if wants_no_music(req):
         return say(en="No music", tr="Müzik yok")
+    if wants_no_sound_effects(req):
+        return say(en="No sound effects", tr="Ses efekti yok")
     text = req.text()
     if req.literal and req.description and req.literal in req.description:
         text = req.description
@@ -17381,6 +17730,7 @@ __all__ = [
     "NarratedStepFact",
     "asks_caption_language",
     "asks_caption_spelling",
+    "brief_asks_no_captions",
     "brief_caption_spellings",
     "keeps_model_summary",
     "wants_light_change",

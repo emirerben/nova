@@ -647,6 +647,12 @@ final class EditorUITests: XCTestCase {
             }
             return result
         }
+        // The warm runs behind the chat and takes longer on a slower simulator than the four seconds above. Its end
+        // (`editor.open.done`, after the preview is built) is what the tap must find; waiting for it keeps the test
+        // about readiness, not about how fast the CI machine is (KRI-1467).
+        let warmDeadline = Date().addingTimeInterval(30)
+        while counters()["t editor.open.done"] == nil, Date() < warmDeadline { Thread.sleep(forTimeInterval: 0.5) }
+        XCTAssertNotNil(counters()["t editor.open.done"], "the editor finished preparing while the chat was on screen")
         let before = counters()
         open.tap()
         let tapped = Date()

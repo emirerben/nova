@@ -1885,6 +1885,12 @@ class Settings(BaseSettings):
     # require an explicit choice before losing alignment. Keep the existing
     # KRI-456 rollout default; request-binding writers are gated separately.
     narrated_clip_alignment_enabled: bool = True
+    # KRI-1466 kill switch. A phone Voiceover clip starts on the moment the creator named for
+    # it (located in the clip's analysed moments), and a clip too short for its step plays at
+    # normal speed with other footage filling the rest, instead of being slowed over it
+    # (`narrated_footage_fit`). Edits that follow a filming guide are left as they were.
+    # false = every clip from its first frame, slowed to fill its step, byte-identical.
+    narrated_footage_fit_enabled: bool = True
 
     # KRI-889: cut the lines a creator named ("cut the line 'with bread, no'") out of a
     # narrated edit's recorded voiceover, phone and cloud, and promise it on the draft.
@@ -3122,6 +3128,13 @@ class Settings(BaseSettings):
     # promise instead of "No pop-in for X"; the finished render reports which clip played
     # under those words (`narrated_alignment` steps). false = "No pop-in", byte-identical.
     narrated_footage_cue_promise_enabled: bool = True
+    # KRI-1465: on a phone Voiceover DRAFT a captions ask the draft cannot judge yet (a named
+    # language, word by word on a style left to the item) is a render promise ("A voiceover
+    # edit always shows captions of what you say ..."), not "I can't confirm this draft does
+    # it yet"; and the finished video's review reads a word-by-word ask off the captions the
+    # phone drew, not off the Voiceover record's language alone. false = the hold and the
+    # language-only review, byte-identical.
+    narrated_caption_render_promise_enabled: bool = True
     # KRI-1354 (de1): "Make it without these" looped. A "simpler version" tap on a strategy
     # refusal still counts on later turns that are only choice taps (e.g. the readiness hold's
     # card), with no draft since, for the same dropped fields. false = per-turn consent only,

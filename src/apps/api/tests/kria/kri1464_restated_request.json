@@ -1,0 +1,420 @@
+{
+ "source": {
+  "issue": "KRI-1464 (asks from the first prompt are never retired), parent run KRI-1463",
+  "thread": "78787267-56c0-4adf-bdc8-56e84148096b, job c8fcb7c0-c0ed-4d9e-acd6-190c21f0bed0, build 1996 / protocol 51, server 3feec88a9",
+  "turn": "creator tap 21:51:04Z (turn ac3bfabd, choice_selection simpler_version) -> reply 21:51:34Z",
+  "recorded": [
+   "messages: every creator message of the thread up to the 21:51:04Z tap, verbatim (creation_thread_events)",
+   "brief: the job binding's brief v3, verbatim. r3/r8/r9 were superseded by the creator on the 21:47Z message (v2); r2/r11 by the server on the 21:50:38Z tap. Persisted as v3 at 21:51:56Z; it is what the 21:51:04Z turn planned over, save the version number",
+   "inventory_2151: intent ids and ops from that turn's clip_intent_inventory; attribute and source_quote of the five kept rows from the job's creator_strategy.clip_intents; attribute of the three asked rows from the picker row labels",
+   "reply_2151 / clip_question_2151: the 21:51:34Z assistant_response, verbatim",
+   "media ids, kinds, durations and capture times: the picker candidates (upload order) and the job's media snapshot"
+  ],
+  "reconstructed": [
+   "source_quote of the three asked rows (the turn stored ids and ops only): the first message's own words",
+   "media[].shows and file names of the two photos: short descriptions, not the recorded analysis",
+   "resolver_raw: the resolver run was not kept. Rows give each kept ask the clip the finished video used and no clip for the three screen recordings, which is what the recorded picker shows"
+  ]
+ },
+ "media": [
+  {
+   "alias": "m001",
+   "media_id": "analysis-proxy-ios-54AF3A20-B68C-43DC-AF46-7E13C0962E28.mp4",
+   "file_name": "IMG_1002",
+   "kind": "video",
+   "shows": "a train at night seen from the platform and through the window",
+   "duration_s": 7.866667,
+   "capture_time": "2026-10-28T17:42:36Z"
+  },
+  {
+   "alias": "m002",
+   "media_id": "analysis-proxy-ios-12032242-E321-4877-A772-BFEF642D9BBD.mp4",
+   "file_name": "IMG_1027",
+   "kind": "video",
+   "shows": "stadium light show, crowd waving red flags",
+   "duration_s": 8.066667,
+   "capture_time": "2026-10-28T19:33:14Z"
+  },
+  {
+   "alias": "m003",
+   "media_id": "analysis-proxy-ios-3DC73A84-CC8E-4387-B137-032D35EBF814.mp4",
+   "file_name": "04_tor",
+   "kind": "video",
+   "shows": "football stadium, the big screen shows TOR, crowd cheers",
+   "duration_s": 7.733333,
+   "capture_time": "2026-10-28T21:35:40Z"
+  },
+  {
+   "alias": "m004",
+   "media_id": "analysis-proxy-ios-515AD598-6FA4-4057-ABD8-6E4E140BA6F9.mp4",
+   "file_name": "IMG_1036",
+   "kind": "video",
+   "shows": "football stadium stands, fans chanting and waving flags",
+   "duration_s": 8.533333,
+   "capture_time": "2026-10-28T19:49:47Z"
+  },
+  {
+   "alias": "m005",
+   "media_id": "asset-58268d70-a8c2-40f5-8843-7b8100018cb5",
+   "file_name": "Photo 1",
+   "kind": "image",
+   "shows": "a football stadium seen from outside"
+  },
+  {
+   "alias": "m006",
+   "media_id": "asset-16efefbc-fb18-4c3a-bb82-e9039137f602",
+   "file_name": "Photo 2",
+   "kind": "image",
+   "shows": "a logo card that reads Kria"
+  }
+ ],
+ "brief": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "audio",
+    "facts": {
+     "voiceover_language": "de"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Use my German voiceover.",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "captions": "word_by_word",
+     "superseded_by": "server",
+     "caption_language": "de"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "German captions, word by word.",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Satz"
+     ],
+     "superseded_by": "creator"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Show the screen recording of typing in the Kria chat when I say \"Satz\".",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r4",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Zug"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-54AF3A20-B68C-43DC-AF46-7E13C0962E28.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "Show the train when I say \"Zug\".",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r5",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Stadion"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the stadium from outside when I say \"Stadion\".",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r6",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Lichtshow"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the light show when I say \"Lichtshow\".",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r7",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Tor"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the TOR on the big screen when I say \"Tor\".",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r8",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Galerie"
+     ],
+     "superseded_by": "creator"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Show the screen recording of the photo library when I say \"Galerie\".",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r9",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "meine Stimme"
+     ],
+     "superseded_by": "creator"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Show the screen recording of the voice recorder when I say \"meine Stimme\".",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r10",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Die App"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the Kria logo card when I say \"Die App\".",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r11",
+    "kind": "audio",
+    "facts": {
+     "superseded_by": "server"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Keep the crowd quietly under my voice.",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   },
+   {
+    "id": "r12",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Ich kann keine Videos schneiden.",
+    "description": "Title",
+    "source_turn_id": "de6c2852-a119-466b-86f6-8aa25b309185"
+   }
+  ]
+ },
+ "messages": [
+  "My voiceover is in German. German captions, word by word. Show each thing when I say it: the screen recording of typing in the Kria chat on \"Satz\", the train on \"Zug\", the stadium from outside on \"Stadion\", the light show on \"Lichtshow\", the TOR on the big screen on \"Tor\", the screen recording of the photo library on \"Galerie\", the screen recording of the voice recorder on \"meine Stimme\", and the Kria logo card on \"Die App\". Keep the crowd quietly under my voice. Title: \"Ich kann keine Videos schneiden.\"",
+  "My voiceover is in German. German captions, word by word. Show each thing when I say it: the train on \"Zug\", the stadium from outside on \"Stadion\", the light show on \"Lichtshow\", the TOR on the big screen on \"Tor\", and the Kria logo card on \"Die App\". Keep the crowd quietly under my voice. Title: \"Ich kann keine Videos schneiden.\"",
+  "The light show: clip 2",
+  "Make it without these",
+  "Make it without these"
+ ],
+ "latest_message": "Make it without these",
+ "inventory_2151": [
+  {
+   "intent_id": "include_satz",
+   "op": "include",
+   "attribute": "the screen recording of typing in the Kria chat",
+   "source_quote": "the screen recording of typing in the Kria chat on \"Satz\""
+  },
+  {
+   "op": "include",
+   "attribute": "the train",
+   "intent_id": "include_zug_1",
+   "source_quote": "Show each thing when I say it: the train on \"Zug\""
+  },
+  {
+   "op": "include",
+   "attribute": "the stadium from outside",
+   "intent_id": "include_stadion_1",
+   "source_quote": "the stadium from outside on \"Stadion\""
+  },
+  {
+   "op": "include",
+   "attribute": "the light show",
+   "intent_id": "include_lichtshow_1",
+   "source_quote": "Show each thing when I say it: the"
+  },
+  {
+   "op": "include",
+   "attribute": "the TOR on the big screen",
+   "intent_id": "include_tor_1",
+   "source_quote": "the TOR on the big screen on \"Tor\""
+  },
+  {
+   "intent_id": "include_galerie",
+   "op": "include",
+   "attribute": "the screen recording of the photo library",
+   "source_quote": "the screen recording of the photo library on \"Galerie\""
+  },
+  {
+   "intent_id": "include_meine_stimme",
+   "op": "include",
+   "attribute": "the screen recording of the voice recorder",
+   "source_quote": "the screen recording of the voice recorder on \"meine Stimme\""
+  },
+  {
+   "op": "include",
+   "attribute": "the Kria logo card",
+   "intent_id": "include_die_app_1",
+   "source_quote": "and the Kria logo card on \"Die App\""
+  }
+ ],
+ "resolver_raw": {
+  "intents": [
+   {
+    "intent_id": "include_zug_1",
+    "assignments": [
+     {
+      "media": "m001",
+      "value": "",
+      "evidence": "a train at night",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "intent_id": "include_stadion_1",
+    "assignments": [
+     {
+      "media": "m005",
+      "value": "",
+      "evidence": "a football stadium seen from outside",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "intent_id": "include_lichtshow_1",
+    "assignments": [
+     {
+      "media": "m002",
+      "value": "",
+      "evidence": "stadium light show",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "intent_id": "include_tor_1",
+    "assignments": [
+     {
+      "media": "m003",
+      "value": "",
+      "evidence": "the big screen shows TOR",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "intent_id": "include_die_app_1",
+    "assignments": [
+     {
+      "media": "m006",
+      "value": "",
+      "evidence": "a logo card that reads Kria",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "intent_id": "include_satz",
+    "assignments": []
+   },
+   {
+    "intent_id": "include_galerie",
+    "assignments": []
+   },
+   {
+    "intent_id": "include_meine_stimme",
+    "assignments": []
+   }
+  ]
+ },
+ "reply_2151": "I couldn't tell which of your clips match \"the screen recording of typing in the Kria chat\", \"the screen recording of the photo library\", \"the screen recording of the voice recorder\". Tap the clips for each one, or mark the ones that have none.",
+ "clip_question_2151": {
+  "version": 1,
+  "allow_none": true,
+  "categories": [
+   {
+    "op": "include",
+    "key": "include:the-screen-recording-of-typing-in-the-kria-chat",
+    "label": "the screen recording of typing in the Kria chat",
+    "intent_id": "include_satz",
+    "candidate_media_ids": [
+     "analysis-proxy-ios-54AF3A20-B68C-43DC-AF46-7E13C0962E28.mp4",
+     "analysis-proxy-ios-12032242-E321-4877-A772-BFEF642D9BBD.mp4",
+     "analysis-proxy-ios-3DC73A84-CC8E-4387-B137-032D35EBF814.mp4",
+     "analysis-proxy-ios-515AD598-6FA4-4057-ABD8-6E4E140BA6F9.mp4",
+     "asset-58268d70-a8c2-40f5-8843-7b8100018cb5",
+     "asset-16efefbc-fb18-4c3a-bb82-e9039137f602"
+    ],
+    "suggested_media_ids": []
+   },
+   {
+    "op": "include",
+    "key": "include:the-screen-recording-of-the-photo-library",
+    "label": "the screen recording of the photo library",
+    "intent_id": "include_galerie",
+    "candidate_media_ids": [
+     "analysis-proxy-ios-54AF3A20-B68C-43DC-AF46-7E13C0962E28.mp4",
+     "analysis-proxy-ios-12032242-E321-4877-A772-BFEF642D9BBD.mp4",
+     "analysis-proxy-ios-3DC73A84-CC8E-4387-B137-032D35EBF814.mp4",
+     "analysis-proxy-ios-515AD598-6FA4-4057-ABD8-6E4E140BA6F9.mp4",
+     "asset-58268d70-a8c2-40f5-8843-7b8100018cb5",
+     "asset-16efefbc-fb18-4c3a-bb82-e9039137f602"
+    ],
+    "suggested_media_ids": []
+   },
+   {
+    "op": "include",
+    "key": "include:the-screen-recording-of-the-voice-recorder",
+    "label": "the screen recording of the voice recorder",
+    "intent_id": "include_meine_stimme",
+    "candidate_media_ids": [
+     "analysis-proxy-ios-54AF3A20-B68C-43DC-AF46-7E13C0962E28.mp4",
+     "analysis-proxy-ios-12032242-E321-4877-A772-BFEF642D9BBD.mp4",
+     "analysis-proxy-ios-3DC73A84-CC8E-4387-B137-032D35EBF814.mp4",
+     "analysis-proxy-ios-515AD598-6FA4-4057-ABD8-6E4E140BA6F9.mp4",
+     "asset-58268d70-a8c2-40f5-8843-7b8100018cb5",
+     "asset-16efefbc-fb18-4c3a-bb82-e9039137f602"
+    ],
+    "suggested_media_ids": []
+   }
+  ]
+ }
+}

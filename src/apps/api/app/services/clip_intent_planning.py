@@ -840,6 +840,83 @@ def authored_text_withdrawn(brief: CreativeBrief | None) -> bool:
     return bool(asks) and not any(req.live for req in asks)
 
 
+@dataclass(frozen=True)
+class WithdrawnClipAsks:
+    """The words of the brief asks the creator took back, and of the ones still live (KRI-1464)."""
+
+    withdrawn: tuple[tuple[str, ...], ...]
+    live: tuple[tuple[str, ...], ...]
+
+
+def _ask_words(req: Any) -> tuple[str, ...]:
+    return _thing(" ".join(part for part in (req.description, req.literal) if part))
+
+
+def _names(words: tuple[str, ...], thing: tuple[str, ...]) -> bool:
+    """``thing`` appears in ``words`` as written: the same words, in a row."""
+    size = len(thing)
+    return any(words[at : at + size] == thing for at in range(len(words) - size + 1))
+
+
+def withdrawn_clip_asks(brief: CreativeBrief | None) -> WithdrawnClipAsks | None:
+    """What the creator took out of the request, for `without_withdrawn_clip_asks` (KRI-1464).
+
+    Kria TikTok video 1 (thread 78787267, 2026-11-14): the first prompt showed three screen
+    recordings on spoken words; they were never uploaded, so the picker asked for them. The
+    creator typed the request again without them and the brief superseded r3 / r8 / r9
+    (``superseded_by: "creator"``). Four turns later a "Make it without these" tap re-planned
+    the clip asks; the planner, reading every creator message, wrote the three again and the
+    same picker came back word for word.
+
+    Only the creator's own removal counts: a requirement the server waived (the simpler
+    version) or one removed before the mark existed says nothing about what the creator
+    wants. None when the brief records no such removal.
+    """
+    from app.kria.brief import CREATOR_REMOVAL, SUPERSEDED_BY_FACT  # noqa: PLC0415
+
+    if brief is None:
+        return None
+    withdrawn = tuple(
+        words
+        for req in brief.requirements
+        if not req.live
+        and req.facts.get(SUPERSEDED_BY_FACT) == CREATOR_REMOVAL
+        and (words := _ask_words(req))
+    )
+    if not withdrawn:
+        return None
+    return WithdrawnClipAsks(
+        withdrawn=withdrawn,
+        live=tuple(words for req in brief.live() if (words := _ask_words(req))),
+    )
+
+
+def without_withdrawn_clip_asks(
+    intents: list[ClipIntent], asks: WithdrawnClipAsks | None
+) -> list[ClipIntent]:
+    """``intents`` without the clips the creator no longer asks for (KRI-1464).
+
+    An `include` is left out when a requirement the creator withdrew names its clip (the
+    attribute's words in a row, case, accents, articles and "my" / "your" aside) and no live
+    requirement does. A clip the creator asked for again, in any requirement, stays; so does
+    one the brief never recorded (a brief model miss is asked as before). Every other op is
+    left alone: a leave-out for the same words must still remove the clip.
+    """
+    if asks is None:
+        return intents
+
+    def withdrawn(intent: ClipIntent) -> bool:
+        thing = _thing(intent.attribute)
+        return (
+            intent.op == "include"
+            and bool(thing)
+            and any(_names(words, thing) for words in asks.withdrawn)
+            and not any(_names(words, thing) for words in asks.live)
+        )
+
+    return [intent for intent in intents if not withdrawn(intent)]
+
+
 def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) -> list[ClipIntent]:
     """Seat the first / last clip a filming-order brief names that no planned row places (KRI-1067).
 
@@ -1252,6 +1329,7 @@ async def plan_and_resolve_clip_intents(
     checked_inventory: Any = None,
     brief_anchors: Mapping[str, str] | None = None,
     authored_text_asks_withdrawn: bool = False,
+    withdrawn_asks: WithdrawnClipAsks | None = None,
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
     what it shows, so the inventory always carries one description label for it.
@@ -1284,7 +1362,11 @@ async def plan_and_resolve_clip_intents(
 
     ``authored_text_asks_withdrawn`` (KRI-1111, ``authored_text_withdrawn``): the creator
     withdrew every brief ask for clip text the server writes, so a label or caption the
-    planner wrote without the creator's own words (fresh or reused) is left out, never asked."""
+    planner wrote without the creator's own words (fresh or reused) is left out, never asked.
+
+    ``withdrawn_asks`` (KRI-1464, ``withdrawn_clip_asks``): the brief asks the creator took
+    back. An `include` the planner wrote for one of them (fresh or reused) from an older
+    message is left out, never asked (``without_withdrawn_clip_asks``)."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -1398,6 +1480,11 @@ async def plan_and_resolve_clip_intents(
         if len(kept) < len(planned_intents):
             silent_drops["withdrawn_text_dropped"] = len(planned_intents) - len(kept)
             planned_intents = kept
+    # KRI-1464: the same re-read brought back clips the creator had taken out of the request.
+    kept = without_withdrawn_clip_asks(planned_intents, withdrawn_asks)
+    if len(kept) < len(planned_intents):
+        silent_drops["withdrawn_clip_dropped"] = len(planned_intents) - len(kept)
+        planned_intents = kept
     if silent_drops:
         # KRI-456 / KRI-945: style asks, title lines and whole-video texts the planner minted
         # as caption intents, dropped without asking. Closed-vocabulary counts only, never text.
