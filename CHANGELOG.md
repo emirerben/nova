@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.238.0] - 2026-11-15
+
+### Fixed
+- fix(kria): Qendresa Q1 run 3: no false holds; captions, title, ending, labels and cards as asked (KRI-1468) (#2360) <!-- release-pr: 2360 -->
+
+## [0.88.237.0] - 2026-11-15
+
+### Changed
+- test(kria): German twins of the Turkish understanding tests + closed-list fixes (KRI-1453) (#2354) <!-- release-pr: 2354 -->
+
+## [0.88.236.0] - 2026-11-15
+
+### Changed
+- feat(notifications): push copy in the chat's language — EN/TR/DE (KRI-1144) (#2349) <!-- release-pr: 2349 -->
+
 ## [0.88.235.0] - 2026-11-15
 
 ### Changed
