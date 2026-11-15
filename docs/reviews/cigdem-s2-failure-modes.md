@@ -192,15 +192,20 @@ ends at the span start. `DETECTOR_VERSION` -> `mixed-gap-v5`.
 
 ## G. Media-services reset reported as a playback failure
 
-Fix: `/me/jobs/{id}/playback-diagnostics` logs a report whose error is the media-services reset
-(AVFoundation `-11819`, or `561210739` `'!ses'` as code or underlying code) as
-`editor_playback_reset` at info level; every other report stays `editor_playback_failed` warning.
+Fix (revised after Emir's review of #2365): `/me/jobs/{id}/playback-diagnostics` keeps logging every
+report as the `editor_playback_failed` warning and adds `media_services_reset: true` when the error is
+the media-services reset (AVFoundation `-11819`, or `561210739` `'!ses'` as code or underlying code),
+so a reset can be told apart from other failures without hiding one. The first version logged it as
+`editor_playback_reset` at info level, which would also have hidden a reset the editor never
+recovered from: `handlePlayerItemFailure` posts the report BEFORE recovery, and a finished render
+whose retries run out (`surfaceUnplayableFinishedRender`) reports nothing more.
 
-1. A real failure that happens to carry `!ses` for another reason → it is the reset's own
-   signature (KRI-626 treats it the same way on the phone); still logged, only renamed.
-2. A report without error codes → unchanged warning.
-3. A reset that the phone does NOT recover from → the phone reports the next failure of the new
-   player normally (a different item, new report).
+1. A recovered reset still shows as a failure → accepted: the server cannot know the recovery
+   worked; the tag lets a dashboard count resets separately. Confirmed recovery would need the
+   client to report it (not in this PR).
+2. A reset whose retries run out → every report it sent stays a warning (the failure is visible).
+3. A report without error codes, or the same code in another domain → `media_services_reset:
+   false`, otherwise unchanged.
 
 ## Checks
 
@@ -210,5 +215,6 @@ Fix: `/me/jobs/{id}/playback-diagnostics` logs a report whose error is the media
   negative controls: no pace named (S57 unchanged), flag off (byte-identical layout).
 - F: golden case built from this take's stamped words and silencedetect spans (the cut removes
   only inside 28.52–29.14 s and leaves <= 0.4 s); negative controls 2-5.
-- G: route test for both log events.
+- G: route tests: reset reports tagged and still warnings; a reset whose retries run out keeps
+  every failure; negative controls untagged.
 - Pending: the S2 rerun on the phone after merge (`tools/check_result.sh … S2`: every line PASS).

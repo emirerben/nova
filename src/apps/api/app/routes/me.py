@@ -2047,17 +2047,14 @@ async def report_library_playback_failure(
     ).scalar_one_or_none()
     if owned is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    if _is_media_services_reset(body):
-        # Cigdem 2 (KRI-1497): iOS restarted its media services and the editor rebuilt every
-        # player (KRI-626, `NativeEditorSession.handleMediaServicesReset`). Logged, not a failure.
-        log.info(
-            "editor_playback_reset", job_id=str(jid), user_id=str(user.id), **body.model_dump()
-        )
-        return
+    # Cigdem 2 (KRI-1497): a media-services reset is tagged, never downgraded. The editor tries to
+    # recover from it (KRI-626) but posts this report BEFORE trying, and a finished render whose
+    # retries run out reports nothing more, so this warning stays the only failure signal.
     log.warning(
         "editor_playback_failed",
         job_id=str(jid),
         user_id=str(user.id),
+        media_services_reset=_is_media_services_reset(body),
         **body.model_dump(),
     )
 
