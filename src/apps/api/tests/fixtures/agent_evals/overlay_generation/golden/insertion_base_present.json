@@ -1,0 +1,195 @@
+{
+  "agent": "nova.editor.overlay_generation",
+  "prompt_version": "2026-11-02.4",
+  "prompt_sha": "fab779ae946c513f",
+  "input": {
+    "language": "en",
+    "mode": "automatic",
+    "prompt": "",
+    "taste_notes": "",
+    "duration_s": 20.0,
+    "evidence": [
+      {
+        "kind": "speech",
+        "reference_id": "speech-0",
+        "quote": "we crossed the bridge right before the carousel starts",
+        "start_s": 3.0,
+        "end_s": 6.55,
+        "words": [
+          {
+            "quote": "we",
+            "start_s": 3.0,
+            "end_s": 3.35
+          },
+          {
+            "quote": "crossed",
+            "start_s": 3.4,
+            "end_s": 3.75
+          },
+          {
+            "quote": "the",
+            "start_s": 3.8,
+            "end_s": 4.15
+          },
+          {
+            "quote": "bridge",
+            "start_s": 4.2,
+            "end_s": 4.55
+          },
+          {
+            "quote": "right",
+            "start_s": 4.6,
+            "end_s": 4.95
+          },
+          {
+            "quote": "before",
+            "start_s": 5.0,
+            "end_s": 5.35
+          },
+          {
+            "quote": "the",
+            "start_s": 5.4,
+            "end_s": 5.75
+          },
+          {
+            "quote": "carousel",
+            "start_s": 5.8,
+            "end_s": 6.15
+          },
+          {
+            "quote": "starts",
+            "start_s": 6.2,
+            "end_s": 6.55
+          }
+        ]
+      },
+      {
+        "kind": "speech",
+        "reference_id": "speech-1",
+        "quote": "and then the lake appeared out of nowhere",
+        "start_s": 12.0,
+        "end_s": 15.15,
+        "words": [
+          {
+            "quote": "and",
+            "start_s": 12.0,
+            "end_s": 12.35
+          },
+          {
+            "quote": "then",
+            "start_s": 12.4,
+            "end_s": 12.75
+          },
+          {
+            "quote": "the",
+            "start_s": 12.8,
+            "end_s": 13.15
+          },
+          {
+            "quote": "lake",
+            "start_s": 13.2,
+            "end_s": 13.55
+          },
+          {
+            "quote": "appeared",
+            "start_s": 13.6,
+            "end_s": 13.95
+          },
+          {
+            "quote": "out",
+            "start_s": 14.0,
+            "end_s": 14.35
+          },
+          {
+            "quote": "of",
+            "start_s": 14.4,
+            "end_s": 14.75
+          },
+          {
+            "quote": "nowhere",
+            "start_s": 14.8,
+            "end_s": 15.15
+          }
+        ]
+      }
+    ],
+    "assets": [],
+    "existing_overlays": [],
+    "insertion_base": 8.0
+  },
+  "raw_text": "{\n  \"overlays\": [\n    {\n      \"kind\": \"image\",\n      \"title\": \"Bridge Icon\",\n      \"prompt\": \"Simple line art icon of a bridge, transparent background.\",\n      \"start_s\": 3.8,\n      \"end_s\": 6.8,\n      \"x_frac\": 0.5,\n      \"y_frac\": 0.3,\n      \"scale\": 0.35,\n      \"reason\": \"Illustrates the 'bridge' mentioned in speech.\",\n      \"evidence\": [\n        {\n          \"kind\": \"speech\",\n          \"reference_id\": \"speech-0\",\n          \"quote\": \"the bridge\"\n        }\n      ],\n      \"depicts\": \"generic_subject\"\n    },\n    {\n      \"kind\": \"image\",\n      \"title\": \"Carousel Icon\",\n      \"prompt\": \"Simple line art icon of a carousel, transparent background.\",\n      \"start_s\": 5.8,\n      \"end_s\": 7.8,\n      \"x_frac\": 0.75,\n      \"y_frac\": 0.5,\n      \"scale\": 0.35,\n      \"reason\": \"Illustrates the 'carousel' mentioned in speech.\",\n      \"evidence\": [\n        {\n          \"kind\": \"speech\",\n          \"reference_id\": \"speech-0\",\n          \"quote\": \"carousel starts\"\n        }\n      ],\n      \"depicts\": \"generic_subject\"\n    },\n    {\n      \"kind\": \"image\",\n      \"title\": \"Lake Icon\",\n      \"prompt\": \"Simple line art icon of a lake with water ripples, transparent background.\",\n      \"start_s\": 13.2,\n      \"end_s\": 16.2,\n      \"x_frac\": 0.5,\n      \"y_frac\": 0.3,\n      \"scale\": 0.35,\n      \"reason\": \"Illustrates the 'lake' mentioned in speech.\",\n      \"evidence\": [\n        {\n          \"kind\": \"speech\",\n          \"reference_id\": \"speech-1\",\n          \"quote\": \"the lake\"\n        }\n      ],\n      \"depicts\": \"generic_subject\"\n    }\n  ],\n  \"message\": \"\"\n}",
+  "output": {
+    "overlays": [
+      {
+        "kind": "image",
+        "title": "Bridge Icon",
+        "prompt": "Simple line art icon of a bridge, transparent background.",
+        "text": "",
+        "asset_id": null,
+        "start_s": 3.8,
+        "end_s": 6.8,
+        "x_frac": 0.5,
+        "y_frac": 0.3,
+        "scale": 0.35,
+        "reason": "Illustrates the 'bridge' mentioned in speech.",
+        "evidence": [
+          {
+            "kind": "speech",
+            "reference_id": "speech-0",
+            "quote": "the bridge"
+          }
+        ],
+        "depicts": "generic_subject"
+      },
+      {
+        "kind": "image",
+        "title": "Carousel Icon",
+        "prompt": "Simple line art icon of a carousel, transparent background.",
+        "text": "",
+        "asset_id": null,
+        "start_s": 5.8,
+        "end_s": 7.8,
+        "x_frac": 0.75,
+        "y_frac": 0.5,
+        "scale": 0.35,
+        "reason": "Illustrates the 'carousel' mentioned in speech.",
+        "evidence": [
+          {
+            "kind": "speech",
+            "reference_id": "speech-0",
+            "quote": "carousel starts"
+          }
+        ],
+        "depicts": "generic_subject"
+      },
+      {
+        "kind": "image",
+        "title": "Lake Icon",
+        "prompt": "Simple line art icon of a lake with water ripples, transparent background.",
+        "text": "",
+        "asset_id": null,
+        "start_s": 13.2,
+        "end_s": 16.2,
+        "x_frac": 0.5,
+        "y_frac": 0.3,
+        "scale": 0.35,
+        "reason": "Illustrates the 'lake' mentioned in speech.",
+        "evidence": [
+          {
+            "kind": "speech",
+            "reference_id": "speech-1",
+            "quote": "the lake"
+          }
+        ],
+        "depicts": "generic_subject"
+      }
+    ],
+    "message": ""
+  },
+  "meta": {
+    "source": "provider_smoke_capture",
+    "expect_overlays": "some",
+    "kri": "KRI-1428",
+    "test_run_id": "kri1428-overlay-generation-20261115e"
+  }
+}

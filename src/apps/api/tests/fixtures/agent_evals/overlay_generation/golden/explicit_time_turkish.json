@@ -1,0 +1,58 @@
+{
+  "agent": "nova.editor.overlay_generation",
+  "prompt_version": "2026-11-02.4",
+  "prompt_sha": "5e412bca1d50a603",
+  "input": {
+    "language": "tr",
+    "mode": "prompt",
+    "prompt": "3. saniyede bir yıldız ekle",
+    "taste_notes": "",
+    "duration_s": 20.0,
+    "evidence": [
+      {
+        "kind": "explicit_time",
+        "reference_id": "time-0",
+        "quote": "3. saniyede",
+        "start_s": 3.0,
+        "output_time_s": 3.0,
+        "end_s": 20.0
+      }
+    ],
+    "assets": [],
+    "existing_overlays": [],
+    "insertion_base": null
+  },
+  "raw_text": "{\n  \"overlays\": [\n    {\n      \"kind\": \"image\",\n      \"title\": \"Star\",\n      \"prompt\": \"a simple, generic golden star icon, transparent background\",\n      \"start_s\": 3.0,\n      \"end_s\": 5.0,\n      \"reason\": \"Kullanıcının isteği üzerine 3. saniyede bir yıldız eklendi.\",\n      \"evidence\": [\n        {\n          \"kind\": \"explicit_time\",\n          \"reference_id\": \"time-0\",\n          \"quote\": \"3. saniyede\"\n        }\n      ],\n      \"depicts\": \"generic_subject\"\n    }\n  ],\n  \"message\": \"İsteğiniz üzerine 3. saniyede bir yıldız eklendi.\"\n}",
+  "output": {
+    "overlays": [
+      {
+        "kind": "image",
+        "title": "Star",
+        "prompt": "a simple, generic golden star icon, transparent background",
+        "text": "",
+        "asset_id": null,
+        "start_s": 3.0,
+        "end_s": 5.0,
+        "x_frac": 0.5,
+        "y_frac": 0.3,
+        "scale": 0.35,
+        "reason": "Kullanıcının isteği üzerine 3. saniyede bir yıldız eklendi.",
+        "evidence": [
+          {
+            "kind": "explicit_time",
+            "reference_id": "time-0",
+            "quote": "3. saniyede"
+          }
+        ],
+        "depicts": "generic_subject"
+      }
+    ],
+    "message": "İsteğiniz üzerine 3. saniyede bir yıldız eklendi."
+  },
+  "meta": {
+    "source": "provider_smoke_capture",
+    "expect_overlays": "some",
+    "kri": "KRI-1428",
+    "test_run_id": "kri1428-overlay-generation-20261115e"
+  }
+}
