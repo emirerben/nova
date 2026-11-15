@@ -46,9 +46,9 @@ _MIDDLE_ASK = {
 }
 
 
-def _cues() -> list[dict]:
+def _cues(lines=_LINES) -> list[dict]:
     cues = []
-    for text, start, end in _LINES:
+    for text, start, end in lines:
         words = text.split()
         step = (end - start) / len(words)
         cues.append(
@@ -69,7 +69,14 @@ def _cues() -> list[dict]:
     return cues
 
 
-def _choose(policy: dict | None, face: NormalizedBox):
+def _choose(
+    policy: dict | None,
+    face: NormalizedBox,
+    *,
+    cues: list[dict] | None = None,
+    caption_style: str = "sentence",
+):
+    cues = _cues() if cues is None else cues
     subject = CaptionSubject(
         start_s=0.0,
         end_s=float("inf"),
@@ -83,7 +90,7 @@ def _choose(policy: dict | None, face: NormalizedBox):
         position_x=0.0,
     )
     kwargs = dict(
-        caption_style="sentence",
+        caption_style=caption_style,
         canvas=CANVAS,
         objects=(),
         faces=(),
@@ -93,9 +100,9 @@ def _choose(policy: dict | None, face: NormalizedBox):
         subjects=[subject],
     )
     if policy is None:
-        return choose_caption_look(_cues(), **kwargs)
+        return choose_caption_look(cues, **kwargs)
     with phone_text_policy_scope(policy):
-        return choose_caption_look(_cues(), **kwargs)
+        return choose_caption_look(cues, **kwargs)
 
 
 def test_an_asked_middle_spot_moves_just_under_a_named_face_not_to_the_lower_third():
@@ -161,3 +168,114 @@ def test_the_finished_check_says_partly_when_the_block_left_the_middle():
     assert receipt is not None and receipt.status == "partial"
     assert "lower than you asked" in receipt.reason
     assert brief_checks._caption_spot_drawn_receipt(req, {"position_y_frac": 0.53}) is None
+
+
+# ------------------------------------------------ KRI-1476: Qendresa Q1 run 3 (job 3ef3cbe5)
+#
+# "Captions word by word in the middle of the screen, white, two words at a time" draws the
+# two-word block under her face (y 0.62, `_apply_caption_shape`). A face ask on the same brief
+# found that block on her chin; the KRI-1327 ladder stops at 0.62 (its last step), so it could
+# only climb onto her face and then fell to 0.86 (kit rule: median 0.50-0.75 -> FAIL).
+#
+# F2  An asked middle drawn at 0.62 has no ladder step below it.
+# F4  A face that fills the frame under the middle still pushes the block out, and says so.
+# F5  The top and bottom rows (Q2's "near the bottom") keep today's ladder.
+# F6  A creator who placed nothing keeps today's ladder (D4 above).
+# F8  The finished check never says "in the middle" for a block outside the row.
+# OFF The switch off is today's ladder, today's row and today's 0.86.
+
+_SWITCH = "keep_text_off_caption_spot_enabled"
+# variants[0].caption_cues of the job: her first two-word pieces.
+_Q1_LINES = (
+    ("Five projects", 0.12, 0.86),
+    ("the AI", 0.86, 1.48),
+    ("builder community", 1.48, 2.3),
+    ("can't stop", 2.3, 2.9),
+    ("talking about.", 2.9, 3.6),
+)
+# opening_title_placement.face_boxes of the job, united: chin at 0.6175 of the height.
+_Q1_FACE = NormalizedBox(0.2067, 0.2113, 0.8452, 0.6175)
+_Q1_ASK = {
+    "preferences": {},
+    "requested": {},
+    "selected_fonts": {"caption": CAPTION_FONT_FAMILY},
+    "selection_calls": 2,
+    "caption_ask": {"color": "#FFFFFF", "words": 2, "position": "middle"},
+}
+_TODAYS_MIDDLE_LADDER = (0.62, 0.59, 0.56, 0.53, 0.5, 0.47, 0.44)
+
+
+def _q1(face: NormalizedBox = _Q1_FACE):
+    return _choose(_Q1_ASK, face, cues=_cues(_Q1_LINES), caption_style="word")
+
+
+def test_a_two_word_middle_block_on_her_chin_steps_just_under_it_not_to_the_lower_third():
+    look, receipt = _q1()
+
+    tried = [row["position_y_frac"] for row in receipt["evaluated"]]
+    y = receipt["position_y_frac"]
+    assert tried[0] == 0.62 and receipt["evaluated"][0]["face_lines"] > 0
+    assert receipt["status"] == "moved"
+    assert 0.62 < y <= 0.68, f"just under her chin (F2); got {y}, tried {tried}"
+    assert 0.86 not in tried
+    assert look is not None and look.position_y_frac == y
+    assert receipt["evaluated"][-1]["face_lines"] == 0
+    assert caption_spot_holds("middle", y), "still reads as the middle (F8)"
+
+
+def test_a_face_that_fills_the_frame_under_the_middle_still_pushes_the_block_out():
+    _look, receipt = _q1(NormalizedBox(0.2067, 0.2113, 0.8452, 0.80))
+
+    y = receipt["position_y_frac"]
+    assert not caption_spot_holds("middle", y), f"never called the middle (F4/F8); got {y}"
+    assert "face" in caption_spot_moved_reason("middle", y)
+
+
+def test_the_top_and_bottom_rows_keep_todays_ladder():
+    from app.kria.caption_look_ask import caption_spot_band
+    from app.pipeline.phone_protected_text import _asked_spot_ladder
+
+    assert caption_spot_band("bottom") == (0.70, 0.90)
+    assert caption_spot_band("top") == (0.08, 0.30)
+    assert _asked_spot_ladder("bottom", 0.79) == (0.79, 0.82, 0.76, 0.85, 0.73, 0.88, 0.7)
+    assert _asked_spot_ladder("top_left", 0.12) == (0.11, 0.14, 0.08, 0.17, 0.2, 0.23, 0.26, 0.29)
+    assert _asked_spot_ladder(None, 0.62) == ()
+
+
+def test_the_middle_row_ends_under_her_chin_and_before_the_bottom_row():
+    from app.kria import brief_checks
+
+    assert caption_spot_holds("middle", 0.66) and caption_spot_holds("middle", 0.68)
+    assert not caption_spot_holds("middle", 0.7)
+    assert not caption_spot_holds("bottom", 0.68)
+    req = BriefRequirement(
+        id="r2",
+        kind="style",
+        scope="global",
+        description="Captions word by word in the middle of the screen, white, two words",
+        facts={
+            "captions": "word_by_word",
+            "caption_color": "#FFFFFF",
+            "caption_words": 2,
+            "caption_position": "middle",
+        },
+    )
+    assert brief_checks._caption_spot_drawn_receipt(req, {"position_y_frac": 0.66}) is None
+    lower = brief_checks._caption_spot_drawn_receipt(req, {"position_y_frac": 0.86})
+    assert lower is not None and lower.status == "partial"
+
+
+def test_switch_off_the_middle_block_falls_to_the_lower_third_as_today(monkeypatch):
+    from app.config import settings
+    from app.kria.caption_look_ask import caption_spot_band
+    from app.pipeline.phone_protected_text import _asked_spot_ladder
+
+    monkeypatch.setattr(settings, _SWITCH, False)
+    assert caption_spot_band("middle") == (0.44, 0.64)
+    assert not caption_spot_holds("middle", 0.66)
+    assert _asked_spot_ladder("middle", 0.62) == _TODAYS_MIDDLE_LADDER
+    assert _asked_spot_ladder("middle", 0.5) == (0.5, 0.53, 0.47, 0.44, 0.56, 0.59, 0.62)
+    _look, receipt = _q1()
+    tried = [row["position_y_frac"] for row in receipt["evaluated"]]
+    assert tried == [*_TODAYS_MIDDLE_LADDER, 0.86]
+    assert (receipt["status"], receipt["position_y_frac"]) == ("moved", 0.86)

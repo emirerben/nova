@@ -97,6 +97,17 @@ class _LaneModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
+class SubtitledCardStrip(_LaneModel):
+    """KRI-1478: the strip a laid-out card may be drawn as instead of the whole picture:
+    ``scale`` of the canvas wide and ``height`` of it tall, centred on ``x_frac`` and the
+    card's own ``y_frac`` (`phone_card_layout.strip_for`). The compile uses it only when the
+    picture has a measured text column to cut to; otherwise the card's own x / y / scale stand."""
+
+    x_frac: float = Field(default=0.5, ge=0, le=1)
+    scale: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+
 class SubtitledOverlayCard(_LaneModel):
     """One sticker/photo/video card requested over the speaker clip."""
 
@@ -143,6 +154,10 @@ class SubtitledOverlayCard(_LaneModel):
     # dump while it is the default, so a plain card's row is byte-identical.
     zoom: float = Field(default=1.0, ge=1, le=4)
     animation: VisualAnimation = Field(default_factory=VisualAnimation)
+    # KRI-1478: set by the server's card layout only, for this render only: the editor
+    # projection and a Save never carry it, so an edited card is today's whole-picture card.
+    # Omitted from the dump while None, so every other card's row is byte-identical.
+    strip: SubtitledCardStrip | None = None
 
     @model_validator(mode="after")
     def _window(self) -> SubtitledOverlayCard:
@@ -191,6 +206,8 @@ class SubtitledOverlayCard(_LaneModel):
             payload.pop("zoom", None)
         if self.animation == VisualAnimation():
             payload.pop("animation", None)
+        if self.strip is None:
+            payload.pop("strip", None)
         return payload
 
 

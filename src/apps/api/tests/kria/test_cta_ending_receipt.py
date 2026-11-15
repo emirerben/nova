@@ -306,3 +306,72 @@ def test_refusing_the_arrow_is_not_an_ask(description):
     plain = ENDING.model_copy(update={"description": description})
     facts = bc.plan_facts_from_phone_variant(_variant([_row("closing-title", _CTA, None)]))
     assert bc.check_requirement(plain, facts).status == "met"
+
+
+# --- KRI-1475: the draft promises the arrow only when the render will draw it -----------------
+# Qendresa Q1 run 3 (job 3ef3cbe5): the draft said "I'll draw a curly arrow next to your ending
+# text", the render kept the pill (the brief also kept text off her face), and the done-list
+# said the arrow isn't there. The draft now reads what the worker's gate reads. Ways it could
+# still lie: an object to keep text off (the pill stays) still gets the promise; an app build
+# below the drawings protocol still gets it; "keep text off my face" alone loses it.
+
+_OFF_FACE = BriefRequirement(
+    id="off",
+    kind="style",
+    scope="global",
+    description="No text on my face",
+    facts={"keep_text_off": [{"kind": "face"}]},
+)
+_OFF_LAPTOP = _OFF_FACE.model_copy(
+    update={
+        "description": "No text on my face or on the laptop",
+        "facts": {"keep_text_off": [{"kind": "face"}, {"kind": "object", "label": "laptop"}]},
+    }
+)
+
+
+def _draft_arrow_reason(monkeypatch, *more: BriefRequirement, protocol: int | None = None) -> str:
+    """The ending's draft receipt as the reply builds it, with the phone lanes as prod runs."""
+    from app.config import settings
+
+    _set_switch(monkeypatch, settings, True)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        _lanes_features("authoredText", "freehandDrawing"),
+    )
+    monkeypatch.setattr(settings, "phone_subtitled_title_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_closing_title_enabled", True)
+    facts = dataclasses.replace(_draft_facts(), client_protocol=protocol)
+    receipts = bc.build_receipts([*more, ENDING], facts, include_unchecked=True)
+    [receipt] = [r for r in receipts if r.requirement_id == ENDING.id]
+    assert receipt.status == "partial"
+    return (receipt.reason or "").lower()
+
+
+def test_keep_text_off_my_face_keeps_the_arrow_promise(monkeypatch):
+    reason = _draft_arrow_reason(monkeypatch, _OFF_FACE, protocol=51)  # protocol-literal-ok
+    assert "draw" in reason and "arrow" in reason and "editor" not in reason
+
+
+def test_an_object_to_keep_text_off_gets_no_arrow_promise(monkeypatch):
+    """The render keeps the pill around a marked object, so the draft says she draws it."""
+    reason = _draft_arrow_reason(monkeypatch, _OFF_LAPTOP, protocol=51)  # protocol-literal-ok
+    assert "i'll draw" not in reason
+    assert "editor" in reason
+
+
+def test_an_object_ask_she_dropped_does_not_cost_her_the_arrow(monkeypatch):
+    dropped = _OFF_LAPTOP.model_copy(update={"status": "superseded"})
+    reason = _draft_arrow_reason(monkeypatch, dropped, protocol=51)  # protocol-literal-ok
+    assert "draw" in reason and "editor" not in reason
+
+
+@pytest.mark.parametrize(("protocol", "promised"), [(5, False), (6, True), (None, True)])
+def test_an_app_build_below_the_drawings_protocol_gets_no_arrow_promise(
+    monkeypatch, protocol, promised
+):
+    """Protocol 6 is the first build that draws drawings; an unknown build keeps the
+    server-wide answer (the draft cannot know)."""
+    reason = _draft_arrow_reason(monkeypatch, protocol=protocol)
+    assert ("editor" not in reason) is promised

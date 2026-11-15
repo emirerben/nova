@@ -312,6 +312,11 @@
    "{what} {count} parçaya bölünüyor"
   ],
   [
+   "app/kria/brief_checks.py",
+   "{text} sits over something else on screen; I couldn't find a clear spot for it",
+   "{text} ekranda başka bir şeyin üstünde duruyor; ona boş bir yer bulamadım"
+  ],
+  [
    "app/kria/clip_exclusions.py",
    " and {count} more",
    " ve {count} tane daha"

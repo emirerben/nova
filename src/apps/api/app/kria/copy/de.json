@@ -1723,6 +1723,7 @@
     "{text} is longer than fits on screen, so the video shows “{fact_cut_to}”": "{text} ist länger, als auf den Bildschirm passt, deshalb zeigt das Video „{fact_cut_to}“",
     "{text} isn't on the video": "{text} ist nicht im Video",
     "{text} lands on a face; I couldn't find a spot clear of it": "{text} liegt auf einem Gesicht; ich habe keine Stelle gefunden, an der es frei bleibt",
+    "{text} sits over something else on screen; I couldn't find a clear spot for it": "{text} liegt über etwas anderem im Bild; ich habe keine freie Stelle dafür gefunden",
     "{text} stays on screen for {held:g} s, not the {asked:g} s you asked for": "{text} bleibt {held:g} s auf dem Bildschirm, nicht die gewünschten {asked:g} s",
     "{unnamed} of your recordings never {v1}.": "{unnamed} deiner Aufnahmen {v1} nie.",
     "{v1} and {v2}": "{v1} und {v2}",

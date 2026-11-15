@@ -4258,6 +4258,39 @@ Simulator before/after: `scripts/ios/qendresa-card-layout-e2e.py prepare OUT --f
 passes on a misread dimmed caption) must flip, `full_speaker` stays, and the rendered-frame face
 check plus its negative control and the watermark check must hold.
 
+## Talking card strip (KRI-1478)
+
+A wide (landscape) layout card is cut to its measured text column (`source_crop` on the card
+clip, from `background_text_focus.measure_text_column` at bind) so the page is readable, and it
+cuts in and out with no fade. Where its band is free it is 0.94 of the frame wide
+(`phone_card_layout.strip_for`); beside the Kria wordmark it keeps its box. The band is always
+the card's own (same top, same height), so nothing new is covered. A second Visual for a mention
+a strip card already holds takes the second half of that window (each part >= 1.5 s in source
+seconds) instead of `overlap`; otherwise it stays unplaced and is named as not shown, as before.
+
+Gate (all required): `TALKING_CARD_STRIP_ENABLED` (default off) + the whole card layout gate
+above (its flag, `cardLayout`, protocol >= 40) + `sourceCrop` and `mediaCards` in
+`PHONE_RENDER_VERIFIED_FEATURES`. No newer build: the engine draws a cropped placed clip since
+KRI-140. Fallback to today's whole-picture card (with its fade): no measurable column or line
+pitch, a portrait or square picture, under three text lines in the band, a tilted, zoomed or
+animated card, an alpha sticker.
+
+Editor: the phone editor draws a card from x / y / scale with no crop, so
+`phone_subtitled_editor.lanes_from_recipe` hands a strip card back as the whole-picture card it
+replaced. Opening the editor shows that card, and a Save renders it (today's card, with the
+fade): the strip is the first render's look only. No iOS change.
+
+Apply: `fly secrets set TALKING_CARD_STRIP_ENABLED=true` (api + worker) + restart. Rollback:
+`fly secrets set TALKING_CARD_STRIP_ENABLED=false` (api + worker) + restart; new renders are
+today's cards, recipes already pinned are not rewritten. Guards: `tests/services/test_phone_card_layout.py` (run-3 job on and off),
+`tests/services/test_talking_card_layout_gate.py` (gate, worker), `tests/kria/test_recipes_v2.py`,
+`tests/pipeline/test_phone_subtitled_plan.py`, `tests/services/test_phone_subtitled_editor.py`.
+
+Not proven without a phone render: that the shipped build draws a cropped still card as the
+engine test does; real sharpness and that the hard cut survives the phone encoder; the crop
+starts at the top of the picture (no vertical text measure), so a page that opens on a logo
+shows the logo; after pause cuts a shared half can be on screen under 1.5 s.
+
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 
 `phone-simple-cut-v3` is a forward-only verifier policy. New v3 code accepts the pinned older supported verifier versions; an older server cannot interpret a newly pinned v3 policy and refuses it rather than publishing unchecked output. After v3 policies exist, rolling the API back below v3 can therefore leave those exports blocked. Do not downgrade the pin/minimum verifier or relabel an old report to recover them; preserve the attempt and restore a compatible server before the normal output-check retry.
