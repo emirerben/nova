@@ -108,6 +108,11 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "A voiceover edit always shows captions of what you say, and I'll check them against your request in the finished video",
+   "Seslendirmeli düzenleme söylediklerini her zaman altyazı olarak gösterir, bitmiş videoda da isteğine uyup uymadıklarını kontrol edeceğim"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "Cut \"{quote}\" ({round_s_removed}s, take {take_index})",
    "\"{quote}\" kesildi ({round_s_removed} sn, {take_index}. çekim)"
   ],
@@ -1570,6 +1575,16 @@
    "app/tasks/kria_runtime.py",
    "Writing the on-screen text for this many clips took longer than our AI allows, so your video wasn't made. Your edit and footage are saved. Fewer clips or less text would help.",
    "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az klip ya da daha az yazı işe yarar."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s), but the part you named comes at {moment_at_s:.1f} s",
+   "{v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn), ama söylediğin kısım {moment_at_s:.1f}. saniyede geliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s), but the part you named isn't in the stretch that plays",
+   "{v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn), ama söylediğin kısım oynayan bölümde yok"
   ],
   [
    "app/tasks/kria_runtime.py",

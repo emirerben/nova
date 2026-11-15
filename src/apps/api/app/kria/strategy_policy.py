@@ -158,6 +158,13 @@ def _captions_kept_notice() -> str:
     return say(en=CAPTIONS_KEPT_NOTICE, tr=_CAPTIONS_KEPT_NOTICE_TR)
 
 
+def _captions_always_on(strategy: CreativeStrategy) -> bool:
+    """A strategy that turns captions off on an edit whose renderer always shows them."""
+    return strategy.caption_style == "none" and (
+        strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
+    )
+
+
 def transcript_labels_dropped_notice() -> str:
     return say(en=TRANSCRIPT_LABELS_DROPPED_NOTICE, tr=_TRANSCRIPT_LABELS_DROPPED_NOTICE_TR)
 
@@ -1334,12 +1341,18 @@ def check_strategy_for_runtime_v2(
     draft_audio_strategy: str | None = None,
     creator_asked_camera_sound: bool = False,
     creator_asked_no_music: bool = False,
+    creator_asked_no_captions: bool = True,
 ) -> CheckedStrategy | RefusedStrategy:
     """Run v1's plan compile over a v2 strategy; never raises a policy error.
 
     ``draft_audio_strategy`` (the draft's sound route) and ``creator_asked_camera_sound`` (a
     live brief ask to keep the camera sound) only matter on footage with no sound at all
     (KRI-1365).
+
+    ``creator_asked_no_captions`` (KRI-1465) only matters when the strategy turns captions off
+    on an edit that always shows them. ``False`` = the caller read the brief and no live ask
+    wants no captions: keeping them is a notice, never the "simpler version?" question. The
+    default is for a caller that does not know the brief, which asks as before.
 
     Both keywords serve a guided-voiceover downgrade (KRI-594): ``creator_text`` is the
     creator's own words (it tells an "all 7 clips" ask apart from "all my photos and
@@ -1374,13 +1387,18 @@ def check_strategy_for_runtime_v2(
     strategy, title_notice = _talking_top_text_as_title(manifest, strategy)
     if title_notice:
         notices.append(title_notice)
+    if not creator_asked_no_captions and _captions_always_on(strategy):
+        # KRI-1465 (prod thread 78787267): before the baseline is taken, like the repairs
+        # above. The plan said "none" but no live ask wants no captions, so there is no
+        # choice of the creator's to lose: "Should I make a simpler version?" asked them to
+        # give up nothing, right after another hold. Said as a notice instead.
+        strategy = strategy.model_copy(update={"caption_style": "auto"})
+        notices.append(_captions_kept_notice())
     original = strategy
     # What a dropped request is judged against: the creator's strategy, with a guided
     # voiceover contract already swapped out when its downgrade keeps every request.
     baseline = original
-    if strategy.caption_style == "none" and (
-        strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
-    ):
+    if _captions_always_on(strategy):
         # Both renderers always caption (the item stores "none" as NULL, which
         # the worker reads as sentence captions), so say so instead of
         # approving a caption-free edit that renders with captions.

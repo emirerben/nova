@@ -1542,7 +1542,8 @@ def _simpler_version_offer(
     if not named:
         return "", question
     kept = {req.id for req in named if req.id in arrow_only_ids}
-    listed = "; ".join(_arrow_label(req) if req.id in kept else req.text() for req in named)
+    # KRI-1465: `listed()`, so asks that are sentences never read ".;" or end the list "..".
+    listed = "; ".join(_arrow_label(req) if req.id in kept else req.listed() for req in named)
     sentence = say(
         en="The simpler version leaves out: {listed}.",
         tr="Daha basit sürümde çıkarılacak: {listed}.",
