@@ -5500,12 +5500,15 @@ enum EditorOpenIntent { case warm, open }
                 splitHint = "\(panel) ends at \(String(format: "%.1f", target))s\(aligned ? " · aligned" : "")\(outOfFootage ? " · out of footage" : "")"
             }
         }
+        // A photo has no source clock: only its length changes, and the server refuses a photo with a source offset.
+        let still = isStillSlot(slot)
+        if still { resized.start = slot.inS }
         // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
         if abs(resized.start - slot.inS) >= 1e-9 { slot.raw["source_start_locked"] = .bool(true) }
         slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
         slot.durationS = abs(resized.length - currentDuration) < 1e-9 && slot.durationS != nil
             ? slot.durationS : max(minimumClipDuration, resized.length)
-        if slot.raw["source_end_s"] != nil {
+        if !still, slot.raw["source_end_s"] != nil {
             slot.raw["source_end_s"] = .number(resized.start + resized.length * rate)
         }
         // A blank has no source window to move.
@@ -5657,6 +5660,7 @@ enum EditorOpenIntent { case warm, open }
     func slideSourceWindow(by offset: TimeInterval) {
         guard canEditTimeline, offset.isFinite, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
         let slot = document.clips[index]
+        guard !isStillSlot(slot) else { return }
         if slot.raw["freeze_frame_s"]?.numberValue != nil {
             let clock = NativeClipSourceClock(slot: slot)
             let limit = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
@@ -12078,15 +12082,16 @@ extension NativeEditorSession {
         transactDocument(section: .timeline) { value in
             let slot = value.clips[index]
             let duration = slot.durationS ?? (found.clip.end - found.clip.start)
-            var right = Self.piece(of: slot, from: local, to: duration, length: duration, rate: rate)
+            var right = Self.piece(of: slot, from: local, to: duration, length: duration, rate: rate, still: still)
             right.id = UUID().uuidString; right.parentSegmentID = still ? nil : slot.id
-            value.clips.replaceSubrange(index...index, with: [Self.piece(of: slot, from: 0, to: local, length: duration, rate: rate), right])
+            value.clips.replaceSubrange(index...index, with: [Self.piece(of: slot, from: 0, to: local, length: duration, rate: rate, still: still), right])
         }
     }
 
     /// The part of `slot` (lasting `length`) from `a` to `b` output seconds after its start, on the same source clock and
     /// at the same place in its panel. A part that starts late locks its source start; one that ends early cuts after it.
-    private static func piece(of slot: EditorTimelineSlot, from a: Double, to b: Double, length: Double, rate: Double) -> EditorTimelineSlot {
+    /// A photo (`still`) has no source clock, so its parts keep `in_s` 0 and never lock a source start.
+    private static func piece(of slot: EditorTimelineSlot, from a: Double, to b: Double, length: Double, rate: Double, still: Bool) -> EditorTimelineSlot {
         let late = a > 0.000001, early = b < length - 0.000001
         guard late || early else { return slot }
         var piece = slot
@@ -12098,13 +12103,15 @@ extension NativeEditorSession {
         }
         if slot.raw["freeze_frame_s"]?.numberValue != nil {
             piece = NativeClipSourceClock(slot: slot).sliced(from: a, to: b).applying(to: slot)
+        } else if still {
+            piece.durationS = b - a
         } else {
             piece.inS = slot.inS + a * rate
             piece.durationS = b - a
             if early, slot.raw["source_end_s"] != nil { piece.raw["source_end_s"] = .number(slot.inS + b * rate) }
         }
         piece.durationBeats = nil
-        if late { piece.raw["source_start_locked"] = .bool(true) }
+        if late, !still { piece.raw["source_start_locked"] = .bool(true) }
         if early { piece.transitionAfter = "cut"; piece.transitionDurationS = nil }
         if slot.splitSectionID != nil { piece.raw["split_offset_s"] = .number(slot.splitOffsetS + a) }
         return piece
@@ -12257,8 +12264,9 @@ extension NativeEditorSession {
             let parts = candidates.compactMap { candidate in candidate.span.map { (start: $0.start, end: $0.end, inSection: candidate.inSection) } }
                 .sorted { $0.start < $1.start }
             for (position, part) in parts.enumerated() {
-                var piece = Self.piece(of: slot, from: part.start - slot.splitOffsetS, to: part.end - slot.splitOffsetS, length: length, rate: rate)
-                if position > 0 { piece.id = UUID().uuidString; piece.parentSegmentID = isStillSlot(slot) ? nil : slot.id }
+                let still = isStillSlot(slot)
+                var piece = Self.piece(of: slot, from: part.start - slot.splitOffsetS, to: part.end - slot.splitOffsetS, length: length, rate: rate, still: still)
+                if position > 0 { piece.id = UUID().uuidString; piece.parentSegmentID = still ? nil : slot.id }
                 if part.inSection {
                     if side == .untilPlayhead { piece.raw["split_offset_s"] = .number(part.start - cut) }
                     sectionSlots.append(piece)
@@ -12319,7 +12327,7 @@ extension NativeEditorSession {
             let left = run[index - 1].slot, length = left.durationS ?? 0, shared = run[index - 1].end - run[index].start
             let replayed = NativeEditorInteraction.transitionOverlap(left: left, leftDuration: length, rightDuration: run[index].slot.durationS ?? 0)
             guard abs(replayed - shared) > 0.001 else { continue }
-            run[index - 1].slot = Self.piece(of: left, from: 0, to: length - shared, length: length, rate: run[index - 1].rate)
+            run[index - 1].slot = Self.piece(of: left, from: 0, to: length - shared, length: length, rate: run[index - 1].rate, still: isStillSlot(left))
             run[index - 1].end = run[index].start
         }
         // Where clips only touch, no transition ever played; keep it that way now that they are ordinary clips.

@@ -221,6 +221,9 @@ def family_fragments(snapshot: object) -> str:
         names.append(SLIDE_TILT_ZOOM_FRAGMENT)
     if snapshot.get("split_screen_available") is True:
         names.append("split_screen.txt")
+        if snapshot.get("split_blank_available") is True:
+            # KRI-1457: only where this build draws a blank block in a split panel.
+            names.append("split_blank.txt")
     background = snapshot.get("background")
     if isinstance(background, dict) and background.get("opening_removable") is True:
         # KRI-1394: only while the speaker has a full-screen opening chat may take away.
