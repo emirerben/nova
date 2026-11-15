@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.244.0] - 2026-11-15
+
+### Fixed
+- fix(kria): withdrawn clips stay withdrawn, no needless Voiceover holds, named moments on the word (KRI-1464, KRI-1465, KRI-1466) (#2359) <!-- release-pr: 2359 -->
+
 ## [0.88.243.0] - 2026-11-15
 
 ### Changed
