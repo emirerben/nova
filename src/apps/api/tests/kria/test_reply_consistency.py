@@ -11,6 +11,7 @@ is replayed end to end by `scripts/kria/check_reply_consistency.py` (all route f
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -445,7 +446,10 @@ def test_q2_run3_hold_is_cut_at_a_line_and_says_how_many_more():
 
 def test_q2_run3_hold_with_the_switch_off_is_the_stored_reply(monkeypatch):
     monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", False)
-    assert _fit_reply(_Q2_REPLIES["hold"]["body"], _HOLD_TAIL) == _Q2_REPLIES["stored_hold_reply"]
+    stored_body = _Q2_REPLIES["stored_hold_reply"].removesuffix(f"\n{_HOLD_TAIL}")
+    # Prod cut the body mid-word ("section star…"); the cut now ends on a whole word (KRI-1408).
+    at_a_word = re.sub(r"\S+$", "", stored_body[:-1]).rstrip().rstrip(",;:-") + "…"
+    assert _fit_reply(_Q2_REPLIES["hold"]["body"], _HOLD_TAIL) == f"{at_a_word}\n{_HOLD_TAIL}"
 
 
 def test_held_rows_that_only_differ_in_their_quoted_text_fold_before_any_is_counted():

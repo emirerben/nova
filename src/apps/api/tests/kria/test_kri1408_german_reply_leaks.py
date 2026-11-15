@@ -129,17 +129,27 @@ def test_an_over_long_reply_is_never_cut_mid_word(german_on: None, repeats: int)
     assert not (word.startswith(last) and last != word), text[-80:]
 
 
+@pytest.mark.parametrize("line_fit", [True, False])
 @pytest.mark.parametrize("extra", range(0, 15))
-def test_a_held_reply_body_is_never_cut_mid_word(extra: int) -> None:
+def test_a_held_reply_body_is_never_cut_mid_word(extra: int, line_fit: bool, monkeypatch) -> None:
     """Case 4 on the hold reply (the chat message in the bug): the receipt lines above the
-    question are shortened on a word boundary."""
+    question are shortened on a word boundary, or (KRI-1485 line fit) a row too long to keep
+    is counted as "…and N more"; never cut inside a word either way."""
+    from app.config import settings
     from app.tasks.kria_runtime import _MAX_TURN_RESPONSE_CHARS, _fit_reply
 
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", line_fit)
     word = "Untertitelzeile"
     tail = "Soll ich eine einfachere Version machen?"
-    body = "- Teilweise: " + " ".join([word] * (_MAX_TURN_RESPONSE_CHARS // 10)) + "x" * extra
-    text = _fit_reply(body, tail)
-    assert len(text) <= _MAX_TURN_RESPONSE_CHARS
-    shortened = text.removesuffix("\n" + tail)
-    assert shortened.endswith("…"), shortened[-60:]
-    assert shortened[:-1].split()[-1] == word, shortened[-60:]
+    for body in (
+        "- Teilweise: " + " ".join([word] * (_MAX_TURN_RESPONSE_CHARS // 10)) + "x" * extra,
+        # Not a "- " row: the line fit keeps it whole, so only its fallback cut can shorten it.
+        "Teilweise: " + " ".join([word] * (_MAX_TURN_RESPONSE_CHARS // 10)) + "x" * extra,
+    ):
+        text = _fit_reply(body, tail)
+        assert len(text) <= _MAX_TURN_RESPONSE_CHARS
+        shortened = text.removesuffix("\n" + tail)
+        if line_fit and body.startswith("- ") and shortened.startswith("- …and "):
+            continue
+        assert shortened.endswith("…"), shortened[-60:]
+        assert shortened[:-1].split()[-1] == word, shortened[-60:]
