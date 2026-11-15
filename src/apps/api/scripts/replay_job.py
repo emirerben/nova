@@ -931,22 +931,29 @@ def run_under_spend_cap(
     """
 
     process = subprocess.Popen(command, cwd=API_ROOT, env=env)
-    while True:
-        try:
-            return process.wait(timeout=poll_s), None
-        except subprocess.TimeoutExpired:
-            pass
-        try:
-            spent = settled_spend_usd(scratch_url)
-        except OperationalError:
-            continue
-        if spent > cap_usd:
-            process.send_signal(signal.SIGINT)
+    try:
+        while True:
             try:
-                return process.wait(timeout=120), spent
+                return process.wait(timeout=poll_s), None
             except subprocess.TimeoutExpired:
-                process.kill()
-                return process.wait(), spent
+                pass
+            try:
+                spent = settled_spend_usd(scratch_url)
+            except OperationalError:
+                continue
+            if spent > cap_usd:
+                process.send_signal(signal.SIGINT)
+                try:
+                    return process.wait(timeout=120), spent
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    return process.wait(), spent
+    except BaseException:
+        # The driver is stopping (SIGTERM, Ctrl-C) and its worker and database go next, so
+        # the replay must not keep sending messages.
+        process.kill()
+        process.wait()
+        raise
 
 
 def mark_spend_cap(result: dict[str, Any], spent: float, cap_usd: float) -> None:
