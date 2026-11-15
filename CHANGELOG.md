@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.248.0] - 2026-11-15
+
+### Fixed
+- fix(kria): German chat replies say whole German sentences (KRI-1408) (#2352) <!-- release-pr: 2352 -->
+
+## [0.88.247.0] - 2026-11-15
+
+### Changed
+- test(evals): re-record creative_direction just_fine fixture live (KRI-1428) (#2367) <!-- release-pr: 2367 -->
+
 ## [0.88.246.0] - 2026-11-15
 
 ### Fixed

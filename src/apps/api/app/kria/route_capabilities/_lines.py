@@ -42,6 +42,28 @@ def _words(value: object) -> str:
     return str(value).replace("_", " ")
 
 
+# German reads these pace / direction / archetype names in German (KRI-1408); English and
+# Turkish keep the English words they always showed.
+_VALUE_NAMES: dict[str, tuple[str, str]] = {
+    "relaxed": ("relaxed", "relaxed"),
+    "balanced": ("balanced", "balanced"),
+    "fast": ("fast", "fast"),
+    "guided_story": ("guided story", "guided story"),
+    "text_explainer": ("text explainer", "text explainer"),
+    "native": ("native", "native"),
+    "fast_montage": ("fast montage", "fast montage"),
+    "day_vlog": ("day vlog", "day vlog"),
+    "single_hero": ("single hero", "single hero"),
+}
+
+
+def _value_name(value: object) -> str:
+    key = str(value)
+    if key in _VALUE_NAMES:
+        return say(en=_VALUE_NAMES[key][0], tr=_VALUE_NAMES[key][1])
+    return _words(value)
+
+
 # --- strategy fields, route-neutral wording ---------------------------------------------------
 
 
@@ -157,7 +179,7 @@ def archetype(value: Any, _s: Mapping[str, Any]) -> str | None:
     return say(
         en="I can't use the {words_value} story archetype on this video yet",
         tr="{words_value} hikâye kalıbını bu videoda henüz kullanamıyorum",
-        words_value=_words(value),
+        words_value=_value_name(value),
     )
 
 
@@ -314,11 +336,12 @@ def stated_length(instead_en: str, instead_tr: str) -> WithAsks:
     ) -> str | None:
         if not length_stated(strategy, requirements):
             return None
+        instead = say(en=instead_en, tr=instead_tr)
         return say(
             en="I can't make this video the length you asked for yet: {instead_en}",
             tr="Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead_tr}",
-            instead_en=instead_en,
-            instead_tr=instead_tr,
+            instead_en=instead,
+            instead_tr=instead,
         )
 
     return WithAsks(build)
@@ -330,12 +353,13 @@ def direction_line(own: str | None, instead_en: str, instead_tr: str) -> Builder
     def build(value: Any, _s: Mapping[str, Any]) -> str | None:
         if not value or value == own:
             return None
+        instead = say(en=instead_en, tr=instead_tr)
         return say(
             en="The {words_value} direction isn't applied on this video yet: {instead_en}",
             tr="{words_value} yönü bu videoda henüz uygulanmıyor: {instead_tr}",
-            words_value=_words(value),
-            instead_en=instead_en,
-            instead_tr=instead_tr,
+            words_value=_value_name(value),
+            instead_en=instead,
+            instead_tr=instead,
         )
 
     return build
@@ -350,12 +374,13 @@ def pacing_line(
     def build(value: Any, strategy: Mapping[str, Any]) -> str | None:
         if not value or applied(value, strategy):
             return None
+        instead = say(en=instead_en, tr=instead_tr)
         return say(
             en="The {words_value} pacing isn't applied on this video yet: {instead_en}",
             tr="{words_value} tempo bu videoda henüz uygulanmıyor: {instead_tr}",
-            words_value=_words(value),
-            instead_en=instead_en,
-            instead_tr=instead_tr,
+            words_value=_value_name(value),
+            instead_en=instead,
+            instead_tr=instead,
         )
 
     return build

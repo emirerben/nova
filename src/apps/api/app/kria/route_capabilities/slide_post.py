@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._lines import direction_line, pacing_line, stated_length
 from app.kria.route_capabilities._types import (
     Applied,
     AskDecline,
@@ -28,14 +29,14 @@ FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
     "pacing": NotApplied(
-        lines.pacing_line(
+        pacing_line(
             lambda _value, _s: False,
             "a slide post shows each slide for its own time",
             "slayt gönderisi her slaytı kendi süresince gösteriyor",
         )
     ),
     "direction": NotApplied(
-        lines.direction_line(
+        direction_line(
             None,
             "a slide post shows your slides in order",
             "slayt gönderisi slaytlarını sırayla gösteriyor",
@@ -44,7 +45,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "caption_style": NotApplied(lines.caption_style),
     "audio_strategy": NotApplied(lines.slide_audio),
     "target_duration_s": NotApplied(
-        lines.stated_length(
+        stated_length(
             "a slide post's length follows its slides",
             "slayt gönderisinin uzunluğu slaytlarına bağlı",
         )

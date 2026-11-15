@@ -23,12 +23,25 @@ _ROLES = {
     "text": ("text", "yazı", "Yazı"),
     "pin": ("pinned text", "sabit yazı", "Sabit yazı"),
 }
-# (English, Turkish "to the ...")
-_ANCHORS = {
-    "top": ("top", "üste"),
-    "middle": ("middle", "ortaya"),
-    "center": ("middle", "ortaya"),
-    "bottom": ("bottom", "alta"),
+# The optional "move it" fix, one whole sentence per anchor: German can't take an English
+# anchor word mid-sentence (KRI-1362).
+_MOVE_TO_ANCHOR = {
+    "top": (
+        "Optional: move the {word} to the top so it's easier to read.",
+        "İstersen {word} daha kolay okunsun diye üste taşınabilir.",
+    ),
+    "middle": (
+        "Optional: move the {word} to the middle so it's easier to read.",
+        "İstersen {word} daha kolay okunsun diye ortaya taşınabilir.",
+    ),
+    "center": (
+        "Optional: move the {word} to the middle so it's easier to read.",
+        "İstersen {word} daha kolay okunsun diye ortaya taşınabilir.",
+    ),
+    "bottom": (
+        "Optional: move the {word} to the bottom so it's easier to read.",
+        "İstersen {word} daha kolay okunsun diye alta taşınabilir.",
+    ),
 }
 
 
@@ -139,14 +152,10 @@ def fix_optional(kind: str, role: str, target: Mapping[str, Any] | None = None) 
             word=word,
         )
     if kind == "move_text_to_safe_anchor":
-        en_anchor, tr_anchor = _ANCHORS.get(str((target or {}).get("anchor")), _ANCHORS["top"])
-        return say(
-            en="Optional: move the {word} to the {en_anchor} so it's easier to read.",
-            tr="İstersen {word} daha kolay okunsun diye {tr_anchor} taşınabilir.",
-            word=word,
-            en_anchor=en_anchor,
-            tr_anchor=tr_anchor,
-        )
+        anchor = str((target or {}).get("anchor"))
+        if anchor not in _MOVE_TO_ANCHOR:
+            anchor = "top"
+        return say(en=_MOVE_TO_ANCHOR[anchor][0], tr=_MOVE_TO_ANCHOR[anchor][1], word=word)
     return None
 
 
