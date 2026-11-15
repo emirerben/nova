@@ -1561,6 +1561,7 @@
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/reply_consistency.py",
         "src/apps/api/tests/fixtures/kria_reply_consistency/",
+        "src/apps/api/tests/fixtures/kri1485_q2_run3_replies.json",
         "src/apps/api/tests/kria/test_reply_consistency.py",
         "src/apps/api/app/kria/caption_look_ask.py",
         "src/apps/api/tests/fixtures/green3_9bad2d75_caption_look_no_music.json",

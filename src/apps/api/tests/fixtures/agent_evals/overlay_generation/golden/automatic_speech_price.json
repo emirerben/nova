@@ -1,0 +1,184 @@
+{
+  "agent": "nova.editor.overlay_generation",
+  "prompt_version": "2026-11-02.4",
+  "prompt_sha": "4df27fb28d4a4f33",
+  "input": {
+    "language": "en",
+    "mode": "automatic",
+    "prompt": "",
+    "taste_notes": "",
+    "duration_s": 20.0,
+    "evidence": [
+      {
+        "kind": "speech",
+        "reference_id": "speech-0",
+        "quote": "okay so this little espresso machine costs forty nine dollars",
+        "start_s": 2.0,
+        "end_s": 5.95,
+        "words": [
+          {
+            "quote": "okay",
+            "start_s": 2.0,
+            "end_s": 2.35
+          },
+          {
+            "quote": "so",
+            "start_s": 2.4,
+            "end_s": 2.75
+          },
+          {
+            "quote": "this",
+            "start_s": 2.8,
+            "end_s": 3.15
+          },
+          {
+            "quote": "little",
+            "start_s": 3.2,
+            "end_s": 3.55
+          },
+          {
+            "quote": "espresso",
+            "start_s": 3.6,
+            "end_s": 3.95
+          },
+          {
+            "quote": "machine",
+            "start_s": 4.0,
+            "end_s": 4.35
+          },
+          {
+            "quote": "costs",
+            "start_s": 4.4,
+            "end_s": 4.75
+          },
+          {
+            "quote": "forty",
+            "start_s": 4.8,
+            "end_s": 5.15
+          },
+          {
+            "quote": "nine",
+            "start_s": 5.2,
+            "end_s": 5.55
+          },
+          {
+            "quote": "dollars",
+            "start_s": 5.6,
+            "end_s": 5.95
+          }
+        ]
+      },
+      {
+        "kind": "speech",
+        "reference_id": "speech-1",
+        "quote": "and honestly it makes better coffee than the cafe",
+        "start_s": 9.0,
+        "end_s": 12.55,
+        "words": [
+          {
+            "quote": "and",
+            "start_s": 9.0,
+            "end_s": 9.35
+          },
+          {
+            "quote": "honestly",
+            "start_s": 9.4,
+            "end_s": 9.75
+          },
+          {
+            "quote": "it",
+            "start_s": 9.8,
+            "end_s": 10.15
+          },
+          {
+            "quote": "makes",
+            "start_s": 10.2,
+            "end_s": 10.55
+          },
+          {
+            "quote": "better",
+            "start_s": 10.6,
+            "end_s": 10.95
+          },
+          {
+            "quote": "coffee",
+            "start_s": 11.0,
+            "end_s": 11.35
+          },
+          {
+            "quote": "than",
+            "start_s": 11.4,
+            "end_s": 11.75
+          },
+          {
+            "quote": "the",
+            "start_s": 11.8,
+            "end_s": 12.15
+          },
+          {
+            "quote": "cafe",
+            "start_s": 12.2,
+            "end_s": 12.55
+          }
+        ]
+      }
+    ],
+    "assets": [],
+    "existing_overlays": [],
+    "insertion_base": null
+  },
+  "raw_text": "{\n  \"overlays\": [\n    {\n      \"kind\": \"text\",\n      \"title\": \"Price Highlight\",\n      \"text\": \"$49\",\n      \"start_s\": 4.8,\n      \"end_s\": 7.0,\n      \"x_frac\": 0.5,\n      \"y_frac\": 0.3,\n      \"scale\": 0.35,\n      \"reason\": \"Highlights the stated price of the espresso machine.\",\n      \"evidence\": [\n        {\n          \"kind\": \"speech\",\n          \"reference_id\": \"speech-0\",\n          \"quote\": \"forty nine dollars\"\n        }\n      ]\n    },\n    {\n      \"kind\": \"image\",\n      \"title\": \"Better Coffee Icon\",\n      \"prompt\": \"Minimalist icon representing 'better coffee', like a steaming coffee cup with a star or checkmark, transparent background.\",\n      \"start_s\": 10.6,\n      \"end_s\": 12.8,\n      \"x_frac\": 0.5,\n      \"y_frac\": 0.3,\n      \"scale\": 0.35,\n      \"reason\": \"Visually emphasizes the claim of making better coffee.\",\n      \"evidence\": [\n        {\n          \"kind\": \"speech\",\n          \"reference_id\": \"speech-1\",\n          \"quote\": \"better coffee\"\n        }\n      ],\n      \"depicts\": \"generic_subject\"\n    }\n  ],\n  \"message\": \"\"\n}",
+  "output": {
+    "overlays": [
+      {
+        "kind": "text",
+        "title": "Price Highlight",
+        "prompt": "",
+        "text": "$49",
+        "asset_id": null,
+        "start_s": 4.8,
+        "end_s": 7.0,
+        "x_frac": 0.5,
+        "y_frac": 0.3,
+        "scale": 0.35,
+        "reason": "Highlights the stated price of the espresso machine.",
+        "evidence": [
+          {
+            "kind": "speech",
+            "reference_id": "speech-0",
+            "quote": "forty nine dollars"
+          }
+        ],
+        "depicts": null
+      },
+      {
+        "kind": "image",
+        "title": "Better Coffee Icon",
+        "prompt": "Minimalist icon representing 'better coffee', like a steaming coffee cup with a star or checkmark, transparent background.",
+        "text": "",
+        "asset_id": null,
+        "start_s": 10.6,
+        "end_s": 12.8,
+        "x_frac": 0.5,
+        "y_frac": 0.3,
+        "scale": 0.35,
+        "reason": "Visually emphasizes the claim of making better coffee.",
+        "evidence": [
+          {
+            "kind": "speech",
+            "reference_id": "speech-1",
+            "quote": "better coffee"
+          }
+        ],
+        "depicts": "generic_subject"
+      }
+    ],
+    "message": ""
+  },
+  "meta": {
+    "source": "provider_smoke_capture",
+    "expect_overlays": "some",
+    "kri": "KRI-1428",
+    "test_run_id": "kri1428-overlay-generation-20261115e"
+  }
+}

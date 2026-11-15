@@ -1,0 +1,19 @@
+{
+  "nova.audio.lyric_style_selector": "0 prod calls; unit-tested; runs only when lyrics are on and no style set is chosen.",
+  "nova.compose.agentic_style_selector": "0 prod calls; unit-tested; runs only for agentic templates.",
+  "nova.compose.narration_focus": "0 prod calls; unit-tested; guided-narration path only.",
+  "nova.compose.talking_insert_sentence": "1 prod call; unit-tested; runs only when a creator asks for inserts.",
+  "nova.compose.text_alignment": "0 prod calls; unit-tested; Layer-2 overlay stage.",
+  "nova.compose.text_classification": "0 prod calls; unit-tested; Layer-2 overlay stage.",
+  "nova.ingest.image_metadata": "0 prod calls and no test at all; add an eval before the media-library image path is relied on.",
+  "nova.plan.detect_plan_relevance": "0 prod calls and no test; web workspace only. Candidate for deletion with its route.",
+  "nova.plan.interviewer": "0 prod calls; no web or iOS caller of /personas/chat; unit-tested. Delete with its routes.",
+  "nova.plan.montage_reviewer": "0 prod calls; only the legacy fast_montage proposal path; unit-tested.",
+  "nova.plan.plan_item_advisor": "0 prod calls; no client calls /plan-items/{id}/agent/turn. Delete with its route.",
+  "nova.plan.shot_list_writer": "0 prod calls; no client calls /generate-guide. Delete with its route.",
+  "nova.research.caption_binding": "8 prod calls; weekly research agent, checked by claim_review in the pipeline; prompt pinned by test_prompt_fingerprint.",
+  "nova.research.claim_review": "4 prod calls; reviewer inside the weekly research pipeline; prompt pinned by test_prompt_fingerprint.",
+  "nova.research.public_facts": "6 prod calls; weekly research agent, checked by claim_review; prompt pinned by test_prompt_fingerprint.",
+  "nova.research.text_layers": "0 prod calls; weekly research agent; prompt pinned by test_prompt_fingerprint.",
+  "nova.video.source_moment_location": "0 prod calls; gated by kria_prompt_moment_inspection_enabled and clip_intents_enabled (default off)."
+}

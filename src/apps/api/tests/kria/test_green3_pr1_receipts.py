@@ -793,3 +793,151 @@ def test_v13_a_voice_only_row_on_a_montage_keeps_todays_music_fallback(monkeypat
     _voice_switch(monkeypatch, True)
     assert not asks_no_music(brief)
     assert asks_no_music(CreativeBrief(version=1, requirements=[R7_RUN3, R4]))  # typed no_music
+
+
+# ------------------------- KRI-1472, Q2 run 3: "Only my voice" restated with no typed fact
+#
+# Prod 2026-11-15 (thread F04383A7, job 77c63496): "Only my voice." was filed as r13 "Only my
+# voice: no music." (typed `no_music`, met) and r14 "Only my voice: keep the speaker audible
+# and mute the screen recordings." with NO fact at all. r14 held the draft ("A Talking video
+# can't do this") and was listed as left out, although the recordings behind a speaker never
+# play sound. The reading is structural only: an untyped whole-video audio row from the SAME
+# turn that shares its lead clause (the words before the first colon) with a sibling carrying
+# the typed no-music / voice-only fact is that sibling's ask, on a Talking edit.
+#
+# Ways it can go wrong, written before the code:
+#  W1 the Q2 pair still holds;          W2 a typed `voice_only` sibling is not accepted;
+#  W3 a lone untyped audio row, one from another turn, one with another lead clause, with no
+#     colon, with a fact of its own, scoped to a clip, or "make my voice louder" is waved
+#     through;                          W4 music in the plan is called done;
+#  W5 the switch off is not today's refusal;        W6 a montage's answers change;
+#  W7 it reads English words (a Turkish pair must work the same).
+
+Q2_TURN = "9bb944c3-4564-4a89-b5b2-a62ebdcf3cc7"
+OTHER_TURN = "089730e8-90b5-46ee-8fba-1825c77202cf"
+
+
+def _audio(rid, description, facts=None, *, turn=Q2_TURN, scope="global"):
+    return BriefRequirement(
+        id=rid,
+        kind="audio",
+        scope=scope,
+        description=description,
+        facts=facts or {},
+        source_turn_id=turn,
+    )
+
+
+R13_Q2 = _audio("r13", "Only my voice: no music.", {"audio_intent": "no_music"})
+R14_Q2 = _audio("r14", "Only my voice: keep the speaker audible and mute the screen recordings.")
+
+
+def _pair(sibling, row, facts=None):
+    receipts = build_receipts(
+        [sibling, row], facts or _draft_facts(_manifest()), include_unchecked=True
+    )
+    return {r.requirement_id: r for r in receipts}[row.id]
+
+
+def test_w1_q2_the_restated_only_my_voice_row_is_done_with_its_typed_sibling(monkeypatch):
+    _voice_switch(monkeypatch, True)
+    receipt = _pair(R13_Q2, R14_Q2)
+    assert (receipt.status, receipt.verification, receipt.reason) == (
+        "met",
+        "checked",
+        "No music, as asked.",
+    )
+
+
+def test_w2_a_typed_voice_only_sibling_counts_too(monkeypatch):
+    _voice_switch(monkeypatch, True)
+    sibling = _audio("r13", "Only my voice: nothing but me.", {"voice_only": True})
+    assert _pair(sibling, R14_Q2).status == "met"
+
+
+@pytest.mark.parametrize(
+    ("sibling", "row"),
+    [
+        (_r("x", "style", "Captions on.", {"captions": "on"}), R14_Q2),
+        (R13_Q2, _audio("r14", R14_Q2.description, turn=OTHER_TURN)),
+        (R13_Q2, _audio("r14", R14_Q2.description, turn=None)),
+        (R13_Q2, _audio("r14", "Sound: mute the screen recordings.")),
+        (R13_Q2, _audio("r14", "Only my voice, and mute the screen recordings.")),
+        (_audio("r13", "Only my voice, no music.", {"audio_intent": "no_music"}), R14_Q2),
+        (R13_Q2, _audio("r14", "Make my voice louder.")),
+        (R13_Q2, _audio("r14", "Only my voice: make it louder.", {"voice_gain_db": 6})),
+        (R13_Q2, _audio("r14", R14_Q2.description, scope=f"clip:{TAKE}")),
+        (_audio("r13", "Only my voice: the same.", {}), R14_Q2),
+    ],
+    ids=[
+        "lone",
+        "another-turn",
+        "no-turn",
+        "another-clause",
+        "no-colon",
+        "sibling-no-colon",
+        "louder",
+        "own-fact",
+        "one-clip",
+        "untyped-sibling",
+    ],
+)
+def test_w3_every_other_untyped_sound_ask_keeps_todays_refusal(monkeypatch, sibling, row):
+    _voice_switch(monkeypatch, True)
+    receipt = _pair(sibling, row)
+    assert (receipt.status, receipt.reason) == ("not_possible", TALKING_CANT)
+
+
+@pytest.mark.parametrize("audio", ["licensed_music", "user_song"])
+def test_w4_music_in_the_plan_is_said_never_done(monkeypatch, audio):
+    _voice_switch(monkeypatch, True)
+    receipt = _pair(R13_Q2, R14_Q2, _draft_facts(_manifest(), audio_strategy=audio))
+    assert (receipt.status, receipt.reason) == ("partial", "This video has music.")
+
+
+def test_w5_switch_off_is_todays_refusal(monkeypatch):
+    _voice_switch(monkeypatch, False)
+    receipt = _pair(R13_Q2, R14_Q2)
+    assert (receipt.status, receipt.reason) == ("not_possible", TALKING_CANT)
+
+
+def test_w6_a_montage_answers_the_pair_as_before(monkeypatch):
+    facts = dataclasses.replace(
+        _draft_facts(_manifest(edit_format="montage"), edit_format="montage"), phone_talking=False
+    )
+    _voice_switch(monkeypatch, True)
+    on = _pair(R13_Q2, R14_Q2, facts)
+    _voice_switch(monkeypatch, False)
+    assert on == _pair(R13_Q2, R14_Q2, facts) and on.status != "met"
+
+
+def test_w7_no_words_are_read_a_turkish_pair_works_the_same(monkeypatch):
+    _voice_switch(monkeypatch, True)
+    sibling = _audio("r13", "Sadece sesim: müzik olmasın.", {"audio_intent": "no_music"})
+    row = _audio("r14", "Sadece sesim: ekran kayıtlarının sesi kapalı olsun.")
+    assert _pair(sibling, row).status == "met"
+
+
+# KRI-1472 review: a row that shares the lead clause but asks for ANOTHER sound action is not
+# a restatement ("Music: no music." + "Music: add a whoosh on each cut." -> the whoosh is not
+# "Done"). The structure (same turn, same lead clause, no facts) is necessary, not enough: the
+# row must also not be read as a sound action by the brief's existing sound readers.
+@pytest.mark.parametrize(
+    ("sibling", "row"),
+    [
+        (
+            _audio("r13", "Music: no music.", {"audio_intent": "no_music"}),
+            _audio("r14", "Music: add a whoosh on each cut."),
+        ),
+        (
+            _audio("r13", "Voice: no music.", {"audio_intent": "no_music"}),
+            _audio("r14", "Voice: louder."),
+        ),
+    ],
+    ids=["whoosh", "louder"],
+)
+def test_w8_another_sound_action_under_the_same_lead_clause_is_not_done(monkeypatch, sibling, row):
+    _voice_switch(monkeypatch, True)
+    receipt = _pair(sibling, row)
+    assert receipt.status != "met", receipt
+    assert receipt.reason != "No music, as asked."

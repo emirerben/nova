@@ -32,6 +32,7 @@ from app.kria.brief_checks import (
     plan_facts_from_strategy,
     speaker_background_waits_for_render,
     talking_caption_promise,
+    unsaid_cue_reason,
     with_planned_cuts,
 )
 from app.kria.contracts import RequirementReceipt
@@ -172,6 +173,9 @@ def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, fact
         or reason == _pinned_promise(req, facts)
         or reason == talking_caption_promise(req, facts)
         or speaker_background_waits_for_render(req, facts)
+        # KRI-1486: a visual asked for words the take never says. Nothing is shown and the
+        # reply says so; there is no choice to hold the draft for.
+        or reason == unsaid_cue_reason(req, facts)
     )
 
 

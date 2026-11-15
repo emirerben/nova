@@ -614,3 +614,48 @@ def test_18_an_item_said_as_the_ending_comes_in_is_named_as_not_shown(monkeypatc
     # An item she starts a second before the ending is shown for that second.
     rows, _receipt, _samples = _run3_label_rows(monkeypatch, example=True, duration_s=40.32)
     assert (rows[-1]["start_s"], rows[-1]["end_s"]) == (39.32, 40.32)
+
+
+# ------------------------------------------------------------------ KRI-1480 / KRI-1481
+#
+# The same five labels with no recording to follow (her Q1 layout), filed with their own name
+# as the trigger: on run 3's words each must start on her counted item ("Number four, the
+# Agents Marketplace"), never on "Trading Agents" (23.08 s) or "AI agents" (26.04 s), and the
+# fifth although she is heard as "Cloud Code Game Studios".
+
+Q2_LABEL_REQS = [
+    BriefRequirement(
+        id=f"r{n}",
+        kind="text",
+        scope="global",
+        description="Show this label as text on screen when I start talking about that repo.",
+        literal=f"{n - 4}. {name}",
+        facts={"triggers": [name]},
+    )
+    for n, name in enumerate(
+        ["Spec-kit", "Impeccable", "TradingAgents", "Agents", "Claude code game studio"], 5
+    )
+]
+
+
+def test_19_triggered_labels_with_no_recording_start_on_her_counted_items(monkeypatch):
+    _job, variant = _run3(monkeypatch, example=True, requirements=tuple(Q2_LABEL_REQS))
+
+    rows = _label_rows(variant)
+    assert [_squash(r["text"]) for r in rows] == [req.literal for req in Q2_LABEL_REQS]
+    for row, said in zip(rows, RUN3_SAID_AT, strict=True):
+        assert abs(row["start_s"] - said) <= 0.3, (row["text"], row["start_s"], said)
+    for row, nxt in zip(rows, rows[1:], strict=False):
+        assert row["end_s"] <= nxt["start_s"] + 1e-6, "two labels at once"
+    assert not [r for r in variant["text_elements"] if r["id"].startswith("spoken-text-")]
+    assert [_after(variant, req).status for req in Q2_LABEL_REQS] == ["met"] * 5
+
+
+def test_20_triggered_labels_switch_off_are_todays_spoken_texts(monkeypatch):
+    _job, variant = _run3(monkeypatch, example=False, requirements=tuple(Q2_LABEL_REQS))
+
+    spoken = {r["text"]: r for r in variant["text_elements"] if r["id"].startswith("spoken-text-")}
+    assert not _label_rows(variant)
+    assert spoken["4. Agents"]["start_s"] == pytest.approx(23.08, abs=0.05)  # "Trading Agents"
+    assert "5. Claude code game studio" not in spoken
+    assert _after(variant, Q2_LABEL_REQS[4]).status == "partial"

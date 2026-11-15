@@ -141,7 +141,8 @@ def test_asks_are_live_global_texts_in_brief_order_without_a_spoken_trigger():
         _req("b", "2. Impeccable", status="superseded"),
         BriefRequirement(id="c", kind="text", scope="clip:1", literal="3. Nope"),
         _req("d", ""),
-        _req("e", "4. Agents", facts={KEY: "agents"}),
+        # A text shown on ANOTHER word (KRI-1480: a label named by its own trigger is listed).
+        _req("e", "4. Agents", facts={KEY: "github"}),
         _req("f", "comment REPO"),
     ]
     asks = list_label_asks(reqs)
@@ -1541,3 +1542,324 @@ def test_m3_talk_that_only_uses_the_opener_word_is_still_not_an_item(monkeypatch
     rows, receipt = _q1_rows(_spoken(*talk))
     assert _texts(rows) == ["1. Spec-kit", "2. Impeccable", "3. Trading Agents"]
     assert receipt["rows"][0]["list_found"] == 3
+
+
+# --- KRI-1480 / KRI-1481: numbered labels filed with their own name as the spoken trigger ---
+#
+# Q2 run 3 (prod 2026-11-15, job 77c63496): after the hold the brief filed each label with
+# `triggers` naming its own repo (["Agents"], ["Claude code game studio"]). Rows with a trigger
+# are the spoken-text lane's, which shows a text at the FIRST hearing of the word: "4. Agents"
+# came up inside "Trading Agents" (7 s early, pushed under her face by label 3) and "5. Claude
+# code game studio" never did (she is heard as "Cloud Code Game Studios").
+#
+# Ways the fix can go wrong, written before the code:
+#  N1 a numbered label whose trigger is its own name is still not a list label;
+#  N2 a numbered text with another word as trigger, a plain text with its own name, or a row
+#     the creator pinned (a speaker, an occurrence, a hold) leaves the spoken-text lane;
+#  N3 the switch off is not today's read;
+#  N4 with no recording to follow, label k is still put on the first hearing of its word
+#     ("agents" in "Trading Agents" / "AI agents") instead of the k-th counted item;
+#  N5 a misheard name ("Claude" / "Cloud", "studio" / "studios") still loses its label;
+#  N6 her typed label is replaced by the transcript's words;
+#  N7 a list that is not numbered 1..N in order, or longer than what she counts, is anchored
+#     on the wrong item;       N8 a label a recording names stops following the recording.
+
+Q2_LABELS = ["1. Spec-kit", "2. Impeccable", "3. TradingAgents", "4. Agents"]
+Q2_LABELS.append("5. Claude code game studio")
+Q2_NAMES = ["Spec-kit", "Impeccable", "TradingAgents", "Agents", "Claude code game studio"]
+
+
+def _triggered(rid, literal, trigger, **facts):
+    return _req(rid, literal, facts={KEY: [trigger], **facts})
+
+
+def test_n1_a_numbered_label_named_by_its_own_trigger_is_a_list_label(monkeypatch):
+    _example_switch(monkeypatch, True)
+    reqs = [
+        _triggered(f"r{n}", label, name)
+        for n, (label, name) in enumerate(zip(Q2_LABELS, Q2_NAMES, strict=True), 5)
+    ]
+    assert _ask_texts(*reqs) == Q2_LABELS
+    assert all(pl.is_list_label_candidate(req, ()) for req in reqs)
+    # However the name is spelled: one word, spaced, another case, a plural.
+    for trigger in ("SpecKit", "Spec Kit", "spec-kit", "the Spec kit"):
+        assert _ask_texts(_triggered("a", "1. Spec-kit", trigger)) == ["1. Spec-kit"], trigger
+    assert _ask_texts(_triggered("a", "4. Agents", "agent")) == ["4. Agents"]
+
+
+@pytest.mark.parametrize(
+    "req",
+    [
+        _triggered("a", "1. Spec-kit", "GitHub"),
+        _triggered("b", "4. Agents", "Trading Agents"),
+        _triggered("c", "ATAKAN", "Atakan"),
+        _triggered("d", "1. Spec-kit", "Spec-kit", speaker="she"),
+        _triggered("e", "1. Spec-kit", "Spec-kit", occurrence=2),
+        _triggered("f", "1. Spec-kit", "Spec-kit", hold_s=1.0),
+    ],
+    ids=["other-word", "longer-name", "not-numbered", "speaker", "occurrence", "hold"],
+)
+def test_n2_every_other_spoken_text_stays_the_spoken_text_lanes(monkeypatch, req):
+    _example_switch(monkeypatch, True)
+    assert list_label_asks([req]) == ()
+
+
+def test_n3_switch_off_leaves_a_triggered_label_to_the_spoken_text_lane(monkeypatch):
+    _example_switch(monkeypatch, False)
+    assert list_label_asks([_triggered("r8", "4. Agents", "Agents")]) == ()
+
+
+def _q2_rows(labels=Q2_LABELS, words=Q1_RUN3_WORDS, anchors=()):
+    return _rows(_asks(labels), list(anchors), words=words, duration=49.0)
+
+
+def test_n4_n5_n6_each_label_starts_on_its_own_counted_item(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows, receipt = _q2_rows()
+
+    assert _texts(rows) == Q2_LABELS  # her words, never the transcript's
+    # "Number four, the Agents Marketplace" is at 31.06 s: not "Trading Agents" (23.08) and
+    # not "AI agents" (26.04); "Cloud Code Game Studios" (39.32) is her fifth item.
+    assert [r["start_s"] for r in rows] == pytest.approx([8.48, 15.32, 22.82, 31.06, 39.32])
+    assert _status(receipt) == {f"r{n}": "placed" for n in range(1, 6)}
+    assert [r["basis"] for r in receipt["rows"]] == ["words", *["counted_list"] * 4]
+    for row, nxt in zip(rows, rows[1:], strict=False):
+        assert row["end_s"] <= nxt["start_s"] + 1e-6, "two labels at once"
+    assert all(r["end_s"] - r["start_s"] == pytest.approx(HOLD_S) for r in rows)
+
+
+def test_n4_switch_off_is_todays_first_hearing(monkeypatch):
+    _example_switch(monkeypatch, False)
+    rows, receipt = _q2_rows()
+    assert [r["basis"] for r in receipt["rows"]] == ["words"] * 5
+    fourth = next(r for r in rows if r["text"] == "4. Agents")
+    assert fourth["start_s"] == pytest.approx(26.04)  # "AI agents", not her fourth item
+
+
+def test_n7_a_list_not_numbered_in_order_keeps_its_own_words(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows, receipt = _q2_rows(["1. Spec-kit", "3. TradingAgents", "4. Agents"])
+    assert [r["basis"] for r in receipt["rows"]] == ["words"] * 3
+    # More labels than she counts: the extra one is not put on someone else's item.
+    six = [*Q2_LABELS, "6. Ghost repo"]
+    rows, receipt = _q2_rows(six)
+    assert _texts(rows) == Q2_LABELS and _status(receipt)["r6"] == "not_heard"
+
+
+def test_n8_a_label_a_recording_names_still_follows_the_recording(monkeypatch):
+    _example_switch(monkeypatch, True)
+    anchors = [
+        LabelAnchor(
+            index=0, spoken_phrase="the agents marketplace", anchor_s=30.0, window_start_s=30.0
+        )
+    ]
+    rows, receipt = _q2_rows(anchors=anchors)
+    fourth = next(r for r in receipt["rows"] if r["text"] == "4. Agents")
+    assert (fourth["basis"], fourth["start_s"]) == ("background", 30.0)
+    assert [r["basis"] for r in receipt["rows"]] == [
+        "words",
+        "counted_list",
+        "counted_list",
+        "background",
+        "counted_list",
+    ]
+
+
+def test_the_fallback_spot_order_is_one_constant(monkeypatch):
+    """Where a label goes when it cannot stay at her spot is `LABEL_FALLBACK_SPOTS`, in order:
+    today the placer's own rows first (y 0.5 over a full-screen recording), then the top band.
+    Swapping the two is the whole change if her spot over a recording is decided otherwise."""
+    _example_switch(monkeypatch, True)
+
+    def place(row, avoid):
+        if row["y_frac"] == LABEL_Y_FRAC:  # her spot is taken: the placer's ladder moves it
+            return {**row, "y_frac": 0.5}, {"status": "moved", "text_overlap": False}
+        return dict(row), {"status": "preset", "text_overlap": False}
+
+    def avoid_for(window, rows):
+        return [CARD_BAND]
+
+    [row], _receipt = _one_label(place, avoid_for)
+    assert pl.LABEL_FALLBACK_SPOTS == ("ladder", "top") and row["y_frac"] == 0.5
+    monkeypatch.setattr(pl, "LABEL_FALLBACK_SPOTS", ("top", "ladder"))
+    [row], receipt = _one_label(place, avoid_for)
+    assert 0.08 <= row["y_frac"] <= 0.16 and receipt["placement"]["status"] == "moved"
+
+
+# --- KRI-1484: a label over the recordings behind her: the top band and a dark plate --------
+#
+# Measured on her Q2 run 3 export: zoomed README pages leave no calm spot (text in every band
+# from y 0.05 to 0.60, pages scroll). Over a recording a label goes to the top band (y 0.15)
+# first, and with LIST_LABEL_PLATE_ENABLED an opaque dark plate (#141414) sits behind its
+# cream letters; only that made all five readable in the mocks. Ways it can go wrong:
+#  B1 a label over a recording keeps her 0.86 spot (her chin in the corner layout) or 0.5;
+#  B2 a label whose time is not all over a recording (she is still full screen) gets the
+#     plate or the move;      B3 no plate asked = byte-identical rows;
+#  B4 the plate changes the letters' colour or outline;
+#  B5 the move survives KRI-1471's switch off;  B6 a two-line label's plate covers one line;
+#  B7 the top spot is taken (a card, a face): the placer's own avoidance still decides.
+
+PLATE = "#141414"
+BACKDROP = (8.0, 48.8)  # the recordings behind her, after a full-screen opening
+
+
+def _over(window):
+    return BACKDROP[0] <= window[0] and window[1] <= BACKDROP[1]
+
+
+def _backdrop_rows(
+    *, plate=PLATE, over=_over, at=10.0, text="1. Spec-kit", phrase="spec kit", place=_place, **kw
+):
+    return list_label_rows(
+        _asks([text]),
+        anchors=_anchors([at], phrases=[phrase]),
+        words=[],
+        timeline_duration_s=48.8,
+        canvas=_CANVAS,
+        place=place,
+        avoid_for=_avoid,
+        **({"over_backdrop": over} if over is not None else {}),
+        **({"backdrop_plate": plate} if plate is not None else {}),
+        **kw,
+    )
+
+
+def test_b1_b4_a_label_over_the_recordings_goes_to_the_top_band_on_a_dark_plate(monkeypatch):
+    _example_switch(monkeypatch, True)
+    [row], receipt = _backdrop_rows()
+    plain, _ = _rows(_asks(["1. Spec-kit"]), _anchors([10.0], phrases=["spec kit"]))
+
+    assert row["y_frac"] == pl.LABEL_BACKDROP_Y_FRAC == 0.15
+    assert row["background_color"] == PLATE
+    for key in ("color", "stroke_color", "stroke_width", "font_family", "size_px", "text"):
+        assert row[key] == plain[0][key], key
+    assert receipt["rows"][0]["plate"] is True
+
+
+def test_b2_a_label_still_over_her_full_screen_take_keeps_todays_spot_and_look(monkeypatch):
+    _example_switch(monkeypatch, True)
+    [row], receipt = _backdrop_rows(at=6.5)  # 6.5-9.5 s: she is full screen until 8.0 s
+    assert row["y_frac"] == LABEL_Y_FRAC and "background_color" not in row
+    assert "plate" not in receipt["rows"][0]
+
+
+def test_b3_no_plate_and_no_backdrop_are_todays_rows_byte_for_byte(monkeypatch):
+    _example_switch(monkeypatch, True)
+    today = _rows(_asks(["1. Spec-kit"]), _anchors([10.0], phrases=["spec kit"]))
+    assert _backdrop_rows(plate=None, over=None) == today
+    moved, _ = _backdrop_rows(plate=None)
+    assert "background_color" not in moved[0] and moved[0]["y_frac"] == 0.15
+
+
+def test_b5_switch_off_keeps_her_spot_over_the_recordings(monkeypatch):
+    _example_switch(monkeypatch, False)
+    [row], _ = _backdrop_rows(plate=None)
+    assert row["y_frac"] == LABEL_Y_FRAC
+
+
+def test_b6_a_two_line_labels_plate_covers_both_lines(monkeypatch):
+    from app.pipeline.phone_subtitled_plan import _compile_text_lane
+    from app.pipeline.phone_subtitled_title import _measure_title_box
+
+    _example_switch(monkeypatch, True)
+    long = "5. Claude code game studio and every agent it ships"
+    [row], _ = _backdrop_rows(text=long, phrase="claude code game studio and every agent")
+    ink = _measure_title_box(row, canvas=_CANVAS)
+    assert ink.bottom - ink.top > 0.07, "the fixture must wrap onto two lines"
+    [layer] = _compile_text_lane([row], user_edited=True, timeline_duration_s=48.8)
+    plate = layer.background
+    assert plate is not None and (plate.color.red, plate.color.alpha) == (0x14 / 255, 1)
+    assert (
+        plate.top / 1920 <= ink.top + 1e-3
+        and (plate.top + plate.height) / 1920 >= ink.bottom - 1e-3
+    )
+
+
+def test_b7_the_top_spot_still_goes_through_the_placer(monkeypatch):
+    _example_switch(monkeypatch, True)
+    asked = []
+
+    def place(row, avoid):
+        asked.append(row["y_frac"])
+        return _place(row, avoid)
+
+    _backdrop_rows(place=place)
+    assert asked[0] == 0.15
+
+
+def test_b8_an_editor_save_keeps_the_plate_on_the_server(monkeypatch):
+    """The phone editor keeps a row's raw keys and draws `background_color` itself
+    (`NativeEditorRenderCompiler.authoredStyle`); a saved row goes back through `TextElement`
+    and the text lane, which keep and draw the plate."""
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.phone_subtitled_plan import _compile_text_lane
+
+    _example_switch(monkeypatch, True)
+    [row], _ = _backdrop_rows()
+    saved = TextElement.model_validate({**row, "text": row["text"]}).model_dump(
+        mode="json", exclude_none=True
+    )
+    assert saved["background_color"] == PLATE
+    [layer] = _compile_text_lane([saved], user_edited=True, timeline_duration_s=48.8)
+    assert layer.background is not None
+
+
+# --- KRI-1480 review: a label named by its own trigger is never lost ----------------------
+#
+# Taken from the spoken-text lane, such a label used to show at the first hearing of its word.
+# If the list lane cannot time it (she says the items out of the typed order, so its words
+# come before the label before it), it must still show at that word, never nowhere; and never
+# inside another placed label's item. Ways it can go wrong: L1 the row is drawn nowhere;
+# L2 it lands inside another label's part; L3 the receipt claims the item instead of the word;
+# L4 a row with no trigger (item 19's own) changes.
+
+
+def _triggered_asks(*pairs):
+    return list_label_asks(
+        [_triggered(f"r{n}", label, trigger) for n, (label, trigger) in enumerate(pairs, 1)]
+    )
+
+
+def test_l1_l3_a_label_the_list_lane_cannot_time_shows_at_its_word(monkeypatch):
+    _example_switch(monkeypatch, True)
+    words = _talk("impeccable gives your agent taste", "then spec kit writes the spec first")
+    asks = _triggered_asks(("1. Spec-kit", "Spec-kit"), ("2. Impeccable", "Impeccable"))
+    rows, receipt = _rows(asks, [], words=words, duration=30.0)
+
+    by_text = {r["text"]: r for r in rows}
+    assert set(by_text) == {"1. Spec-kit", "2. Impeccable"}
+    assert by_text["2. Impeccable"]["start_s"] == pytest.approx(words[0]["start_s"])
+    second = next(r for r in receipt["rows"] if r["requirement_id"] == "r2")
+    assert (second["status"], second["basis"], second["trigger"]) == (
+        "placed",
+        "spoken_word",
+        "Impeccable",
+    )
+
+
+def test_l2_the_fallback_word_is_never_inside_another_label_on_screen(monkeypatch):
+    _example_switch(monkeypatch, True)
+    # "agents" alone before her list, then inside "trading agents" while label 3 is up; the
+    # typed list skips 2, so it is not counted and label 4 cannot be timed on its item.
+    words = _talk(
+        "agents are everywhere now",
+        "number one spec kit is first",
+        "number three trading agents is a firm",
+    )
+    asks = _triggered_asks(
+        ("1. Spec-kit", "Spec-kit"),
+        ("3. TradingAgents", "TradingAgents"),
+        ("4. Agents", "Agents"),
+    )
+    rows, receipt = _rows(asks, [], words=words, duration=40.0)
+    starts = {r["text"]: r["start_s"] for r in rows}
+    assert starts["4. Agents"] == pytest.approx(words[0]["start_s"])  # not inside label 3
+    fourth = next(r for r in receipt["rows"] if r["requirement_id"] == "r3")
+    assert fourth["basis"] == "spoken_word"
+
+
+def test_l4_without_triggers_an_unplaced_label_stays_not_heard(monkeypatch):
+    _example_switch(monkeypatch, True)
+    words = _talk("impeccable gives your agent taste", "then spec kit writes the spec first")
+    rows, receipt = _rows(_asks(["1. Spec-kit", "2. Impeccable"]), [], words=words, duration=30.0)
+    assert _status(receipt)["r2"] == "not_heard" and [r["text"] for r in rows] == ["1. Spec-kit"]

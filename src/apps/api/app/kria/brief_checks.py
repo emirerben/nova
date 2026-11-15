@@ -89,7 +89,7 @@ from app.kria.style_asks import (
 )
 from app.kria.text_shape_ask import CURVED, text_shape
 from app.kria.unclear_word_ask import asks_if_unclear
-from app.kria.voice_only_ask import asks_voice_only
+from app.kria.voice_only_ask import asks_voice_only, restated_voice_only_ids
 from app.pipeline.caption_language import (
     ASK_END,
     LANGUAGE_NAMES,
@@ -932,6 +932,9 @@ class PlanFacts:
     # pinned). Only a draft sets them; nothing about clip sound is claimed without them.
     phone_narrated: bool = False
     media_snapshot: Mapping[str, Any] | None = None
+    # KRI-1486: what a finished phone Talking render heard the take say (its words, joined);
+    # None = not recorded. A draft reads the take's transcript off ``media_snapshot`` instead.
+    take_transcript: str | None = None
     last_clip_id: str | None = None
     # KRI-842: a finished phone Voiceover's per-clip sound receipt (`variant["clip_sound"]`,
     # `phone_clip_sound`): what its pinned recipe plays for each clip-sound ask. None = no
@@ -988,6 +991,10 @@ class PlanFacts:
     # KRI-1164: a finished phone render that plays music under the video (a smart music bed, or
     # a track mixed in rather than only recommended). False = none recorded.
     music_in_render: bool = False
+    # KRI-1472: untyped whole-video audio rows that restate a typed "only my voice" / "no
+    # music" row of the same turn (`voice_only_ask.restated_voice_only_ids`); set by
+    # `build_receipts`, which sees the whole brief.
+    voice_only_restated: frozenset[str] = frozenset()
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -3141,6 +3148,11 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
     changes.update(_grounded_card_facts(variant))
     changes.update(_rendered_caption_facts(variant))
+    heard = variant.get("overlay_transcript")
+    if isinstance(heard, list) and heard:
+        changes["take_transcript"] = " ".join(
+            str(word.get("text") or "") for word in heard if isinstance(word, Mapping)
+        )  # KRI-1486
     if _rendered_music(variant):
         changes["music_in_render"] = True  # KRI-1164: "No music" is judged against it
     receipt = variant.get("clip_sound")
@@ -8922,6 +8934,82 @@ def _card_miss_text(groups: Mapping[str, list[str]], keep: int, *, default_why: 
     return text
 
 
+def _take_transcripts(facts: PlanFacts) -> list[str] | None:
+    """What every video clip of the edit says, or None when that is not known for all of
+    them: a finished render's own words, else each clip record's transcript on the draft."""
+    if facts.take_transcript:
+        return [facts.take_transcript]
+    snapshot = facts.media_snapshot if isinstance(facts.media_snapshot, Mapping) else {}
+    rows = [
+        row
+        for row in snapshot.get("clip_assignments") or []
+        if isinstance(row, Mapping) and row.get("kind", "video") == "video"
+    ]
+    said = [
+        (row.get("analysis") or {}).get("transcript")
+        if isinstance(row.get("analysis"), Mapping)
+        else None
+        for row in rows
+    ]
+    if not said or not all(isinstance(text, str) and text.strip() for text in said):
+        return None
+    return [str(text) for text in said]
+
+
+def _take_says(transcript: str, phrase: str) -> bool:
+    """``phrase`` is said in ``transcript``, by the matchers the recordings behind the speaker
+    use (folded tokens: case, punctuation, "SpecKit" / "Spec Kit", a plural "s")."""
+    from app.services import phone_background_sequence as sequence  # noqa: PLC0415
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    words = [
+        {"text": text, "start_s": float(i), "end_s": i + 0.5}
+        for i, text in enumerate(transcript.split())
+    ]
+    stream = grounding._token_stream(words)  # noqa: SLF001
+    return bool(
+        grounding._phrase_windows(stream, words, phrase, joined=True, plural=True)  # noqa: SLF001
+        or sequence._loose_hearings(stream, phrase)  # noqa: SLF001
+        or sequence._plural_toggled_hearings(stream, words, phrase)  # noqa: SLF001
+    )
+
+
+def unsaid_cue_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """KRI-1486: the receipt reason for a word-timed visual whose words the take never says.
+
+    Q2 run 3: "Show the trending page when I talk about what's hot this week" (she never says
+    it) got "No pop-in for what's hot this week." and held the draft for a choice nobody could
+    make. Only on a phone Talking edit, only for the trigger words the brief typed, only when
+    every video clip's transcript is known and none says any of them, and no pop-in carries
+    one: then nothing is shown and the reply says why. Readiness reads the same sentence
+    (`approval_readiness._promised_at_render`), so the draft is approvable. Anything else (she
+    says it, no transcript, the switch off) is None: today's answer.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.unsaid_cue_report_enabled or not facts.phone_talking:
+        return None
+    named = _named_triggers(req) if _wants_beats(req) else []
+    beats = facts.reaction_beats or ()
+    if not named or any(_trigger_heard(n, b.trigger) for b in beats for n in named):
+        return None
+    planned = (*facts.unheard_beat_triggers, *facts.dropped_beat_triggers)
+    if (
+        any(_trigger_heard(n, t) for t in planned for n in named)
+        or _title_misses_for(facts, named)
+        or any(_beat_room_drop(facts, n) for n in named)
+    ):
+        return None  # a pop-in WAS planned for it: its own answer ("I never heard ...") stands
+    takes = _take_transcripts(facts)
+    if takes is None or any(_take_says(take, n) for take in takes for n in named):
+        return None
+    return say(
+        en="You don't say {names} in your take, so nothing is shown for it",
+        tr="Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor",
+        names=", ".join(f"“{name}”" for name in named),
+    )
+
+
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
     cards = _spoken_cards_receipt(req, facts)
@@ -8951,6 +9039,9 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         # guessed from the sentence pick which pop-ins the ask is about, never a verdict.
         named = _named_triggers(req)
         names = named or _cue_triggers(req)
+        # KRI-1486: her take never says the words. That sentence replaces only the cue's own
+        # verdict below ("No pop-in for ..."); every other problem of the row is still said.
+        unsaid = unsaid_cue_reason(req, facts)
         if not facts.reaction_beats_available:
             problems.append(
                 say(
@@ -8986,6 +9077,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     delivered = True
                 else:
                     promises.append(_NARRATED_FOOTAGE_CUE_PLAN)
+            elif unsaid is not None:
+                problems.append(unsaid)
+                if sequence_problem:
+                    problems.append(sequence_problem)
+                delivered = bool(sequence_problem)
             else:
                 problems.append(
                     say(
@@ -9051,7 +9147,12 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 if not any(_trigger_heard(t, b.trigger) for b in beats)
                 and not any(_trigger_heard(t, n) for n in missing)
             ]
-            if missing:
+            if missing and unsaid is not None:
+                problems.append(unsaid)
+                if sequence_problem:
+                    problems.append(sequence_problem)
+                delivered = delivered or bool(sequence_problem)
+            elif missing:
                 problems.append(
                     sequence_problem
                     or say(
@@ -9142,6 +9243,8 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                         tr="Söylediğin kapanış rozetini bulamadım",
                     )
                 )
+    if wants_beats and unsaid is not None and problems == [unsaid] and not promises:
+        return _receipt(req, "partial", unsaid)  # KRI-1486: the whole answer, approvable
     if not problems:
         if (
             by_name
@@ -10184,6 +10287,21 @@ def _check_caption_look(
             return _receipt(req, "partial", shape_gap)
         if facts.caption_look_receipt is None:
             return None
+        drawn = facts.caption_look_receipt
+        if drawn.get("beside_speaker") is True:
+            # KRI-1483: the writer slid her row beside her corner face, so it no longer sits
+            # over her, and the lines it left centred in her full-screen opening are its own
+            # (never "the captions no longer look the way you asked").
+            over_speaker = False
+            opening_x = _finite_number(drawn.get("full_screen_x_frac"))
+            facts = dataclasses.replace(
+                facts,
+                caption_line_overrides=tuple(
+                    line
+                    for line in facts.caption_line_overrides
+                    if opening_x is None or dict(line) != {"position_x_frac": opening_x}
+                ),
+            )
         kept = _caption_look_kept(ask, facts)
         if kept is None:
             return None
@@ -10199,10 +10317,13 @@ def _check_caption_look(
         moved = _caption_spot_drawn_receipt(req, facts.caption_look_receipt)
         if moved is not None:
             return moved
-        over_face = facts.caption_look_receipt.get("over_face") is True
+        over_face = drawn.get("over_face") is True
+        # KRI-1483: no room beside her corner face, so her row stayed on it. Said as "Partly":
+        # a met look's note is dropped whenever the ask has another part, a bare "Done".
+        on_her = over_face and drawn.get("beside_speaker") is False
         return _receipt(
             req,
-            "met",
+            "partial" if on_her else "met",
             caption_look_reason(ask, over_speaker=over_speaker, over_face=over_face),
         )
     from app.config import settings  # noqa: PLC0415
@@ -12313,8 +12434,9 @@ def _is_list_label_candidate(req: BriefRequirement, facts: PlanFacts) -> bool:
     from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
     from app.pipeline import phone_list_labels as labels  # noqa: PLC0415
 
-    # The worker's own rule (`list_label_asks`): only a text with no spoken trigger is its.
-    if requirement_spoken_text(req) is not None:
+    # The worker's own rule (`list_label_asks`): only a text with no spoken trigger is its,
+    # or (KRI-1480) a numbered label whose trigger only names its own item.
+    if requirement_spoken_text(req) is not None and not labels.names_own_item(req):
         return False
     return labels.is_list_label_candidate(req, facts.background_phrases)
 
@@ -16233,7 +16355,9 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if sound_toggle is not None:
         # KRI-942: "clip sound off except that last line": the recorded on/off facts own it.
         return _check_sound_toggle(req, sound_toggle, facts)
-    if asks_voice_only(req) and facts.edit_format in _TALKING_FORMATS:
+    if (
+        asks_voice_only(req) or req.id in facts.voice_only_restated
+    ) and facts.edit_format in _TALKING_FORMATS:
         # KRI-1472: on a Talking edit the typed "only my voice" is judged like "no music", after
         # the recorded clip-sound facts above (they own a row that also carries one). Every
         # other format keeps the readers below.
@@ -16731,11 +16855,12 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
         return receipt.reason not in _NEUTRAL_REASONS
     if (
         req is not None
-        and asks_voice_only(req)
+        and req.kind == "audio"
         and receipt.verification == "checked"
         and receipt.stage == "checked"
     ):
-        # KRI-1472: "only my voice" as a Talking edit judged it (`_check_voice_only`).
+        # KRI-1472: "only my voice" as a Talking edit judged it (`_check_voice_only`): the
+        # typed ask, or an untyped row that restates one. No other audio check sets the stage.
         return True
     return (
         req is not None
@@ -16857,6 +16982,24 @@ def _live_ask_for_caption_language(req: BriefRequirement, code: str) -> bool:
     return req.live and asks_caption_language(req) and _requested_caption_language(req) == code
 
 
+def _another_sound_action(req: BriefRequirement) -> bool:
+    """KRI-1472 review: the brief's own sound readers see another sound action in ``req``: a
+    sound effect ("add a whoosh on each cut"), a louder / raised sound, sound at words, or a
+    lower bed. Such a row is never a restatement of "only my voice", whatever its lead clause.
+    No new word list: these are the readers the other sound checks already use (the editor's
+    sound-effect cue, not `_SOUND_RE`, which also reads a plain "sound" / "sesi")."""
+    from app.kria.editor_receipts import _REGEX_CUES  # noqa: PLC0415 - import cycle
+
+    text = _req_text(req)
+    return bool(
+        _REGEX_CUES["sfx"].search(text)
+        or _BED_UP_RE.search(text)
+        or _wants_beats(req)
+        or _wants_bed_under_voice(req)
+        or requirement_clip_sound(req) is not None
+    )
+
+
 def build_receipts(
     requirements: Iterable[BriefRequirement],
     facts: PlanFacts,
@@ -16881,6 +17024,14 @@ def build_receipts(
     if any(_keeps_text_off_object(req) for req in requirements):
         # KRI-1475: another requirement keeps text off an object (`_closing_arrow_reason`).
         facts = dataclasses.replace(facts, text_kept_off_object=True)
+    restated = frozenset(
+        req.id
+        for req in requirements
+        if req.id in restated_voice_only_ids(requirements) and not _another_sound_action(req)
+    )
+    if restated:
+        # KRI-1472: "Only my voice: ..." filed a second time with no fact of its own.
+        facts = dataclasses.replace(facts, voice_only_restated=restated)
     rendered_language = str(facts.caption_language or "").casefold().split("-")[0]
     if (
         rendered_language
@@ -16942,8 +17093,12 @@ def _label(status: str) -> str:
 
 def _receipt_label(receipt: RequirementReceipt) -> str:
     if _planned_at_render(receipt):
-        return say(en=_PLANNED_LABEL, tr=_PLANNED_LABEL_TR)
+        return _planned_label()
     return _label(receipt.status)
+
+
+def _planned_label() -> str:
+    return say(en=_PLANNED_LABEL, tr=_PLANNED_LABEL_TR)
 
 
 _PLANNED_LABEL = "Will do at render"
@@ -17082,6 +17237,242 @@ def keeps_model_summary(
         if is_judged(req, receipt) and receipt.status != "met":
             return False
     return True
+
+
+# --------------------------------------------------------- reply line fitter (KRI-1485)
+# Qendresa Q2 run 3 (job 77c63496): a reply over the chat's 1200 characters was cut where the
+# count ran out. The finished list ended "- Done: Show this label a…" and so hid its only row
+# that was not Done; the simpler draft and its approval text lost the Clean-up-speech and arrow
+# promises; the held reply ended "...section star…". A long reply is now fitted line by line.
+
+
+@dataclass(frozen=True)
+class ReplyRow:
+    """One "- ..." line of a reply, in the parts the fitter may fold or drop.
+
+    ``head`` is the status and the ask ("Done: Show this label"), ``literals`` the quoted texts
+    that follow it, ``tail`` the reason as written after them (" (reason)" on a receipt line,
+    ": reason" on a held one). ``done`` marks a plain Done row, the only kind whose reason may
+    go and that may fold into the count line. ``weight`` orders the rows a held reply must still
+    count away: the lowest first (Will do at render 1, Partly 2), a Couldn't row or a held line
+    (why the draft waits) last."""
+
+    head: str
+    literals: tuple[str, ...] = ()
+    tail: str = ""
+    done: bool = False
+    weight: int = 3
+
+    @property
+    def asks(self) -> int:
+        return max(1, len(self.literals))
+
+    def text(self, *, reason: bool = True) -> str:
+        quoted = ", ".join(f'"{literal}"' for literal in self.literals)
+        return self.head + (f" ({quoted})" if quoted else "") + (self.tail if reason else "")
+
+
+def _fold_reply_rows(rows: Sequence[ReplyRow]) -> list[ReplyRow]:
+    """Rows with the same status, ask and reason (each with its quoted text) as one row that
+    names every quoted text, at the first one's place. Any difference keeps a row its own."""
+    first: dict[tuple[str, str, bool], int] = {}
+    folded: list[ReplyRow] = []
+    for row in rows:
+        key = (row.head, row.tail, row.done)
+        if row.literals and key in first:
+            kept = folded[first[key]]
+            folded[first[key]] = dataclasses.replace(kept, literals=(*kept.literals, *row.literals))
+            continue
+        if row.literals:
+            first[key] = len(folded)
+        folded.append(row)
+    return folded
+
+
+def _count_line(n: object, *, done: bool) -> str:
+    """The line that stands for ``n`` asks a fitted reply no longer names."""
+    if done:
+        return "- " + say(en="…and {n} more done", tr="…ve {n} tane daha yapıldı", n=n)
+    return "- " + say(en="…and {n} more", tr="…ve {n} tane daha", n=n)
+
+
+def _counted(line: str) -> tuple[int, bool] | None:
+    """``(n, done)`` when ``line`` is a count line an earlier fit wrote, else None: fitting a
+    fitted reply again adds to its count instead of reading it as one more row."""
+    for done in (True, False):
+        prefix, _, suffix = _count_line("\0", done=done).partition("\0")
+        number = line[len(prefix) : len(line) - len(suffix)]
+        if line.startswith(prefix) and line.endswith(suffix) and number.isdigit():
+            return int(number), done
+    return None
+
+
+def _split_reason(line: str) -> tuple[str, str]:
+    """A "Label: ask (reason)" line with no quoted text as ``(head, " (reason)")``: the last
+    bracket group at its end, nested brackets included; ``(line, "")`` without one."""
+    if not line.endswith(")"):
+        return line, ""
+    depth = 0
+    for index in range(len(line) - 1, 0, -1):
+        depth += {")": 1, "(": -1}.get(line[index], 0)
+        if depth == 0:
+            if line[index - 1] == " ":
+                return line[: index - 1], line[index - 1 :]
+            break
+    return line, ""
+
+
+def fit_reply_rows(
+    rows: Sequence[ReplyRow],
+    room: int,
+    *,
+    hard: bool = False,
+    counted_done: int = 0,
+    counted_more: int = 0,
+) -> list[str]:
+    """``rows`` as reply lines ("- ...") in ``room`` characters, no line ever cut (KRI-1485).
+
+    Only as far as needed, in this order: rows with the same status, ask and reason fold into
+    one line naming each quoted text; Done rows lose their reasons (last first); Done rows
+    fold into "…and N more done" (last first). A row that is not Done (Partly, Couldn't, Will
+    do at render) is never dropped and keeps its reason: when those alone are longer than
+    ``room``, the lines run past it (the caller decides what then). ``hard`` (the held reply,
+    bound by `KriaTurnPlan.response`) then also counts the last rows into "…and N more", so it
+    fits whenever one line can. ``counted_done`` / ``counted_more`` are asks an earlier fit
+    already counted: they stay in the one count line."""
+
+    def lines(shown: Sequence[ReplyRow], bare: Iterable[int], done: int, more: int) -> list[str]:
+        bare = set(bare)
+        out = [f"- {row.text(reason=index not in bare)}" for index, row in enumerate(shown)]
+        if done:
+            out.append(_count_line(done, done=True))
+        if more:
+            out.append(_count_line(more, done=False))
+        return out
+
+    def fits(candidate: Sequence[str]) -> bool:
+        return sum(len(line) + 1 for line in candidate) - 1 <= room
+
+    shown = list(rows)
+    done, more = counted_done, counted_more
+    if fits(lines(shown, (), done, more)):
+        return lines(shown, (), done, more)
+    shown = _fold_reply_rows(shown)
+    bare: set[int] = set()
+    for index in reversed(range(len(shown))):
+        if fits(lines(shown, bare, done, more)):
+            break
+        if shown[index].done and shown[index].tail:
+            bare.add(index)
+    while not fits(lines(shown, bare, done, more)):
+        index = next((i for i in reversed(range(len(shown))) if shown[i].done), None)
+        if index is None and not (hard and shown):
+            break
+        if index is None:
+            # KRI-1024 replay: the last row may be the Couldn't that holds the draft; the
+            # lightest row goes first (the last of those), so that reason is the last counted.
+            index = min(reversed(range(len(shown))), key=lambda i: shown[i].weight)
+        dropped = shown.pop(index)
+        if dropped.done:
+            done += dropped.asks
+        else:
+            more += dropped.asks
+        bare = {i if i < index else i - 1 for i in bare if i != index}
+    return lines(shown, bare, done, more)
+
+
+# The ("...") that `BriefRequirement.text()` wrote after an ask (or the ("a", "b") of a row an
+# earlier fit folded), in a line Kria composed itself.
+_REPLY_ROW_LITERAL = re.compile(  # kri667: splits Kria's own reply line; reads no meaning
+    r'^- (?P<head>.+?) \((?P<literals>"[^"]+"(?:, "[^"]+")*)\)(?P<tail>(?:: .*| \(.*\))?)$'
+)
+
+
+def fit_reply_text(text: str, room: int) -> str:
+    """A composed reply in ``room`` characters, for the held reply whose rows the caller has
+    only as text: its first run of "- ..." lines goes through `fit_reply_rows` (``hard``), and
+    every other line stays whole and in place. Only when those other lines alone are longer
+    than ``room`` is the text cut the old way, so the result always fits.
+
+    The text may already be fitted (the receipt reply, then the held reply around it): its
+    count lines are added to, folded rows keep each quoted text, and a Done line's reason is
+    read off it with or without quoted text, so it goes before any row is counted away."""
+    if len(text) <= room:
+        return text
+    lines = text.split("\n")
+    start = next((i for i, line in enumerate(lines) if line.startswith("- ")), len(lines))
+    end = next((i for i in range(start, len(lines)) if not lines[i].startswith("- ")), len(lines))
+    done_label = f"- {_label('met')}: "
+    weights = (
+        (_planned_label(), 1),
+        (_label("partial"), 2),
+        (_label("chosen"), 2),
+    )
+    rows = []
+    counted = {True: 0, False: 0}
+    for line in lines[start:end]:
+        count = _counted(line)
+        if count is not None:
+            counted[count[1]] += count[0]
+            continue
+        done = line.startswith(done_label)
+        match = _REPLY_ROW_LITERAL.match(line)
+        if match:
+            head, tail = match["head"], match["tail"]
+            literals = tuple(match["literals"][1:-1].split('", "'))
+        else:
+            head, tail = _split_reason(line[2:]) if done else (line[2:], "")
+            literals = ()
+        weight = next((w for label, w in weights if line.startswith(f"- {label}: ")), 3)
+        rows.append(ReplyRow(head=head, literals=literals, tail=tail, done=done, weight=weight))
+    before, after = lines[:start], lines[end:]
+    fixed = sum(len(line) + 1 for line in (*before, *after))
+    fitted_rows = fit_reply_rows(
+        rows,
+        room - fixed,
+        hard=True,
+        counted_done=counted[True],
+        counted_more=counted[False],
+    )
+    fitted = "\n".join([*before, *fitted_rows, *after])
+    return fitted if len(fitted) <= room else text[: max(0, room - 1)].rstrip() + "…"
+
+
+def _receipt_reply_rows(
+    outcomes: Sequence[Mapping[str, Any]],
+    judged: Sequence[RequirementReceipt],
+    by_id: Mapping[str, BriefRequirement],
+    guess_lines: Sequence[str],
+) -> list[ReplyRow]:
+    """`reply_and_lead_from_receipts`'s lines as rows: each outcome and each judged receipt in
+    its parts (an ask with its own quoted text can fold with its twins; a reason can go), the
+    guesses line after them as written."""
+    rows = []
+    for row in outcomes:
+        status = str(row.get("status") or "")
+        if status not in _LABEL or not row.get("name"):
+            continue
+        reason = _outcome_reason(str(row["reason"])).rstrip(".") if row.get("reason") else ""
+        rows.append(
+            ReplyRow(
+                head=f"{_label(status)}: {_outcome_name(row)}",
+                tail=f" ({reason})" if reason else "",
+                done=status == "met",
+            )
+        )
+    for receipt in judged:
+        req = by_id[receipt.requirement_id]
+        folds = bool(req.literal and req.description)
+        label = _receipt_label(receipt)
+        rows.append(
+            ReplyRow(
+                head=f"{label}: {req.description if folds else req.text()}",
+                literals=(str(req.literal),) if folds else (),
+                tail=f" ({_loc(receipt.reason).rstrip('.')})" if receipt.reason else "",
+                done=receipt.status == "met" and label == _label("met"),
+            )
+        )
+    return [*rows, *(ReplyRow(head=line) for line in guess_lines)]
 
 
 def ask_text(req: BriefRequirement) -> str:
@@ -17234,6 +17625,19 @@ def reply_and_lead_from_receipts(
         lead = _reply_lead(judged, outcomes, notices)
     else:
         text = "\n".join(part for part in ((summary or "").strip(), body) if part)
+    if len(text) > MAX_REPLY_CHARS and body:
+        from app.config import settings as _fit_settings  # noqa: PLC0415
+
+        if _fit_settings.kria_reply_line_fit_enabled:
+            # KRI-1485: fitted line by line; a row that is not Done is never dropped or cut.
+            # When those rows (or the lines around them) alone fill the chat, this text gets
+            # the shortening below: the reply never runs past MAX_REPLY_CHARS.
+            prefix, suffix = text.rsplit(body, 1)
+            rows = _receipt_reply_rows(outcomes, judged, by_id, lines[-1:] if guesses else [])
+            room = MAX_REPLY_CHARS - len(prefix) - len(suffix)
+            fitted = prefix + "\n".join(fit_reply_rows(rows, room)) + suffix
+            if len(fitted) <= MAX_REPLY_CHARS:
+                return fitted, lead
     if len(text) > MAX_REPLY_CHARS and judged and not (outcomes or guesses or unchecked):
         # Keep every requested action/status visible when its labels fit. A long
         # explanation must not consume the final action's display budget. Stored
