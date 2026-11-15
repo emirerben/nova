@@ -72,7 +72,7 @@ class AddBlank(SectionCommand):
     section_id: str
     panel_index: int = Field(ge=0, le=2, strict=True)
     offset_s: float | None = Field(default=None, ge=0, le=1800)
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
     color: str | None = Field(default=None, pattern=_HEX_COLOR)
     grow_section: bool = True
 
@@ -595,7 +595,7 @@ def _add_blank(state: Any, section: dict, members: list[dict], command: dict) ->
             + [section["duration_s"]]
         )
         length = room - offset
-        if length < 0.1:
+        if below_editor_minimum(length):
             raise ValueError(
                 "This panel is full. Give duration_s to lengthen the section, "
                 "or shorten a clip in it to make room."
@@ -610,7 +610,7 @@ def _add_blank(state: Any, section: dict, members: list[dict], command: dict) ->
         section["duration_s"] = max(section["duration_s"], offset + length)
     else:
         length = min(length, section["duration_s"] - offset)
-        if length < 0.1:
+        if below_editor_minimum(length):
             raise ValueError("This panel is full. Shorten a clip in it to make room.")
     row = {
         "slot_id": str(uuid4()),
