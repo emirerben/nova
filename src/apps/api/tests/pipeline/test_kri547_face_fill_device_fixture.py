@@ -38,6 +38,8 @@ from app.pipeline.phone_subtitled_title import source_box_to_canvas
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.services.phone_sources import PhoneSourceBinding
 
+pytestmark = pytest.mark.journey("kri-547-speaker-framing")
+
 FIXTURE = Path(__file__).resolve().parents[3] / "ios/Tests/Fixtures/KRI547SpeakerFaceFill.json"
 GENERATOR = "src/apps/api/tests/pipeline/test_kri547_face_fill_device_fixture.py"
 

@@ -39,6 +39,8 @@ from tests.services.test_kria_capture_time_ops import (  # noqa: F401
 from tests.test_edit_copilot import _full_snapshot
 from tests.test_edit_copilot import _snapshot as _basic_snapshot
 
+pytestmark = pytest.mark.journey("kri-667-turkish-chat")
+
 CANNED_EN = "I prepared this edit for the editor to validate and stage."
 CANNED_TR = "Bu düzenlemeyi hazırladım, editör kontrol edip uygulayacak."
 _UNSET = object()

@@ -7,9 +7,16 @@ guard must also leave real talk alone in English AND Turkish (Unicode tokenizati
 
 from __future__ import annotations
 
+import pytest
+
 from app.agents.clip_metadata import ClipMetadataAgent, ClipMetadataInput
 from app.services.clip_understanding import clip_record, understanding_payload
 from app.services.transcript_quality import is_degenerate_transcript
+
+pytestmark = [
+    pytest.mark.journey("kri-653-silent-take"),
+    pytest.mark.journey("kri-808-clip-speech-language"),
+]
 
 _REAL_EN = (
     "You know sometimes you're working on something and you realize that you're hitting a "

@@ -49,6 +49,8 @@ from tests.pipeline.user_song_helpers import (
     take,
 )
 
+pytestmark = pytest.mark.journey("kri-561-song-order")
+
 
 @pytest.fixture(autouse=True)
 def _phone_profile(monkeypatch):

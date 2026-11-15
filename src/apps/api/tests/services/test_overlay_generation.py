@@ -5,6 +5,8 @@ import pytest
 from app.agents.overlay_generation import OverlayPlanOutput
 from app.services.overlay_generation import materialize_overlays, speech_evidence
 
+pytestmark = pytest.mark.journey("native-generated-overlay-review")
+
 
 def proposal(**changes):
     row = dict(

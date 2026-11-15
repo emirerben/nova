@@ -35,6 +35,11 @@ from app.pipeline.silence_cut import CutPlan, Removal, no_op_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
+pytestmark = [
+    pytest.mark.journey("kri-547-speaker-framing"),
+    pytest.mark.journey("kri-841-talking-ending-clip"),
+]
+
 
 def _binding(
     media_id: str = "clip-0",

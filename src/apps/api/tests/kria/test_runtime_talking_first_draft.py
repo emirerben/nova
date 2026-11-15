@@ -26,6 +26,8 @@ from app.models import CreationThreadEvent
 from app.tasks.kria_runtime import run_kria_turn
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, _submit
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 _CUTS = (
     "Cut out the long pauses, the part where I say 'let me start that one again', "
     "and the 'where was I' bit."

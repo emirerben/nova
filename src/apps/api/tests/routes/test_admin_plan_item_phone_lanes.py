@@ -29,6 +29,8 @@ from fastapi.testclient import TestClient
 from app.database import get_db
 from app.main import app
 
+pytestmark = pytest.mark.journey("kri-841-talking-ending-clip")
+
 VALID_TOKEN = "test-admin-token"
 
 
