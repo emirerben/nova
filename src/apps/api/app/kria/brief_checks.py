@@ -83,6 +83,7 @@ from app.kria.style_asks import (
 )
 from app.kria.text_shape_ask import CURVED, text_shape
 from app.kria.unclear_word_ask import asks_if_unclear
+from app.kria.voice_only_ask import asks_voice_only
 from app.pipeline.caption_language import (
     ASK_END,
     LANGUAGE_NAMES,
@@ -6973,6 +6974,19 @@ def _check_no_music(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             say(en="No music, as asked.", tr="İstediğin gibi müzik yok."),
         )
     return _receipt(req, "partial", _NO_CHECKER)
+
+
+def _check_voice_only(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1472: "Only my voice." (`voice_only_ask`) against the plan or the finished video.
+
+    The same verdict, in the same words, as "No music" (`_check_no_music`): a Talking edit plays
+    the creator's own sound with no music under it, so the ask is how it is made; a plan or
+    render that carries music says so. Only a Talking edit is judged here. ``stage="checked"``
+    marks the receipt as judged (see ``is_judged``): the ask has no `_has_checker` entry, which
+    would also change how every other format's readiness reads the row.
+    """
+    receipt = _check_no_music(req, facts)
+    return receipt.model_copy(update={"verification": "checked", "stage": "checked"})
 
 
 def _has_duration_target(req: BriefRequirement) -> bool:
@@ -15830,6 +15844,11 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if sound_toggle is not None:
         # KRI-942: "clip sound off except that last line": the recorded on/off facts own it.
         return _check_sound_toggle(req, sound_toggle, facts)
+    if asks_voice_only(req) and facts.edit_format in _TALKING_FORMATS:
+        # KRI-1472: on a Talking edit the typed "only my voice" is judged like "no music", after
+        # the recorded clip-sound facts above (they own a row that also carries one). Every
+        # other format keeps the readers below.
+        return _check_voice_only(req, facts)
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
         # (and any pauses it names); every other speech edit keeps its usual path.
@@ -16324,6 +16343,14 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
         # KRI-558: a change proven by the before/after edit diff, not by a value check.
         return receipt.reason not in _NEUTRAL_REASONS
+    if (
+        req is not None
+        and asks_voice_only(req)
+        and receipt.verification == "checked"
+        and receipt.stage == "checked"
+    ):
+        # KRI-1472: "only my voice" as a Talking edit judged it (`_check_voice_only`).
+        return True
     return (
         req is not None
         and receipt.verification != "unchecked"

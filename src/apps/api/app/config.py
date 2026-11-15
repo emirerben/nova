@@ -1465,6 +1465,13 @@ class Settings(BaseSettings):
     # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
     # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
     kria_honest_reply_lines_enabled: bool = False
+    # KRI-1472: "Only my voice." filed as its own sound ask (the typed `voice_only` fact) is
+    # judged like "No music" (`app.kria.voice_only_ask`): done on a Talking edit with no music,
+    # "This video has music." when there is some. Before, no checker owned it, so a Talking
+    # draft was held for "A Talking video can't do this" and the ask was listed as left out.
+    # Default TRUE. False: the ask is read exactly as before. Rollback: `fly secrets set
+    # VOICE_ONLY_ASK_ENABLED=false --app nova-video` + restart (api + worker).
+    voice_only_ask_enabled: bool = True
 
     # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
     # media only, "ok") takes the language of the creator's latest message typed in another of

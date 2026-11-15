@@ -72,10 +72,14 @@ def asks_camera_sound(brief: CreativeBrief | None) -> bool:
 
 
 def asks_no_music(brief: CreativeBrief | None) -> bool:
-    """True when a live ask is the typed "no music" (KRI-1164), e.g. "I'll add a song on TikTok"."""
+    """True when a live ask is the typed "no music" (KRI-1164), e.g. "I'll add a song on TikTok",
+    or the typed "only my voice" (KRI-1472), which rules music out as well."""
     from app.kria.brief_checks import wants_no_music  # noqa: PLC0415
+    from app.kria.voice_only_ask import asks_voice_only  # noqa: PLC0415
 
-    return brief is not None and any(wants_no_music(req) for req in brief.live())
+    return brief is not None and any(
+        wants_no_music(req) or asks_voice_only(req) for req in brief.live()
+    )
 
 
 def carry_draft_audio_strategy(

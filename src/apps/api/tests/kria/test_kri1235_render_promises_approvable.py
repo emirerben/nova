@@ -287,6 +287,38 @@ def test_a_turkish_turn_is_not_held_either(q1_prod):
         assert rows[rid]["reason"] != PROD_TURN_1[rid][1], "expected the Turkish twin"
 
 
+# KRI-1472: Q1 run 3 (prod 2026-11-14) filed "Only my voice, no music." as two rows; the
+# untyped half ("Only my voice.", `voice_only: true`) held the draft and was "left out".
+RUN3_VOICE = [
+    _r("r7", "audio", "Only my voice.", facts={"voice_only": True}),
+    _r("r8", "audio", "No music.", facts={"audio_intent": "no_music"}),
+]
+
+
+def test_run3_only_my_voice_is_done_never_held_or_left_out(q1_prod):
+    brief = CreativeBrief(version=1, requirements=RUN3_VOICE)
+    report = _assess(brief)
+    rows = _rows(report)
+    assert (rows["r7"]["disposition"], rows["r7"]["reason"]) == (
+        "executable",
+        "No music, as asked.",
+    )
+    assert rows["r8"]["disposition"] == "executable"
+    assert report["ready"] is True
+
+
+def test_run3_only_my_voice_switch_off_holds_exactly_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "voice_only_ask_enabled", False)
+    brief = CreativeBrief(version=1, requirements=RUN3_VOICE)
+    report = _assess(brief)
+    assert (_rows(report)["r7"]["disposition"], _rows(report)["r7"]["reason"]) == (
+        "unsupported",
+        bc._TALKING_NO_SUCH_EDIT,
+    )
+    assert report["ready"] is False
+    assert "Only my voice." in readiness_reply(brief, report)
+
+
 # ----------------------------------------------- 2. each promise, through its real checker
 
 
