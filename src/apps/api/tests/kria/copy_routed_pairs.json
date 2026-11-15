@@ -1582,6 +1582,16 @@
    "- Kararlaştırdığımız gibi çıkarıldı: {what}"
   ],
   [
+   "app/agents/editor_ops_v2/split_screen.py",
+   "A blank block in a split screen needs the latest Kria update.",
+   "Bölünmüş ekranda boş blok için Kria'nın son sürümü gerekiyor."
+  ],
+  [
+   "app/agents/editor_ops_v2/split_screen.py",
+   "A blank block in a split screen is not available on this edit yet.",
+   "Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor."
+  ],
+  [
    "app/kria/approval_readiness.py",
    "Before I make this, please choose:",
    "Bunu yapmadan önce bir seçim yap:"
