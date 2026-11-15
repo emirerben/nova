@@ -272,6 +272,12 @@ _FILLER_LEXICON = frozenset(
         "ah",
         "oh",
         "oo",
+        # German hesitations whisper writes (KRI-1453). None is a German word; bare
+        # "hm"/"ehm" stay out (no German-only spelling, and "hmm"/"erm" already cover them).
+        "äh",
+        "ähm",
+        "öh",
+        "öhm",
     }
 )
 # Real Turkish exclamations — deliberately NOT fillers. Subtracted defensively;
