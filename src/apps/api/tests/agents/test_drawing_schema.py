@@ -25,6 +25,8 @@ from app.agents._schemas.drawing import (
     validate_drawings,
 )
 
+pytestmark = pytest.mark.journey("kri-589-drawing")
+
 FIXTURE = json.loads(
     (
         Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "drawing-parity" / "v1.json"

@@ -36,6 +36,8 @@ from app.pipeline.silence_cut import CutPlan, Removal
 from app.services.phone_rollout import PhoneCapabilityUnavailable, validate_phone_pilot_recipe
 from tests.pipeline.test_phone_subtitled_plan import _CUES, _binding
 
+pytestmark = pytest.mark.journey("kri-547-speaker-framing")
+
 _CANVAS = Canvas(width=1080, height=1920)
 _TITLE = "3 sourdough mistakes"
 
