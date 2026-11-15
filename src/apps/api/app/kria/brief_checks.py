@@ -16452,7 +16452,7 @@ def untyped_select(req: BriefRequirement) -> bool:
     (`UNTYPED_SELECT_UNJUDGED_ENABLED`): never."""
     from app.config import settings  # noqa: PLC0415
 
-    if not settings.untyped_select_unjudged_enabled or req.literal:
+    if not settings.untyped_select_unjudged_enabled or req.kind != "select" or req.literal:
         return False
     facts = req.facts if isinstance(req.facts, Mapping) else {}
     if any(value not in (None, "", [], {}, False) for value in facts.values()):
