@@ -127,8 +127,20 @@ def degrade_plan_for_phone(plan, exc: Exception) -> tuple[Any, list[Recovery]]: 
     return _degrade_moment(plan, exc, degrade)
 
 
+# A value the compiler draws exactly as the field's None.
+_DRAWN_AS_NONE = {"look_adjustments": {}, "playback_rate": 1, "freeze_hold_s": 0}
+
+
+def _drawn(key: str, value: Any) -> Any:
+    return None if key in _DRAWN_AS_NONE and value == _DRAWN_AS_NONE[key] else value
+
+
 def _changed(row, patch: dict[str, Any] | None) -> dict[str, Any]:  # noqa: ANN001
-    return {key: value for key, value in (patch or {}).items() if getattr(row, key) != value}
+    return {
+        key: value
+        for key, value in (patch or {}).items()
+        if _drawn(key, getattr(row, key)) != _drawn(key, value)
+    }
 
 
 def _lost(patch: dict[str, Any]) -> tuple[str, ...]:

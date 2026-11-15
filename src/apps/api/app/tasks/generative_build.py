@@ -18201,6 +18201,26 @@ def _run_phone_narrated_job(
                     steps = clip_sound_plan.steps
                     _record_clip_sound_event("clip_sound", None, clip_sound_plan)
 
+            def _leave_out_captions(exc: Exception) -> None:
+                """KRI-1376: the caption style is a preference the contract does not pin, so
+                captions the phone cannot draw are left out and the creator told."""
+                log.warning("phone_narrated.captions_dropped", job_id=job_id, error=str(exc))
+                phone_recoveries.append(
+                    Recovery(
+                        reason="captions_compile", lane="captions", item_id=None, action="dropped"
+                    )
+                )
+                narrated_record["caption_language"] = None
+                narrated_record["spoken_language"] = None
+                with _worker_reply_language(snapshot):
+                    narrated_repair_notes.append(captions_dropped_note())
+                    # The receipts read the record's caption language: stamp them again.
+                    _narrated_alignment_receipts(
+                        narrated_record,
+                        narrated_brief,
+                        bound=bool(snapshot.get("creator_brief_binding")),
+                    )
+
             opening_title_end_s = narrated_title_end_s(
                 transcript.words[0].end_s if transcript.words else None
             )
@@ -18223,17 +18243,25 @@ def _run_phone_narrated_job(
                         canvas=canvas,
                         entrance=title_entrance,
                     )
-                    spoken_rows, spoken_receipt = narrated_spoken_text_rows(
-                        asks,
-                        words=transcript.words,
-                        cues=cues,
-                        caption_style=caption_style,
-                        timeline_duration_s=voiceover_duration_s,
-                        canvas=canvas,
-                        shown_rows=[title.model_dump(mode="json", exclude_none=True)]
-                        if title
-                        else [],
-                    )
+                    while True:
+                        try:
+                            spoken_rows, spoken_receipt = narrated_spoken_text_rows(
+                                asks,
+                                words=transcript.words,
+                                cues=cues,
+                                caption_style=caption_style,
+                                timeline_duration_s=voiceover_duration_s,
+                                canvas=canvas,
+                                shown_rows=[title.model_dump(mode="json", exclude_none=True)]
+                                if title
+                                else [],
+                            )
+                            break
+                        except UnsupportedPhonePlan as exc:
+                            if exc.reason != "captions_compile" or not cues:
+                                raise
+                            _leave_out_captions(exc)
+                            cues = detected_lang = None
                     misses = [row for row in spoken_receipt["rows"] if row["status"] != "placed"]
                     if misses:
                         with _worker_reply_language(snapshot):
@@ -18281,7 +18309,7 @@ def _run_phone_narrated_job(
                         narrated_repair_notes.extend(
                             shrunk_on_screen_note(shown_text[row["element_id"]]) for row in shrunk
                         )
-                    phone_recoveries = [
+                    phone_recoveries.extend(
                         Recovery(
                             reason="spoken_text_fit",
                             lane="spoken_text",
@@ -18289,7 +18317,7 @@ def _run_phone_narrated_job(
                             action="shrunk",
                         )
                         for row in shrunk
-                    ]
+                    )
             # KRI-519: beats become the Voiceover overlay / sound-effect lanes,
             # the same ones an editor Save recompiles (KRI-281).
             lanes: Any = None
@@ -18369,30 +18397,8 @@ def _run_phone_narrated_job(
                         and exc.reason == "captions_compile"
                         and cues
                     ):
-                        # KRI-1376: the caption style is a preference the contract does not pin,
-                        # so captions the phone cannot draw are left out and the creator told.
-                        log.warning(
-                            "phone_narrated.captions_dropped", job_id=job_id, error=str(exc)
-                        )
-                        cues = None
-                        phone_recoveries.append(
-                            Recovery(
-                                reason="captions_compile",
-                                lane="captions",
-                                item_id=None,
-                                action="dropped",
-                            )
-                        )
-                        narrated_record["caption_language"] = None
-                        narrated_record["spoken_language"] = None
-                        with _worker_reply_language(snapshot):
-                            narrated_repair_notes.append(captions_dropped_note())
-                            # The receipts read the record's caption language: stamp them again.
-                            _narrated_alignment_receipts(
-                                narrated_record,
-                                narrated_brief,
-                                bound=bool(snapshot.get("creator_brief_binding")),
-                            )
+                        _leave_out_captions(exc)
+                        cues = detected_lang = None
                         continue
                     # An ask for one clip's own sound never costs the creator their video: the
                     # compile that refused it is retried without the tail, then without the

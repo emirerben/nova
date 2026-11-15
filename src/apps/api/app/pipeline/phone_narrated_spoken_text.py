@@ -16,6 +16,7 @@ from typing import Any, Protocol
 import structlog
 
 from app.kria.spoken_text_ask import SpokenTextAsk
+from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_spoken_text import (
     SPOKEN_TEXT_FIELD,
     _text_boxes,
@@ -199,13 +200,12 @@ def narrated_spoken_text_rows(
                         cues, window=window, caption_style=caption_style, canvas=canvas
                     )
                 except Exception as exc:  # noqa: BLE001 - never place across unmeasured captions
-                    log.warning(
-                        "phone_narrated_spoken_text.caption_boxes_failed", error=str(exc)[:200]
-                    )
-                    receipt_rows.append(
-                        {**entry, "status": "error", "error": "caption_boxes_failed"}
-                    )
-                    continue
+                    # The captions are at fault, not this ask: the caller leaves them out.
+                    raise UnsupportedPhonePlan(
+                        f"unable to measure captions: {exc}",
+                        reason="captions_compile",
+                        lane="captions",
+                    ) from exc
             placed, placement = _place_or_shrink(
                 row, avoid, canvas=canvas, face_regions=face_regions
             )
@@ -215,6 +215,8 @@ def narrated_spoken_text_rows(
                 )
                 continue
         except Exception as exc:  # noqa: BLE001 - one ask must not abort a render
+            if isinstance(exc, UnsupportedPhonePlan) and exc.lane == "captions":
+                raise
             log.warning("phone_narrated_spoken_text.failed", error=str(exc)[:200])
             receipt_rows.append({**entry, "status": "error", "error": str(exc)[:200]})
             continue
