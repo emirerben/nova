@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.243.0] - 2026-11-15
+
+### Changed
+- fix(kria): German Talking promises never hold the draft (KRI-1405) (#2348) <!-- release-pr: 2348 -->
+
 ## [0.88.242.0] - 2026-11-15
 
 ### Fixed
