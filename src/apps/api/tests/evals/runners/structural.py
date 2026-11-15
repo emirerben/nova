@@ -77,6 +77,7 @@ from app.agents.overlay_format_matcher import (
     _SKIA_EFFECTS,
     OverlayFormatMatcherOutput,
 )
+from app.agents.overlay_generation import OverlayPlanInput, OverlayPlanOutput
 from app.agents.platform_copy import PlatformCopyOutput
 from app.agents.retake_detector import (
     RetakeDetectorInput,
@@ -1189,6 +1190,54 @@ def check_landmark_guess(
         failures.append("named landmark has no evidence")
     if output.confidence < 0.0 or output.confidence > 1.0:
         failures.append(f"confidence={output.confidence} outside [0, 1]")
+    return failures
+
+
+def check_overlay_generation(
+    output: OverlayPlanOutput,
+    input: OverlayPlanInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.editor.overlay_generation.
+
+    Failure modes this guards (the agent plans overlays from evidence it must not invent):
+    cites evidence that was not supplied; quotes speech that is not a contiguous phrase of the
+    cited words; places an overlay outside the video; names an asset that was not offered;
+    leaves an image row without a `depicts` declaration; answers a prompt that has no evidence
+    with overlays instead of a clarification.
+
+    Not checked here: crossing the Carousel insertion, overlapping existing or other proposed
+    overlays, and holding a picture under two seconds. The live model breaks these in about 1 of
+    3 captured cases, and `materialize_overlays` in app/services/overlay_generation.py trims,
+    drops or extends those rows before the creator sees them, so they are repaired, not
+    creator-visible defects.
+    """
+    failures: list[str] = []
+    evidence = {row["reference_id"]: row for row in input.evidence}
+    asset_ids = {row.get("asset_id") for row in input.assets}
+    if input.mode == "prompt" and not input.evidence and output.overlays:
+        failures.append("prompt mode with no evidence proposed overlays instead of asking")
+    if not output.overlays and not output.message:
+        failures.append("no overlays and no message explaining why")
+
+    for index, row in enumerate(output.overlays):
+        label = f"overlays[{index}] {row.title!r}"
+        if row.end_s <= row.start_s or row.end_s > input.duration_s + 1e-6:
+            failures.append(f"{label}: {row.start_s}-{row.end_s}s is outside 0-{input.duration_s}s")
+        if row.kind == "library_asset" and row.asset_id not in asset_ids:
+            failures.append(f"{label}: asset_id {row.asset_id!r} was not offered")
+        if row.kind == "image" and row.depicts is None:
+            failures.append(f"{label}: image row has no depicts declaration")
+        for cite in row.evidence:
+            source = evidence.get(cite.reference_id)
+            if source is None:
+                failures.append(f"{label}: cites unknown evidence {cite.reference_id!r}")
+                continue
+            if source["kind"] != cite.kind:
+                failures.append(f"{label}: cites {cite.reference_id!r} as {cite.kind}")
+            if cite.kind == "speech" and cite.quote:
+                spoken = " ".join(str(source.get("quote", "")).casefold().split())
+                if " ".join(cite.quote.casefold().split()) not in spoken:
+                    failures.append(f"{label}: quote {cite.quote!r} is not in {cite.reference_id}")
     return failures
 
 
@@ -3118,6 +3167,8 @@ def run_structural(
         return check_clip_question(output, input)
     if agent_name == "nova.video.landmark_guess":
         return check_landmark_guess(output, input)
+    if agent_name == "nova.editor.overlay_generation":
+        return check_overlay_generation(output, input)
     if agent_name == "nova.plan.speech_excerpt_planner":
         return check_speech_excerpt_planner(output, input)
     if agent_name == "nova.video.clip_router":
