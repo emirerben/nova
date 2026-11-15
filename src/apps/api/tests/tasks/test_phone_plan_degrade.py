@@ -70,6 +70,14 @@ Added with the fifth verifier's findings, before the fix:
      the end of the video;
  30. the move is silent: no note, an English note in a Turkish chat, or no recovery naming
      the row.
+
+Added with the sixth verifier's findings, before the fix:
+ 31. a caption the phone cannot draw, on screen while a word-timed text shows, stops the
+     Voiceover video with "check the phrase" (blaming words that are fine) instead of leaving
+     the captions out; or the text is then placed across captions that still render;
+ 32. once the captions are left out the variant still names a caption language, or the
+     captions note or recovery is lost or said twice;
+ 33. a clip or photo with an empty color adjustment or a 1x speed is told it lost them.
 """
 
 from __future__ import annotations
@@ -502,6 +510,12 @@ CARD = {"layout": "supporting_card"}
         ({"playback_rate": 2.0}, {}, "speed change"),
         ({**CARD, "source_crop": CROP}, CARD, "crop"),
         ({**CARD, "source_crop": CROP, "image_motion": "subtle_zoom_in"}, CARD, "zoom and crop"),
+        (
+            {"image_motion": "subtle_zoom_in", "look_adjustments": {}},
+            {"look_adjustments": {}},
+            "zoom",
+        ),
+        ({"image_motion": "subtle_zoom_in", "playback_rate": 1.0}, {"playback_rate": 1.0}, "zoom"),
     ],
 )
 def test_a_photo_the_phone_cannot_treat_renders_as_the_plain_still(bad, kept, lost):
@@ -516,6 +530,19 @@ def test_a_photo_the_phone_cannot_treat_renders_as_the_plain_still(bad, kept, lo
 
     assert result.recipe == compile_phone_guided_plan(clean, bindings, visuals)
     assert result.notes == [f"Showed photo 2 without its {lost}: your iPhone can't draw that yet"]
+
+
+@pytest.mark.usefixtures("_verified")
+def test_a_clip_is_told_only_what_it_lost():
+    """Failure mode 33, the shape of prod e4398b51's clip 4: a zoom next to an empty color."""
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(
+        update={"image_motion": "subtle_zoom_in", "look_adjustments": {}}
+    )
+
+    result = compile_phone_guided_repaired(plan, bindings)
+
+    assert result.notes == ["Showed clip 1 without its zoom: your iPhone can't draw that yet"]
 
 
 # --- the degrade itself ----------------------------------------------------------------------
@@ -956,7 +983,7 @@ def test_a_caption_fault_drops_the_captions_not_the_video_or_its_beats(language,
 
     assert job.status == "awaiting_device"
     [variant] = job.assembly_plan["variants"]
-    assert variant["caption_cues"] is None
+    assert (variant["caption_cues"], variant["caption_language"]) == (None, None)
     receipt = variant["phone_beat_receipt"]
     assert [entry["beat_id"] for entry in receipt["placed"]] == ["medal", "finish-time"]
     assert receipt["unplaced"] == []
@@ -967,6 +994,53 @@ def test_a_caption_fault_drops_the_captions_not_the_video_or_its_beats(language,
     assert job.assembly_plan[NARRATED_ALIGNMENT_FIELD]["caption_language"] is None
     recovered = [data for stage, event, data in events if stage == "phone_plan"]
     assert recovered == [
+        {
+            "decision": "render_with_notes",
+            "reason": "captions_compile",
+            "lane": "captions",
+            "item_id": None,
+            "action": "dropped",
+        }
+    ]
+
+
+# --- the sixth verifier's findings ------------------------------------------------------------
+
+
+def test_a_caption_fault_under_a_word_timed_text_leaves_out_the_captions_not_the_text(
+    monkeypatch,
+):
+    """Failure modes 31 and 32: the one caption is on screen while the word-timed text shows."""
+    job, snapshot = _spoken_job(monkeypatch)
+    events = _captured_events(monkeypatch)
+
+    def unreadable(cues, **_kwargs):  # noqa: ANN001
+        if any("karanlık" in cue["text"] for cue in cues):
+            raise ValueError("no face draws this cue")
+        raise AssertionError("only the faulty cue is ever measured here")
+
+    monkeypatch.setattr("app.pipeline.phone_captions.compile_caption_layers", unreadable)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    assert "request_recovery" not in job.assembly_plan
+    [variant] = job.assembly_plan["variants"]
+    assert (variant["caption_cues"], variant["caption_language"]) == (None, None)
+    [receipt] = variant["spoken_text_placement"]["rows"]
+    assert receipt["status"] == "placed"
+    [row] = [r for r in variant["narrated_title_text_elements"] if r["id"] == "spoken-text-r6"]
+    assert (row["text"], row["start_s"]) == (SPOKEN, pytest.approx(1.0, abs=1 / 30))
+    assert (
+        variant["phone_repair_notes"].count(
+            "Left out the captions: your iPhone can't draw them yet"
+        )
+        == 1
+    )
+    recipe = device_status(job, "narrated").request.recipe
+    assert not [layer for layer in recipe.text_layers if layer.id.startswith("caption")]
+    recovered = [data for stage, event, data in events if stage == "phone_plan"]
+    assert [r for r in recovered if r["reason"] == "captions_compile"] == [
         {
             "decision": "render_with_notes",
             "reason": "captions_compile",
