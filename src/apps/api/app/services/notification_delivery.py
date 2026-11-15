@@ -18,7 +18,14 @@ from sqlalchemy.orm import Session
 
 from app.auth import VerifiedMobilePrincipal
 from app.database import sync_session
-from app.models import MobileSession, NativeActivity, NotificationDelivery, NotificationInstallation
+from app.kria.reply_language import thread_reply_language
+from app.models import (
+    CreationThread,
+    MobileSession,
+    NativeActivity,
+    NotificationDelivery,
+    NotificationInstallation,
+)
 from app.services.apns import (
     Accepted,
     ActivityNotification,
@@ -403,8 +410,12 @@ def _admit(
     except (TokenCryptoError, ValueError):
         _finish(row, "rejected", "token_unavailable", now)
         return None
+    # The push speaks the chat's language, the one Kria answers that chat in (KRI-1144).
+    thread = db.get(CreationThread, current[0].thread_id)
     try:
-        notification = ActivityNotification(row.activity_id, row.id, current[0].kind)
+        notification = ActivityNotification(
+            row.activity_id, row.id, current[0].kind, thread_reply_language(thread)
+        )
     except ValueError:
         _finish(row, "rejected", "activity_kind_unsupported", now)
         return None

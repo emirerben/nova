@@ -1512,6 +1512,26 @@
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
   ],
   [
+   "app/services/apns.py",
+   "Open Kria to see what to do next.",
+   "Sıradaki adımı görmek için Kria'yı aç."
+  ],
+  [
+   "app/services/apns.py",
+   "Open it to watch and share.",
+   "Açıp izleyebilir ve paylaşabilirsin."
+  ],
+  [
+   "app/services/apns.py",
+   "Your video is ready",
+   "Videon hazır"
+  ],
+  [
+   "app/services/apns.py",
+   "Your video needs a look",
+   "Videona bir göz at"
+  ],
+  [
    "app/tasks/generative_build.py",
    "Tell me how you'd like the text instead.",
    "Metnin bunun yerine nasıl olmasını istediğini söyle."
