@@ -38,6 +38,10 @@ import re
 import warnings
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.journey("kri-667-turkish-chat")
+
 _API = Path(__file__).resolve().parents[2]
 _APP = _API / "app"
 _RE_FUNCS = frozenset(

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.232.0] - 2026-11-15
+
+### Changed
+- chore(ci): derive journey and UI test registries from the tests (KRI-1380) (#2308) <!-- release-pr: 2308 -->
+
 ## [0.88.231.0] - 2026-11-14
 
 ### Changed

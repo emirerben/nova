@@ -11,6 +11,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import journey_registry
 import ui_tests
 
 
@@ -96,10 +98,12 @@ def verify_input(fixture: Path, head: str) -> dict:
     return proof
 
 
-def require_passed_test(
-    results: Path,
-    target: str = "DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone",
-) -> None:
+NATIVE_EXPORT_TEST = (
+    "DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone"
+)
+
+
+def require_passed_test(results: Path, target: str = NATIVE_EXPORT_TEST) -> None:
     value = load(results)
     matches = []
 
@@ -180,8 +184,7 @@ def record_native(
                 "-skipPackagePluginValidation -derivedDataPath .derived-data "
                 "CODE_SIGNING_ALLOWED=NO -destination "
                 '"platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" '
-                "-only-testing:KriaTests/DeviceMontageRenderE2ETests/"
-                "testCapturedCreationWordsRetimedThenExportOnTheIPhone "
+                f"-only-testing:KriaTests/{NATIVE_EXPORT_TEST} "
                 "-resultBundlePath ../../../test-results/kri-559/native.xcresult test-without-building"
             ),
             "result_inspection": (
@@ -368,7 +371,7 @@ def verify_named_tests(report: dict, expected: set) -> None:
 def api_tests_for_ids(ids: str) -> list[str]:
     import shlex
 
-    journeys = load(Path(__file__).with_name("journey-manifest.json"))["journeys"]
+    journeys = journey_registry.journeys()
     selected = ids.split(",") if ids else []
     require(
         selected and len(selected) == len(set(selected)),
