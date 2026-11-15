@@ -771,6 +771,9 @@ class PlanFacts:
     # KRI-1489: every word a live requirement of the brief names for a pop-in (typed `triggers`
     # or quoted), so a pop-in another ask claims is never counted as a spare one.
     brief_named_triggers: tuple[str, ...] = ()
+    # KRI-1488: the creator's own videos a finished phone render was made from (the job's
+    # `_phone_sources_v1`); None = not known. Read only by `_check_single_take_pointer`.
+    attached_video_count: int | None = None
     # KRI-547: how a phone Talking render framed a sideways speaker clip for a
     # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
     # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
@@ -7259,6 +7262,8 @@ _TEXT_CURVED = "curved"
 # KRI-994: the clip the creator asked to skip, or a photo in a "video clips only" edit, is
 # in the finished video after all (a pin or the plan's own placement kept it).
 _SKIPPED_CLIP_PLAYS = "The clip you asked to skip is still in the video"
+# KRI-1488: an untyped `select` row met by an edit made from the one video attached.
+_EDIT_USES_YOUR_TAKE = "This video is made from the one video you attached"
 _PHOTO_IN_CLIPS_ONLY = "The video still has a photo in it"
 # KRI-828: the freeze is planned, but no analysed moment of the clips matches the creator's
 # words for it (or two do), so no frame is guessed.
@@ -7589,6 +7594,7 @@ _REASON_TR: dict[str, str] = {
     _TEXT_CAME_OUT_STRAIGHT: "Bitmiş videoda yazı kavisli değil, düz",
     _TEXT_CURVED: "kavisli",
     _SKIPPED_CLIP_PLAYS: "Çıkarmanı istediğin klip hâlâ videoda",
+    _EDIT_USES_YOUR_TAKE: "Bu video eklediğin tek videodan yapılıyor",
     _PHOTO_IN_CLIPS_ONLY: "Videoda hâlâ bir fotoğraf var",
     _NO_FREEZE_FRAME: (
         "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
@@ -16028,6 +16034,9 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                     return seated
             return _check_closing_speech(req, facts)
     if req.kind == "select":
+        pointer = _check_single_take_pointer(req, facts)
+        if pointer is not None:
+            return pointer
         typed = _check_select_typed(req, facts)
         if typed is not None:
             return typed
@@ -16447,17 +16456,48 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
 
 
 def untyped_select(req: BriefRequirement) -> bool:
-    """KRI-1488: a `select` row that carries no typed fact, no literal and no moment: what it
-    selects is in its words alone, which the server does not read (KRI-667). Off
-    (`UNTYPED_SELECT_UNJUDGED_ENABLED`): never."""
+    """KRI-1488: a whole-video `select` row that carries no typed fact, no literal, no moment and
+    quotes no words: what it selects is in its words alone, which the server does not read
+    (KRI-667). A quoted word ("cut the second “Neredesin”") names a part of the footage, so that
+    row is a real selection and keeps its verdict. Off (`SINGLE_TAKE_POINTER_ASK_ENABLED`):
+    never."""
     from app.config import settings  # noqa: PLC0415
 
-    if not settings.untyped_select_unjudged_enabled or req.kind != "select" or req.literal:
-        return False
+    if (
+        not settings.single_take_pointer_ask_enabled
+        or req.kind != "select"
+        or req.scope != "global"
+        or req.literal
+    ):
+        return False  # a clip-scoped row picks inside one clip: a real selection
     facts = req.facts if isinstance(req.facts, Mapping) else {}
     if any(value not in (None, "", [], {}, False) for value in facts.values()):
         return False
-    return moment_ask(req) is None
+    return moment_ask(req) is None and not _quoted_triggers(req)
+
+
+def _check_single_take_pointer(
+    req: BriefRequirement, facts: PlanFacts
+) -> RequirementReceipt | None:
+    """KRI-1488: an untyped `select` row ("Use my talking video.", `untyped_select`) on an edit
+    made from the ONE video the creator attached: whatever the row picks among her videos, the
+    edit already uses that one, so it is met. Several videos, or a count the facts do not know:
+    None (today's verdict; a Talking draft still answers "can't")."""
+    if not untyped_select(req):
+        return None
+    count = (
+        facts.video_clip_count if facts.video_clip_count is not None else facts.attached_video_count
+    )
+    single = count == 1
+    if not single:
+        return None
+    return _receipt(
+        req,
+        "met",
+        say(en=_EDIT_USES_YOUR_TAKE, tr=_REASON_TR[_EDIT_USES_YOUR_TAKE]),
+        verification="checked",
+        stage="checked",
+    )
 
 
 def _talking_honest_receipt(
@@ -16551,11 +16591,6 @@ def _talking_honest_receipt(
         or requirement_clip_sound(req) is not None
     )
     if req.kind not in {"audio", "timing", "select"} and not bed_ask:
-        return receipt
-    if req.kind == "select" and untyped_select(req):
-        # KRI-1488: "Use my talking video." filed as a `select` row with no typed fact names no
-        # selection the server can read, so it is no "can't" (that held the draft and listed the
-        # row as left out); it stays an unjudged "have a look".
         return receipt
     # A speech-excerpt reading ("sesim öne çıksın", "so my voice comes through") only has a
     # checker on a plan with speech sections; a Talking plan has none, so that reading must

@@ -1580,6 +1580,11 @@
    "app/tasks/kria_runtime.py",
    "- Left out as agreed: {what}",
    "- Kararlaştırdığımız gibi çıkarıldı: {what}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This video is made from the one video you attached",
+   "Bu video eklediğin tek videodan yapılıyor"
   ]
  ],
  "retired": [

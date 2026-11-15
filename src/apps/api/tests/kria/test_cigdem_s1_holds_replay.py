@@ -26,9 +26,11 @@ were never stored, and every planner run in the thread put the beats on the same
 Both fixes read typed fields and counts only, never the creator's words (KRI-667).
 
 Failure modes written before the fix (each has a test below):
- 1. a `select` row WITH a typed fact keeps its own checker (no blanket "have a look");
- 2. the untyped `select` row is never claimed "Done" (nothing proves it), only no longer "can't";
- 3. Turkish and English untyped rows read the same (no words are read);
+ 1. a `select` row WITH a typed fact keeps its own checker;
+ 2. an untyped `select` row is "Done" only on an edit made from the one video attached; with
+    several videos it keeps today's "can't" (it may really pick among them);
+ 3. a row that quotes words ("cut the second “Neredesin”") is a real selection: today's verdict;
+    Turkish and English rows read the same (no words are read);
  4. a word the creator QUOTED that no pop-in answers still holds;
  5. spare pop-ins must match the described moments EXACTLY ("2 posts" = 2): one too few (a
     missed moment) or one too many (a pop-in on a word nobody asked for) still holds;
@@ -38,6 +40,7 @@ Failure modes written before the fix (each has a test below):
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 
 import pytest
@@ -66,7 +69,7 @@ PROD_HOLDS = {
     "r3": "No pop-in for launch, Vela's 2 posts.",
     "r7": END_CARD,
 }
-SWITCHES = ("untyped_select_unjudged_enabled", "described_popin_names_enabled")
+SWITCHES = ("single_take_pointer_ask_enabled", "described_popin_names_enabled")
 # Switches production has on for this path (all default off in code); the same list as the
 # Qendresa Q1 run 3 replay, which was read off prod the day before this run.
 PROD_ON = (
@@ -274,19 +277,117 @@ def test_her_first_reply_is_ready_with_nothing_held(monkeypatch):
 def test_a_typed_selection_keeps_its_own_checker(monkeypatch):
     only_video = _r("r1", "select", "Use my video clips only.", facts={"only_media_kind": "video"})
     report = _readiness(monkeypatch, CreativeBrief(version=1, requirements=[only_video, R8]))
-    assert _row(report, "r1")["reason"] != _row(_readiness(monkeypatch, BRIEF_V1), "r1")["reason"]
+    assert _row(report, "r1")["reason"] != ONE_VIDEO
 
 
-@pytest.mark.parametrize(
-    "description", ["Use my talking video.", "Konuşma videomu kullan.", "Use my second clip."]
-)
-def test_an_untyped_selection_is_have_a_look_never_done(monkeypatch, description):
+ONE_VIDEO = "This video is made from the one video you attached"
+
+
+@pytest.mark.parametrize("description", ["Use my talking video.", "Konuşma videomu kullan."])
+def test_an_untyped_selection_on_her_one_video_is_done(monkeypatch, description):
     brief = CreativeBrief(version=1, requirements=[_r("r1", "select", description), R8])
-    report = _readiness(monkeypatch, brief)
-    row = _row(report, "r1")
-    assert row["disposition"] in APPROVABLE
-    assert row["disposition"] != "executable"  # nothing proves it: never "Done"
-    assert row["reason"] != PROD_HOLDS["r1"]
+    row = _row(_readiness(monkeypatch, brief), "r1")
+    assert (row["disposition"], row["reason"]) == ("executable", ONE_VIDEO)
+
+
+def test_with_several_videos_an_untyped_selection_keeps_todays_verdict(monkeypatch):
+    two = {**STRATEGY, "selected_media_ids": [TAKE, "second-take.mp4"]}
+    original = _manifest
+
+    def _two_videos():
+        media = [
+            {"media_id": TAKE, "kind": "video", "duration_s": TAKE_S},
+            {"media_id": "second-take.mp4", "kind": "video", "duration_s": 12.0},
+        ]
+        return capabilities.resolve_creator_manifest(
+            item_id="f0fcb94e-7556-44db-8b0f-d7dff0c0588e",
+            edit_format="subtitled",
+            media=media,
+            phone_source_media_ids=[TAKE, "second-take.mp4"],
+            phone_rendering_allowed=True,
+        )
+
+    monkeypatch.setattr(__import__(__name__), "_manifest", _two_videos, raising=False)
+    globals()["_manifest"] = _two_videos
+    try:
+        report = _readiness(
+            monkeypatch,
+            CreativeBrief(version=1, requirements=[_r("r1", "select", "Use my second clip."), R8]),
+            strategy={**two, "reaction_beats": []},
+        )
+    finally:
+        globals()["_manifest"] = original
+    assert _row(report, "r1")["reason"] != ONE_VIDEO
+    assert "r1" in _held(report)
+
+
+def test_a_quoted_selection_keeps_todays_verdict(monkeypatch):
+    cut = _r("r1", "select", "İkinci “Neredesin”i kes, bir kere sorayım")
+    report = _readiness(monkeypatch, CreativeBrief(version=1, requirements=[cut, R8]))
+    assert _row(report, "r1")["reason"] != ONE_VIDEO
+
+
+def test_the_finished_video_says_done_for_her_one_video(monkeypatch):
+    # The after-render review reads the variant prod persisted for job 4bb9842c (its phone beat
+    # receipt and clip ids), not the draft.
+    from app.kria.brief_checks import build_receipts, plan_facts_from_phone_variant
+
+    monkeypatch.setattr(settings, "single_take_pointer_ask_enabled", True)
+    variant = {
+        "variant_id": "subtitled",
+        "resolved_archetype": "subtitled",
+        "duration_s": 32.576740223434456,
+        "phone_beat_receipt": {
+            "version": 1,
+            "matcher": "phrase",
+            "placed": [
+                {
+                    "at_s": 3.18,
+                    "end_s": 4.68,
+                    "trigger": "launched",
+                    "visual_label": "IMG_7101.JPG",
+                    "display_mode": "fullscreen",
+                },
+                {
+                    "at_s": 11.72,
+                    "end_s": 13.22,
+                    "trigger": "five years",
+                    "visual_label": "IMG_7102.PNG",
+                    "display_mode": "fullscreen",
+                },
+                {
+                    "at_s": 13.92,
+                    "end_s": 15.42,
+                    "trigger": "hinge",
+                    "visual_label": "IMG_7103.PNG",
+                    "display_mode": "fullscreen",
+                },
+                {
+                    "at_s": 26.76,
+                    "end_s": 28.26,
+                    "trigger": "billboards",
+                    "visual_label": "IMG_7107.JPG",
+                    "display_mode": "fullscreen",
+                },
+            ],
+            "unplaced": [],
+            "closing": {"badge": "none", "status": "none"},
+        },
+    }
+    from types import SimpleNamespace
+
+    from app.tasks.kria_runtime import _phone_source_video_count
+
+    # The job's `_phone_sources_v1`: her one take (Visuals are stored apart).
+    job = SimpleNamespace(
+        assembly_plan={"_phone_sources_v1": [{"media_id": TAKE, "original": {"kind": "video"}}]}
+    )
+    facts = dataclasses.replace(
+        plan_facts_from_phone_variant(variant), attached_video_count=_phone_source_video_count(job)
+    )
+    receipts = {r.requirement_id: r for r in build_receipts([R1, R3], facts)}
+    assert (receipts["r1"].status, receipts["r1"].reason) == ("met", ONE_VIDEO)
+    assert receipts["r3"].status == "met", receipts["r3"].reason
 
 
 def test_a_quoted_word_with_no_pop_in_still_holds(monkeypatch):

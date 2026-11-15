@@ -398,20 +398,12 @@ def _no_pre_render_checker(req: Any, facts: Any) -> bool:
     ("I can't confirm this draft does it yet") blocked a creator on something no draft can
     show, so a requirement whose research is proven falls through to the checks of its other
     facts. Research that is not proven (never researched, a limit, a failure) still blocks."""
-    from app.kria.brief_checks import (  # noqa: PLC0415
-        judged_at_render,
-        text_words_met,
-        untyped_select,  # noqa: PLC0415
-    )
+    from app.kria.brief_checks import judged_at_render, text_words_met  # noqa: PLC0415
     from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
     from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
     from app.kria.style_asks import text_look_facts  # noqa: PLC0415
     from app.kria.text_sequence import is_text_sequence  # noqa: PLC0415
 
-    if untyped_select(req):
-        # KRI-1488: a `select` row with no typed fact ("Use my talking video.") names nothing a
-        # draft can check; it is said after render, never a hold.
-        return True
     researched = req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping)
     if researched and not (
         settings.kria_researched_look_after_render_enabled and _research_proven(req, facts)
