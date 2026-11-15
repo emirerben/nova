@@ -25,6 +25,8 @@ from app.pipeline.phone_speaker_framing import (
 )
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 
+pytestmark = pytest.mark.journey("kri-547-speaker-framing")
+
 CANVAS = Canvas(width=1080, height=1920)
 # 1920x1080 cover-filled into 1080x1920: 3413.33 px wide, 1080 of it shows.
 SHOWN_W = 1920 * 1920 / 1080

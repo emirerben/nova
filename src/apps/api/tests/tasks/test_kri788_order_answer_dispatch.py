@@ -61,6 +61,8 @@ from app.tasks.content_plan_build import _dispatch_item_render
 from app.tasks.kria_runtime import _unresolved_choice_plan
 from tests.tasks.test_content_plan_build import _phone_dispatch_item
 
+pytestmark = pytest.mark.journey("kri-788-order-answer-dispatch")
+
 MEDIA_ID = "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4"
 REFUSAL = "I can't verify this ordering rule from the approved media."
 

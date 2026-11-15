@@ -31,6 +31,8 @@ from app.agents.retake_detector import (
     run_retake_detector,
 )
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 MODEL = RetakeDetectorAgent.spec.model
 
 # 22 words: "So today we're | wait let me start over. | So today we're looking

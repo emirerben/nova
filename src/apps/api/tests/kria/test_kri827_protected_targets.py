@@ -230,3 +230,38 @@ def test_an_editor_save_that_changes_crop_bars_or_cut_marks_the_receipt_stale() 
     }
     kept = protected_text_after_editor_save(unmarked, **{**same, "speaker_position_x": 0.0})
     assert kept["targets"][0]["status"] == "no_selection"
+
+
+# ------------------------------------------------- KRI-1476: a face ask on her cards sentence
+#
+# Qendresa Q1 run 3 (job 3ef3cbe5, 2026-11-14): "show the matching screenshot ... in the top or
+# bottom part of the screen, not over my face" was filed with ``keep_text_off: [face]`` beside
+# the brief model's own Visuals facts. A face ask filed anywhere keeps EVERY text off her face
+# (text never covers a face): what changed is where her captions go to honour it
+# (`test_s3_caption_middle_off_face`), never whether the ask counts.
+
+
+@pytest.mark.parametrize("switch", [True, False])
+def test_a_face_ask_filed_on_her_cards_sentence_still_keeps_every_text_off_her_face(
+    monkeypatch, switch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "keep_text_off_caption_spot_enabled", switch)
+    r4 = BriefRequirement(
+        id="r4",
+        kind="style",
+        scope="global",
+        description=(
+            "When I talk about something, show the matching screenshot or screen recording in "
+            "the top or bottom part of the screen, not over my face."
+        ),
+        facts={
+            "keep_text_off": [{"kind": "face"}],
+            "visual_position": "top_or_bottom",
+            "keep_visuals_off_face": True,
+            "match_visuals_to_speech": True,
+        },
+    )
+    brief = CreativeBrief(version=1, requirements=[r4])
+    assert protected_targets(brief) == (ProtectedTarget("face", "face", ("r4",)),)

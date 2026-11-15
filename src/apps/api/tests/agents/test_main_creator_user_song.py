@@ -27,6 +27,8 @@ from app.agents.main_creator import (
 from app.config import settings
 from tests.agents.test_main_creator_agent import _input, _manifest
 
+pytestmark = pytest.mark.journey("kri-586-hook-copy")
+
 # (clip_intents_enabled, brief_enabled) -> sha256 of the deliberate v56 no-song baseline.
 # v55 (KRI-598) adds the unavailable-`guided_voiceover` rule, so all four renders changed.
 # v56 (KRI-614) adds the clip `filename` sentence to the base prompt: all four changed again.

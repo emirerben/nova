@@ -37,6 +37,7 @@ from app.kria.brief_checks import (
 from app.pipeline.phone_spoken_text import caption_boxes
 from app.pipeline.phone_subtitled_plan import _STORY_CANVAS
 from app.pipeline.phone_subtitled_title import _measure_title_box
+from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.pipeline.transcribe import Word
 from app.services.client_protocol import clear_request_context
 from app.tasks import generative_build as gb
@@ -162,11 +163,13 @@ TYPED_REQ = _req("l1", TYPED)
 TYPED_REQ_2 = _req("l2", TYPED_2)
 
 
-def _job(monkeypatch, sentences, requirements):
+def _job(monkeypatch, sentences, requirements, words=None):
     from tests.tasks.test_phone_subtitled_narrated_dispatch import _enable_beats, _setup_subtitled
 
     job, snapshot, _session, _binding = _setup_subtitled(
-        monkeypatch, transcript_words=_words(sentences), duration_s=TAKE_S
+        monkeypatch,
+        transcript_words=words if words is not None else _words(sentences),
+        duration_s=TAKE_S,
     )
     _enable_beats(monkeypatch, extra_features=("authoredText",))
     clear_request_context()
@@ -188,9 +191,11 @@ def _job(monkeypatch, sentences, requirements):
     return job
 
 
-def _run(monkeypatch, *, flag: bool, sentences=FULL_SENTENCES, requirements=(TYPED_REQ,)):
+def _run(
+    monkeypatch, *, flag: bool, sentences=FULL_SENTENCES, requirements=(TYPED_REQ,), words=None
+):
     _flag(monkeypatch, flag)
-    job = _job(monkeypatch, sentences, requirements)
+    job = _job(monkeypatch, sentences, requirements, words)
     gb._run_generative_job(str(job.id))
     assert job.status == "awaiting_device", (job.status, job.error_detail)
     return job, job.assembly_plan["variants"][0]
@@ -421,3 +426,191 @@ def test_10_a_first_second_third_take_draws_no_wrong_text_and_the_receipt_is_par
     receipt = _after(variant, TYPED_REQ)
     assert receipt.status == "partial"
     assert "rest of your list" in (receipt.reason or "")
+
+
+# ------------------------------------------------------------------ KRI-1471 (Q1 run 3)
+#
+# Prod 2026-11-14: the same list ask was filed as one `text / per_clip` row with no literal (the
+# example "1. Spec-kit" stayed in the description) and her take counts the list aloud ("Number
+# one, Spec Kit. ... Number two, Impeccable. ..."). The worker read no label ask at all. Ways the
+# fix can go wrong, each pinned below: W1 fewer than five labels, or not in her words, or at the
+# wrong moment; W2 the finished-video receipt still judges clip text; W3 the switch off is not
+# today's render; W4 item 19's own typed row changes with the switch off.
+
+RUN3_REQ = BriefRequirement(
+    id="r5",
+    kind="text",
+    scope="per_clip",
+    description="When I list the five repos, show each one as big text, like “1. Spec-kit”.",
+    literal=None,
+    facts={"numbered": True, "text_size": "large", "show_when_mentioned": True},
+)
+RUN3_SAID_AT = [8.48, 15.32, 22.82, 31.06, 39.32]
+
+
+def _run3(monkeypatch, *, example: bool, requirements=(RUN3_REQ,)):
+    from tests.pipeline.test_phone_list_labels import Q1_RUN3_WORDS
+
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", example)
+    words = [Word(confidence=1.0, **word) for word in Q1_RUN3_WORDS]
+    return _run(monkeypatch, flag=True, requirements=requirements, words=words)
+
+
+def test_11_run3_take_and_brief_draw_all_five_labels(monkeypatch):
+    """W1, W2: five rows in her words, each when she starts that item; the row's receipt is met."""
+    from tests.pipeline.test_phone_list_labels import Q1_RUN3_LABELS
+
+    _job, variant = _run3(monkeypatch, example=True)
+    rows = _label_rows(variant)
+    assert [_squash(r["text"]) for r in rows] == Q1_RUN3_LABELS, [
+        r["text"] for r in variant.get("text_elements") or []
+    ]
+    for row, said in zip(rows, RUN3_SAID_AT, strict=True):
+        assert abs(row["start_s"] - said) <= 0.3, (row["text"], row["start_s"], said)
+    for row, nxt in zip(rows, rows[1:], strict=False):
+        assert row["end_s"] <= nxt["start_s"] + 1e-6, "two labels at once"
+    placed = variant["list_label_placement"]["rows"]
+    assert placed[0]["list_found"] == 5 and all(r["status"] == "placed" for r in placed)
+    assert _after(variant, RUN3_REQ).status == "met"
+
+
+def test_12_run3_switch_off_reads_no_label_ask_as_today(monkeypatch):
+    """W3: off, the per-clip row is nobody's label: no rows, and not "met"."""
+    _job, variant = _run3(monkeypatch, example=False)
+    assert not _label_rows(variant)
+    assert _after(variant, RUN3_REQ).status != "met"
+
+
+def test_13_run3_switch_off_keeps_item_19s_one_typed_label(monkeypatch):
+    """W4: the typed global row with the switch off is today's render: her one label."""
+    typed = _req("l1", "1. Spec-kit")
+    _job, variant = _run3(monkeypatch, example=False, requirements=(typed,))
+    assert [_squash(r["text"]) for r in _label_rows(variant)] == ["1. Spec-kit"]
+    assert variant["list_label_placement"]["rows"][0]["list_found"] == 1
+
+
+# ------------------------------------------------------------------ KRI-1471: labels and cards
+#
+# The combined Q1 run 3 replay drew every label over its own screenshot card (her spot, y 0.86,
+# is in the bottom band the cards take once her captions are in the middle). The worker's own
+# placement helper with the REAL placer, her take's words, her face and the replay's card box.
+# Ways it goes wrong: L1 the label stays on the card; L2 it lands on her face or off the frame
+# instead; L3 every retry decodes her face again; L4 with no clear spot it is moved onto
+# something else, or the receipt hides the overlap; L5 the switch off is not today's rows;
+# L6 a label is still up when her ending comes in.
+
+RUN3_FACE = NormalizedBox(0.2067, 0.2113, 0.8452, 0.6175)  # the job's sampled face boxes, united
+RUN3_CARD = NormalizedBox(0.205, 0.694, 0.98, 0.939)  # the replay's bottom-band card
+TOP_CARD = NormalizedBox(0.22, 0.02, 0.78, 0.196)  # the same card in the band above her head
+
+
+def _run3_label_rows(monkeypatch, *, example: bool, cards=(RUN3_CARD,), duration_s=48.8):
+    import app.pipeline.phone_subtitled_title as title_mod
+    from app.pipeline.phone_list_labels import list_label_asks
+    from tests.pipeline.test_phone_list_labels import Q1_RUN3_WORDS
+    from tests.pipeline.test_phone_voiceover_montage_plan import _binding
+
+    _flag(monkeypatch, True)
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", example)
+    samples: list[tuple] = []
+
+    def faces(_path, anchors, **_kwargs):
+        samples.append(tuple(anchors))
+        return [ProtectedRegion(0.0, 48.8, RUN3_FACE, "face")], {"decoded": len(anchors)}
+
+    monkeypatch.setattr(title_mod, "sample_face_regions", faces)
+    rows, receipt = gb._phone_talking_list_label_rows(
+        list_label_asks([_req("r5", "1. Spec-kit")]),
+        anchors=[],
+        words=list(Q1_RUN3_WORDS),
+        cues=[],
+        caption_style="word",
+        caption_look=None,
+        shown_rows=[],
+        cards=[(0.0, 48.8, box) for box in cards],
+        timeline_duration_s=duration_s,
+        binding=_binding("c0", duration_s=48.8),
+        clip_path="/tmp/c0.mp4",
+        keep_segments=[(0.0, 48.8)],
+        landscape_fit="fit",
+    )
+    return rows, receipt, samples
+
+
+def test_14_labels_whose_spot_is_under_a_card_go_above_her_head(monkeypatch):
+    """L1, L2, L3: five labels, none on the card or her face, each decoded for once."""
+    from tests.pipeline.test_phone_list_labels import Q1_RUN3_LABELS
+
+    rows, receipt, samples = _run3_label_rows(monkeypatch, example=True)
+
+    assert [_squash(r["text"]) for r in rows] == Q1_RUN3_LABELS
+    for row in rows:
+        box = _measure_title_box(row, canvas=_STORY_CANVAS)
+        assert box.intersection_area(RUN3_CARD) == 0.0, (row["text"], box)
+        assert box.intersection_area(RUN3_FACE) == 0.0, (row["text"], box)
+        assert 0.06 - 1e-6 <= box.top and box.bottom <= RUN3_FACE.top, (row["text"], box)
+        assert 0.0 <= box.left and box.right <= 1.0
+    for placed in receipt["rows"]:
+        assert placed["placement"]["status"] == "moved", placed
+        assert placed["placement"]["text_overlap"] is False and "text_overlap" not in placed
+    assert len(samples) == len(rows), "one face sample per label, not one per spot tried"
+
+
+def test_15_with_no_clear_spot_the_label_keeps_her_spot_and_says_so(monkeypatch):
+    """L4: a card in the top band too. The label is not pushed onto her face."""
+    rows, receipt, _samples = _run3_label_rows(
+        monkeypatch, example=True, cards=(RUN3_CARD, TOP_CARD)
+    )
+
+    assert {r["y_frac"] for r in rows} == {0.86}
+    assert all(placed["text_overlap"] is True for placed in receipt["rows"])
+    assert not any(placed["face_collision"] for placed in receipt["rows"])
+
+
+def test_16_switch_off_leaves_the_labels_on_the_card_as_today(monkeypatch):
+    """L5: one try per label at her spot, today's receipt (the overlap only in `placement`)."""
+    rows, receipt, samples = _run3_label_rows(monkeypatch, example=False)
+
+    assert [_squash(r["text"]) for r in rows] == ["1. Spec-kit"]  # no counted list either
+    assert rows[0]["y_frac"] == 0.86 and len(samples) == 1
+    [placed] = receipt["rows"]
+    assert placed["placement"]["text_overlap"] is True and "text_overlap" not in placed
+
+
+def test_17_a_label_is_gone_when_her_ending_comes_in(monkeypatch):
+    """L6: the worker ends the labels' time where the ending's last 3 s start."""
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", True)
+    assert gb._list_label_timeline_end_s(48.8, closing_text="comment REPO") == 45.8
+    assert gb._list_label_timeline_end_s(48.8, closing_text=None) == 48.8
+    rows, _receipt, _samples = _run3_label_rows(monkeypatch, example=True, duration_s=41.0)
+    assert rows[-1]["text"].startswith("5.") and rows[-1]["end_s"] == 41.0  # cut at the ending
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
+    assert gb._list_label_timeline_end_s(48.8, closing_text="comment REPO") == 48.8
+
+
+def test_18_an_item_said_as_the_ending_comes_in_is_named_as_not_shown(monkeypatch):
+    """Review: her fifth item starts 0.18 s before the ending (under the 0.8 s a label needs).
+    No row is drawn for it, its receipt row says why, and the done-list names it: the list is
+    never "Done" with an item silently missing."""
+    from tests.pipeline.test_phone_list_labels import Q1_RUN3_LABELS
+
+    rows, receipt, _samples = _run3_label_rows(monkeypatch, example=True, duration_s=39.5)
+
+    assert [_squash(r["text"]) for r in rows] == Q1_RUN3_LABELS[:4]
+    fifth = receipt["rows"][-1]
+    assert (fifth["list_item"], fifth["text"], fifth["status"]) == (5, Q1_RUN3_LABELS[4], "no_time")
+    assert receipt["rows"][0]["list_found"] == 5
+    variant = {
+        "resolved_archetype": "subtitled",
+        "edit_format": "subtitled",
+        "text_elements": rows,
+        "list_label_placement": receipt,
+    }
+    done = _after(variant, _req("r5", "1. Spec-kit"))
+    assert (done.status, done.reason) == (
+        "partial",
+        "I showed this one, but couldn't show 1 more from your list: “5. Cloud Code Game Studios”",
+    )
+    # An item she starts a second before the ending is shown for that second.
+    rows, _receipt, _samples = _run3_label_rows(monkeypatch, example=True, duration_s=40.32)
+    assert (rows[-1]["start_s"], rows[-1]["end_s"]) == (39.32, 40.32)

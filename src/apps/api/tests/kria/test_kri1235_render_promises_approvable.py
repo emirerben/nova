@@ -287,6 +287,38 @@ def test_a_turkish_turn_is_not_held_either(q1_prod):
         assert rows[rid]["reason"] != PROD_TURN_1[rid][1], "expected the Turkish twin"
 
 
+# KRI-1472: Q1 run 3 (prod 2026-11-14) filed "Only my voice, no music." as two rows; the
+# untyped half ("Only my voice.", `voice_only: true`) held the draft and was "left out".
+RUN3_VOICE = [
+    _r("r7", "audio", "Only my voice.", facts={"voice_only": True}),
+    _r("r8", "audio", "No music.", facts={"audio_intent": "no_music"}),
+]
+
+
+def test_run3_only_my_voice_is_done_never_held_or_left_out(q1_prod):
+    brief = CreativeBrief(version=1, requirements=RUN3_VOICE)
+    report = _assess(brief)
+    rows = _rows(report)
+    assert (rows["r7"]["disposition"], rows["r7"]["reason"]) == (
+        "executable",
+        "No music, as asked.",
+    )
+    assert rows["r8"]["disposition"] == "executable"
+    assert report["ready"] is True
+
+
+def test_run3_only_my_voice_switch_off_holds_exactly_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "voice_only_ask_enabled", False)
+    brief = CreativeBrief(version=1, requirements=RUN3_VOICE)
+    report = _assess(brief)
+    assert (_rows(report)["r7"]["disposition"], _rows(report)["r7"]["reason"]) == (
+        "unsupported",
+        bc._TALKING_NO_SUCH_EDIT,
+    )
+    assert report["ready"] is False
+    assert "Only my voice." in readiness_reply(brief, report)
+
+
 # ----------------------------------------------- 2. each promise, through its real checker
 
 
@@ -618,3 +650,51 @@ def test_the_longest_cleanup_promise_fits_a_receipt():
     for joined in ("; ".join(parts), "; ".join(bc._REASON_TR[p] for p in parts)):
         assert len(joined) <= 300, len(joined)
         assert _promised_at_render(_ASK, _partial(joined), bc.PlanFacts())
+
+
+# --- KRI-1471: Q1 run 3 (prod 2026-11-14, thread 05aa3a87): the list example filed per clip ---
+#
+# The same prompt, a week later, reached readiness as ONE `text / per_clip` row with no literal
+# (job 3ef3cbe5's binding). Readiness answered "unsupported: None of the 11 clips got its own
+# text in this draft." and "Make it without these" dropped her labels.
+RUN3_VISUALS = tuple(f"asset-0000000{n}-0000-4000-8000-00000000000{n}" for n in range(10))
+RUN3_R5 = _r(
+    "r5",
+    "text",
+    "When I list the five repos, show each one as big text, like “1. Spec-kit”.",
+    scope="per_clip",
+    facts={"numbered": True, "text_size": "large", "show_when_mentioned": True},
+)
+
+
+def _assess_run3(*requirements: BriefRequirement) -> tuple[CreativeBrief, dict]:
+    brief = CreativeBrief(version=1, requirements=list(requirements))
+    report = assess_readiness(
+        brief,
+        dict(Q1_STRATEGY),
+        media={"clip_paths": [TAKE]},
+        manifest=_manifest(*RUN3_VISUALS),
+        creator_id=CREATOR,
+        protected_regions=[],
+        protected_marks=True,
+    )
+    return brief, report
+
+
+def test_run3_the_list_example_row_is_a_promise_not_a_hold(q1_prod):
+    brief, report = _assess_run3(RUN3_R5)
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == ("unverified", bc._TALKING_LIST_LABEL_PLAN)
+    assert report["ready"] is True
+
+
+def test_run3_list_example_switch_off_holds_exactly_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
+    brief, report = _assess_run3(RUN3_R5)
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == (
+        "unsupported",
+        "None of the 11 clips got its own text in this draft.",
+    )
+    assert report["ready"] is False
+    assert RUN3_R5.text() in readiness_reply(brief, report)

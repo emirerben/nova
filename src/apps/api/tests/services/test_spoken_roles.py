@@ -32,6 +32,8 @@ from app.services.spoken_quotes import SEGMENT_LEAD_S as SPEECH_LEAD_S
 from app.services.spoken_quotes import SEGMENT_TAIL_S as SPEECH_TAIL_S
 from app.services.spoken_roles import quiet_window, spoken_line
 
+pytestmark = pytest.mark.journey("kri-585-spoken-order")
+
 
 def _analysis(*segments, transcript: str | None = None, people: int | None = None, speech=True):
     rows = [{"text": t, "start_s": s, "end_s": e} for t, s, e in segments]

@@ -312,6 +312,11 @@
    "{what} {count} parçaya bölünüyor"
   ],
   [
+   "app/kria/brief_checks.py",
+   "{text} sits over something else on screen; I couldn't find a clear spot for it",
+   "{text} ekranda başka bir şeyin üstünde duruyor; ona boş bir yer bulamadım"
+  ],
+  [
    "app/kria/clip_exclusions.py",
    " and {count} more",
    " ve {count} tane daha"
@@ -1512,6 +1517,26 @@
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
   ],
   [
+   "app/services/apns.py",
+   "Open Kria to see what to do next.",
+   "Sıradaki adımı görmek için Kria'yı aç."
+  ],
+  [
+   "app/services/apns.py",
+   "Open it to watch and share.",
+   "Açıp izleyebilir ve paylaşabilirsin."
+  ],
+  [
+   "app/services/apns.py",
+   "Your video is ready",
+   "Videon hazır"
+  ],
+  [
+   "app/services/apns.py",
+   "Your video needs a look",
+   "Videona bir göz at"
+  ],
+  [
    "app/tasks/generative_build.py",
    "Tell me how you'd like the text instead.",
    "Metnin bunun yerine nasıl olmasını istediğini söyle."
@@ -1545,6 +1570,16 @@
    "app/tasks/kria_runtime.py",
    "Writing the on-screen text for this many clips took longer than our AI allows, so your video wasn't made. Your edit and footage are saved. Fewer clips or less text would help.",
    "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az klip ya da daha az yazı işe yarar."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "- Left out as agreed: {count} of your asks",
+   "- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "- Left out as agreed: {what}",
+   "- Kararlaştırdığımız gibi çıkarıldı: {what}"
   ],
   [
    "app/kria/approval_readiness.py",

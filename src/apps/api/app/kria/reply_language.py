@@ -121,6 +121,14 @@ _DE_WORDS = (
     andere anderen wort worter woerter ueber uber nach vor hab habe hinzugefugt hinzufuegen
     gemacht zeigen sag sage gesagt
     """.split()
+        # KRI-1453: everyday words a German edit ask is made of, so "Lösch alle Beschriftungen"
+        # (only ö) is not Turkish and "Ordne die Clips in der ..." is not English.
+        + """
+    die alle allen sind sein zu dass wenn weil aus einer eines diese dieser diesen dieses
+    mir mich dir dich uns euch ihr ihm ihn haben hast bist wurde gibt sehr mehr weniger
+    etwas immer nie ganz ganze ganzen neu neue neuen jede jeden jedes als
+    nimm setz setze verwende behalte ordne schneide kurz kurze losch loesch
+    """.split()
     )
     - _EN_WORDS
 )  # a word English also uses ("will", "was", "video", "im") is not German evidence

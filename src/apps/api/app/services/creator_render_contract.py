@@ -1233,10 +1233,16 @@ def _digest(data: Mapping[str, Any]) -> str:
 
 def _talking_list_label(requirement: Any, raw: Mapping[str, Any]) -> bool:
     """Item 19: flag on and the Talking worker would read this whole-video text as a list label."""
-    from app.pipeline.phone_list_labels import is_list_label_candidate  # noqa: PLC0415
+    from app.pipeline.phone_list_labels import (  # noqa: PLC0415
+        example_label,
+        is_list_label_candidate,
+    )
     from app.services.phone_rollout import phone_list_labels_supported  # noqa: PLC0415
 
-    if requirement.scope != "global" or not phone_list_labels_supported():
+    # KRI-1471: the numbered example filed as a per-clip literal is the worker's label too, so
+    # it is not looked up on a clip ("I couldn't tell which clip ...").
+    whole_video = requirement.scope == "global" or example_label(requirement) is not None
+    if not whole_video or not phone_list_labels_supported():
         return False
     from app.config import settings  # noqa: PLC0415
 
