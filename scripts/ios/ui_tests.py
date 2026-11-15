@@ -345,13 +345,24 @@ HAND_NAMED_SWIFT_TESTS = (
 
 def swift_followers(root, journeys=None):
     """Files that name a Swift test as `Class/method`: the journey manifest, the
-    workflows' native steps, these self-tests and the scripts that keep native
-    test names in code."""
+    workflows' native steps, the self-tests, the helper scripts that print
+    xcodebuild commands and the scripts that keep native test names in code."""
     files = [journeys or root / "scripts/ci/journey-manifest.json"]
-    for pattern in (".github/workflows/*.yml", "scripts/ios/tests/*.py"):
+    for pattern in (
+        ".github/workflows/*.yml",
+        "scripts/ios/tests/*.py",
+        "scripts/ci/test_*.py",
+        "scripts/ios/*.py",
+        "scripts/ios/*.sh",
+    ):
         files += sorted(root.glob(pattern))
     files += [root / name for name in HAND_NAMED_SWIFT_TESTS]
-    return [path for path in files if path.is_file()]
+    unique = dict.fromkeys(
+        path
+        for path in files
+        if path.is_file() and path != root / "scripts/ios/ui_tests.py"
+    )
+    return list(unique)
 
 
 def bare_followers(root):
