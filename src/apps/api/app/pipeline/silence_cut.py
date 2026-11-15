@@ -732,6 +732,10 @@ def _sentence_initial_head_carve(
         return None
     if span_lo < previous_word.start + SENTENCE_TAIL_MIN_VOICED_S - _EPS:
         return None
+    # A span that also swallows a real part of the last word's stamped end is the tail rule's
+    # shape or an ambiguous one (both edges in one pause): never carved here (F6).
+    if previous_word.end - span_lo >= TOKEN_SILENCE_MIN_OVERLAP_S - _EPS:
+        return None
     return span_hi
 
 
