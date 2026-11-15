@@ -1580,6 +1580,21 @@
    "app/tasks/kria_runtime.py",
    "- Left out as agreed: {what}",
    "- Kararlaştırdığımız gibi çıkarıldı: {what}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You don't say {names} in your take, so nothing is shown for it",
+   "Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "…and {n} more done",
+   "…ve {n} tane daha yapıldı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "…and {n} more",
+   "…ve {n} tane daha"
   ]
  ],
  "retired": [

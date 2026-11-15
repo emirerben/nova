@@ -491,7 +491,10 @@ def test_09_flag_off_is_byte_identical_to_today(monkeypatch):
 
 
 def test_10_a_label_with_a_spoken_trigger_stays_kri707_and_is_drawn_once(monkeypatch):
-    """FM 12: `facts.triggers` = KRI-707 draws it on the word; the list labels skip it."""
+    """FM 12: `facts.triggers` = KRI-707 draws it on the word; the list labels skip it. With
+    KRI-1480's switch on a label named by its own trigger is the list lane's instead
+    (`test_15`); either way it is drawn once."""
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
     triggered = _req("l2", "2. Impeccable", facts={"triggers": ["impeccable"]})
     labels = [LABEL_REQS[0], triggered, *LABEL_REQS[2:]]
     _job, variant = _run(monkeypatch, flag=True, brief=_brief(labels=labels))
@@ -652,3 +655,179 @@ def test_f6_list_labels_join_the_protected_text_placements():
         "list:l1-2": {"status": "moved"},
     }
     assert gb._list_label_protected_placements(None) == {}
+
+
+# ------------------------------------------------------------------ KRI-1480 / KRI-1481
+#
+# Q2 run 3 (prod 2026-11-15, job 77c63496): the labels were filed with their own repo name as
+# the spoken trigger (`triggers: ["Agents"]`), so the spoken-text lane drew them at the FIRST
+# hearing of the word: "4. Agents" inside "trading agents", "5. Claude code game studio" never
+# ("cloud code game studios"), while the recordings behind her switched on the right words.
+# Ways the fix can go wrong: T1 a label still fires on its word instead of its recording;
+# T2 the label is drawn twice (once per lane); T3 the done-list is not judged by the label's
+# own row; T4 a numbered text on ANOTHER word leaves the spoken-text lane; T5 switch off is not
+# today's video.
+
+TRIGGERED_REQS = [
+    _req(f"l{i}", text, facts={"triggers": [text.split(". ", 1)[1]]})
+    for i, text in enumerate(LABELS, start=1)
+]
+
+
+def _example_switch(monkeypatch, value: bool) -> None:
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", value)
+
+
+def _spoken_rows(variant: dict) -> list[dict]:
+    return [r for r in variant.get("text_elements") or [] if r["id"].startswith("spoken-text-")]
+
+
+def _receipt(variant: dict, req: BriefRequirement):
+    [receipt] = build_receipts(
+        [req], plan_facts_from_phone_variant(variant), include_unchecked=True
+    )
+    return receipt
+
+
+def test_15_labels_named_by_their_own_trigger_start_with_their_recordings(monkeypatch):
+    """T1, T2, T3: five list labels, each when its repo is introduced, one at a time, none
+    from the spoken-text lane, every row's receipt met."""
+    _example_switch(monkeypatch, True)
+    _job, variant = _run(monkeypatch, flag=True, brief=_brief(labels=TRIGGERED_REQS))
+
+    by_text = _by_text(variant)
+    assert list(by_text) == LABELS and _spoken_rows(variant) == []
+    assert "spoken_text_placement" not in variant
+    for text, intro in INTRO_AT.items():
+        assert abs(by_text[text]["start_s"] - intro) <= TOLERANCE_S, (text, by_text[text], intro)
+    four = by_text["4. Agents"]["start_s"]
+    assert abs(four - TRADING_AGENTS_AT) > 1.0 and abs(four - AS_AGENTS_AT) > 1.0
+    rows = _label_rows(variant)
+    for row, nxt in zip(rows, rows[1:], strict=False):
+        assert row["end_s"] <= nxt["start_s"] + 1e-6, "two labels at once"
+    assert [_receipt(variant, req).status for req in TRIGGERED_REQS] == ["met"] * 5
+
+
+def test_16_a_numbered_text_on_another_word_stays_a_spoken_text(monkeypatch):
+    """T4: "show 1. Spec-kit when I say github" is a text on a word, not a list label."""
+    _example_switch(monkeypatch, True)
+    on_word = _req("l1", "1. Spec-kit", facts={"triggers": ["github"]})
+    _job, variant = _run(monkeypatch, flag=True, brief=_brief(labels=[on_word, *LABEL_REQS[1:]]))
+
+    [spoken] = _spoken_rows(variant)
+    assert spoken["text"] == "1. Spec-kit"
+    assert abs(spoken["start_s"] - _said_at(0.0, "github")) <= TOLERANCE_S
+    assert "1. Spec-kit" not in _by_text(variant)
+
+
+def test_17_switch_off_draws_the_triggered_labels_on_their_first_hearing_as_today(monkeypatch):
+    """T5: the spoken-text lane, "4. Agents" inside "trading agents", no label 5."""
+    _example_switch(monkeypatch, False)
+    _job, variant = _run(monkeypatch, flag=True, brief=_brief(labels=TRIGGERED_REQS))
+
+    spoken = {r["text"]: r for r in _spoken_rows(variant)}
+    assert _label_rows(variant) == []
+    assert spoken["4. Agents"]["start_s"] == pytest.approx(TRADING_AGENTS_AT, abs=0.05)
+    assert "5. Claude code game studio" not in spoken
+
+
+# ------------------------------------------------------------------ KRI-1484
+#
+# Her labels over the recordings behind her (this walkthrough: small in the bottom-right
+# corner): the top band first, and with LIST_LABEL_PLATE_ENABLED (default off, needs a phone
+# check) an opaque dark plate behind the cream letters, drawn by the phone's authored-text
+# lane. Ways the worker glue goes wrong: P1 no plate reaches the row or the recipe layer;
+# P2 a plated label lands on her corner face, a caption or another text; P3 the plate without
+# `authoredText` verified (the recipe would be refused, losing the video); P4 switch off is not
+# the same rows minus the plate.
+
+PLATE = "#141414"
+
+
+def _plate(monkeypatch, value: bool) -> None:
+    monkeypatch.setattr(settings, "list_label_plate_enabled", value)
+
+
+def _corner_face() -> NormalizedBox:
+    from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS
+    from app.pipeline.phone_subtitled_title import frame_face_box
+
+    preset = SPEAKER_FRAME_PRESETS["small_bottom_right"]
+    frame = (preset["width_fraction"], preset["x_fraction"], preset["y_fraction"])
+    return frame_face_box(FULL_FRAME_FACE, frame)
+
+
+def _label_layers(job) -> dict[str, object]:
+    return {
+        " ".join(" ".join(run.text for run in layer.runs).split()): layer
+        for layer in _recipe(job).text_layers
+        if " ".join(" ".join(run.text for run in layer.runs).split()) in LABELS
+    }
+
+
+def test_18_over_the_recordings_each_label_is_up_top_on_a_dark_plate(monkeypatch):
+    """P1, P2: five plated labels in the top band, clear of her corner face and the captions;
+    the device draws the plate (the text layer's background)."""
+    _example_switch(monkeypatch, True)
+    _plate(monkeypatch, True)
+    job, variant = _run(monkeypatch, flag=True)
+
+    rows = _label_rows(variant)
+    assert [r["text"] for r in rows] == LABELS
+    face = _corner_face()
+    for row in rows:
+        assert row["background_color"] == PLATE, row["text"]
+        box = _measure_title_box(row, canvas=_STORY_CANVAS)
+        assert box.bottom <= 0.30, (row["text"], box)  # the top band, not mid-page
+        assert box.intersection_area(face) == 0.0, (row["text"], box)
+        for cap in caption_boxes(
+            variant["caption_cues"],
+            window=(row["start_s"], row["end_s"]),
+            caption_style="sentence",
+            canvas=_STORY_CANVAS,
+        ):
+            assert box.intersection_area(cap) == 0.0, (row["text"], box, cap)
+    assert all(
+        r.get("plate") is True
+        for r in variant["list_label_placement"]["rows"]
+        if r["status"] == "placed"
+    )
+    layers = _label_layers(job)
+    assert sorted(layers) == sorted(LABELS)
+    for layer in layers.values():
+        assert layer.background is not None
+        assert round(layer.background.color.red * 255) == 0x14 and layer.background.color.alpha == 1
+
+
+def test_19_without_authored_text_verified_there_is_no_plate(monkeypatch):
+    """P3: the plate is the authored-text lane's; without it today's look, and the video is made."""
+    _example_switch(monkeypatch, True)
+    _plate(monkeypatch, True)
+    job = _label_job(monkeypatch)
+    _flag(monkeypatch, True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [f for f in gb.settings.phone_render_verified_features if f != "authoredText"],
+    )
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device", (job.status, job.error_detail)
+    rows = _label_rows(job.assembly_plan["variants"][0])
+    assert rows and not any("background_color" in r for r in rows)
+
+
+def test_20_switch_off_is_the_same_labels_without_the_plate(monkeypatch):
+    """P4: off, every row and receipt is the plated one minus the plate."""
+    _example_switch(monkeypatch, True)
+    _plate(monkeypatch, True)
+    _job, on = _run(monkeypatch, flag=True)
+    _plate(monkeypatch, False)
+    _job, off = _run(monkeypatch, flag=True)
+
+    strip = lambda rows: [{k: v for k, v in r.items() if k != "background_color"} for r in rows]  # noqa: E731
+    assert strip(_label_rows(on)) == _label_rows(off)
+    assert not any("background_color" in r for r in _label_rows(off))
+    plain = [
+        {k: v for k, v in r.items() if k != "plate"} for r in on["list_label_placement"]["rows"]
+    ]
+    assert plain == off["list_label_placement"]["rows"]

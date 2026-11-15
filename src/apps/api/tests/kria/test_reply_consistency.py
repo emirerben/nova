@@ -10,12 +10,15 @@ is replayed end to end by `scripts/kria/check_reply_consistency.py` (all route f
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.config import settings
 from app.kria import brief_checks
 from app.kria.brief import BriefRequirement
-from app.kria.contracts import RequirementReceipt
+from app.kria.contracts import KriaTurnPlan, RequirementReceipt
 from app.kria.reply_consistency import (
     CLOSING_CARD,
     SPEAKER_BACKGROUND,
@@ -29,6 +32,7 @@ from app.kria.reply_language import reply_language_for
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities import talking_head
 from app.kria.route_disclosure import Disclosure
+from app.tasks.kria_runtime import _MAX_TURN_RESPONSE_CHARS, _fit_reply
 
 # yorum3 r5 / r7 / r4, as the brief extractor recorded them.
 CLOSING_CARD_ASK = BriefRequirement(
@@ -398,3 +402,105 @@ def test_old_app_build_is_told_to_update_not_that_the_card_is_unsupported(
     assert receipt.reason.startswith(too_old)
     assert not receipt.reason.startswith(unavailable)
     assert not contradictions([CLOSING_CARD_ASK], [receipt])
+
+
+# --- KRI-1485: the held reply's receipt lines inside `KriaTurnPlan.response` ------------------
+# Qendresa Q2 run 3 (job 77c63496): the first hold listed nine asks and ended "- Add this label
+# when the Claude code game studio section star…", then the "I held this first draft back"
+# sentence. That reply is bound by the contract's 1200 characters, so it is the one place rows
+# can be counted instead of shown. Ways the fitter could fail here (written before it): a line
+# cut in the middle; the count missing or wrong; the tail (what is held, the question) cut;
+# rows that only differ in their quoted text not folded before any is counted; a Done row kept
+# while a Couldn't row is counted; over 1200 characters; the switch off not the old cut.
+
+_Q2_REPLIES = json.loads(
+    (Path(__file__).resolve().parents[1] / "fixtures" / "kri1485_q2_run3_replies.json").read_text(
+        encoding="utf-8"
+    )
+)
+_HOLD_TAIL = _Q2_REPLIES["hold"]["tail"]
+
+
+def _held(body: str, tail: str = _HOLD_TAIL) -> list[str]:
+    """The fitted reply's receipt lines; the reply is valid for the contract and ends on the
+    whole tail."""
+    reply = _fit_reply(body, tail)
+    KriaTurnPlan(mode="respond", turn_value="question", response=reply)
+    assert len(reply) <= _MAX_TURN_RESPONSE_CHARS
+    assert reply.endswith(f"\n{tail}")
+    return reply[: -len(tail) - 1].split("\n")
+
+
+def test_q2_run3_hold_is_cut_at_a_line_and_says_how_many_more():
+    body = _Q2_REPLIES["hold"]["body"]
+    asked = body.split("\n")
+    lines = _held(body)
+
+    kept = [line for line in lines if not line.startswith("- …")]
+    assert kept == asked[: len(kept)]  # whole lines, in order, nothing reworded
+    assert len(kept) >= 10  # the heading, the reason and at least eight asks
+    assert lines[-1] == f"- …and {len(asked) - len(kept)} more"
+    assert not any(line.endswith("…") for line in lines)
+
+
+def test_q2_run3_hold_with_the_switch_off_is_the_stored_reply(monkeypatch):
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", False)
+    assert _fit_reply(_Q2_REPLIES["hold"]["body"], _HOLD_TAIL) == _Q2_REPLIES["stored_hold_reply"]
+
+
+def test_held_rows_that_only_differ_in_their_quoted_text_fold_before_any_is_counted():
+    ask = (
+        "Show this label as text on screen when I start talking about that repo, not as a clip "
+        "label; replace the previous repo label."
+    )
+    reason = "None of the 8 clips got its own text in this draft."
+    labels = ["2. Impeccable", "3. TradingAgents", "4. Agents", "5. Claude code game studio"]
+    body = "\n".join(
+        [
+            "I can't make this yet:",
+            "- Opening title in bold caps, then serif, then handwritten.: "
+            + "It is not there. " * 12,
+            *(f'- {ask} ("{label}"): {reason}' for label in labels),
+            "- Cut all my pauses.: " + "Only the long pauses are cut. " * 8,
+        ]
+    )
+    assert len(body) > _MAX_TURN_RESPONSE_CHARS
+    lines = _held(body)
+
+    quoted = ", ".join(f'"{label}"' for label in labels)
+    assert f"- {ask} ({quoted}): {reason}" in lines
+    assert sum(ask in line for line in lines) == 1
+    assert lines[-1].startswith("- Cut all my pauses.: Only the long pauses are cut.")
+    assert not any(line.startswith("- …") for line in lines)
+
+
+def test_a_held_reply_counts_done_rows_before_it_counts_a_row_that_is_not_done():
+    body = "\n".join(
+        [
+            "Not everything you asked for made it in:",
+            *(
+                f"- Done: Keep clip number {i} exactly as it was filmed, {'no changes ' * 9}"
+                for i in range(8)
+            ),
+            "- Couldn't: Add a song (A Talking video can't do this, so it stays as filmed)",
+        ]
+    )
+    lines = _held(body)
+
+    assert "- Couldn't: Add a song (A Talking video can't do this, so it stays as filmed)" in lines
+    counted = next(line for line in lines if line.startswith("- …and"))
+    assert counted.endswith("more done") and lines[-1] == counted
+
+
+def test_a_held_reply_far_too_long_still_fits_and_counts_every_row_it_leaves_out():
+    """Forty different asks can't all be named in 1200 characters with the tail: the last ones
+    become one honest count (the cards under the reply still list every ask)."""
+    asked = [
+        f"- Put the words for moment {i} right where I say them: I can't find that moment."
+        for i in range(40)
+    ]
+    lines = _held("\n".join(["I can't make this yet:", *asked]))
+
+    kept = lines[1:-1]
+    assert kept == asked[: len(kept)] and kept
+    assert lines[-1] == f"- …and {40 - len(kept)} more"

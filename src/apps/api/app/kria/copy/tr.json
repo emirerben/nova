@@ -1347,6 +1347,7 @@
     "You didn't pick a clip for \"{words}\"": "\"{words}\" için bir klip seçmedin",
     "You didn't say what order the clips in {quoted} should play in. Tell me the order, or say any order is fine.": "{quoted} içindeki kliplerin hangi sırayla oynayacağını söylemedin. Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle.",
     "You didn't say what order these clips should play in. Tell me the order, or say any order is fine.": "Bu kliplerin hangi sırayla oynayacağını söylemedin. Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle.",
+    "You don't say {names} in your take, so nothing is shown for it": "Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor",
     "You gave me a specific order for the clips.": "Klipler için belirli bir sıra verdin.",
     "You gave me the words \"{clean_name_str_req_literal}\" for one shot.": "Bir sahne için \"{clean_name_str_req_literal}\" yazısını verdin.",
     "You marked {named} on a different clip than the one I put the text on; mark it on the speaking clip": "{named_tr} yazının olduğu klipte değil başka bir klipte işaretledin; konuşan klipte işaretle",
@@ -1737,6 +1738,8 @@
     "{what} is in {count} stretches": "{what} {count} parçaya bölünüyor",
     "{why_capitalize}.": "{why}.",
     "{words} ({spot})": "{words} ({v1})",
-    "“{state_candidate}” — does this wording work?": "“{state_candidate}” — bu ifade sana uyar mı?"
+    "“{state_candidate}” — does this wording work?": "“{state_candidate}” — bu ifade sana uyar mı?",
+    "…and {n} more": "…ve {n} tane daha",
+    "…and {n} more done": "…ve {n} tane daha yapıldı"
   }
 }

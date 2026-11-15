@@ -4291,6 +4291,30 @@ engine test does; real sharpness and that the hard cut survives the phone encode
 starts at the top of the picture (no vertical text measure), so a page that opens on a logo
 shows the logo; after pause cuts a shared half can be on screen under 1.5 s.
 
+## List-label plate (KRI-1484)
+
+While her recordings play behind her (a speaker-background window or picture fill, never her
+full-screen take), a numbered list label tries the top band first (y 0.15,
+`phone_list_labels.LABEL_BACKDROP_Y_FRAC`, under `LIST_LABEL_EXAMPLE_ASK_ENABLED`) and, with
+`LIST_LABEL_PLATE_ENABLED`, is drawn on an opaque dark plate: the row's `background_color`
+`#141414`, cream letters and outline unchanged, the text layer's `background` with the default
+8 / 4 px padding. Measured on her Q2 run 3 export: zoomed README pages have text in every band,
+and only an opaque plate made all five labels readable. A label whose time is not wholly over
+the recordings (she is still full screen) keeps today's spot and look.
+
+Gate: `LIST_LABEL_PLATE_ENABLED` (default off) + `authoredText` in
+`PHONE_RENDER_VERIFIED_FEATURES` (without it: no plate, the video is made). Off: byte-identical
+rows. Editor: the plate is the row's own `background_color`, which the phone editor reads from the
+row (`NativeEditorRenderCompiler.authoredStyle`) and keeps on a Save; the server keeps and draws it.
+
+Apply: `fly secrets set LIST_LABEL_PLATE_ENABLED=true` (api + worker) + restart. Rollback: `...=false`
++ restart; new renders have no plate, saved rows keep theirs. Guards:
+`tests/pipeline/test_phone_list_labels.py` (`test_b*`), `tests/tasks/test_qendresa_list_labels_worker.py`
+(`test_18`-`test_20`), `tests/tasks/test_speaker_full_opening_list_labels.py`.
+
+Not proven without a phone render: the plate's look and padding on the device, that it reads on a
+scrolling page, and the editor Save/reopen on a phone.
+
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 
 `phone-simple-cut-v3` is a forward-only verifier policy. New v3 code accepts the pinned older supported verifier versions; an older server cannot interpret a newly pinned v3 policy and refuses it rather than publishing unchecked output. After v3 policies exist, rolling the API back below v3 can therefore leave those exports blocked. Do not downgrade the pin/minimum verifier or relabel an old report to recover them; preserve the attempt and restore a compatible server before the normal output-check retry.

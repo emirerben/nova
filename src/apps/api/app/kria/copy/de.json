@@ -1347,6 +1347,7 @@
     "You didn't pick a clip for \"{words}\"": "Du hast keinen Clip für \"{words}\" ausgewählt",
     "You didn't say what order the clips in {quoted} should play in. Tell me the order, or say any order is fine.": "Du hast nicht gesagt, in welcher Reihenfolge die Clips in {quoted} laufen sollen. Sag mir die Reihenfolge oder sag, dass jede Reihenfolge okay ist.",
     "You didn't say what order these clips should play in. Tell me the order, or say any order is fine.": "Du hast nicht gesagt, in welcher Reihenfolge diese Clips laufen sollen. Sag mir die Reihenfolge oder sag, dass jede Reihenfolge okay ist.",
+    "You don't say {names} in your take, so nothing is shown for it": "Du sagst {names} in deinem Take nicht, deshalb wird dafür nichts gezeigt",
     "You gave me a specific order for the clips.": "Du hast mir eine bestimmte Reihenfolge für die Clips vorgegeben.",
     "You gave me the words \"{clean_name_str_req_literal}\" for one shot.": "Du hast mir für eine Einstellung den Text \"{clean_name_str_req_literal}\" gegeben.",
     "You marked {named} on a different clip than the one I put the text on; mark it on the speaking clip": "Du hast {named} auf einem anderen Clip markiert als dem, auf den ich den Text gelegt habe; markier es auf dem Clip, in dem gesprochen wird",
@@ -1742,6 +1743,8 @@
     "{what} is in {count} stretches": "{what} ist in {count} Abschnitte geteilt",
     "{why_capitalize}.": "{why_capitalize}.",
     "{words} ({spot})": "{words} ({spot})",
-    "“{state_candidate}” — does this wording work?": "„{state_candidate}“ – passt dir dieser Wortlaut?"
+    "“{state_candidate}” — does this wording work?": "„{state_candidate}“ – passt dir dieser Wortlaut?",
+    "…and {n} more": "…und {n} weitere",
+    "…and {n} more done": "…und {n} weitere erledigt"
   }
 }

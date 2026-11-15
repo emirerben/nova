@@ -1599,7 +1599,9 @@ def test_build_receipts_is_empty_with_no_live_requirements(requirements) -> None
     assert build_receipts(requirements, PlanFacts()) == []
 
 
-def test_long_replies_are_truncated_at_the_cap() -> None:
+@pytest.mark.parametrize("line_fit", [False, True])
+def test_long_replies_are_truncated_at_the_cap(monkeypatch, line_fit: bool) -> None:
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", line_fit)
     reqs = [_req("order", "global", id=f"r{i}", description="X" * 150) for i in range(1, 5)]
     brief = CreativeBrief(version=1, requirements=reqs)
     receipts = [
@@ -1608,7 +1610,12 @@ def test_long_replies_are_truncated_at_the_cap() -> None:
     ]
     reply = reply_from_receipts(brief, receipts, summary="Drafted.")
     assert reply.startswith("Not everything you asked for made it in:\n")
-    assert len(reply) <= 1200 and reply.endswith("…")
+    if line_fit:
+        # KRI-1485: a row that is not Done is never cut, so four long Partly rows stay whole.
+        assert reply.count("\n- Partly: " + "X" * 150 + " (" + "Y" * 200 + ")") == 4
+        assert "…" not in reply
+    else:
+        assert len(reply) <= 1200 and reply.endswith("…")
 
 
 def test_main_creator_scope_recognisers_ignore_model_authored_brief_text() -> None:
