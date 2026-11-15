@@ -219,14 +219,20 @@ class _Clock:
         return out
 
 
-def _piece(row: dict[str, Any], a: float, b: float, length: float, rate: float) -> dict[str, Any]:
-    """``piece(of:from:to:length:rate:)``: output seconds ``a``..``b`` of ``row`` on its own source
-    clock and at its own place in its panel."""
+def _piece(
+    row: dict[str, Any], a: float, b: float, length: float, rate: float, still: bool
+) -> dict[str, Any]:
+    """``piece(of:from:to:length:rate:still:)``: output seconds ``a``..``b`` of ``row`` on its own
+    source clock and at its own place in its panel. A photo has no source clock, so its part keeps
+    ``in_s`` and never locks a source start (KRI-1440)."""
     late, early = a > _EPS, b < length - _EPS
     if not (late or early):
         return copy.deepcopy(row)
     if _num(row.get("freeze_frame_s")) is not None:
         piece = _Clock.of(row).sliced(a, b).applied(row)
+    elif still:
+        piece = copy.deepcopy(row)
+        piece["duration_s"] = b - a
     else:
         piece = copy.deepcopy(row)
         in_s = _num(row.get("in_s")) or 0.0
@@ -235,7 +241,7 @@ def _piece(row: dict[str, Any], a: float, b: float, length: float, rate: float) 
         if early and _present(row, "source_end_s"):
             piece["source_end_s"] = in_s + b * rate
     piece["duration_beats"] = None
-    if late:
+    if late and not still:
         piece["source_start_locked"] = True
     if early:
         _set_cut(piece)
@@ -498,12 +504,11 @@ def plan_split_full_screen(
             key=lambda part: part[0],
         )
         for position, (start, end, in_section) in enumerate(parts):
-            piece = _piece(row, start - _offset(row), end - _offset(row), length, rate)
+            still = is_still(row, still_set)
+            piece = _piece(row, start - _offset(row), end - _offset(row), length, rate, still)
             if position > 0:
                 piece["slot_id"] = new_id()
-                piece["parent_segment_id"] = (
-                    None if is_still(row, still_set) else row.get("slot_id")
-                )
+                piece["parent_segment_id"] = None if still else row.get("slot_id")
             if in_section:
                 if side == "until":
                     piece["split_offset_s"] = float(start - cut)
@@ -580,7 +585,14 @@ def plan_split_full_screen(
         replayed = _transition_overlap(left, length, _length(run[index]["slot"]) or 0.0)
         if abs(replayed - shared) <= 0.001:
             continue
-        run[index - 1]["slot"] = _piece(left, 0.0, length - shared, length, run[index - 1]["rate"])
+        run[index - 1]["slot"] = _piece(
+            left,
+            0.0,
+            length - shared,
+            length,
+            run[index - 1]["rate"],
+            is_still(left, still_set),
+        )
         run[index - 1]["end"] = run[index]["start"]
     for index in range(len(run)):
         if index == len(run) - 1 or run[index]["end"] <= run[index + 1]["start"] + _EPS:
