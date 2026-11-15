@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.241.0] - 2026-11-15
+
+### Changed
+- test(ios): editor-ready UI test waits for the background warm instead of 4 s (KRI-1467) (#2358) <!-- release-pr: 2358 -->
+
 ## [0.88.240.0] - 2026-11-15
 
 ### Changed
