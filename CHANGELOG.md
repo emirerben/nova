@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.240.0] - 2026-11-15
+
+### Changed
+- feat(api): chat places and recolours a split panel blank (KRI-1457) (#2355) <!-- release-pr: 2355 -->
+
 ## [0.88.239.0] - 2026-11-15
 
 ### Changed
