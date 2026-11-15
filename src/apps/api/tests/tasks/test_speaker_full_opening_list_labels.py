@@ -101,3 +101,18 @@ def test_without_the_opening_labels_keep_item_19s_corner_placement(monkeypatch):
     job, variant = _run(monkeypatch, follows_talk=False, opening=False)
     assert not _recipe(job).speaker_background.full_screen_windows
     assert _check(job, variant) == []
+
+
+# KRI-1484: a label while she is still full screen is over her own take, not a recording: no
+# plate and her own spot there; the labels over the recordings get both.
+def test_a_label_inside_her_full_screen_opening_gets_no_plate(monkeypatch):
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", True)
+    monkeypatch.setattr(settings, "list_label_plate_enabled", True)
+    _job, variant = _run(monkeypatch, follows_talk=False)
+
+    rows = item19._label_rows(variant)
+    inside = [r for r in rows if r["start_s"] < OPENING_S]
+    after = [r for r in rows if r["start_s"] >= OPENING_S]
+    assert inside and after, [(r["text"], r["start_s"]) for r in rows]
+    assert not any("background_color" in r for r in inside)
+    assert all(r.get("background_color") == "#141414" for r in after)

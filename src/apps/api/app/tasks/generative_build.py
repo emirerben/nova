@@ -9643,6 +9643,12 @@ def _run_phone_subtitled_job(
         )
 
         list_label_asks = _list_label_asks(_phone_brief_live_requirements(snapshot))
+        # KRI-1480: a numbered label filed with its own name as the spoken trigger is the list
+        # lane's (`phone_list_labels.names_own_item`): the spoken-text lane leaves it alone.
+        _list_label_ids = {ask.requirement_id for ask in list_label_asks}
+        spoken_text_asks = tuple(
+            ask for ask in spoken_text_asks if ask.requirement_id not in _list_label_ids
+        )
     # KRI-827: what the creator asked to keep text off (None without such an ask).
     protected_plan: Any = None
     protected_card_regions: tuple = ()
@@ -11268,13 +11274,17 @@ def _run_phone_subtitled_job(
                     **text_canvas,
                 )
 
-            def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
+            def _closing_rows_for(
+                photo_card: Any, speaker_frame: Mapping[str, Any] | None = None
+            ) -> tuple[list[dict], dict[str, Any] | None]:
                 # KRI-1342 item 7: the corner rows ride with the closing rows, so every
                 # compile path (plain, lanes, inserts) carries them; they come last.
-                rows, receipt = _closing_rows_only(photo_card)
+                rows, receipt = _closing_rows_only(photo_card, speaker_frame or {})
                 return rows + [dict(row) for row in corner_text_rows_placed], receipt
 
-            def _closing_rows_only(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
+            def _closing_rows_only(
+                photo_card: Any, speaker_frame: Mapping[str, Any]
+            ) -> tuple[list[dict], dict[str, Any] | None]:
                 closing_drawings[:] = []
                 if closing_card_row is not None:
                     # KRI-1346: her colour card owns the ending words; the compiler times the
@@ -11347,6 +11357,8 @@ def _run_phone_subtitled_job(
                     caption_style=caption_style,
                     caption_look=protected_caption_look,
                     insert_points=tuple(float(i.at_take_s) for i in inserts),
+                    # KRI-1482: where she is drawn once the lanes are final (a corner frame).
+                    **speaker_frame,
                     **text_canvas,
                 )
                 closing_drawings[:] = drawings
@@ -12498,6 +12510,8 @@ def _run_phone_subtitled_job(
                             if lanes is not None and lanes.background is not None
                             else ()
                         ),
+                        # KRI-1484: where her recordings play behind her (cut time).
+                        backdrop_spans=_list_label_backdrop_spans(lanes, talking_timeline_s),
                         protected=protected_plan,
                         **text_canvas,
                     )
@@ -12509,6 +12523,9 @@ def _run_phone_subtitled_job(
                     try:
                         # KRI-514: the closing text sits on the closing photo
                         # card that survived every lane drop so far.
+                        closing_frame = _closing_speaker_frame_kwargs(
+                            lanes, visuals, title_rows + spoken_text_rows, text_canvas.get("canvas")
+                        )
                         closing_text_rows, closing_text_receipt = _closing_rows_for(
                             next(
                                 (
@@ -12519,10 +12536,32 @@ def _run_phone_subtitled_job(
                                 None,
                             )
                             if lanes is not None and beat_closing_card_id
-                            else None
+                            else None,
+                            closing_frame,
                         )
                         cues = _cues_clear_of_cta(cues, closing_text_rows, closing_text_receipt)
                         recipe = _compile_lanes(title_rows + spoken_text_rows + closing_text_rows)
+                        if (
+                            closing_frame
+                            and not inserts
+                            and _captions_touch_ending(
+                                current_phone_text_policy(),
+                                closing_text_rows,
+                                closing_drawings,
+                                text_canvas.get("canvas"),
+                            )
+                        ):
+                            # KRI-1482: moved off her corner cut-out, the ending can meet the
+                            # captions where the text policy finally drew them. They stop where
+                            # it starts (KRI-1306); they run through it only when clear of it.
+                            closing_text_receipt = {
+                                **(closing_text_receipt or {}),
+                                "text_overlap": True,
+                            }
+                            cues = _cues_clear_of_cta(cues, closing_text_rows, closing_text_receipt)
+                            recipe = _compile_lanes(
+                                title_rows + spoken_text_rows + closing_text_rows
+                            )
                         # Rows are on the take timeline; the inserts' length is on the recipe.
                         take_duration = recipe.duration - sum(
                             float(i.binding.original.duration_s) for i in inserts
@@ -15161,6 +15200,68 @@ def _phone_saved_title_rule() -> dict:
     return rule
 
 
+def _closing_speaker_frame_kwargs(
+    lanes: Any, visuals: Any, shown_rows: Sequence[Mapping[str, Any]], canvas: Any
+) -> dict[str, Any]:
+    """KRI-1482: where the final lanes draw the speaker, for `_phone_talking_closing_rows`.
+
+    Qendresa Q2 run 3 (job 77c63496): her ending was placed against her face in the full-frame
+    take while she sat cut out small in the bottom-right corner, so "REPO" and the arrow were
+    drawn across her. With a corner frame the ending is placed against where she is drawn, and
+    off the other text and the pip cards on screen with it. ``{}`` (the placement exactly as
+    before) without a frame, or with ``SPEAKER_FRAME_CAPTION_FACES_ENABLED`` off."""
+    background = lanes.background if lanes is not None else None
+    frame = background.speaker_frame if background is not None else None
+    if frame is None or not settings.speaker_frame_caption_faces_enabled:
+        return {}
+    return {
+        "speaker_frame": (frame.width_fraction, frame.x_fraction, frame.y_fraction),
+        "full_screen_windows": tuple(
+            (float(span.start_s), float(span.end_s)) for span in background.full_screen_windows
+        ),
+        "shown_rows": list(shown_rows),
+        "cards": _phone_list_label_card_boxes(lanes, visuals, canvas),
+    }
+
+
+def _captions_touch_ending(
+    policy: Mapping[str, Any] | None,
+    rows: Sequence[Mapping[str, Any]],
+    drawings: Sequence[Mapping[str, Any]],
+    canvas: Any,
+) -> bool:
+    """KRI-1482: do the caption lines AS COMPILED (the phone text policy's measured boxes)
+    touch the CTA ending's two rows or its arrow while it shows? The ending is placed before
+    the compile against an estimate of the captions; this reads where they really are. False
+    without a policy, without the two-row ending, or when nothing touches."""
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+
+    ending = [row for row in rows if (row.get("source_params") or {}).get("cta_part")]
+    boxes = (policy or {}).get("_caption_boxes") or []
+    if not ending or not boxes:
+        return False
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    start_s = min(float(row["start_s"]) for row in ending)
+    end_s = max(float(row["end_s"]) for row in ending)
+    parts = [_measure_title_box(dict(row), canvas=canvas) for row in ending]
+    for drawing in drawings:
+        points = [point for stroke in drawing.get("strokes") or [] for point in stroke["points"]]
+        if points:
+            xs, ys = [point[0] for point in points], [point[1] for point in points]
+            parts.append(NormalizedBox(min(xs), min(ys), max(xs), max(ys)))
+    for item in boxes:
+        if item.get("kind", "caption") != "caption" or not item.get("box"):
+            continue
+        if float(item["end_s"]) <= start_s + 1e-3 or float(item["start_s"]) >= end_s - 1e-3:
+            continue
+        caption = NormalizedBox(*item["box"])
+        if any(part.intersection_area(caption) > 0.0 for part in parts):
+            return True
+    return False
+
+
 def _cues_clear_of_cta(cues: Any, rows: list[dict], receipt: dict[str, Any] | None) -> Any:
     """KRI-1306: when the CTA ending could only be placed touching the captions, the captions
     stop where the ending starts, so no caption word lands on "comment"/the keyword."""
@@ -15308,6 +15409,10 @@ def _phone_talking_closing_rows(
     caption_look: Any = None,
     caption_offset_s: float = 0.0,
     insert_points: tuple[float, ...] = (),
+    speaker_frame: tuple[float, float, float] | None = None,
+    full_screen_windows: tuple[tuple[float, float], ...] = (),
+    shown_rows: Sequence[Mapping[str, Any]] = (),
+    cards: Sequence[tuple[float, float, Any]] = (),
 ) -> tuple[list[dict], dict[str, Any] | None, list[dict]]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
     receipt and its drawings (item 14's arrow; ``[]`` for the tag); ``([], None, [])``
@@ -15315,7 +15420,12 @@ def _phone_talking_closing_rows(
     photo's `SubtitledOverlayCard` on the cut
     timeline (``None`` without one): the text appears with it and sits on it.
     Without one it holds for the last 3 s at the title's top spot, off the
-    speaker's face."""
+    speaker's face.
+
+    KRI-1482: ``speaker_frame`` / ``full_screen_windows`` (`_closing_speaker_frame_kwargs`)
+    say where the matted speaker is drawn, so the ending keeps off her face and her cut-out
+    in the corner, and off the ``shown_rows`` (other text) and ``cards`` (start, end, box) on
+    screen with it. Without a frame the placement is exactly what it was."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
@@ -15354,6 +15464,21 @@ def _phone_talking_closing_rows(
         keeps_off_object = protected is not None and any(
             target.kind == "object" for target in protected.targets
         )
+        # KRI-1482: with her in a corner frame, what else is on screen during the ending.
+        on_screen: list[Any] = []
+        if speaker_frame is not None:
+            from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
+
+            on_screen = [
+                _measure_title_box(dict(shown), canvas=canvas)
+                for shown in shown_rows
+                if float(shown["start_s"]) < end_s and float(shown["end_s"]) > start_s
+            ] + [box for a, b, box in cards if float(a) < end_s and float(b) > start_s]
+        frame_kwargs: dict[str, Any] = (
+            {"speaker_frame": speaker_frame, "full_screen_windows": full_screen_windows}
+            if speaker_frame is not None
+            else {}
+        )
         if cta and not insert_in_ending and not keeps_off_object:
             from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
             from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
@@ -15386,6 +15511,8 @@ def _phone_talking_closing_rows(
                     position_x=position_x,
                     caption_boxes=_cta_caption_boxes,
                     all_faces=bool(protected is not None and protected.protect_all_faces),
+                    **frame_kwargs,
+                    **({"avoid": on_screen} if on_screen else {}),
                 )
                 if ending is not None:
                     try:
@@ -15405,8 +15532,14 @@ def _phone_talking_closing_rows(
             scale=fit_scale,
             position_x=position_x,
             avoid=(
-                caption_avoid((float(row["start_s"]), float(row["end_s"]))) if caption_avoid else ()
+                *(
+                    caption_avoid((float(row["start_s"]), float(row["end_s"])))
+                    if caption_avoid
+                    else ()
+                ),
+                *on_screen,
             ),
+            **frame_kwargs,
             **_protected_placement_kwargs(protected),
         )
     if cta_attempted:
@@ -16114,8 +16247,13 @@ def _phone_talking_list_label_rows(
     canvas: Any = None,
     phrases: Any = None,
     full_screen_windows: tuple[tuple[float, float], ...] = (),
+    backdrop_spans: tuple[tuple[float, float], ...] = (),
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """Item 19: one text row per numbered list label that has its moment, plus the receipt.
+
+    KRI-1484: ``backdrop_spans`` (cut timeline, `_list_label_backdrop_spans`) are where her
+    recordings play behind her. A label whose whole time is inside one tries the top band first
+    and, with LIST_LABEL_PLATE_ENABLED and ``authoredText`` verified, is drawn on a dark plate.
 
     Modelled on `_phone_talking_spoken_text_rows`. ``anchors`` (`LabelAnchor`) and ``words``
     are on the cut timeline the recipe plays; ``cards`` are ``(start_s, end_s, NormalizedBox)``
@@ -16197,6 +16335,7 @@ def _phone_talking_list_label_rows(
         place=place,
         avoid_for=avoid_for,
         phrases=phrases,
+        **_list_label_backdrop_kwargs(backdrop_spans),
     )
     receipt_rows = [row for row in receipt["rows"] if row.get("status") != "not_a_list_item"]
     if not receipt_rows:
@@ -16207,6 +16346,50 @@ def _phone_talking_list_label_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return rows, receipt
+
+
+# KRI-1484: the plate behind a list label over her recordings (cream letters on near-black).
+LIST_LABEL_PLATE_COLOR = "#141414"
+
+
+def _list_label_backdrop_spans(lanes: Any, timeline_s: float) -> tuple[tuple[float, float], ...]:
+    """KRI-1484: where a picture or recording plays behind her while she is cut out SMALL in a
+    speaker frame (a speaker-background window or a picture fill), never where she is drawn full
+    screen in her own take; cut-timeline seconds, like the label rows. Empty without a background
+    lane, without a speaker frame (a picture behind her full-size cut-out keeps today's label),
+    or with a plain colour fill and no windows."""
+    background = lanes.background if lanes is not None else None
+    if background is None or background.speaker_frame is None:
+        return ()
+    if background.kind in ("image", "video"):
+        spans = [(0.0, float(timeline_s))]
+    else:
+        spans = sorted((float(w.start_s), float(w.end_s)) for w in background.windows)
+    for cut in sorted((float(w.start_s), float(w.end_s)) for w in background.full_screen_windows):
+        spans = [
+            part
+            for start, end in spans
+            for part in ((start, min(end, cut[0])), (max(start, cut[1]), end))
+            if part[1] - part[0] > 1e-6
+        ]
+    return tuple(spans)
+
+
+def _list_label_backdrop_kwargs(spans: tuple[tuple[float, float], ...]) -> dict[str, Any]:
+    """`list_label_rows`'s KRI-1484 arguments: none without a backdrop (the call is today's)."""
+    if not spans:
+        return {}
+
+    def over(window: tuple[float, float]) -> bool:
+        return any(start - 1e-6 <= window[0] and window[1] <= end + 1e-6 for start, end in spans)
+
+    plate = (
+        LIST_LABEL_PLATE_COLOR
+        if settings.list_label_plate_enabled
+        and "authoredText" in set(settings.phone_render_verified_features)
+        else None
+    )
+    return {"over_backdrop": over, **({"backdrop_plate": plate} if plate else {})}
 
 
 def _list_label_timeline_end_s(timeline_s: float, *, closing_text: str | None) -> float:

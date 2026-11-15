@@ -132,6 +132,10 @@ A new fixture needs a pin before it passes `test_fixture_prompt_pins.py`: captur
 
 `raw_text` provenance: the export script serializes the persisted output dict back to JSON and uses that as `raw_text`. Replay re-parses it through the agent's `parse()`. This means replay validates the structural floor but does not validate Gemini's actual JSON-shape compliance — that's why we keep at least one hand-authored `golden/` fixture per agent recorded from a real model response.
 
+## Every agent has an eval or a reason
+
+`test_agents_have_evals.py` scans every `AgentSpec` under `app/`. An agent passes with replayable fixtures under `tests/fixtures/agent_evals/` or a `tests/evals/test_*.py` that names it. Otherwise it needs an entry in `no_eval_reasons.json` saying why (production calls in the last 30 days, and what covers it instead). The list may only shrink.
+
 ## Fixture pins
 
 Each fixture carries `prompt_sha`, a hash of the exact prompt the model was sent when the answer was recorded. Replay hashes the prompt the agent sends today and fails the fixture on a mismatch (`stale fixture ...`), so a prompt edit cannot pass on an answer given to the old prompt. Live captures (`NOVA_EVAL_CAPTURE_DIR`) write the pin themselves. To re-record, run the live command from "Live-mode cost cap" with `NOVA_EVAL_CAPTURE_DIR=<dir>`, then copy `<dir>/<golden|prod_snapshots>/*.json` over the fixture files.

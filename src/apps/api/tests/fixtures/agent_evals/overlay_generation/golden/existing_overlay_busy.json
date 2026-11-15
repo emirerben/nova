@@ -1,0 +1,125 @@
+{
+  "agent": "nova.editor.overlay_generation",
+  "prompt_version": "2026-11-02.4",
+  "prompt_sha": "da914969299b144a",
+  "input": {
+    "language": "en",
+    "mode": "automatic",
+    "prompt": "",
+    "taste_notes": "",
+    "duration_s": 20.0,
+    "evidence": [
+      {
+        "kind": "speech",
+        "reference_id": "speech-0",
+        "quote": "look at that sunset",
+        "start_s": 3.0,
+        "end_s": 4.55,
+        "words": [
+          {
+            "quote": "look",
+            "start_s": 3.0,
+            "end_s": 3.35
+          },
+          {
+            "quote": "at",
+            "start_s": 3.4,
+            "end_s": 3.75
+          },
+          {
+            "quote": "that",
+            "start_s": 3.8,
+            "end_s": 4.15
+          },
+          {
+            "quote": "sunset",
+            "start_s": 4.2,
+            "end_s": 4.55
+          }
+        ]
+      },
+      {
+        "kind": "speech",
+        "reference_id": "speech-1",
+        "quote": "pure golden hour over the harbor",
+        "start_s": 10.0,
+        "end_s": 12.35,
+        "words": [
+          {
+            "quote": "pure",
+            "start_s": 10.0,
+            "end_s": 10.35
+          },
+          {
+            "quote": "golden",
+            "start_s": 10.4,
+            "end_s": 10.75
+          },
+          {
+            "quote": "hour",
+            "start_s": 10.8,
+            "end_s": 11.15
+          },
+          {
+            "quote": "over",
+            "start_s": 11.2,
+            "end_s": 11.55
+          },
+          {
+            "quote": "the",
+            "start_s": 11.6,
+            "end_s": 11.95
+          },
+          {
+            "quote": "harbor",
+            "start_s": 12.0,
+            "end_s": 12.35
+          }
+        ]
+      }
+    ],
+    "assets": [],
+    "existing_overlays": [
+      {
+        "id": "text-1",
+        "kind": "text_elements",
+        "start_s": 2.0,
+        "end_s": 6.0
+      }
+    ],
+    "insertion_base": null
+  },
+  "raw_text": "{\n  \"overlays\": [\n    {\n      \"kind\": \"image\",\n      \"title\": \"Golden Hour Harbor\",\n      \"prompt\": \"An illustration of a beautiful harbor during golden hour, with warm, soft light, no text.\",\n      \"start_s\": 10.0,\n      \"end_s\": 13.0,\n      \"reason\": \"To visually represent the 'pure golden hour over the harbor' mentioned in the speech.\",\n      \"evidence\": [\n        {\n          \"kind\": \"speech\",\n          \"reference_id\": \"speech-1\",\n          \"quote\": \"pure golden hour over the harbor\"\n        }\n      ],\n      \"depicts\": \"generic_subject\",\n      \"x_frac\": 0.5,\n      \"y_frac\": 0.3,\n      \"scale\": 0.35\n    }\n  ],\n  \"message\": \"\"\n}",
+  "output": {
+    "overlays": [
+      {
+        "kind": "image",
+        "title": "Golden Hour Harbor",
+        "prompt": "An illustration of a beautiful harbor during golden hour, with warm, soft light, no text.",
+        "text": "",
+        "asset_id": null,
+        "start_s": 10.0,
+        "end_s": 13.0,
+        "x_frac": 0.5,
+        "y_frac": 0.3,
+        "scale": 0.35,
+        "reason": "To visually represent the 'pure golden hour over the harbor' mentioned in the speech.",
+        "evidence": [
+          {
+            "kind": "speech",
+            "reference_id": "speech-1",
+            "quote": "pure golden hour over the harbor"
+          }
+        ],
+        "depicts": "generic_subject"
+      }
+    ],
+    "message": ""
+  },
+  "meta": {
+    "source": "provider_smoke_capture",
+    "expect_overlays": "some",
+    "kri": "KRI-1428",
+    "test_run_id": "kri1428-overlay-generation-20261115e"
+  }
+}

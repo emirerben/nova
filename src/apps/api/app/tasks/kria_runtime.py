@@ -1643,13 +1643,21 @@ def _fit_reply(
     """``body``, then ``tail`` on its own line, within the turn plan's response limit. The
     tail (what is held back, what the simpler version leaves out, the question) stays whole;
     the receipt lines above it are shortened first. The route heads-up (``notice``, the end of
-    ``body``) keeps whole sentences and names the ones that do not fit on its compact line."""
+    ``body``) keeps whole sentences and names the ones that do not fit on its compact line.
+
+    KRI-1485: the receipt lines are fitted line by line (`brief_checks.fit_reply_text`): rows
+    that only differ in their quoted text fold into one, then the last rows become "…and N
+    more"; no line is cut in the middle. KRIA_REPLY_LINE_FIT_ENABLED=false: the old cut."""
     room = _MAX_TURN_RESPONSE_CHARS - len(tail) - 1
     if notice and len(body) > room and body.endswith(notice):
         head = body[: -len(notice)].rstrip("\n")
         fitted = card_text_within(disclosures, room - len(head) - 1)
         body = f"{head}\n{fitted}" if head else fitted
-    if len(body) > room:
+    if len(body) > room and settings.kria_reply_line_fit_enabled:
+        from app.kria.brief_checks import fit_reply_text  # noqa: PLC0415
+
+        body = fit_reply_text(body, room)
+    elif len(body) > room:
         body = trim_at_word(body, max(0, room))
     return f"{body}\n{tail}"
 
