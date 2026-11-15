@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.236.0] - 2026-11-15
+
+### Changed
+- feat(notifications): push copy in the chat's language — EN/TR/DE (KRI-1144) (#2349) <!-- release-pr: 2349 -->
+
 ## [0.88.235.0] - 2026-11-15
 
 ### Changed
