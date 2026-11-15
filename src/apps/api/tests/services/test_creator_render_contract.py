@@ -13,6 +13,8 @@ from app.services.creator_render_contract import (
     verify_phone_recipe,
 )
 
+pytestmark = pytest.mark.journey("kri-492-length-ownership")
+
 
 def _speech_recipe():
     from app.pipeline.phone_speech_montage_plan import (

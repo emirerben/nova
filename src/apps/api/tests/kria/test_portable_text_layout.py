@@ -6,6 +6,8 @@ from app.pipeline import text_overlay_skia as cloud
 from app.pipeline.canvas import Canvas
 from app.pipeline.portable_text_layout import UnsupportedPortableText, compile_text_overlay
 
+pytestmark = pytest.mark.journey("kri-548-caption-watermark")
+
 
 @pytest.mark.parametrize("shaped", [False, True])
 @pytest.mark.parametrize("anchor", ["left", "center", "right"])

@@ -23,6 +23,8 @@ from app.pipeline.render_geometry import (
     measure_caption,
 )
 
+pytestmark = pytest.mark.journey("kri-547-speaker-framing")
+
 _KW = dict(
     font_family="Montserrat Bold",
     font_size_px=64,

@@ -15,6 +15,8 @@ import pytest
 
 from app.tasks.maintenance import _decide_lifecycle_action
 
+pytestmark = pytest.mark.journey("kri-798-render-worker-restart")
+
 _GRACE_MIN = 10
 
 

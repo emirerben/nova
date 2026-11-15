@@ -8,6 +8,8 @@ from app.config import settings
 from app.services import speech_segments
 from app.tasks import kria_clip_understanding as task
 
+pytestmark = pytest.mark.journey("kri-808-clip-speech-language")
+
 WORDS = [
     {"text": w, "start_s": i * 0.4, "end_s": i * 0.4 + 0.3}
     for i, w in enumerate("never rush a good espresso. It changed my whole morning.".split())

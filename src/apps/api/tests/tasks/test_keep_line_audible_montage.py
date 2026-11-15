@@ -61,6 +61,8 @@ from tests.tasks.test_named_line_windows_montage import (
 )
 from tests.tasks.test_selected_clip_dispatch import _verify
 
+pytestmark = pytest.mark.journey("kri-760-whole-line-ask")
+
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri803_don_julio_m1_clips.json"
 CLIPS = json.loads(_FIXTURE.read_text(encoding="utf-8"))["clips"]
 NAME_CLIP, CHEERS_CLIP, RED_CAP, BLURRY = "m1_05", "m1_01", "m1_02", "m1_04"
