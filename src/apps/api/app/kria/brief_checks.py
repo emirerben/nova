@@ -768,6 +768,9 @@ class PlanFacts:
     # KRI-1015: another live requirement asked for this caption language, so the translation is
     # no miss on a captions ask that names none (the language row says where it came from).
     caption_translation_asked: bool = False
+    # KRI-1489: every word a live requirement of the brief names for a pop-in (typed `triggers`
+    # or quoted), so a pop-in another ask claims is never counted as a spare one.
+    brief_named_triggers: tuple[str, ...] = ()
     # KRI-547: how a phone Talking render framed a sideways speaker clip for a
     # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
     # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
@@ -7003,6 +7006,56 @@ def _trigger_heard(named: str, spoken: str) -> bool:
     return a == b or _contains_text(spoken, a) or _contains_text(named, b)
 
 
+def _named_count(name: str) -> int:
+    """How many moments one named entry stands for, by the number the brief writer copied into
+    it ("Vela's 2 posts" = 2); 1 without one. Digits only: nothing is read from words."""
+    for token in name.split():
+        digits = token.strip(".,;:!?()'\"")
+        if digits.isdigit() and 0 < int(digits) <= 10:
+            return int(digits)
+    return 1
+
+
+def _described_names_uncovered(
+    req: BriefRequirement,
+    missing: Sequence[str],
+    beats: Sequence[BeatFact],
+    names: Sequence[str],
+    facts: PlanFacts,
+) -> list[str]:
+    """KRI-1489: ``missing`` without the moments the plan's spare pop-ins answer one for one.
+
+    The brief writer files the moments of "When I mention the launch, Vela's 2 posts and the
+    billboards" under `triggers` in the creator's words ("launch", "Vela's 2 posts"); the planner,
+    which reads the take, puts the pictures on the words actually said ("launched", "five
+    years", "hinge"). Two model fields, two vocabularies: matching them word for word called
+    three placed pictures missing (Çiğdem S1, 2026-11-15). Only counts are compared, never
+    words (KRI-667). A pop-in is spare when no name of the brief claims it (this ask's, any
+    other live ask's, a quoted word). The unmatched names count as answered only when the spare
+    pop-ins are EXACTLY as many as the moments they stand for ("2 posts" = 2): one spare too few
+    or too many (pop-ins on words nobody asked for, a missed moment) keeps today's "No pop-in for
+    X". A word the creator quoted is never covered. The finished video is judged again on the
+    render's own receipt (which pop-ins it placed).
+    Off (`DESCRIBED_POPIN_NAMES_ENABLED`): ``missing`` unchanged."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not missing or not settings.described_popin_names_enabled:
+        return list(missing)
+    quoted = {_fold(q) for q in _quoted_triggers(req)}
+    unquoted = [n for n in missing if _fold(n) not in quoted]
+    if not unquoted:
+        return list(missing)
+    claimants = [*names, *facts.brief_named_triggers]
+    spare = [
+        b
+        for b in beats
+        if b.anchor != "title" and not any(_trigger_heard(n, b.trigger) for n in claimants)
+    ]
+    if len(spare) != sum(_named_count(n) for n in unquoted):
+        return list(missing)
+    return [n for n in missing if n not in unquoted]
+
+
 def _names(values: Iterable[str]) -> str:
     items = list(dict.fromkeys(values))
     shown = ", ".join(items[:_MAX_NAMED_IN_REASON])
@@ -8900,6 +8953,8 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             # places on the words; nothing typed says which, so it is not "No pop-in".
             footage_cues = _footage_cues(facts, missing) if not sequence_problem else []
             missing = [n for n in missing if n not in footage_cues]
+            # KRI-1489: a described moment ("Vela's 2 posts") answered by the plan's other pop-ins.
+            missing = _described_names_uncovered(req, missing, beats, names, facts)
             if unheard:
                 problems.append(
                     _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
@@ -16391,6 +16446,20 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     )
 
 
+def untyped_select(req: BriefRequirement) -> bool:
+    """KRI-1488: a `select` row that carries no typed fact, no literal and no moment: what it
+    selects is in its words alone, which the server does not read (KRI-667). Off
+    (`UNTYPED_SELECT_UNJUDGED_ENABLED`): never."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.untyped_select_unjudged_enabled or req.literal:
+        return False
+    facts = req.facts if isinstance(req.facts, Mapping) else {}
+    if any(value not in (None, "", [], {}, False) for value in facts.values()):
+        return False
+    return moment_ask(req) is None
+
+
 def _talking_honest_receipt(
     req: BriefRequirement, receipt: RequirementReceipt, facts: PlanFacts
 ) -> RequirementReceipt:
@@ -16483,6 +16552,11 @@ def _talking_honest_receipt(
     )
     if req.kind not in {"audio", "timing", "select"} and not bed_ask:
         return receipt
+    if req.kind == "select" and untyped_select(req):
+        # KRI-1488: "Use my talking video." filed as a `select` row with no typed fact names no
+        # selection the server can read, so it is no "can't" (that held the draft and listed the
+        # row as left out); it stays an unjudged "have a look".
+        return receipt
     # A speech-excerpt reading ("sesim öne çıksın", "so my voice comes through") only has a
     # checker on a plan with speech sections; a Talking plan has none, so that reading must
     # not keep an engine-noise ask silent.
@@ -16529,6 +16603,11 @@ def build_receipts(
     ):
         # KRI-1015: another requirement asked for this caption language.
         facts = dataclasses.replace(facts, caption_translation_asked=True)
+    named_anywhere = tuple(
+        dict.fromkeys(name for req in requirements if req.live for name in _named_triggers(req))
+    )
+    if named_anywhere:
+        facts = dataclasses.replace(facts, brief_named_triggers=named_anywhere)
     checked = (
         (req, _talking_honest_receipt(req, check_requirement(req, facts), facts))
         for req in requirements
