@@ -47,14 +47,17 @@ make kria-replay-job JOB=<production job id>
    production approved ended otherwise in the replay, or the replay failed inside, or after, an
    agent production never ran for this plan item; see "Chat jobs" and "Route comparison"). A chat
    job answers its questions with the creator's own next messages. `stalled`: the replay
-   stopped waiting (see "Stalls"); never read as a route result. Exit code 0 for
+   stopped waiting (see "Stalls"); never read as a route result. `input_error`: the seeded
+   inputs are not production's (seeded clips that do not bind as phone sources), so nothing was
+   replayed; fix the input recovery, not the product. Exit code 0 for
    `video_rendered` and `device_plan_ready` only, 1 for any other outcome, 3 when the local
    machine could not host the run (no PostgreSQL role, fewer than 20 free connections, scratch
    database not creatable, a worker that never finished its prewarm, or a turn whose lease
    lapsed and that no worker took back), which says nothing about the job.
 
 For a phone-first job, which is every failed creation job since 2026-10-08 (the snapshot records
-`IOS_DEVICE_ONLY_MODE=true`, `CLOUD_RENDER_EXECUTION_ENABLED=false`), the end-to-end artifact is
+`IOS_DEVICE_ONLY_MODE=true`, `CLOUD_RENDER_EXECUTION_ENABLED=false`, and
+`IOS_NATIVE_DEVICE_ONLY_ENABLED=true` from the job records), the end-to-end artifact is
 `device_plan_ready`: the pinned device render plan in `<run dir>/device-plan.json`, never an MP4.
 What the iPhone then renders is the iOS gates' job. A PR that fixes such a job states the plan
 (or the failure reason that remains, only when `production_failure_reproduced` is true) as its
@@ -72,7 +75,9 @@ never asked. So a chat job is replayed the way the app drove it:
 * The seeded thread is runtime v2 with its own Creator session, the format choice the creator
   made (`format_prompt`, `action_select_format`), a `media_added` event and the device intent the
   app's thread creation stamps (`with_device_intent`, an iPhone thread when the messages carry a
-  client protocol). Each medium carries production's projection (filename, upload receipt).
+  client protocol, the job is `native_device_only`, or its clips are analysis proxies, which only
+  the app uploads; f88555bc's messages carry no protocol). Each medium carries production's
+  projection (filename, upload receipt).
 * Every `user_message` up to the job's `kria_turn_id` goes through `submit_turn`, the function
   behind `POST /creation-threads/<id>/turns`, in order, with the client protocol the app build
   sent (`X-Kria-Client-Protocol`, recorded on the event), its `request_outcome_link` (parent turn
@@ -83,7 +88,10 @@ never asked. So a chat job is replayed the way the app drove it:
   a recorded id never names a question of the replay. The replay sends the answer to its own open
   question of the same kind (the runtime's own "latest open question" rules), and only when that
   question matches production's: the same `conflict` and the option the creator tapped (choice),
-  every category and candidate the creator tapped (clip picker). Pool assets get a fresh id per
+  every category and candidate the creator tapped (clip picker). A clip answer to a category the
+  replay's question did not ask is left out when the rest still answers the replay's question
+  (`answers_sent.remapped.clip_selection.not_asked_by_replay`): the replay's server settled that
+  category itself (40684a25 measured its too-short clips), which is what a fix may change. Pool assets get a fresh id per
   replay; the creator's `asset-<id>` taps are mapped to it (clips keep production's media id).
   `answers_sent.remapped` names each production and replay question id. When the replay's open
   question differs, the outcome is `diverged_from_production` with `production_question` and
@@ -93,7 +101,9 @@ never asked. So a chat job is replayed the way the app drove it:
   against its own question (`answers_sent.rederived_from_text`).
 * Each entry of `turns` carries `production_reply` and `replay_reply` (`approval`, `draft`,
   `reply`, `error`, or the question kind such as `choice_question:ask_user:lyrics_text_needed`)
-  and `matches_production`. `first_divergent_turn` names the first message whose reply differed.
+  and `matches_production`. `first_divergent_turn` names the first message whose reply differed,
+  or, when every reply matched, the message whose recorded answer could not be sent
+  (`answer_not_sent`).
   A reply that differs on one message is not evidence about the job either way: it says the
   replay left production's route there. `input_differences` lists what the replay could not give
   the planner as production did (see "Route comparison").
@@ -143,9 +153,11 @@ Main Creator model the replay will use.
 
 `input_differences` also counts production state the replay does not recreate:
 `media_library_backed_media` (media the thread took from the media library; the library's
-catalogue rows and facts are not seeded) and `visual_capture_times_not_restored` (a pool visual
-the binding recorded without a media id keeps its capture time only on the binding row). Clip
-capture times, shot ids and source filenames come from the binding rows and are restored.
+catalogue rows and facts are not seeded), `visual_capture_times_not_restored` (a pool visual
+the binding recorded without a media id keeps its capture time only on the binding row) and
+`pool_visuals_not_recorded` (pool media replayed although the binding did not record it; see
+below). Clip capture times, shot ids and source filenames come from the binding rows and are
+restored.
 
 The replayed footage is exactly the media the job's brief binding recorded (its clip
 assignments and visuals), copied at the `storage_generation` the binding recorded (the bytes
@@ -157,13 +169,37 @@ songs) or a voiceover the item no longer holds. A job with no brief binding (old
 binding) replays everything the item holds, and the printed coverage says
 `bound_to_recorded_media: false`.
 
-Bindings written since 2026-11-06 name no media: a clip row keeps its kind, duration and upload
-receipt, a visual row only its kind and capture time. Those rows are matched to the item's media by
-shape. A clip matches the item clip of the same kind whose duration agrees within 0.15 s (two
-equally close candidates, or none, refuse the run); the matched row receives that clip's media id
-so its upload receipt is restored. Visuals match the item's ready pool assets by kind, and the
-item must hold exactly as many of each kind as the binding recorded, otherwise which ones the job
-used is unknown and the run is refused. Coverage reports `matched_without_media_id`.
+Some bindings arrive with no media named. The admin job debug strips media ids, and every value
+that names a media file (`manifest_identity`, `storage_generation`, paths, file names), from a
+job whose speech cleanup is still `required_v1` with no finished variant
+(`_mask_active_speech_rerender` in `app/services/public_assembly_plan.py`): f88555bc and 4620fd7c
+arrive that way, 50f67a06 and 40684a25 (`off_v1`) do not. A clip row then keeps its kind,
+duration and upload receipt, a visual row only its kind and capture time. Those rows are matched
+to the item's media by shape. A clip matches the item clip of the same kind whose duration agrees
+within 0.15 s (two equally close candidates, or none, refuse the run); the matched row receives
+that clip's media id and the same value as `manifest_identity` (what the clip row writer stores),
+so its upload receipt binds. Visuals match the item's ready pool assets by kind, and the item must
+hold exactly as many of each kind as the binding recorded, otherwise which ones the job used is
+unknown and the run is refused. Coverage reports `matched_without_media_id`, and
+`copied_unpinned` counts sources copied at the latest generation because neither the binding nor
+the item debug pinned one (a creation-thread proxy is written once, so it has one generation).
+
+After seeding, the replay binds its analysis-proxy clips with `bind_phone_sources`, the check the
+manifest makes before it offers the iPhone render. Production's turn dispatched, so its receipts
+bound; seeded rows that do not bind would leave the planner without footage (the runtime answers
+"Add at least one clip" without a model call). The run stops there with outcome `input_error`
+and the binding's reason, before any model call: a statement about the replay's inputs, never a
+route result.
+
+A binding without a `visuals` key (written before KRI-1069, or by a turn that snapshots clips
+only; 50f67a06, f88555bc, 40684a25, fba2c864 and e7bf7099 have none) does not say which pool media
+the plan saw, and "none" would drop footage production used. The replay then keeps the item's
+ready pool assets created before the job ran (the manifest lists every visible pool row) and
+leaves out the later ones; coverage says `pool_visuals_recorded: false` with
+`pool_visuals_inferred` and `pool_visuals_added_after_job`, and `input_differences` repeats the
+inferred count. Every pool asset the job's own plan names (`asset-<id>` in a brief scope, a render
+requirement or a resolved clip intent) must be among the replayed sources, with or without a
+binding; one the item no longer holds refuses the run.
 
 Precondition for jobs whose pool holds media-library assets: the production API must serve
 `gcs_path` and `gcs_generation` on `GET /admin/plan-items/<id>/debug` (this PR's
@@ -275,6 +311,12 @@ unbound draft path. They take the `prod_profile_pre_cutover` fixture (or
 settings at the code default; they are the known places the "production profile" is not
 production. Converting a file to the full profile means deciding what the device-only path should
 assert there.
+
+`IOS_NATIVE_DEVICE_ONLY_ENABLED=true` (`job-data:native-device-only-2026-11-15`) is inferred, not
+documented: every one of the 24 production jobs read for this ticket carries
+`assembly_plan.native_device_only=true`, which dispatch copies from a thread intent that only
+that flag stamps. Recording it changed one test fake (`test_kri598_voiceover_planner.py`), whose
+mock database had no answer for the thread-state read the flag adds.
 
 Refresh without reading a Fly secret value:
 

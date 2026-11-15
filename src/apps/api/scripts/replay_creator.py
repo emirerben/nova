@@ -62,6 +62,11 @@ class ReplaySafetyError(RuntimeError):
     """Raised when a replay could escape the local-only boundary."""
 
 
+class ReplayInputError(ReplaySafetyError):
+    """The seeded inputs are not the ones production ran on: a fact about the replay's inputs,
+    never about the route, so the run stops before any model call."""
+
+
 @dataclass(frozen=True)
 class ReplayInputs:
     manifest: dict[str, Any]
@@ -442,14 +447,54 @@ def _event_order(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(events, key=lambda event: int(event.get("sequence") or 0))
 
 
-def _sent_from_app(thread_events: list[dict[str, Any]]) -> bool:
-    """The iPhone app sends a client protocol with every message; the web sends none."""
+def _sent_from_app(
+    thread_events: list[dict[str, Any]], job_debug: dict[str, Any], sources: list[dict[str, Any]]
+) -> bool:
+    """The iPhone app sends a client protocol with its messages, but a message event may carry
+    none (job f88555bc's do not). A phone-only job, or an analysis proxy among its clips (only
+    the app uploads one), was sent from the app all the same."""
 
-    return any(
-        (event.get("payload") or {}).get("client_protocol") is not None
-        for event in thread_events
-        if event.get("kind") == "user_message"
+    from app.kria.media_sources import is_analysis_proxy_path
+
+    plan = (job_debug.get("job") or {}).get("assembly_plan") or {}
+    return (
+        any(
+            (event.get("payload") or {}).get("client_protocol") is not None
+            for event in thread_events
+            if event.get("kind") == "user_message"
+        )
+        or plan.get("native_device_only") is True
+        or any(
+            is_analysis_proxy_path(str(source["id"]))
+            for source in sources
+            if source["kind"] == "video" and not source.get("pool")
+        )
     )
+
+
+def _require_phone_source_receipts(assignments: list[dict[str, Any]]) -> None:
+    """Seeded analysis proxies must bind as phone sources the way production's did.
+
+    Production's turn only dispatched because its receipts bound (``bind_phone_sources``);
+    seeded rows that do not bind leave the manifest without a phone source, and the runtime
+    then answers "Add at least one clip" without a model call. That is a defect of the
+    replay's inputs, not a route result.
+    """
+
+    from app.kria.media_sources import is_analysis_proxy_path
+    from app.services.phone_sources import bind_phone_sources
+
+    paths = [str(a["gcs_path"]) for a in assignments]
+    if not any(is_analysis_proxy_path(path) for path in paths):
+        return
+    try:
+        bind_phone_sources(assignments, paths)
+    except ValueError as exc:
+        raise ReplayInputError(
+            f"The seeded clips do not bind as verified phone sources ({exc}); production's "
+            "upload receipts were not fully recovered from the job debug, so the replay would "
+            "plan without footage"
+        ) from exc
 
 
 def _with_recorded_media(
@@ -572,6 +617,7 @@ def seed_replay_database(
             assignment["analysis"] = analysis
         assignments.append(assignment)
         imported.append({"source_id": source["id"], "kind": source["kind"], **copied})
+    _require_phone_source_receipts(assignments)
 
     voiceover = audio[0] if audio else None
     voiceover_path: str | None = None
@@ -709,7 +755,7 @@ def seed_replay_database(
                 "media_count": len(media_projection),
                 "edit_format": item_format,
             }
-            if _sent_from_app(thread_events):
+            if _sent_from_app(thread_events, inputs.job_debug, inputs.sources):
                 from app.services.phone_destination import with_device_intent
 
                 state = with_device_intent(state, native_client=True, user_id=user_id) or state
@@ -1182,6 +1228,9 @@ def remap_answer(
     recorded_id = str(answer.get("question_id") or "")
     asked = ids.questions.get(recorded_id, (key, None))[1]
     open_question = _replay_open_question(key, replay_events)
+    not_asked: list[str] = []
+    if field == "clip_selection" and open_question is not None:
+        answer, not_asked = _without_unasked_categories(answer, open_question)
     reason = _why_unanswerable(field, answer, asked, open_question)
     if reason or open_question is None:
         raise AnswerUnreplayable(
@@ -1197,7 +1246,30 @@ def remap_answer(
     return {**answer, "question_id": replay_id}, {
         "production_question_id": recorded_id,
         "replay_question_id": replay_id,
+        **({"not_asked_by_replay": not_asked} if not_asked else {}),
     }
+
+
+def _without_unasked_categories(
+    answer: dict[str, Any], question: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """The clip answer without the categories the replay's question did not ask.
+
+    The replay's server can settle a category itself (job 40684a25: it measured the
+    too-short clips and asked only the order), which is exactly what a fix may change; the
+    creator's answer to such a category has nothing left to answer. An answer naming none of
+    the replay's categories is returned whole, so it is refused as a divergence.
+    """
+
+    asked = {c.get("key") for c in question.get("categories") or [] if isinstance(c, dict)}
+    rows = [row for row in answer.get("answers") or [] if row.get("key") in asked]
+    none_keys = [key for key in answer.get("none_keys") or [] if key in asked]
+    if not rows and not none_keys:
+        return answer, []
+    dropped = [
+        str(row.get("key")) for row in answer.get("answers") or [] if row.get("key") not in asked
+    ] + [str(key) for key in answer.get("none_keys") or [] if key not in asked]
+    return {**answer, "answers": rows, "none_keys": none_keys}, dropped
 
 
 @dataclass(frozen=True)
@@ -2296,6 +2368,8 @@ def main(argv: list[str] | None = None) -> int:
             receipt["error"]["diverged_turn"] = exc.detail
         if isinstance(exc, ReplayStalled):
             receipt["error"]["stalled"] = exc.detail
+        if isinstance(exc, ReplayInputError):
+            receipt["error"]["input_error"] = True
         try:
             _write_receipt(receipt_path, receipt)
         except OSError:

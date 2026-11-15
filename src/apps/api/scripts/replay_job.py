@@ -261,9 +261,16 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         for a in item_debug.get("pool_assets") or []
         if a.get("kind") in MEDIA_KINDS and a.get("status") == "ready"
     ]
-    chosen = _select_recorded_media(recorded, clip_rows, pool_rows)
+    chosen = _select_recorded_media(recorded, clip_rows, pool_rows, job)
     _name_unnamed_binding_rows(job_debug, chosen)
     bound = _bound_rows(job)
+    unpinned: list[str] = []
+
+    def copy(object_path: str, local: Path, generation: object) -> None:
+        if not generation:
+            unpinned.append(object_path)
+        storage_copy(bucket, object_path, local, generation)
+
     for assignment in clip_rows:
         media_id = str(assignment["media_id"])
         kind = str(assignment.get("kind") or "video")
@@ -274,8 +281,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         local = inputs_dir / "media" / media_id
         # The binding pins the bytes production analysed; the item debug often has no generation.
         binding_row = bound.get(_media_key(media_id), {})
-        storage_copy(
-            bucket,
+        copy(
             _owned_object_path(object_path, user_id),
             local,
             assignment.get("generation") or binding_row.get("storage_generation"),
@@ -306,8 +312,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
                 )
         local = inputs_dir / "media" / f"{asset['id']}-{Path(object_path).name}"
         binding_row = bound.get(_media_key(str(asset["id"])), {})
-        storage_copy(
-            bucket,
+        copy(
             _owned_object_path(object_path, user_id),
             local,
             generation or binding_row.get("storage_generation") or binding_row.get("generation"),
@@ -325,11 +330,8 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         voiceover_path = _owned_object_path(str(voiceover_path), user_id)
         local = inputs_dir / "media" / Path(voiceover_path).name
         bound_voiceover = snapshot.get("voiceover_path") == voiceover_path
-        storage_copy(
-            bucket,
-            voiceover_path,
-            local,
-            snapshot.get("voiceover_generation") if bound_voiceover else None,
+        copy(
+            voiceover_path, local, snapshot.get("voiceover_generation") if bound_voiceover else None
         )
         sources.append(
             _source(
@@ -338,7 +340,11 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         )
     if not sources:
         raise ReplayJobError("The plan item holds no footage in storage to replay")
-    coverage = _check_source_coverage(job, sources, recorded, chosen)
+    coverage = {
+        **_check_source_coverage(job, sources, recorded, chosen),
+        # The latest bytes stand in where neither the binding nor the item debug pins one.
+        "copied_unpinned": len(unpinned),
+    }
 
     manifest = {"job_id": job_id, "creator_request": creator_request, "sources": sources}
     for name, value in (
@@ -354,7 +360,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         "job": job,
         "item": item,
         "item_id": str(item_id),
-        "unseeded_state": _unseeded_state(job, recorded, thread_events),
+        "unseeded_state": _unseeded_state(job, recorded, thread_events, chosen),
         "thread_events": inputs_dir / "thread-events.json" if thread_events else None,
         "creator_messages": sum(1 for e in thread_events or [] if e.get("kind") == "user_message"),
         "job_agent_runs": list(job_debug.get("agent_runs") or []),
@@ -368,6 +374,7 @@ def _unseeded_state(
     job: dict[str, Any],
     recorded: RecordedMedia | None,
     thread_events: list[dict[str, Any]] | None,
+    chosen: ChosenMedia | None,
 ) -> dict[str, int]:
     """Production state the job's media leaned on that the replay does not recreate."""
 
@@ -392,6 +399,8 @@ def _unseeded_state(
         "visual_capture_times_not_restored": sum(
             1 for row in (recorded.unnamed_visuals if recorded else ()) if row.get("capture")
         ),
+        # Pool media the binding did not record, replayed because the item held it then.
+        "pool_visuals_not_recorded": len(chosen.pool_inferred) if chosen else 0,
     }
 
 
@@ -421,14 +430,19 @@ def _bound_rows(job: dict[str, Any]) -> dict[str, dict[str, Any]]:
 class RecordedMedia:
     """The media a job was approved against, as its brief binding recorded it.
 
-    Older bindings name every row (``media_id``); newer ones keep only the kind, duration and
-    upload receipt of a clip and the kind of a visual, so those rows are matched to the
-    item's media by shape instead of by id.
+    The admin job debug strips media ids, and every value naming a media file, from a job
+    whose speech cleanup is still ``required_v1`` with no finished variant
+    (``_mask_active_speech_rerender``): such a row keeps only the kind, duration and upload
+    receipt of a clip and the kind and capture time of a visual, so it is matched to the
+    item's media by shape instead of by id. A binding without a ``visuals`` key (written
+    before KRI-1069, or by a turn that snapshots clips only) does not say which pool media
+    the plan saw.
     """
 
     named: frozenset[str]
     unnamed_clips: tuple[dict[str, Any], ...]
     unnamed_visuals: tuple[dict[str, Any], ...]
+    visuals_recorded: bool
 
     @property
     def total(self) -> int:
@@ -440,6 +454,10 @@ class ChosenMedia:
     clips: frozenset[str]
     pool: frozenset[str]
     matched_clip_rows: tuple[tuple[dict[str, Any], str], ...]
+    # Pool assets taken without a binding record, and the item's pool rows left out as added
+    # after the job ran; both stay zero when the binding recorded the pool.
+    pool_inferred: frozenset[str] = frozenset()
+    pool_added_after_job: int = 0
 
 
 def _recorded_media(job: dict[str, Any]) -> RecordedMedia | None:
@@ -459,14 +477,64 @@ def _recorded_media(job: dict[str, Any]) -> RecordedMedia | None:
         named=named,
         unnamed_clips=tuple(r for r in clips if not r.get("media_id")),
         unnamed_visuals=tuple(r for r in visuals if not r.get("media_id")),
+        visuals_recorded="visuals" in snapshot,
     )
     return recorded if recorded.total else None
+
+
+def _parse_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _pool_held_when_job_ran(
+    job: dict[str, Any], pool_rows: list[dict[str, Any]]
+) -> tuple[set[str], int]:
+    """The item's ready pool assets created before the job, and how many came after.
+
+    A binding that does not record its visuals leaves this as the best record of the pool the
+    plan saw (the manifest lists every visible pool row); an asset deleted since is caught
+    only when the job's plan names it (``_referenced_pool_ids``).
+    """
+
+    ran_at = _parse_time(job.get("created_at"))
+    if ran_at is None and pool_rows:
+        raise ReplayJobError(
+            "The job's binding does not record its pool media and the job has no created_at, "
+            "so which of the item's pool assets it saw is unknown"
+        )
+    held: set[str] = set()
+    for row in pool_rows:
+        created = _parse_time(row.get("created_at"))
+        if created is None:
+            raise ReplayJobError(
+                f"Pool {row.get('kind')} {row['id']} has no created_at in the item debug, so "
+                "whether the job saw it is unknown"
+            )
+        if created <= ran_at:
+            held.add(_media_key(str(row["id"])))
+    return held, len(pool_rows) - len(held)
+
+
+POOL_REFERENCE = re.compile(r"asset-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+
+def _referenced_pool_ids(job: dict[str, Any]) -> frozenset[str]:
+    """Pool assets the job's own plan names: brief scopes (``clip:asset-<id>``), render
+    requirements, resolved clip intents. Each must be replayed."""
+
+    return frozenset(POOL_REFERENCE.findall(json.dumps(job, ensure_ascii=False)))
 
 
 def _select_recorded_media(
     recorded: RecordedMedia | None,
     clip_rows: list[dict[str, Any]],
     pool_rows: list[dict[str, Any]],
+    job: dict[str, Any],
 ) -> ChosenMedia | None:
     """Pick the item's media rows the job used; refuse when they cannot be told apart.
 
@@ -474,6 +542,8 @@ def _select_recorded_media(
     within ``DURATION_TOLERANCE_S``; two equally close candidates are ambiguous. Visuals
     without ids are item pool assets, matched by kind: the item must hold exactly as many ready
     assets of that kind as the binding recorded, otherwise which ones the job used is unknown.
+    A binding that does not record its visuals keeps the pool assets the item held when the
+    job ran.
     """
 
     if recorded is None:
@@ -521,14 +591,28 @@ def _select_recorded_media(
                 "would run on different footage"
             )
         pool |= {_media_key(str(r["id"])) for r in held}
-    return ChosenMedia(frozenset(clips), frozenset(pool), tuple(matched))
+    inferred: set[str] = set()
+    added_after = 0
+    if not recorded.visuals_recorded:
+        held_then, added_after = _pool_held_when_job_ran(job, pool_rows)
+        inferred = held_then - pool
+        pool |= inferred
+    return ChosenMedia(
+        frozenset(clips), frozenset(pool), tuple(matched), frozenset(inferred), added_after
+    )
 
 
 def _name_unnamed_binding_rows(job_debug: dict[str, Any], chosen: ChosenMedia | None) -> None:
-    """Give matched binding clip rows their item media id so their upload receipts restore."""
+    """Give matched binding clip rows back the identity the admin debug stripped.
+
+    The clip row writer sets ``manifest_identity`` to the media id
+    (``creation_threads._clip_assignment_row``) and ``bind_phone_sources`` requires the two to
+    agree; the debug drops it with the id because its value is the proxy's file name.
+    """
 
     for row, media_id in chosen.matched_clip_rows if chosen else ():
         row["media_id"] = media_id
+        row["manifest_identity"] = media_id
         row["replay_matched_by"] = "kind_and_duration"
 
 
@@ -542,8 +626,9 @@ def _check_source_coverage(
 
     The job's brief binding records the media it was approved against. Every one of them
     must have a replayed source, and a creator song or voiceover the replay cannot reproduce
-    stops the run: a green replay on partial footage is stand-in evidence. A job without a
-    binding replays everything the item holds, and the coverage says so.
+    stops the run: a green replay on partial footage is stand-in evidence. So does a pool
+    asset the job's own plan names that the replay would not hold. A job without a binding
+    replays everything the item holds, and the coverage says so.
     """
 
     snapshot = _binding_snapshot(job)
@@ -556,6 +641,13 @@ def _check_source_coverage(
                 f"{len(missing)} are not recoverable ({', '.join(missing[:5])}); refusing to "
                 "replay on different footage"
             )
+    unheld = sorted(_referenced_pool_ids(job) - {s["id"] for s in visuals if s.get("pool")})
+    if unheld:
+        raise ReplayJobError(
+            f"The job's plan names pool media the replay would not hold ({', '.join(unheld[:5])}):"
+            " not a ready asset of the item, or added after the job ran; refusing to replay on "
+            "different footage"
+        )
     if any(snapshot.get(key) for key in ("song_analysis", "song_alignment", "song_generation")):
         raise ReplayJobError(
             "The job used a creator song; replay_creator does not seed songs, so a replay "
@@ -571,6 +663,9 @@ def _check_source_coverage(
             "clips": len(chosen.matched_clip_rows) if chosen else 0,
             "pool_visuals": len(recorded.unnamed_visuals) if recorded else 0,
         },
+        "pool_visuals_recorded": recorded.visuals_recorded if recorded is not None else None,
+        "pool_visuals_inferred": len(chosen.pool_inferred) if chosen else 0,
+        "pool_visuals_added_after_job": chosen.pool_added_after_job if chosen else 0,
         "pool_images": sum(1 for s in visuals if s.get("pool") and s["kind"] == "image"),
         "pool_videos": sum(1 for s in visuals if s.get("pool") and s["kind"] == "video"),
         "voiceover": any(s["kind"] == "audio" for s in sources),
@@ -998,9 +1093,12 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
     question = (receipt.get("error") or {}).get("question")
     diverged_turn = (receipt.get("error") or {}).get("diverged_turn")
     stalled = (receipt.get("error") or {}).get("stalled")
+    input_error = (receipt.get("error") or {}).get("input_error")
     device_plan = receipt.get("device_plan")
     if videos:
         outcome = "video_rendered"
+    elif input_error:
+        outcome = "input_error"
     elif stalled:
         outcome = "stalled"
     elif question:
@@ -1028,16 +1126,22 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
         "stalled": stalled,
         "creator_client_protocol": (job.get("all_candidates") or {}).get("creator_client_protocol"),
         "turns": receipt.get("turns"),
-        "first_divergent_turn": first_divergent_turn(receipt.get("turns") or []),
+        "first_divergent_turn": first_divergent_turn(receipt.get("turns") or [], diverged_turn),
         "stopped_early": receipt.get("stopped_early"),
         "reconcile": receipt.get("reconcile"),
         "receipt": str(receipt_path),
     }
 
 
-def first_divergent_turn(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
+def first_divergent_turn(
+    turns: list[dict[str, Any]], diverged_turn: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """The first message whose reply differed from production's (a question, a draft, an
-    approval card), or None. Everything after it answered a reply the replay never gave."""
+    approval card), or None. Everything after it answered a reply the replay never gave.
+
+    When every reply matched but the run diverged, it is the message the replay stopped at:
+    one whose recorded answer could not be sent is never logged as a turn.
+    """
 
     for index, turn in enumerate(turns):
         if turn.get("matches_production") is False:
@@ -1048,7 +1152,16 @@ def first_divergent_turn(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
                 "replay_reply": turn.get("replay_reply"),
                 "replay_question": turn.get("question"),
             }
-    return None
+    if not diverged_turn:
+        return None
+    logged = [turn.get("production_turn_id") for turn in turns]
+    turn_id = diverged_turn.get("production_turn_id")
+    return {
+        "message_index": logged.index(turn_id) + 1 if turn_id in logged else len(turns) + 1,
+        "production_turn_id": turn_id,
+        "answer_not_sent": diverged_turn.get("answer"),
+        "reason": diverged_turn.get("reason"),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
