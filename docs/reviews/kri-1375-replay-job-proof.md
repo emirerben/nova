@@ -5,6 +5,99 @@ with `scripts/admin.py --prod GET`, copies the footage the job's brief binding r
 read-only from the bucket, and runs the Main Creator route and the real worker locally under
 `src/apps/api/tests/prod_flags.snapshot.json`.
 
+## Pass 5, round 2: e7bf7099 on the current code
+
+Paid calls this round settled $0.2749 in total, from the scratch databases' agent runs and one
+worker log: run 9 $0.1050, the aborted run $0.0471, run 11 $0.1228. All three ran live on
+2026-11-15 with `gpt-6.1-sol` as the snapshot's Main Creator.
+
+### Run 11: e7bf7099 on the final code, `device_plan_ready`
+
+Command: `make kria-replay-job JOB=e7bf7099-7006-4d3f-9f05-c8daeb83546d MAX_COST_USD=0.27`, code
+commit 0c27a352d (later commits change docs only), 17:27 UTC. Exit 0.
+
+The source job (production, 2026-11-14 07:04) ended `processing_failed` with
+`creation_text_failed`. Its chat has three creator messages: (1) find the lyrics and add them as
+text, (2) the lyrics themselves, approved, whose render (d6c58d7b) failed `creation_text_failed`,
+and (3) "Fix it", approved, whose render is e7bf7099 and failed the same way.
+
+* Message 1, client protocol 49: the replay answered in words ("Could you paste the lines you
+  want added to the video?"), where production asked with a choice card
+  (`ask_user:lyrics_text_needed`). `first_divergent_turn` names message 1. Message 2 carries no
+  structured answer, so it was sent.
+* Message 2: an approval card, as in production (`matches_production: true`). The replay approved
+  it under protocol 49. Job c1214872 ended `awaiting_device` with one pinned `guided_story`
+  variant (4.0 s), whose text layers hold the creator's lyric lines ("Vazgeçmem dünyalatı" ...
+  "Seninle Fenerbahçe").
+* Production's render of message 2 failed and the replay's did not, so the replay stopped there
+  (`stopped_early`, `compared_production_render` d6c58d7b). "Fix it" answered a failure that no
+  longer happens.
+* `route_comparison`: no replay-only agent, no failed agent, `diverged_failures: []`,
+  `replay_uncompared_agents: []`. Production's trace for this item lists the clip-intent agents
+  (the job ran after #1973), so they were compared.
+* `model_differences`: the Main Creator ran on `gpt-6.1-sol` for message 1 and on
+  `gemini-3.1-pro-preview` for message 2. The ledger refused message 2's Sol reservation under
+  the 0.27 cap (`AiBudgetExceededError`, then `agent_provider_fallback`). The cap was set to keep
+  this round's paid calls under $0.35. The runbook now says how much cap two Sol messages need.
+
+Afterwards no scratch database, no Redis key of the run's namespace and no replay process was
+left.
+
+### Run 9: the same job on 6d932aaa9, no model difference
+
+Command: the same with `MAX_COST_USD=0.30`, 17:15 UTC, exit 0, `device_plan_ready`. Both Main
+Creator calls ran on `gpt-6.1-sol` and `model_differences` was empty. Message 1 got a choice
+card of another kind (`ask_user:lyrics_alternative`: paste the lyrics or have an original chant
+written). Message 2 matched production's approval, and job de98768f ended `awaiting_device`
+with the same pinned 4.0 s `guided_story` plan and lyric lines. The code after 6d932aaa9 changes
+only two things. The route comparison of jobs from before 2026-10-31 (e7bf7099's production
+trace is complete for the agents involved, so `unrecorded` is empty for it, read with the final
+code). And what happens to `replay_creator` when the driver is stopped.
+
+### The aborted run: a stopped driver left its replay running
+
+A run started with `MAX_COST_USD=0.24` was stopped by SIGTERM at 17:24 UTC, because that cap is
+under a Sol reservation. The driver dropped its database and stopped its worker, but the new
+`run_under_spend_cap` loop had not killed `replay_creator`. The orphan sent message 1, and the
+worker billed one Sol call ($0.0471) before it shut down. `subprocess.run`, which the loop
+replaced, kills its child on any exception. `test_a_stopped_driver_takes_its_replay_down_with_it`
+was committed red in 37adfa30e, and the fix is in 0c27a352d.
+
+### 19f61092's route comparison, recomputed on production data (no model call)
+
+`production_agents` on the final code, reading production's trace with GETs only: the job's
+thread began 2026-10-19 16:01 UTC, production's trace lists `nova.creator.main` and
+`nova.edit.copilot` only, and `unrecorded` holds `nova.audio.music_matcher`,
+`nova.plan.clip_intent_planner`, `nova.plan.clip_request_resolver` and
+`nova.video.clip_question`. Fed the agents the verifier's replay of message 1 ran (Main Creator,
+clip-intent planner, resolver), `compare_routes` now gives `replay_only_agents: []` and lists
+the planner and resolver in `replay_uncompared_agents`. Before this round it named both as
+agents production never ran. They were not stored in production before #1973 deployed
+(2026-10-31 10:21 UTC); today's replay stores them on the item.
+
+The verifier's other finding on that job stands as data, not as a defect: today's code answers
+message 1 with a clip question where production asked a simplification choice, so the creator's
+tap has nothing to answer. The runbook's Fidelity limits now say why the replay does not answer
+for the creator, and that such a job cannot carry a fix PR's proof.
+
+### Offline proofs this round (no model calls)
+
+Committed red before each fix (bfa9b3a87, 993dcd905, 37adfa30e):
+
+* `tests/scripts/test_replay_route_scope_postgres.py`: on real agent-run rows, a run linked to
+  the item or to its current job is compared. A session-only run or a run of an earlier render is
+  not, and spend still counts all four.
+* `tests/scripts/test_replay_job.py`:
+  * A session-scoped `clip_request_resolver` failure leaves a reproduced failure `failed` with
+    `production_failure_reproduced: true`.
+  * An agent production did not store yet proves no divergence before the deploy and does after
+    it.
+  * A job with no binding keeps the pool photo created before it and leaves out the later one
+    (`clips_not_dated` counts the clip rows).
+  * The spend watchdog interrupts the run past the cap, survives a failed spend read, and
+    reports `spend_cap_reached`.
+  * A stopped driver kills its replay.
+
 ## Pass 5: f88555bc and 50f67a06 after the input fixes
 
 Both runs used code commit dd7ac30ba (the commits after it change docs only), on 2026-11-15,
@@ -286,5 +379,4 @@ recorded 15, 11 and 1 clips.
   2026-11-14 planned on `gemini-3.1-pro-preview`, so its replay runs on another model.
   `model_differences` says so, and runs 7 and 8 both diverged at message 1 under that difference.
   The replay does not yet run each job on its own production model.
-* Run 6 (`device_plan_ready`) predates this round's code. It was not repeated on dd7ac30ba, to
-  keep this round's paid calls within its cap.
+* Run 6 (`device_plan_ready`) predates pass 5. Runs 9 and 11 repeat it on the current code.

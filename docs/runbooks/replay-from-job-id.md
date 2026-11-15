@@ -235,9 +235,12 @@ in production, so the driver also reads the scratch database's settled agent-run
 and interrupts the run once it is over the cap (`spend_cap_reached`, the spend that stopped it in
 `failure_reason`). A call counts once it settled, so a run can pass the cap by the call that
 crossed it. A provider call that writes no agent run is not counted: Whisper transcription of a
-clip's speech (billed per minute) is one. A Sol Main Creator call reserves about $0.21 until it settles, so a cap under that
-refuses it and the Main Creator answers on its Gemini fallback, which `model_differences` then
-shows. The clip analysis production planned with is restored
+clip's speech (billed per minute) is one. A Sol Main Creator call reserves $0.22 to $0.25 until
+it settles (about $0.05), and the reservation must fit under the cap on top of what earlier
+messages settled. When it does not, the ledger refuses it (`AiBudgetExceededError` in the worker
+log) and the Main Creator answers on its Gemini fallback, which `model_differences` then shows.
+e7bf7099's two Sol messages fit under 0.30 and not under 0.27 (2026-11-15), so allow about
+$0.25 plus $0.05 per earlier message. The clip analysis production planned with is restored
 from the brief binding, so the replay does not analyse a clip twice. `route_comparison` prints
 `replay_agent_runs` and `replay_spend_usd` (the scratch database's agent-run costs); the worker log
 is `<run dir>/worker.log`.
@@ -377,6 +380,12 @@ flag the snapshot has not seen, so a new flag cannot silently run at its default
   jobs").
 * The replay stops at an earlier render that waits for a phone or that did not fail where
   production's did (see "Chat jobs"), so the job id's own render is not always reached.
+* The replay never answers a question the creator was not asked. When today's code answers an
+  early message with a question production did not ask, the creator's next tap has nothing to
+  answer and the run ends `diverged_from_production` there (19f61092, f88555bc and 50f67a06 on
+  2026-11-15, all at message 1). Answering for the creator from their later messages would be
+  the stand-in evidence this command exists to replace. Such a job cannot carry a fix PR's
+  proof: replay a later job that failed the same way, or write "n/a" with the reason.
 * A device-render job (`native_device_only`) ends in a server-side plan, not an MP4. The replay
   reproduces everything up to and including that plan (`device_plan_ready` on success, the
   failure reason when the plan cannot be built). What the phone then renders is not replayed;
