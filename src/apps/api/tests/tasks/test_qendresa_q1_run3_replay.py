@@ -803,7 +803,8 @@ def test_control_the_draft_is_held_with_prods_two_reasons(monkeypatch):
     reply = readiness_reply(BRIEF_V1, report)
     for rid, reason in HOLD_REASONS.items():
         req = next(r for r in BRIEF_V1.requirements if r.id == rid)
-        assert f"- {req.text()}: {reason}" in reply
+        # KRI-1465: an ask is listed without its closing full stop (prod read ".:").
+        assert f"- {req.listed()}: {reason}" in reply
 
 
 def test_control_the_simpler_version_renders_as_prod_did():

@@ -3883,6 +3883,17 @@
         "src/apps/api/tests/kria/test_kri1394_split_full_screen.py",
         "src/apps/ios/Tests/KriaTests/NativeSplitFullScreenParityTests.swift"
       ]
+    },
+    {
+      "id": "kri-1466-narrated-named-moment",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_narrated_footage_fit.py tests/tasks/test_kri1466_narrated_named_moment.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/pipeline/test_phone_narrated_plan.py tests/kria/test_brief_checks_narrated_alignment.py",
+      "paths": [
+        "src/apps/api/app/pipeline/narrated_footage_fit.py",
+        "src/apps/api/tests/fixtures/narrated_alignment/kri1466_tor_moment.json",
+        "src/apps/api/tests/pipeline/test_narrated_footage_fit.py",
+        "src/apps/api/tests/tasks/test_kri1466_narrated_named_moment.py"
+      ]
     }
   ]
 }

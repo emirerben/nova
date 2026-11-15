@@ -4800,6 +4800,138 @@
         "The typed native wire cannot carry the repairs tag; untagged fixes match by op name only (KRI-1393)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1464-restated-request-retires-clips",
+      "tickets": [
+        "KRI-1464"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1464",
+      "symptom": "Clips the creator took out of a retyped request (brief requirements superseded by the creator) were planned again from the first message on a later tap, and the first prompt's clip picker came back word for word.",
+      "boundary": "planner",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1464_restated_request_retires_asks.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Thread 78787267 turn ac3bfabd (2026-11-14 21:51Z) through the real runtime-v2 planner path over the recorded brief and messages; only the planner inventory and resolver answer are replayed. Without the brief the reply equals the recorded 21:51:34Z reply byte for byte; with the retire step switched off the three rows come back.",
+        "live_model": "Not run; no paid call is authorized.",
+        "native_output": "Not applicable: a chat-turn decision, nothing renders.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "A live requirement that still names the clip keeps it",
+        "A server waiver or an unmarked removal retires nothing",
+        "An ask the brief never recorded, or no brief, is asked as before",
+        "A leave-out for the same words is kept",
+        "A longer or (while a live ask names it) shorter near miss is kept",
+        "An inventory reused for a picker tap (KRI-950) is filtered too"
+      ],
+      "neighbours_gap": [
+        "The harness plans a montage manifest; the incident was a Voiceover edit (the clip-intent step is shared)",
+        "Only include asks are retired; a withdrawn order, label or caption ask other than KRI-1111's cases can still come back",
+        "A one-word include is matched by that word alone: it is retired when only withdrawn asks contain it",
+        "The typed message still does not close the open clip picker itself"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1466-narrated-named-moment",
+      "tickets": [
+        "KRI-1466"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1466",
+      "symptom": "A phone Voiceover clip came on screen on its spoken cue from its first frame and, being last, was slowed to half speed over the rest of the voice, so the named moment (TOR on the big screen) played about 6 s after the word and the review still read as fine.",
+      "boundary": "compiler",
+      "paths": [
+        "src/apps/api/app/pipeline/narrated_footage_fit.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/kria/brief_checks.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_narrated_footage_fit.py",
+        "tests/tasks/test_kri1466_narrated_named_moment.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "narrated_footage_fit_enabled",
+      "evidence": {
+        "offline_replay": "Job c8fcb7c0 (2026-11-14) through the real _run_phone_narrated_job, compiler and review with the recorded clip lengths, analysed moments and steps; word times and the alignment agent's answer are reconstructed. With the switch off the recipe and record equal the recorded ones (goal clip from 0.0 at 0.496x, TOR at about 16 s) and the review is the recorded line.",
+        "live_model": "Not run; no paid call is authorized.",
+        "native_output": "Not inspected: no device or simulator export of the new recipe yet.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Wrong-content control: the TOR moment recorded on another clip moves nothing",
+        "Words that fit the whole clip or no recorded moment locate nothing",
+        "A clip the creator ends on (order intent or last_clip) keeps its step and in-point",
+        "A filming-guide edit is left alone",
+        "Footage repeats only with video_reuse_policy allow_repeat",
+        "Fillers carry no labels or seats in the record; the editor cut equals the recipe",
+        "The review says when a located moment plays late"
+      ],
+      "neighbours_gap": [
+        "A moment the clip analysis did not record is not located, and the review then stays neutral",
+        "A gap the unseen footage cannot fill completely keeps the old slow-down",
+        "A typed 'each clip only once' has no plan carrier: unseen footage of a clip can still return",
+        "Scripted (filming guide) Voiceover edits and the cloud narrated render are unchanged",
+        "The spoken cue's own time is not in the record: lateness is measured from the clip's start",
+        "A filler between two named clips makes the clip-timing receipt read can't check instead of met"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1465-narrated-needless-holds",
+      "tickets": [
+        "KRI-1465"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1465",
+      "symptom": "A phone Voiceover first draft was held twice for asks the video then delivered: 'German captions, word by word.' and 'Keep the crowd quietly under my voice.' read 'I can't confirm this draft does it yet', then the plan's captions-off repair asked 'Should I make a simpler version?' again; the review said both were left out as agreed.",
+      "boundary": "verifier",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/strategy_policy.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1465_narrated_needless_holds.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "narrated_caption_render_promise_enabled",
+      "evidence": {
+        "offline_replay": "The incident brief rows (thread 78787267, 2026-11-14) through the real build_receipts, assess_readiness, strategy policy, planner step and the runtime's first turn over Postgres; the de1 kit's clips and voiceover stand in for the incident's media. Red before the fix: 23 of 47 tests failed (r2 and r11 held, the second question returned verbatim, '.:' in the reply); with the three changes switched back the runtime writes the recorded first hold word for word.",
+        "live_model": "Not run; no paid call is authorized.",
+        "native_output": "Not inspected: the finished video's caption language and word highlight were not re-checked on a device.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Captions in another language than the stated voiceover language keep the hold",
+        "A captions look, place or colour ask, a spelling ask and 'no captions' are judged as before",
+        "A real unsupported ask next to r2 and r11 still holds, and the card names only it",
+        "'Mute the crowd noise under my voice' stays a mute; the crowd as a picture is no sound ask",
+        "Talking, montage, cloud voiceover and editor verdicts are unchanged (r11 reads met on a cloud voiceover, like 'crowd noise')",
+        "A live no-captions ask still gets the simpler-version question",
+        "Hold copy in EN, TR and DE has no '.:' , '.;' or '..'",
+        "The caption promise kill switch restores the hold"
+      ],
+      "neighbours_gap": [
+        "With German replies on, readiness reads every render promise as needs_choice (its promise texts are English and Turkish only); predates this fix",
+        "Word-by-word on an auto caption style is approved, not guaranteed: the review says so when the render drew sentences",
+        "The crowd-under-voice ask is still read from words; a typed fact needs a brief-writer prompt change",
+        "'Keep the crowd quietly under my voice, no music' in one row keeps the hold",
+        "Where the plan's caption_style none came from in the incident was not verified"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

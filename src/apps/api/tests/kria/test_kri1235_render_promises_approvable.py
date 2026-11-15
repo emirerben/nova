@@ -316,7 +316,8 @@ def test_run3_only_my_voice_switch_off_holds_exactly_as_prod_did(q1_prod, monkey
         bc._TALKING_NO_SUCH_EDIT,
     )
     assert report["ready"] is False
-    assert "Only my voice." in readiness_reply(brief, report)
+    # KRI-1465: the ask is listed without its closing full stop ("Only my voice: ...").
+    assert "- Only my voice: " in readiness_reply(brief, report)
 
 
 # ----------------------------------------------- 2. each promise, through its real checker
@@ -697,4 +698,5 @@ def test_run3_list_example_switch_off_holds_exactly_as_prod_did(q1_prod, monkeyp
         "None of the 11 clips got its own text in this draft.",
     )
     assert report["ready"] is False
-    assert RUN3_R5.text() in readiness_reply(brief, report)
+    # KRI-1465: listed without its closing full stop, so the reply never reads ".:".
+    assert f"- {RUN3_R5.listed()}: " in readiness_reply(brief, report)
