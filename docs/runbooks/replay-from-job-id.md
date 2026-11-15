@@ -132,12 +132,21 @@ a snapshot value that is only approximated can send it down a planner production
 The driver reads every agent name production recorded for the plan item
 (`GET /admin/plan-items/<id>/proposal-trace`, all pages, plus the job's own agent runs) and the
 same slice of the replay's scratch database: runs linked to the replay's plan item, plus the runs
-of the replay's last job. Runs scoped to the Creator session alone (the clip-intent agents,
-`nova.plan.clip_intent_planner` and `nova.plan.clip_request_resolver`, run without a plan item)
-appear in no production read, so they are listed in `replay_uncompared_agents`, counted in
-`replay_spend_usd`, and never compared: on 19f61092 the replay named the resolver as an agent
-production never ran, while production's own reply quoted the resolver's result. It prints
-`route_comparison`:
+of the replay's last job. Two kinds of run appear in no production read, so they are listed in
+`replay_uncompared_agents`, counted in `replay_spend_usd`, and never compared:
+
+* Runs scoped to the Creator session alone. On the Main Creator route the clip-intent agents
+  run without a plan item (`creator_agent.py`).
+* Agents production did not store yet when the job's thread began
+  (`RECORDED_IN_PRODUCTION_FROM` in `replay_job.py`, from the Fly Deploy run that shipped each
+  fix). Until #1973 (2026-10-31 10:21 UTC) the chat runtime ran `nova.plan.clip_intent_planner`,
+  `nova.plan.clip_request_resolver` and `nova.video.clip_question` with no plan item, and their
+  runs were not stored. Until #1737 (2026-10-22 06:02 UTC) every `nova.audio.music_matcher`
+  insert failed its foreign key. On 19f61092 (2026-10-19) production's trace lists only
+  `nova.creator.main` and `nova.edit.copilot`, and the replay named the planner and resolver as
+  agents production never ran, while production's own reply quoted the resolver's result.
+
+It prints `route_comparison`:
 `production_agents`, `replay_agents`, `replay_only_agents`, `replay_failed_agents` (an agent whose
 last run failed) and `diverged_failures` (failed in the replay, never run in production). When the
 replay ends `failed` with a non-empty `diverged_failures`, the outcome is

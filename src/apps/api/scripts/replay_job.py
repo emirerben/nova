@@ -347,6 +347,8 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
     }
 
     manifest = {"job_id": job_id, "creator_request": creator_request, "sources": sources}
+    stamps = [job.get("created_at"), *(e.get("created_at") for e in thread_events or [])]
+    began = min(filter(None, map(_parse_time, stamps)), default=None)
     for name, value in (
         ("source-manifest.json", manifest),
         ("job-debug.json", job_debug),
@@ -363,6 +365,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         "unseeded_state": _unseeded_state(job, recorded, thread_events, chosen),
         "thread_events": inputs_dir / "thread-events.json" if thread_events else None,
         "creator_messages": sum(1 for e in thread_events or [] if e.get("kind") == "user_message"),
+        "began_at": began.isoformat() if began else None,
         "job_agent_runs": list(job_debug.get("agent_runs") or []),
         "source_count": len(sources),
         "source_coverage": coverage,
@@ -1008,13 +1011,29 @@ def recorded_agent_runs(item_id: str | None) -> dict[str, Any]:
     return {"runs": runs, "success": sorted(SUCCESS_OUTCOMES)}
 
 
+# When production began storing each agent's runs on the chat path (the Fly Deploy run that
+# shipped the fix ended). Before #1737 the song match bound the thread id as job_id and every
+# insert failed the FK; before #1973 the clip-intent agents ran with no plan item and were not
+# stored. A job's trace from before cannot show them, so their absence proves nothing.
+RECORDED_IN_PRODUCTION_FROM = {
+    "nova.audio.music_matcher": "2026-10-22T06:02:03Z",
+    "nova.plan.clip_intent_planner": "2026-10-31T10:21:20Z",
+    "nova.plan.clip_request_resolver": "2026-10-31T10:21:20Z",
+    "nova.video.clip_question": "2026-10-31T10:21:20Z",
+}
+
+
 @dataclass(frozen=True)
 class ProductionAgents:
-    """What production ran for the plan item up to the job's end: agents, models, prompts."""
+    """What production ran for the plan item up to the job's end: agents, models, prompts.
+
+    ``unrecorded`` holds agents production did not store yet when the job's thread began.
+    """
 
     models: dict[str, frozenset[str]]
     prompt_versions: dict[str, frozenset[str]]
     trace_complete: bool
+    unrecorded: frozenset[str] = frozenset()
 
     @property
     def names(self) -> set[str]:
@@ -1032,13 +1051,15 @@ def _by_agent(runs: list[dict[str, Any]], field: str) -> dict[str, frozenset[str
 
 
 def production_agents(
-    item_id: str, job_runs: list[dict[str, Any]], until: str | None
+    item_id: str, job_runs: list[dict[str, Any]], until: str | None, began: str | None
 ) -> ProductionAgents:
     """Agent runs production recorded for the plan item (all pages of its proposal trace).
 
     Runs after the job ended (``until``, its ``updated_at``) are left out: a later message may
     have run on a model production switched to afterwards. ``trace_complete`` is False when
-    the trace was cut off, so an absence proves nothing.
+    the trace was cut off, so an absence proves nothing. ``began`` is when the job's thread
+    (or the job, without one) started; with no time every agent of
+    ``RECORDED_IN_PRODUCTION_FROM`` counts as unrecorded.
     """
 
     runs = list(job_runs)
@@ -1054,10 +1075,16 @@ def production_agents(
             break
     if until:
         runs = [r for r in runs if not r.get("created_at") or str(r["created_at"]) <= until]
+    started = _parse_time(began)
     return ProductionAgents(
         models=_by_agent(runs, "model"),
         prompt_versions=_by_agent(runs, "prompt_version"),
         trace_complete=complete,
+        unrecorded=frozenset(
+            name
+            for name, since in RECORDED_IN_PRODUCTION_FROM.items()
+            if started is None or started < _parse_time(since)
+        ),
     )
 
 
@@ -1100,7 +1127,11 @@ def compare_routes(production: ProductionAgents, recorded: dict[str, Any]) -> di
     """
 
     success = set(recorded["success"])
-    compared = [run for run in recorded["runs"] if run["comparable"]]
+    compared = [
+        run
+        for run in recorded["runs"]
+        if run["comparable"] and run["agent_name"] not in production.unrecorded
+    ]
     last_outcome: dict[str, str] = {}
     for run in compared:
         last_outcome[run["agent_name"]] = run["outcome"]
@@ -1114,9 +1145,11 @@ def compare_routes(production: ProductionAgents, recorded: dict[str, Any]) -> di
         "replay_only_agents": sorted(set(ran) - names),
         "replay_failed_agents": failed,
         "diverged_failures": sorted(set(failed) - names) if production.trace_complete else [],
-        # Session-scoped runs production's trace cannot show, so they prove no divergence.
+        # Runs production's trace cannot show (session-scoped, or not stored yet when the
+        # job ran), so they prove no divergence.
         "replay_uncompared_agents": sorted(
-            {run["agent_name"] for run in recorded["runs"] if not run["comparable"]}
+            {run["agent_name"] for run in recorded["runs"]}
+            - {run["agent_name"] for run in compared}
         ),
         "replay_models": {
             name: sorted(models) for name, models in _by_agent(compared, "model").items()
@@ -1303,7 +1336,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"inputs: {inputs_dir}")
             return 0
         production = production_agents(
-            info["item_id"], info["job_agent_runs"], info["job"].get("updated_at")
+            info["item_id"], info["job_agent_runs"], info["job"].get("updated_at"), info["began_at"]
         )
         planned = json.loads(SNAPSHOT.read_text(encoding="utf-8"))["settings"]
         print(
