@@ -29,11 +29,15 @@ LATE_POOL = "2f22b5a3-14ae-4599-8756-0bee53fa7e2e"
 USED_POOL = "71843110-fb7d-4124-90a2-99861d248a2a"
 
 
+JOB_RAN_AT = "2026-10-21T13:05:04.458952Z"
+
+
 def _job(snapshot: dict | None) -> dict:
     binding = {"media_snapshot": snapshot} if snapshot is not None else {}
     return {
         "job": {
             "id": "89fefe4d-137a-409c-b846-760161dc5063",
+            "created_at": JOB_RAN_AT,
             "user_id": USER,
             "content_plan_item_id": ITEM,
             "all_candidates": {"creator_request": "Caption the clips."},
@@ -58,8 +62,12 @@ def _item() -> dict:
                 "kind": "image",
                 "status": "ready",
                 "gcs_path": f"users/{USER}/plan/{ITEM}/pool/{pool}.jpg",
+                "created_at": created_at,
             }
-            for pool in (LATE_POOL, USED_POOL)
+            for pool, created_at in (
+                (LATE_POOL, "2026-10-21T13:20:00Z"),
+                (USED_POOL, "2026-10-21T12:52:12.939395Z"),
+            )
         ],
     }
 
@@ -162,14 +170,18 @@ def test_unnamed_pool_visuals_must_match_the_item_pool_count(stubbed) -> None:
         stubbed(_job(snapshot), _timed_item())
 
 
-def test_job_without_a_binding_replays_everything_the_item_holds(stubbed) -> None:
-    info = stubbed(_job(None), _item())
-    assert info["source_count"] == 4
-    assert info["source_coverage"]["bound_to_recorded_media"] is False
-
-
-JOB_RAN_AT = "2026-10-21T13:05:04.458952Z"
 SCOPED_PHOTO = "6ae61e1a-96ff-4776-8f95-54ace669db23"
+
+
+def test_job_without_a_binding_replays_only_the_pool_the_item_held_when_it_ran(stubbed) -> None:
+    info = stubbed(_job(None), _item())
+    assert any(USED_POOL in path for path in stubbed.copied)
+    assert not any(LATE_POOL in path for path in stubbed.copied)
+    coverage = info["source_coverage"]
+    assert coverage["bound_to_recorded_media"] is False
+    assert (coverage["pool_visuals_inferred"], coverage["pool_visuals_added_after_job"]) == (1, 1)
+    # Clip rows carry no creation time, so the run says how many it could not date.
+    assert coverage["clips_not_dated"] == 1
 
 
 def _job_without_visuals_key() -> dict:
@@ -177,25 +189,16 @@ def _job_without_visuals_key() -> dict:
     about the pool, while the job's own plan scopes a requirement to a pool photo."""
 
     job = _job({"clip_assignments": [{"media_id": CLIP}]})
-    job["job"]["created_at"] = JOB_RAN_AT
     job["job"]["assembly_plan"]["creator_render_requirements"] = {
         "exact_texts": [{"media_id": f"asset-{USED_POOL}", "text": "Oblea"}]
     }
     return job
 
 
-def _dated_item() -> dict:
-    item = _item()
-    late, used = item["pool_assets"]
-    late["created_at"] = "2026-10-21T13:20:00Z"
-    used["created_at"] = "2026-10-21T12:52:12.939395Z"
-    return item
-
-
 def test_a_binding_without_a_visuals_key_keeps_the_pool_the_item_held_when_the_job_ran(
     stubbed,
 ) -> None:
-    info = stubbed(_job_without_visuals_key(), _dated_item())
+    info = stubbed(_job_without_visuals_key(), _item())
     assert any(USED_POOL in path for path in stubbed.copied)
     assert not any(LATE_POOL in path for path in stubbed.copied)
     coverage = info["source_coverage"]
@@ -210,7 +213,7 @@ def test_pool_media_the_job_names_but_the_item_no_longer_holds_is_refused(stubbe
         {"media_id": f"asset-{SCOPED_PHOTO}", "text": "Merope"}
     )
     with pytest.raises(replay_job.ReplayJobError, match=SCOPED_PHOTO):
-        stubbed(job, _dated_item())
+        stubbed(job, _item())
 
 
 def test_voiceover_outside_the_owner_prefix_is_refused(stubbed) -> None:
@@ -297,11 +300,81 @@ def _production(complete: bool = True, main_model: str = GEMINI):
     )
 
 
-def _runs(*pairs: tuple[str, str], model: str = GEMINI) -> dict:
+def _runs(*pairs: tuple[str, str], model: str = GEMINI, comparable: bool = True) -> dict:
     return {
         "success": SUCCESS,
-        "runs": [{"agent_name": n, "outcome": o, "model": model} for n, o in pairs],
+        "runs": [
+            {"agent_name": n, "outcome": o, "model": model, "comparable": comparable}
+            for n, o in pairs
+        ],
     }
+
+
+def test_a_session_scoped_agent_failure_does_not_relabel_a_reproduced_failure() -> None:
+    """Verifier, 19f61092: the clip-intent agents run on the Creator session alone
+    (`creator_agent.py`, RunContext without a plan item), so production's item trace never
+    lists them while the replay counted every run in its database.
+
+    Ways this goes wrong: a reproduced failure reads as `diverged_from_production` "inside
+    nova.plan.clip_request_resolver, which production never ran"; an unreproduced one names
+    that agent as replay-only; the spend total drops the runs left out of the comparison.
+    """
+
+    recorded = _runs(("nova.creator.main", "ok"))
+    recorded["runs"] += _runs(
+        ("nova.plan.clip_request_resolver", "terminal_transient"), comparable=False
+    )["runs"]
+    recorded["runs"][-1]["cost_usd"] = 0.004
+    route = replay_job.compare_routes(_production(), recorded)
+    assert route["replay_only_agents"] == [] and route["diverged_failures"] == []
+    assert route["replay_uncompared_agents"] == ["nova.plan.clip_request_resolver"]
+    assert route["replay_spend_usd"] == 0.004
+    result = {"outcome": "failed", "failure_reason": "phone_plan_unsupported", "error_detail": None}
+    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
+
+
+def test_the_replay_is_interrupted_once_its_settled_spend_passes_the_cap(monkeypatch) -> None:
+    """Gemini is not metered by the ledger while AI_COST_CONTROL_ENABLED stays off as in
+    production, so MAX_COST_USD capped nothing for it (verifier: $0.1487 on Gemini 3.1 Pro
+    under a 0.25 cap). Ways this goes wrong: the run continues past the cap; it is stopped but
+    reported as a route result; a failed spend read crashes the driver mid-run."""
+
+    import time
+
+    from sqlalchemy.exc import OperationalError
+
+    reads = iter([OperationalError("select", {}, Exception("busy")), 0.01, 0.42])
+
+    def spend(url: str) -> float:
+        value = next(reads)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(replay_job, "settled_spend_usd", spend)
+    started = time.monotonic()
+    code, spent = replay_job.run_under_spend_cap(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        env={"PATH": "/usr/bin:/bin"},
+        scratch_url="postgresql://x@localhost/y",
+        cap_usd=0.35,
+        poll_s=0.05,
+    )
+    assert spent == 0.42 and code != 0
+    assert time.monotonic() - started < 30
+    result = {"outcome": "failed", "failure_reason": "replay interrupted", "error_detail": None}
+    replay_job.mark_spend_cap(result, spent, 0.35)
+    assert result["outcome"] == "spend_cap_reached"
+    assert "0.42" in result["failure_reason"]
+    finished = replay_job.run_under_spend_cap(
+        [sys.executable, "-c", "pass"],
+        env={"PATH": "/usr/bin:/bin"},
+        scratch_url="postgresql://x@localhost/y",
+        cap_usd=0.35,
+        poll_s=5,
+    )
+    assert finished == (0, None)
 
 
 def test_a_failure_inside_an_agent_production_never_ran_is_a_divergence() -> None:
