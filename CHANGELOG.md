@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.244.0] - 2026-11-15
+
+### Fixed
+- fix(kria): withdrawn clips stay withdrawn, no needless Voiceover holds, named moments on the word (KRI-1464, KRI-1465, KRI-1466) (#2359) <!-- release-pr: 2359 -->
+
+## [0.88.243.0] - 2026-11-15
+
+### Changed
+- fix(kria): German Talking promises never hold the draft (KRI-1405) (#2348) <!-- release-pr: 2348 -->
+
+## [0.88.242.0] - 2026-11-15
+
+### Fixed
+- fix(ios): the editor no longer aborts when the live preview takes over the finished video (KRI-1404) (#2333) <!-- release-pr: 2333 -->
+
+## [0.88.241.0] - 2026-11-15
+
+### Changed
+- test(ios): editor-ready UI test waits for the background warm instead of 4 s (KRI-1467) (#2358) <!-- release-pr: 2358 -->
+
 ## [0.88.240.0] - 2026-11-15
 
 ### Changed
