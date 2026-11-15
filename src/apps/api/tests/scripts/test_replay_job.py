@@ -334,6 +334,38 @@ def test_a_session_scoped_agent_failure_does_not_relabel_a_reproduced_failure() 
     assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
 
 
+@pytest.mark.parametrize(
+    ("began", "diverged"),
+    [
+        ("2026-10-19T16:05:00Z", []),
+        ("2026-11-14T06:53:16Z", ["nova.plan.clip_request_resolver"]),
+    ],
+)
+def test_an_agent_production_did_not_record_yet_proves_no_divergence(
+    monkeypatch, began: str, diverged: list[str]
+) -> None:
+    """19f61092 (2026-10-19): before #1973 deployed (2026-10-31 10:21 UTC) the chat runtime ran
+    the clip-intent planner, resolver and clip question with no plan item, so production
+    stored no run of them; today's replay stores them on the item. Ways this goes wrong: an
+    older job's replay names them as agents production never ran, or a job after the deploy
+    loses that comparison."""
+
+    trace = {
+        "agent_runs": [
+            {"agent_name": "nova.creator.main", "model": GEMINI, "created_at": began},
+        ],
+        "next_cursor": None,
+    }
+    monkeypatch.setattr(replay_job, "prod_get", lambda path: trace)
+    production = replay_job.production_agents(ITEM, [], until=None, began=began)
+    recorded = _runs(
+        ("nova.creator.main", "ok"), ("nova.plan.clip_request_resolver", "terminal_transient")
+    )
+    route = replay_job.compare_routes(production, recorded)
+    assert route["diverged_failures"] == diverged
+    assert ("nova.plan.clip_request_resolver" in route["replay_uncompared_agents"]) is not diverged
+
+
 def test_the_replay_is_interrupted_once_its_settled_spend_passes_the_cap(monkeypatch) -> None:
     """Gemini is not metered by the ledger while AI_COST_CONTROL_ENABLED stays off as in
     production, so MAX_COST_USD capped nothing for it (verifier: $0.1487 on Gemini 3.1 Pro
