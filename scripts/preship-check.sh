@@ -180,7 +180,7 @@ fi
 
 # Journey tests and UI test groups come from markers in the tests; the entries
 # kept by hand (source paths, evidence tests, UI class groups) must still exist.
-if OUT="$(python3 scripts/ci/journey_registry.py check 2>&1 && python3 scripts/ios/ui_tests.py check 2>&1)"; then
+if OUT="$(make --no-print-directory check-test-registries 2>&1)"; then
   pass "journey and UI test registries match the tests"
 else
   fail "test registries drifted (CI runs the same check):"

@@ -145,14 +145,17 @@ in `ci.yml` (`-only-testing:Target/Class/test`, `--xctest Class/test`) that does
 not exist in that target; a problem `sync` cannot fix names its own fix, the rest
 end with `make sync-test-registries`. After a rename, `make sync-test-registries` rewrites the renamed paths
 in those files and follows Swift class and test-method renames into
-`ui-test-groups.json`, the manifest's `xctests`, the `ci.yml` native steps and
-the `scripts/ios/tests` self-tests, including a renamed UI test file path, class
+`ui-test-groups.json`, the manifest's `xctests`, the `ci.yml` native steps,
+`scripts/ci/journey-gate.py`, `scripts/ios/render_evidence.py` and the
+`scripts/ios/tests` self-tests, including a renamed UI test file path, class
 name and `func` name they quote (stage a file rename first); `check` names a file
 that still holds the old name or a `src/apps/ios/Tests/...swift` path that is gone.
 When sync cannot follow an entry (a method renamed in the same edit that adds or
 removes another), the check after sync says to edit or delete that entry by hand.
 The `scripts/ios/tests` self-tests borrow their UI test file, class and methods
-from the tree (`ui_fixture.py`), so no real test name is spelled out there.
+from the tree (`ui_fixture.py`) or use synthetic names, and a self-test asserts the
+recorded xcresult fixtures name no real UI test (sync rewrites `.py` files, not
+fixtures).
 Not derived yet: `api_tests` entries for the manifest's journeys that no marker
 declares (a new test for those still needs a manifest line or a marker), the
 native test names in `ci.yml` and the manifest's `xctests` (followed through

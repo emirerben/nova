@@ -337,17 +337,29 @@ def swift_name_pattern(test):
     return re.compile(rf"(?<!\w){re.escape(test)}(?!\w)")
 
 
+HAND_NAMED_SWIFT_TESTS = (
+    "scripts/ci/journey-gate.py",
+    "scripts/ios/render_evidence.py",
+)
+
+
 def swift_followers(root, journeys=None):
     """Files that name a Swift test as `Class/method`: the journey manifest, the
-    workflows' native steps and these self-tests."""
+    workflows' native steps, these self-tests and the scripts that keep native
+    test names in code."""
     files = [journeys or root / "scripts/ci/journey-manifest.json"]
     for pattern in (".github/workflows/*.yml", "scripts/ios/tests/*.py"):
         files += sorted(root.glob(pattern))
+    files += [root / name for name in HAND_NAMED_SWIFT_TESTS]
     return [path for path in files if path.is_file()]
 
 
-def self_tests(root):
-    return sorted((root / "scripts/ios/tests").glob("*.py"))
+def bare_followers(root):
+    """Files that also quote a bare class or `func` name outside `Class/method`."""
+    return [
+        *sorted((root / "scripts/ios/tests").glob("*.py")),
+        *(root / name for name in HAND_NAMED_SWIFT_TESTS if (root / name).is_file()),
+    ]
 
 
 def bare_renames(renames):
@@ -414,7 +426,7 @@ def stale_followers(root, base=None, journeys=None):
                     f"{path.relative_to(root).as_posix()} still names {old!r}, "
                     f"which git renamed to {new!r}"
                 )
-    for path in self_tests(root):
+    for path in bare_followers(root):
         text = path.read_text()
         for pattern, new, old in bare_patterns(renames):
             if pattern.search(text):
@@ -444,7 +456,7 @@ def sync(root=ROOT, base=None, journeys=None):
             changed.append(f"{old} -> {new}")
     renames = test_renames(base, root)
     changed += follow_test_renames(data, renames)
-    followers_self = set(self_tests(root))
+    followers_bare = set(bare_followers(root))
     for path in swift_followers(root, journeys):
         text = original = path.read_text()
         for old, new in renames.items():
@@ -453,7 +465,7 @@ def sync(root=ROOT, base=None, journeys=None):
                 changed.append(
                     f"{path.relative_to(root).as_posix()}: {old} -> {new} ({count})"
                 )
-        if path in followers_self:
+        if path in followers_bare:
             for pattern, new, old in bare_patterns(renames):
                 text, count = pattern.subn(new, text)
                 if count:

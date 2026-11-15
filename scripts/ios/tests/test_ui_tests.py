@@ -819,15 +819,12 @@ class VerifyCommandFlakyReportingTests(unittest.TestCase):
 
 
 class OverrunRerunTests(unittest.TestCase):
-    """Real xcresulttool output (fixtures/overrun-ui-results.json) from nightly
-    43415393573: one test ran past its 3 minute allowance, which xcodebuild never
+    """xcresulttool output (fixtures/overrun-ui-results.json, names made
+    synthetic) from nightly 43415393573: one test ran past its 3 minute allowance, which xcodebuild never
     retries, and verify.sh reruns it once (KRI-1379)."""
 
-    OVERRAN = "KriaUITests/NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow"
-    SIBLING = (
-        "KriaUITests/NativeEditorInspectorUITests/"
-        "testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt"
-    )
+    OVERRAN = "KriaUITests/OverrunProbeUITests/testRunsPastItsAllowance"
+    SIBLING = "KriaUITests/OverrunProbeUITests/testFinishesQuickly"
     MESSAGE = "Test exceeded execution time allowance of 3 minutes"
 
     def rerun(self, result="Passed", identifier=None, children=None):
@@ -886,6 +883,19 @@ class OverrunRerunTests(unittest.TestCase):
             with self.subTest(rerun=rerun), self.assertRaises(ValueError):
                 ui.verify_results(OVERRUN_FIXTURE, expected, rerun=rerun)
         self.assertEqual(ui.flaky_tests(OVERRUN_FIXTURE, rerun=overran_again), [])
+
+
+class FixturesNameNoRealTestTests(unittest.TestCase):
+    """`make sync-test-registries` rewrites the self-test .py files but not their
+    recorded fixtures, so a fixture quoting a real UI test would go stale on a
+    rename and fail the ios-contracts job with nothing naming the cause."""
+
+    def test_no_recorded_fixture_names_a_real_ui_test(self):
+        real = {name.rsplit("/", 1)[1] for name in ui.discovered()}
+        for path in sorted((Path(__file__).parent / "fixtures").glob("*")):
+            text = path.read_text()
+            named = sorted(m for m in real if ui.swift_name_pattern(m).search(text))
+            self.assertEqual(named, [], f"{path.name} names real UI tests")
 
 
 if __name__ == "__main__":
