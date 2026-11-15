@@ -510,7 +510,7 @@ def _repo_job(monkeypatch, **changes):
     return _cta_job(
         monkeypatch,
         **{
-            "protocol": 51,
+            "protocol": 51,  # protocol-literal-ok (run 3 build)
             "requirement": _REPO_ENDING,
             "closing": _REPO,
             "features": _RUN3_FEATURES,

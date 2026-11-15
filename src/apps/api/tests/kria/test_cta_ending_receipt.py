@@ -350,20 +350,20 @@ def _draft_arrow_reason(monkeypatch, *more: BriefRequirement, protocol: int | No
 
 
 def test_keep_text_off_my_face_keeps_the_arrow_promise(monkeypatch):
-    reason = _draft_arrow_reason(monkeypatch, _OFF_FACE, protocol=51)
+    reason = _draft_arrow_reason(monkeypatch, _OFF_FACE, protocol=51)  # protocol-literal-ok
     assert "draw" in reason and "arrow" in reason and "editor" not in reason
 
 
 def test_an_object_to_keep_text_off_gets_no_arrow_promise(monkeypatch):
     """The render keeps the pill around a marked object, so the draft says she draws it."""
-    reason = _draft_arrow_reason(monkeypatch, _OFF_LAPTOP, protocol=51)
+    reason = _draft_arrow_reason(monkeypatch, _OFF_LAPTOP, protocol=51)  # protocol-literal-ok
     assert "i'll draw" not in reason
     assert "editor" in reason
 
 
 def test_an_object_ask_she_dropped_does_not_cost_her_the_arrow(monkeypatch):
     dropped = _OFF_LAPTOP.model_copy(update={"status": "superseded"})
-    reason = _draft_arrow_reason(monkeypatch, dropped, protocol=51)
+    reason = _draft_arrow_reason(monkeypatch, dropped, protocol=51)  # protocol-literal-ok
     assert "draw" in reason and "editor" not in reason
 
 

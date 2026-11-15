@@ -81,7 +81,7 @@ TAKE = "c0"  # the worker harness's speaker clip
 # The draft turn names a phone take by its proxy file (the job's is ...-3D5CE019-....mp4).
 PROXY_TAKE = "analysis-proxy-ios-3D5CE019.mp4"
 TAKE_S = 48.8  # the job's `silence_cut.original_duration_s`
-PROTOCOL = 51  # `all_candidates.creator_client_protocol`
+PROTOCOL = 51  # protocol-literal-ok: `all_candidates.creator_client_protocol` of run 3
 CANVAS_H = 1920.0
 CANVAS_RATIO = 1080.0 / CANVAS_H
 OVERLAY_TRACK = "subtitled-overlays"
