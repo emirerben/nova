@@ -11,12 +11,12 @@ import pytest
 from app.agents.edit_copilot import _ParseState, parse_editor_operation
 from app.config import settings
 from app.services import kria_editor_ops as editor
-from app.services.editor_limits import EDITOR_MIN_CLIP_S
 from app.services.client_protocol import (
     SPLIT_BLANK_PANEL_PROTOCOL,
     bind_sending_build,
     unbind_sending_build,
 )
+from app.services.editor_limits import EDITOR_MIN_CLIP_S
 from tests.services.test_kria_editor_ops import _job, _variant
 
 
