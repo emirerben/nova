@@ -17,6 +17,8 @@ from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.services.speech_montage_planning import NO_SPEECH_QUESTION
 from app.tasks import generative_build as gb
 
+pytestmark = pytest.mark.journey("kri-808-clip-speech-language")
+
 SPEECH = (
     "So the thing I learned in Lisbon was, never rush a good espresso. "
     "Honestly it changed my whole morning routine!"

@@ -29,6 +29,8 @@ from app.pipeline.silence_cut import (
     build_cut_plan,
 )
 
+pytestmark = pytest.mark.journey("kri-653-silent-take")
+
 # The incident: 11 hallucinated words at these (start_s, end_s) over a 192.6 s take.
 _INCIDENT_WORDS = [
     ("I've", 102.48, 102.52),

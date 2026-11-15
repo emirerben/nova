@@ -57,6 +57,10 @@ _CAPTION_Y_CANDIDATES = (0.86, 0.90, 0.72, 0.64, 0.56, 0.32, 0.24)
 # above the middle), before the ladder above. Without it a middle block that met her chin fell
 # straight to 0.86, the lower third.
 _ASKED_SPOT_STEP = 0.03
+# KRI-1476 (Qendresa Q1 run 3): a two-word middle block is drawn at 0.62, the ladder's last
+# step, so it could only climb onto her face and then fell to 0.86. The middle row also tries
+# the spots just under the asked centre, down to the row's lower edge (0.68).
+_UNDER_SPOT_STEP = 0.02
 _STATUS_RANK = {
     "clear": 0,
     "unverified": 1,
@@ -293,7 +297,10 @@ def merge_target_rows(plans: Sequence[ProtectedPlan]) -> tuple[dict[str, Any], .
 
 def _asked_spot_ladder(spot: str | None, centre: float) -> tuple[float, ...]:
     """Block centres inside the asked row, nearest ``centre`` first, below it on a tie."""
-    from app.kria.caption_look_ask import caption_spot_band  # noqa: PLC0415
+    from app.kria.caption_look_ask import (  # noqa: PLC0415
+        MIDDLE_UNDER_FACE_Y_BAND,
+        caption_spot_band,
+    )
 
     band = caption_spot_band(spot)
     if band is None:
@@ -301,6 +308,10 @@ def _asked_spot_ladder(spot: str | None, centre: float) -> tuple[float, ...]:
     low, high = band
     count = int((high - low) / _ASKED_SPOT_STEP + 1e-9) + 1
     steps = [round(low + i * _ASKED_SPOT_STEP, 3) for i in range(count)]
+    if band is MIDDLE_UNDER_FACE_Y_BAND:
+        under = int((high - centre) / _UNDER_SPOT_STEP + 1e-9)
+        steps += [round(centre + i * _UNDER_SPOT_STEP, 3) for i in range(1, under + 1)]
+        steps = list(dict.fromkeys(steps))
     return tuple(sorted(steps, key=lambda y: (abs(y - centre), y < centre)))
 
 

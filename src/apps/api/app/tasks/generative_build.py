@@ -11730,6 +11730,17 @@ def _run_phone_subtitled_job(
                     text_rows=title_rows + spoken_text_rows,
                     keep_segments=speaker_keep_segments,
                 )
+                # KRI-1478: the same context with the full-width strip opened, when planned
+                # for this build (`TALKING_CARD_STRIP_ENABLED`); otherwise the same object.
+                from app.services.phone_overlay_grounding import (  # noqa: PLC0415
+                    share_beat_windows,
+                    strip_card_windows,
+                    with_card_strip,
+                )
+
+                card_layout = with_card_strip(
+                    card_layout, all_candidates.get("creator_client_protocol")
+                )
                 if beats_enabled and (beats or closing):
                     if lane_request is not None:
                         beat_receipt = {
@@ -12014,6 +12025,13 @@ def _run_phone_subtitled_job(
                                     if protected_card_regions
                                     else {}
                                 ),
+                                # KRI-1478: a strip card's window may be shared by a second
+                                # visual for the same mention (none without the strip).
+                                **(
+                                    {"shareable": strip_windows}
+                                    if (strip_windows := strip_card_windows(beat_cards))
+                                    else {}
+                                ),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -12034,6 +12052,12 @@ def _run_phone_subtitled_job(
                             grounded_cards = list(grounded.cards)
                             grounded_media_ids = frozenset(card.media_id for card in grounded_cards)
                             overlay_receipt = grounded.receipt
+                            if shared_windows := getattr(grounded, "shared_windows", ()):
+                                # KRI-1478: the first card of a shared mention ends where the
+                                # second one starts (never two cards at once).
+                                beat_cards, beat_receipt = share_beat_windows(
+                                    beat_cards, beat_receipt, shared_windows
+                                )
 
                 overlay_cards: list = []
                 ending_clip: Any = None
@@ -12137,7 +12161,16 @@ def _run_phone_subtitled_job(
                         }
                         try:
                             overlay_visuals = bind_phone_visual_assets(
-                                _sync_session, job_id=job_id, pins=pins
+                                _sync_session,
+                                job_id=job_id,
+                                pins=pins,
+                                # KRI-1478: a strip is cut to the picture's text column,
+                                # measured while its bytes are on disk (never without one).
+                                **(
+                                    {"measure_text": True}
+                                    if strip_card_windows(overlay_cards)
+                                    else {}
+                                ),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -12437,7 +12470,10 @@ def _run_phone_subtitled_job(
                         cards=_phone_list_label_card_boxes(
                             lanes, visuals, text_canvas.get("canvas")
                         ),
-                        timeline_duration_s=talking_timeline_s,
+                        timeline_duration_s=_list_label_timeline_end_s(
+                            talking_timeline_s,
+                            closing_text=None if closing_card_row else talking_closing_text,
+                        ),
                         binding=binding,
                         clip_path=clip_path,
                         keep_segments=speaker_keep_segments,
@@ -15312,11 +15348,13 @@ def _phone_talking_closing_rows(
         # An inserted clip (take-timeline ``insert_points``) inside the ending pauses the
         # take and would split the two rows and play the arrow over the clip: keep the tag.
         insert_in_ending = any(start_s + 1e-3 < point < end_s - 1e-3 for point in insert_points)
-        if (
-            cta
-            and not insert_in_ending
-            and (protected is None or not _protected_placement_kwargs(protected))
-        ):
+        # KRI-1475: only an object to keep text off keeps the tag (the ending is placed
+        # around faces and captions, not objects). "Keep text off my face" alone used to
+        # lose the ending too; it is now kept off every face instead (``all_faces``).
+        keeps_off_object = protected is not None and any(
+            target.kind == "object" for target in protected.targets
+        )
+        if cta and not insert_in_ending and not keeps_off_object:
             from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
             from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
 
@@ -15347,6 +15385,7 @@ def _phone_talking_closing_rows(
                     scale=fit_scale,
                     position_x=position_x,
                     caption_boxes=_cta_caption_boxes,
+                    all_faces=bool(protected is not None and protected.protect_all_faces),
                 )
                 if ending is not None:
                     try:
@@ -16096,6 +16135,17 @@ def _phone_talking_list_label_rows(
     display_width, display_height = display_dims(binding.original)
     scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
     speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
+    # KRI-1471: a label whose spot is taken is placed a second time above her head
+    # (`phone_list_labels._clear_spot`); her face in its window is decoded once, not per try.
+    from app.pipeline import phone_subtitled_title as title_placer  # noqa: PLC0415
+
+    face_samples: dict[Any, Any] = {}
+
+    def sample_once(path: Any, anchors: Any, **kwargs: Any) -> Any:
+        key = (path, tuple(anchors), tuple(sorted(kwargs.items())))
+        if key not in face_samples:
+            face_samples[key] = title_placer.sample_face_regions(path, anchors, **kwargs)
+        return face_samples[key]
 
     def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
         return place_talking_title(
@@ -16106,6 +16156,7 @@ def _phone_talking_list_label_rows(
             display_height=display_height,
             canvas=canvas,
             scale=scale,
+            sample=sample_once,
             position_x=position_x,
             avoid=avoid,
             speaker_frame=speaker_frame,
@@ -16156,6 +16207,18 @@ def _phone_talking_list_label_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return rows, receipt
+
+
+def _list_label_timeline_end_s(timeline_s: float, *, closing_text: str | None) -> float:
+    """KRI-1471: where the list labels' time ends. With her ending text on the talk's last
+    seconds (`talking_closing_window`) the labels stop where it comes in, so a label is never
+    on screen with the ending; no ending, or the switch off: the whole talk, as before. (The
+    ending is placed after the labels, around her face and captions only.)"""
+    from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
+
+    if not closing_text or not settings.list_label_example_ask_enabled:
+        return timeline_s
+    return talking_closing_window(float(timeline_s))[0]
 
 
 def _phone_list_label_follow(

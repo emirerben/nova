@@ -3,9 +3,13 @@ Turkish in a Turkish chat; anything that isn't exactly that copy shows as stored
 
 from __future__ import annotations
 
+import pytest
+
 from app.kria.brief_checks import NO_TITLE_REASON, _loc, render_block_recovery
 from app.kria.reply_language import reply_language_for
 from app.tasks.kria_runtime import _blocked_title_question, _localized_block_recovery
+
+pytestmark = pytest.mark.journey("kri-590-voiceover-cues")
 
 
 def _receipts() -> list[dict]:

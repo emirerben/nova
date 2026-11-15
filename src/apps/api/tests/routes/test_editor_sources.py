@@ -17,6 +17,8 @@ from app.tasks import editor_sources as task
 from tests.services.test_phone_editor_sources import admitted, source
 from tests.services.test_phone_sources import receipt
 
+pytestmark = pytest.mark.journey("kri-669-gameday")
+
 
 @pytest.fixture
 def admission(monkeypatch):

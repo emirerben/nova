@@ -18,6 +18,17 @@ Ways this could fail (written before the code; each is pinned below or in the re
 - (review #2103) the receipt, which now needs the arrow over the ending rows, stops counting
   the arrow the worker drew.
 
+KRI-1475 (Qendresa Q1 run 3, job 3ef3cbe5): the brief also carried "keep text off my face"
+(`keep_text_off: [{"kind": "face"}]`), and any such ask sent the ending back to the lime pill
+with no arrow, after the draft had promised one. Ways the fix could fail (written before it):
+- the block or the arrow lands on a second person's face (the ask protects every face);
+- no room clear of every face, and the ending is drawn on one anyway instead of the pill;
+- a marked object ("the laptop") is covered: the ending is not placed around objects;
+- the protected-text receipt calls the face-clear ending unverified, or the arrow receipt
+  stops saying met;
+- the simpler-version brief (version 2, superseded asks) loses the ending again;
+- the switch off is no longer exactly today's job.
+
 Runs the real worker (`_run_generative_job`) on the shared Talking harness: ingest, probe,
 transcription and the face sampler are faked, the planner rows, placement, compiler, contract
 check and device pin are the production ones.
@@ -30,10 +41,13 @@ import uuid
 
 import pytest
 
+import app.pipeline.phone_protected_text as protected_mod
 import app.pipeline.phone_subtitled_title as title_mod
 import app.services.phone_visuals as phone_visuals_mod
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
+from app.kria.protected_targets import PROTECTED_TEXT_FIELD
+from app.pipeline.object_track import ObjectTrack, TrackAnchor
 from app.pipeline.phone_subtitled_lanes import PHONE_SUBTITLED_LANES_FIELD
 from app.pipeline.phone_subtitled_plan import _STORY_CANVAS
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
@@ -113,6 +127,9 @@ def _cta_job(
     requirement: BriefRequirement | None = _ENDING,
     closing: str = _CTA,
     features: tuple[str, ...] = ("authoredText", "freehandDrawing"),
+    more: tuple[BriefRequirement, ...] = (),
+    marks: list[dict] | None = None,
+    brief_version: int = 1,
 ):
     job, snapshot, _session, binding = _setup_subtitled(monkeypatch, transcript_words=_TAKE_WORDS)
     _set_switch(monkeypatch, gb.settings, enabled)
@@ -122,7 +139,9 @@ def _cta_job(
         job.all_candidates["creator_client_protocol"] = protocol
     if requirement is not None:
         binding_dump = BriefBinding.create(
-            uuid.uuid4(), CreativeBrief(version=1, requirements=[requirement])
+            uuid.uuid4(),
+            CreativeBrief(version=brief_version, requirements=[*more, requirement]),
+            protected_regions=marks,
         ).model_dump(mode="json")
         snapshot["creator_brief_binding"] = binding_dump
         job.assembly_plan["creator_brief_binding"] = copy.deepcopy(binding_dump)
@@ -150,11 +169,11 @@ def _closes_with(job, text: str = _CTA) -> list:
     return verify_phone_recipe(contract, _recipe(job))
 
 
-def _receipt_status(variant: dict) -> str:
+def _receipt_status(variant: dict, requirement: BriefRequirement = _ENDING) -> str:
     """The finished-video receipt for the arrow ask, on the variant the worker persisted."""
     from app.kria import brief_checks as bc
 
-    return bc.check_requirement(_ENDING, bc.plan_facts_from_phone_variant(variant)).status
+    return bc.check_requirement(requirement, bc.plan_facts_from_phone_variant(variant)).status
 
 
 def _drawn_box(row: dict) -> NormalizedBox:
@@ -436,3 +455,216 @@ def test_no_arrow_draws_no_arrow(monkeypatch):
     variant = job.assembly_plan["variants"][0]
     assert [row["text"] for row in _closing_rows(variant)] == ["comment", "READ"]
     assert not variant.get("drawings")
+
+
+# --- KRI-1475: the ending with "keep text off my face" in the brief ----------------------------
+
+_REPO = "comment REPO"
+# Job 3ef3cbe5's r6 and r4 as the brief extractor wrote them (curly quotes, an `arrow` fact, no
+# arrow emoji; "not over my face" filed as a text ask too).
+_REPO_ENDING = BriefRequirement(
+    id="r6",
+    kind="text",
+    scope="global",
+    description="End with \u201ccomment REPO\u201d and an arrow for the last 3 seconds.",
+    literal=_REPO,
+    facts={"arrow": True, "closing": _REPO},
+)
+_OFF_FACE = BriefRequirement(
+    id="r4",
+    kind="style",
+    scope="global",
+    description=(
+        "When I talk about something, show the matching screenshot or screen recording in "
+        "the top or bottom part of the screen, not over my face."
+    ),
+    facts={
+        "keep_text_off": [{"kind": "face"}],
+        "visual_position": "top_or_bottom",
+        "keep_visuals_off_face": True,
+        "match_visuals_to_speech": True,
+    },
+)
+# "Make it without these": the server superseded the list-label ask, the brief became v2.
+_SUPERSEDED = BriefRequirement(
+    id="r5",
+    kind="text",
+    scope="per_clip",
+    status="superseded",
+    description="When I list the five repos, show each one as big text.",
+    facts={"numbered": True, "superseded_by": "server"},
+)
+# A second person lower right, exactly where the ending sits under her face.
+_SECOND_FACE = NormalizedBox(0.55, 0.64, 0.92, 0.84)
+_LAPTOP = NormalizedBox(0.30, 0.66, 0.70, 0.86)
+_RUN3_FEATURES = (
+    "authoredText",
+    "freehandDrawing",
+    "positionedText",
+    "freezeFrame",
+    "visualBlocks",
+)
+
+
+def _repo_job(monkeypatch, **changes):
+    return _cta_job(
+        monkeypatch,
+        **{
+            "protocol": 51,  # protocol-literal-ok (run 3 build)
+            "requirement": _REPO_ENDING,
+            "closing": _REPO,
+            "features": _RUN3_FEATURES,
+            "more": (_OFF_FACE,),
+            **changes,
+        },
+    )
+
+
+def _assert_her_repo_ending(job, faces: tuple[NormalizedBox, ...]) -> dict:
+    assert job.status == "awaiting_device", job.error_detail
+    variant = job.assembly_plan["variants"][0]
+    lead, keyword = _closing_rows(variant)
+    assert (lead["text"], keyword["text"]) == ("comment", "REPO")
+    assert keyword["size_px"] >= 1.5 * lead["size_px"]
+    lead_box, keyword_box = _drawn_box(lead), _drawn_box(keyword)
+    assert keyword_box.bottom - keyword_box.top >= 1.5 * (lead_box.bottom - lead_box.top)
+    for row in (lead, keyword):
+        assert (row["start_s"], row["end_s"]) == (7.0, 10.0)  # the last 3 s
+    [arrow] = variant["drawings"]  # exactly one arrow: no emoji, no second drawing
+    assert arrow["id"] == "closing-arrow"
+    assert (arrow["start_s"], arrow["end_s"]) == (7.0, 10.0)
+    assert [layer.id for layer in _recipe(job).drawing_layers] == ["closing-arrow"]
+    for drawn in (lead_box, keyword_box, _arrow_box(arrow)):
+        for face in faces:
+            assert drawn.coverage_by(face) <= 0.05, (drawn, face)
+    assert variant["closing_title_placement"]["status"] == "cta_ending"
+    # The "keep text off my face" receipt: the ending looked at the faces and is clear.
+    protected = variant[PROTECTED_TEXT_FIELD]
+    assert protected["verdict"] == "clear", protected
+    assert protected["texts"]["closing"] == "clear"
+    assert protected["face_texts"]["closing"] == "clear"
+    assert _closes_with(job, _REPO)
+    assert _receipt_status(variant, _REPO_ENDING) == "met"
+    return variant
+
+
+@pytest.mark.parametrize(
+    ("more", "brief_version"),
+    [((_OFF_FACE,), 1), ((_OFF_FACE, _SUPERSEDED), 2)],
+    ids=["keep-text-off-face", "simpler-version-brief"],
+)
+def test_keep_text_off_my_face_still_gets_her_ending(monkeypatch, more, brief_version):
+    """Job 3ef3cbe5: the promised ending came out as one lime pill with no arrow."""
+    _faces(monkeypatch)
+    job = _repo_job(monkeypatch, more=more, brief_version=brief_version)
+
+    gb._run_generative_job(str(job.id))
+
+    _assert_her_repo_ending(job, (_FACE,))
+
+
+def test_with_a_second_face_the_ending_stays_off_both(monkeypatch):
+    """The ask protects every face in frame, not only the speaker's: the block that would
+    sit under her face moves clear of the second person too."""
+    _faces(
+        monkeypatch,
+        regions=(
+            ProtectedRegion(0.0, 10.0, _FACE, "face"),
+            ProtectedRegion(0.0, 10.0, _SECOND_FACE, "face"),
+        ),
+    )
+    job = _repo_job(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = _assert_her_repo_ending(job, (_FACE, _SECOND_FACE))
+    assert variant["closing_title_placement"]["face_boxes"] == 2
+
+
+def test_with_no_room_off_every_face_it_keeps_the_tag_and_says_so(monkeypatch):
+    """A face filling the frame leaves no spot for the block: today's pill, no arrow, and the
+    finished-video receipt names the missing arrow (never a block on a face)."""
+    _faces(
+        monkeypatch,
+        regions=(
+            ProtectedRegion(0.0, 10.0, _FACE, "face"),
+            ProtectedRegion(0.0, 10.0, NormalizedBox(0.10, 0.04, 0.90, 0.96), "face"),
+        ),
+    )
+    job = _repo_job(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    [row] = _closing_rows(variant)
+    assert (row["text"], row["background_color"]) == (_REPO, "#C5F82A")
+    assert not variant.get("drawings")
+    assert variant["closing_title_placement"]["cta_fallback"] is True
+    assert _closes_with(job, _REPO)
+    assert _receipt_status(variant, _REPO_ENDING) == "partial"
+
+
+def test_a_marked_object_keeps_todays_tag(monkeypatch):
+    """The ending is placed around faces and captions only; with a marked object to keep
+    text off, the pill (which is placed around objects) stays."""
+
+    def track(_clip_path, **kw):
+        count = int(round((kw["end_s"] - kw["start_s"]) / 0.1)) + 1
+        return ObjectTrack(
+            label=kw["label"],
+            media_id=kw["media_id"],
+            generation=kw["generation"],
+            seed_t_s=kw["seed_t_s"],
+            seed_box=kw["seed_box"],
+            anchors=tuple(
+                TrackAnchor(round(kw["start_s"] + i * 0.1, 3), _LAPTOP, "tracked")
+                for i in range(count)
+            ),
+            status="tracked",
+            receipt={"anchors": count, "tracked": count, "lost": 0},
+        )
+
+    _faces(monkeypatch)
+    monkeypatch.setattr(protected_mod, "track_object", track)
+    keep_off = [{"kind": "face"}, {"kind": "object", "label": "laptop"}]
+    off_laptop = _OFF_FACE.model_copy(update={"facts": {"keep_text_off": keep_off}})
+    mark = {
+        "label": "laptop",
+        "media_id": "c0",
+        "source_t_s": 0.5,
+        "box": [_LAPTOP.left, _LAPTOP.top, _LAPTOP.right, _LAPTOP.bottom],
+        "generation": "1",
+    }
+    job = _repo_job(monkeypatch, more=(off_laptop,), marks=[mark])
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    [row] = _closing_rows(variant)
+    assert (row["text"], row["background_color"]) == (_REPO, "#C5F82A")
+    assert not variant.get("drawings")
+    placement = variant["closing_title_placement"]
+    assert placement["status"] != "cta_ending"
+    assert [o["label"] for o in placement["objects"]] == ["laptop"]
+
+
+def test_switched_off_with_keep_text_off_my_face_is_exactly_todays(monkeypatch):
+    """CREATOR_CTA_ENDING_ENABLED=false stays the kill switch for this path too."""
+    no_arrow = _REPO_ENDING.model_copy(
+        update={"description": "End with \u201ccomment REPO\u201d.", "facts": {"closing": _REPO}}
+    )
+    _faces(monkeypatch)
+    plain = _repo_job(monkeypatch, enabled=False, protocol=None, requirement=no_arrow)
+    gb._run_generative_job(str(plain.id))
+    expected_variant = copy.deepcopy(plain.assembly_plan["variants"][0])
+    expected_recipe = _recipe(plain)
+
+    job = _repo_job(monkeypatch, enabled=False)
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    [row] = _closing_rows(variant)
+    assert (row["text"], row["background_color"]) == (_REPO, "#C5F82A")
+    assert "drawings" not in variant
+    assert variant == {**expected_variant, "render_generation_id": variant["render_generation_id"]}
+    assert _recipe(job) == expected_recipe

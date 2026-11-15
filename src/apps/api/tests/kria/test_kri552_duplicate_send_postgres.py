@@ -56,6 +56,8 @@ from app.models import (
 )
 from app.tasks.kria_runtime import run_kria_turn
 
+pytestmark = pytest.mark.journey("kri-552-duplicate-resend")
+
 _db_name = make_url(settings.database_url).database or ""
 if not _db_name.endswith("_test"):
     pytest.skip(f"refusing to write to non-test database {_db_name!r}", allow_module_level=True)
