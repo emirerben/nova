@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.235.0] - 2026-11-15
+
+### Changed
+- fix(kria): approval card fits one screen and arrives with its draft (KRI-1403) (#2346) <!-- release-pr: 2346 -->
+
 ## [0.88.234.0] - 2026-11-15
 
 ### Fixed
