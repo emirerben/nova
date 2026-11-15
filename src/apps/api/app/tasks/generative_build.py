@@ -15312,11 +15312,13 @@ def _phone_talking_closing_rows(
         # An inserted clip (take-timeline ``insert_points``) inside the ending pauses the
         # take and would split the two rows and play the arrow over the clip: keep the tag.
         insert_in_ending = any(start_s + 1e-3 < point < end_s - 1e-3 for point in insert_points)
-        if (
-            cta
-            and not insert_in_ending
-            and (protected is None or not _protected_placement_kwargs(protected))
-        ):
+        # KRI-1475: only an object to keep text off keeps the tag (the ending is placed
+        # around faces and captions, not objects). "Keep text off my face" alone used to
+        # lose the ending too; it is now kept off every face instead (``all_faces``).
+        keeps_off_object = protected is not None and any(
+            target.kind == "object" for target in protected.targets
+        )
+        if cta and not insert_in_ending and not keeps_off_object:
             from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
             from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
 
@@ -15347,6 +15349,7 @@ def _phone_talking_closing_rows(
                     scale=fit_scale,
                     position_x=position_x,
                     caption_boxes=_cta_caption_boxes,
+                    all_faces=bool(protected is not None and protected.protect_all_faces),
                 )
                 if ending is not None:
                     try:

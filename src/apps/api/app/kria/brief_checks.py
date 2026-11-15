@@ -643,6 +643,9 @@ class PlanFacts:
     # Item 14: a drawing over the closing text's window (Kria's `closing-arrow` or her own) is
     # on the finished video / in the editor payload.
     closing_arrow: bool = False
+    # KRI-1475: a live ask keeps text off an object; the phone Talking writer then keeps the
+    # closing tag, so a draft never promises the ending's arrow (set by `build_receipts`).
+    text_kept_off_object: bool = False
     phone_voiceover_spoken_text: bool = False
     # KRI-793: True when this draft renders through the phone Talking writer, which captions
     # the take, spells the creator's listed words their way and records every caption line
@@ -14197,11 +14200,36 @@ def _closing_arrow_reason(req: BriefRequirement, facts: PlanFacts) -> str | None
     if facts.closing_arrow and is_ending:
         return None
     if not facts.rendered_variant and facts.phone_talking and is_ending:
-        from app.services.phone_rollout import cta_ending_available  # noqa: PLC0415
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            cta_ending_available,
+            cta_ending_planned_for,
+        )
 
-        if cta_ending_available():
+        # KRI-1475: promise the arrow only where the worker draws the ending
+        # (`_phone_talking_closing_rows`): never to an app build that can't draw drawings
+        # (an unknown build keeps the server-wide answer), never with an object to keep
+        # text off, where the closing tag stays.
+        drawable = (
+            cta_ending_planned_for(facts.client_protocol)
+            if facts.client_protocol is not None
+            else cta_ending_available()
+        )
+        if drawable and not facts.text_kept_off_object:
             return _CLOSING_ARROW_PLAN
     return _CLOSING_ARROW_MISSING
+
+
+def _keeps_text_off_object(req: BriefRequirement) -> bool:
+    """KRI-1475: a live ask names an object to keep text off ("no text on the laptop")."""
+    from app.kria.protected_targets import KEEP_TEXT_OFF_KEY  # noqa: PLC0415
+
+    entries = req.facts.get(KEEP_TEXT_OFF_KEY) if req.live else None
+    return any(
+        isinstance(entry, Mapping)
+        and entry.get("kind") == "object"
+        and str(entry.get("label") or "").strip()
+        for entry in (entries if isinstance(entries, list) else ())
+    )
 
 
 def _drawn_by_contract(req: BriefRequirement, facts: PlanFacts) -> bool:
@@ -16408,6 +16436,9 @@ def build_receipts(
     if (include_unchecked if strict_order is None else strict_order) and not facts.strict_order:
         facts = dataclasses.replace(facts, strict_order=True)
     requirements = list(requirements)
+    if any(_keeps_text_off_object(req) for req in requirements):
+        # KRI-1475: another requirement keeps text off an object (`_closing_arrow_reason`).
+        facts = dataclasses.replace(facts, text_kept_off_object=True)
     rendered_language = str(facts.caption_language or "").casefold().split("-")[0]
     if (
         rendered_language
