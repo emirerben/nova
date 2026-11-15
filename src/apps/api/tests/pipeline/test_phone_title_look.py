@@ -845,3 +845,39 @@ def test_kri1305_clear_captions_stay_put():
         window=(0, 5),
     )
     assert found is not None and found[0] is None and found[1]["status"] == "preset"
+
+
+# --- KRI-1477: Qendresa Q1 run 3 (job 3ef3cbe5), the title in the first 3 s ---------------
+#
+# Her "big title" came out at 0.72 of its size. Its size only follows where her captions are:
+# a title never touches a caption line, so with the captions thrown to y 0.86 (KRI-1476) only
+# 0.72 fits between her chin (0.6175) and them. F7: the title and the captions stack in the
+# first 3 s with no overlap, and the title is full size when the captions keep her middle spot.
+
+Q1_TITLE = "5 repos / I'd build with / this weekend!!"
+Q1_FACE = (0.2067, 0.2113, 0.8452, 0.6175)
+
+
+def _q1_caption_line(y_frac):
+    # A two-word 76 px caption line centred on ``y_frac`` (the job's measured ink box).
+    return NormalizedBox(0.21, y_frac - 0.0156, 0.79, y_frac + 0.0234)
+
+
+@pytest.mark.parametrize(
+    ("caption_y", "scale"),
+    [
+        (0.62, 1.0),  # her asked spot kept (run 2, and run 3's cards-only face ask)
+        (0.66, 0.85),  # a real face ask: the captions step just under her chin
+        (0.86, 0.72),  # run 3 as rendered: the captions in the lower third
+    ],
+)
+def test_her_title_is_as_big_as_her_captions_leave_room_for(caption_y, scale):
+    caption = _q1_caption_line(caption_y)
+    placed, receipt = _place(_rows(Q1_TITLE), Q1_FACE, avoid=[caption])
+
+    assert receipt["scale"] == scale
+    assert receipt["text_overlap"] is False and receipt["face_collision"] is False
+    block = title_block_box(placed, canvas=CANVAS)
+    assert block.top >= Q1_FACE[3], "under her chin"
+    assert block.bottom <= caption.top or block.top >= caption.bottom, "off her captions"
+    _assert_stacked_and_inside(placed)

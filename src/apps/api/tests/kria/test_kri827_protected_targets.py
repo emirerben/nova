@@ -230,3 +230,129 @@ def test_an_editor_save_that_changes_crop_bars_or_cut_marks_the_receipt_stale() 
     }
     kept = protected_text_after_editor_save(unmarked, **{**same, "speaker_position_x": 0.0})
     assert kept["targets"][0]["status"] == "no_selection"
+
+
+# ------------------------------------------------- KRI-1476: a face ask about her cards
+#
+# Qendresa Q1 run 3 (job 3ef3cbe5, 2026-11-14): "show the matching screenshot ... in the top or
+# bottom part of the screen, not over my face" was filed with ``keep_text_off: [face]`` beside
+# the model's own Visuals facts. Every text then kept off her face: her "middle" captions fell
+# to y 0.86 and her title shrank to 0.72. Failure modes (written before the code):
+#
+# F1  A face ask on a cards requirement moves the captions and the title.
+# F3  A real "keep the text / captions off my face" must still protect every text.
+# F5  An object named beside it (the plate) and a mark keep today's protection.
+# F9  Approval promises "the phone render keeps the text off what you named" for an ask the
+#     render no longer measures.
+# OFF The switch off is today's behaviour.
+
+SWITCH = "keep_text_off_caption_spot_enabled"
+Q1_CARDS_OFF_FACE = BriefRequirement(
+    id="r4",
+    kind="style",
+    scope="global",
+    description=(
+        "When I talk about something, show the matching screenshot or screen recording in the "
+        "top or bottom part of the screen, not over my face."
+    ),
+    facts={
+        "keep_text_off": [{"kind": "face"}],
+        "visual_position": "top_or_bottom",
+        "keep_visuals_off_face": True,
+        "match_visuals_to_speech": True,
+    },
+)
+FACE_R4 = ProtectedTarget("face", "face", ("r4",))
+KEEP_OFF_FACE = {"keep_text_off": [{"kind": "face"}]}
+
+
+def _only(req: BriefRequirement) -> CreativeBrief:
+    return CreativeBrief(version=1, requirements=[req])
+
+
+def _r4(**changes) -> BriefRequirement:
+    return Q1_CARDS_OFF_FACE.model_copy(update=changes)
+
+
+def test_a_face_ask_about_her_cards_is_not_a_text_ask():
+    assert protected_targets(_only(Q1_CARDS_OFF_FACE)) == ()
+
+
+@pytest.mark.parametrize(
+    "req",
+    [
+        # No typed Visuals signal: the ask is read as written (the caption ladder covers it).
+        _r4(facts={"keep_text_off": [{"kind": "face"}]}),
+        _r4(facts={"keep_text_off": [{"kind": "face"}], "visual_position": "top_or_bottom"}),
+        _r4(facts={**Q1_CARDS_OFF_FACE.facts, "keep_visuals_off_face": "true"}),
+        # The same requirement also places captions or text: it is a text ask.
+        _r4(facts={**Q1_CARDS_OFF_FACE.facts, "caption_position": "middle"}),
+        _r4(facts={**Q1_CARDS_OFF_FACE.facts, "captions": "word_by_word"}),
+        _r4(facts={**Q1_CARDS_OFF_FACE.facts, "text_size": "large"}),
+        _r4(kind="text"),
+        _r4(literal="5 repos"),
+    ],
+)
+def test_a_real_keep_text_off_my_face_still_protects_every_text(req):
+    assert protected_targets(_only(req)) == (FACE_R4,)
+
+
+def test_an_object_named_beside_the_cards_ask_keeps_todays_protection():
+    plate = {"kind": "object", "label": "plate"}
+    req = _r4(facts={**Q1_CARDS_OFF_FACE.facts, "keep_text_off": [{"kind": "face"}, plate]})
+    assert protected_targets(_only(req), [_mark()]) == (
+        FACE_R4,
+        ProtectedTarget("object", "plate", ("r4",)),
+    )
+    # A mark alone is still an ask on its own beside a cards-only face ask.
+    assert protected_targets(_only(Q1_CARDS_OFF_FACE), [_mark("cup")]) == (
+        ProtectedTarget("object", "cup", ()),
+    )
+
+
+# The same ask in words no draft checker reads (Q1's own sentence is also a pop-in ask).
+CARDS_ONLY = _r4(description="Keep the pictures off my face")
+
+
+def _readiness_row() -> dict:
+    return {
+        "requirement_id": "r4",
+        "disposition": "evidence_missing",
+        "reason": "",
+        "evidence_owner": "brief_checks",
+    }
+
+
+def _marked_rows(req: BriefRequirement) -> list[dict]:
+    from app.kria import approval_readiness as readiness
+
+    return readiness._with_protected_marks(
+        [_readiness_row()], [req], _only(req), marks=[], media={}
+    )
+
+
+def test_approval_never_promises_text_protection_for_a_cards_face_ask():
+    from app.kria import approval_readiness as readiness
+    from app.kria.brief_checks import PlanFacts
+
+    assert _marked_rows(CARDS_ONLY) == [_readiness_row()]
+    # Like any ask no draft check reads: judged on the finished video, never a hold.
+    assert readiness._no_pre_render_checker(CARDS_ONLY, PlanFacts())
+    (row,) = readiness._approve_undecidable([_readiness_row()], [CARDS_ONLY])
+    assert row["disposition"] == "unverified"
+    # A real "no text on my face" keeps the render's promise.
+    (kept,) = _marked_rows(_r4(description="No text on my face", facts=KEEP_OFF_FACE))
+    assert (kept["disposition"], kept["evidence_owner"]) == ("executable", "protected_text_render")
+
+
+def test_switch_off_a_cards_face_ask_protects_text_as_today(monkeypatch):
+    from app.config import settings
+    from app.kria import approval_readiness as readiness
+    from app.kria.brief_checks import PlanFacts
+
+    monkeypatch.setattr(settings, SWITCH, False)
+    assert protected_targets(_only(Q1_CARDS_OFF_FACE)) == (FACE_R4,)
+    (row,) = _marked_rows(CARDS_ONLY)
+    assert (row["disposition"], row["evidence_owner"]) == ("executable", "protected_text_render")
+    assert not readiness._no_pre_render_checker(CARDS_ONLY, PlanFacts())
+    assert readiness._approve_undecidable([_readiness_row()], [CARDS_ONLY]) == [_readiness_row()]

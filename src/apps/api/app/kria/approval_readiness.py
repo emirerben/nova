@@ -399,7 +399,7 @@ def _no_pre_render_checker(req: Any, facts: Any) -> bool:
     show, so a requirement whose research is proven falls through to the checks of its other
     facts. Research that is not proven (never researched, a limit, a failure) still blocks."""
     from app.kria.brief_checks import judged_at_render, text_words_met  # noqa: PLC0415
-    from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
+    from app.kria.protected_targets import keep_text_off_entries  # noqa: PLC0415
     from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
     from app.kria.style_asks import text_look_facts  # noqa: PLC0415
     from app.kria.text_sequence import is_text_sequence  # noqa: PLC0415
@@ -409,7 +409,7 @@ def _no_pre_render_checker(req: Any, facts: Any) -> bool:
         settings.kria_researched_look_after_render_enabled and _research_proven(req, facts)
     ):
         return False
-    if _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY)):
+    if keep_text_off_entries(req):
         return False
     if _wants_whole_take(req):
         # KRI-1295: the typed fact can be filed under text too, but a compound
@@ -1038,7 +1038,7 @@ def _approve_undecidable(
     the creator. Researched-text and keep-text-off asks keep their own flows (the research
     preview and the mark card), and a prepared story keeps its frozen-evidence rule."""
     from app.kria.brief_checks import _has_duration_target  # noqa: PLC0415
-    from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
+    from app.kria.protected_targets import keep_text_off_entries  # noqa: PLC0415
     from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
 
     by_id = {req.id: req for req in requirements}
@@ -1059,7 +1059,7 @@ def _approve_undecidable(
             or (req.kind == "timing" and _has_duration_target(req))
             or "collection_story" in req.facts
             or (req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping))
-            or _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY))
+            or keep_text_off_entries(req)
         ):
             out.append(row)
             continue
@@ -1094,8 +1094,8 @@ def _with_protected_marks(
     asks (a title, a literal) keep their own checker's verdict."""
     from app.kria.protected_targets import (  # noqa: PLC0415
         KEEP_TEXT_OFF_KEY,
-        _fact_entries,
         clip_generations,
+        keep_text_off_entries,
         mark_request_text,
         speaker_candidates,
         unmarked_object_targets,
@@ -1113,11 +1113,7 @@ def _with_protected_marks(
     out = []
     for row in rows:
         req = by_id.get(row["requirement_id"])
-        if (
-            req is None
-            or not _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY))
-            or row["disposition"] == "unsupported"
-        ):
+        if req is None or not keep_text_off_entries(req) or row["disposition"] == "unsupported":
             out.append(row)
             continue
         missing = [t for t in unmarked if req.id in t.requirement_ids]

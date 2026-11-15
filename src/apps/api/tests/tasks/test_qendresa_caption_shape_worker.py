@@ -561,3 +561,101 @@ def test_box_text_always_reads_on_the_asked_box(monkeypatch, color, box, fill, o
         assert variant["caption_editor_style"]["stroke_color"] == outline
     # B3: the asked colour is on screen, so the review may call the look met.
     assert _receipt(asked, variant).status == "met"
+
+
+# --------------------------------------- KRI-1476: Q1 run 3 (job 3ef3cbe5), a face ask
+#
+# Run 3's brief filed "... in the top or bottom part of the screen, not over my face" (her
+# CARDS sentence) with ``keep_text_off: [face]``. Her two-word middle captions (y 0.62, on the
+# chin of the sampler's face box) then fell to y 0.86: kit rule "captions sit at 0.5-0.75"
+# FAIL, done-list "Partly: the captions sit lower than you asked".
+#
+# F1  The cards sentence's face ask moves her captions at all.
+# F2  A real "no text on my face" throws a middle block to the lower third although the spot
+#     just under her chin is clear.
+# F8  The done-list calls a block outside the middle row "in the middle", or a block still in
+#     the row "lower than you asked".
+# OFF The switch off renders run 3 exactly as it was.
+
+# r4 exactly as filed on 2026-11-14 (the Visuals facts are the brief model's own).
+Q1_CARDS_OFF_FACE = BriefRequirement(
+    id="q1cards",
+    kind="style",
+    scope="global",
+    description=(
+        "When I talk about something, show the matching screenshot or screen recording in the "
+        "top or bottom part of the screen, not over my face."
+    ),
+    facts={
+        "keep_text_off": [{"kind": "face"}],
+        "visual_position": "top_or_bottom",
+        "keep_visuals_off_face": True,
+        "match_visuals_to_speech": True,
+    },
+)
+Q1_NO_TEXT_ON_FACE = BriefRequirement(
+    id="q1face",
+    kind="style",
+    scope="global",
+    description="No text on my face",
+    facts={"keep_text_off": [{"kind": "face"}]},
+)
+# opening_title_placement.face_boxes of the job, united: her chin at 0.6175 of the height.
+Q1_FACE = (0.2067, 0.2113, 0.8452, 0.6175)
+
+
+def _q1_face_job(monkeypatch, face_ask):
+    from app.pipeline import phone_subtitled_title as title_mod
+    from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
+
+    job = _shape_job(monkeypatch, [Q1_CAPTIONS, face_ask], request=Q1_PROMPT, corner=False)
+    box = NormalizedBox(*Q1_FACE)
+
+    def faces(_path, anchors, **_kw):
+        return [ProtectedRegion(a, a, box, "face") for a in anchors], {"decoded": len(anchors)}
+
+    monkeypatch.setattr(title_mod, "sample_face_regions", faces)
+    return job
+
+
+def _caption_centres(job) -> list[float]:
+    return [layer.anchor_y / CANVAS_H for layer in _caption_layers(job)]
+
+
+def test_q1_a_face_ask_about_her_cards_leaves_her_captions_on_her_spot(monkeypatch):
+    job = _q1_face_job(monkeypatch, Q1_CARDS_OFF_FACE)
+    variant = _run(job)
+
+    assert variant["caption_look_receipt"]["position_y_frac"] == 0.62
+    assert variant["caption_face_band_placement"] == {"status": "creator_spot_kept"}
+    assert "protected_text_regions" not in variant
+    centres = _caption_centres(job)
+    assert centres and all(0.55 <= y <= 0.70 for y in centres), sorted(set(centres))
+    assert _receipt(Q1_CAPTIONS, variant).status == "met"
+
+
+def test_q1_no_text_on_my_face_steps_her_captions_just_under_her_chin(monkeypatch):
+    job = _q1_face_job(monkeypatch, Q1_NO_TEXT_ON_FACE)
+    variant = _run(job)
+
+    look = variant["caption_look_receipt"]
+    assert 0.62 < look["position_y_frac"] <= 0.68, look
+    assert look["over_face"] is False
+    assert variant["protected_text_regions"]["texts"]["captions"] == "clear"
+    assert variant["protected_text_regions"]["face_texts"]["captions"] == "clear"
+    # Still the row she asked for, off her face: "Done", for the captions and for the face.
+    assert _receipt(Q1_CAPTIONS, variant).status == "met"
+    assert _receipt(Q1_NO_TEXT_ON_FACE, variant).status == "met"
+
+
+def test_q1_switch_off_the_cards_face_ask_renders_run_3_as_it_was(monkeypatch):
+    monkeypatch.setattr(settings, "keep_text_off_caption_spot_enabled", False)
+    job = _q1_face_job(monkeypatch, Q1_CARDS_OFF_FACE)
+    variant = _run(job)
+
+    assert variant["caption_look_receipt"]["position_y_frac"] == 0.86
+    assert variant["caption_margin_v"] == 269
+    assert "caption_face_band_placement" not in variant
+    assert variant["protected_text_regions"]["targets"][0]["requirement_ids"] == ["q1cards"]
+    receipt = _receipt(Q1_CAPTIONS, variant)
+    assert receipt.status == "partial" and "lower than you asked" in receipt.reason
