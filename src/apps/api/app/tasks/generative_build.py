@@ -16838,7 +16838,8 @@ def _narrated_footage_fit(
             if isinstance(row, Mapping) and isinstance(row.get("analysis"), Mapping)
         }
         words_by_step: dict[str, list[str]] = {}
-        analysis_by_step: dict[str, dict[str, Any]] = {}
+        rendered_by_step: dict[str, dict[str, Any]] = {}
+        stored_by_step: dict[str, Mapping[str, Any]] = {}
         for step, clip_id in zip(steps, step_clip_ids, strict=True):
             media_id = str(step.media_id)
             keys = [key for key in (media_id, proxy_names.get(media_id)) if key]
@@ -16846,19 +16847,32 @@ def _narrated_footage_fit(
             if not words:
                 continue
             words_by_step[str(step.step_id)] = list(dict.fromkeys(words))
-            record = dict(stored.get(media_id) or {})
             rendered = [
                 row if isinstance(row, Mapping) else getattr(row, "model_dump", dict)()
                 for row in (getattr(meta_by_clip.get(clip_id), "best_moments", None) or [])
             ]
-            record["best_moments"] = [*rendered, *(record.get("best_moments") or [])]
-            analysis_by_step[str(step.step_id)] = record
+            if rendered:
+                rendered_by_step[str(step.step_id)] = {"best_moments": rendered}
+            if media_id in stored:
+                stored_by_step[str(step.step_id)] = stored[media_id]
+        # This render's analysis; the chat's stored record only for a clip the render has
+        # no moments for. Never both at once: the same moment described twice, a few
+        # frames apart, is a tie, and a tie locates nothing.
         moments = located_step_moments(
             steps,
             words_by_step=words_by_step,
-            analysis_by_step=analysis_by_step,
+            analysis_by_step=rendered_by_step,
             durations=durations,
         )
+        moments = {
+            **located_step_moments(
+                [step for step in steps if str(step.step_id) not in rendered_by_step],
+                words_by_step=words_by_step,
+                analysis_by_step=stored_by_step,
+                durations=durations,
+            ),
+            **moments,
+        }
         _labels, _first, pinned_last, _groups = _narrated_creator_clip_labels(
             all_candidates, clip_id_to_gcs, media_id_for_clip
         )

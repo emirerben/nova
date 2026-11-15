@@ -4836,6 +4836,7 @@
       "neighbours_gap": [
         "The harness plans a montage manifest; the incident was a Voiceover edit (the clip-intent step is shared)",
         "Only include asks are retired; a withdrawn order, label or caption ask other than KRI-1111's cases can still come back",
+        "A one-word include is matched by that word alone: it is retired when only withdrawn asks contain it",
         "The typed message still does not close the open clip picker itself"
       ],
       "red_control": "not_applicable"
@@ -4880,7 +4881,8 @@
         "A gap the unseen footage cannot fill completely keeps the old slow-down",
         "A typed 'each clip only once' has no plan carrier: unseen footage of a clip can still return",
         "Scripted (filming guide) Voiceover edits and the cloud narrated render are unchanged",
-        "The spoken cue's own time is not in the record: lateness is measured from the clip's start"
+        "The spoken cue's own time is not in the record: lateness is measured from the clip's start",
+        "A filler between two named clips makes the clip-timing receipt read can't check instead of met"
       ],
       "red_control": "not_applicable"
     },

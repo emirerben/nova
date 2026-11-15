@@ -32,6 +32,8 @@ job. Ways it can fail, written before the code:
  P13 the receipt's "when does the moment show" is wrong: on time when late, or late when the
      moment is not in the part that plays.
  P14 a long voice over short clips makes more clips than the editor's timeline holds.
+ P15 (review) starting on the moment slows a clip that used to fit, when the gap it leaves is
+     too short to fill.
 """
 
 from __future__ import annotations
@@ -266,3 +268,16 @@ def test_p14_a_fill_never_passes_the_editors_clip_limit() -> None:
         _incident(), durations=DURATIONS, moments={"seg_3": TOR}, max_steps=8
     )
     assert len(roomy.steps) == 8
+
+
+def test_p15_starting_on_the_moment_never_slows_a_clip_that_fitted() -> None:
+    """Review finding: the moment (6 s in) leaves 1.65 s for a 3 s step and 1.35 s is no cut
+    of its own, so the moved clip would play at 0.55x where it played at normal speed."""
+    steps = [_step("seg_0", TRAIN, 0.0, 4.0), _step("seg_1", GOAL, 4.0, 7.0)]
+
+    fit = fit_steps_to_footage(steps, durations=DURATIONS, moments={"seg_1": (6.0, 6.5)})
+
+    assert fit.steps == steps
+    assert [_rate(step) for step in fit.steps] == [1.0, 1.0]
+    # The receipt hears that the part that plays (0-3 s) never reaches the moment.
+    assert fit.moment_at_s == {"seg_1": None}

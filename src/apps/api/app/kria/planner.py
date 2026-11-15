@@ -4969,6 +4969,7 @@ async def _plan_creator_action(
             **(
                 {"creator_asked_no_captions": False}
                 if action.strategy.caption_style == "none"
+                and effective_brief is not None
                 and not brief_asks_no_captions(effective_brief)
                 else {}
             ),

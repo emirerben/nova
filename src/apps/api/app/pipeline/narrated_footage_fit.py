@@ -157,6 +157,12 @@ class _Footage:
     def unshow_cut(self, media_id: str, start_s: float, length_s: float) -> None:
         self.unshow(media_id, start_s, start_s + length_s)
 
+    def snapshot(self) -> dict[str, list[tuple[float, float]]]:
+        return {media: list(spans) for media, spans in self._shown.items()}
+
+    def restore(self, seen: Mapping[str, list[tuple[float, float]]]) -> None:
+        self._shown = {media: list(spans) for media, spans in seen.items()}
+
     def forget(self) -> None:
         """Everything has been seen: any footage may play again."""
         for spans in self._shown.values():
@@ -203,6 +209,7 @@ def _fill(
     length = gap_s / count
     cuts: list[tuple[str, float, float]] = []
     previous = before
+    seen = footage.snapshot()
     for index in range(count):
         soft = {previous, after} if after is not None and index == count - 1 else {previous}
         picked = footage.pick(length, soft) or footage.pick(length, {previous})
@@ -210,8 +217,7 @@ def _fill(
             footage.forget()
             picked = footage.pick(length, soft) or footage.pick(length, {previous})
         if picked is None:
-            for media_id, start, _length in cuts:
-                footage.unshow_cut(media_id, start, length)
+            footage.restore(seen)
             return None
         media_id, start = picked
         footage.show(media_id, start, start + length)
@@ -274,11 +280,11 @@ def fit_steps_to_footage(
         window = step.end_s - step.start_s
         usable = _usable_s(step, float(clip_s))
         gap = window - usable
-        if gap < MIN_FILL_S or usable / window >= MIN_STRETCH_RATE:
+        if usable / window >= MIN_STRETCH_RATE:
             out.append(step)
             continue
         cuts = None
-        if step.step_id not in keep_whole and usable >= MIN_FILL_S:
+        if gap >= MIN_FILL_S and step.step_id not in keep_whole and usable >= MIN_FILL_S:
             following = moved[index + 1].media_id if index + 1 < len(moved) else None
             cuts = _fill(
                 footage, gap, before=step.media_id, after=following, allow_replay=allow_replay
@@ -288,8 +294,9 @@ def fit_steps_to_footage(
                 footage.unshow_cut(media_id, start, length)
             cuts = None
         if cuts is None:
-            # Nothing may follow it, or nothing else can: the compiler slows it, as it always
-            # did. Starting later would only slow it more, so it starts where it came.
+            # Nothing may follow it, nothing else can, or the gap is no cut of its own: the
+            # compiler slows it, as it always did. Starting later would only slow it more
+            # (or slow a clip that fitted), so it starts where it came.
             if step is not original:
                 footage.unshow(step.media_id, *played(step))
                 footage.show(original.media_id, *played(original))

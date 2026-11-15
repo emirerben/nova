@@ -48,6 +48,7 @@ import pytest
 
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
+from app.pipeline.phone_narrated_plan import NarratedPhoneStep
 from app.services.device_render import device_status
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from app.tasks import generative_build as gb
@@ -253,6 +254,42 @@ def test_j3_words_that_fit_the_whole_clip_locate_nothing(monkeypatch) -> None:
 
     assert clips[0].source_start == 0.0 and clips[2].source_start == 0.0
     assert [row["step_id"] for row in _rows(job) if "moment" in row] == ["seg_3"]
+
+
+def test_j3_the_chats_own_record_of_the_same_moment_is_not_a_second_vote(monkeypatch) -> None:
+    """Review finding: the chat's stored clip record often describes the same moment a few
+    frames apart ("TOR on the scoreboard", 3.0-4.6 s). Read together with this render's
+    analysis the two tie, and a tie locates nothing, so the render's own analysis is read
+    alone; the stored record only serves a clip the render has no moments for."""
+    job, snapshot = _setup(monkeypatch)
+    steps = [
+        NarratedPhoneStep(step_id=f"seg_{i}", media_id=media, start_s=start, end_s=end)
+        for i, (media, start, end) in enumerate(
+            [("c0", 0.0, 6.76), ("c3", 6.76, 8.26), ("c1", 8.26, 9.76), ("c2", 9.76, VOICE_END)]
+        )
+    ]
+    stored = {"best_moments": [{"start_s": 3.0, "end_s": 4.6, "description": "TOR on a display"}]}
+
+    def fit(metas):
+        return gb._narrated_footage_fit(
+            steps,
+            step_clip_ids=["c0", "c3", "c1", "c2"],
+            bindings=[_binding(c["clip_id"], duration_s=c["duration_s"]) for c in CLIPS],
+            clip_metas=metas,
+            strategy=job.all_candidates["creator_strategy"],
+            media_snapshot={"clip_assignments": [{"media_id": "c2", "analysis": stored}]},
+            all_candidates=job.all_candidates,
+            clip_id_to_gcs={c["clip_id"]: f"user/analysis-proxy-{c['clip_id']}.mp4" for c in CLIPS},
+            media_id_for_clip=lambda clip_id: clip_id,
+            brief=None,
+            job_id=str(job.id),
+        )
+
+    both = fit(_metas())
+    assert (both.moments["seg_3"].start_s, both.moments["seg_3"].end_s) == (2.76, 4.5)
+    # A render with no moments for the goal clip falls back to the stored record.
+    only_stored = fit(_metas({GOAL: []}))
+    assert (only_stored.moments["seg_3"].start_s, only_stored.moments["seg_3"].end_s) == (3.0, 4.6)
 
 
 # -- J4: the record --------------------------------------------------------------------------
