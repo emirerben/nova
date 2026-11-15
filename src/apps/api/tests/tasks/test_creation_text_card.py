@@ -21,7 +21,8 @@ _TR = "Yazı isteğinin her kısmını yapamadım, videoda yapabildiğim kısım
 
 
 def _draft(monkeypatch, phone_notes: list[str], *, chat_language: str | None = None):
-    """One auto-approved phone draft whose text composer asks instead of editing."""
+    """One auto-approved phone draft whose text composer returns an edit with no op and nothing
+    to ask (a composer question fails the draft with that question instead, KRI-1456)."""
     make_item = drafts._prod_item
 
     def item_with_request(*args, **kwargs):
@@ -41,12 +42,7 @@ def _draft(monkeypatch, phone_notes: list[str], *, chat_language: str | None = N
     monkeypatch.setattr(drafts, "_Db", _ChatDb)
     monkeypatch.setattr(
         "app.services.creation_text_composition.CreationTextComposer.run",
-        lambda *_a, **_kw: EditCopilotOutput(
-            intent="clarify",
-            confidence=0.4,
-            reply="Which text should go?",
-            needs_clarification=True,
-        ),
+        lambda *_a, **_kw: EditCopilotOutput(intent="edit", confidence=0.9, reply="Prepared."),
     )
     return drafts._phone_draft(monkeypatch, lambda *_a: phone_notes, phone=True)
 

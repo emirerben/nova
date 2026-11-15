@@ -2213,11 +2213,6 @@
   ],
   [
    "app/services/creation_text_degrade.py",
-   "Left out one text change I couldn't make",
-   "Yapamadığım bir yazı değişikliğini eklemedim"
-  ],
-  [
-   "app/services/creation_text_degrade.py",
    "Left out {count} text changes I couldn't make fit",
    "Sığdıramadığım {count} yazı değişikliğini eklemedim"
   ],

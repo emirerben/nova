@@ -14,7 +14,7 @@ import math
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -31,7 +31,6 @@ from app.agents.edit_copilot import (
     EditCopilotOutput,
     _font_catalog,
     _format_snapshot,
-    _not_applied,
 )
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.kria.brief import BriefRequirement
@@ -1318,17 +1317,28 @@ def _ensure_text_look(snapshot: EditProposalSnapshot, look: Any) -> EditProposal
         return snapshot
 
 
-def _wording_shown(relevant: Sequence[BriefRequirement], facts: Any) -> bool:
-    """Whether the lane already draws the wording every one of ``relevant`` asks for."""
+def _wording_shown(
+    relevant: Sequence[BriefRequirement], facts: Any, *, plan: dict | None = None
+) -> bool:
+    """Whether the lane already draws the wording every one of ``relevant`` asks for.
+
+    With ``plan``, a literal also reads as drawn across consecutive whole rows in screen order
+    (``_literal_shown``: her lines stacked, prod d6c58d7b), as the text pass's own whole-pass
+    check reads it (KRI-1376).
+    """
     from app.kria.brief_checks import check_requirement, text_sequence_shown  # noqa: PLC0415
     from app.kria.text_shape_ask import words_only  # noqa: PLC0415
+
+    def met(req: BriefRequirement) -> bool:
+        return check_requirement(words_only(req), facts).status == "met" or bool(
+            plan is not None and req.literal and _literal_shown(plan, req.literal)
+        )
 
     return all(
         # A static title is not words shown a piece at a time, flag or not.
         text_sequence_shown(req, facts)
         if is_text_sequence(req)
-        else check_requirement(words_only(req), facts).status == "met"
-        or _answered_by_later_text(req, relevant[i + 1 :], facts)
+        else met(req) or _answered_by_later_text(req, relevant[i + 1 :], met)
         for i, req in enumerate(relevant)
     )
 
@@ -1360,7 +1370,9 @@ def planned_text_if_shown(
     For a composer that asked a question instead of composing: the creator's own words are on
     screen, so the video can be made as planned and the question (about layout or style) asked
     beside it. None when a wording is missing or cannot be checked (no bound brief), because
-    then the question blocks the video. Uses the checks the composer's own skip path uses.
+    then the question blocks the video. Uses the checks the composer's own skip path uses, and
+    also reads a literal across her stacked lines, as the text pass does for a composer that
+    wrote no op (KRI-1376), so the same plan never renders or blocks on the composer's wording.
     """
     from app.kria.brief_checks import plan_facts_from_editor_payload  # noqa: PLC0415
     from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
@@ -1376,13 +1388,15 @@ def planned_text_if_shown(
         if req.kind == "text" or req.scope == "title" or is_text_sequence(req)
     ]
     facts = plan_facts_from_editor_payload({**plan, "title": snapshot.opening_title})
-    if not constraints or not wording or not _wording_shown(wording, facts):
+    if not constraints or not wording or not _wording_shown(wording, facts, plan=plan):
         return None
     return _as_planned(snapshot, texts, slots, constraints)
 
 
 def _answered_by_later_text(
-    req: BriefRequirement, later: Sequence[BriefRequirement], facts: Any
+    req: BriefRequirement,
+    later: Sequence[BriefRequirement],
+    met: Callable[[BriefRequirement], bool],
 ) -> bool:
     """A bare "find the text and add it" ask the creator then answered by pasting the words.
 
@@ -1392,9 +1406,6 @@ def _answered_by_later_text(
     requirement with no literal and no typed facts is covered, and only by a later text
     requirement of the same scope whose literal is already met.
     """
-    from app.kria.brief_checks import check_requirement  # noqa: PLC0415
-    from app.kria.text_shape_ask import words_only  # noqa: PLC0415
-
     if req.kind != "text" or req.literal or req.facts or is_text_sequence(req):
         return False
     return any(
@@ -1402,7 +1413,7 @@ def _answered_by_later_text(
         and other.literal
         and other.scope == req.scope
         and not is_text_sequence(other)
-        and check_requirement(words_only(other), facts).status == "met"
+        and met(other)
         for other in later
     )
 
@@ -2349,11 +2360,14 @@ def _compose_creation_text(
         question = output.reply.strip() or details
         if question and (output.needs_clarification or details):
             raise CreationTextClarification(message, question=question, unmet=output.unmet_requests)
+        if output.intent == "reject":
+            # KRI-1456: a refusal with nothing to ask her stays a failure.
+            raise CreationTextCompositionError(message)
         # KRI-1376 (KRI-129): no question for the creator, and she approved this draft, so what
         # the composer could do renders and the note says the rest could not. Raised only if no
         # asked text is left.
         unmet = CreationTextCompositionError(message, reason="incomplete")
-        drops.append(shrink(unmet, **_unmet_ask(output)))
+        drops.append(shrink(unmet, text=_first_unmet_ask(output)))
         log.info(
             "creation_text_incomplete_rendered",
             job_id=getattr(ctx, "job_id", None),
@@ -2494,22 +2508,18 @@ def _compose_creation_text(
     return snapshot.model_copy(update={"text_composition": program}), drops
 
 
-def _unmet_ask(output: EditCopilotOutput) -> dict[str, Any]:
-    """What the ``incomplete`` note names: her first unmet ask in her words, or that only ops
-    the parser refused are missing.
-
-    The parser appends one entry per refused op after the composer's own (KRI-1386), worded as
-    an action on that op's target ("change the text"), never as her ask.
-    """
-    refused = {_not_applied(item)[0]["request"] for item in output.not_applied}
-    for row in output.unmet_requests:
-        request = str(row.get("request") or "").strip()
-        if request in refused:
-            break
-        if request:
-            return {"text": request}
-    clarifying = output.needs_clarification or output.intent not in {"edit", "describe"}
-    return {"asked": bool(clarifying or not output.not_applied)}
+def _first_unmet_ask(output: EditCopilotOutput) -> str | None:
+    """Her first unmet ask in her words, as the composer restated it, for the ``incomplete``
+    note. An unmet ask with a reason (each op the parser refused beside surviving ones gets one,
+    KRI-1386) is the composer's question instead (``CreationTextClarification``)."""
+    return next(
+        (
+            request
+            for row in output.unmet_requests
+            if (request := str(row.get("request") or "").strip())
+        ),
+        None,
+    )
 
 
 def _text_asks(requirements: Sequence[BriefRequirement] | None) -> list[BriefRequirement]:

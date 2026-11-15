@@ -71,8 +71,6 @@ class TextDrop:
     # Whether the item may be one the creator asked for. For `unasked_text`: one of her live
     # text asks could own the line. A title ask ("and the English translation at the bottom")
     # authorizes no new row, yet the line is hers (prod 3c312af4), so leaving it out is said.
-    # For `incomplete`: False when no ask of hers is unmet and only composer ops the parser
-    # refused are missing, so the note does not call them part of her request.
     asked: bool = True
 
     def note(self, count: int = 1) -> str | None:
@@ -104,11 +102,6 @@ class TextDrop:
                     en="I couldn't do {text}, so the video shows the rest of your text",
                     tr="{text} isteğini yapamadım, videoda yazının geri kalanı var",
                     text=quoted,
-                )
-            if not self.asked:
-                return say(
-                    en="Left out one text change I couldn't make",
-                    tr="Yapamadığım bir yazı değişikliğini eklemedim",
                 )
             return say(
                 en="I couldn't do every part of your text request, so the video shows the "

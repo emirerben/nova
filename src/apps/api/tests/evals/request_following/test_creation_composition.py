@@ -163,16 +163,11 @@ def test_changed_base_is_rejected_and_existing_program_is_not_replanned(monkeypa
         compile_proposal_execution_plan(changed)
 
 
-def test_partial_composition_renders_what_it_could_and_says_so(monkeypatch):
-    """KRI-1376: never silently accepted, never the whole video failed either."""
+def test_partial_or_invalid_composition_is_not_silently_accepted(monkeypatch):
     response = sequence_response()
     response["unmet_requests"] = [{"request": "sequence", "reason": "cannot"}]
-    drops = []
-    snapshot = compose(monkeypatch, base_plan(), response, drops=drops)
-    words = compile_proposal_execution_plan(snapshot)["text_elements"]
-    assert [x["text"] for x in words if "::sequence-" in x["id"]] == TITLE.split()
-    assert [(drop.reason, drop.action) for drop in drops] == [("incomplete", "shrunk")]
-    assert drops[0].note() == ("I couldn't do “sequence”, so the video shows the rest of your text")
+    with pytest.raises(ValueError, match="composition"):
+        compose(monkeypatch, base_plan(), response)
 
 
 def test_disallowed_operations_cannot_change_source_timeline(monkeypatch):

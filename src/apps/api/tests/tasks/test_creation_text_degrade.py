@@ -45,6 +45,17 @@ Fourth review of #2314, written before the fixes:
      not told her line was left out of the text pass;
  20. her literal counts as shown when its words start or end inside unrelated lines ("Sabah
      oldu" read across "Günaydın sabah" and "oldu bitti").
+
+Rebase onto the composer's question (KRI-1456, #2357), written before the merge fixes:
+ 21. a composer that asks her something, or names an unmet ask with its reason, is degraded
+     into a video with a drop note, so the question never reaches her and a missing wording is
+     dropped instead of asked;
+ 22. a composer that refuses with nothing to ask (KRI-1456 ``composer_rejects``) renders as
+     planned with a generic note instead of failing;
+ 23. her lines stacked as whole rows count as drawn for a composer that wrote no op, but not
+     for one that asks which layout she wants, so the same plan renders or blocks on the
+     composer's wording (prod d6c58d7b), or a drop of the asking candidate is said beside the
+     video made as planned.
 """
 
 from __future__ import annotations
@@ -314,31 +325,23 @@ GATES = [
         ),
         keeps_good=False,
     ),
+    # An unmet ask with no reason and nothing asked: a reason makes it the composer's question.
     Gate(
         "incomplete",
         lambda snap: [_add(GOOD)],
         note="I couldn't do “English word by word”, so the video shows the rest of your text",
-        unmet=({"request": "English word by word", "reason": "No text holds the English yet"},),
+        unmet=({"request": "English word by word"},),
     ),
     Gate(
         "incomplete_nothing_written",
         lambda snap: [],
         note="I couldn't do “make the title pop in”, so the video shows the rest of your text",
         kept=TITLE,
-        unmet=({"request": "make the title pop in", "reason": "No pop-in for a title"},),
+        unmet=({"request": "make the title pop in"},),
         reasons=("incomplete",),
         keeps_good=False,
     ),
-    Gate(
-        "incomplete_refused_op",
-        lambda snap: [
-            _add(GOOD),
-            {"op": "remove_text", "selector": {"ids": [_title_id(snap)]}},
-        ],
-        note="Left out one text change I couldn't make",
-        kept=TITLE,
-        reasons=("incomplete",),
-    ),
+    # Prod d6c58d7b's edit answer with no op.
     Gate(
         "incomplete_her_lines_stacked",
         lambda snap: [],
@@ -346,7 +349,6 @@ GATES = [
         kept=LINES[0],
         brief=_LYRICS,
         pinned=LINES,
-        answer=_CLARIFY,
         reasons=("incomplete",),
         keeps_good=False,
     ),
@@ -557,6 +559,97 @@ def test_a_bad_row_only_the_creators_own_words_could_fix_still_fails(harness, mo
     assert job.assembly_plan.get("variants") is None
 
 
+_QUESTIONS = [
+    Gate(
+        "unmet_with_its_reason",
+        lambda snap: [_add(GOOD)],
+        note="No text holds the English yet",
+        unmet=({"request": "English word by word", "reason": "No text holds the English yet"},),
+    ),
+    Gate(
+        "an_op_the_parser_refused",
+        lambda snap: [_add(GOOD), {"op": "remove_text", "selector": {"ids": [_title_id(snap)]}}],
+        note="I couldn't change the text",
+    ),
+    Gate(
+        "asks_with_her_line_missing",
+        lambda snap: [],
+        note="Which layout?",
+        brief=_LYRICS,
+        pinned=LINES[:2],
+        answer=_CLARIFY,
+    ),
+]
+
+
+@pytest.mark.parametrize("gate", _QUESTIONS, ids=[gate.name for gate in _QUESTIONS])
+def test_a_composer_question_reaches_her_and_is_never_degraded(harness, monkeypatch, gate):  # noqa: F811
+    """Failure mode 21: the composer's question (KRI-1456) is saved for her and no video is made
+    without what it asks about; nothing is said as a text-pass drop."""
+    job, _ = _job(harness, monkeypatch, gate)
+    events = _events(monkeypatch)
+    failure = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", failure)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.assembly_plan.get("variants") is None
+    assert failure.call_args.kwargs["failure_reason"] != "creation_text_failed"
+    assert gate.note in job.assembly_plan["request_recovery"]["message"]
+    assert not [data for _s, event, data in events if event == "requirement_recovery"]
+
+
+def test_her_stacked_lines_are_made_as_planned_when_the_composer_asks(harness, monkeypatch):  # noqa: F811
+    """Failure mode 23 (prod d6c58d7b): her literal reads across her three lines, so a "which
+    layout?" answer makes the video as planned, as an answer with no op does, with KRI-1456's
+    note and no text-pass drop."""
+    gate = Gate(
+        "asks",
+        lambda snap: [],
+        note=None,
+        kept=LINES[0],
+        brief=_LYRICS,
+        pinned=LINES,
+        answer=_CLARIFY,
+    )
+    job, contract = _job(harness, monkeypatch, gate)
+    events = _events(monkeypatch)
+    failure = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", failure)
+
+    gb._run_generative_job(str(job.id))
+
+    failure.assert_not_called()
+    assert job.status == "awaiting_device"
+    verify_phone_recipe(
+        contract, device_status(job, "guided_story").request.recipe, source_audio={"source": True}
+    )
+    assert {_squash(line) for line in LINES} <= _drawn(job)
+    notes = job.assembly_plan["variants"][0].get("phone_repair_notes") or []
+    assert gb._text_shown_as_planned_note() in notes
+    assert not [data for _s, event, data in events if event == "requirement_recovery"]
+
+
+def test_a_composer_that_refuses_with_nothing_to_ask_still_fails(harness, monkeypatch):  # noqa: F811
+    """Failure mode 22 (KRI-1456 ``composer_rejects``): her title is on screen, yet a refusal
+    with no question is a failure, not a video with a generic note."""
+    gate = Gate(
+        "rejects",
+        lambda snap: [],
+        note=None,
+        answer={"intent": "reject", "reply": "I can't do that with the text tool."},
+    )
+    job, _ = _job(harness, monkeypatch, gate)
+    failure = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", failure)
+
+    gb._run_generative_job(str(job.id))
+
+    assert failure.call_args.kwargs["failure_reason"] == "creation_text_failed"
+    assert job.assembly_plan.get("variants") is None
+    assert job.assembly_plan.get("request_recovery") is None
+
+
 def test_a_degrade_that_would_leave_no_asked_text_fails(harness, monkeypatch):  # noqa: F811
     """A text ask never turns into a video with no text: the composer removed every bar and
     then broke its own explanation, so dropping the broken op leaves nothing on screen."""
@@ -567,7 +660,7 @@ def test_a_degrade_that_would_leave_no_asked_text_fails(harness, monkeypatch):  
         ],
         note=None,
         brief=CreativeBrief(version=1, requirements=[_EXPLAIN]),
-        unmet=({"request": "explain", "reason": "nothing to explain"},),
+        unmet=({"request": "explain"},),
     )
     job, _ = _job(harness, monkeypatch, gate)
     failure = Mock(return_value=True)
@@ -585,7 +678,7 @@ def test_a_composer_bundle_rejected_as_a_whole_still_fails(harness, monkeypatch)
         "bundle",
         lambda snap: [_add(f"Place {n}", 0.5, 1.5) for n in range(60)],
         note=None,
-        unmet=({"request": "name each place", "reason": "Too many places"},),
+        unmet=({"request": "name each place"},),
     )
     job, _ = _job(harness, monkeypatch, gate)
     failure = Mock(return_value=True)
@@ -603,6 +696,7 @@ _MORNING = CreativeBrief(
 )
 
 
+@pytest.mark.parametrize("answer", [{}, _CLARIFY], ids=["no_op", "asks"])
 @pytest.mark.parametrize(
     ("brief", "pinned"),
     [
@@ -612,15 +706,19 @@ _MORNING = CreativeBrief(
     ],
     ids=["a_line_missing", "lines_out_of_order", "words_inside_unrelated_lines"],
 )
-def test_her_lines_not_all_shown_in_order_still_fail(harness, monkeypatch, brief, pinned):  # noqa: F811
-    """Failure modes 16 and 20: the composer did nothing and her literal does not read word for
-    word across whole lines on screen, so the pass failed as a whole."""
-    gate = Gate("partial", lambda snap: [], note=None, brief=brief, pinned=pinned, answer=_CLARIFY)
+def test_her_lines_not_all_shown_in_order_still_fail(harness, monkeypatch, brief, pinned, answer):  # noqa: F811
+    """Failure modes 16, 20 and 23: the composer did nothing and her literal does not read word
+    for word across whole lines on screen, so no video is made. With no op the pass failed as a
+    whole; a composer that asked has its question saved for her (KRI-1456)."""
+    gate = Gate("partial", lambda snap: [], note=None, brief=brief, pinned=pinned, answer=answer)
     job, _ = _job(harness, monkeypatch, gate)
     failure = Mock(return_value=True)
     monkeypatch.setattr(gb, "_fail_job", failure)
 
     gb._run_generative_job(str(job.id))
 
-    assert failure.call_args.kwargs["failure_reason"] == "creation_text_failed"
     assert job.assembly_plan.get("variants") is None
+    if answer:
+        assert _CLARIFY["reply"] in job.assembly_plan["request_recovery"]["message"]
+    else:
+        assert failure.call_args.kwargs["failure_reason"] == "creation_text_failed"
