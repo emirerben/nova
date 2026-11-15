@@ -117,6 +117,8 @@ from app.kria.request_budget import creator_request_text_sync, request_over_budg
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     Disclosure,
+    approval_card_disclosures,
+    approval_card_text,
     card_disclosures,
     card_text,
     card_text_within,
@@ -1540,7 +1542,8 @@ def _simpler_version_offer(
     if not named:
         return "", question
     kept = {req.id for req in named if req.id in arrow_only_ids}
-    listed = "; ".join(_arrow_label(req) if req.id in kept else req.text() for req in named)
+    # KRI-1465: `listed()`, so asks that are sentences never read ".;" or end the list "..".
+    listed = "; ".join(_arrow_label(req) if req.id in kept else req.listed() for req in named)
     sentence = say(
         en="The simpler version leaves out: {listed}.",
         tr="Daha basit sürümde çıkarılacak: {listed}.",
@@ -1610,6 +1613,32 @@ def _left_out_line(req: BriefRequirement, *, agreed: bool, label: str | None = N
     )
 
 
+def _card_summary(reply: str) -> str:
+    """The approval card's copy of the draft reply (KRI-1403).
+
+    Two or more "Left out as agreed" lines become one line with their count: the creator chose
+    them on the question just before, and the card has to fit on one screen (ylab, build 1977:
+    a 14-line card blanked the chat). The draft reply itself keeps every line.
+    """
+    prefix = say(
+        en="- Left out as agreed: {what}",
+        tr="- Kararlaştırdığımız gibi çıkarıldı: {what}",
+        what="",
+    )
+    lines = reply.split("\n")
+    agreed = [index for index, line in enumerate(lines) if line.startswith(prefix)]
+    if len(agreed) < 2:
+        return reply
+    count = say(
+        en="- Left out as agreed: {count} of your asks",
+        tr="- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin",
+        count=len(agreed),
+    )
+    kept = [line for index, line in enumerate(lines) if index not in agreed[1:]]
+    kept[agreed[0]] = count
+    return "\n".join(kept)
+
+
 # KRI-1236: an ending the simpler version keeps without its arrow. The draft's coverage maps
 # each such id to the facets left out, so the after-render review can say so (the ask stays
 # live, so the superseded-ids rule of `_left_out_lines` never lists it).
@@ -1629,12 +1658,15 @@ def _arrow_only_ids(
     Prod thread b931bc4e (Qendresa Q1): "Make it without these" removed r10, "End with comment
     REPO and an arrow", so the words went with the arrow.
     """
-    from app.kria.brief_checks import _CLOSING_ARROW_MISSING, _REASON_TR  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CLOSING_ARROW_MISSING,
+        reason_in_every_language,
+    )
     from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
 
     if brief is None:
         return frozenset()
-    missing = {_CLOSING_ARROW_MISSING, _REASON_TR.get(_CLOSING_ARROW_MISSING) or ""} - {""}
+    missing = set(reason_in_every_language(_CLOSING_ARROW_MISSING))
     reasons = {str(row.get("requirement_id")): row.get("reason") for row in rows}
     wanted = set(unmet_ids)
     return frozenset(
@@ -1748,6 +1780,31 @@ def _offered_brief_revision(
         and brief.version == offered + 1
         and bool(written)
         and written <= {str(req_id) for req_id in named}
+    )
+
+
+def _kept_after_tap(
+    updates: Sequence[BriefUpdate],
+    offered_ids: Sequence[str],
+    source_event: CreationThreadEvent | None,
+) -> frozenset[str]:
+    """KRI-1405: the offered asks the creator kept after tapping "Make it without these".
+
+    Prod thread 8044373b (ylab, 2026-11-13): the tap turn asked whether the captions go too,
+    the creator tapped "Untertitel wie gewünscht behalten", and the draft still left the
+    captions out under the earlier tap (KRI-1323) while the video had them. An answer on a
+    LATER card that restates an offered ask (a `change` of its id) keeps it: it comes off the
+    drop list and the rest stay left out. A restatement on the tap's own turn says nothing new
+    (KRI-1113), so only a choice on another card counts.
+    """
+    selection = (source_event.payload or {}).get("choice_selection") if source_event else None
+    if not isinstance(selection, Mapping) or selection.get("option_key") == "simpler_version":
+        return frozenset()
+    offered = {str(req_id) for req_id in offered_ids}
+    return frozenset(
+        str(update.target_requirement_id)
+        for update in updates
+        if update.operation == "change" and str(update.target_requirement_id) in offered
     )
 
 
@@ -2912,6 +2969,8 @@ def _complete_draft_turn(
             thread.creator_id
         )
         readiness_report = None
+        # KRI-1405: the readiness hold reply as first written, so the card can re-head it.
+        readiness_hold_text: str | None = None
         consented = None
         if readiness_required and apply_intent.tool_name == "draft.apply_strategy":
             consented = _consented_policy_simplification(
@@ -3491,6 +3550,7 @@ def _complete_draft_turn(
             ]
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
+                readiness_hold_text = reply_text
             elif document.prepared_collection_story is not None:
                 # The frozen execution checker owns this selected requirement;
                 # persist its checked verdict in the receipt as well as approval.
@@ -3603,6 +3663,25 @@ def _complete_draft_turn(
             )
             else None
         )
+        kept_after_tap = (
+            _kept_after_tap(
+                planned.brief_updates,
+                unmet_ids,
+                db.get(CreationThreadEvent, turn.source_event_id),
+            )
+            if simpler_consent is not None
+            else frozenset()
+        )
+        if kept_after_tap:
+            # KRI-1405: what the creator kept after the tap is not left out; the rest still is.
+            log.info(
+                "kria_simpler_kept_after_tap",
+                thread_id=str(thread.id),
+                requirement_ids=sorted(kept_after_tap),
+            )
+            unmet_ids = [req_id for req_id in unmet_ids if req_id not in kept_after_tap]
+            if not unmet_ids:
+                simpler_consent = None
         simpler_version_chosen = simpler_consent is not None
         # KRI-968: only an offer that named these requirements lets a reply say "as agreed".
         agreed_omission_ids = list(unmet_ids) if simpler_consent == "named" else []
@@ -3886,6 +3965,9 @@ def _complete_draft_turn(
             )
             # KRI-1236: a list too long to name whole gets no card, never an unnamed one.
             can_offer_simpler = can_offer_simpler and simpler_question is not None
+            if can_offer_simpler and reply_text == readiness_hold_text:
+                # KRI-1405: the card follows, so asks it can leave out read as a choice.
+                reply_text = readiness_reply(brief, readiness_report, offers_choice=True)
             ask = (
                 simpler_version_ask()
                 if can_offer_simpler
@@ -4363,6 +4445,8 @@ def _complete_draft_turn(
         db.add(render_execution)
         db.flush()
         copy_notice = _restored_copy_notice(db, thread.id, planned)
+        card_shown = approval_card_disclosures(route_disclosures)
+        card_notice = card_text(card_shown) if card_shown else None
         approval = CreatorAgentApproval(
             creator_id=thread.creator_id,
             thread_id=thread.id,
@@ -4379,13 +4463,18 @@ def _complete_draft_turn(
             # KRI-689: the speed heads-up rides on the card too, unless the KRI-700 reply
             # (which already ends with it) became the summary. KRI-1352: words the server
             # restored to the brief are shown on the card before anyone approves them.
+            # KRI-1403: the card fits one screen: no plan notes the route won't use, and one
+            # line for the asks the creator just agreed to leave out.
             consequence_summary=" ".join(
                 part
                 for part in (
-                    f"Render this draft: {approval_summary}",
+                    "Render this draft: "
+                    + approval_card_text(_card_summary(approval_summary), route_disclosures),
                     copy_notice,
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
-                    route_notice if route_notice and route_notice not in approval_summary else None,
+                    card_notice
+                    if card_notice and route_notice and route_notice not in approval_summary
+                    else None,
                 )
                 if part
             ),

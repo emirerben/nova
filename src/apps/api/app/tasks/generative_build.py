@@ -11730,6 +11730,17 @@ def _run_phone_subtitled_job(
                     text_rows=title_rows + spoken_text_rows,
                     keep_segments=speaker_keep_segments,
                 )
+                # KRI-1478: the same context with the full-width strip opened, when planned
+                # for this build (`TALKING_CARD_STRIP_ENABLED`); otherwise the same object.
+                from app.services.phone_overlay_grounding import (  # noqa: PLC0415
+                    share_beat_windows,
+                    strip_card_windows,
+                    with_card_strip,
+                )
+
+                card_layout = with_card_strip(
+                    card_layout, all_candidates.get("creator_client_protocol")
+                )
                 if beats_enabled and (beats or closing):
                     if lane_request is not None:
                         beat_receipt = {
@@ -12014,6 +12025,13 @@ def _run_phone_subtitled_job(
                                     if protected_card_regions
                                     else {}
                                 ),
+                                # KRI-1478: a strip card's window may be shared by a second
+                                # visual for the same mention (none without the strip).
+                                **(
+                                    {"shareable": strip_windows}
+                                    if (strip_windows := strip_card_windows(beat_cards))
+                                    else {}
+                                ),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -12034,6 +12052,12 @@ def _run_phone_subtitled_job(
                             grounded_cards = list(grounded.cards)
                             grounded_media_ids = frozenset(card.media_id for card in grounded_cards)
                             overlay_receipt = grounded.receipt
+                            if shared_windows := getattr(grounded, "shared_windows", ()):
+                                # KRI-1478: the first card of a shared mention ends where the
+                                # second one starts (never two cards at once).
+                                beat_cards, beat_receipt = share_beat_windows(
+                                    beat_cards, beat_receipt, shared_windows
+                                )
 
                 overlay_cards: list = []
                 ending_clip: Any = None
@@ -12137,7 +12161,16 @@ def _run_phone_subtitled_job(
                         }
                         try:
                             overlay_visuals = bind_phone_visual_assets(
-                                _sync_session, job_id=job_id, pins=pins
+                                _sync_session,
+                                job_id=job_id,
+                                pins=pins,
+                                # KRI-1478: a strip is cut to the picture's text column,
+                                # measured while its bytes are on disk (never without one).
+                                **(
+                                    {"measure_text": True}
+                                    if strip_card_windows(overlay_cards)
+                                    else {}
+                                ),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -12437,7 +12470,10 @@ def _run_phone_subtitled_job(
                         cards=_phone_list_label_card_boxes(
                             lanes, visuals, text_canvas.get("canvas")
                         ),
-                        timeline_duration_s=talking_timeline_s,
+                        timeline_duration_s=_list_label_timeline_end_s(
+                            talking_timeline_s,
+                            closing_text=None if closing_card_row else talking_closing_text,
+                        ),
                         binding=binding,
                         clip_path=clip_path,
                         keep_segments=speaker_keep_segments,
@@ -15312,11 +15348,13 @@ def _phone_talking_closing_rows(
         # An inserted clip (take-timeline ``insert_points``) inside the ending pauses the
         # take and would split the two rows and play the arrow over the clip: keep the tag.
         insert_in_ending = any(start_s + 1e-3 < point < end_s - 1e-3 for point in insert_points)
-        if (
-            cta
-            and not insert_in_ending
-            and (protected is None or not _protected_placement_kwargs(protected))
-        ):
+        # KRI-1475: only an object to keep text off keeps the tag (the ending is placed
+        # around faces and captions, not objects). "Keep text off my face" alone used to
+        # lose the ending too; it is now kept off every face instead (``all_faces``).
+        keeps_off_object = protected is not None and any(
+            target.kind == "object" for target in protected.targets
+        )
+        if cta and not insert_in_ending and not keeps_off_object:
             from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
             from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
 
@@ -15347,6 +15385,7 @@ def _phone_talking_closing_rows(
                     scale=fit_scale,
                     position_x=position_x,
                     caption_boxes=_cta_caption_boxes,
+                    all_faces=bool(protected is not None and protected.protect_all_faces),
                 )
                 if ending is not None:
                     try:
@@ -16096,6 +16135,17 @@ def _phone_talking_list_label_rows(
     display_width, display_height = display_dims(binding.original)
     scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
     speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
+    # KRI-1471: a label whose spot is taken is placed a second time above her head
+    # (`phone_list_labels._clear_spot`); her face in its window is decoded once, not per try.
+    from app.pipeline import phone_subtitled_title as title_placer  # noqa: PLC0415
+
+    face_samples: dict[Any, Any] = {}
+
+    def sample_once(path: Any, anchors: Any, **kwargs: Any) -> Any:
+        key = (path, tuple(anchors), tuple(sorted(kwargs.items())))
+        if key not in face_samples:
+            face_samples[key] = title_placer.sample_face_regions(path, anchors, **kwargs)
+        return face_samples[key]
 
     def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
         return place_talking_title(
@@ -16106,6 +16156,7 @@ def _phone_talking_list_label_rows(
             display_height=display_height,
             canvas=canvas,
             scale=scale,
+            sample=sample_once,
             position_x=position_x,
             avoid=avoid,
             speaker_frame=speaker_frame,
@@ -16156,6 +16207,18 @@ def _phone_talking_list_label_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return rows, receipt
+
+
+def _list_label_timeline_end_s(timeline_s: float, *, closing_text: str | None) -> float:
+    """KRI-1471: where the list labels' time ends. With her ending text on the talk's last
+    seconds (`talking_closing_window`) the labels stop where it comes in, so a label is never
+    on screen with the ending; no ending, or the switch off: the whole talk, as before. (The
+    ending is placed after the labels, around her face and captions only.)"""
+    from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
+
+    if not closing_text or not settings.list_label_example_ask_enabled:
+        return timeline_s
+    return talking_closing_window(float(timeline_s))[0]
 
 
 def _phone_list_label_follow(
@@ -16773,6 +16836,161 @@ def _render_clip_intents(raw: object) -> list[dict] | None:
     return kept or None
 
 
+@dataclass(frozen=True)
+class _NarratedFootageFit:
+    """The fitted steps and, by step id, the located moment the creator named (KRI-1466)."""
+
+    fit: Any  # app.pipeline.narrated_footage_fit.FootageFit
+    moments: Mapping[str, Any]  # step id -> LocatedMoment
+
+
+def _narrated_footage_fit(
+    steps: list[Any],
+    *,
+    step_clip_ids: list[str],
+    bindings: Sequence[Any],
+    clip_metas: list[Any],
+    strategy: Mapping[str, Any],
+    media_snapshot: Mapping[str, Any] | None,
+    all_candidates: Mapping[str, Any],
+    clip_id_to_gcs: Mapping[str, str],
+    media_id_for_clip: Callable[[str], str | None],
+    brief: Any,
+    job_id: str,
+) -> _NarratedFootageFit | None:
+    """`fit_steps_to_footage` over this job's steps, failing open (KRI-1466).
+
+    The moment is searched only in what the clip's analysis recorded (this render's
+    ``best_moments`` and the chat's stored clip record), by the creator's own words for the
+    clip (its resolved clip intents). A clip the creator asked to end on (a resolved ``last``
+    order intent, or the brief's ``last_clip``), and the last clip when it should play on
+    after the voice (KRI-842), keep their whole step. Any failure returns None and the steps
+    render as they were; the outcome is on the trace.
+    """
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    try:
+        from app.kria.narrated_clip_sound_ask import (  # noqa: PLC0415
+            AFTER_VOICE,
+            brief_clip_sound_asks,
+        )
+        from app.pipeline.narrated_footage_fit import (  # noqa: PLC0415
+            fit_steps_to_footage,
+            located_step_moments,
+        )
+
+        if len(step_clip_ids) != len(steps):
+            return None
+        durations = {b.media_id: float(b.original.duration_s) for b in bindings}
+        proxy_names = {b.media_id: os.path.basename(str(b.proxy_path or "")) for b in bindings}
+        words_by_key: dict[str, list[str]] = {}
+        for intent in strategy.get("resolved_clip_intents") or []:
+            if not isinstance(intent, Mapping) or intent.get("status") not in (None, "resolved"):
+                continue
+            if intent.get("op") not in ("include", "order"):
+                continue
+            name = " ".join(str(intent.get("attribute") or "").split())
+            for assignment in intent.get("assignments") or []:
+                key = assignment.get("media_id") if isinstance(assignment, Mapping) else None
+                if name and key and name not in words_by_key.setdefault(str(key), []):
+                    words_by_key[str(key)].append(name)
+        meta_by_clip = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
+        stored = {
+            str(row.get("media_id")): row.get("analysis")
+            for row in ((media_snapshot or {}).get("clip_assignments") or [])
+            if isinstance(row, Mapping) and isinstance(row.get("analysis"), Mapping)
+        }
+        words_by_step: dict[str, list[str]] = {}
+        rendered_by_step: dict[str, dict[str, Any]] = {}
+        stored_by_step: dict[str, Mapping[str, Any]] = {}
+        for step, clip_id in zip(steps, step_clip_ids, strict=True):
+            media_id = str(step.media_id)
+            keys = [key for key in (media_id, proxy_names.get(media_id)) if key]
+            words = [w for key in keys for w in words_by_key.get(key, [])]
+            if not words:
+                continue
+            words_by_step[str(step.step_id)] = list(dict.fromkeys(words))
+            rendered = [
+                row if isinstance(row, Mapping) else getattr(row, "model_dump", dict)()
+                for row in (getattr(meta_by_clip.get(clip_id), "best_moments", None) or [])
+            ]
+            if rendered:
+                rendered_by_step[str(step.step_id)] = {"best_moments": rendered}
+            if media_id in stored:
+                stored_by_step[str(step.step_id)] = stored[media_id]
+        # This render's analysis; the chat's stored record only for a clip the render has
+        # no moments for. Never both at once: the same moment described twice, a few
+        # frames apart, is a tie, and a tie locates nothing.
+        moments = located_step_moments(
+            steps,
+            words_by_step=words_by_step,
+            analysis_by_step=rendered_by_step,
+            durations=durations,
+        )
+        moments = {
+            **located_step_moments(
+                [step for step in steps if str(step.step_id) not in rendered_by_step],
+                words_by_step=words_by_step,
+                analysis_by_step=stored_by_step,
+                durations=durations,
+            ),
+            **moments,
+        }
+        _labels, _first, pinned_last, _groups = _narrated_creator_clip_labels(
+            all_candidates, clip_id_to_gcs, media_id_for_clip
+        )
+        keep_whole = {
+            str(step.step_id)
+            for step, clip_id in zip(steps, step_clip_ids, strict=True)
+            if clip_id in pinned_last
+        }
+        ends_on_a_named_clip = brief is not None and any(
+            str(req.facts.get("last_clip") or "").strip() for req in brief.live()
+        )
+        if ends_on_a_named_clip or any(
+            ask.mode == AFTER_VOICE for ask in brief_clip_sound_asks(brief)
+        ):
+            # The brief names the clip to end on, or the last clip plays on after the voice
+            # (KRI-842): nothing may follow the last step.
+            keep_whole.add(str(steps[-1].step_id))
+        # The approved plan is the only word on reuse (never the request's text, KRI-470):
+        # footage plays a second time only when it says `allow_repeat`.
+        fit = fit_steps_to_footage(
+            steps,
+            durations=durations,
+            moments={step_id: (m.start_s, m.end_s) for step_id, m in moments.items()},
+            keep_whole=keep_whole,
+            allow_replay=strategy.get("video_reuse_policy") == "allow_repeat",
+        )
+    except Exception as exc:  # noqa: BLE001 - a better cut never costs the creator the video
+        log.warning("narrated_footage_fit_failed", job_id=job_id, error=str(exc))
+        record_pipeline_event(
+            "narrated", "narrated_footage_fit", {"status": "failed", "error": type(exc).__name__}
+        )
+        return None
+    record_pipeline_event(
+        "narrated",
+        "narrated_footage_fit",
+        {
+            "status": "fitted",
+            "steps_in": len(steps),
+            "steps_out": len(fit.steps),
+            "fill_step_ids": sorted(fit.fill_step_ids),
+            "kept_whole": sorted(keep_whole),
+            "moments": [
+                {
+                    "step_id": step_id,
+                    "source_start_s": moment.start_s,
+                    "source_end_s": moment.end_s,
+                    "at_s": fit.moment_at_s.get(step_id),
+                }
+                for step_id, moment in moments.items()
+            ],
+        },
+    )
+    return _NarratedFootageFit(fit=fit, moments=moments)
+
+
 def _narrated_alignment_record(
     *,
     generation: str | None,
@@ -16786,6 +17004,7 @@ def _narrated_alignment_record(
     spoken_language: str | None,
     caption_language_request: str | None,
     out_of_sequence_media_ids: Collection[str] = (),
+    footage_fit: _NarratedFootageFit | None = None,
 ) -> dict[str, Any]:
     """The receipt record of a phone Voiceover edit (KRI-533): what the worker pinned.
 
@@ -16796,7 +17015,18 @@ def _narrated_alignment_record(
     reads this back; nothing here is model-claimed. A step whose clip belongs to a
     described sequence the voiceover overrode (``out_of_sequence_media_ids``, KRI-590)
     also carries ``"out_of_sequence": True``; every other row is unchanged.
+
+    ``footage_fit`` (KRI-1466): a step added to fill a short clip's leftover time carries
+    ``"fill": True`` and no labels or seats (it is not the shot the creator named; only "what
+    is on screen when I say X" reads it). A step that does not start at its clip's first
+    frame carries ``source_start_s``, and one whose named moment was located carries
+    ``moment``: the creator's words, where the moment is in the clip, and the second of the
+    video it starts showing at (None when the part that plays never reaches it). Without a
+    fit, or for a step it left alone, the row is unchanged.
     """
+    fill_ids = footage_fit.fit.fill_step_ids if footage_fit is not None else frozenset()
+    moments = footage_fit.moments if footage_fit is not None else {}
+    moment_at = footage_fit.fit.moment_at_s if footage_fit is not None else {}
     labels_by_key: dict[str, list[str]] = {}
     placed_by_key: dict[str, list[dict[str, str]]] = {}
     for intent in strategy.get("resolved_clip_intents") or []:
@@ -16835,17 +17065,38 @@ def _narrated_alignment_record(
             for word in words
             if step.start_s <= (float(word.start_s) + float(word.end_s)) / 2 < step.end_s
         )
+        fill = str(step.step_id) in fill_ids
+        moment = moments.get(str(step.step_id))
+        source_start = round(float(getattr(step, "source_start_s", 0.0) or 0.0), 3)
         rows.append(
             {
                 "step_id": str(step.step_id),
                 "media_id": media_id,
                 "clip": clip,
-                "labels": labels,
-                "placed": placed,
+                "labels": [] if fill else labels,
+                "placed": [] if fill else placed,
                 "start_s": round(float(step.start_s), 3),
                 "end_s": round(float(step.end_s), 3),
                 "text": spoken[:_NARRATED_STEP_TEXT_CHARS],
-                **({"out_of_sequence": True} if media_id in out_of_sequence_media_ids else {}),
+                **(
+                    {"out_of_sequence": True}
+                    if media_id in out_of_sequence_media_ids and not fill
+                    else {}
+                ),
+                **({"fill": True} if fill else {}),
+                **({"source_start_s": source_start} if source_start > 0 else {}),
+                **(
+                    {
+                        "moment": {
+                            "words": moment.words,
+                            "source_start_s": round(moment.start_s, 3),
+                            "source_end_s": round(moment.end_s, 3),
+                            "at_s": moment_at.get(str(step.step_id)),
+                        }
+                    }
+                    if moment is not None
+                    else {}
+                ),
             }
         )
     return {
@@ -17283,6 +17534,8 @@ def _run_phone_narrated_job(
             aligned = None  # KRI-533: set by the alignment agent in the branch below
             # KRI-590: described-sequence clips the voiceover placed in another order.
             moved_clip_ids: list[str] = []
+            # KRI-1466: the clip each step shows, when the voice (not a script) places them.
+            step_clip_ids: list[str] | None = None
             if len(script_steps) >= 2:
                 clip_assignments = _narrated_clip_assignments(
                     filming_guide, narrative_order, clip_id_to_local
@@ -17521,11 +17774,37 @@ def _run_phone_narrated_job(
             # KRI-1097 wave 2: the asks the compiler reads with the plan (the title entrance).
             narrated_requirements = narrated_brief.live() if narrated_brief is not None else []
             title_entrance = narrated_title_entrance(strategy, narrated_requirements)
+            # KRI-1466: a clip opens on the moment the creator named for it, and one too short
+            # for its step is followed by other footage instead of being slowed over it.
+            footage_fit = None
+            if (
+                settings.narrated_footage_fit_enabled
+                and step_clip_ids is not None
+                and not guide_narrative_order
+            ):
+                footage_fit = _narrated_footage_fit(
+                    steps,
+                    step_clip_ids=step_clip_ids,
+                    bindings=bindings,
+                    clip_metas=list(ingest.get("clip_metas") or []),
+                    strategy=strategy,
+                    media_snapshot=(snapshot.get("creator_brief_binding") or {}).get(
+                        "media_snapshot"
+                    ),
+                    all_candidates=all_candidates,
+                    clip_id_to_gcs=clip_id_to_gcs,
+                    media_id_for_clip=_media_id_for_clip,
+                    brief=narrated_brief,
+                    job_id=job_id,
+                )
+                if footage_fit is not None:
+                    steps = footage_fit.fit.steps
             narrated_record = _narrated_alignment_record(
                 generation=generation,
                 brief_version=narrated_brief.version if narrated_brief else None,
                 ordering_basis=narrated_basis,
                 steps=steps,
+                footage_fit=footage_fit,
                 proxy_path_by_media_id={b.media_id: b.proxy_path for b in bindings},
                 strategy=strategy,
                 words=list(transcript.words),

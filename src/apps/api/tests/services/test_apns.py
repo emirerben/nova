@@ -499,3 +499,27 @@ async def test_external_cancellation_during_accepted_response_cleanup_propagates
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+@pytest.mark.parametrize("language", ["fr", "", "tr\r\n", 7])
+def test_unknown_push_language_is_refused_before_any_request(language):
+    with pytest.raises(ValueError, match="Invalid activity notification"):
+        ActivityNotification(UUID(int=1), UUID(int=2), "video_ready", language)
+
+
+async def test_turkish_notification_sends_turkish_copy():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return response(200)
+
+    notice = ActivityNotification(UUID(int=1), UUID(int=2), "video_ready", "tr")
+    async with APNsTransport(
+        lambda: SecretStr(BEARER), transport=httpx.MockTransport(handler)
+    ) as apns:
+        assert await apns.send(target(), notice) == Accepted()
+    assert json.loads(requests[0].content)["aps"]["alert"] == {
+        "title": "Videon hazır",
+        "body": "Açıp izleyebilir ve paylaşabilirsin.",
+    }

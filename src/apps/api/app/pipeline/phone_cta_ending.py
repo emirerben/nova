@@ -270,8 +270,12 @@ def build_cta_ending(
     position_x: float = 0.0,
     caption_boxes: Callable[[tuple[float, float]], Sequence[NormalizedBox]] | None = None,
     sample: Any = None,
+    all_faces: bool = False,
 ) -> CtaEnding | None:
-    """The CTA ending for ``text`` ("comment READ"), or None to keep the lime tag."""
+    """The CTA ending for ``text`` ("comment READ"), or None to keep the lime tag.
+
+    ``all_faces`` (KRI-1475: the creator asked to keep text off faces) keeps the block and
+    the arrow off every detected face, not only the speaker's."""
     try:
         return _build(
             text,
@@ -287,6 +291,7 @@ def build_cta_ending(
             position_x=position_x,
             caption_boxes=caption_boxes,
             sample=sample,
+            all_faces=all_faces,
         )
     except Exception as exc:  # noqa: BLE001 - fall back to the lime tag, never fail a draft
         log.warning("cta_ending_failed", error=str(exc)[:200])
@@ -308,6 +313,7 @@ def _build(
     position_x: float,
     caption_boxes: Callable[[tuple[float, float]], Sequence[NormalizedBox]] | None,
     sample: Any,
+    all_faces: bool = False,
 ) -> CtaEnding | None:
     from app.pipeline.phone_text_style import undrawable_text  # noqa: PLC0415
 
@@ -364,6 +370,7 @@ def _build(
         scale=scale,
         sample=sample or pst.sample_face_regions,
         position_x=position_x,
+        all_faces=all_faces,
     )
     captions = list(caption_boxes((start_s, end_s))) if caption_boxes else []
 

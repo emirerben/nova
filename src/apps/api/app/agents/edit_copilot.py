@@ -148,7 +148,10 @@ log = structlog.get_logger()
 # v129 (KRI-1420): add_split_panel_clip, a second clip in a split panel from the approved source
 # pool, taught in the SPLIT SCREEN fragment (prompts/edit_copilot_ops/split_screen.txt), printed
 # only where split_screen_available is true, so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v129"
+# v130 (KRI-1457): add_split_blank and set_split_blank_color, a flat-colour block in a split panel
+# (prompts/edit_copilot_ops/split_blank.txt), printed only where split_blank_available is true (a
+# protocol 51 build with splitBlankPanel verified), so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v130"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1807,6 +1810,11 @@ def _format_snapshot(snapshot: dict) -> str:
                 max_chars=100,
             )
             media_kind = _field(slot.get("media_kind") or slot.get("kind") or "", max_chars=12)
+            blank_color = (
+                f" color={_field(slot.get('color'), max_chars=8)!r}"
+                if slot.get("media_kind") == "blank"
+                else ""
+            )
             facts_text = _format_slot_facts(slot.get("facts"), _field)
             seen = slot.get("seen")
             if isinstance(seen, dict) and seen.get("text"):
@@ -1815,7 +1823,7 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"({_field(seen.get('provenance') or 'vision', max_chars=12)})"
                 )
             lines.append(
-                f"{i}. media_id={media_id!r} media_kind={media_kind!r} "
+                f"{i}. media_id={media_id!r} media_kind={media_kind!r}{blank_color} "
                 f"output={_fmt_range(start, end)} duration={_fmt_num(duration)}s "
                 f"in={_fmt_num(in_s)}s source={_fmt_num(source)}s moment={moment!r} "
                 f"look_preset={look_preset!r} "
@@ -3114,10 +3122,11 @@ _PENDING_NEGATION_RE = _BilingualPattern(
     r"\b(?:yapma|yapmayin|yapmasin|ekleme|eklemeyin|dokunma|dokunmayin|kullanma|"
     r"kullanmayin|haric|olmadan|disinda|degil|olmasin|istemiyorum|atla|atlayin|gecme)\b",
 )
-# Group 1 is the number. Turkish writes a decimal comma ("2,5 saniye"): callers normalize.
+# Group 1 is the number. Turkish and German write a decimal comma ("2,5 saniye",
+# "2,5 Sekunden"): callers normalize. The German unit rides on the loose (second) pattern.
 _DURATION_ANSWER_RE = _BilingualPattern(
     r"\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
-    r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b)",
+    r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b|sekunde\w*|sek\b)",
 )
 _VAGUE_DURATION_RE = _BilingualPattern(
     r"\b(?:shorter|shorten|shorten(?:ed|ing)?|make\s+.+\s+short)\b",

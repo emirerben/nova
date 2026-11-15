@@ -16,6 +16,7 @@
     "FootageSourcesUITests": "creation",
     "GamedayAddClipUITests": "editor",
     "GeneratedMediaUITests": "creation",
+    "LongApprovalCardUITests": "creation",
     "MomentOrderUITests": "creation",
     "NativeCaptionAnimationUITests": "editor",
     "NativeCaptionVisualUITests": "editor",

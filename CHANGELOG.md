@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.244.0] - 2026-11-15
+
+### Fixed
+- fix(kria): withdrawn clips stay withdrawn, no needless Voiceover holds, named moments on the word (KRI-1464, KRI-1465, KRI-1466) (#2359) <!-- release-pr: 2359 -->
+
+## [0.88.243.0] - 2026-11-15
+
+### Changed
+- fix(kria): German Talking promises never hold the draft (KRI-1405) (#2348) <!-- release-pr: 2348 -->
+
+## [0.88.242.0] - 2026-11-15
+
+### Fixed
+- fix(ios): the editor no longer aborts when the live preview takes over the finished video (KRI-1404) (#2333) <!-- release-pr: 2333 -->
+
+## [0.88.241.0] - 2026-11-15
+
+### Changed
+- test(ios): editor-ready UI test waits for the background warm instead of 4 s (KRI-1467) (#2358) <!-- release-pr: 2358 -->
+
+## [0.88.240.0] - 2026-11-15
+
+### Changed
+- feat(api): chat places and recolours a split panel blank (KRI-1457) (#2355) <!-- release-pr: 2355 -->
+
+## [0.88.239.0] - 2026-11-15
+
+### Changed
+- fix(ios): write no source offset for a cut or left-trimmed photo (KRI-1440) (#2356) <!-- release-pr: 2356 -->
+
+## [0.88.238.0] - 2026-11-15
+
+### Fixed
+- fix(kria): Qendresa Q1 run 3: no false holds; captions, title, ending, labels and cards as asked (KRI-1468) (#2360) <!-- release-pr: 2360 -->
+
+## [0.88.237.0] - 2026-11-15
+
+### Changed
+- test(kria): German twins of the Turkish understanding tests + closed-list fixes (KRI-1453) (#2354) <!-- release-pr: 2354 -->
+
+## [0.88.236.0] - 2026-11-15
+
+### Changed
+- feat(notifications): push copy in the chat's language — EN/TR/DE (KRI-1144) (#2349) <!-- release-pr: 2349 -->
+
+## [0.88.235.0] - 2026-11-15
+
+### Changed
+- fix(kria): approval card fits one screen and arrives with its draft (KRI-1403) (#2346) <!-- release-pr: 2346 -->
+
+## [0.88.234.0] - 2026-11-15
+
+### Fixed
+- fix(api): room hum no longer holds a take join open (KRI-1409) (#2345) <!-- release-pr: 2345 -->
+
 ## [0.88.233.0] - 2026-11-15
 
 ### Changed

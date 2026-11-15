@@ -108,6 +108,11 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "A voiceover edit always shows captions of what you say, and I'll check them against your request in the finished video",
+   "Seslendirmeli düzenleme söylediklerini her zaman altyazı olarak gösterir, bitmiş videoda da isteğine uyup uymadıklarını kontrol edeceğim"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "Cut \"{quote}\" ({round_s_removed}s, take {take_index})",
    "\"{quote}\" kesildi ({round_s_removed} sn, {take_index}. çekim)"
   ],
@@ -310,6 +315,11 @@
    "app/kria/brief_checks.py",
    "{what} is in {count} stretches",
    "{what} {count} parçaya bölünüyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{text} sits over something else on screen; I couldn't find a clear spot for it",
+   "{text} ekranda başka bir şeyin üstünde duruyor; ona boş bir yer bulamadım"
   ],
   [
    "app/kria/clip_exclusions.py",
@@ -1512,6 +1522,26 @@
    "Bu düzenlemede bölünmüş ekranın bir kısmını sohbetten tam ekran yapamıyorum."
   ],
   [
+   "app/services/apns.py",
+   "Open Kria to see what to do next.",
+   "Sıradaki adımı görmek için Kria'yı aç."
+  ],
+  [
+   "app/services/apns.py",
+   "Open it to watch and share.",
+   "Açıp izleyebilir ve paylaşabilirsin."
+  ],
+  [
+   "app/services/apns.py",
+   "Your video is ready",
+   "Videon hazır"
+  ],
+  [
+   "app/services/apns.py",
+   "Your video needs a look",
+   "Videona bir göz at"
+  ],
+  [
    "app/tasks/generative_build.py",
    "Tell me how you'd like the text instead.",
    "Metnin bunun yerine nasıl olmasını istediğini söyle."
@@ -1545,6 +1575,56 @@
    "app/tasks/kria_runtime.py",
    "Writing the on-screen text for this many clips took longer than our AI allows, so your video wasn't made. Your edit and footage are saved. Fewer clips or less text would help.",
    "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az klip ya da daha az yazı işe yarar."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s), but the part you named comes at {moment_at_s:.1f} s",
+   "{v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn), ama söylediğin kısım {moment_at_s:.1f}. saniyede geliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s), but the part you named isn't in the stretch that plays",
+   "{v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn), ama söylediğin kısım oynayan bölümde yok"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "- Left out as agreed: {count} of your asks",
+   "- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "- Left out as agreed: {what}",
+   "- Kararlaştırdığımız gibi çıkarıldı: {what}"
+  ],
+  [
+   "app/agents/editor_ops_v2/split_screen.py",
+   "A blank block in a split screen needs the latest Kria update.",
+   "Bölünmüş ekranda boş blok için Kria'nın son sürümü gerekiyor."
+  ],
+  [
+   "app/agents/editor_ops_v2/split_screen.py",
+   "A blank block in a split screen is not available on this edit yet.",
+   "Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor."
+  ],
+  [
+   "app/kria/approval_readiness.py",
+   "Before I make this, please choose:",
+   "Bunu yapmadan önce bir seçim yap:"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "No sound effects",
+   "Ses efekti yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "No sound effects, as asked.",
+   "İstediğin gibi ses efekti yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This video has sound effects.",
+   "Bu videoda ses efekti var."
   ]
  ],
  "retired": [

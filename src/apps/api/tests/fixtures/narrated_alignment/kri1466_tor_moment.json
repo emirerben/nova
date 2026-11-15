@@ -1,0 +1,552 @@
+{
+ "source": {
+  "issue": "KRI-1466 (the TOR moment comes 7 s after the word), parent run KRI-1463",
+  "job": "c8fcb7c0-c0ed-4d9e-acd6-190c21f0bed0 (thread 78787267), 2026-11-14, build 1996 / protocol 51, phone render, server 3feec88a9",
+  "recorded": [
+   "clips: the job's four videos in clip_paths order; duration_s is the phone original's measured length; summary / activity / subject / setting / best_moments are this render's clip analysis (all_candidates.clip_metadata_cache), verbatim",
+   "steps: assembly_plan.narrated_alignment.steps (step id, clip, window, labels), verbatim",
+   "resolved_clip_intents: creator_strategy.resolved_clip_intents rows for the four videos (media ids mapped to the harness ids), attributes verbatim",
+   "voiceover_s: the voiceover length the steps tile (the last step's end)",
+   "observed: the creator's own review of the source and the rendered file (KRI-1466): the big screen reads TOR at about 3.2-4.7 s of 04_tor.MOV; in the video it showed at about 16.0-17.6 s"
+  ],
+  "reconstructed": [
+   "words: the transcript words were not kept. Each word is spread inside its recorded caption line; line 3 (\"Ich habe den Zug gefilmt, das Stadion, die Lichtshow, das Tor.\") is set by hand so every word falls in its recorded step, \"Stadion\" starts at the recorded pop-in (7.76 s) and \"Tor\" at the recorded goal step start (9.76 s); spellings are the recorded step texts' (the transcript heard \"Kriya\")",
+   "alignment: the agent's answer was not kept. The start words here give the recorded steps (0 / 6.76 / 8.26 / 9.76 s) through the real 1.5 s floor"
+  ]
+ },
+ "voiceover_s": 25.183,
+ "clips": [
+  {
+   "clip_id": "c0",
+   "name": "train",
+   "recorded_media_id": "analysis-proxy-ios-54AF3A20-B68C-43DC-AF46-7E13C0962E28.mp4",
+   "duration_s": 7.835,
+   "summary": "The camera is inside a moving train, looking out the window and then panning up and around the interior, showing other passengers.",
+   "activity": "traveling by train",
+   "subject": "train interior",
+   "setting": "train interior at night",
+   "best_moments": [
+    {
+     "end_s": 2.1,
+     "energy": 4.0,
+     "start_s": 0.0,
+     "description": "view out train window at night"
+    },
+    {
+     "end_s": 5.0,
+     "energy": 5.0,
+     "start_s": 2.2,
+     "description": "camera pans from window to train ceiling"
+    },
+    {
+     "end_s": 7.4,
+     "energy": 4.0,
+     "start_s": 5.3,
+     "description": "view of train aisle and passengers"
+    }
+   ]
+  },
+  {
+   "clip_id": "c1",
+   "name": "lights",
+   "recorded_media_id": "analysis-proxy-ios-12032242-E321-4877-A772-BFEF642D9BBD.mp4",
+   "duration_s": 8.035,
+   "summary": "The camera pans across a football stadium, showing a green pitch and a vibrant crowd in the stands, waving flags and banners.",
+   "activity": "watching a football match, cheering, waving flags",
+   "subject": "stadium crowd and football pitch",
+   "setting": "indoor football stadium at night",
+   "best_moments": [
+    {
+     "end_s": 2.5,
+     "energy": 6.0,
+     "start_s": 0.0,
+     "description": "camera pans across empty pitch"
+    },
+    {
+     "end_s": 6.5,
+     "energy": 7.5,
+     "start_s": 4.0,
+     "description": "crowd waves flags in stands"
+    }
+   ]
+  },
+  {
+   "clip_id": "c2",
+   "name": "goal",
+   "recorded_media_id": "analysis-proxy-ios-3DC73A84-CC8E-4387-B137-032D35EBF814.mp4",
+   "duration_s": 7.703,
+   "summary": "The video captures the lively atmosphere of a football stadium at night, panning across the brightly lit pitch and the cheering crowd, displaying a 'TOR' (German for 'goal') graphic on a large screen.",
+   "activity": "watching a football match, cheering for a goal",
+   "subject": "stadium crowd and football match",
+   "setting": "large football stadium at night",
+   "best_moments": [
+    {
+     "end_s": 1.76,
+     "energy": 6.0,
+     "start_s": 0.0,
+     "description": "wide shot of stadium and pitch"
+    },
+    {
+     "end_s": 4.5,
+     "energy": 7.0,
+     "start_s": 2.76,
+     "description": "jumbotron displays 'TOR'"
+    },
+    {
+     "end_s": 7.39,
+     "energy": 8.0,
+     "start_s": 5.42,
+     "description": "crowd cheers and waves flags"
+    }
+   ]
+  },
+  {
+   "clip_id": "c3",
+   "name": "pan",
+   "recorded_media_id": "analysis-proxy-ios-515AD598-6FA4-4057-ABD8-6E4E140BA6F9.mp4",
+   "duration_s": 8.533333333333333,
+   "summary": "A large crowd of football fans cheers loudly, waving flags and banners in a stadium illuminated by red lights. The atmosphere is energetic.",
+   "activity": "cheering, waving flags, and watching a football match (implied)",
+   "subject": "stadium crowd",
+   "setting": "indoor football stadium at night",
+   "best_moments": [
+    {
+     "end_s": 3.0,
+     "energy": 7.5,
+     "start_s": 0.0,
+     "description": "crowd cheers loudly with flags waving"
+    },
+    {
+     "end_s": 8.0,
+     "energy": 8.0,
+     "start_s": 4.0,
+     "description": "stadium fans chant and wave flags"
+    }
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "clip": "analysis-proxy-ios-54AF3A20-B68C-43DC-AF46-7E13C0962E28.mp4",
+   "text": "Für dieses Video habe ich nur einen Satz getippt. Ich war mit einem Freund beim Fußball. Ich habe den Zug",
+   "end_s": 6.76,
+   "labels": [
+    "the train"
+   ],
+   "placed": [],
+   "start_s": 0.0,
+   "step_id": "seg_0",
+   "media_id": "analysis-proxy-ios-54AF3A20-B68C-43DC-AF46-7E13C0962E28.mp4"
+  },
+  {
+   "clip": "analysis-proxy-ios-515AD598-6FA4-4057-ABD8-6E4E140BA6F9.mp4",
+   "text": "gefilmt, das Stadion,",
+   "end_s": 8.26,
+   "labels": [],
+   "placed": [],
+   "start_s": 6.76,
+   "step_id": "seg_1",
+   "media_id": "analysis-proxy-ios-515AD598-6FA4-4057-ABD8-6E4E140BA6F9.mp4"
+  },
+  {
+   "clip": "analysis-proxy-ios-12032242-E321-4877-A772-BFEF642D9BBD.mp4",
+   "text": "die Lichtshow, das",
+   "end_s": 9.76,
+   "labels": [
+    "the light show"
+   ],
+   "placed": [],
+   "start_s": 8.26,
+   "step_id": "seg_2",
+   "media_id": "analysis-proxy-ios-12032242-E321-4877-A772-BFEF642D9BBD.mp4"
+  },
+  {
+   "clip": "analysis-proxy-ios-3DC73A84-CC8E-4387-B137-032D35EBF814.mp4",
+   "text": "Tor. Normalerweise verstauben solche Clips in meiner Galerie. Diesmal habe ich meine Stimme aufgenommen und Kriya gesagt, was wann zu sehen ist. Kriya hat alles auf meine Worte geschnitten. Die App heißt Kriya. Jetzt im Testflight.",
+   "end_s": 25.183,
+   "labels": [
+    "the TOR on the big screen"
+   ],
+   "placed": [],
+   "start_s": 9.76,
+   "step_id": "seg_3",
+   "media_id": "analysis-proxy-ios-3DC73A84-CC8E-4387-B137-032D35EBF814.mp4"
+  }
+ ],
+ "resolved_clip_intents": [
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the train",
+   "intent_id": "include_zug_1",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-c0.mp4",
+     "confidence": 0.9,
+     "evidence": "asking turn"
+    }
+   ]
+  },
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the light show",
+   "intent_id": "include_lichtshow_1",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-c1.mp4",
+     "confidence": 1.0,
+     "evidence": "creator selected"
+    }
+   ]
+  },
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the TOR on the big screen",
+   "intent_id": "include_tor_1",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-c2.mp4",
+     "confidence": 0.8,
+     "evidence": "asking turn"
+    }
+   ]
+  }
+ ],
+ "creator_request": "Show each thing when I say it: the train on \"Zug\", the stadium from outside on \"Stadion\", the light show on \"Lichtshow\", the TOR on the big screen on \"Tor\", and the Kria logo card on \"Die App\".",
+ "words": [
+  [
+   "Für",
+   0.3,
+   0.533
+  ],
+  [
+   "dieses",
+   0.533,
+   0.998
+  ],
+  [
+   "Video",
+   0.998,
+   1.386
+  ],
+  [
+   "habe",
+   1.386,
+   1.696
+  ],
+  [
+   "ich",
+   1.696,
+   1.929
+  ],
+  [
+   "nur",
+   1.929,
+   2.161
+  ],
+  [
+   "einen",
+   2.161,
+   2.549
+  ],
+  [
+   "Satz",
+   2.549,
+   2.86
+  ],
+  [
+   "getippt.",
+   2.86,
+   3.48
+  ],
+  [
+   "Ich",
+   3.62,
+   3.791
+  ],
+  [
+   "war",
+   3.791,
+   3.961
+  ],
+  [
+   "mit",
+   3.961,
+   4.132
+  ],
+  [
+   "einem",
+   4.132,
+   4.416
+  ],
+  [
+   "Freund",
+   4.416,
+   4.758
+  ],
+  [
+   "beim",
+   4.758,
+   4.985
+  ],
+  [
+   "Fußball.",
+   4.985,
+   5.44
+  ],
+  [
+   "Ich",
+   6.0,
+   6.15
+  ],
+  [
+   "habe",
+   6.15,
+   6.35
+  ],
+  [
+   "den",
+   6.35,
+   6.5
+  ],
+  [
+   "Zug",
+   6.5,
+   6.74
+  ],
+  [
+   "gefilmt,",
+   6.8,
+   7.3
+  ],
+  [
+   "das",
+   7.4,
+   7.6
+  ],
+  [
+   "Stadion,",
+   7.76,
+   8.2
+  ],
+  [
+   "die",
+   8.3,
+   8.45
+  ],
+  [
+   "Lichtshow,",
+   8.45,
+   9.2
+  ],
+  [
+   "das",
+   9.4,
+   9.6
+  ],
+  [
+   "Tor.",
+   9.76,
+   10.1
+  ],
+  [
+   "Normalerweise",
+   10.185,
+   10.814
+  ],
+  [
+   "verstauben",
+   10.814,
+   11.298
+  ],
+  [
+   "solche",
+   11.298,
+   11.589
+  ],
+  [
+   "Clips",
+   11.589,
+   11.831
+  ],
+  [
+   "in",
+   11.831,
+   11.927
+  ],
+  [
+   "meiner",
+   11.927,
+   12.218
+  ],
+  [
+   "Galerie.",
+   12.218,
+   12.605
+  ],
+  [
+   "Diesmal",
+   13.125,
+   13.695
+  ],
+  [
+   "habe",
+   13.695,
+   14.021
+  ],
+  [
+   "ich",
+   14.021,
+   14.266
+  ],
+  [
+   "meine",
+   14.266,
+   14.673
+  ],
+  [
+   "Stimme",
+   14.673,
+   15.162
+  ],
+  [
+   "aufgenommen",
+   15.162,
+   16.058
+  ],
+  [
+   "und",
+   16.058,
+   16.302
+  ],
+  [
+   "Kriya",
+   16.302,
+   16.628
+  ],
+  [
+   "gesagt,",
+   16.628,
+   17.199
+  ],
+  [
+   "was",
+   17.199,
+   17.443
+  ],
+  [
+   "wann",
+   17.443,
+   17.769
+  ],
+  [
+   "zu",
+   17.769,
+   17.932
+  ],
+  [
+   "sehen",
+   17.932,
+   18.339
+  ],
+  [
+   "ist.",
+   18.339,
+   18.665
+  ],
+  [
+   "Kriya",
+   18.989,
+   19.225
+  ],
+  [
+   "hat",
+   19.225,
+   19.401
+  ],
+  [
+   "alles",
+   19.401,
+   19.696
+  ],
+  [
+   "auf",
+   19.696,
+   19.873
+  ],
+  [
+   "meine",
+   19.873,
+   20.167
+  ],
+  [
+   "Worte",
+   20.167,
+   20.462
+  ],
+  [
+   "geschnitten.",
+   20.462,
+   21.169
+  ],
+  [
+   "Die",
+   21.669,
+   21.946
+  ],
+  [
+   "App",
+   21.946,
+   22.224
+  ],
+  [
+   "heißt",
+   22.224,
+   22.686
+  ],
+  [
+   "Kriya.",
+   22.686,
+   23.148
+  ],
+  [
+   "Jetzt",
+   23.648,
+   23.937
+  ],
+  [
+   "im",
+   23.937,
+   24.053
+  ],
+  [
+   "Testflight.",
+   24.053,
+   24.689
+  ]
+ ],
+ "alignment": {
+  "order": [
+   "c0",
+   "c3",
+   "c1",
+   "c2"
+  ],
+  "start_words": [
+   0,
+   22,
+   24,
+   26
+  ]
+ },
+ "observed": {
+  "clip_id": "c2",
+  "tor_source_start_s": 3.2,
+  "tor_source_end_s": 4.7,
+  "word": "Tor",
+  "word_start_s": 9.76,
+  "incident_shown_at_s": 16.0
+ }
+}

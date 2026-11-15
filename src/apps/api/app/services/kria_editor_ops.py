@@ -109,6 +109,19 @@ def split_collapse_available(job: Any, variant: dict[str, Any]) -> bool:
     )
 
 
+def split_blank_available(job: Any, variant: dict[str, Any]) -> bool:
+    """May an edit put a blank block in a split panel? Reads the sending build, as the request does.
+
+    Offered when Save would take the block: protocol 51 and `splitBlankPanel` verified.
+    """
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_blank_planned_for
+
+    return split_screen_available(job, variant) and split_blank_planned_for(
+        current_client_protocol()
+    )
+
+
 def _variant_split_sections(variant: dict[str, Any]) -> list[dict[str, Any]]:
     timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
     return copy.deepcopy(timeline.get("split_screen_sections") or [])
@@ -423,6 +436,8 @@ def _safe_slot(
     ):
         if key in row:
             slot[key] = copy.deepcopy(row[key])
+    if is_blank_row(row) and isinstance(row.get("color"), str):
+        slot["color"] = row["color"]
     media_id = row.get("media_id")
     if isinstance(media_id, str) and media_id:
         slot["media_id"] = media_id
@@ -1839,6 +1854,8 @@ def build_editor_snapshot(
         snapshot["split_screen_sections"] = sections
     if split_screen_available(job, variant):
         snapshot["split_screen_available"] = True
+        if split_blank_available(job, variant):
+            snapshot["split_blank_available"] = True
     if sections and "clip" in families:
         from app.agents.editor_ops_v2.split_full_screen import (  # noqa: PLC0415
             split_full_screen_snapshot,

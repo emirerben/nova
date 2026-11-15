@@ -957,6 +957,16 @@ class Settings(BaseSettings):
     # byte-identical to before.
     # Apply: `fly secrets set TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart.
     talking_card_layout_enabled: bool = False
+    # KRI-1478: a wide screenshot / recording card (the item-15 layout above) is drawn as a
+    # full-width strip in the same band, cut to its measured text column so the page is
+    # readable, with a hard cut in and out; a second visual for the same mention shares the
+    # window instead of being dropped as "overlap". A card with no measurable column, a
+    # portrait picture and every edited card stay today's whole-picture card. Default FALSE
+    # (new look: one phone check first). Applied only when the card layout is, and `sourceCrop`
+    # and `mediaCards` are in PHONE_RENDER_VERIFIED_FEATURES. Otherwise byte-identical.
+    # Apply: `fly secrets set TALKING_CARD_STRIP_ENABLED=true` (api + worker) + restart.
+    # Rollback: `fly secrets set TALKING_CARD_STRIP_ENABLED=false` (api + worker) + restart.
+    talking_card_strip_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
@@ -975,6 +985,14 @@ class Settings(BaseSettings):
     # compile is byte-identical to before. Apply: `fly secrets set
     # PHONE_CAPTION_ROW_BUDGET_ENABLED=false` (api + worker) + restart.
     phone_caption_row_budget_enabled: bool = True
+    # KRI-1476: a face the brief keeps text off (`keep_text_off`) no longer throws captions the
+    # creator placed in the middle to the lower third. The caption ladder tries the spots just
+    # under the asked one first and the middle row reaches y 0.68 (under a talking face). The
+    # face ask itself is unchanged: every text still keeps off the face. Default TRUE. False:
+    # the ladder and the row are as before (a middle block on her chin falls to 0.86).
+    # Rollback: `fly secrets set KEEP_TEXT_OFF_CAPTION_SPOT_ENABLED=false` (api + worker) +
+    # restart.
+    keep_text_off_caption_spot_enabled: bool = True
     # Prompt fidelity (animation): "with animations" / "animated text" reaches the rendered text.
     # Default TRUE. brief_view reads an animation ask at any text scope, an unnamed ask gets one
     # tasteful entrance (`animation_ask.DEFAULT_TEXT_ENTRANCE`), the creation text pass applies
@@ -1094,6 +1112,15 @@ class Settings(BaseSettings):
     # --app nova-video` + restart (api + worker). Design:
     # docs/reviews/qendresa-list-labels-failure-modes.md.
     spoken_list_labels_enabled: bool = False
+    # KRI-1471: the same list ask filed with its example in the description ("show each one as
+    # big text, like “1. Spec-kit”" as a per-clip or whole-video text with no literal, or the
+    # example as a per-clip literal) is a list label on a phone Talking edit, not clip text, so
+    # the draft is no longer held for "None of the N clips got its own text". And a list she
+    # counts aloud ("Number one, ... Number two, ...") gives the other labels. Needs
+    # SPOKEN_LIST_LABELS_ENABLED. Default TRUE. False: those rows and takes are read exactly as
+    # before. Rollback: `fly secrets set LIST_LABEL_EXAMPLE_ASK_ENABLED=false --app nova-video`
+    # + restart (api + worker).
+    list_label_example_ask_enabled: bool = True
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an
@@ -1448,6 +1475,13 @@ class Settings(BaseSettings):
     # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
     # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
     kria_honest_reply_lines_enabled: bool = False
+    # KRI-1472: "Only my voice." filed as its own sound ask (the typed `voice_only` fact) is
+    # judged like "No music" (`app.kria.voice_only_ask`): done on a Talking edit with no music,
+    # "This video has music." when there is some. Before, no checker owned it, so a Talking
+    # draft was held for "A Talking video can't do this" and the ask was listed as left out.
+    # Default TRUE. False: the ask is read exactly as before. Rollback: `fly secrets set
+    # VOICE_ONLY_ASK_ENABLED=false --app nova-video` + restart (api + worker).
+    voice_only_ask_enabled: bool = True
 
     # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
     # media only, "ok") takes the language of the creator's latest message typed in another of
@@ -1824,6 +1858,12 @@ class Settings(BaseSettings):
     # require an explicit choice before losing alignment. Keep the existing
     # KRI-456 rollout default; request-binding writers are gated separately.
     narrated_clip_alignment_enabled: bool = True
+    # KRI-1466 kill switch. A phone Voiceover clip starts on the moment the creator named for
+    # it (located in the clip's analysed moments), and a clip too short for its step plays at
+    # normal speed with other footage filling the rest, instead of being slowed over it
+    # (`narrated_footage_fit`). Edits that follow a filming guide are left as they were.
+    # false = every clip from its first frame, slowed to fill its step, byte-identical.
+    narrated_footage_fit_enabled: bool = True
 
     # KRI-889: cut the lines a creator named ("cut the line 'with bread, no'") out of a
     # narrated edit's recorded voiceover, phone and cloud, and promise it on the draft.
@@ -3061,6 +3101,13 @@ class Settings(BaseSettings):
     # promise instead of "No pop-in for X"; the finished render reports which clip played
     # under those words (`narrated_alignment` steps). false = "No pop-in", byte-identical.
     narrated_footage_cue_promise_enabled: bool = True
+    # KRI-1465: on a phone Voiceover DRAFT a captions ask the draft cannot judge yet (a named
+    # language, word by word on a style left to the item) is a render promise ("A voiceover
+    # edit always shows captions of what you say ..."), not "I can't confirm this draft does
+    # it yet"; and the finished video's review reads a word-by-word ask off the captions the
+    # phone drew, not off the Voiceover record's language alone. false = the hold and the
+    # language-only review, byte-identical.
+    narrated_caption_render_promise_enabled: bool = True
     # KRI-1354 (de1): "Make it without these" looped. A "simpler version" tap on a strategy
     # refusal still counts on later turns that are only choice taps (e.g. the readiness hold's
     # card), with no draft since, for the same dropped fields. false = per-turn consent only,

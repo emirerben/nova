@@ -249,13 +249,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("make_split_full_screen",),
         fields=("section_id", "at_s", "side", "panel"),
     ),
-    # KRI-1421: blank blocks are a person's action first. PR 2327 owns the split ops; until one
-    # places a blank (`add_split_panel_clip` with `blank: true`), the agent cannot.
+    # KRI-1457: Fill with blank puts a colour block after the panel's last member (the phone fills
+    # the free time under the playhead; chat has no playhead, so it uses the time after the last
+    # member). Block colour recolours the selected block by its slot index.
     "split_screen_blank": _g(
-        "agent_unsupported",
+        "agent_ops",
         "fillSplitPanelWithBlank setSelectedBlankColor",
-        reason="A blank block in a split panel is placed and recoloured by hand; the split ops "
-        "(PR 2327) do not take a blank yet.",
+        ("add_split_blank", "set_split_blank_color"),
+        fields=("offset_s", "duration_s", "color", "grow_section"),
     ),
     "split_screen_queries": _g(
         "not_an_edit",

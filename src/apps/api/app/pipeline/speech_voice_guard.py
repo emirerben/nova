@@ -112,6 +112,7 @@ def voiced_runs(
     *,
     floor_db: float,
     sr: int = SAMPLE_RATE,
+    min_above_floor_db: float = MIN_ABOVE_FLOOR_DB,
 ) -> list[tuple[float, float]]:
     """Sustained voiced runs inside ``[lo_s, hi_s)``, as frame-centre spans in seconds."""
 
@@ -140,7 +141,7 @@ def voiced_runs(
     tail = energy[:, -1][:, None] - energy[:, lags]  # energy of frame[lag:]
     periodicity = (autocorr[:, lags] / np.sqrt(head * tail + 1e-18)).max(axis=1)
 
-    voiced = (periodicity >= MIN_PERIODICITY) & (level_db >= floor_db + MIN_ABOVE_FLOOR_DB)
+    voiced = (periodicity >= MIN_PERIODICITY) & (level_db >= floor_db + min_above_floor_db)
     centres = (start + hop * np.arange(len(frames)) + win / 2) / sr
     runs: list[tuple[float, float]] = []
     min_frames = int(round(MIN_VOICED_RUN_S / HOP_S))
@@ -168,6 +169,7 @@ def guard_audible_speech(
     sr: int = SAMPLE_RATE,
     min_cut_s: float = MIN_CUT_S,
     min_floor_db: float | None = None,
+    min_above_floor_db: float = MIN_ABOVE_FLOOR_DB,
 ) -> tuple[CutPlan, dict[str, Any]]:
     """``plan`` with every voiced silence/filler cut given back to the edit.
 
@@ -180,7 +182,8 @@ def guard_audible_speech(
     a cut. Either way the returned audio only grows the keep segments either side (at a clip
     edge it becomes the keep segment that holds the voice), so no other cut moves and the
     budget can only loosen. Audio that cannot be decoded drops every judged cut, so a decode
-    fault never turns into cutting blind.
+    fault never turns into cutting blind. ``min_above_floor_db`` is how far over the quiet
+    floor a periodic frame must be to count as voice.
     """
 
     judged = [removal for removal in plan.removed if removal.reason in GUARDED_REASONS]
@@ -214,6 +217,7 @@ def guard_audible_speech(
                     removal.end_s + CONTEXT_S,
                     floor_db=floor_db,
                     sr=sr,
+                    min_above_floor_db=min_above_floor_db,
                 )
                 for piece in _subtract(lo, hi, exempt_spans)
                 if min(piece[1], removal.end_s) - max(piece[0], removal.start_s) > _EPS

@@ -98,7 +98,13 @@ import XCTest
         let session = try await session(retainingAdmittedPreviewOf: file)
         defer { session.endPreviewPresentation() }
         let retainedPlayer = try XCTUnwrap(session.player)
-        session.prerolledPlayerProvider = { _, _ in nil }
+        // A real miss (timeout or failed seek) leaves the item on the warm-up's player (KRI-1404).
+        var missedHolder: AVPlayer?
+        session.prerolledPlayerProvider = { item, _ in
+            let holder = AVPlayer(playerItem: item)
+            missedHolder = holder
+            return NativeEditorSession.WarmedLivePlayer(player: holder, isPrerolled: false)
+        }
 
         await session.prepareFixtureSourcePreview(url: file)
 
@@ -106,6 +112,7 @@ import XCTest
         XCTAssertTrue(session.canDisplayCurrentPlayer)
         XCTAssertNotEqual(session.previousPreviewPresentation?.status, .failed)
         XCTAssertFalse(session.player === retainedPlayer, "The plain swap installs the new composition")
+        XCTAssertTrue(session.player === missedHolder, "The plain swap runs on the player already holding the item")
         session.togglePlayback()
         XCTAssertTrue(session.isPlaying, "Play must start the live preview")
         try await waitForReadyItem(of: session)
@@ -113,6 +120,54 @@ import XCTest
         XCTAssertTrue(session.previewFrameWasShown(player: try XCTUnwrap(session.player), ticket: ticket))
         XCTAssertNil(session.previousPreviewPresentation)
         XCTAssertFalse(session.isPreparingCurrentPreview)
+        session.pausePlayback()
+    }
+
+    /// KRI-1404: two TestFlight 1977 aborts on 2026-11-13, both `-[AVPlayerItem _attachToPlayer:]` under
+    /// `-[AVPlayer initWithPlayerItem:]` while another player was still in `RemoveFromPlayQueue`.
+    ///
+    /// Ways the editor can hand one live item to two players (written before the fix):
+    /// 1. The finished video plays, the warm-up attaches the live item to its own player, the creator pauses or
+    ///    scrubs meanwhile, the warm player is dropped with `replaceCurrentItem(with: nil)` and the plain swap
+    ///    calls `AVPlayer(playerItem:)` on the same item. That detach is asynchronous, so the attach throws.
+    /// 2. The warm-up takes longer than its ~2 s budget (a long, many-cut Talking edit on an older phone) and
+    ///    detaches the item itself before the plain swap re-attaches it.
+    /// 3. A retained preview drifts past the hand-off limit and the corrective seek misses: same detach + attach.
+    /// What must still hold afterwards: one player only (no second audio track left playing), the live preview
+    /// installed and playable, and a stale warm-up (the document changed meanwhile) still discarded.
+    /// This test drives case 1 through the production warm-up; the other two share its swap.
+    func testPausingWhileTheLivePreviewWarmsOverTheFinishedVideoDoesNotAttachItsItemTwice() async throws {
+        let file = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.draft(for: .sourceText),
+                                          operations: LocalEditorOperations(), trustsInitialPlaybackURL: true)
+        session.beginPreviewPresentation()
+        defer { session.endPreviewPresentation() }
+        session.installFinishedRenderPlayer(url: file)
+        try await waitForReadyItem(of: session)
+        let finishedPlayer = try XCTUnwrap(session.player)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying, "The finished video plays while the live preview builds")
+
+        let productionWarmUp = session.prerolledPlayerProvider
+        var warmUps = 0
+        session.prerolledPlayerProvider = { item, time in
+            warmUps += 1
+            let warmed = await productionWarmUp(item, time)
+            session.pausePlayback()  // the creator pauses while the live item warms
+            return warmed
+        }
+
+        await session.prepareFixtureSourcePreview(url: file)
+
+        XCTAssertEqual(warmUps, 1, "The live preview must have been warmed over the playing finished video")
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertFalse(session.isPlaying, "The pause is kept")
+        let livePlayer = try XCTUnwrap(session.player)
+        XCTAssertFalse(livePlayer === finishedPlayer, "The live preview replaced the finished video")
+        XCTAssertNil(finishedPlayer.currentItem, "The finished video's player is detached, so it cannot keep playing")
+        try await waitForReadyItem(of: session)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying, "Play starts the live preview")
         session.pausePlayback()
     }
 

@@ -374,7 +374,7 @@ private struct CopyableMessage<PreviewShape: Shape>: ViewModifier {
 
 private struct AssistantHeading: View {
     let title: String
-    let bodyText: String
+    let bodyText: String?
     var isFormatHeading = false
 
     var body: some View {
@@ -383,11 +383,13 @@ private struct AssistantHeading: View {
                 .font(isFormatHeading ? KriaFont.headline(28) : KriaFont.body(20))
                 .foregroundStyle(KriaColor.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(bodyText)
-                .font(KriaFont.body(14))
-                .foregroundStyle(KriaColor.zinc)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
+            if let bodyText {
+                Text(bodyText)
+                    .font(KriaFont.body(14))
+                    .foregroundStyle(KriaColor.zinc)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -757,7 +759,6 @@ struct DirectionStage: View {
     var recordAgain: (() -> Void)? = nil
     var chooseAnother: (() -> Void)? = nil
     let approval: ApprovalSnapshot
-    let format: CreationFormat?
     /// The v2 thread's `speech_cleanup` projection (`CreationThread.speechCleanup`).
     /// Nil for a thread that predates the field or hasn't loaded it yet, which
     /// resolves to the same plain "Create this video" flow as `applicable: false`.
@@ -795,31 +796,24 @@ struct DirectionStage: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        // KRI-1403: the card must fit one screen. The chat draws it as one lazy row, and a row taller than the
+        // visible chat blanked the whole chat (ylab, build 1977: 14 lines at 22 pt under stock filler). So the draft's
+        // summary is chat-sized text, and nothing here repeats it or says what this draft doesn't decide.
+        VStack(alignment: .leading, spacing: 12) {
             AssistantHeading(
                 title: approval.retryOfExecutionID == nil ? "Here’s the direction I’ll use" : "Retry your approved edit",
-                bodyText: approval.retryOfExecutionID == nil ? "I’ve shaped a clear creative direction from your footage and what you told me." : "This reruns the saved edit with the same clips, text, timing and audio."
+                bodyText: approval.retryOfExecutionID == nil ? nil : "This reruns the saved edit with the same clips, text, timing and audio."
             )
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Creative direction")
-                    .kriaType(.label)
-                    .foregroundStyle(KriaColor.mutedInk)
-                ChatResponseText(content: directionTitle.isEmpty ? "A considered first cut" : directionTitle, startedAt: responseStartedAt)
-                    .font(KriaFont.body(22))
-                    .foregroundStyle(KriaColor.ink)
-                    .copyableMessage(directionTitle, previewShape: RoundedRectangle(cornerRadius: 8))
-
-                if approval.retryOfExecutionID == nil {
-                    Rectangle().fill(KriaColor.line).frame(height: 1)
-                    DirectionRow(label: "Format", value: "\(format?.title ?? "Video") · short-form")
-                    DirectionRow(label: "Rhythm", value: "Natural, intentional")
-                    DirectionRow(label: "Opening", value: "The story, right away")
-                }
-            }
-            .padding(16)
-            .background(KriaColor.sage)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            ChatResponseText(content: directionTitle.isEmpty ? "A considered first cut" : directionTitle, startedAt: responseStartedAt)
+                .font(KriaFont.body(15))
+                .lineSpacing(2)
+                .foregroundStyle(KriaColor.ink)
+                .copyableMessage(directionTitle, previewShape: RoundedRectangle(cornerRadius: 8))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(KriaColor.sage)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             if let researchPreview {
                 ResearchPreviewCard(preview: researchPreview, strings: ResearchPreviewStrings(language: replyLanguage))
@@ -883,24 +877,6 @@ struct DirectionStage: View {
                     keepOriginal: { decide("approve", "keep_original", resolution.analysisID) }
                 )
             }
-        }
-    }
-}
-
-private struct DirectionRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(KriaFont.body(12))
-                .foregroundStyle(KriaColor.zinc)
-                .frame(width: 64, alignment: .leading)
-            Text(value)
-                .font(KriaFont.body(12).weight(.medium))
-                .foregroundStyle(KriaColor.ink)
-            Spacer(minLength: 0)
         }
     }
 }
