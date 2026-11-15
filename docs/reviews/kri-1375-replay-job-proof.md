@@ -5,6 +5,100 @@ with `scripts/admin.py --prod GET`, copies the footage the job's brief binding r
 read-only from the bucket, and runs the Main Creator route and the real worker locally under
 `src/apps/api/tests/prod_flags.snapshot.json`.
 
+## Pass 5: f88555bc and 50f67a06 after the input fixes
+
+Both runs used code commit dd7ac30ba (the commits after it change docs only), on 2026-11-15,
+live. Settled cost across both was $0.1515, from the scratch databases' agent runs. A spend
+watchdog was set to stop each run before the round's $0.35 cap.
+
+### Run 7: f88555bc, the clip now binds as a phone source
+
+Command: `make kria-replay-job JOB=f88555bc-ddd3-4320-b078-c58f17a275be MAX_COST_USD=0.35`
+(16:25 UTC). Cost: $0.0595, one `nova.creator.main` call on `gpt-6.1-sol`.
+
+The source job (production, 2026-10-21) ended `processing_failed` with `phone_plan_unsupported`.
+It had one analysis-proxy clip and four creator messages, two of them choice taps. Its speech
+cleanup is `required_v1`, so the admin debug served its binding row with no media id and no
+`manifest_identity`.
+
+Before this round, the verifier's live run on the same job stopped at message 1 with zero agent
+runs. The seeded clip did not bind, and the runtime answered "Add at least one clip and I can shape
+the edit around what is actually there." The driver reported that as `diverged_from_production`.
+
+What happened now:
+
+* The matched row got `manifest_identity` equal to its media id. The seed's
+  `bind_phone_sources` check passed, and the worker log has no "Add at least one clip" and no
+  `unverified_phone_sources`.
+* Message 1 reached a draft and an approval card (`draft_applied`, `approval_requested`). The
+  plan cites the take's own timecodes: "from “Hi, I'm Karolina, I'm from Ecuador” (0:12) to right
+  after “I'm gonna be here all week” (0:50)".
+* Production asked a choice question at message 1 (`order_basis`: `attachment_order` or
+  `unordered`). So `first_divergent_turn` names message 1 (`choice_question:order_basis` against
+  `approval`). Message 2's tap had no question to answer and was not sent.
+
+Result: `outcome: diverged_from_production`, exit 1. `input_differences.models` names the Main
+Creator: production used `gemini-3.1-pro-preview` for this item, and the replay used `gpt-6.1-sol`,
+which is the snapshot's model since production switched on 2026-11-14. This run says nothing
+about the production failure. It shows the replay now plans on the job's footage.
+
+### Run 8: 50f67a06, the pool photo the old code dropped is replayed
+
+Command: `make kria-replay-job JOB=50f67a06-2c78-4691-831c-5754e3bf9f74 MAX_COST_USD=0.29`
+(16:27 UTC). Cost: $0.0920 over six agent runs: `nova.creator.main` on Sol,
+`nova.plan.clip_intent_planner`, `nova.plan.clip_request_resolver`, three
+`nova.video.clip_question` calls on `gemini-2.5-flash`, and the live analysis of the pool photo.
+
+The source job (production, 2026-10-21) ended `processing_failed` with `phone_plan_unsupported`.
+Its binding has no `visuals` key. Its own plan names pool photo `asset-6ae61e1a-…`: two brief
+scopes `clip:asset-6ae61e1a-…`, an `exact_texts` render requirement, and two resolved clip
+intents. Before this round `--fetch-only` copied only the video (`pool_images: 0`) and still said
+`bound_to_recorded_media: true`.
+
+What happened now:
+
+* Coverage was `replayed_visuals_and_clips: 2`, `pool_images: 1`, `pool_visuals_recorded: false`,
+  `pool_visuals_inferred: 1`, `pool_visuals_added_after_job: 0`, and
+  `input_differences.pool_visuals_not_recorded: 1`. The photo was created at 12:52, before the job
+  at 13:05. It was seeded as the replay's `asset-9726a560-…` and analysed there.
+* Message 1 reached an approval card: six moments, the longest 2.0 s, plus "Couldn't: Freeze the
+  frame for one second on Atakan's bite". Production asked a clip question
+  (`order:his-thumbs-up`) instead. Message 2's clip tap had no clip question to answer and was not
+  sent.
+
+Result: `outcome: diverged_from_production`, exit 1, with the same Main Creator model difference
+(`gemini-3.1-pro-preview` in production, `gpt-6.1-sol` here).
+
+### 4620fd7c is refused before any model call
+
+`--fetch-only` stops with "Pool image 2aa3ede6-… has no storage path in the item debug and is not
+under users/…/plan/81e6999d-…/pool/; it is a media-library asset and this production API predates
+the gcs_path field". This is the known precondition below. It needs this PR's
+`admin_plan_items.py` change deployed.
+
+### Offline proofs this round (no model calls)
+
+These tests were committed red in 22906029e, before the fix in dd7ac30ba:
+
+* `tests/scripts/test_replay_seeded_sources_postgres.py` runs the real `collect_inputs`, seed and
+  `resolve_item_creator_context` on Postgres. It uses f88555bc's shape (redacted row,
+  `required_v1`, `native_device_only`, no client protocol on the messages).
+  * Red: `dispatch_render` came back `unverified_phone_sources`, the verifier's offline probe.
+  * Green: `phone_source_audio` is available, and the thread carries the native-only device
+    intent.
+  * A seeded row that does not bind raises `ReplayInputError`. A cloud clip with no receipt still
+    seeds.
+* `tests/scripts/test_replay_job.py`:
+  * With no `visuals` key, a pool photo created before the job is kept and one added after is left
+    out.
+  * A pool asset the job's plan names but the item no longer holds refuses the run.
+  * A receipt marked `input_error` prints `input_error`.
+  * A message whose answer could not be sent is named in `first_divergent_turn`.
+* `tests/scripts/test_replay_recorded_answers_postgres.py` uses 40684a25's shape on the real
+  `submit_turn`. The replay's clip question asks only `order:the-obelisco`, so the tapped
+  `exclude:anything-too-short-to-use` is left out and recorded in `not_asked_by_replay`. Before
+  the fix the whole answer was refused.
+
 ## Run 6 (pass 3, round 2): e7bf7099 on production's Main Creator model
 
 Command: `make kria-replay-job JOB=e7bf7099-7006-4d3f-9f05-c8daeb83546d MAX_COST_USD=0.35`
@@ -188,3 +282,9 @@ recorded 15, 11 and 1 clips.
   the deterministic `prepared_collection_story` path, so whether production's successful guided
   items skip that agent is not established. `route_comparison` prints it for every run.
 * Model output varies between runs; a different result on the same input is data.
+* The snapshot records today's Main Creator model (`gpt-6.1-sol`). A job from before
+  2026-11-14 planned on `gemini-3.1-pro-preview`, so its replay runs on another model.
+  `model_differences` says so, and runs 7 and 8 both diverged at message 1 under that difference.
+  The replay does not yet run each job on its own production model.
+* Run 6 (`device_plan_ready`) predates this round's code. It was not repeated on dd7ac30ba, to
+  keep this round's paid calls within its cap.
