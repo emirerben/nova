@@ -10,12 +10,15 @@ is replayed end to end by `scripts/kria/check_reply_consistency.py` (all route f
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.config import settings
 from app.kria import brief_checks
-from app.kria.brief import BriefRequirement
-from app.kria.contracts import RequirementReceipt
+from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.contracts import KriaTurnPlan, RequirementReceipt
 from app.kria.reply_consistency import (
     CLOSING_CARD,
     SPEAKER_BACKGROUND,
@@ -29,6 +32,7 @@ from app.kria.reply_language import reply_language_for
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities import talking_head
 from app.kria.route_disclosure import Disclosure
+from app.tasks.kria_runtime import _MAX_TURN_RESPONSE_CHARS, _fit_reply
 
 # yorum3 r5 / r7 / r4, as the brief extractor recorded them.
 CLOSING_CARD_ASK = BriefRequirement(
@@ -398,3 +402,220 @@ def test_old_app_build_is_told_to_update_not_that_the_card_is_unsupported(
     assert receipt.reason.startswith(too_old)
     assert not receipt.reason.startswith(unavailable)
     assert not contradictions([CLOSING_CARD_ASK], [receipt])
+
+
+# --- KRI-1485: the held reply's receipt lines inside `KriaTurnPlan.response` ------------------
+# Qendresa Q2 run 3 (job 77c63496): the first hold listed nine asks and ended "- Add this label
+# when the Claude code game studio section star…", then the "I held this first draft back"
+# sentence. That reply is bound by the contract's 1200 characters, so it is the one place rows
+# can be counted instead of shown. Ways the fitter could fail here (written before it): a line
+# cut in the middle; the count missing or wrong; the tail (what is held, the question) cut;
+# rows that only differ in their quoted text not folded before any is counted; a Done row kept
+# while a Couldn't row is counted; over 1200 characters; the switch off not the old cut.
+
+_Q2_REPLIES = json.loads(
+    (Path(__file__).resolve().parents[1] / "fixtures" / "kri1485_q2_run3_replies.json").read_text(
+        encoding="utf-8"
+    )
+)
+_HOLD_TAIL = _Q2_REPLIES["hold"]["tail"]
+
+
+def _held(body: str, tail: str = _HOLD_TAIL) -> list[str]:
+    """The fitted reply's receipt lines; the reply is valid for the contract and ends on the
+    whole tail."""
+    reply = _fit_reply(body, tail)
+    KriaTurnPlan(mode="respond", turn_value="question", response=reply)
+    assert len(reply) <= _MAX_TURN_RESPONSE_CHARS
+    assert reply.endswith(f"\n{tail}")
+    return reply[: -len(tail) - 1].split("\n")
+
+
+def test_q2_run3_hold_is_cut_at_a_line_and_says_how_many_more():
+    body = _Q2_REPLIES["hold"]["body"]
+    asked = body.split("\n")
+    lines = _held(body)
+
+    kept = [line for line in lines if not line.startswith("- …")]
+    assert kept == asked[: len(kept)]  # whole lines, in order, nothing reworded
+    assert len(kept) >= 10  # the heading, the reason and at least eight asks
+    assert lines[-1] == f"- …and {len(asked) - len(kept)} more"
+    assert not any(line.endswith("…") for line in lines)
+
+
+def test_q2_run3_hold_with_the_switch_off_is_the_stored_reply(monkeypatch):
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", False)
+    assert _fit_reply(_Q2_REPLIES["hold"]["body"], _HOLD_TAIL) == _Q2_REPLIES["stored_hold_reply"]
+
+
+def test_held_rows_that_only_differ_in_their_quoted_text_fold_before_any_is_counted():
+    ask = (
+        "Show this label as text on screen when I start talking about that repo, not as a clip "
+        "label; replace the previous repo label."
+    )
+    reason = "None of the 8 clips got its own text in this draft."
+    labels = ["2. Impeccable", "3. TradingAgents", "4. Agents", "5. Claude code game studio"]
+    body = "\n".join(
+        [
+            "I can't make this yet:",
+            "- Opening title in bold caps, then serif, then handwritten.: "
+            + "It is not there. " * 12,
+            *(f'- {ask} ("{label}"): {reason}' for label in labels),
+            "- Cut all my pauses.: " + "Only the long pauses are cut. " * 8,
+        ]
+    )
+    assert len(body) > _MAX_TURN_RESPONSE_CHARS
+    lines = _held(body)
+
+    quoted = ", ".join(f'"{label}"' for label in labels)
+    assert f"- {ask} ({quoted}): {reason}" in lines
+    assert sum(ask in line for line in lines) == 1
+    assert lines[-1].startswith("- Cut all my pauses.: Only the long pauses are cut.")
+    assert not any(line.startswith("- …") for line in lines)
+
+
+def test_a_held_reply_counts_done_rows_before_it_counts_a_row_that_is_not_done():
+    body = "\n".join(
+        [
+            "Not everything you asked for made it in:",
+            *(
+                f"- Done: Keep clip number {i} exactly as it was filmed, {'no changes ' * 9}"
+                for i in range(8)
+            ),
+            "- Couldn't: Add a song (A Talking video can't do this, so it stays as filmed)",
+        ]
+    )
+    lines = _held(body)
+
+    assert "- Couldn't: Add a song (A Talking video can't do this, so it stays as filmed)" in lines
+    counted = next(line for line in lines if line.startswith("- …and"))
+    assert counted.endswith("more done") and lines[-1] == counted
+
+
+def test_a_held_reply_far_too_long_still_fits_and_counts_every_row_it_leaves_out():
+    """Forty different asks can't all be named in 1200 characters with the tail: the last ones
+    become one honest count (the cards under the reply still list every ask)."""
+    asked = [
+        f"- Put the words for moment {i} right where I say them: I can't find that moment."
+        for i in range(40)
+    ]
+    lines = _held("\n".join(["I can't make this yet:", *asked]))
+
+    kept = lines[1:-1]
+    assert kept == asked[: len(kept)] and kept
+    assert lines[-1] == f"- …and {40 - len(kept)} more"
+
+
+def test_a_reply_fitted_twice_keeps_one_count_line_with_the_whole_total():
+    """Review of the Q2 commits: the receipt reply is fitted to 1200 ("…and 7 more done"), then
+    the held reply fits it again into what is left beside its tail. The count line is a count,
+    not a row: one line, every ask it stands for, and the same text as fitting it once."""
+    asks = [
+        BriefRequirement(
+            id=f"d{i}",
+            kind="text",
+            scope="global",
+            description=f"Keep clip number {i} exactly as it was filmed, with no changes",
+            literal=f"CLIP {i}",
+        )
+        for i in range(20)
+    ]
+    miss = BriefRequirement(id="p1", kind="text", scope="global", description="Add a song")
+    reason = brief_checks._CLOSING_ARROW_MISSING
+    receipts = [
+        *(
+            RequirementReceipt(requirement_id=a.id, status="met", verification="checked")
+            for a in asks
+        ),
+        RequirementReceipt(
+            requirement_id="p1", status="partial", reason=reason, verification="checked"
+        ),
+    ]
+    brief = CreativeBrief(version=1, requirements=[*asks, miss])
+    once, _ = brief_checks.reply_and_lead_from_receipts(brief, receipts)
+    assert sum(line.startswith("- …and") for line in once.split("\n")) == 1
+
+    tail = (
+        "I held this first draft back. " + "Tell me what to change and I'll prepare it again. " * 3
+    )
+    twice = _fit_reply(once, tail)
+    lines = _held(once, tail)
+
+    counts = [line for line in lines if line.startswith("- …and")]
+    named = sum(line.startswith("- Done: Keep clip number") for line in lines)
+    assert counts == [f"- …and {20 - named} more done"]
+    assert f"- Partly: Add a song ({reason})" in lines
+    # Fitting the already fitted reply equals fitting the whole list once.
+    whole = "\n".join(
+        [
+            "Not everything you asked for made it in:",
+            *(f'- Done: {a.description} ("{a.literal}")' for a in asks),
+            f"- Partly: Add a song ({reason})",
+        ]
+    )
+    assert twice == _fit_reply(whole, tail)
+    assert _fit_reply(twice[: -len(tail) - 1], tail) == twice
+
+
+# KRI-1024 Postgres replay (Merope T1 with "甜点" in her title), through the review's fallback:
+# the receipt reply is the old shortening (every row a Partly or Couldn't, longer than the chat
+# alone), then the held reply fits it beside its tail. Counting the last rows away dropped the
+# Couldn't row, the only line that names the character no phone font draws and so the reason
+# the draft is held. A row that says why the draft is held is the last one ever counted.
+_MEROPE_HOLD_BODY = [
+    "Not everything you asked for made it in:",
+    (
+        "- Partly: About 35 seconds (A Talking edit keeps only the part of your take "
+        "you asked for, so…)"
+    ),
+    (
+        "- Partly: Start at 'Hi, I'm Karolina, I'm from Ecuador' and end right after "
+        "'I'm gonna be here all week' (I'll keep your take from “Hi, I'm Karolina, I'm "
+        "from Ecuador”…)"
+    ),
+    (
+        "- Partly: Cut her slip 'with bread, no,' so it says 'waffle cookie with "
+        "blackberry jam' (Choose Clean up speech when you approve and the long pauses "
+        "are…)"
+    ),
+    (
+        "- Partly: Cut the half question 'how are you gonna' (Choose Clean up speech "
+        "when you approve and the long pauses are…)"
+    ),
+    (
+        "- Partly: Captions for both voices, ensuring correct spellings: Oblea de la "
+        "Casa, dulce de leche, leche condensada, Merope (Every voice in your take gets "
+        "captions, off-camera ones too; I'll…)"
+    ),
+    (
+        "- Couldn't: Title on screen, placed so there is no text on her face or on the "
+        'plate ("Colombian dessert, Ecuadorian hands 甜点") (No phone font can draw '
+        '"甜点". Remove it or change "Colombian…)'
+    ),
+    (
+        "- Partly: Show MEROPE in big letters the first time she says Merope, placed so "
+        'there is no text on her face or on the plate ("MEROPE") (I\'ll show it the '
+        "first time that word is said in your take; I can't…)"
+    ),
+    "…",
+    "Heads-up for this video:",
+    ("- Also not applied on this video yet: the planned story structure, the length you asked for"),
+]
+_MEROPE_HOLD_TAIL = (
+    "I held this first draft back. The simpler version leaves out: Title on screen, "
+    'placed so there is no text on her face or on the plate ("Colombian dessert, '
+    'Ecuadorian hands 甜点"). Should I make it without these, or do you want to '
+    "change your request?"
+)
+
+
+def test_a_held_reply_keeps_the_couldnt_row_that_holds_it_and_counts_partly_rows_first():
+    lines = _held("\n".join(_MEROPE_HOLD_BODY), _MEROPE_HOLD_TAIL)
+
+    couldnt = next(line for line in _MEROPE_HOLD_BODY if line.startswith("- Couldn't:"))
+    assert couldnt in lines  # whole, with its quoted glyph reason
+    assert '"甜点"' in "\n".join(lines)
+    partly = [line for line in _MEROPE_HOLD_BODY if line.startswith("- Partly:")]
+    kept = [line for line in lines if line.startswith("- Partly:")]
+    assert kept == partly[: len(kept)]  # the last Partly rows go first, in order
+    assert lines.count(f"- …and {len(partly) - len(kept)} more") == 1

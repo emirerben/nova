@@ -1597,6 +1597,21 @@
    "- Kararlaştırdığımız gibi çıkarıldı: {what}"
   ],
   [
+   "app/kria/brief_checks.py",
+   "You don't say {names} in your take, so nothing is shown for it",
+   "Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "…and {n} more done",
+   "…ve {n} tane daha yapıldı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "…and {n} more",
+   "…ve {n} tane daha"
+  ],
+  [
    "app/agents/editor_ops_v2/split_screen.py",
    "A blank block in a split screen needs the latest Kria update.",
    "Bölünmüş ekranda boş blok için Kria'nın son sürümü gerekiyor."
@@ -1630,6 +1645,11 @@
    "app/kria/brief_checks.py",
    "This video is made from the one video you attached",
    "Bu video eklediğin tek videodan yapılıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I put the pictures where you talk about the moments you described, not on your exact words, so check in the video that each one shows what you meant",
+   "Görselleri tam söylediğin kelimelere değil, anlattığın anlardan bahsettiğin yerlere koydum; videoda her birinin istediğini gösterdiğini kontrol et"
   ]
  ],
  "retired": [

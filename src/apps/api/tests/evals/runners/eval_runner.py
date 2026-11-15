@@ -458,6 +458,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.landmark_guess import LandmarkGuessAgent
 
         return LandmarkGuessAgent
+    if agent_name == "nova.editor.overlay_generation":
+        from app.agents.overlay_generation import OverlayGenerationAgent
+
+        return OverlayGenerationAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

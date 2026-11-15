@@ -35,7 +35,13 @@ Failure modes written before the fix (each has a test below):
  5. spare pop-ins must match the described moments EXACTLY ("2 posts" = 2): one too few (a
     missed moment) or one too many (a pop-in on a word nobody asked for) still holds;
  6. a pop-in a name claims (this ask's, or another ask's in the brief) is never spare;
- 7. with both switches off the draft is held exactly as prod held it (the control).
+ 7. with both switches off the draft is held exactly as prod held it (the control);
+ 8. (review of 3f4a7a6f) a matching COUNT is not proof: an unrelated pop-in counts the same,
+    so described moments are never "met", only a check for the creator, draft and finished
+    video alike;
+ 9. (review of 3f4a7a6f) one spare pop-in never answers two asks' moments: the count is
+    brief-wide, so two asks with one unanswered moment each and one spare pop-in both hold;
+10. an ask none of whose own words has a pop-in is never read by count (today's answer).
 """
 
 from __future__ import annotations
@@ -263,6 +269,8 @@ def test_first_draft_holds_only_the_honest_end_card(monkeypatch):
     assert _held(report) == {"r7": END_CARD}
     assert _row(report, "r1")["disposition"] in APPROVABLE
     assert _row(report, "r3")["disposition"] in APPROVABLE
+    # Approvable, never "Done": only the count of her other pictures matches.
+    assert _row(report, "r3")["reason"] == DESCRIBED_CHECK
 
 
 def test_her_first_reply_is_ready_with_nothing_held(monkeypatch):
@@ -281,6 +289,10 @@ def test_a_typed_selection_keeps_its_own_checker(monkeypatch):
 
 
 ONE_VIDEO = "This video is made from the one video you attached"
+DESCRIBED_CHECK = (
+    "I put the pictures where you talk about the moments you described, not on your exact "
+    "words, so check in the video that each one shows what you meant"
+)
 
 
 @pytest.mark.parametrize("description", ["Use my talking video.", "Konuşma videomu kullan."])
@@ -387,7 +399,9 @@ def test_the_finished_video_says_done_for_her_one_video(monkeypatch):
     )
     receipts = {r.requirement_id: r for r in build_receipts([R1, R3], facts)}
     assert (receipts["r1"].status, receipts["r1"].reason) == ("met", ONE_VIDEO)
-    assert receipts["r3"].status == "met", receipts["r3"].reason
+    # The render placed four pictures for three described moments ("2 posts" = 2), but nothing
+    # says which is which: her check, not "Done".
+    assert (receipts["r3"].status, receipts["r3"].reason) == ("partial", DESCRIBED_CHECK)
 
 
 def test_a_quoted_word_with_no_pop_in_still_holds(monkeypatch):
@@ -452,3 +466,74 @@ def test_a_pop_in_another_ask_names_is_never_spare(monkeypatch):
     extra = {**STRATEGY, "reaction_beats": [*BEATS, _beat("latte", "coffee", LATTE)]}
     brief = CreativeBrief(version=1, requirements=[R3, R8, coffee])
     assert _held(_readiness(monkeypatch, brief, strategy=extra)) == {}
+
+
+def test_an_unrelated_pop_in_of_the_same_count_is_never_done(monkeypatch):
+    # Emir's review: the one spare pop-in sits on "goodbye", nothing to do with the launch. The
+    # count matches (one moment, one spare) and the count is all the server can read, so the
+    # launch is never "met": with her billboards placed it is her check, approvable.
+    launch_and_billboards = _r(
+        "r3",
+        "style",
+        "Show the launch photo and the billboards full screen when I mention them.",
+        facts={"triggers": ["launch", "billboards"], "display_mode": "fullscreen"},
+    )
+    goodbye = {
+        **STRATEGY,
+        "reaction_beats": [
+            _beat("billboards", "billboards", BILLBOARDS),
+            _beat("bye", "goodbye", LATTE),
+        ],
+    }
+    brief = CreativeBrief(version=1, requirements=[launch_and_billboards, R8])
+    row = _row(_readiness(monkeypatch, brief, strategy=goodbye), "r3")
+    # "unverified": approvable, and said as her check after the render, never "Done".
+    assert (row["disposition"], row["reason"]) == ("unverified", DESCRIBED_CHECK)
+
+
+def test_an_ask_with_none_of_its_words_placed_holds_whatever_the_count(monkeypatch):
+    # One moment, one unrelated spare ("goodbye"), and no pop-in on any word the ask names:
+    # nothing ties the plan's pop-ins to it, so today's answer.
+    launch = _r(
+        "r3",
+        "style",
+        "Show the launch photo full screen when I mention the launch.",
+        facts={"triggers": ["launch"], "display_mode": "fullscreen"},
+    )
+    goodbye = {**STRATEGY, "reaction_beats": [_beat("bye", "goodbye", LATTE)]}
+    brief = CreativeBrief(version=1, requirements=[launch, R8])
+    assert _held(_readiness(monkeypatch, brief, strategy=goodbye)) == {
+        "r3": "No pop-in for launch."
+    }
+
+
+def test_one_spare_pop_in_never_answers_two_asks(monkeypatch):
+    # Emir's review: separate asks for "launch" and "billboards", one spare pop-in ("goodbye").
+    # Each ask alone sees one moment and one spare; brief-wide it is two moments for one.
+    launch = _r(
+        "r3",
+        "style",
+        "Show the launch photo full screen when I mention the launch.",
+        facts={"triggers": ["five years", "launch"], "display_mode": "fullscreen"},
+    )
+    billboards = _r(
+        "r9",
+        "style",
+        "Show the billboards full screen when I mention them.",
+        facts={"triggers": ["hinge", "billboards"], "display_mode": "fullscreen"},
+    )
+    # Each ask has one word placed ("five years", "hinge"), so each alone would read one
+    # missing moment against the one spare pop-in.
+    goodbye = {
+        **STRATEGY,
+        "reaction_beats": [
+            _beat("first-post", "five years", POST_1),
+            _beat("second-post", "hinge", POST_2),
+            _beat("bye", "goodbye", LATTE),
+        ],
+    }
+    brief = CreativeBrief(version=1, requirements=[launch, billboards, R8])
+    assert _held(_readiness(monkeypatch, brief, strategy=goodbye)) == {
+        "r3": "No pop-in for launch.",
+        "r9": "No pop-in for billboards.",
+    }

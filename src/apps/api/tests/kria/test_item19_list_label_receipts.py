@@ -149,9 +149,14 @@ def test_draft_flag_off_is_todays_receipt(monkeypatch):
 
 
 def test_draft_with_a_spoken_trigger_keeps_the_kri707_plan(monkeypatch):
+    """A numbered text on ANOTHER word is a text on a word. (A label named by its own trigger
+    is the list lane's since KRI-1480; with that switch off it is KRI-707's as before.)"""
     _flag(monkeypatch, True)
-    receipt = _draft(_req("l1", "1. Spec-kit", facts={"triggers": ["spec kit"]}))
-    assert receipt.reason != PLAN_EN
+    assert _draft(_req("l1", "1. Spec-kit", facts={"triggers": ["github"]})).reason != PLAN_EN
+    named = _req("l1", "1. Spec-kit", facts={"triggers": ["spec kit"]})
+    assert _draft(named).reason == PLAN_EN
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
+    assert _draft(named).reason != PLAN_EN
 
 
 def _row(status: str, **kw) -> dict:

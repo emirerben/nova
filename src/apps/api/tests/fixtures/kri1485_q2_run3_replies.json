@@ -1,0 +1,396 @@
+{
+  "note": "KRI-1485: Qendresa Q2 run 3 (2026-11-15, job 77c63496). The pinned brief (v3) and the receipts of the simpler draft and of the finished video, as stored; ids of turns replaced, no media. `stored_*` are the reply texts production stored (cut at 1200 characters). `hold.body` is the first hold's receipt lines: the stored lines, the cut ninth row completed after its siblings, and the three held rows the cut hid (r10, r13, r14, by their words in the pinned brief).",
+  "brief": {
+    "version": 3,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "text",
+        "facts": {},
+        "scope": "title",
+        "status": "open",
+        "literal": "5 PROJECTS / the AI builder community / can’t stop talking about!!!!",
+        "description": "Opening title in bold caps, then serif, then handwritten.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r2",
+        "kind": "style",
+        "facts": {
+          "speaker_full_opening": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Start with me full screen with the GitHub logo above the opening title.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r3",
+        "kind": "style",
+        "facts": {
+          "speaker_small": true,
+          "background_zoom": true,
+          "background_changes": true,
+          "speaker_background": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "After the opening, put my screen recordings full screen and me cut out with no background, small in the bottom right. Zoom into the recordings so the text is readable and show the matching recording when I discuss each repo.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r4",
+        "kind": "style",
+        "facts": {
+          "triggers": [
+            "what’s hot this week"
+          ],
+          "superseded_by": "server"
+        },
+        "scope": "global",
+        "status": "superseded",
+        "literal": null,
+        "description": "Show the trending page when I talk about what’s hot this week.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r5",
+        "kind": "text",
+        "facts": {
+          "triggers": [
+            "Spec-kit"
+          ]
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": "1. Spec-kit",
+        "description": "Show this label as text on screen when I start talking about that repo, not as a clip label; replace it when the next repo starts.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r6",
+        "kind": "text",
+        "facts": {
+          "triggers": [
+            "Impeccable"
+          ]
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": "2. Impeccable",
+        "description": "Show this label as text on screen when I start talking about that repo, not as a clip label; replace the previous repo label.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r7",
+        "kind": "text",
+        "facts": {
+          "triggers": [
+            "TradingAgents"
+          ]
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": "3. TradingAgents",
+        "description": "Show this label as text on screen when I start talking about that repo, not as a clip label; replace the previous repo label.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r8",
+        "kind": "text",
+        "facts": {
+          "triggers": [
+            "Agents"
+          ]
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": "4. Agents",
+        "description": "Show this label as text on screen when I start talking about that repo, not as a clip label; replace the previous repo label.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r9",
+        "kind": "text",
+        "facts": {
+          "triggers": [
+            "Claude code game studio"
+          ]
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": "5. Claude code game studio",
+        "description": "Show this label as text on screen when I start talking about that repo, not as a clip label; replace the previous repo label.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r10",
+        "kind": "style",
+        "facts": {
+          "captions": "word_by_word",
+          "caption_box": "#E5E5E5",
+          "caption_position": "bottom"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Captions word by word in a light grey box near the bottom.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r11",
+        "kind": "style",
+        "facts": {
+          "pauses": "tight",
+          "speech_cleanup": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Cut all my pauses.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r12",
+        "kind": "text",
+        "facts": {
+          "closing": "comment REPO"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": "comment REPO",
+        "description": "End with “comment REPO” and an arrow.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r13",
+        "kind": "audio",
+        "facts": {
+          "audio_intent": "no_music"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Only my voice: no music.",
+        "source_turn_id": "turn-1"
+      },
+      {
+        "id": "r14",
+        "kind": "audio",
+        "facts": {
+          "superseded_by": "server"
+        },
+        "scope": "global",
+        "status": "superseded",
+        "literal": null,
+        "description": "Only my voice: keep the speaker audible and mute the screen recordings.",
+        "source_turn_id": "turn-1"
+      }
+    ]
+  },
+  "draft_receipts": [
+    {
+      "requirement_id": "r1",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r2",
+      "status": "met",
+      "reason": "You'll start full screen in your own room, then you're small in the bottom-right corner when you start on your first recording.",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r3",
+      "status": "partial",
+      "reason": "I'll zoom onto the text when the video is made; I can't confirm it before then",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r5",
+      "status": "partial",
+      "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r6",
+      "status": "partial",
+      "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r7",
+      "status": "partial",
+      "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r8",
+      "status": "partial",
+      "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r9",
+      "status": "partial",
+      "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r10",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r11",
+      "status": "partial",
+      "reason": "Choose Clean up speech when you approve and every pause is cut down to about 0.3 s",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r12",
+      "status": "partial",
+      "reason": "I'll draw a curly arrow next to your ending text",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r13",
+      "status": "met",
+      "reason": "No music, as asked.",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    }
+  ],
+  "review_receipts": [
+    {
+      "requirement_id": "r1",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r2",
+      "status": "met",
+      "reason": "You're full screen in your own take for the first 5.5 s, then small in the bottom-right corner.",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r3",
+      "status": "met",
+      "reason": "5 photos or videos take turns behind you; you're small at the bottom right. Your recordings are zoomed in on their text.",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r5",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r6",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r7",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r8",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r9",
+      "status": "partial",
+      "reason": "I didn't hear you say “Claude code game studio” in your take, so “5. Claude code game studio” isn't shown",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r10",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r11",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r12",
+      "status": "met",
+      "reason": null,
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    },
+    {
+      "requirement_id": "r13",
+      "status": "met",
+      "reason": "No music, as asked.",
+      "verification": "checked",
+      "stage": "checked",
+      "brief_version": 3
+    }
+  ],
+  "stored_draft_reply": "Here's the simpler version.\n- Done: Opening title in bold caps, then serif, then handwritten. (\"5 PROJECTS / the AI builder community / can’t stop talking about!!!!\")\n- Done: Start with me full screen with the GitHub logo above the opening title. (You'll start full screen in your own room, then you're small in the bottom-right corner when you start on your first recording)\n- Will do at render: After the opening, put my screen recordings full screen and me cut out with no background, small in the bottom right. Zoom into the recordings so the text is readable and show the matching recording when I discuss each repo. (I'll zoom onto the text when the video is made; I can't confirm it before then)\n- Will do at render: Show this label as text on screen when I start talking about that repo, not as a clip label; replace it when the next repo starts. (\"1. Spec-kit\") (I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear)\n- Will do at render: Show this label as text on screen when I start talking about that repo, not as a clip label; replace the previous repo label. (\"2. Impeccable\") (I'll show it the moment you say that word in your take; if I don't hear the word, it won't…\n- Left out as agreed: Show the trending page when I talk about what’s hot this week.\n- Left out as agreed: Only my voice: keep the speaker audible and mute the screen recordings.\nHeads-up for this video:\n- I can't use the opening hook idea (\"Your on-camera introduction to the five projects before the matching…\") on this video yet, so it won't be shown as text",
+  "stored_review_reply": "Not everything you asked for made it in:\n- Done: Opening title in bold caps, then serif, then handwritten. (\"5 PROJECTS / the AI builder community / can’t stop talking about!!!!\")\n- Done: Start with me full screen with the GitHub logo above the opening title. (You're full screen in your own take for the first 5.5 s, then small in the bottom-right corner)\n- Done: After the opening, put my screen recordings full screen and me cut out with no background, small in the bottom right. Zoom into the recordings so the text is readable and show the matching recording when I discuss each repo. (5 photos or videos take turns behind you; you're small at the bottom right. Your recordings are zoomed in on their text)\n- Done: Show this label as text on screen when I start talking about that repo, not as a clip label; replace it when the next repo starts. (\"1. Spec-kit\")\n- Done: Show this label as text on screen when I start talking about that repo, not as a clip label; replace the previous repo label. (\"2. Impeccable\")\n- Done: Show this label as text on screen when I start talking about that repo, not as a clip label; replace the previous repo label. (\"3. TradingAgents\")\n- Done: Show this label a…\n- Left out as agreed: Show the trending page when I talk about what’s hot this week.\n- Left out as agreed: Only my voice: keep the speaker audible and mute the screen recordings.\n\nSpeech cleanup cut what it heard as 12 pauses and 1 restarted sentence (9.4 s).",
+  "stored_hold_reply": "I can't make this yet:\nI couldn't tell which clip \"1. Spec-kit\" goes on, so I can't confirm that text.\n- Opening title in bold caps, then serif, then handwritten. (\"5 PROJECTS / the AI builder community / can’t stop talking about!!!!\")\n- Start with me full screen with the GitHub logo above the opening title.\n- After the opening, put my screen recordings full screen and me cut out with no background, small in the bottom right. Zoom into the recordings so the text is readable and show the matching recording when I discuss each repo.\n- Show the trending page when I talk about what’s hot this week.\n- Add this label when the Spec-kit section starts, replacing it when the next project starts. (\"1. Spec-kit\")\n- Add this label when the Impeccable section starts, replacing the previous project label. (\"2. Impeccable\")\n- Add this label when the TradingAgents section starts, replacing the previous project label. (\"3. TradingAgents\")\n- Add this label when the Agents section starts, replacing the previous project label. (\"4. Agents\")\n- Add this label when the Claude code game studio section star…\nI held this first draft back. Please clarify the requested changes so I can prepare the edit again.",
+  "hold": {
+    "body": "I can't make this yet:\nI couldn't tell which clip \"1. Spec-kit\" goes on, so I can't confirm that text.\n- Opening title in bold caps, then serif, then handwritten. (\"5 PROJECTS / the AI builder community / can’t stop talking about!!!!\")\n- Start with me full screen with the GitHub logo above the opening title.\n- After the opening, put my screen recordings full screen and me cut out with no background, small in the bottom right. Zoom into the recordings so the text is readable and show the matching recording when I discuss each repo.\n- Show the trending page when I talk about what’s hot this week.\n- Add this label when the Spec-kit section starts, replacing it when the next project starts. (\"1. Spec-kit\")\n- Add this label when the Impeccable section starts, replacing the previous project label. (\"2. Impeccable\")\n- Add this label when the TradingAgents section starts, replacing the previous project label. (\"3. TradingAgents\")\n- Add this label when the Agents section starts, replacing the previous project label. (\"4. Agents\")\n- Add this label when the Claude code game studio section starts, replacing the previous project label. (\"5. Claude code game studio\")\n- Captions word by word in a light grey box near the bottom.\n- Only my voice: no music.\n- Only my voice: keep the speaker audible and mute the screen recordings.",
+    "tail": "I held this first draft back. Please clarify the requested changes so I can prepare the edit again."
+  }
+}

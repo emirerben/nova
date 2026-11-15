@@ -639,6 +639,7 @@
     "I'll show it the first time that word is said in your take; I can't tell who's speaking, so it may appear when someone else says it": "Ich zeige ihn, wenn das Wort in deinem Take zum ersten Mal gesagt wird; ich erkenne nicht, wer spricht, deshalb kann er auch erscheinen, wenn jemand anderes es sagt",
     "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear": "Ich zeige ihn in dem Moment, in dem du das Wort in deinem Take sagst; wenn ich das Wort nicht höre, erscheint er nicht",
     "I'll show it when I hear those words in your voiceover": "Ich zeige es, sobald ich diese Worte in deinem Voiceover höre",
+    "I put the pictures where you talk about the moments you described, not on your exact words, so check in the video that each one shows what you meant": "Ich habe die Bilder dort gezeigt, wo du über die beschriebenen Momente sprichst, nicht auf deinen genauen Worten; prüfe im Video, ob jedes zeigt, was du gemeint hast",
     "I'll show it when that part of your talk starts; if I don't hear where it starts, it won't appear": "Ich zeige ihn, wenn dieser Teil deiner Rede beginnt; wenn ich nicht höre, wo er beginnt, erscheint er nicht",
     "I'll show these words one at a time when I prepare the video, then check.": "Ich zeige diese Wörter nacheinander, wenn ich das Video vorbereite, und prüfe es danach.",
     "I'll show your Visuals as cards when you talk about them; one you never talk about won't appear": "Ich zeige deine Visuals als Karten, wenn du darüber sprichst; eines, über das du nie sprichst, erscheint nicht",
@@ -1357,6 +1358,7 @@
     "You didn't pick a clip for \"{words}\"": "Du hast keinen Clip für \"{words}\" ausgewählt",
     "You didn't say what order the clips in {quoted} should play in. Tell me the order, or say any order is fine.": "Du hast nicht gesagt, in welcher Reihenfolge die Clips in {quoted} laufen sollen. Sag mir die Reihenfolge oder sag, dass jede Reihenfolge okay ist.",
     "You didn't say what order these clips should play in. Tell me the order, or say any order is fine.": "Du hast nicht gesagt, in welcher Reihenfolge diese Clips laufen sollen. Sag mir die Reihenfolge oder sag, dass jede Reihenfolge okay ist.",
+    "You don't say {names} in your take, so nothing is shown for it": "Du sagst {names} in deinem Take nicht, deshalb wird dafür nichts gezeigt",
     "You gave me a specific order for the clips.": "Du hast mir eine bestimmte Reihenfolge für die Clips vorgegeben.",
     "You gave me the words \"{clean_name_str_req_literal}\" for one shot.": "Du hast mir für eine Einstellung den Text \"{clean_name_str_req_literal}\" gegeben.",
     "You marked {named} on a different clip than the one I put the text on; mark it on the speaking clip": "Du hast {named} auf einem anderen Clip markiert als dem, auf den ich den Text gelegt habe; markier es auf dem Clip, in dem gesprochen wird",
@@ -1752,6 +1754,8 @@
     "{what} is in {count} stretches": "{what} ist in {count} Abschnitte geteilt",
     "{why_capitalize}.": "{why_capitalize}.",
     "{words} ({spot})": "{words} ({spot})",
-    "“{state_candidate}” — does this wording work?": "„{state_candidate}“ – passt dir dieser Wortlaut?"
+    "“{state_candidate}” — does this wording work?": "„{state_candidate}“ – passt dir dieser Wortlaut?",
+    "…and {n} more": "…und {n} weitere",
+    "…and {n} more done": "…und {n} weitere erledigt"
   }
 }

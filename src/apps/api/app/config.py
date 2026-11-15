@@ -1121,6 +1121,24 @@ class Settings(BaseSettings):
     # before. Rollback: `fly secrets set LIST_LABEL_EXAMPLE_ASK_ENABLED=false --app nova-video`
     # + restart (api + worker).
     list_label_example_ask_enabled: bool = True
+    # KRI-1486: a visual asked for words the take never says ("show the trending page when I
+    # talk about what's hot this week") is reported, not held. On a phone Talking edit whose
+    # take has a transcript that says none of the ask's typed trigger words, the receipt is
+    # "You don't say “...” in your take, so nothing is shown for it" (draft and finished video)
+    # and the draft is approvable; before, "No pop-in for ..." held it for a choice nobody could
+    # make. Words she does say, or no transcript: unchanged. Default TRUE. False: exactly as
+    # before. Rollback: `fly secrets set UNSAID_CUE_REPORT_ENABLED=false --app nova-video` +
+    # restart (api + worker).
+    unsaid_cue_report_enabled: bool = True
+    # KRI-1484: a numbered list label shown while the recordings play behind the speaker (a
+    # speaker-background window, never her full-screen take) is drawn on an opaque dark plate
+    # (#141414, the label's cream letters unchanged), the text row's `background_color`. Her
+    # zoomed README pages have text in every band, so outline and size alone left labels
+    # unreadable. Needs `authoredText` in PHONE_RENDER_VERIFIED_FEATURES (else today's look).
+    # Default FALSE: a new look, one phone check first; false = byte-identical rows. Apply:
+    # `fly secrets set LIST_LABEL_PLATE_ENABLED=true --app nova-video` + restart (api + worker).
+    # Rollback: `...=false` + restart (saved rows keep their plate; new renders have none).
+    list_label_plate_enabled: bool = False
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an
@@ -1475,6 +1493,15 @@ class Settings(BaseSettings):
     # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
     # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
     kria_honest_reply_lines_enabled: bool = False
+    # KRI-1485: a hold / draft / review reply longer than the chat's 1200 characters is fitted
+    # line by line (`brief_checks.fit_reply_rows`) instead of cut mid-sentence: rows with the
+    # same status, ask and reason fold into one line naming each label, Done rows lose their
+    # reasons, then fold into "…and N more done"; a Partly / Couldn't / Will-do row and its
+    # reason are never dropped or shortened (the list may then run past 1200). Only the held
+    # reply, bound by `KriaTurnPlan.response`, may end "…and N more". Default TRUE. Rollback:
+    # `fly secrets set KRIA_REPLY_LINE_FIT_ENABLED=false --app nova-video` + restart (api +
+    # worker) = the old cut at 1200 characters, byte-identical.
+    kria_reply_line_fit_enabled: bool = True
     # KRI-1472: "Only my voice." filed as its own sound ask (the typed `voice_only` fact) is
     # judged like "No music" (`app.kria.voice_only_ask`): done on a Talking edit with no music,
     # "This video has music." when there is some. Before, no checker owned it, so a Talking
