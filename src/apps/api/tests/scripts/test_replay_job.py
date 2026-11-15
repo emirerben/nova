@@ -409,6 +409,41 @@ def test_the_replay_is_interrupted_once_its_settled_spend_passes_the_cap(monkeyp
     assert finished == (0, None)
 
 
+def test_a_stopped_driver_takes_its_replay_down_with_it(monkeypatch, tmp_path) -> None:
+    """A SIGTERM to the driver (make interrupted) left replay_creator running after the worker
+    stopped and the scratch database was dropped: it sent message 1 and the Main Creator call
+    was billed ($0.047, 2026-11-15 17:24). Ways this goes wrong: the child outlives the driver;
+    the interrupt is swallowed and the driver reports a result."""
+
+    import os
+    import time
+
+    pid_file = tmp_path / "child.pid"
+
+    def interrupted(url: str) -> float:
+        while not pid_file.exists():
+            time.sleep(0.01)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(replay_job, "settled_spend_usd", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        replay_job.run_under_spend_cap(
+            [
+                sys.executable,
+                "-c",
+                f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+                "time.sleep(60)",
+            ],
+            env={"PATH": "/usr/bin:/bin"},
+            scratch_url="postgresql://x@localhost/y",
+            cap_usd=0.35,
+            poll_s=0.05,
+        )
+    child = int(pid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)
+
+
 def test_a_failure_inside_an_agent_production_never_ran_is_a_divergence() -> None:
     recorded = _runs(
         ("nova.creator.main", "ok"),
