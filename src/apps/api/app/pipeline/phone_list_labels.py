@@ -44,6 +44,9 @@ LIST_LABEL_LOOK_PARAM = "list_label_look"
 HOLD_S = 3.0
 MIN_S = 0.8
 LABEL_Y_FRAC = 0.86
+# KRI-1471: where a label goes when her spot is taken (a card in the bottom band, a caption
+# line): the free band above her head, about y 0.08-0.16 for a one-line label.
+LABEL_TOP_Y_FRAC = 0.12
 # Her label look (V5 OCR + frames): bold cream text with a dark outline.
 LABEL_FONT_FAMILY = "TikTok Sans Bold"
 LABEL_COLOR = "#FCF3C3"
@@ -815,6 +818,36 @@ def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: A
     return label_look(element.model_dump(mode="json", exclude_none=True), canvas=canvas)
 
 
+def _clear_spot(row: dict, avoid: list, place: Callable, canvas: Any) -> tuple[dict, dict]:
+    """KRI-1471: ``place(row, avoid)`` at her spot and, when that leaves the label on something
+    else on screen (``text_overlap``: a card, a caption line, other text), once more from the
+    band above her head (`LABEL_TOP_Y_FRAC`, lower for a taller label so it stays under the top
+    margin). The move is taken only when it is clear of those and of every face; otherwise her
+    spot stays as placed, ``text_overlap`` and all, and the receipt row says so.
+
+    The Q1 run 3 replay drew all five labels over their own screenshot cards: the placer's rows
+    (her spot, the title's 0.5 / 0.44 / 0.38, just under her face) were all taken, and it went
+    back to her spot. A label that is clear at her spot is placed once, exactly as before."""
+    placed, placement = place(row, list(avoid))
+    if not _example_asks_on() or placement.get("text_overlap") is not True:
+        return placed, placement
+    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
+        _TOP_MARGIN_FRAC,
+        _measure_title_box,
+    )
+
+    box = _measure_title_box(row, canvas=canvas)
+    top = round(max(LABEL_TOP_Y_FRAC, _TOP_MARGIN_FRAC + (box.bottom - box.top) / 2 + 0.002), 4)
+    moved, verdict = place({**row, "y_frac": top}, list(avoid))
+    blocked = ("text_overlap", "face_collision", "object_collision")
+    if verdict.get("status") in (None, "error", "best_effort") or any(
+        verdict.get(key) is True for key in blocked
+    ):
+        return placed, placement
+    status = "moved" if verdict.get("status") == "preset" else verdict["status"]
+    return moved, {**verdict, "status": status, "default_y_frac": row["y_frac"]}
+
+
 def list_label_rows(
     asks: Sequence[ListLabelAsk],
     *,
@@ -953,7 +986,7 @@ def list_label_rows(
         try:
             row = _label_element(ask, start_s=start, end_s=end, canvas=canvas)
             avoid = avoid_for((start, end), list(rows))
-            placed, placement = place(row, list(avoid))
+            placed, placement = _clear_spot(row, list(avoid), place, canvas)
         except LabelTooLong:
             status[rid] = "too_long"  # left out whole, never drawn shortened
             continue
@@ -973,6 +1006,12 @@ def list_label_rows(
             # A placement that could not look ("error") is never called clear of the face.
             "face_collision": placement.get("face_collision") is True
             or placement.get("status") == "error",
+            # KRI-1471: no clear spot was found, so the label sits on something else on screen.
+            **(
+                {"text_overlap": True}
+                if placement.get("text_overlap") is True and _example_asks_on()
+                else {}
+            ),
         }
 
     receipt_rows: list[dict[str, Any]] = []

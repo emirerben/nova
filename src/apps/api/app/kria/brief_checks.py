@@ -413,6 +413,9 @@ class ListLabelFact:
     items_missing: tuple[str, ...] = ()
     # Found items `list_found` counts that the receipt has no row for (also not shown).
     items_unaccounted: int = 0
+    # KRI-1471: the label (or a spoken item of its list) found no clear spot and is drawn over
+    # something else on screen (a card, a caption line, other text).
+    text_overlap: bool = False
 
 
 @dataclass(frozen=True)
@@ -11955,6 +11958,8 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
                 str(item.get("text") or "") for item in found_items if not _drawn_item(item)
             ),
             items_unaccounted=max(0, found - 1 - len(found_items)) if found is not None else 0,
+            text_overlap=row.get("text_overlap") is True
+            or any(_drawn_item(item) and item.get("text_overlap") is True for item in found_items),
         )
 
     return {
@@ -12079,6 +12084,19 @@ def _with_list_label_face(
                 en="{text} lands on a face; I couldn't find a spot clear of it",
                 tr="{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
                 text=text,
+            ),
+        )
+    if fact.text_overlap:
+        # KRI-1471: never "Done" for a label drawn over a card or a caption line.
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "{text} sits over something else on screen; I couldn't find a clear spot for it"
+                ),
+                tr="{text} ekranda başka bir şeyin üstünde duruyor; ona boş bir yer bulamadım",
+                text=f"“{fact.text}”",
             ),
         )
     if fact.list_found == 1:

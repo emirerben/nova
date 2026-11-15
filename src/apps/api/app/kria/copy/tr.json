@@ -1713,6 +1713,7 @@
     "{text} is longer than fits on screen, so the video shows “{fact_cut_to}”": "{text} ekrana sığmayacak kadar uzun, o yüzden videoda “{fact_cut_to}” görünüyor",
     "{text} isn't on the video": "{text} videoda yok",
     "{text} lands on a face; I couldn't find a spot clear of it": "{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
+    "{text} sits over something else on screen; I couldn't find a clear spot for it": "{text} ekranda başka bir şeyin üstünde duruyor; ona boş bir yer bulamadım",
     "{text} stays on screen for {held:g} s, not the {asked:g} s you asked for": "{text} ekranda istediğin {asked:g} sn yerine {held:g} sn kalıyor",
     "{unnamed} of your recordings never {v1}.": "Kayıtlarından {unnamed} tanesi hiç görünmüyor.",
     "{v1} and {v2}": "{v1} ve {v2}",

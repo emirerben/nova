@@ -570,3 +570,36 @@ def test_x9_a_label_never_heard_says_so(monkeypatch):
 def test_after_the_render_switch_off_judges_the_row_as_before(monkeypatch):
     _example_switch(monkeypatch, False)
     assert _after(_example(), _q1_rows(5)).status != "met"
+
+
+# --- KRI-1471: a label left on a card or a caption line is never "Done" -------------------
+#
+# The Q1 run 3 replay: every label was drawn over its screenshot card and the done-list said
+# "Done". When the worker finds no clear spot it now records ``text_overlap`` on the row. Ways
+# the receipt can go wrong: O1 it still says met; O2 the Turkish turn does; O3 an overlap on
+# one of the spoken items (rows 2..) is lost; O4 a clear label stops being met.
+
+OVERLAP_EN = "“1. Spec-kit” sits over something else on screen; I couldn't find a clear spot for it"
+OVERLAP_TR = "“1. Spec-kit” ekranda başka bir şeyin üstünde duruyor; ona boş bir yer bulamadım"
+
+
+def test_o1_o2_a_label_left_on_a_card_is_partial_and_says_so(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows = _q1_rows(5, text_overlap=True)
+    receipt = _after(_example(), rows)
+    assert (receipt.status, receipt.reason) == ("partial", OVERLAP_EN)
+    assert _after(_example(), rows, lang="tr").reason == OVERLAP_TR
+    assert _after(_req("r5", "1. Spec-kit"), rows).status == "partial"  # item 19's own row too
+
+
+def test_o3_an_overlapping_spoken_item_makes_the_list_partial(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows = _q1_rows(5)
+    rows[3] = {**rows[3], "text_overlap": True}
+    receipt = _after(_example(), rows)
+    assert (receipt.status, receipt.reason) == ("partial", OVERLAP_EN)
+
+
+def test_o4_clear_labels_are_still_met(monkeypatch):
+    _example_switch(monkeypatch, True)
+    assert _after(_example(), _q1_rows(5, text_overlap=False)).status == "met"

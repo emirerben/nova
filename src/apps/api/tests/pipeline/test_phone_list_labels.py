@@ -1389,3 +1389,120 @@ def test_c9_a_same_opener_list_is_still_read_first(monkeypatch):
     rows, _ = _v7_rows(_talk(V7_INTRO, V7_LIST))
     assert _texts(rows)[1] == "2. what it saves on my machine?"
     assert pl.find_counted_list(_talk(V7_INTRO, V7_LIST), first_start_s=0.0, first_end_s=0.2) == []
+
+
+# --- KRI-1471: a label never sits on a card or a caption line (the Q1 run 3 replay) -------
+#
+# The combined replay drew all five labels over their own screenshot cards: her spot (y 0.86)
+# is inside the bottom band the cards use once her captions are back in the middle. The placer
+# tried only the title's rows (her spot, 0.5, 0.44, 0.38, just under her face), found none
+# clear, and went back to her spot with ``text_overlap: true``; the done-list said "Done".
+#
+# Ways the fix can go wrong, written before the code:
+#  S1 her spot is taken and the free band above her head is never tried;
+#  S2 a label that is clear at her spot moves anyway (existing videos change);
+#  S3 the top spot is taken too and the label is drawn there, or the overlap is not recorded;
+#  S4 a two-line label in the top band runs off the top of the frame;
+#  S5 the switch off is not today's placement (one try, no new receipt key);
+#  S6 the top spot lands on a face (the placer's own verdict is ignored).
+
+CARD_BAND = NormalizedBox(0.205, 0.694, 0.98, 0.939)  # the replay's bottom-band cards
+
+
+def _taken_placer(taken: tuple[NormalizedBox, ...], face: NormalizedBox | None = None):
+    """A placer like `place_talking_title`: the row stays where it is asked; ``text_overlap``
+    when its ink is on something in ``avoid``, ``face_collision`` when it is on ``face``."""
+    from app.pipeline.phone_subtitled_title import _measure_title_box
+
+    calls: list[float] = []
+
+    def place(row, avoid):
+        calls.append(row["y_frac"])
+        box = _measure_title_box(row, canvas=_CANVAS)
+        receipt = {"status": "preset", "chosen_y_frac": row["y_frac"]}
+        if avoid:
+            receipt["text_overlap"] = any(box.coverage_by(other) > 0.05 for other in avoid)
+        if face is not None and box.coverage_by(face) > 0.05:
+            receipt["face_collision"] = True
+        return dict(row), receipt
+
+    def avoid_for(window, rows):
+        return list(taken)
+
+    return place, avoid_for, calls
+
+
+def _one_label(place, avoid_for, text="1. Spec-kit", phrase="spec kit"):
+    rows, receipt = _rows(
+        _asks([text]), _anchors([5.0], phrases=[phrase]), place=place, avoid_for=avoid_for
+    )
+    return rows, receipt["rows"][0]
+
+
+def test_s1_her_spot_taken_by_a_card_moves_the_label_above_her_head(monkeypatch):
+    _example_switch(monkeypatch, True)
+    place, avoid_for, calls = _taken_placer((CARD_BAND,))
+    [row], receipt = _one_label(place, avoid_for)
+
+    assert calls[0] == LABEL_Y_FRAC and len(calls) == 2
+    assert 0.08 <= row["y_frac"] <= 0.16
+    placement = receipt["placement"]
+    assert (placement["status"], placement["default_y_frac"]) == ("moved", LABEL_Y_FRAC)
+    assert placement["text_overlap"] is False and "text_overlap" not in receipt
+    assert receipt["status"] == "placed"
+
+
+def test_s2_a_label_clear_at_her_spot_is_placed_once_where_it_was(monkeypatch):
+    _example_switch(monkeypatch, True)
+    place, avoid_for, calls = _taken_placer((NormalizedBox(0.1, 0.02, 0.9, 0.2),))
+    [row], receipt = _one_label(place, avoid_for)
+
+    assert calls == [LABEL_Y_FRAC] and row["y_frac"] == LABEL_Y_FRAC
+    assert receipt["placement"]["status"] == "preset" and "text_overlap" not in receipt
+
+
+def test_s3_no_clear_spot_keeps_her_spot_and_the_receipt_says_so(monkeypatch):
+    _example_switch(monkeypatch, True)
+    place, avoid_for, _calls = _taken_placer((CARD_BAND, NormalizedBox(0.1, 0.02, 0.9, 0.2)))
+    [row], receipt = _one_label(place, avoid_for)
+
+    assert row["y_frac"] == LABEL_Y_FRAC
+    assert receipt["status"] == "placed" and receipt["text_overlap"] is True
+
+
+def test_s4_a_two_line_label_stays_inside_the_frame_above_her_head(monkeypatch):
+    from app.pipeline.phone_subtitled_title import _measure_title_box
+
+    _example_switch(monkeypatch, True)
+    place, avoid_for, _calls = _taken_placer((CARD_BAND,))
+    [row], _receipt = _one_label(
+        place, avoid_for, text="5. Cloud Code Game Studios", phrase="cloud code game studios"
+    )
+
+    box = _measure_title_box(row, canvas=_CANVAS)
+    assert box.bottom - box.top > 0.10, "the fixture must be a two-line label"
+    assert box.top >= 0.06 - 1e-6 and box.bottom <= 0.2113  # under the margin, above her head
+
+
+def test_s5_switch_off_is_one_try_at_her_spot_as_today(monkeypatch):
+    _example_switch(monkeypatch, False)
+    place, avoid_for, calls = _taken_placer((CARD_BAND,))
+    [row], receipt = _one_label(place, avoid_for)
+
+    assert calls == [LABEL_Y_FRAC] and row["y_frac"] == LABEL_Y_FRAC
+    assert receipt["placement"] == {
+        "status": "preset",
+        "chosen_y_frac": LABEL_Y_FRAC,
+        "text_overlap": True,
+    }
+    assert "text_overlap" not in receipt
+
+
+def test_s6_a_top_spot_on_a_face_is_not_taken(monkeypatch):
+    _example_switch(monkeypatch, True)
+    tall_face = NormalizedBox(0.3, 0.05, 0.7, 0.5)
+    place, avoid_for, _calls = _taken_placer((CARD_BAND,), face=tall_face)
+    [row], receipt = _one_label(place, avoid_for)
+
+    assert row["y_frac"] == LABEL_Y_FRAC and receipt["text_overlap"] is True
+    assert receipt["face_collision"] is False
