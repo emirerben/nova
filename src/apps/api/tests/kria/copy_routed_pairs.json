@@ -1545,6 +1545,16 @@
    "app/tasks/kria_runtime.py",
    "Writing the on-screen text for this many clips took longer than our AI allows, so your video wasn't made. Your edit and footage are saved. Fewer clips or less text would help.",
    "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az klip ya da daha az yazı işe yarar."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "- Left out as agreed: {count} of your asks",
+   "- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "- Left out as agreed: {what}",
+   "- Kararlaştırdığımız gibi çıkarıldı: {what}"
   ]
  ],
  "retired": [

@@ -28,6 +28,7 @@
     ", so have a look at the captions": ", schau dir also die Untertitel an",
     ", so nothing plays on after your voice": ", also läuft nach deiner Stimme nichts weiter",
     ", starting with {pins_first}": ", angefangen mit {pins_first}",
+    "- Left out as agreed: {count} of your asks": "- Wie besprochen weggelassen: {count} deiner Wünsche",
     "- Left out as agreed: {what}": "- Wie besprochen weggelassen: {what}",
     "- Left out in the simpler version: {what}": "- In der einfacheren Version weggelassen: {what}",
     "- Left out: {v1} ({omission_reasons_get_req_id})": "- Weggelassen: {v1} ({omission_reasons_get_req_id})",
