@@ -1077,6 +1077,15 @@ class Settings(BaseSettings):
     # (api + worker); rollback = `...=false` + restart. Design:
     # docs/reviews/speaker-background-windows-failure-modes.md (S64-S69).
     background_follows_talk_enabled: bool = False
+    # Çiğdem S2 "Cigdem 2" (2026-11-15, KRI-1494): when the creator NAMES a pace for the
+    # pictures behind them ("changing every 3-5 seconds"), no background window outlasts it by more
+    # than 1 s: a small overshoot brings the next picture in early, and a long hold after a
+    # picture's own sentence is filled by pictures already shown. Without a named pace S57 stands
+    # (a longer scene beats a repeat). Default TRUE; rollback = `fly secrets set
+    # BACKGROUND_KEEPS_ASKED_PACE_ENABLED=false --app nova-video` + restart (worker): layouts are
+    # then byte-identical to S57 and the review says when a picture stays longer than asked.
+    # Design: docs/reviews/cigdem-s2-failure-modes.md (E).
+    background_keeps_asked_pace_enabled: bool = True
     # Qendresa item 16 (builds on KRI-1162): the speaker starts FULL SCREEN in their own take (no
     # person mask, no background, no corner) and then drops into the background / corner for the
     # rest of the edit. Recipe field `speaker_background.full_screen_windows` (capability

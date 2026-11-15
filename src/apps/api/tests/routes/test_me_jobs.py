@@ -1569,6 +1569,62 @@ def test_playback_diagnostics_drops_a_trace_that_is_not_fixed_labels_and_counts(
         assert events[0]["error_code"] == -11800, "the rest of the report is kept"
 
 
+def test_playback_diagnostics_logs_a_media_services_reset_as_a_recovered_reset() -> None:
+    """Cigdem 2 (job ef12ddfd, failure modes G1-G3): iOS restarted its media services 8 s after a
+    phone render, and the editor's KRI-626 recovery rebuilt every player (the creator saw nothing
+    wrong). Its reports -- `-11819`, then `-11800` over `'!ses'` (561210739) -- are logged as a
+    reset at info level, not as a playback failure; every other report is unchanged."""
+    user = _user()
+    url = _diagnostics_url(uuid.uuid4())
+    reset_reports = (
+        {
+            **_PLAYBACK_DIAGNOSTIC,
+            "error_code": -11819,
+            "underlying_domain": None,
+            "underlying_code": None,
+        },
+        {
+            **_PLAYBACK_DIAGNOSTIC,
+            "player_kind": "finished",
+            "source_state": "preparing",
+            "error_code": -11800,
+            "underlying_code": 561210739,
+        },
+        {
+            **_PLAYBACK_DIAGNOSTIC,
+            "error_domain": "NSOSStatusErrorDomain",
+            "error_code": 561210739,
+            "underlying_domain": None,
+            "underlying_code": None,
+        },
+    )
+    for body in reset_reports:
+        db = _db([_scalar(uuid.uuid4())])
+        _override(user, db)
+        with structlog.testing.capture_logs() as logs:
+            assert client.post(url, json=body).status_code == 204
+        assert [entry["event"] for entry in logs] == ["editor_playback_reset"], (body, logs)
+        assert logs[0]["log_level"] == "info"
+        assert logs[0]["error_code"] == body["error_code"]
+    # Negative control: the same codes in another domain, and a real failure, stay failures.
+    for body in (
+        {
+            **_PLAYBACK_DIAGNOSTIC,
+            "error_domain": "preview.speaker_background.hidden_run",
+            "error_code": -11819,
+            "underlying_domain": None,
+            "underlying_code": None,
+        },
+        _PLAYBACK_DIAGNOSTIC,
+    ):
+        db = _db([_scalar(uuid.uuid4())])
+        _override(user, db)
+        with structlog.testing.capture_logs() as logs:
+            assert client.post(url, json=body).status_code == 204
+        assert [entry["event"] for entry in logs] == ["editor_playback_failed"], (body, logs)
+        assert logs[0]["log_level"] == "warning"
+
+
 _RECORDER_DIAGNOSTIC = {
     "kind": "take_silent",
     "audio_category": "playAndRecord",

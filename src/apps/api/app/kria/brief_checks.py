@@ -477,6 +477,8 @@ class SpeakerBackgroundFact:
     # named, or a render recorded before the worker wrote it (no claim either way).
     asked_cadence_s: float | None = None
     longest_s: float | None = None
+    # KRI-1494: the worker kept the named pace (pictures may return).
+    pace_kept: bool = False
 
 
 @dataclass(frozen=True)
@@ -1371,6 +1373,7 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         left_out=_left_out_recordings(detail.get("left_out")),
         asked_cadence_s=_positive_seconds(detail.get("cadence_s")),
         longest_s=_positive_seconds(detail.get("longest_s")),
+        pace_kept=detail.get("pace_kept") is True,
     )
 
 
@@ -5785,6 +5788,23 @@ def _slower_than_asked_sentence(fact: SpeakerBackgroundFact) -> str | None:
     cadence, longest = fact.asked_cadence_s, fact.longest_s
     if cadence is None or longest is None or longest <= cadence + _RHYTHM_SLACK_S:
         return None
+    if fact.pace_kept:
+        # KRI-1494: pictures already shown came back to keep the pace; a hold left over is a
+        # picture with nothing shown before it, or one the creator is still talking about.
+        return say(
+            en=(
+                "One stays on for {longest:.0f} s, but you asked for a change about every "
+                "{cadence:g} s: it stays while you're still talking about it and nothing else "
+                "can come up yet. Add more for faster changes."
+            ),
+            tr=(
+                "Biri {longest:.0f} sn ekranda kalıyor ama yaklaşık {cadence:g} saniyede bir "
+                "değişmesini istedin: sen ondan bahsederken ekranda kalıyor ve henüz başka bir şey "
+                "gösterilemiyor. Daha hızlı değişmesi için daha fazlasını ekle."
+            ),
+            longest=longest,
+            cadence=cadence,
+        )
     shown = _background_media_shown(fact)
     return say(
         en=(

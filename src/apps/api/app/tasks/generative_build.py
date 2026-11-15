@@ -8705,6 +8705,9 @@ def _resolve_strategy_background(
             # A colour fill is a base outside the sequence; a pool fill may be one of its photos.
             fill_key=str(fill_row["id"]) if fill_row is not None else None,
             **({"opening_s": opening_end_s} if opening_end_s is not None else {}),
+            # KRI-1494: a pace the creator NAMED is kept (pictures already shown may return).
+            keep_pace=request.get("cadence_s") is not None
+            and settings.background_keeps_asked_pace_enabled,
         )
         lane_drops.extend(layout.notes)
         if rhythm_out is not None and layout.windows:
@@ -8716,6 +8719,8 @@ def _resolve_strategy_background(
             )
             if request.get("cadence_s") is not None:
                 rhythm_out["cadence_s"] = float(request["cadence_s"])
+            if layout.pace_kept:
+                rhythm_out["pace_kept"] = True
         if layout_out is not None:
             layout_out["phrases"] = [
                 (index, str(entry.get("spoken_phrase")))
@@ -12639,6 +12644,10 @@ def _run_phone_subtitled_job(
                         if background_rhythm.get("cadence_s") is not None and _bg.windows:
                             lane_receipt["background"]["cadence_s"] = background_rhythm["cadence_s"]
                             lane_receipt["background"]["longest_s"] = background_rhythm["longest_s"]
+                            if background_rhythm.get("pace_kept"):
+                                # KRI-1494: pictures may return, so a hold left over is told
+                                # without "none repeats".
+                                lane_receipt["background"]["pace_kept"] = True
                         _left_out = (background_request or {}).get("left_out")
                         if _left_out:
                             lane_receipt["background"]["left_out"] = _left_out

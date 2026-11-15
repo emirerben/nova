@@ -208,6 +208,18 @@ TOKEN_SPLIT_PIECE_MAX_S = 0.35
 # on both sides like any other pause.
 SENTENCE_TAIL_MIN_VOICED_S = 0.3
 SENTENCE_TAIL_REACH_S = PAD_S + 0.08
+# Its mirror (Çiğdem S2 "Cigdem 2", KRI-1492, decision in agents/DECISIONS.md): whisper also
+# stamps the pause onto the HEAD of the next sentence's first token ("So" stamped 28.58-29.32 s
+# from the end of "story.", voice from ~29.14 s, silence 28.52-29.14 s), so the stamped gap is
+# 0.00 s and rule 3 never sees the 0.6 s of dead air. The head is carved only when:
+#   * the token before it ends a sentence (". ? !", never an ellipsis);
+#   * ONE long span (>= TOKEN_SILENCE_MIN_S) covers the token's whole stamped head and leaves at
+#     least SENTENCE_HEAD_MIN_VOICED_S of the token after it (a one-syllable word is short);
+#   * that span starts within SENTENCE_TAIL_REACH_S of the previous token's end and at least
+#     SENTENCE_TAIL_MIN_VOICED_S after its start: no unexplained sound before the silence.
+# The previous token's stamped end inside the span (shorter than TOKEN_SILENCE_MIN_OVERLAP_S, or
+# the tail rule would own it) moves back to the span start, so the stamped gap is the pause.
+SENTENCE_HEAD_MIN_VOICED_S = 0.15
 _SENTENCE_FINAL_MARKS = (".", "?", "!")
 # A surviving speech fragment shorter than this reads as a stutter between two
 # jump cuts rather than a shot. Hygiene widens it by retreating a neighbouring
@@ -394,8 +406,8 @@ class TokenAdjustment:
     carved_s: float
     # An interior carve keeps both slivers ("split") or loses one of them to
     # TOKEN_PIECE_MIN_S absorption ("trim_head"/"trim_tail"). The only edge
-    # carve is the sentence-final tail (SENTENCE_TAIL_* above).
-    kind: Literal["trim_head", "trim_tail", "split", "trim_sentence_tail"]
+    # carves are the sentence-final tail and the next sentence's head (SENTENCE_* above).
+    kind: Literal["trim_head", "trim_tail", "split", "trim_sentence_tail", "trim_sentence_head"]
 
 
 @dataclass(frozen=True)
@@ -698,6 +710,31 @@ def _sentence_final_tail_carve(
     return span_lo
 
 
+def _sentence_initial_head_carve(
+    word: _CutWord,
+    span: tuple[float, float],
+    previous_word: _CutWord | None,
+) -> float | None:
+    """New token start when ``span`` is a pause whisper stamped onto the token's head.
+
+    Returns the silence end (the token's voiced start) only for the shape documented at
+    ``SENTENCE_HEAD_MIN_VOICED_S``; ``None`` otherwise.
+    """
+    if previous_word is None or not _is_sentence_final(previous_word.text):
+        return None
+    span_lo, span_hi = span
+    # The span swallows the whole stamped head and leaves the word a real voiced length.
+    if span_lo > word.start + _EPS or span_hi > word.end - SENTENCE_HEAD_MIN_VOICED_S + _EPS:
+        return None
+    # Nothing unexplained between the sentence end and the silence, and the sentence's last
+    # word keeps its own voice.
+    if span_lo - previous_word.end > SENTENCE_TAIL_REACH_S + _EPS:
+        return None
+    if span_lo < previous_word.start + SENTENCE_TAIL_MIN_VOICED_S - _EPS:
+        return None
+    return span_hi
+
+
 def _reconcile_words_with_silence(
     words: list[_CutWord],
     silence_spans: list[tuple[float, float]],
@@ -722,9 +759,11 @@ def _reconcile_words_with_silence(
     ``TOKEN_SPLIT_VOICE_RATIO`` of the carve. Anything else — an edge trim,
     several quiet patches, substantial voice either side — is left alone,
     because it is indistinguishable from a quiet onset or a mumbled word and
-    the cut would delete real speech. The single exception is a sentence-final
+    the cut would delete real speech. The exceptions are a sentence-final
     token whose stamped tail lies wholly in a pause that runs on to the next
-    word (``_sentence_final_tail_carve``, KRI-236). Tokens are never dropped either (a
+    word (``_sentence_final_tail_carve``, KRI-236) and its mirror, the first
+    token of the next sentence whose stamped head lies wholly in that pause
+    (``_sentence_initial_head_carve``, KRI-1492). Tokens are never dropped either (a
     mis-stamped filler inside silence is handled by rule 2's full-span flanks),
     so a very quiet clip behaves exactly as before. Text and order are
     preserved. ``retake_spans`` keep indexing the ORIGINAL list, so the caller
@@ -761,6 +800,24 @@ def _reconcile_words_with_silence(
                     pieces=((word.start, tail_lo),),
                     carved_s=word.end - tail_lo,
                     kind="trim_sentence_tail",
+                )
+            )
+            continue
+        previous_word = words[index - 1] if index > 0 else None
+        head_hi = _sentence_initial_head_carve(word, overlapping[0], previous_word)
+        if head_hi is not None:
+            span_lo = overlapping[0][0]
+            if reconciled and reconciled[-1].end > span_lo:
+                # The last word's stamped end inside the pause is the pause.
+                reconciled[-1] = reconciled[-1]._replace(end=max(reconciled[-1].start, span_lo))
+            reconciled.append(word._replace(start=head_hi))
+            adjustments.append(
+                TokenAdjustment(
+                    original_start_s=word.start,
+                    original_end_s=word.end,
+                    pieces=((head_hi, word.end),),
+                    carved_s=head_hi - word.start,
+                    kind="trim_sentence_head",
                 )
             )
             continue
