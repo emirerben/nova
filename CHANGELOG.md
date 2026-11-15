@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.237.0] - 2026-11-15
+
+### Changed
+- test(kria): German twins of the Turkish understanding tests + closed-list fixes (KRI-1453) (#2354) <!-- release-pr: 2354 -->
+
 ## [0.88.236.0] - 2026-11-15
 
 ### Changed
