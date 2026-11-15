@@ -49,7 +49,9 @@ make kria-replay-job JOB=<production job id>
    job answers its questions with the creator's own next messages. `stalled`: the replay
    stopped waiting (see "Stalls"); never read as a route result. `input_error`: the seeded
    inputs are not production's (seeded clips that do not bind as phone sources), so nothing was
-   replayed; fix the input recovery, not the product. Exit code 0 for
+   replayed; fix the input recovery, not the product. `spend_cap_reached`: the replay's agent
+   runs settled more than `MAX_COST_USD` and the run was interrupted (see the cost paragraph
+   below); never a route result. Exit code 0 for
    `video_rendered` and `device_plan_ready` only, 1 for any other outcome, 3 when the local
    machine could not host the run (no PostgreSQL role, fewer than 20 free connections, scratch
    database not creatable, a worker that never finished its prewarm, or a turn whose lease
@@ -129,7 +131,13 @@ The replay drives the same Main Creator start and confirm controllers the chat t
 a snapshot value that is only approximated can send it down a planner production does not use.
 The driver reads every agent name production recorded for the plan item
 (`GET /admin/plan-items/<id>/proposal-trace`, all pages, plus the job's own agent runs) and the
-agent runs of the replay's scratch database, and prints `route_comparison`:
+same slice of the replay's scratch database: runs linked to the replay's plan item, plus the runs
+of the replay's last job. Runs scoped to the Creator session alone (the clip-intent agents,
+`nova.plan.clip_intent_planner` and `nova.plan.clip_request_resolver`, run without a plan item)
+appear in no production read, so they are listed in `replay_uncompared_agents`, counted in
+`replay_spend_usd`, and never compared: on 19f61092 the replay named the resolver as an agent
+production never ran, while production's own reply quoted the resolver's result. It prints
+`route_comparison`:
 `production_agents`, `replay_agents`, `replay_only_agents`, `replay_failed_agents` (an agent whose
 last run failed) and `diverged_failures` (failed in the replay, never run in production). When the
 replay ends `failed` with a non-empty `diverged_failures`, the outcome is
@@ -166,8 +174,11 @@ holds now: pool assets added after the job
 ran are left out, and a recorded media id that can no longer be recovered refuses the run before
 any model call. The same refusal applies to a creator song (`replay_creator.py` does not seed
 songs) or a voiceover the item no longer holds. A job with no brief binding (older than the
-binding) replays everything the item holds, and the printed coverage says
-`bound_to_recorded_media: false`.
+binding) replays every clip row the item holds and the ready pool assets created before the job
+ran (as below for a binding without `visuals`). The printed coverage says
+`bound_to_recorded_media: false`, and `clips_not_dated` counts the clip rows it took whole: the
+item debug does not date clip rows, so a clip added after the job cannot be told apart. The same
+holds for the item's voiceover.
 
 Some bindings arrive with no media named. The admin job debug strips media ids, and every value
 that names a media file (`manifest_identity`, `storage_generation`, paths, file names), from a
@@ -209,11 +220,15 @@ names the asset; pool assets under the item's own pool prefix still work.
 Costs real model calls (Main Creator per message, text agents, clip analysis only for a clip the
 brief binding recorded no analysis for). The paid-call ledger runs in the scratch database as a
 development manual-QA run (`AI_MANUAL_QA_TEST_RUN_ID` = the run's namespace) capped at
-`MAX_COST_USD` (`--max-cost-usd`, default 1.00, at most 2.00). The cap holds every call the ledger
-meters: Sol (OpenAI) planning always, Gemini calls only when the snapshot turns
-`AI_COST_CONTROL_ENABLED` on. A Sol Main Creator call reserves about $0.21 until it settles, so a
-cap under that refuses it and the Main Creator answers on its Gemini fallback, which
-`model_differences` then shows. The clip analysis production planned with is restored
+`MAX_COST_USD` (`--max-cost-usd`, default 1.00, at most 2.00). The ledger reserves Sol (OpenAI)
+planning against it. Gemini calls are not reserved while `AI_COST_CONTROL_ENABLED` stays off, as
+in production, so the driver also reads the scratch database's settled agent-run cost every 5 s
+and interrupts the run once it is over the cap (`spend_cap_reached`, the spend that stopped it in
+`failure_reason`). A call counts once it settled, so a run can pass the cap by the call that
+crossed it. A provider call that writes no agent run is not counted: Whisper transcription of a
+clip's speech (billed per minute) is one. A Sol Main Creator call reserves about $0.21 until it settles, so a cap under that
+refuses it and the Main Creator answers on its Gemini fallback, which `model_differences` then
+shows. The clip analysis production planned with is restored
 from the brief binding, so the replay does not analyse a clip twice. `route_comparison` prints
 `replay_agent_runs` and `replay_spend_usd` (the scratch database's agent-run costs); the worker log
 is `<run dir>/worker.log`.

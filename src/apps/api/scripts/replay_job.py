@@ -275,7 +275,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         media_id = str(assignment["media_id"])
         kind = str(assignment.get("kind") or "video")
         object_path = str(assignment["gcs_path"])
-        if media_id in seen or (chosen is not None and _media_key(media_id) not in chosen.clips):
+        if media_id in seen or _media_key(media_id) not in chosen.clips:
             continue
         seen.add(media_id)
         local = inputs_dir / "media" / media_id
@@ -291,7 +291,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
     pool_objects: list[str] | None = None
     for asset in pool_rows:
         kind = str(asset["kind"])
-        if chosen is not None and _media_key(str(asset["id"])) not in chosen.pool:
+        if _media_key(str(asset["id"])) not in chosen.pool:
             continue
         object_path = asset.get("gcs_path")
         generation = asset.get("gcs_generation")
@@ -374,7 +374,7 @@ def _unseeded_state(
     job: dict[str, Any],
     recorded: RecordedMedia | None,
     thread_events: list[dict[str, Any]] | None,
-    chosen: ChosenMedia | None,
+    chosen: ChosenMedia,
 ) -> dict[str, int]:
     """Production state the job's media leaned on that the replay does not recreate."""
 
@@ -400,7 +400,7 @@ def _unseeded_state(
             1 for row in (recorded.unnamed_visuals if recorded else ()) if row.get("capture")
         ),
         # Pool media the binding did not record, replayed because the item held it then.
-        "pool_visuals_not_recorded": len(chosen.pool_inferred) if chosen else 0,
+        "pool_visuals_not_recorded": len(chosen.pool_inferred),
     }
 
 
@@ -496,16 +496,16 @@ def _pool_held_when_job_ran(
 ) -> tuple[set[str], int]:
     """The item's ready pool assets created before the job, and how many came after.
 
-    A binding that does not record its visuals leaves this as the best record of the pool the
-    plan saw (the manifest lists every visible pool row); an asset deleted since is caught
-    only when the job's plan names it (``_referenced_pool_ids``).
+    A binding that does not record its visuals, or no binding at all, leaves this as the best
+    record of the pool the plan saw (the manifest lists every visible pool row); an asset
+    deleted since is caught only when the job's plan names it (``_referenced_pool_ids``).
     """
 
     ran_at = _parse_time(job.get("created_at"))
     if ran_at is None and pool_rows:
         raise ReplayJobError(
-            "The job's binding does not record its pool media and the job has no created_at, "
-            "so which of the item's pool assets it saw is unknown"
+            "The job records no pool media and has no created_at, so which of the item's "
+            "pool assets it saw is unknown"
         )
     held: set[str] = set()
     for row in pool_rows:
@@ -535,19 +535,22 @@ def _select_recorded_media(
     clip_rows: list[dict[str, Any]],
     pool_rows: list[dict[str, Any]],
     job: dict[str, Any],
-) -> ChosenMedia | None:
+) -> ChosenMedia:
     """Pick the item's media rows the job used; refuse when they cannot be told apart.
 
     A clip row without an id matches an item clip of the same kind whose duration agrees
     within ``DURATION_TOLERANCE_S``; two equally close candidates are ambiguous. Visuals
     without ids are item pool assets, matched by kind: the item must hold exactly as many ready
     assets of that kind as the binding recorded, otherwise which ones the job used is unknown.
-    A binding that does not record its visuals keeps the pool assets the item held when the
-    job ran.
+    A binding that does not record its visuals, or a job with no binding, keeps the pool assets
+    the item held when the job ran. Without a binding every clip row is kept: the item debug
+    does not date them.
     """
 
     if recorded is None:
-        return None
+        held_then, added_after = _pool_held_when_job_ran(job, pool_rows)
+        every_clip = frozenset(_media_key(str(r["media_id"])) for r in clip_rows)
+        return ChosenMedia(every_clip, frozenset(held_then), (), frozenset(held_then), added_after)
     clips = {_media_key(str(r["media_id"])) for r in clip_rows} & recorded.named
     pool = {_media_key(str(r["id"])) for r in pool_rows} & recorded.named
     matched: list[tuple[dict[str, Any], str]] = []
@@ -602,7 +605,7 @@ def _select_recorded_media(
     )
 
 
-def _name_unnamed_binding_rows(job_debug: dict[str, Any], chosen: ChosenMedia | None) -> None:
+def _name_unnamed_binding_rows(job_debug: dict[str, Any], chosen: ChosenMedia) -> None:
     """Give matched binding clip rows back the identity the admin debug stripped.
 
     The clip row writer sets ``manifest_identity`` to the media id
@@ -610,7 +613,7 @@ def _name_unnamed_binding_rows(job_debug: dict[str, Any], chosen: ChosenMedia | 
     agree; the debug drops it with the id because its value is the proxy's file name.
     """
 
-    for row, media_id in chosen.matched_clip_rows if chosen else ():
+    for row, media_id in chosen.matched_clip_rows:
         row["media_id"] = media_id
         row["manifest_identity"] = media_id
         row["replay_matched_by"] = "kind_and_duration"
@@ -620,7 +623,7 @@ def _check_source_coverage(
     job: dict[str, Any],
     sources: list[dict[str, Any]],
     recorded: RecordedMedia | None,
-    chosen: ChosenMedia | None,
+    chosen: ChosenMedia,
 ) -> dict[str, Any]:
     """Refuse a replay that would run on different inputs than the production job.
 
@@ -660,12 +663,14 @@ def _check_source_coverage(
         "recorded_visuals_and_clips": recorded.total if recorded is not None else None,
         "replayed_visuals_and_clips": len(visuals),
         "matched_without_media_id": {
-            "clips": len(chosen.matched_clip_rows) if chosen else 0,
+            "clips": len(chosen.matched_clip_rows),
             "pool_visuals": len(recorded.unnamed_visuals) if recorded else 0,
         },
         "pool_visuals_recorded": recorded.visuals_recorded if recorded is not None else None,
-        "pool_visuals_inferred": len(chosen.pool_inferred) if chosen else 0,
-        "pool_visuals_added_after_job": chosen.pool_added_after_job if chosen else 0,
+        "pool_visuals_inferred": len(chosen.pool_inferred),
+        "pool_visuals_added_after_job": chosen.pool_added_after_job,
+        # Without a binding the clip rows are taken whole: the item debug does not date them.
+        "clips_not_dated": 0 if recorded is not None else len(chosen.clips),
         "pool_images": sum(1 for s in visuals if s.get("pool") and s["kind"] == "image"),
         "pool_videos": sum(1 for s in visuals if s.get("pool") and s["kind"] == "video"),
         "voiceover": any(s["kind"] == "audio" for s in sources),
@@ -891,6 +896,68 @@ def wait_until_worker_warm(
     )
 
 
+SPEND_POLL_S = 5.0
+
+
+def settled_spend_usd(url: str) -> float:
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection:
+            query = text("SELECT coalesce(sum(cost_usd), 0) FROM agent_run")
+            return float(connection.execute(query).scalar_one())
+    finally:
+        engine.dispose()
+
+
+def run_under_spend_cap(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    scratch_url: str,
+    cap_usd: float,
+    poll_s: float = SPEND_POLL_S,
+) -> tuple[int, float | None]:
+    """Run ``command``; interrupt it once the replay's agent runs settled more than the cap.
+
+    The paid-call ledger reserves only OpenAI and Anthropic planning while
+    AI_COST_CONTROL_ENABLED stays off as in production, so Gemini spend is watched here. A call
+    counts once it settled, so the run can pass the cap by the call that crossed it. Returns
+    the exit code and, when the cap stopped the run, the spend that did.
+    """
+
+    process = subprocess.Popen(command, cwd=API_ROOT, env=env)
+    while True:
+        try:
+            return process.wait(timeout=poll_s), None
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            spent = settled_spend_usd(scratch_url)
+        except OperationalError:
+            continue
+        if spent > cap_usd:
+            process.send_signal(signal.SIGINT)
+            try:
+                return process.wait(timeout=120), spent
+            except subprocess.TimeoutExpired:
+                process.kill()
+                return process.wait(), spent
+
+
+def mark_spend_cap(result: dict[str, Any], spent: float, cap_usd: float) -> None:
+    result["replay_failure"] = {
+        "failure_reason": result["failure_reason"],
+        "error_detail": result["error_detail"],
+    }
+    result["outcome"] = "spend_cap_reached"
+    result["failure_reason"] = (
+        f"Stopped: the replay's agent runs settled ${spent:.4f}, over --max-cost-usd "
+        f"{cap_usd:.2f}. Nothing was learned about the production job."
+    )
+
+
 def stop_worker(worker: subprocess.Popen[bytes]) -> None:
     if worker.poll() is None:
         os.killpg(worker.pid, signal.SIGTERM)
@@ -902,24 +969,43 @@ def stop_worker(worker: subprocess.Popen[bytes]) -> None:
 
 PRODUCTION_TRACE_PAGES = 10
 AGENT_RUNS_CODE = """
-import json
-from app.agents._runtime import SUCCESS_OUTCOMES
-from app.database import sync_session
-from app.models import AgentRun
-
-with sync_session() as db:
-    runs = [
-        {
-            "agent_name": r.agent_name,
-            "outcome": r.outcome,
-            "cost_usd": float(r.cost_usd or 0),
-            "model": r.model,
-            "prompt_version": r.prompt_version,
-        }
-        for r in db.query(AgentRun).order_by(AgentRun.created_at)
-    ]
-print(json.dumps({"runs": runs, "success": sorted(SUCCESS_OUTCOMES)}))
+import json, sys
+sys.path.insert(0, "scripts")
+import replay_job
+print(json.dumps(replay_job.recorded_agent_runs(sys.argv[1] if len(sys.argv) > 1 else None)))
 """
+
+
+def recorded_agent_runs(item_id: str | None) -> dict[str, Any]:
+    """Every agent run in the replay's database, each marked whether production could list it.
+
+    Production's side is the plan item's proposal trace (runs linked to the item) and the
+    job's own runs. The clip-intent agents run on the Creator session alone
+    (``creator_agent.py``), so production never lists them: comparing them would name them as
+    agents production never ran. They still count toward the spend.
+    """
+
+    from app.agents._runtime import SUCCESS_OUTCOMES
+    from app.database import sync_session
+    from app.models import AgentRun, PlanItem
+
+    item = uuid.UUID(item_id) if item_id else None
+    with sync_session() as db:
+        plan_item = db.get(PlanItem, item) if item else None
+        job = plan_item.current_job_id if plan_item else None
+        runs = [
+            {
+                "agent_name": r.agent_name,
+                "outcome": r.outcome,
+                "cost_usd": float(r.cost_usd or 0),
+                "model": r.model,
+                "prompt_version": r.prompt_version,
+                "comparable": item is not None
+                and (r.plan_item_id == item or (job is not None and r.job_id == job)),
+            }
+            for r in db.query(AgentRun).order_by(AgentRun.created_at)
+        ]
+    return {"runs": runs, "success": sorted(SUCCESS_OUTCOMES)}
 
 
 @dataclass(frozen=True)
@@ -975,11 +1061,11 @@ def production_agents(
     )
 
 
-def replay_agents(env: dict[str, str]) -> dict[str, Any]:
-    """The agent runs the replay recorded in its scratch database."""
+def replay_agents(env: dict[str, str], item_id: str | None) -> dict[str, Any]:
+    """The agent runs the replay recorded in its scratch database (``recorded_agent_runs``)."""
 
     completed = subprocess.run(
-        [sys.executable, "-c", AGENT_RUNS_CODE],
+        [sys.executable, "-c", AGENT_RUNS_CODE, *((item_id,) if item_id else ())],
         cwd=API_ROOT,
         env=env,
         capture_output=True,
@@ -1014,8 +1100,9 @@ def compare_routes(production: ProductionAgents, recorded: dict[str, Any]) -> di
     """
 
     success = set(recorded["success"])
+    compared = [run for run in recorded["runs"] if run["comparable"]]
     last_outcome: dict[str, str] = {}
-    for run in recorded["runs"]:
+    for run in compared:
         last_outcome[run["agent_name"]] = run["outcome"]
     ran = sorted(last_outcome)
     failed = sorted(name for name, outcome in last_outcome.items() if outcome not in success)
@@ -1027,12 +1114,16 @@ def compare_routes(production: ProductionAgents, recorded: dict[str, Any]) -> di
         "replay_only_agents": sorted(set(ran) - names),
         "replay_failed_agents": failed,
         "diverged_failures": sorted(set(failed) - names) if production.trace_complete else [],
+        # Session-scoped runs production's trace cannot show, so they prove no divergence.
+        "replay_uncompared_agents": sorted(
+            {run["agent_name"] for run in recorded["runs"] if not run["comparable"]}
+        ),
         "replay_models": {
-            name: sorted(models) for name, models in _by_agent(recorded["runs"], "model").items()
+            name: sorted(models) for name, models in _by_agent(compared, "model").items()
         },
-        "model_differences": _differences(production.models, _by_agent(recorded["runs"], "model")),
+        "model_differences": _differences(production.models, _by_agent(compared, "model")),
         "prompt_version_differences": _differences(
-            production.prompt_versions, _by_agent(recorded["runs"], "prompt_version")
+            production.prompt_versions, _by_agent(compared, "prompt_version")
         ),
         "replay_agent_runs": len(recorded["runs"]),
         "replay_spend_usd": round(sum(r.get("cost_usd") or 0 for r in recorded["runs"]), 4),
@@ -1081,6 +1172,9 @@ def classify_failure(
     )
 
 
+SUCCEEDED = frozenset({"video_rendered", "device_plan_ready"})
+
+
 def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     job = receipt.get("job") or {}
@@ -1115,9 +1209,7 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
     return {
         "outcome": outcome,
         "replayed_job_status": job.get("status"),
-        "failure_reason": None
-        if outcome in {"video_rendered", "device_plan_ready"}
-        else job.get("failure_reason") or error,
+        "failure_reason": None if outcome in SUCCEEDED else job.get("failure_reason") or error,
         "error_detail": job.get("error_detail"),
         "video_paths": videos,
         "device_plan": device_plan,
@@ -1129,6 +1221,7 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
         "first_divergent_turn": first_divergent_turn(receipt.get("turns") or [], diverged_turn),
         "stopped_early": receipt.get("stopped_early"),
         "reconcile": receipt.get("reconcile"),
+        "replay_plan_item_id": (receipt.get("seed") or {}).get("plan_item_id"),
         "receipt": str(receipt_path),
     }
 
@@ -1177,7 +1270,7 @@ def main(argv: list[str] | None = None) -> int:
         "--max-cost-usd",
         type=float,
         default=1.0,
-        help="cap on the paid calls the ledger meters (OpenAI planning always), at most 2.00",
+        help="stop once the replay's agent runs settled more than this (USD), at most 2.00",
     )
     parser.add_argument("--fetch-only", action="store_true", help="stop after writing the inputs")
     args = parser.parse_args(argv)
@@ -1232,7 +1325,7 @@ def main(argv: list[str] | None = None) -> int:
             ) from exc
         worker = start_worker(worker_env, run_dir, namespace)
         warm_s = wait_until_worker_warm(worker, run_dir / "worker.log")
-        completed = subprocess.run(
+        exit_code, capped_at = run_under_spend_cap(
             [
                 sys.executable,
                 str(API_ROOT / "scripts" / "replay_creator.py"),
@@ -1254,14 +1347,16 @@ def main(argv: list[str] | None = None) -> int:
                 str(args.timeout_s),
                 *(("--thread-events", str(info["thread_events"])) if info["thread_events"] else ()),
             ],
-            cwd=API_ROOT,
             env=env,
-            check=False,
+            scratch_url=scratch_url,
+            cap_usd=args.max_cost_usd,
         )
         result = summarize(run_dir / "replay-receipt.json", run_dir)
-        result["replay_exit_code"] = completed.returncode
+        result["replay_exit_code"] = exit_code
+        if capped_at is not None and result["outcome"] not in SUCCEEDED:
+            mark_spend_cap(result, capped_at, args.max_cost_usd)
         result["worker_warm_s"] = warm_s
-        route = compare_routes(production, replay_agents(worker_env))
+        route = compare_routes(production, replay_agents(worker_env, result["replay_plan_item_id"]))
         result["route_comparison"] = route
         result["input_differences"] = {
             "models": route["model_differences"],
@@ -1286,8 +1381,7 @@ def main(argv: list[str] | None = None) -> int:
         if result["outcome"] == "stalled" and (result["stalled"] or {}).get("lease_lapsed"):
             # The local worker stopped running the turn; nothing was learned about the job.
             return 3
-        succeeded = result["outcome"] in {"video_rendered", "device_plan_ready"}
-        return 0 if succeeded and completed.returncode == 0 else 1
+        return 0 if result["outcome"] in SUCCEEDED and exit_code == 0 else 1
     except ReplayInfrastructureError as exc:
         print(f"replay not run, local infrastructure: {exc}", file=sys.stderr)
         return 3

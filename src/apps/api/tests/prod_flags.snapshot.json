@@ -445,6 +445,10 @@
       "source": "job-data:native-device-only-2026-11-15",
       "value": true
     },
+    "keep_text_off_caption_spot_enabled": {
+      "source": "default",
+      "value": true
+    },
     "keep_whole_take_plan_enabled": {
       "source": "default",
       "value": true
@@ -666,6 +670,10 @@
       "value": true
     },
     "lipsync_route_follows_prompt_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "list_label_example_ask_enabled": {
       "source": "default",
       "value": true
     },
@@ -1475,6 +1483,10 @@
       "source": "default",
       "value": false
     },
+    "talking_card_strip_enabled": {
+      "source": "default",
+      "value": false
+    },
     "talking_head_route_follows_prompt_enabled": {
       "source": "default",
       "value": true
@@ -1608,6 +1620,10 @@
       "value": false
     },
     "voice_dictation_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "voice_only_ask_enabled": {
       "source": "default",
       "value": true
     },
