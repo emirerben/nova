@@ -23,6 +23,8 @@ from app.kria.brief_checks import (
 )
 from app.kria.reply_language import bind_reply_language, release_reply_language
 
+pytestmark = pytest.mark.journey("kri-590-voiceover-cues")
+
 PROXY = "users/u/creation-threads/t/analysis-proxy-ios-A.mp4"
 USER = uuid.uuid4()
 

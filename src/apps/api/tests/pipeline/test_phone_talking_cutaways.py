@@ -48,6 +48,8 @@ from app.pipeline.phone_talking_cutaways import (
 )
 from app.pipeline.transcribe import Word
 
+pytestmark = pytest.mark.journey("kri-719-talking-multi-clip")
+
 
 def _clip(clip_id, duration_s, words, audible=True, span_s=None):
     return TalkingClipEvidence(

@@ -346,6 +346,35 @@ def test_a_card_the_cleanup_cut_is_named_as_cut_not_shown() -> None:
     assert "0:11 Screenshot 2 impeccable" in reason
 
 
+def test_a_recording_with_no_half_to_share_is_named_as_not_shown() -> None:
+    """KRI-1478 (Q1 run 3 with the card strip on): four recordings share their mention with a
+    screenshot; the fifth mention is 2.72 s, too short for two parts, so that recording stays
+    out (worker reason ``overlap``). Ways the creator's row goes wrong: it says every Visual was
+    shown; it drops the recording without naming it; it invents a cause for it."""
+    rows = {
+        row["label"].split("-")[-1]: row for row in VARIANT["phone_overlay_receipt"]["unplaced"]
+    }
+    starts = {  # the second halves, on the take's clock (`test_phone_card_layout.py`)
+        "Screen Recording 1 spec": (10.71, 13.04),
+        "Screen Recording 2 impe": (17.05, 18.88),
+        "Screen Recording 3 trad": (24.61, 26.5),
+        "Screen Recording 4 agen": (33.57, 36.18),
+    }
+    placed = [
+        {**rows[name], "reason": "shown with its screenshot", "start_s": start, "end_s": end}
+        for name, (start, end) in starts.items()
+    ]
+    left_out = {**rows["Screen Recording 5 game"], "reason": "overlap"}
+    receipt = _receipt(
+        CARDS, plan_facts_from_phone_variant(_variant(placed=placed, unplaced=[left_out]))
+    )
+    assert receipt.status == "met" and receipt.verification == "checked", receipt
+    shown, missed = receipt.reason.split("; not shown: ")
+    assert all(name in shown for name in starts), shown
+    assert "Screen Recording 5 game" not in shown
+    assert missed == "Screen Recording 5 game (couldn't be placed).", receipt.reason
+
+
 def test_no_times_when_the_cut_record_is_missing() -> None:
     """Failure mode 5: cleanup ran but its record is gone: name the cards, quote no second."""
     variant = copy.deepcopy(VARIANT)

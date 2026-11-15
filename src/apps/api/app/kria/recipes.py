@@ -394,7 +394,24 @@ class EditRecipeV1(_RecipeModel):
                         raise ValueError("a media backdrop requires a V2 recipe")
                     self.required_capabilities |= {"clipBackdropMedia"}
                 if clip.source_crop is not None:
-                    if clip.still_layout is not None or clip.visual_placement is not None:
+                    placement = clip.visual_placement
+                    # KRI-1478: one placed clip may be cropped, the plain pip card (a Talking
+                    # strip cut to its text column): the device crops, then sizes the card by
+                    # ``width_fraction``. A full-canvas, fitted, zoomed, moving, fading, styled
+                    # or tilted placement draws a crop another way and stays refused.
+                    cropped_card = (
+                        placement is not None
+                        and track.kind == "overlay"
+                        and placement.width_fraction is not None
+                        and placement.editor_style is None
+                        and not (placement.contain or placement.pre_crop)
+                        and (placement.zoom, placement.motion) == (1, "none")
+                        and not (placement.fade_in or placement.fade_out)
+                        and clip.transform == MediaTransform()
+                    )
+                    if clip.still_layout is not None or (
+                        placement is not None and not cropped_card
+                    ):
                         raise ValueError(
                             "a source crop cannot combine with a still card or a visual placement"
                         )

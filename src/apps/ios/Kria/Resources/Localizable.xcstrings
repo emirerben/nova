@@ -910,22 +910,6 @@
         }
       }
     },
-    "%@ · short-form" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%@ · Kurzvideo"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%@ · kısa video"
-          }
-        }
-      }
-    },
     "%@ · step %lld of %lld" : {
       "localizations" : {
         "de" : {
@@ -12712,22 +12696,6 @@
         }
       }
     },
-    "Creative direction" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Kreative Richtung"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Yaratıcı yön"
-          }
-        }
-      }
-    },
     "Crop" : {
       "localizations" : {
         "de" : {
@@ -16731,22 +16699,6 @@
         }
       }
     },
-    "Format" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Format"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Biçim"
-          }
-        }
-      }
-    },
     "Found %lld pauses and filler sounds" : {
       "localizations" : {
         "de" : {
@@ -18562,22 +18514,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Videonu şekillendiriyorum"
-          }
-        }
-      }
-    },
-    "I’ve shaped a clear creative direction from your footage and what you told me." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Aus deinem Material und deinen Angaben habe ich eine klare kreative Richtung entwickelt."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Çekimlerinden ve bana anlattıklarından net bir yaratıcı yön oluşturdum."
           }
         }
       }
@@ -23185,22 +23121,6 @@
         }
       }
     },
-    "Natural, intentional" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Natürlich, gewollt"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Doğal, bilinçli"
-          }
-        }
-      }
-    },
     "Needs attention" : {
       "localizations" : {
         "de" : {
@@ -25023,23 +24943,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "En son koleksiyon açıldı. Yerel değişikliklerin ayrı olarak kayıtlı."
-          }
-        }
-      }
-    },
-    "Opening" : {
-      "comment" : "Label: how the video starts",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Einstieg"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Açılış"
           }
         }
       }
@@ -31950,22 +31853,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Videonu incele"
-          }
-        }
-      }
-    },
-    "Rhythm" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Rhythmus"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ritim"
           }
         }
       }
@@ -39412,22 +39299,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Konuşma kontrolü kullanılamıyor. Yenilemek için projeyi yeniden aç."
-          }
-        }
-      }
-    },
-    "The story, right away" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Die Story, sofort"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hikâye, hemen"
           }
         }
       }

@@ -27,6 +27,8 @@ from app.agents._runtime import (
 from app.agents.music_matcher import MusicMatcherAgent
 from tests.agents.conftest import max_tokens_response
 
+pytestmark = pytest.mark.journey("kri-557-thinking")
+
 
 class _CapturingModels:
     def __init__(self) -> None:

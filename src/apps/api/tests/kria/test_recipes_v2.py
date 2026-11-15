@@ -114,6 +114,62 @@ def test_visual_blocks_require_bounded_silent_overlay_and_rollout_gate():
         EditRecipeV2.model_validate(document)
 
 
+# KRI-1478: a source crop may ride ONE kind of placed clip, the plain pip card (a strip cut to
+# its text column). Everything else a placement can be stays refused, as before.
+_CROP = {"x": 0.177, "y": 0.0, "width": 0.456, "height": 0.268}
+_PIP = {
+    "order": 1,
+    "window_start": 0,
+    "window_end": 10,
+    "width_fraction": 0.94,
+    "x_fraction": 0.5,
+    "y_fraction": 0.1075,
+}
+
+
+def _cropped_overlay_document(placement, **clip):
+    document = json.loads(FIXTURE.read_text())
+    overlay = (
+        document["tracks"][0]["clips"][0]
+        | {
+            "id": "visual-shot",
+            "volume": 0,
+            "transition": None,
+            "visual_placement": placement,
+            "source_crop": _CROP,
+        }
+        | clip
+    )
+    document["tracks"].append({"id": "visual", "kind": "overlay", "clips": [overlay]})
+    return document
+
+
+def test_a_plain_pip_card_may_carry_a_source_crop():
+    recipe = EditRecipeV2.model_validate(_cropped_overlay_document(_PIP))
+    assert {"sourceCrop", "visualBlocks"} <= recipe.required_capabilities
+    clip = recipe.tracks[-1].clips[0]
+    assert clip.source_crop.model_dump() == _CROP
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+@pytest.mark.parametrize(
+    ("placement", "clip"),
+    [
+        ({k: v for k, v in _PIP.items() if k != "width_fraction"}, {}),  # full-canvas cutaway
+        (_PIP | {"fade_in": True}, {}),
+        (_PIP | {"fade_out": True}, {}),
+        (_PIP | {"contain": True}, {}),
+        (_PIP | {"zoom": 2}, {}),
+        (_PIP | {"motion": "zoom_in"}, {}),
+        (_PIP | {"editor_style": {"zoom": 1.5}}, {}),
+        (_PIP, {"transform": {"rotation_degrees": 8}}),
+    ],
+)
+def test_any_other_placed_clip_still_refuses_a_source_crop(placement, clip):
+    with pytest.raises(ValidationError, match="source crop cannot combine"):
+        EditRecipeV2.model_validate(_cropped_overlay_document(placement, **clip))
+
+
 def test_mute_windows_cannot_reference_absent_clip():
     document = json.loads(FIXTURE.read_text())
     document["audio"]["mute_windows"] = [{"start": 0, "end": 1, "clip_ids": ["absent"]}]

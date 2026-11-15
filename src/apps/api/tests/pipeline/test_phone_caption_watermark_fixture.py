@@ -37,6 +37,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+pytestmark = pytest.mark.journey("kri-548-caption-watermark")
+
 FIXTURE = (
     Path(__file__).resolve().parents[5] / "src/apps/ios/Tests/Fixtures/KRI548CaptionWatermark.json"
 )

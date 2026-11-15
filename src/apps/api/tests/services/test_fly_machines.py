@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+pytestmark = pytest.mark.journey("kri-798-render-worker-restart")
+
 
 def _machine(machine_id: str, state: str, process_group: str | None) -> dict:
     metadata = {}

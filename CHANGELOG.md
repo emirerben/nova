@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.235.0] - 2026-11-15
+
+### Changed
+- fix(kria): approval card fits one screen and arrives with its draft (KRI-1403) (#2346) <!-- release-pr: 2346 -->
+
+## [0.88.234.0] - 2026-11-15
+
+### Fixed
+- fix(api): room hum no longer holds a take join open (KRI-1409) (#2345) <!-- release-pr: 2345 -->
+
+## [0.88.233.0] - 2026-11-15
+
+### Changed
+- test(ios): two split-panel editor UI tests allow for #2315's scroll and handle changes (KRI-1379) (#2361) <!-- release-pr: 2361 -->
+
+## [0.88.232.0] - 2026-11-15
+
+### Changed
+- chore(ci): derive journey and UI test registries from the tests (KRI-1380) (#2308) <!-- release-pr: 2308 -->
+
 ## [0.88.231.0] - 2026-11-14
 
 ### Changed

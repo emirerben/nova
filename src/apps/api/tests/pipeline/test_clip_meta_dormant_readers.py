@@ -16,7 +16,11 @@ import dataclasses
 import re
 from pathlib import Path
 
+import pytest
+
 from app.pipeline.agents.gemini_analyzer import ClipMeta
+
+pytestmark = pytest.mark.journey("kri-625-moment-quality")
 
 APP_ROOT = Path(__file__).parents[2] / "app"
 

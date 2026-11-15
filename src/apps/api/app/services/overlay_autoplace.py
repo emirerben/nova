@@ -102,6 +102,34 @@ def _overlaps(a_start: float, a_end: float, intervals: list[tuple[float, float]]
     return any(a_start < e and s < a_end for s, e in intervals)
 
 
+def _window_key(start: float, end: float) -> tuple[float, float]:
+    """A window as `share_beat_windows` keys it: rounded to the millisecond."""
+    return round(float(start), 3), round(float(end), 3)
+
+
+def _shared_half(
+    start: float,
+    end: float,
+    taken: list[tuple[float, float, bool]],
+    shareable: set[tuple[float, float]],
+) -> tuple[float, float, float] | None:
+    """KRI-1478: ``(first_start, first_end, midpoint)`` when this card may take the second half
+    of ONE shareable window it overlaps, else ``None`` (it is dropped as "overlap", as before).
+
+    Only a card that starts in the first half (the same mention), and only when both halves
+    stay on screen `_MIN_ON_SCREEN_S`: otherwise the first card keeps its whole window.
+    """
+    hits = [(s, e) for s, e, _ in taken if start < e and s < end]
+    # Matched to the millisecond (`_window_key`): `taken` and `shareable` are separate floats.
+    if len(hits) != 1 or _window_key(*hits[0]) not in shareable:
+        return None
+    first_start, first_end = hits[0]
+    mid = round((first_start + first_end) / 2, 3)
+    if start >= mid or min(mid - first_start, first_end - mid) < _MIN_ON_SCREEN_S:
+        return None
+    return first_start, first_end, mid
+
+
 def _is_hook_burst_card(*, kind: str, tier: str, start: float, end: float) -> bool:
     return (
         kind == "image"
@@ -351,6 +379,8 @@ def build_suggestions(
     stats: dict | None = None,
     ceiling: int = _CEILING,
     hook_any_tier: bool = False,
+    shareable: list[tuple[float, float]] | None = None,
+    shared_out: dict[str, tuple[float, float, float]] | None = None,
 ) -> list[dict]:
     """Validate + resolve raw matcher output into OverlaySuggestion dumps.
 
@@ -368,6 +398,11 @@ def build_suggestions(
 
     `ceiling` / `hook_any_tier` (Qendresa item 15, defaults = today): the density cap, and
     whether a non-"confident" card may start inside the hook window.
+
+    `shareable` (KRI-1478, default none = today): the `occupied` windows a pip card may share.
+    A card on the same mention takes the second half of that window instead of being dropped
+    as "overlap"; `shared_out[overlay id] = (first_start, first_end, midpoint)` tells the
+    caller where the first card must now end.
     """
     from app.agents._schemas.overlay_suggestion import OverlaySuggestion  # noqa: PLC0415
 
@@ -391,6 +426,7 @@ def build_suggestions(
     )
 
     taken: list[tuple[float, float, bool]] = [(s, e, False) for s, e in occupied]
+    shareable_left = {_window_key(s, e) for s, e in shareable or ()}
     out: list[dict] = []
     fullscreen_count = 0
     density_count = 0
@@ -457,6 +493,21 @@ def build_suggestions(
             if end - start < _MIN_ON_SCREEN_S:
                 _trace("autoplace_item_dropped", reason="too_short", asset_id=asset_id)
                 continue
+        # KRI-1478: `others` is `taken` as it stands once this card shares a window (the first
+        # card ending at the midpoint); it only becomes `taken` if the card is kept.
+        shared = None if is_fs else _shared_half(start, end, taken, shareable_left)
+        others = taken
+        if shared is not None:
+            start, end = shared[2], shared[1]
+            if asset.get("kind") == "video" and asset_dur:
+                end = min(end, start + float(asset_dur) + _FREEZE_ALLOWANCE_S)
+            if end - start < _MIN_ON_SCREEN_S:
+                shared = None  # too little footage for its half: "overlap", as before
+            else:
+                others = [
+                    (s, shared[2], hook) if (s, e) == shared[:2] else (s, e, hook)
+                    for s, e, hook in taken
+                ]
         tier = getattr(p, "confidence_tier", "likely")
         if not is_fs and not hook_any_tier and start < _HOOK_WINDOW_S and tier != "confident":
             _trace("autoplace_item_dropped", reason="hook_window", asset_id=asset_id)
@@ -473,11 +524,11 @@ def build_suggestions(
         )
         if not is_fs:
             if is_hook_burst:
-                reject_reason = _hook_burst_reject_reason(start=start, end=end, taken=taken)
+                reject_reason = _hook_burst_reject_reason(start=start, end=end, taken=others)
                 if reject_reason is not None:
                     _trace("autoplace_item_dropped", reason=reject_reason, asset_id=asset_id)
                     continue
-            elif _overlaps(start, end, [(s, e) for s, e, _ in taken]):
+            elif _overlaps(start, end, [(s, e) for s, e, _ in others]):
                 _trace("autoplace_item_dropped", reason="overlap", asset_id=asset_id)
                 continue
         if not is_hook_burst and density_count >= budget:
@@ -572,6 +623,11 @@ def build_suggestions(
             if stats is not None:
                 stats["fullscreen_emitted"] = stats.get("fullscreen_emitted", 0) + 1
         else:
+            if shared is not None:
+                taken[:] = others
+                shareable_left.discard(_window_key(*shared[:2]))
+                if shared_out is not None:
+                    shared_out[str(overlay["id"])] = shared
             taken.append((start, end, is_hook_burst))
         if not is_hook_burst:
             density_count += 1

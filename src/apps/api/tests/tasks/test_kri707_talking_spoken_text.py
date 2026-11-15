@@ -73,6 +73,8 @@ from app.tasks import generative_build as gb
 from tests._silent_pcm import silent_pcm
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled
 
+pytestmark = pytest.mark.journey("kri-707-talking-spoken-text")
+
 DURATION = 28.0
 GENERATION = "generation"  # `_setup_subtitled`'s `creator_generation_id`
 
