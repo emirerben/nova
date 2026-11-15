@@ -1648,8 +1648,8 @@
   ],
   [
    "app/kria/brief_checks.py",
-   "I put the pictures where you talk about the moments you described, not on your exact words, so check in the video that each one shows what you meant",
-   "Görselleri tam söylediğin kelimelere değil, anlattığın anlardan bahsettiğin yerlere koydum; videoda her birinin istediğini gösterdiğini kontrol et"
+   "I added pictures but couldn't verify which moments they match, so check the pictures and their timing",
+   "Görselleri ekledim ama hangi anlara denk geldiklerini doğrulayamadım, görselleri ve zamanlamalarını kontrol et"
   ]
  ],
  "retired": [

@@ -54,6 +54,7 @@ import pytest
 from app.config import settings
 from app.kria.approval_readiness import APPROVABLE, assess_readiness
 from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.reply_language import reply_language_for
 from app.services import creator_capabilities as capabilities
 from tests._prod_profile import PROD_VERIFIED_FEATURES, apply_prod_profile
 
@@ -290,9 +291,19 @@ def test_a_typed_selection_keeps_its_own_checker(monkeypatch):
 
 ONE_VIDEO = "This video is made from the one video you attached"
 DESCRIBED_CHECK = (
-    "I put the pictures where you talk about the moments you described, not on your exact "
-    "words, so check in the video that each one shows what you meant"
+    "I added pictures but couldn't verify which moments they match, so check the pictures and "
+    "their timing"
 )
+DESCRIBED_CHECK_IN = {
+    "tr": (
+        "Görselleri ekledim ama hangi anlara denk geldiklerini doğrulayamadım, görselleri ve "
+        "zamanlamalarını kontrol et"
+    ),
+    "de": (
+        "Ich habe Bilder eingefügt, konnte aber nicht prüfen, zu welchen Momenten sie passen, "
+        "also prüfe die Bilder und ihr Timing"
+    ),
+}
 
 
 @pytest.mark.parametrize("description", ["Use my talking video.", "Konuşma videomu kullan."])
@@ -487,8 +498,15 @@ def test_an_unrelated_pop_in_of_the_same_count_is_never_done(monkeypatch):
     }
     brief = CreativeBrief(version=1, requirements=[launch_and_billboards, R8])
     row = _row(_readiness(monkeypatch, brief, strategy=goodbye), "r3")
-    # "unverified": approvable, and said as her check after the render, never "Done".
+    # "unverified": approvable, and said as her check after the render, never "Done". The line
+    # claims no match (the latte is on "goodbye"): pictures were added, which moments they fit
+    # is unknown.
     assert (row["disposition"], row["reason"]) == ("unverified", DESCRIBED_CHECK)
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", True)
+    for language, expected in DESCRIBED_CHECK_IN.items():
+        with reply_language_for(language):
+            row = _row(_readiness(monkeypatch, brief, strategy=goodbye), "r3")
+        assert (row["disposition"], row["reason"]) == ("unverified", expected), language
 
 
 def test_an_ask_with_none_of_its_words_placed_holds_whatever_the_count(monkeypatch):

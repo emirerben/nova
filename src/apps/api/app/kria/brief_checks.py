@@ -7502,10 +7502,11 @@ _TALKING_LIST_LABEL_PLAN = (
 _NARRATED_BEAT_PLAN = "I'll show it when I hear those words in your voiceover"
 # KRI-1489: moments the creator described rather than quoted ("Vela's 2 posts"), which the plan's
 # other pop-ins may answer on the words she actually says. Only their count matches; nothing
-# says which picture stands for which moment, so it is the creator's check, never "Done".
+# says which picture stands for which moment (or that any does), so the line claims no match:
+# pictures were added, which moments they fit is the creator's check, never "Done".
 _DESCRIBED_POPINS_PLAN = (
-    "I put the pictures where you talk about the moments you described, not on your exact "
-    "words, so check in the video that each one shows what you meant"
+    "I added pictures but couldn't verify which moments they match, so check the pictures and "
+    "their timing"
 )
 # KRI-1357: a named spoken cue with no pop-in planned on a phone Voiceover DRAFT ("show the fans
 # clip at '1. FC Nürnberg'"). The narration places the footage on the words, and nothing typed
@@ -7918,8 +7919,8 @@ _REASON_TR: dict[str, str] = {
     ),
     _NARRATED_BEAT_PLAN: "Seslendirmende o sözleri duyduğumda gösteririm",
     _DESCRIBED_POPINS_PLAN: (
-        "Görselleri tam söylediğin kelimelere değil, anlattığın anlardan bahsettiğin yerlere "
-        "koydum; videoda her birinin istediğini gösterdiğini kontrol et"
+        "Görselleri ekledim ama hangi anlara denk geldiklerini doğrulayamadım, görselleri ve "
+        "zamanlamalarını kontrol et"
     ),
     _NARRATED_FOOTAGE_CUE_PLAN: (
         "Klipler sesini takip ediyor, video hazır olunca o sözleri söylediğinde ekranda ne "
