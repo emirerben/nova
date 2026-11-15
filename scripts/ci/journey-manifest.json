@@ -2505,6 +2505,7 @@
       "paths": [
         "src/apps/api/app/kria/clip_sound_toggle_ask.py",
         "src/apps/api/app/kria/draft_sound_carry.py",
+        "src/apps/api/app/kria/voice_only_ask.py",
         "src/apps/api/app/pipeline/clip_sound_toggle.py",
         "src/apps/api/app/services/phone_clip_sound_toggle.py",
         "src/apps/api/app/services/kept_sound_lines.py",
