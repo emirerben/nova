@@ -555,3 +555,67 @@ def test_a_reply_fitted_twice_keeps_one_count_line_with_the_whole_total():
     )
     assert twice == _fit_reply(whole, tail)
     assert _fit_reply(twice[: -len(tail) - 1], tail) == twice
+
+
+# KRI-1024 Postgres replay (Merope T1 with "甜点" in her title), through the review's fallback:
+# the receipt reply is the old shortening (every row a Partly or Couldn't, longer than the chat
+# alone), then the held reply fits it beside its tail. Counting the last rows away dropped the
+# Couldn't row, the only line that names the character no phone font draws and so the reason
+# the draft is held. A row that says why the draft is held is the last one ever counted.
+_MEROPE_HOLD_BODY = [
+    "Not everything you asked for made it in:",
+    (
+        "- Partly: About 35 seconds (A Talking edit keeps only the part of your take "
+        "you asked for, so…)"
+    ),
+    (
+        "- Partly: Start at 'Hi, I'm Karolina, I'm from Ecuador' and end right after "
+        "'I'm gonna be here all week' (I'll keep your take from “Hi, I'm Karolina, I'm "
+        "from Ecuador”…)"
+    ),
+    (
+        "- Partly: Cut her slip 'with bread, no,' so it says 'waffle cookie with "
+        "blackberry jam' (Choose Clean up speech when you approve and the long pauses "
+        "are…)"
+    ),
+    (
+        "- Partly: Cut the half question 'how are you gonna' (Choose Clean up speech "
+        "when you approve and the long pauses are…)"
+    ),
+    (
+        "- Partly: Captions for both voices, ensuring correct spellings: Oblea de la "
+        "Casa, dulce de leche, leche condensada, Merope (Every voice in your take gets "
+        "captions, off-camera ones too; I'll…)"
+    ),
+    (
+        "- Couldn't: Title on screen, placed so there is no text on her face or on the "
+        'plate ("Colombian dessert, Ecuadorian hands 甜点") (No phone font can draw '
+        '"甜点". Remove it or change "Colombian…)'
+    ),
+    (
+        "- Partly: Show MEROPE in big letters the first time she says Merope, placed so "
+        'there is no text on her face or on the plate ("MEROPE") (I\'ll show it the '
+        "first time that word is said in your take; I can't…)"
+    ),
+    "…",
+    "Heads-up for this video:",
+    ("- Also not applied on this video yet: the planned story structure, the length you asked for"),
+]
+_MEROPE_HOLD_TAIL = (
+    "I held this first draft back. The simpler version leaves out: Title on screen, "
+    'placed so there is no text on her face or on the plate ("Colombian dessert, '
+    'Ecuadorian hands 甜点"). Should I make it without these, or do you want to '
+    "change your request?"
+)
+
+
+def test_a_held_reply_keeps_the_couldnt_row_that_holds_it_and_counts_partly_rows_first():
+    lines = _held("\n".join(_MEROPE_HOLD_BODY), _MEROPE_HOLD_TAIL)
+
+    couldnt = next(line for line in _MEROPE_HOLD_BODY if line.startswith("- Couldn't:"))
+    assert couldnt in lines  # whole, with its quoted glyph reason
+    assert '"甜点"' in "\n".join(lines)
+    partly = [line for line in _MEROPE_HOLD_BODY if line.startswith("- Partly:")]
+    kept = [line for line in lines if line.startswith("- Partly:")]
+    assert kept == partly[: len(kept)]  # the last Partly rows go first, in order
+    assert lines.count(f"- …and {len(partly) - len(kept)} more") == 1

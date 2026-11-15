@@ -16728,8 +16728,12 @@ def _label(status: str) -> str:
 
 def _receipt_label(receipt: RequirementReceipt) -> str:
     if _planned_at_render(receipt):
-        return say(en=_PLANNED_LABEL, tr=_PLANNED_LABEL_TR)
+        return _planned_label()
     return _label(receipt.status)
+
+
+def _planned_label() -> str:
+    return say(en=_PLANNED_LABEL, tr=_PLANNED_LABEL_TR)
 
 
 _PLANNED_LABEL = "Will do at render"
@@ -16882,12 +16886,15 @@ class ReplyRow:
     ``head`` is the status and the ask ("Done: Show this label"), ``literals`` the quoted texts
     that follow it, ``tail`` the reason as written after them (" (reason)" on a receipt line,
     ": reason" on a held one). ``done`` marks a plain Done row, the only kind whose reason may
-    go and that may fold into the count line."""
+    go and that may fold into the count line. ``weight`` orders the rows a held reply must still
+    count away: the lowest first (Will do at render 1, Partly 2), a Couldn't row or a held line
+    (why the draft waits) last."""
 
     head: str
     literals: tuple[str, ...] = ()
     tail: str = ""
     done: bool = False
+    weight: int = 3
 
     @property
     def asks(self) -> int:
@@ -16994,7 +17001,10 @@ def fit_reply_rows(
         index = next((i for i in reversed(range(len(shown))) if shown[i].done), None)
         if index is None and not (hard and shown):
             break
-        index = len(shown) - 1 if index is None else index
+        if index is None:
+            # KRI-1024 replay: the last row may be the Couldn't that holds the draft; the
+            # lightest row goes first (the last of those), so that reason is the last counted.
+            index = min(reversed(range(len(shown))), key=lambda i: shown[i].weight)
         dropped = shown.pop(index)
         if dropped.done:
             done += dropped.asks
@@ -17026,6 +17036,11 @@ def fit_reply_text(text: str, room: int) -> str:
     start = next((i for i, line in enumerate(lines) if line.startswith("- ")), len(lines))
     end = next((i for i in range(start, len(lines)) if not lines[i].startswith("- ")), len(lines))
     done_label = f"- {_label('met')}: "
+    weights = (
+        (_planned_label(), 1),
+        (_label("partial"), 2),
+        (_label("chosen"), 2),
+    )
     rows = []
     counted = {True: 0, False: 0}
     for line in lines[start:end]:
@@ -17041,7 +17056,8 @@ def fit_reply_text(text: str, room: int) -> str:
         else:
             head, tail = _split_reason(line[2:]) if done else (line[2:], "")
             literals = ()
-        rows.append(ReplyRow(head=head, literals=literals, tail=tail, done=done))
+        weight = next((w for label, w in weights if line.startswith(f"- {label}: ")), 3)
+        rows.append(ReplyRow(head=head, literals=literals, tail=tail, done=done, weight=weight))
     before, after = lines[:start], lines[end:]
     fixed = sum(len(line) + 1 for line in (*before, *after))
     fitted_rows = fit_reply_rows(
