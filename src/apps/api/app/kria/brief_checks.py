@@ -9982,6 +9982,21 @@ def _check_caption_look(
             return _receipt(req, "partial", shape_gap)
         if facts.caption_look_receipt is None:
             return None
+        drawn = facts.caption_look_receipt
+        if drawn.get("beside_speaker") is True:
+            # KRI-1483: the writer slid her row beside her corner face, so it no longer sits
+            # over her, and the lines it left centred in her full-screen opening are its own
+            # (never "the captions no longer look the way you asked").
+            over_speaker = False
+            opening_x = _finite_number(drawn.get("full_screen_x_frac"))
+            facts = dataclasses.replace(
+                facts,
+                caption_line_overrides=tuple(
+                    line
+                    for line in facts.caption_line_overrides
+                    if opening_x is None or dict(line) != {"position_x_frac": opening_x}
+                ),
+            )
         kept = _caption_look_kept(ask, facts)
         if kept is None:
             return None
@@ -9997,10 +10012,13 @@ def _check_caption_look(
         moved = _caption_spot_drawn_receipt(req, facts.caption_look_receipt)
         if moved is not None:
             return moved
-        over_face = facts.caption_look_receipt.get("over_face") is True
+        over_face = drawn.get("over_face") is True
+        # KRI-1483: no room beside her corner face, so her row stayed on it. Said as "Partly":
+        # a met look's note is dropped whenever the ask has another part, a bare "Done".
+        on_her = over_face and drawn.get("beside_speaker") is False
         return _receipt(
             req,
-            "met",
+            "partial" if on_her else "met",
             caption_look_reason(ask, over_speaker=over_speaker, over_face=over_face),
         )
     from app.config import settings  # noqa: PLC0415

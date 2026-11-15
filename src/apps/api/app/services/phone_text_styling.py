@@ -606,6 +606,12 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
             if ask is not None:
                 over_face = _caption_over_face(row, rows, policy.get("_face_boxes") or [], canvas)
     resolved, over_face = _apply_caption_shape(resolved, ask, over_face, cues, canvas)
+    beside: dict = {}
+    if over_face and ask is not None and ask.position is not None:
+        # KRI-1483: her asked row, beside her corner face instead of on it.
+        slid = _beside_corner_speaker(resolved, cues, canvas)
+        if slid is not None:
+            resolved, over_face, beside = slid
     if ask is not None:
         policy["_caption_look_receipt"] = {
             **ask.as_dict(),
@@ -617,6 +623,7 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
             "position_x_frac": round(float(resolved.position_x_frac), 5),
             "position_y_frac": round(float(resolved.position_y_frac), 5),
             "over_face": over_face,
+            **beside,
         }
     policy["caption_look"] = resolved
     return resolved
@@ -1083,6 +1090,115 @@ def _shape_over_face(look, cues: list[dict], faces: list, canvas) -> bool:
         and (not isinstance(face, dict) or any(_same_window(face, w) for w in windows))
         for face in faces
     )
+
+
+# KRI-1483: the frame-edge inset a slid caption block keeps (the writer's own corner inset) and
+# the hair of air between the block and her face box (which already carries its own margin).
+_BESIDE_FRAME_INSET = 0.06
+_BESIDE_AIR = 0.002
+
+
+def _beside_corner_speaker(look, cues: list[dict], canvas):
+    """KRI-1483 (Qendresa Q2 run 3): a caption row the creator asked for ("in a light grey box
+    near the bottom") is the row her face is drawn in when she is cut out small in a corner, so
+    the box sat on her cheek. The row is hers (KRI-1177), the side is free: the block slides
+    sideways in that row, to the roomier side of her face, at ONE x for the whole video -- the
+    middle of the room between her face and the frame inset (or the Kria mark, where it meets
+    the row). The wrap width becomes that room, so the compiler itself keeps every caption
+    inside it: a caption wider than the room wraps there instead of reaching her.
+
+    Captions inside a full-screen span keep their x (she fills the frame there) as per-line
+    overrides, which need cue ids; a caption with no id takes the slid x.
+
+    ``(look, over_face, receipt fields)``. No room for her widest word on either side: the
+    look as given, still over her face, and ``beside_speaker: False`` so the review says so.
+    ``None`` when there is nothing to do: no corner frame, the switch off, or no caption on
+    her corner face."""
+    from dataclasses import replace
+
+    from app.config import settings
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.phone_captions import watermark_keepout_rect
+    from app.pipeline.phone_text_style import _overlap, _same_window
+
+    policy = _POLICY.get()
+    layout = policy.get("_speaker_layout") or {}
+    if layout.get("frame") is None or not settings.speaker_frame_caption_faces_enabled:
+        return None
+    canvas = canvas or PORTRAIT
+    spans = layout.get("full_screen") or []
+    faces = [f for f in policy.get("_face_boxes") or [] if isinstance(f, dict)]
+    # Her face where the corner frame draws it: every box outside a full-screen span.
+    corner = [f for f in faces if not _inside(float(f["start_s"]), float(f["end_s"]), spans)]
+    pad_x = pad_y = 0.0
+    if look.box_color is not None:
+        from app.pipeline.phone_captions import _CAPTION_BOX_PAD_X_EM, _CAPTION_BOX_PAD_Y_EM
+
+        pad_x = _CAPTION_BOX_PAD_X_EM * look.text_size_px / canvas.width
+        pad_y = _CAPTION_BOX_PAD_Y_EM * look.text_size_px / canvas.height
+
+    def block(drawn, text: str):
+        left, top, right, bottom = _caption_block(drawn, text, canvas)
+        return (left - pad_x, top - pad_y, right + pad_x, bottom + pad_y)
+
+    def touches(cue: dict, box, among: list) -> bool:
+        return any(_overlap(box, f["box"]) and _same_window(f, cue) for f in among)
+
+    slid, kept = [], []
+    for cue in cues:
+        start, end = float(cue.get("start_s", 0)), float(cue.get("end_s", 0))
+        if not str(cue.get("text") or "").strip() or end <= start:
+            continue
+        in_corner = bool(_outside(start, end, spans)) if spans else True
+        (slid if in_corner or not isinstance(cue.get("id"), str) else kept).append(cue)
+    blocks = [block(look, str(cue["text"])) for cue in slid]
+    if not any(touches(cue, box, corner) for cue, box in zip(slid, blocks, strict=True)):
+        return None
+    line = min(box[3] - box[1] for box in blocks)
+    top = min(box[1] for box in blocks) - line  # a re-wrapped block is a line taller
+    bottom = max(box[3] for box in blocks) + line
+    beside = [f["box"] for f in corner if f["box"][1] < bottom and top < f["box"][3]]
+    mark = watermark_keepout_rect(canvas.width, canvas.height)
+    left_edge = _BESIDE_FRAME_INSET
+    if mark[1] / canvas.height < bottom and top < mark[3] / canvas.height:
+        left_edge = max(left_edge, mark[2] / canvas.width - pad_x)  # the ink clears the mark
+    rooms = (
+        (left_edge, min(box[0] for box in beside) - _BESIDE_AIR),
+        (max(box[2] for box in beside) + _BESIDE_AIR, 1 - _BESIDE_FRAME_INSET),
+    )
+    low, high = max(rooms, key=lambda room: room[1] - room[0])
+    words = {word for cue in slid for word in str(cue["text"]).split()}
+    widest_word = max(box[2] - box[0] for box in (block(look, word) for word in words))
+    no_room = (look, True, {"beside_speaker": False})
+    if high - low < widest_word:
+        return no_room
+    budget = int((high - low - 2 * pad_x) * 1000) / 1000  # the text's wrap width, rounded down
+    x = round(
+        low + pad_x
+        if look.text_anchor == "left"
+        else high - pad_x
+        if look.text_anchor == "right"
+        else (low + high) / 2,
+        4,
+    )
+    if not 0.05 <= x <= 0.95:
+        return no_room
+    was = round(float(look.position_x_frac), 5)
+    overrides = dict(look.line_overrides or {})
+    for cue in kept:
+        overrides[cue["id"]] = {"position_x_frac": was, **(overrides.get(cue["id"]) or {})}
+    moved = replace(
+        look,
+        position_x_frac=x,
+        max_width_frac=min(budget, look.max_width_frac or budget),
+        line_overrides=overrides or None,
+    )
+    if any(touches(cue, block(moved, str(cue["text"])), faces) for cue in slid):
+        return no_room
+    stayed = replace(moved, position_x_frac=was)
+    over_face = any(touches(cue, block(stayed, str(cue["text"])), faces) for cue in kept)
+    receipt = {"beside_speaker": True, **({"full_screen_x_frac": was} if kept else {})}
+    return moved, over_face, receipt
 
 
 def _caption_over_face(row: dict, rows: list[dict], faces: list, canvas) -> bool:
