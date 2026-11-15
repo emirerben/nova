@@ -1595,6 +1595,16 @@
    "app/kria/brief_checks.py",
    "…and {n} more",
    "…ve {n} tane daha"
+  ],
+  [
+   "app/agents/editor_ops_v2/split_screen.py",
+   "A blank block in a split screen needs the latest Kria update.",
+   "Bölünmüş ekranda boş blok için Kria'nın son sürümü gerekiyor."
+  ],
+  [
+   "app/agents/editor_ops_v2/split_screen.py",
+   "A blank block in a split screen is not available on this edit yet.",
+   "Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor."
   ]
  ],
  "retired": [

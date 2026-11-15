@@ -13,7 +13,7 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 | Conversation threads | 31 | 77 | 52 | 7 | 18 | 68% | 13 |
 | Per-action set | 46 | 46 | 39 | 0 | 7 | 85% | 1 |
 
-Threads measured from recordings: 77. Threads awaiting recordings (not in the KPI): 1.
+Threads measured from recordings: 77. Threads awaiting recordings (not in the KPI): 2.
 
 ## Provenance
 
@@ -79,6 +79,7 @@ Threads measured from recordings: 77. Threads awaiting recordings (not in the KP
 | action_speaker_background | Put the beach photo behind me. | reaches | ['set_background'] | met | parser accepted ['set_background'] |
 | action_speaker_frame_by_hand | Move me to the small bottom left corner. | reaches | ['set_speaker_frame'] | met | parser accepted ['set_speaker_frame'] |
 | action_speaker_full_opening | Start with the background behind me, no full-screen intro. | reaches | ['remove_full_screen_opening'] | met | parser accepted ['remove_full_screen_opening'] |
+| action_split_screen_blank | Fill the bottom panel of the split screen with a red block after its clip. | reaches | no op | unrecorded |  |
 | action_split_screen_clip_offset | Start the bottom clip of the split screen one second later. | reaches | ['assign_split_panel'] | met | parser accepted ['assign_split_panel'] |
 | action_split_screen_clip_order | In the split screen, play the second clip of the top panel first. | reaches | ['move_split_clip'] | met | parser accepted ['move_split_clip'] |
 | action_split_screen_create | Put the first two clips side by side on one screen. | reaches | ['create_split_screen'] | met | parser accepted ['create_split_screen'] |

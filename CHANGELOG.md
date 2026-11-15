@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.240.0] - 2026-11-15
+
+### Changed
+- feat(api): chat places and recolours a split panel blank (KRI-1457) (#2355) <!-- release-pr: 2355 -->
+
+## [0.88.239.0] - 2026-11-15
+
+### Changed
+- fix(ios): write no source offset for a cut or left-trimmed photo (KRI-1440) (#2356) <!-- release-pr: 2356 -->
+
 ## [0.88.238.0] - 2026-11-15
 
 ### Fixed

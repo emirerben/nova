@@ -908,6 +908,7 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
 
     from app.models import CreatorGenerationReview
     from app.services import render_review_admission as admission
+    from app.tasks import kria_runtime
     from app.tasks.kria_runtime import reconcile_kria_turns
     from app.tasks.render_review import prepare_generation_review
 
@@ -933,6 +934,10 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
 
     forbidden = Mock(side_effect=AssertionError("review recovery inside the 45s chat reconciler"))
     monkeypatch.setattr(admission, "reconcile_generation_reviews", forbidden)
+    # The shared database holds turns and approvals earlier tests left; once their one-minute
+    # republish backoff lapses the reconciler publishes them, and this suite has no broker.
+    monkeypatch.setattr(kria_runtime.run_kria_turn, "apply_async", Mock())
+    monkeypatch.setattr(kria_runtime.execute_kria_approval, "apply_async", Mock())
     reconcile_kria_turns.run()
     forbidden.assert_not_called()
     monkeypatch.undo()
