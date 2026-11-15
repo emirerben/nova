@@ -129,6 +129,33 @@ _DIRECTION_LABEL: dict[str, tuple[str, str]] = {
 }
 
 
+_FUTURE_NOTE_TR = "Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2}"
+_PAST_NOTE_TR = "Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}."
+# "*": any other direction, named by its label.
+_FUTURE_NOTES: dict[str, tuple[str, str]] = {
+    "*": ("I'll cut this as a fast montage instead of a {label_en}: {v1}", _FUTURE_NOTE_TR),
+    "text_explainer": (
+        "I'll cut this as a fast montage instead of a text explainer: {v1}",
+        _FUTURE_NOTE_TR,
+    ),
+    "guided_story": (
+        "I'll cut this as a fast montage instead of a guided story: {v1}",
+        _FUTURE_NOTE_TR,
+    ),
+}
+_PAST_NOTES: dict[str, tuple[str, str]] = {
+    "*": ("I cut this as a fast montage instead of a {label_en}: {v1}.", _PAST_NOTE_TR),
+    "text_explainer": (
+        "I cut this as a fast montage instead of a text explainer: {v1}.",
+        _PAST_NOTE_TR,
+    ),
+    "guided_story": (
+        "I cut this as a fast montage instead of a guided story: {v1}.",
+        _PAST_NOTE_TR,
+    ),
+}
+
+
 def says_fallback(reason: str | None, direction: str | None) -> bool:
     """Is ``reason`` worth a line to the creator for ``direction``?
 
@@ -144,24 +171,29 @@ def fallback_note(reason: str, direction: str, *, future: bool = False) -> str:
 
     ``future`` is the approval card's wording ("will be cut"), else the finished video's. Read
     in the creator's reply language (call under `_worker_reply_language`)."""
-    en, tr = _REASONS.get(reason, _REASONS["story_not_compilable"])
+    # The reason and whole sentence per direction are localized, so German reads them in
+    # German too (KRI-1408).
+    reason_key = reason if reason in _REASONS else "story_not_compilable"
+    because = say(en=_REASONS[reason_key][0], tr=_REASONS[reason_key][1])
     label_en, label_tr = _DIRECTION_LABEL.get(direction, (direction, direction))
     if future:
+        note_key = direction if direction in _FUTURE_NOTES else "*"
         return say(
-            en="I'll cut this as a fast montage instead of a {label_en}: {v1}",
-            tr="Bunu {label_tr} yerine hızlı montaj olarak keseceğim: {v2}",
+            en=_FUTURE_NOTES[note_key][0],
+            tr=_FUTURE_NOTES[note_key][1],
             label_en=label_en,
-            v1=en,
+            v1=because,
             label_tr=label_tr,
-            v2=tr,
+            v2=because,
         )
+    note_key = direction if direction in _PAST_NOTES else "*"
     return say(
-        en="I cut this as a fast montage instead of a {label_en}: {v1}.",
-        tr="Bunu {label_tr} yerine hızlı montaj olarak kestim: {v2}.",
+        en=_PAST_NOTES[note_key][0],
+        tr=_PAST_NOTES[note_key][1],
         label_en=label_en,
-        v1=en,
+        v1=because,
         label_tr=label_tr,
-        v2=tr,
+        v2=because,
     )
 
 

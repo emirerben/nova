@@ -843,6 +843,6 @@ def test_control_the_video_prod_made():
     on_face = [box for _s, box in drawn if box.intersection_area(CORNER_FACE)]
     assert run.variant["caption_look_receipt"]["position_x_frac"] == 0.5
     assert len(on_face) >= len(drawn) * 0.7, (len(on_face), len(drawn))
-    # The done-list cut mid-line at the cap.
-    assert len(run.reply) == bc.MAX_REPLY_CHARS
+    # The done-list cut mid-line at the cap (at a word boundary since KRI-1408).
+    assert bc.MAX_REPLY_CHARS - 20 < len(run.reply) <= bc.MAX_REPLY_CHARS
     assert run.reply.endswith("…") and not run.reply.splitlines()[-1].startswith("- …and ")

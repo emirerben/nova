@@ -14,6 +14,7 @@ from app.config import settings
 from app.kria.brief import BriefRequirement
 from app.kria.reply_language import say
 from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._lines import direction_line, pacing_line
 from app.kria.route_capabilities._types import (
     Applied,
     AskDecline,
@@ -52,14 +53,14 @@ FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
     "pacing": NotApplied(
-        lines.pacing_line(
+        pacing_line(
             _pace_applied,
             "the cuts follow a fast pace",
             "kesimler hızlı tempoda",
         )
     ),
     "direction": NotApplied(
-        lines.direction_line(
+        direction_line(
             ROUTE_DIRECTION,
             "it is cut as a fast montage",
             "hızlı bir montaj olarak kesiliyor",
