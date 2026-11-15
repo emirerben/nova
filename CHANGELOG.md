@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.246.0] - 2026-11-15
+
+### Fixed
+- fix(kria): Qendresa Q2 run 3: labels at their own item, no false holds, nothing on her corner face, full replies (KRI-1479) (#2363) <!-- release-pr: 2363 -->
+
 ## [0.88.245.0] - 2026-11-15
 
 ### Changed
