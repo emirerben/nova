@@ -57,6 +57,7 @@ from app.kria.clip_sound_toggle_ask import (
 )
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import InferredLabel, RequirementReceipt
+from app.kria.copy_catalog import translate
 from app.kria.freeze_ask import (
     asks_freeze_frame,
     freeze_spec,
@@ -66,7 +67,7 @@ from app.kria.freeze_ask import (
 from app.kria.narrated_clip_sound_ask import AFTER_VOICE, ClipSoundAsk, requirement_clip_sound
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.order_replacement_receipts import VerifiedOrderExecution
-from app.kria.reply_language import current_reply_language, say
+from app.kria.reply_language import CATALOG_REPLY_LANGUAGES, current_reply_language, say
 from app.kria.route_disclosure import is_route_decline_reason
 from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
@@ -84,6 +85,7 @@ from app.kria.style_asks import (
 from app.kria.text_shape_ask import CURVED, text_shape
 from app.kria.text_trim import trim_at_word
 from app.kria.unclear_word_ask import asks_if_unclear
+from app.kria.voice_only_ask import asks_voice_only
 from app.pipeline.caption_language import (
     ASK_END,
     LANGUAGE_NAMES,
@@ -413,6 +415,9 @@ class ListLabelFact:
     items_missing: tuple[str, ...] = ()
     # Found items `list_found` counts that the receipt has no row for (also not shown).
     items_unaccounted: int = 0
+    # KRI-1471: the label (or a spoken item of its list) found no clear spot and is drawn over
+    # something else on screen (a card, a caption line, other text).
+    text_overlap: bool = False
 
 
 @dataclass(frozen=True)
@@ -644,6 +649,9 @@ class PlanFacts:
     # Item 14: a drawing over the closing text's window (Kria's `closing-arrow` or her own) is
     # on the finished video / in the editor payload.
     closing_arrow: bool = False
+    # KRI-1475: a live ask keeps text off an object; the phone Talking writer then keeps the
+    # closing tag, so a draft never promises the ending's arrow (set by `build_receipts`).
+    text_kept_off_object: bool = False
     phone_voiceover_spoken_text: bool = False
     # KRI-793: True when this draft renders through the phone Talking writer, which captions
     # the take, spells the creator's listed words their way and records every caption line
@@ -7096,6 +7104,19 @@ def _check_no_music(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
     return _receipt(req, "partial", _NO_CHECKER)
 
 
+def _check_voice_only(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1472: "Only my voice." (`voice_only_ask`) against the plan or the finished video.
+
+    The same verdict, in the same words, as "No music" (`_check_no_music`): a Talking edit plays
+    the creator's own sound with no music under it, so the ask is how it is made; a plan or
+    render that carries music says so. Only a Talking edit is judged here. ``stage="checked"``
+    marks the receipt as judged (see ``is_judged``): the ask has no `_has_checker` entry, which
+    would also change how every other format's readiness reads the row.
+    """
+    receipt = _check_no_music(req, facts)
+    return receipt.model_copy(update={"verification": "checked", "stage": "checked"})
+
+
 def _has_duration_target(req: BriefRequirement) -> bool:
     target = req.facts.get("duration_s")
     return isinstance(target, (int, float)) and not isinstance(target, bool) and target > 0
@@ -7940,7 +7961,20 @@ _NEUTRAL_EN = frozenset(
         _NO_CHECKER,
     }
 )
-_NEUTRAL_REASONS = _NEUTRAL_EN | frozenset(_REASON_TR[reason] for reason in _NEUTRAL_EN)
+# A receipt keeps its reason in the chat's language, so every language's text is neutral.
+# KRI-1403: German was missing, and a German approval card wrote "(Das kann ich noch nicht
+# automatisch prüfen)" under "Have a look at these in the video", which English and Turkish
+# leave out.
+_NEUTRAL_REASONS = (
+    _NEUTRAL_EN
+    | frozenset(_REASON_TR[reason] for reason in _NEUTRAL_EN)
+    | frozenset(
+        text
+        for language in sorted(CATALOG_REPLY_LANGUAGES)
+        for reason in _NEUTRAL_EN
+        if (text := translate(language, reason))
+    )
+)
 
 # Reasons that describe what the format the creator chose does with an ask, not a
 # simplification Kria made instead of it: a Talking edit's length follows the take,
@@ -12144,6 +12178,8 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
                 str(item.get("text") or "") for item in found_items if not _drawn_item(item)
             ),
             items_unaccounted=max(0, found - 1 - len(found_items)) if found is not None else 0,
+            text_overlap=row.get("text_overlap") is True
+            or any(_drawn_item(item) and item.get("text_overlap") is True for item in found_items),
         )
 
     return {
@@ -12188,6 +12224,28 @@ def _is_list_label_candidate(req: BriefRequirement, facts: PlanFacts) -> bool:
     if requirement_spoken_text(req) is not None:
         return False
     return labels.is_list_label_candidate(req, facts.background_phrases)
+
+
+def _as_list_label(req: BriefRequirement, facts: PlanFacts) -> BriefRequirement:
+    """KRI-1471: a list ask filed with its numbered example in the description, or as a per-clip
+    literal, judged as item 19's own row: a whole-video text whose literal is that example.
+
+    Q1 run 3 (prod 2026-11-14): "show each one as big text, like “1. Spec-kit”" came as a
+    `per_clip` text with no literal, so the clip-text check held the draft ("None of the 11
+    clips got its own text") for labels the worker can show. Only on the phone Talking writer,
+    which draws it (`phone_list_labels.example_label`): while its lane is on, or once a render
+    holds this ask's label receipt. Every other draft keeps its per-clip check.
+    """
+    if not facts.phone_talking:
+        return req
+    if _list_label_fact(facts, req) is None and not _talking_list_labels_lane():
+        return req
+    from app.pipeline import phone_list_labels as labels  # noqa: PLC0415
+
+    example = labels.example_label(req)
+    if example is None:
+        return req
+    return req.model_copy(update={"scope": "global", "literal": example})
 
 
 def _list_label_fact(facts: PlanFacts, req: BriefRequirement) -> ListLabelFact | None:
@@ -12246,6 +12304,19 @@ def _with_list_label_face(
                 en="{text} lands on a face; I couldn't find a spot clear of it",
                 tr="{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
                 text=text,
+            ),
+        )
+    if fact.text_overlap:
+        # KRI-1471: never "Done" for a label drawn over a card or a caption line.
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "{text} sits over something else on screen; I couldn't find a clear spot for it"
+                ),
+                tr="{text} ekranda başka bir şeyin üstünde duruyor; ona boş bir yer bulamadım",
+                text=f"“{fact.text}”",
             ),
         )
     if fact.list_found == 1:
@@ -14420,11 +14491,36 @@ def _closing_arrow_reason(req: BriefRequirement, facts: PlanFacts) -> str | None
     if facts.closing_arrow and is_ending:
         return None
     if not facts.rendered_variant and facts.phone_talking and is_ending:
-        from app.services.phone_rollout import cta_ending_available  # noqa: PLC0415
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            cta_ending_available,
+            cta_ending_planned_for,
+        )
 
-        if cta_ending_available():
+        # KRI-1475: promise the arrow only where the worker draws the ending
+        # (`_phone_talking_closing_rows`): never to an app build that can't draw drawings
+        # (an unknown build keeps the server-wide answer), never with an object to keep
+        # text off, where the closing tag stays.
+        drawable = (
+            cta_ending_planned_for(facts.client_protocol)
+            if facts.client_protocol is not None
+            else cta_ending_available()
+        )
+        if drawable and not facts.text_kept_off_object:
             return _CLOSING_ARROW_PLAN
     return _CLOSING_ARROW_MISSING
+
+
+def _keeps_text_off_object(req: BriefRequirement) -> bool:
+    """KRI-1475: a live ask names an object to keep text off ("no text on the laptop")."""
+    from app.kria.protected_targets import KEEP_TEXT_OFF_KEY  # noqa: PLC0415
+
+    entries = req.facts.get(KEEP_TEXT_OFF_KEY) if req.live else None
+    return any(
+        isinstance(entry, Mapping)
+        and entry.get("kind") == "object"
+        and str(entry.get("label") or "").strip()
+        for entry in (entries if isinstance(entries, list) else ())
+    )
 
 
 def _drawn_by_contract(req: BriefRequirement, facts: PlanFacts) -> bool:
@@ -16079,6 +16175,11 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if sound_toggle is not None:
         # KRI-942: "clip sound off except that last line": the recorded on/off facts own it.
         return _check_sound_toggle(req, sound_toggle, facts)
+    if asks_voice_only(req) and facts.edit_format in _TALKING_FORMATS:
+        # KRI-1472: on a Talking edit the typed "only my voice" is judged like "no music", after
+        # the recorded clip-sound facts above (they own a row that also carries one). Every
+        # other format keeps the readers below.
+        return _check_voice_only(req, facts)
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
         # (and any pauses it names); every other speech edit keeps its usual path.
@@ -16184,6 +16285,7 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if req.kind != "timing" and _wants_whole_take(req):
         return _check_whole_take(req, facts)
     if req.kind == "text":
+        req = _as_list_label(req, facts)  # KRI-1471: the example, not clip text
         researched = None if req.literal else _check_research(req, facts)
         if researched is not None:
             if researched.status == "met" and asks_text_animation(req):
@@ -16577,6 +16679,14 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
         # KRI-558: a change proven by the before/after edit diff, not by a value check.
         return receipt.reason not in _NEUTRAL_REASONS
+    if (
+        req is not None
+        and asks_voice_only(req)
+        and receipt.verification == "checked"
+        and receipt.stage == "checked"
+    ):
+        # KRI-1472: "only my voice" as a Talking edit judged it (`_check_voice_only`).
+        return True
     return (
         req is not None
         and receipt.verification != "unchecked"
@@ -16724,6 +16834,9 @@ def build_receipts(
     if (include_unchecked if strict_order is None else strict_order) and not facts.strict_order:
         facts = dataclasses.replace(facts, strict_order=True)
     requirements = list(requirements)
+    if any(_keeps_text_off_object(req) for req in requirements):
+        # KRI-1475: another requirement keeps text off an object (`_closing_arrow_reason`).
+        facts = dataclasses.replace(facts, text_kept_off_object=True)
     rendered_language = str(facts.caption_language or "").casefold().split("-")[0]
     if (
         rendered_language

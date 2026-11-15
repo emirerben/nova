@@ -202,8 +202,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // Source has 20 s and a fixed section grows with its longest member, so dragging past the 4 s section end extends.
         selectTimelineClip(1, in: app)
         XCTAssertTrue(trailing.isHittable)
+        // The timeline scrolls itself while a finger rests in the 56 pt zone at its edge (`updateAutoScrollX`), and
+        // this drag ends with a 0.2 s hold, so a drop inside that zone overshoots the length it measures. The clip
+        // starts right of centre, so slide it left under the fixed playhead until the whole extension fits short of it.
+        dragPlayheadForward(originalWidth * 0.6, in: app)
+        XCTAssertTrue(member.isSelected, "Seeking with the playhead keeps the clip selected")
+        XCTAssertTrue(trailing.isHittable)
+        let lane = app.scrollViews["native-editor-lane-scroll"].frame
         let extensionDistance = originalWidth
-        XCTAssertLessThan(trailing.frame.midX + extensionDistance, app.frame.maxX - 12)
+        XCTAssertLessThan(trailing.frame.midX + extensionDistance, lane.maxX - 56 - 8, "The drop must stay out of the edge scroll zone")
         dragHandle(trailing, by: extensionDistance)
         let extended = try splitSnapshot(app)
         let extendedRow = try extended.row(editedID)
@@ -358,6 +365,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // A short gesture on blank ruler space can be interpreted as deselection.
         clip.tap()
         let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
+        scrollLanesToTop(in: app, until: playhead)
         XCTAssertTrue(playhead.isHittable)
         let start = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: clip.frame.width / 2, dy: 0)),
@@ -520,6 +528,27 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let targetX = target == 1 ? app.frame.maxX - 1 - frame.minX : inset + (frame.width - 2 * inset) * target
         let end = origin.withOffset(CGVector(dx: targetX, dy: frame.height / 2))
         start.press(forDuration: 0.25, thenDragTo: end, withVelocity: 20, thenHoldForDuration: 0.3)
+    }
+
+    /// Drags the playhead handle right: the clips slide left under it. Selection stays.
+    private func dragPlayheadForward(_ distance: CGFloat, in app: XCUIApplication) {
+        let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
+        scrollLanesToTop(in: app, until: playhead)
+        XCTAssertTrue(playhead.isHittable)
+        let start = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: distance, dy: 0)),
+            withVelocity: 20, thenHoldForDuration: 0.3)
+    }
+
+    /// Selecting a clip on a lower panel row scrolls the lanes up one row, which carries the playhead handle under the
+    /// transport bar. Scrolls back down until the handle can be grabbed again.
+    private func scrollLanesToTop(in app: XCUIApplication, until handle: XCUIElement) {
+        let lanes = app.scrollViews["native-editor-lane-scroll"]
+        for _ in 0..<4 where !handle.isHittable {
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: lanes.frame.minX + 24, dy: lanes.frame.minY + 120))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 90)))
+        }
     }
 
     private func selectTimelineClip(_ number: Int, in app: XCUIApplication) {

@@ -38,6 +38,8 @@ from app.pipeline.phone_recipe_shared import fit_transform
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
 from app.services.client_protocol import CARD_LAYOUT_PROTOCOL
+from app.services.phone_card_layout import CardLayoutContext
+from app.services.phone_overlay_grounding import talking_card_strip_planned_for, with_card_strip
 from app.services.phone_rollout import talking_card_layout_planned_for
 from app.services.phone_subtitled_editor import (
     lanes_from_editor_sections,
@@ -77,6 +79,43 @@ def test_gate_truth_table(monkeypatch, flag, verified, protocol, expected):
 def test_gate_defaults_closed():
     assert settings.talking_card_layout_enabled is False
     assert CARD_LAYOUT_PROTOCOL == 40
+
+
+# KRI-1478: the strip (a cropped full-width card) opens only on top of the card layout, with its
+# own switch, and only for a build the phone verified to draw a cropped card. Ways it goes wrong:
+# the strip opens with the layout closed; with `sourceCrop` or `mediaCards` unverified (the
+# recipe would be refused at validation, losing every card); with no stamped build.
+_STRIP_TOKENS = ["cardLayout", "sourceCrop", "mediaCards"]
+
+
+@pytest.mark.parametrize(
+    ("strip", "layout", "verified", "protocol", "expected"),
+    [
+        (True, True, _STRIP_TOKENS, CARD_LAYOUT_PROTOCOL, True),
+        (False, True, _STRIP_TOKENS, CARD_LAYOUT_PROTOCOL, False),
+        (True, False, _STRIP_TOKENS, CARD_LAYOUT_PROTOCOL, False),
+        (True, True, ["cardLayout", "mediaCards"], CARD_LAYOUT_PROTOCOL, False),
+        (True, True, ["cardLayout", "sourceCrop"], CARD_LAYOUT_PROTOCOL, False),
+        (True, True, ["sourceCrop", "mediaCards"], CARD_LAYOUT_PROTOCOL, False),
+        (True, True, _STRIP_TOKENS, CARD_LAYOUT_PROTOCOL - 1, False),
+        (True, True, _STRIP_TOKENS, None, False),
+    ],
+)
+def test_strip_gate_truth_table(monkeypatch, strip, layout, verified, protocol, expected):
+    monkeypatch.setattr(settings, "talking_card_strip_enabled", strip)
+    monkeypatch.setattr(settings, "talking_card_layout_enabled", layout)
+    monkeypatch.setattr(settings, "phone_render_verified_features", verified)
+    assert talking_card_strip_planned_for(protocol) is expected
+    context = CardLayoutContext(caption_band=(0.62, 0.72))
+    assert with_card_strip(context, protocol).strip is expected
+    assert with_card_strip(None, protocol) is None, "a closed layout stays closed"
+
+
+def test_strip_gate_defaults_closed_and_leaves_the_context_alone():
+    assert settings.talking_card_strip_enabled is False
+    context = CardLayoutContext(caption_band=(0.62, 0.72))
+    assert with_card_strip(context, CARD_LAYOUT_PROTOCOL) is context
+    assert context.strip is False
 
 
 def test_window_map_without_cuts_is_identity():
@@ -225,3 +264,99 @@ def test_card_layout_framing_follows_the_phone_letterbox(fit, w, h):
         face_filled=False, landscape_fit=fit, display_width=w, display_height=h
     )
     assert opened is not letterboxed
+
+
+# --- KRI-1478 worker: the strip through the real phone Talking writer ----------------------
+#
+# The item-15 worker job (15 Visuals, the real `_run_phone_subtitled_job`), run with the strip
+# off and on. Ways the worker glue goes wrong: the strip never reaches grounding (the context
+# is built without it); the bind never measures the text column, so every card silently stays
+# whole; the bind measures although no card has a strip; a strip sits in another band than the
+# card it replaces (so it could reach her face or captions, which the item-15 tests only prove
+# clear for that band).
+
+
+def _strip_worker_job(monkeypatch, *, strip: bool):
+    import app.services.phone_overlay_grounding as ogm
+    import app.services.phone_visuals as phone_visuals_mod
+    import app.services.pipeline_trace as pipeline_trace
+    from app.services.background_text_focus import TextColumn
+    from tests.tasks import test_qendresa_card_layout_worker as worker
+    from tests.tasks.test_kri841_talking_ending_clip import _recipe
+
+    monkeypatch.setattr(ogm.settings, "gemini_api_key", "", raising=False)
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", lambda *a, **k: None)
+    job = worker._cards_job(monkeypatch)
+    monkeypatch.setattr(settings, "talking_card_strip_enabled", strip)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "sourceCrop", "mediaCards"],
+    )
+    measured: list[bool] = []
+
+    def bind(_open, *, job_id, pins, measure_text=False):  # noqa: ARG001
+        measured.append(measure_text)
+        visuals = []
+        for media_id in pins:
+            aspect = worker.SPEC[media_id][2]
+            column = (
+                TextColumn(
+                    left=0.2,
+                    right=0.62,
+                    line_pitch=0.034,
+                    source_width=1920,
+                    source_height=round(1920 / aspect),
+                )
+                if measure_text and aspect > 1
+                else None
+            )
+            visuals.append(worker._visual(media_id).model_copy(update={"text_column": column}))
+        return tuple(visuals)
+
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", bind)
+    variant = worker._run(job)
+    clips = {clip.id: clip for clip in worker._card_clips(_recipe(job))}
+    return clips, variant, measured, worker
+
+
+def test_worker_draws_wide_cards_as_strips_in_the_band_they_already_had(monkeypatch):
+    off, off_variant, off_measured, worker = _strip_worker_job(monkeypatch, strip=False)
+    on, on_variant, on_measured, _ = _strip_worker_job(monkeypatch, strip=True)
+
+    assert off_measured == [False], "no strip: the bind skips the measure, as today"
+    assert all(clip.source_crop is None for clip in off.values())
+    assert on_measured == [True]
+    assert on.keys() == off.keys() and len(on) >= 10
+    assert on_variant["phone_overlay_receipt"] == off_variant["phone_overlay_receipt"]
+
+    strips = 0
+    for clip_id, clip in on.items():
+        today, place = off[clip_id].visual_placement, clip.visual_placement
+        assert (place.window_start, place.window_end) == (today.window_start, today.window_end)
+        assert place.y_fraction == today.y_fraction, "same band"
+        aspect = worker.ASPECT[clip.source_asset_id]
+        if clip.source_crop is None:  # her portrait sign-up screenshot stays whole
+            assert place == today and aspect < 1
+            continue
+        strips += 1
+        assert (place.fade_in, place.fade_out) == (False, False)
+        if today.x_fraction == 0.5 and today.width_fraction < 0.94:
+            assert (place.width_fraction, place.x_fraction) == (pytest.approx(0.94), 0.5)
+        else:  # beside the Kria mark in the bottom band: the same box, the picture cut
+            assert (place.width_fraction, place.x_fraction) == (
+                today.width_fraction,
+                today.x_fraction,
+            )
+        crop = clip.source_crop
+        source_w, source_h = 1920, round(1920 / aspect)
+        drawn_h = (
+            place.width_fraction
+            * (1080 / 1920)
+            * (crop.height * source_h)
+            / (crop.width * source_w)
+        )
+        # as tall as the whole-picture card it replaces: nothing new above or below it
+        assert drawn_h == pytest.approx(today.width_fraction * (1080 / 1920) / aspect, abs=1e-4)
+        assert crop.width < 0.5, "cut to the text column: over twice the text size"
+    assert strips >= 10, "her wide screenshots and recordings are cut to their text"

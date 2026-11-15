@@ -104,6 +104,10 @@ _ZONE_Y = {"top": (0.12, 0.24), "middle": (0.44, 0.56), "bottom": (0.72, 0.84)}
 # middle 0.5, bottom 0.78). A face the creator named moves the block inside its row first
 # (`phone_protected_text.choose_caption_look`); outside these bands the receipt says it moved.
 CAPTION_SPOT_Y_BANDS = {"top": (0.08, 0.30), "middle": (0.44, 0.64), "bottom": (0.70, 0.90)}
+# KRI-1476 (Qendresa Q1 run 3): a two-word "middle" block is drawn under the face (0.62,
+# `phone_text_styling._apply_caption_shape`), so the row runs on to just above the bottom row:
+# a block that steps under her chin (0.66) is still the middle, not "lower than you asked".
+MIDDLE_UNDER_FACE_Y_BAND = (0.44, 0.68)
 
 
 @dataclass(frozen=True)
@@ -275,7 +279,13 @@ def caption_spot_band(position: str | None) -> tuple[float, float] | None:
     """The block centres that still read as the asked row, or None when nothing was asked."""
     if position not in CAPTION_ASK_POSITIONS:
         return None
-    return CAPTION_SPOT_Y_BANDS[_row(position)]
+    row = _row(position)
+    if row == "middle":
+        from app.config import settings  # noqa: PLC0415
+
+        if settings.keep_text_off_caption_spot_enabled:
+            return MIDDLE_UNDER_FACE_Y_BAND
+    return CAPTION_SPOT_Y_BANDS[row]
 
 
 def caption_spot_holds(position: str | None, y_frac: float) -> bool:

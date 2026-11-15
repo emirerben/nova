@@ -452,8 +452,45 @@ def _card_lines(whole: Sequence[Disclosure], rest: Sequence[Disclosure]) -> str:
     out += [f"- {item.text}" for item in rest if not lines.subject_label(item.subject)]
     if not out:
         return ""
-    heads_up = say(en="Heads-up for this video:", tr="Bu video için not:")
-    return "\n".join([heads_up, *out])
+    return "\n".join([_heads_up(), *out])
+
+
+def _heads_up() -> str:
+    return say(en="Heads-up for this video:", tr="Bu video için not:")
+
+
+def approval_card_disclosures(disclosures: Sequence[Disclosure]) -> list[Disclosure]:
+    """The disclosures the approval card shows (KRI-1403): none about the planner's own plan
+    fields (``PLANNER_OWNED_FIELDS``: a hook idea, a story structure, pacing, a direction).
+
+    Those are Kria's ideas the route won't use, not something the creator asked for: a related
+    ask (a clip order, a title) has its own receipt line on the card. The card has to fit one
+    screen (ylab, build 1977: a 14-line card blanked the chat). The draft reply and the
+    approval's ``not_applied`` record keep every line. ``asked_only`` off: every line, as before.
+    """
+    if not asked_only():
+        return list(disclosures)
+    return [item for item in disclosures if item.subject not in PLANNER_OWNED_FIELDS]
+
+
+def approval_card_text(reply: str, disclosures: Sequence[Disclosure]) -> str:
+    """``reply`` with its heads-up block holding only `approval_card_disclosures` (KRI-1403).
+
+    Unchanged when nothing is left out, so a reply whose block was fitted to a length limit keeps
+    that exact wording."""
+    kept = approval_card_disclosures(disclosures)
+    if len(kept) == len(disclosures):
+        return reply
+    lines = reply.split("\n")
+    header = _heads_up()
+    if header not in lines:
+        return reply
+    start = lines.index(header)
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("- "):
+        end += 1
+    block = card_text(kept).split("\n") if kept else []
+    return "\n".join(lines[:start] + block + lines[end:])
 
 
 # --- length -----------------------------------------------------------------------------------

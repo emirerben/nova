@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.journey("kri-215-learning-loop")
+
 ROOT = Path(__file__).resolve().parents[5]
 
 
