@@ -11,7 +11,8 @@ it says (`match_labels`), takes the recording's start (`label_start`) or, with n
 follow, grounds the item on the take's own words (`ground_on_words`), and builds one ordinary
 editable ``TextElement`` row per placed label plus a receipt (`list_label_rows`). It mirrors
 `app.pipeline.phone_spoken_text` (rows + receipt, a ``place`` callback, never raises for one
-ask) and rides the same KRI-467 text lane, so it needs no new phone capability.
+ask) and rides the same KRI-467 text lane, so it needs no new phone capability. Its one
+setting is KRI-1471's kill switch (`_example_asks_on`).
 
 No ``re`` and no word tests on lowered text (KRI-667): list markers are read with ``str``
 methods and names are compared as `phone_reaction_grounding.fold_tokens` tokens.
@@ -71,6 +72,11 @@ _MAX_JOINER_LETTERS = 3
 _MAX_GAP_S = 0.6
 MAX_LIST_ITEMS = 10
 _MIN_LIST_ITEMS = 3
+# KRI-1471: the mark that opens a quoted example -> the marks that may close it („ “ is German).
+_QUOTE_CLOSERS = {'"': '"', "“": "”", "„": '“”"', "«": "»", "‘": "’", "'": "'"}
+# A transcribed word that ends a sentence, read past a closing quote or bracket.
+_SENTENCE_END = (".", "!", "?", "…")
+_CLOSING_MARKS = "\"'”’»)]"
 
 
 @dataclass(frozen=True)
@@ -128,19 +134,66 @@ def _has_explicit_marker(text: str) -> bool:
     return _read_marker(_collapse(text))[1]
 
 
+def _example_asks_on() -> bool:
+    """KRI-1471's kill switch (the one setting this module reads). Off: today's reads."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.list_label_example_ask_enabled)
+
+
+def _quoted(text: str) -> list[str]:
+    """Each quoted stretch of ``text``, marks dropped. An apostrophe inside a word ("don't")
+    neither opens nor closes one."""
+    found: list[str] = []
+    opened: tuple[int, str] | None = None  # (where the words start, the marks that close them)
+    for index, mark in enumerate(text):
+        if opened is None:
+            if mark in _QUOTE_CLOSERS and not (mark == "'" and text[index - 1 : index].isalnum()):
+                opened = (index + 1, _QUOTE_CLOSERS[mark])
+        elif mark in opened[1] and not (mark == "'" and text[index + 1 : index + 2].isalnum()):
+            found.append(text[opened[0] : index])
+            opened = None
+    return found
+
+
+def example_label(req: Any) -> str | None:
+    """KRI-1471: the numbered example of a list ask that was NOT filed as item 19's row (a
+    whole-video text whose literal is the label), or None.
+
+    Q1 run 3: "When I list the five repos, show each one as big text, like “1. Spec-kit”." came
+    as one ``per_clip`` text with no literal, the example left in the description. Two shapes:
+    a ``global`` or ``per_clip`` text with no literal whose description quotes exactly ONE text
+    with an explicit list marker, or a ``per_clip`` text whose own literal carries the marker.
+    Read from quote marks and digits only (KRI-667). The callers are the phone Talking readers;
+    every other per-clip text (described labels, a shot's dictated words) is None."""
+    if not _example_asks_on() or req.kind != "text" or req.scope not in ("global", "per_clip"):
+        return None
+    literal = _collapse(req.literal)
+    if literal:
+        marked = req.scope == "per_clip" and _has_explicit_marker(literal)
+        return literal if marked else None
+    examples = [
+        text
+        for text in map(_collapse, _quoted(str(req.description or "")))
+        if _has_explicit_marker(text)
+    ]
+    return examples[0] if len(examples) == 1 else None
+
+
 def list_label_asks(requirements: Iterable[Any]) -> tuple[ListLabelAsk, ...]:
     """Every live global ``text`` requirement that no spoken trigger owns, in brief order.
 
     Being listed does NOT make it a label: only a content match (`match_labels`) or, for a text
     with a list marker, the take's words (`ground_on_words`) does. The title and the closing text
-    are listed too and come out of `list_label_rows` as ``not_a_list_item``."""
+    are listed too and come out of `list_label_rows` as ``not_a_list_item``. KRI-1471: so is a
+    list ask filed with its numbered example elsewhere (`example_label`), as that example."""
     from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
 
     asks: list[ListLabelAsk] = []
     for req in requirements:
-        if not req.live or req.kind != "text" or req.scope != "global":
+        if not req.live or req.kind != "text":
             continue
-        text = _collapse(req.literal)
+        text = example_label(req) or (_collapse(req.literal) if req.scope == "global" else "")
         if not text:
             continue
         if requirement_spoken_text(req) is not None:
@@ -553,6 +606,91 @@ def find_spoken_list(
     ]
 
 
+def _ends_sentence(word: object) -> bool:
+    return str(word or "").rstrip().rstrip(_CLOSING_MARKS)[-1:] in _SENTENCE_END
+
+
+def _after_break(
+    stream: Sequence[tuple[str, int, float, float]], words: Sequence[dict], k: int
+) -> bool:
+    """Token ``k`` follows a break: the take starts (or ends) there, the word before it ends a
+    sentence, or she paused (``_MAX_GAP_S``) before it."""
+    if k == 0 or k >= len(stream):
+        return True
+    _token, word, _start, end = stream[k - 1]
+    return _ends_sentence(words[word].get("text")) or stream[k][2] - end >= _MAX_GAP_S - _EPS
+
+
+def _starts_sentence(
+    stream: Sequence[tuple[str, int, float, float]], words: Sequence[dict], k: int
+) -> bool:
+    """Token ``k`` opens a sentence, or follows the one short joiner that does ("And number")."""
+    joined = k > 0 and len(stream[k - 1][0]) <= _MAX_JOINER_LETTERS
+    return _after_break(stream, words, k) or (joined and _after_break(stream, words, k - 1))
+
+
+def find_counted_list(
+    words: Sequence[dict], *, first_start_s: float, first_end_s: float
+) -> list[SpokenItem]:
+    """KRI-1471: items 2.. of a list she COUNTS aloud, item 1 said at [first_start_s,
+    first_end_s] -- or [].
+
+    Q1 run 3: "Number one, Spec Kit. You write the spec first ... Number two, Impeccable. ..." has
+    talk between the items, so no opener follows item 1 (`find_spoken_list`). Language-agnostic
+    (no word lists): the two tokens right before item 1 are the opener (4+ letters, "number") and
+    its counter ("one"). The opener said again where a sentence starts (after a sentence mark or
+    a pause; one joiner of 3 letters or fewer may come first, "And number five"), with a counter
+    not used before that is punctuated like the first ("one," / "two,"; "the number of stars" is
+    talk), opens the next item. The item runs from the word after the counter to the first word
+    that ends a sentence or is followed by a pause, within 2 * n1 + 2 tokens; an opener whose
+    item has no such end is talk and is skipped, never guessed. At least 3 items in all or
+    nothing."""
+    stream = _word_stream(words)
+    texts = [token for token, _w, _s, _e in stream]
+    first = next((i for i, row in enumerate(stream) if row[2] >= first_start_s - 1e-3), None)
+    if first is None or first < 2:
+        return []
+    after = max((i for i, row in enumerate(stream) if row[3] <= first_end_s + 1e-3), default=first)
+    after = max(after + 1, first + 1)
+    opener = texts[first - 2]
+    if len(opener) < _MIN_OPENER_LETTERS or not _starts_sentence(stream, words, first - 2):
+        return []
+
+    def _mark(k: int) -> str:
+        raw = str(words[stream[k][1]].get("text") or "").rstrip()
+        return raw[-1:] if raw and not raw[-1].isalnum() else ""
+
+    cap = 2 * (after - first) + 2
+    seen = {texts[first - 1]}
+    items: list[SpokenItem] = []
+    q = after
+    while q + 2 < len(stream) and len(items) < MAX_LIST_ITEMS - 1:
+        end = None
+        if (
+            texts[q] == opener
+            and texts[q + 1] not in seen
+            and _mark(q + 1) == _mark(first - 1)
+            and _starts_sentence(stream, words, q)
+        ):
+            span = range(q + 2, min(len(stream), q + 2 + cap))
+            end = next((k for k in span if _after_break(stream, words, k + 1)), None)
+        if end is None:
+            q += 1
+            continue
+        seen.add(texts[q + 1])
+        items.append(
+            SpokenItem(
+                start_s=float(stream[q + 2][2]),
+                words=tuple(
+                    str(words[w].get("text") or "")
+                    for w in range(stream[q + 2][1], stream[end][1] + 1)
+                ),
+            )
+        )
+        q = end + 1
+    return items if len(items) + 1 >= _MIN_LIST_ITEMS else []
+
+
 def _marker_parts(text: str) -> tuple[str, str] | None:
     """(digits, punctuation) of ``text``'s explicit marker, or None."""
     length, explicit = _read_marker(text)
@@ -752,11 +890,13 @@ def list_label_rows(
     ):
         parent = marked[0]
         try:
-            items = find_spoken_list(
-                words,
-                first_start_s=spans[parent.requirement_id][0],
-                first_end_s=spans[parent.requirement_id][1],
-            )
+            first_start_s, first_end_s = spans[parent.requirement_id]
+            items = find_spoken_list(words, first_start_s=first_start_s, first_end_s=first_end_s)
+            if not items and _example_asks_on():
+                # KRI-1471: talk between the items ("Number one, ... Number two, ...").
+                items = find_counted_list(
+                    words, first_start_s=first_start_s, first_end_s=first_end_s
+                )
             found[parent.requirement_id] = 1
             for offset, item in enumerate(items):
                 number = offset + 2

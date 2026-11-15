@@ -1090,3 +1090,302 @@ def test_a_long_spoken_item_is_drawn_whole_too():
     assert _texts(rows)[:2] == ["1. which company it sends data to?", second]
     assert _fits(rows[1])
     assert receipt["rows"][1]["text"] == second and receipt["rows"][1]["status"] == "placed"
+
+
+# --- KRI-1471: the example filed in the description, and a list she counts aloud ---------
+#
+# Q1 run 3 (prod 2026-11-14): "When I list the five repos, show each one as big text, like
+# “1. Spec-kit”." was filed as ONE `text / per_clip` row with NO literal (the example stayed in
+# the description). No list-label reader saw it, the per-clip check said "None of the 11 clips
+# got its own text" and the draft was held. Her take counts the list aloud ("Number one, Spec
+# Kit. ... Number two, Impeccable. ..."), which the same-opener finder does not read.
+#
+# Ways this can go wrong, written before the code:
+#  E1 the prod shape is still not an ask;            E2 a quote style is missed (“ ” „ “ « » ‘ ’);
+#  E3 the same example on a `global` row is missed;  E4 a marked literal on a per_clip row is;
+#  E5 a per-clip ask with no numbered example (a described label, dictated shot words, a
+#     clip:<id> row, two numbered examples, an apostrophe) becomes a list label;
+#  E6 switch off is not today's read;                E7 a superseded row is listed;
+#  C1 fewer than her five labels, or not her words;  C2 switch off finds more than today;
+#  C3 "the number of ..." in ordinary talk becomes an item and shifts the numbers;
+#  C4 an opener in the middle of a sentence counts;  C5 a counter said twice makes two items;
+#  C6 two counted items are called a list;           C7 an item with no clear end is guessed;
+#  C8 it needs English words;                        C9 it replaces a same-opener list (V7).
+
+from app.pipeline import phone_list_labels as pl  # noqa: E402
+
+Q1_ASK_WORDS = "When I list the five repos, show each one as big text, like {}."
+# Her take as the phone Talking worker heard it (run 3 `overlay_transcript`: text, start, end).
+Q1_RUN3_WORDS = [
+    {"text": text, "start_s": start, "end_s": end}
+    for text, start, end in (
+        ("Five", 0.0, 0.64), ("projects", 0.64, 1.06), ("the", 1.06, 1.46), ("AI", 1.46, 1.74),
+        ("builder.", 1.74, 2.1), ("Five", 3.16, 3.46), ("projects", 3.46, 3.9),
+        ("the", 3.9, 4.26), ("AI", 4.26, 4.52), ("builder", 4.52, 4.76),
+        ("community", 4.76, 5.34), ("can't", 5.34, 5.9), ("stop", 5.9, 6.06),
+        ("talking", 6.06, 6.4), ("about.", 6.4, 6.92), ("Number", 7.52, 7.72),
+        ("one,", 7.72, 8.08), ("Spec", 8.48, 8.54), ("Kit.", 8.54, 8.8), ("You", 9.26, 9.42),
+        ("write", 9.42, 9.62), ("the", 9.62, 9.94), ("spec", 9.94, 9.94),
+        ("first,", 9.94, 10.44), ("and", 10.46, 10.64), ("your", 10.64, 11.08),
+        ("agent", 11.08, 11.08), ("builds", 11.08, 11.38), ("the", 11.38, 11.66),
+        ("whole", 11.66, 11.94), ("thing", 11.94, 12.18), ("from", 12.18, 12.4),
+        ("it.", 12.4, 12.84), ("Number", 14.48, 14.62), ("two,", 14.62, 15.04),
+        ("Impeccable.", 15.32, 15.82), ("It", 16.04, 16.48), ("gives", 16.48, 16.66),
+        ("your", 16.66, 16.9), ("coding", 16.9, 17.12), ("agent", 17.12, 17.46),
+        ("real", 17.46, 17.9), ("design", 17.9, 18.32), ("taste,", 18.32, 18.72),
+        ("so", 18.88, 19.22), ("your", 19.22, 19.5), ("apps", 19.5, 19.76),
+        ("stop", 19.76, 20.22), ("looking", 20.22, 20.52), ("generic.", 20.52, 20.98),
+        ("Number", 22.08, 22.18), ("three,", 22.18, 22.58), ("Trading", 22.82, 23.08),
+        ("Agents.", 23.08, 23.6), ("A", 24.0, 24.3), ("whole", 24.3, 24.58),
+        ("trading", 24.58, 24.86), ("firm", 24.86, 25.18), ("built", 25.18, 25.44),
+        ("from", 25.44, 25.72), ("AI", 25.72, 26.04), ("agents.", 26.04, 26.5),
+        ("Analysts,", 26.5, 27.6), ("a", 27.7, 28.06), ("bull,", 28.06, 28.06),
+        ("a", 28.36, 28.66), ("bear,", 28.66, 28.66), ("and", 28.88, 29.08),
+        ("a", 29.08, 29.14), ("trader.", 29.14, 29.4), ("Number", 30.52, 30.54),
+        ("four,", 30.54, 30.84), ("the", 31.06, 31.4), ("Agents", 31.4, 31.58),
+        ("Marketplace.", 31.58, 32.3), ("Hundreds", 32.88, 33.0), ("of", 33.0, 33.38),
+        ("ready-made", 33.38, 33.78), ("sub-agents", 33.78, 34.28), ("you", 34.28, 34.56),
+        ("can", 34.56, 34.76), ("drop", 34.76, 34.9), ("straight", 34.9, 35.28),
+        ("into", 35.28, 35.56), ("Cloud", 35.56, 35.68), ("Code.", 35.68, 35.98),
+        ("And", 37.62, 38.22), ("number", 38.22, 38.38), ("five,", 38.38, 38.82),
+        ("Cloud", 39.32, 39.38), ("Code", 39.38, 39.7), ("Game", 39.7, 40.02),
+        ("Studios.", 40.02, 40.64), ("Directors,", 41.46, 41.46), ("leads,", 41.88, 41.88),
+        ("and", 41.94, 42.22), ("specialists", 42.22, 42.54), ("that", 42.54, 42.88),
+        ("build", 42.88, 43.1), ("a", 43.1, 43.38), ("whole", 43.38, 43.58),
+        ("game", 43.58, 43.84), ("with", 43.84, 44.22), ("you.", 44.22, 44.92),
+        ("Comment", 45.38, 45.76), ("repo,", 45.76, 46.26), ("and", 46.44, 46.6),
+        ("I'll", 46.6, 46.82), ("send", 46.82, 46.96), ("you", 46.96, 47.16),
+        ("all", 47.16, 47.58), ("five", 47.58, 47.84), ("links.", 47.84, 48.18),
+    )
+]  # fmt: skip
+Q1_RUN3_LABELS = [
+    "1. Spec-kit",
+    "2. Impeccable",
+    "3. Trading Agents",
+    "4. The Agents Marketplace",
+    "5. Cloud Code Game Studios",
+]
+Q1_ONE = ListLabelAsk("r5", "1. Spec-kit", "Spec-kit")
+
+
+def _example_switch(monkeypatch, value: bool) -> None:
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", value)
+
+
+def _example_req(quoted="“1. Spec-kit”", *, scope="per_clip", literal=None, **kw):
+    return BriefRequirement(
+        id="r5",
+        kind="text",
+        scope=scope,
+        literal=literal,
+        description=Q1_ASK_WORDS.format(quoted),
+        facts={"numbered": True, "text_size": "large", "show_when_mentioned": True},
+        **kw,
+    )
+
+
+def _ask_texts(*reqs) -> list[str]:
+    return [ask.text for ask in list_label_asks(reqs)]
+
+
+def test_e1_the_prod_row_is_one_list_label_ask(monkeypatch):
+    _example_switch(monkeypatch, True)
+    [ask] = list_label_asks([_example_req()])
+    assert (ask.requirement_id, ask.text, ask.item) == ("r5", "1. Spec-kit", "Spec-kit")
+    assert pl.is_list_label_candidate(_example_req(), ())
+
+
+@pytest.mark.parametrize(
+    "quoted",
+    ['"1. Spec-kit"', "“1. Spec-kit”", "„1. Spec-kit“", "«1. Spec-kit»", "‘1. Spec-kit’"],
+)
+def test_e2_every_quote_style_is_read(monkeypatch, quoted):
+    _example_switch(monkeypatch, True)
+    assert _ask_texts(_example_req(quoted)) == ["1. Spec-kit"]
+
+
+def test_e3_e4_the_same_example_on_a_global_row_or_as_a_per_clip_literal(monkeypatch):
+    _example_switch(monkeypatch, True)
+    assert _ask_texts(_example_req(scope="global")) == ["1. Spec-kit"]
+    assert _ask_texts(_example_req(literal="1. Spec-kit")) == ["1. Spec-kit"]
+
+
+@pytest.mark.parametrize(
+    "req",
+    [
+        BriefRequirement(
+            id="a", kind="text", scope="per_clip", description="the landmark shown in each clip"
+        ),
+        BriefRequirement(
+            id="b", kind="text", scope="per_clip", description="name each place, like “Paris”"
+        ),
+        BriefRequirement(
+            id="c", kind="text", scope="per_clip", literal="Mutfak", description="the kitchen clip"
+        ),
+        BriefRequirement(
+            id="d", kind="text", scope="clip:asset-1", description="label it “1. Spec-kit”"
+        ),
+        BriefRequirement(
+            id="e", kind="text", scope="per_clip", description="like “1. Spec-kit” or “1) Kit”"
+        ),
+        BriefRequirement(
+            id="f", kind="text", scope="per_clip", description="don't number the clips I'd shot"
+        ),
+        BriefRequirement(id="g", kind="text", scope="title", description="open with “1. Spec-kit”"),
+        BriefRequirement(id="h", kind="order", scope="per_clip", description="like “1. Spec-kit”"),
+    ],
+    ids=[
+        "described",
+        "unmarked",
+        "shot-words",
+        "clip-scope",
+        "two",
+        "apostrophes",
+        "title",
+        "kind",
+    ],
+)
+def test_e5_other_per_clip_asks_are_never_list_labels(monkeypatch, req):
+    _example_switch(monkeypatch, True)
+    assert list_label_asks([req]) == ()
+    assert not pl.is_list_label_candidate(req, ())
+
+
+def test_e6_switch_off_reads_only_todays_rows(monkeypatch):
+    _example_switch(monkeypatch, False)
+    assert list_label_asks([_example_req()]) == ()
+    assert list_label_asks([_example_req(scope="global")]) == ()
+    assert list_label_asks([_example_req(literal="1. Spec-kit")]) == ()
+    assert _ask_texts(_req("a", "1. Spec-kit")) == ["1. Spec-kit"]  # item 19's own row
+
+
+def test_e7_a_superseded_example_row_is_not_listed(monkeypatch):
+    _example_switch(monkeypatch, True)
+    assert list_label_asks([_example_req(status="superseded")]) == ()
+
+
+def _q1_rows(words=Q1_RUN3_WORDS, asks=(Q1_ONE,)):
+    return _rows(list(asks), [], words=words, duration=49.0)
+
+
+def test_c1_her_take_gives_all_five_labels_in_her_words(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows, receipt = _q1_rows()
+    assert _texts(rows) == Q1_RUN3_LABELS
+    # Each label starts on its item's first word, as the take says it.
+    assert [r["start_s"] for r in rows] == pytest.approx([8.48, 15.32, 22.82, 31.06, 39.32])
+    typed, *spoken = receipt["rows"]
+    assert typed["status"] == "placed" and typed["list_found"] == 5
+    assert [(r["requirement_id"], r["list_item"], r["status"]) for r in spoken] == [
+        ("r5", n, "placed") for n in (2, 3, 4, 5)
+    ]
+    assert [r["id"] for r in rows] == [
+        "list-label-r5",
+        *(f"list-label-r5-{n}" for n in (2, 3, 4, 5)),
+    ]
+
+
+def test_c2_switch_off_shows_only_the_typed_label_as_today(monkeypatch):
+    _example_switch(monkeypatch, False)
+    rows, receipt = _q1_rows()
+    assert _texts(rows) == ["1. Spec-kit"]
+    assert receipt["rows"][0]["list_found"] == 1 and len(receipt["rows"]) == 1
+
+
+def _spoken(*sentences, step=0.3, breath=0.4):
+    """Punctuated sentences as timed words; ``breath`` (under the 0.6 s pause) between them."""
+    out, t = [], 0.0
+    for sentence in sentences:
+        for w in sentence.split():
+            out.append({"text": w, "start_s": round(t, 3), "end_s": round(t + step - 0.05, 3)})
+            t += step
+        t += breath
+    return out
+
+
+COUNTED = (
+    "Five projects worth a look.",
+    "Number one, Spec Kit.",
+    "You write the spec first.",
+    "Number two, Impeccable.",
+    "It gives your agent taste.",
+    "Number three, Trading Agents.",
+    "A whole firm of agents.",
+)
+
+
+def test_c3_the_number_of_in_ordinary_talk_is_not_an_item(monkeypatch):
+    _example_switch(monkeypatch, True)
+    talk = (*COUNTED[:3], "The number of stars is huge.", *COUNTED[3:])
+    rows, receipt = _q1_rows(_spoken(*talk))
+    assert _texts(rows) == ["1. Spec-kit", "2. Impeccable", "3. Trading Agents"]
+    assert receipt["rows"][0]["list_found"] == 3
+
+
+def test_c4_an_opener_in_the_middle_of_a_sentence_is_not_an_item(monkeypatch):
+    _example_switch(monkeypatch, True)
+    talk = (*COUNTED[:3], "People call it number nine, somehow.", *COUNTED[3:])
+    assert _texts(_q1_rows(_spoken(*talk))[0]) == [
+        "1. Spec-kit",
+        "2. Impeccable",
+        "3. Trading Agents",
+    ]
+
+
+def test_c5_a_counter_said_again_is_not_a_new_item(monkeypatch):
+    _example_switch(monkeypatch, True)
+    talk = (*COUNTED[:5], "Number two, Impeccable.", *COUNTED[5:])
+    assert _texts(_q1_rows(_spoken(*talk))[0]) == [
+        "1. Spec-kit",
+        "2. Impeccable",
+        "3. Trading Agents",
+    ]
+
+
+def test_c6_two_counted_items_are_not_a_list(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows, receipt = _q1_rows(_spoken(*COUNTED[:5]))
+    assert _texts(rows) == ["1. Spec-kit"] and receipt["rows"][0]["list_found"] == 1
+
+
+def test_c7_an_item_with_no_clear_end_is_never_guessed(monkeypatch):
+    _example_switch(monkeypatch, True)
+    # No punctuation and no pause: where "impeccable" ends is anyone's guess.
+    run_on = _spoken(
+        "number one spec kit you write the spec first number two impeccable it gives your "
+        "agent taste number three trading agents a whole firm of agents and more"
+    )
+    rows, receipt = _q1_rows(run_on)
+    assert _texts(rows) == ["1. Spec-kit"] and receipt["rows"][0]["list_found"] == 1
+    # The same words with a breath after each item: the pause ends it.
+    breaths = _talk(
+        "number one spec kit",
+        "you write the spec first",
+        "number two impeccable",
+        "it gives your agent taste",
+        "number three trading agents",
+        "a whole firm of agents",
+        step=0.4,
+    )
+    assert _texts(_q1_rows(breaths)[0]) == ["1. Spec-kit", "2. Impeccable", "3. Trading agents"]
+
+
+def test_c8_a_german_counted_list_needs_no_english_words(monkeypatch):
+    _example_switch(monkeypatch, True)
+    talk = _spoken(
+        "Fünf Projekte für dich.",
+        "Nummer eins, Spec Kit.",
+        "Du schreibst zuerst die Spec.",
+        "Nummer zwei, Impeccable.",
+        "Es gibt deinem Agenten Geschmack.",
+        "Und Nummer drei, Trading Agents.",
+        "Eine ganze Firma.",
+    )
+    assert _texts(_q1_rows(talk)[0]) == ["1. Spec-kit", "2. Impeccable", "3. Trading Agents"]
+
+
+def test_c9_a_same_opener_list_is_still_read_first(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows, _ = _v7_rows(_talk(V7_INTRO, V7_LIST))
+    assert _texts(rows)[1] == "2. what it saves on my machine?"
+    assert pl.find_counted_list(_talk(V7_INTRO, V7_LIST), first_start_s=0.0, first_end_s=0.2) == []

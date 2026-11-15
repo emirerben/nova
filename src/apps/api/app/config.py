@@ -1102,6 +1102,15 @@ class Settings(BaseSettings):
     # --app nova-video` + restart (api + worker). Design:
     # docs/reviews/qendresa-list-labels-failure-modes.md.
     spoken_list_labels_enabled: bool = False
+    # KRI-1471: the same list ask filed with its example in the description ("show each one as
+    # big text, like “1. Spec-kit”" as a per-clip or whole-video text with no literal, or the
+    # example as a per-clip literal) is a list label on a phone Talking edit, not clip text, so
+    # the draft is no longer held for "None of the N clips got its own text". And a list she
+    # counts aloud ("Number one, ... Number two, ...") gives the other labels. Needs
+    # SPOKEN_LIST_LABELS_ENABLED. Default TRUE. False: those rows and takes are read exactly as
+    # before. Rollback: `fly secrets set LIST_LABEL_EXAMPLE_ASK_ENABLED=false --app nova-video`
+    # + restart (api + worker).
+    list_label_example_ask_enabled: bool = True
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an

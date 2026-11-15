@@ -162,11 +162,13 @@ TYPED_REQ = _req("l1", TYPED)
 TYPED_REQ_2 = _req("l2", TYPED_2)
 
 
-def _job(monkeypatch, sentences, requirements):
+def _job(monkeypatch, sentences, requirements, words=None):
     from tests.tasks.test_phone_subtitled_narrated_dispatch import _enable_beats, _setup_subtitled
 
     job, snapshot, _session, _binding = _setup_subtitled(
-        monkeypatch, transcript_words=_words(sentences), duration_s=TAKE_S
+        monkeypatch,
+        transcript_words=words if words is not None else _words(sentences),
+        duration_s=TAKE_S,
     )
     _enable_beats(monkeypatch, extra_features=("authoredText",))
     clear_request_context()
@@ -188,9 +190,11 @@ def _job(monkeypatch, sentences, requirements):
     return job
 
 
-def _run(monkeypatch, *, flag: bool, sentences=FULL_SENTENCES, requirements=(TYPED_REQ,)):
+def _run(
+    monkeypatch, *, flag: bool, sentences=FULL_SENTENCES, requirements=(TYPED_REQ,), words=None
+):
     _flag(monkeypatch, flag)
-    job = _job(monkeypatch, sentences, requirements)
+    job = _job(monkeypatch, sentences, requirements, words)
     gb._run_generative_job(str(job.id))
     assert job.status == "awaiting_device", (job.status, job.error_detail)
     return job, job.assembly_plan["variants"][0]
@@ -421,3 +425,64 @@ def test_10_a_first_second_third_take_draws_no_wrong_text_and_the_receipt_is_par
     receipt = _after(variant, TYPED_REQ)
     assert receipt.status == "partial"
     assert "rest of your list" in (receipt.reason or "")
+
+
+# ------------------------------------------------------------------ KRI-1471 (Q1 run 3)
+#
+# Prod 2026-11-14: the same list ask was filed as one `text / per_clip` row with no literal (the
+# example "1. Spec-kit" stayed in the description) and her take counts the list aloud ("Number
+# one, Spec Kit. ... Number two, Impeccable. ..."). The worker read no label ask at all. Ways the
+# fix can go wrong, each pinned below: W1 fewer than five labels, or not in her words, or at the
+# wrong moment; W2 the finished-video receipt still judges clip text; W3 the switch off is not
+# today's render; W4 item 19's own typed row changes with the switch off.
+
+RUN3_REQ = BriefRequirement(
+    id="r5",
+    kind="text",
+    scope="per_clip",
+    description="When I list the five repos, show each one as big text, like “1. Spec-kit”.",
+    literal=None,
+    facts={"numbered": True, "text_size": "large", "show_when_mentioned": True},
+)
+RUN3_SAID_AT = [8.48, 15.32, 22.82, 31.06, 39.32]
+
+
+def _run3(monkeypatch, *, example: bool, requirements=(RUN3_REQ,)):
+    from tests.pipeline.test_phone_list_labels import Q1_RUN3_WORDS
+
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", example)
+    words = [Word(confidence=1.0, **word) for word in Q1_RUN3_WORDS]
+    return _run(monkeypatch, flag=True, requirements=requirements, words=words)
+
+
+def test_11_run3_take_and_brief_draw_all_five_labels(monkeypatch):
+    """W1, W2: five rows in her words, each when she starts that item; the row's receipt is met."""
+    from tests.pipeline.test_phone_list_labels import Q1_RUN3_LABELS
+
+    _job, variant = _run3(monkeypatch, example=True)
+    rows = _label_rows(variant)
+    assert [_squash(r["text"]) for r in rows] == Q1_RUN3_LABELS, [
+        r["text"] for r in variant.get("text_elements") or []
+    ]
+    for row, said in zip(rows, RUN3_SAID_AT, strict=True):
+        assert abs(row["start_s"] - said) <= 0.3, (row["text"], row["start_s"], said)
+    for row, nxt in zip(rows, rows[1:], strict=False):
+        assert row["end_s"] <= nxt["start_s"] + 1e-6, "two labels at once"
+    placed = variant["list_label_placement"]["rows"]
+    assert placed[0]["list_found"] == 5 and all(r["status"] == "placed" for r in placed)
+    assert _after(variant, RUN3_REQ).status == "met"
+
+
+def test_12_run3_switch_off_reads_no_label_ask_as_today(monkeypatch):
+    """W3: off, the per-clip row is nobody's label: no rows, and not "met"."""
+    _job, variant = _run3(monkeypatch, example=False)
+    assert not _label_rows(variant)
+    assert _after(variant, RUN3_REQ).status != "met"
+
+
+def test_13_run3_switch_off_keeps_item_19s_one_typed_label(monkeypatch):
+    """W4: the typed global row with the switch off is today's render: her one label."""
+    typed = _req("l1", "1. Spec-kit")
+    _job, variant = _run3(monkeypatch, example=False, requirements=(typed,))
+    assert [_squash(r["text"]) for r in _label_rows(variant)] == ["1. Spec-kit"]
+    assert variant["list_label_placement"]["rows"][0]["list_found"] == 1

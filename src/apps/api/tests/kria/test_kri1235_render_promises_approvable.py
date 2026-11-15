@@ -618,3 +618,51 @@ def test_the_longest_cleanup_promise_fits_a_receipt():
     for joined in ("; ".join(parts), "; ".join(bc._REASON_TR[p] for p in parts)):
         assert len(joined) <= 300, len(joined)
         assert _promised_at_render(_ASK, _partial(joined), bc.PlanFacts())
+
+
+# --- KRI-1471: Q1 run 3 (prod 2026-11-14, thread 05aa3a87): the list example filed per clip ---
+#
+# The same prompt, a week later, reached readiness as ONE `text / per_clip` row with no literal
+# (job 3ef3cbe5's binding). Readiness answered "unsupported: None of the 11 clips got its own
+# text in this draft." and "Make it without these" dropped her labels.
+RUN3_VISUALS = tuple(f"asset-0000000{n}-0000-4000-8000-00000000000{n}" for n in range(10))
+RUN3_R5 = _r(
+    "r5",
+    "text",
+    "When I list the five repos, show each one as big text, like “1. Spec-kit”.",
+    scope="per_clip",
+    facts={"numbered": True, "text_size": "large", "show_when_mentioned": True},
+)
+
+
+def _assess_run3(*requirements: BriefRequirement) -> tuple[CreativeBrief, dict]:
+    brief = CreativeBrief(version=1, requirements=list(requirements))
+    report = assess_readiness(
+        brief,
+        dict(Q1_STRATEGY),
+        media={"clip_paths": [TAKE]},
+        manifest=_manifest(*RUN3_VISUALS),
+        creator_id=CREATOR,
+        protected_regions=[],
+        protected_marks=True,
+    )
+    return brief, report
+
+
+def test_run3_the_list_example_row_is_a_promise_not_a_hold(q1_prod):
+    brief, report = _assess_run3(RUN3_R5)
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == ("unverified", bc._TALKING_LIST_LABEL_PLAN)
+    assert report["ready"] is True
+
+
+def test_run3_list_example_switch_off_holds_exactly_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
+    brief, report = _assess_run3(RUN3_R5)
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == (
+        "unsupported",
+        "None of the 11 clips got its own text in this draft.",
+    )
+    assert report["ready"] is False
+    assert RUN3_R5.text() in readiness_reply(brief, report)

@@ -11987,6 +11987,28 @@ def _is_list_label_candidate(req: BriefRequirement, facts: PlanFacts) -> bool:
     return labels.is_list_label_candidate(req, facts.background_phrases)
 
 
+def _as_list_label(req: BriefRequirement, facts: PlanFacts) -> BriefRequirement:
+    """KRI-1471: a list ask filed with its numbered example in the description, or as a per-clip
+    literal, judged as item 19's own row: a whole-video text whose literal is that example.
+
+    Q1 run 3 (prod 2026-11-14): "show each one as big text, like “1. Spec-kit”" came as a
+    `per_clip` text with no literal, so the clip-text check held the draft ("None of the 11
+    clips got its own text") for labels the worker can show. Only on the phone Talking writer,
+    which draws it (`phone_list_labels.example_label`): while its lane is on, or once a render
+    holds this ask's label receipt. Every other draft keeps its per-clip check.
+    """
+    if not facts.phone_talking:
+        return req
+    if _list_label_fact(facts, req) is None and not _talking_list_labels_lane():
+        return req
+    from app.pipeline import phone_list_labels as labels  # noqa: PLC0415
+
+    example = labels.example_label(req)
+    if example is None:
+        return req
+    return req.model_copy(update={"scope": "global", "literal": example})
+
+
 def _list_label_fact(facts: PlanFacts, req: BriefRequirement) -> ListLabelFact | None:
     return next((f for f in facts.list_labels or () if f.requirement_id == req.id), None)
 
@@ -15913,6 +15935,7 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if req.kind != "timing" and _wants_whole_take(req):
         return _check_whole_take(req, facts)
     if req.kind == "text":
+        req = _as_list_label(req, facts)  # KRI-1471: the example, not clip text
         researched = None if req.literal else _check_research(req, facts)
         if researched is not None:
             if researched.status == "met" and asks_text_animation(req):
