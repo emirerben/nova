@@ -655,7 +655,7 @@ def test_an_editor_saved_background_counts_distinct_media():
 #     row) stops being refused;            V8 another typed sound intent on the row is overruled;
 #  V9 only one spelling of the fact is read;       V10 it is read as a mute of the footage;
 #  V11 a montage's answer changes;         V12 the reply renames the ask "No music";
-#  V13 a redo of the draft may fall back to music.
+#  V13 a montage's music fallback (the planner's `asks_no_music`) changes.
 
 TALKING_CANT = "A Talking video can't do this, so it stays as filmed"
 VOICE_ONLY_MET = "No music, as asked."
@@ -783,11 +783,13 @@ def test_v12_the_reply_keeps_her_words_for_the_ask(monkeypatch):
     assert ask_text(R7_RUN3) == "Only my voice."
 
 
-def test_v13_a_voice_only_brief_never_falls_back_to_music(monkeypatch):
+def test_v13_a_voice_only_row_on_a_montage_keeps_todays_music_fallback(monkeypatch):
+    """Review: the fix is Talking-only, and `asks_no_music` cannot tell the format. So the
+    planner's KRI-1365 fallback to the draft's music (`creator_asked_no_music`) reads a
+    `voice_only` row exactly as main does, on a montage as everywhere."""
     from app.kria.draft_sound_carry import asks_no_music  # noqa: PLC0415
 
     brief = CreativeBrief(version=1, requirements=[R7_RUN3])
     _voice_switch(monkeypatch, True)
-    assert asks_no_music(brief)
-    _voice_switch(monkeypatch, False)
     assert not asks_no_music(brief)
+    assert asks_no_music(CreativeBrief(version=1, requirements=[R7_RUN3, R4]))  # typed no_music

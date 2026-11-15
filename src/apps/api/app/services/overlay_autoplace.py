@@ -102,6 +102,11 @@ def _overlaps(a_start: float, a_end: float, intervals: list[tuple[float, float]]
     return any(a_start < e and s < a_end for s, e in intervals)
 
 
+def _window_key(start: float, end: float) -> tuple[float, float]:
+    """A window as `share_beat_windows` keys it: rounded to the millisecond."""
+    return round(float(start), 3), round(float(end), 3)
+
+
 def _shared_half(
     start: float,
     end: float,
@@ -115,7 +120,8 @@ def _shared_half(
     stay on screen `_MIN_ON_SCREEN_S`: otherwise the first card keeps its whole window.
     """
     hits = [(s, e) for s, e, _ in taken if start < e and s < end]
-    if len(hits) != 1 or hits[0] not in shareable:
+    # Matched to the millisecond (`_window_key`): `taken` and `shareable` are separate floats.
+    if len(hits) != 1 or _window_key(*hits[0]) not in shareable:
         return None
     first_start, first_end = hits[0]
     mid = round((first_start + first_end) / 2, 3)
@@ -420,7 +426,7 @@ def build_suggestions(
     )
 
     taken: list[tuple[float, float, bool]] = [(s, e, False) for s, e in occupied]
-    shareable_left = {(float(s), float(e)) for s, e in shareable or ()}
+    shareable_left = {_window_key(s, e) for s, e in shareable or ()}
     out: list[dict] = []
     fullscreen_count = 0
     density_count = 0
@@ -619,7 +625,7 @@ def build_suggestions(
         else:
             if shared is not None:
                 taken[:] = others
-                shareable_left.discard(shared[:2])
+                shareable_left.discard(_window_key(*shared[:2]))
                 if shared_out is not None:
                     shared_out[str(overlay["id"])] = shared
             taken.append((start, end, is_hook_burst))

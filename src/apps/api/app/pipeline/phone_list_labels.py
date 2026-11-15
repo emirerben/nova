@@ -643,8 +643,10 @@ def find_counted_list(
     (no word lists): the two tokens right before item 1 are the opener (4+ letters, "number") and
     its counter ("one"). The opener said again where a sentence starts (after a sentence mark or
     a pause; one joiner of 3 letters or fewer may come first, "And number five"), with a counter
-    not used before that is punctuated like the first ("one," / "two,"; "the number of stars" is
-    talk), opens the next item. The item runs from the word after the counter to the first word
+    not used before, opens the next item. That counter is set off by a mark ("two," / "two." /
+    "two:", or the first one's own), or has none while the opener itself starts the sentence;
+    "the number of stars" (a joiner first, no mark) is talk.
+    The item runs from the word after the counter to the first word
     that ends a sentence or is followed by a pause, within 2 * n1 + 2 tokens; an opener whose
     item has no such end is talk and is skipped, never guessed. At least 3 items in all or
     nothing."""
@@ -672,8 +674,14 @@ def find_counted_list(
         if (
             texts[q] == opener
             and texts[q + 1] not in seen
-            and _mark(q + 1) == _mark(first - 1)
             and _starts_sentence(stream, words, q)
+            # The counter is set off like the first ("two," / "two." / "two:"), or, with no
+            # mark at all, the opener itself starts the sentence ("Number two Impeccable.").
+            # "The number of stars ..." (a joiner first, no mark) is talk.
+            and (
+                _mark(q + 1) in (_mark(first - 1), *_MARKER_PUNCTUATION, ",")
+                or _after_break(stream, words, q)
+            )
         ):
             span = range(q + 2, min(len(stream), q + 2 + cap))
             end = next((k for k in span if _after_break(stream, words, k + 1)), None)

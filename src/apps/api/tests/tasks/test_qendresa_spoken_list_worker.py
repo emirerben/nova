@@ -586,3 +586,31 @@ def test_17_a_label_is_gone_when_her_ending_comes_in(monkeypatch):
     assert rows[-1]["text"].startswith("5.") and rows[-1]["end_s"] == 41.0  # cut at the ending
     monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
     assert gb._list_label_timeline_end_s(48.8, closing_text="comment REPO") == 48.8
+
+
+def test_18_an_item_said_as_the_ending_comes_in_is_named_as_not_shown(monkeypatch):
+    """Review: her fifth item starts 0.18 s before the ending (under the 0.8 s a label needs).
+    No row is drawn for it, its receipt row says why, and the done-list names it: the list is
+    never "Done" with an item silently missing."""
+    from tests.pipeline.test_phone_list_labels import Q1_RUN3_LABELS
+
+    rows, receipt, _samples = _run3_label_rows(monkeypatch, example=True, duration_s=39.5)
+
+    assert [_squash(r["text"]) for r in rows] == Q1_RUN3_LABELS[:4]
+    fifth = receipt["rows"][-1]
+    assert (fifth["list_item"], fifth["text"], fifth["status"]) == (5, Q1_RUN3_LABELS[4], "no_time")
+    assert receipt["rows"][0]["list_found"] == 5
+    variant = {
+        "resolved_archetype": "subtitled",
+        "edit_format": "subtitled",
+        "text_elements": rows,
+        "list_label_placement": receipt,
+    }
+    done = _after(variant, _req("r5", "1. Spec-kit"))
+    assert (done.status, done.reason) == (
+        "partial",
+        "I showed this one, but couldn't show 1 more from your list: “5. Cloud Code Game Studios”",
+    )
+    # An item she starts a second before the ending is shown for that second.
+    rows, _receipt, _samples = _run3_label_rows(monkeypatch, example=True, duration_s=40.32)
+    assert (rows[-1]["start_s"], rows[-1]["end_s"]) == (39.32, 40.32)

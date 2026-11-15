@@ -967,3 +967,19 @@ def test_run3_job_with_the_strip_off_is_todays_job(monkeypatch):
     assert [u["reason"] for u in overlay_receipt["unplaced"]] == ["overlap"] * 5
     assert "sourceCrop" not in recipe.required_capabilities
     assert "source_crop" not in recipe.model_dump_json()
+
+
+def test_a_strip_window_is_shared_when_the_two_lists_differ_past_the_millisecond(monkeypatch):
+    """KRI-1478 review: `occupied` (the beat windows) and `shareable` (the cards' own start/end)
+    are two float lists; a difference in the 4th decimal must not turn the share into "overlap"."""
+    drifted = [(start + 0.0004, end - 0.0004) for start, end in BEAT_WINDOWS[:1]]
+    result = _run3_overlays(monkeypatch, shareable=drifted, occupied=OCCUPIED)
+    assert [c.media_id for c in result.cards] == ["r1"]
+    # ... and still only once: a second recording on that mention is "overlap".
+    twice = _run3_overlays(
+        monkeypatch,
+        shareable=drifted,
+        occupied=OCCUPIED,
+        raw=[_raw("r1", 8.48, 12.84, "confident"), _raw("r2", 8.6, 12.84, "confident")],
+    )
+    assert [c.media_id for c in twice.cards] == ["r1"]

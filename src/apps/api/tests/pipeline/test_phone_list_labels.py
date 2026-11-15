@@ -1506,3 +1506,38 @@ def test_s6_a_top_spot_on_a_face_is_not_taken(monkeypatch):
 
     assert row["y_frac"] == LABEL_Y_FRAC and receipt["text_overlap"] is True
     assert receipt["face_collision"] is False
+
+
+# --- KRI-1471 review: one counter punctuated differently must not lose its item ----------
+#
+# The counter had to be punctuated exactly like the first ("one," / "two,"), so a transcript
+# that wrote "Number two." or "Number three" dropped that item and renumbered the rest. Ways the
+# looser rule can go wrong: M1 a differently marked counter still loses its item; M2 a counter
+# with no mark does; M3 "the number of ..." talk (no mark, after a joiner) opens an item.
+
+
+@pytest.mark.parametrize(
+    "second",
+    ["Number two. Impeccable.", "Number two: Impeccable.", "Number two Impeccable."],
+    ids=["period", "colon", "no-mark"],
+)
+def test_m1_m2_a_counter_punctuated_differently_keeps_its_item(monkeypatch, second):
+    _example_switch(monkeypatch, True)
+    talk = (*COUNTED[:3], second, *COUNTED[4:])
+    assert _texts(_q1_rows(_spoken(*talk))[0]) == [
+        "1. Spec-kit",
+        "2. Impeccable",
+        "3. Trading Agents",
+    ]
+
+
+@pytest.mark.parametrize(
+    "aside",
+    ["The number of stars is huge.", "And number crunching is slow.", "The number two spot."],
+)
+def test_m3_talk_that_only_uses_the_opener_word_is_still_not_an_item(monkeypatch, aside):
+    _example_switch(monkeypatch, True)
+    talk = (*COUNTED[:3], aside, *COUNTED[3:])
+    rows, receipt = _q1_rows(_spoken(*talk))
+    assert _texts(rows) == ["1. Spec-kit", "2. Impeccable", "3. Trading Agents"]
+    assert receipt["rows"][0]["list_found"] == 3
