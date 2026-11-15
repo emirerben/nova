@@ -431,7 +431,9 @@ ASKED_BOTTOM_ROW = (0.70, 0.90)  # `caption_look_ask.CAPTION_SPOT_Y_BANDS["botto
 FRAME_BUDGET = 0.88  # `phone_captions.ASKED_CAPTION_FRAME_BUDGET_FRAC`
 
 
-def _q2_compile(*, frame=CORNER, take_face=Q2_TAKE_FACE, ask=Q2_ASK, opening_s=Q2_OPENING_S):
+def _q2_compile(
+    *, frame=CORNER, take_face=Q2_TAKE_FACE, ask=Q2_ASK, opening_s=Q2_OPENING_S, cues=Q2_CUES
+):
     """The real caption look and compile for the job's inputs: ``(boxes, look, receipt)`` with
     one ``(cue id, start, grey box)`` per caption. The policy is what the worker holds once the
     corner background is registered; no worker, no I/O."""
@@ -461,21 +463,21 @@ def _q2_compile(*, frame=CORNER, take_face=Q2_TAKE_FACE, ask=Q2_ASK, opening_s=Q
     policy["_face_boxes"] = styling._faces_where_drawn(policy["_face_boxes_raw"], policy)
     with styling.phone_text_policy_scope(policy):
         layers = compile_caption_layers(
-            [dict(cue) for cue in Q2_CUES], canvas_width=1080, canvas_height=1920, style="word"
+            [dict(cue) for cue in cues], canvas_width=1080, canvas_height=1920, style="word"
         )
         live = styling._POLICY.get()
         look, receipt = live["caption_look"], dict(live.get("_caption_look_receipt") or {})
         _Q2_SAVED.clear()
         _Q2_SAVED.update(styling.generation_style_fields())
-    return _q2_boxes(layers), look, receipt
+    return _q2_boxes(layers, cues), look, receipt
 
 
 _Q2_SAVED: dict = {}  # the variant fields the last `_q2_compile` would persist
 
 
-def _q2_boxes(layers) -> list[tuple]:
+def _q2_boxes(layers, cues=Q2_CUES) -> list[tuple]:
     boxes = []
-    for cue, layer in zip(Q2_CUES, layers, strict=True):
+    for cue, layer in zip(cues, layers, strict=True):
         back = layer.background
         box = (
             None
@@ -534,6 +536,69 @@ def test_the_captions_of_her_full_screen_opening_stay_centred():
         assert _centre_x(box) == pytest.approx(0.5, abs=0.003), box
         assert (box[1] + box[3]) / 2 == pytest.approx(0.79, abs=0.005)
         assert not _overlap(box, Q2_TAKE_FACE), "under her full-frame face, as today"
+
+
+# Review of 4c5a76851: a caption that starts in her full-screen opening and ends after it. It
+# was slid (part of it is in the corner) and then judged at the slid x against her FULL-FRAME
+# face too, so a face low in the opening turned the whole video back to her spot on her corner
+# face with "Partly", although every corner caption had room beside her.
+#
+# F9   One straddling caption flips the whole video to "no room".
+# F10  A straddling caption is left on her face when one of its two x's is clear of her.
+Q2_STRADDLER = {"id": "native-caption-2-2", "text": "Spec kit.", "start_s": 5.42, "end_s": 5.66}
+Q2_STRADDLED = sorted([*Q2_CUES, Q2_STRADDLER], key=lambda cue: cue["start_s"])
+# A close take: her full-frame face reaches the caption row in the opening (and, drawn in the
+# corner, her face fills the corner's height).
+Q2_LOW_TAKE_FACE = (0.2067, 0.40, 0.8452, 0.85)
+
+
+def _drawn_face(take_face):
+    box = _drawn(take_face)
+    return (box[0] - 0.01, box[1] - 0.01, box[2] + 0.01, box[3] + 0.01)
+
+
+def _straddler(boxes):
+    return next(box for cue_id, _start, box in boxes if cue_id == Q2_STRADDLER["id"])
+
+
+def test_a_caption_across_the_end_of_her_opening_never_flips_the_whole_video():
+    boxes, look, receipt = _q2_compile(take_face=Q2_LOW_TAKE_FACE, cues=Q2_STRADDLED)
+
+    assert receipt["beside_speaker"] is True, receipt
+    corner = [box for _id, start, box in boxes if start >= Q2_OPENING_S]
+    hits = [box for box in corner if _overlap(box, _drawn_face(Q2_LOW_TAKE_FACE))]
+    assert not hits, f"{len(hits)}/{len(corner)} corner captions on her face"
+    centres = [_centre_x(box) for box in corner]
+    assert max(centres) - min(centres) <= 0.003, "one x for every corner caption"
+    # Neither of its x's is clear of her (her full-frame face is low in the opening): it keeps
+    # the opening's x, and the receipt says a caption covers her face there.
+    assert _centre_x(_straddler(boxes)) == pytest.approx(0.5, abs=0.003)
+    assert look.line_overrides[Q2_STRADDLER["id"]] == {"position_x_frac": 0.5}
+    assert receipt["over_face"] is True
+
+
+def test_a_caption_across_the_end_of_her_opening_takes_the_x_that_keeps_it_off_her():
+    boxes, look, receipt = _q2_compile(cues=Q2_STRADDLED)
+
+    straddler = _straddler(boxes)
+    corner_x = _centre_x(next(box for _id, start, box in boxes if start >= Q2_OPENING_S))
+    # At the opening's x it would reach her corner face once the opening ends; beside her it
+    # touches neither her full-frame face nor her corner face.
+    assert _overlap(
+        (
+            0.5 - (straddler[2] - straddler[0]) / 2,
+            straddler[1],
+            0.5 + (straddler[2] - straddler[0]) / 2,
+            straddler[3],
+        ),
+        Q2_DRAWN_FACE,
+    ), "setup: at x 0.5 it would touch her corner face"
+    assert _centre_x(straddler) == pytest.approx(corner_x, abs=0.003)
+    assert not _overlap(straddler, Q2_DRAWN_FACE) and not _overlap(straddler, Q2_TAKE_FACE)
+    assert Q2_STRADDLER["id"] not in (look.line_overrides or {})
+    assert (receipt["beside_speaker"], receipt["over_face"]) == (True, False)
+    opening = [box for cue_id, _start, box in boxes if cue_id in Q2_OPENING_IDS]
+    assert all(_centre_x(box) == pytest.approx(0.5, abs=0.003) for box in opening)
 
 
 @pytest.mark.parametrize("frame", ["small_bottom_left"])

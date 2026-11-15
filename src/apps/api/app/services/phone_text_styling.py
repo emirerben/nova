@@ -1144,13 +1144,18 @@ def _beside_corner_speaker(look, cues: list[dict], canvas):
     def touches(cue: dict, box, among: list) -> bool:
         return any(_overlap(box, f["box"]) and _same_window(f, cue) for f in among)
 
-    slid, kept = [], []
+    # A caption that starts in a full-screen span keeps its x there; one that also runs past the
+    # span's end is decided on its own below, once the slid x is known.
+    slid, kept, across = [], [], []
     for cue in cues:
         start, end = float(cue.get("start_s", 0)), float(cue.get("end_s", 0))
         if not str(cue.get("text") or "").strip() or end <= start:
             continue
-        in_corner = bool(_outside(start, end, spans)) if spans else True
-        (slid if in_corner or not isinstance(cue.get("id"), str) else kept).append(cue)
+        starts_inside = any(float(s["start_s"]) <= start < float(s["end_s"]) for s in spans)
+        if not starts_inside or not isinstance(cue.get("id"), str):
+            slid.append(cue)
+        else:
+            (across if _outside(start, end, spans) else kept).append(cue)
     blocks = [block(look, str(cue["text"])) for cue in slid]
     if not any(touches(cue, box, corner) for cue, box in zip(slid, blocks, strict=True)):
         return None
@@ -1184,19 +1189,30 @@ def _beside_corner_speaker(look, cues: list[dict], canvas):
     if not 0.05 <= x <= 0.95:
         return no_room
     was = round(float(look.position_x_frac), 5)
+    moved = replace(
+        look, position_x_frac=x, max_width_frac=min(budget, look.max_width_frac or budget)
+    )
+    stayed = replace(moved, position_x_frac=was)
+    # Only her corner face can say the room was wrong. A caption running into a full-screen span
+    # is judged against her full-frame face there too, but that is one caption's verdict
+    # (``over_face``), never the whole video's (review of 4c5a76851).
+    if any(touches(cue, block(moved, str(cue["text"])), corner) for cue in slid):
+        return no_room
+    for cue in across:
+        # The span's x when that keeps it off her face over its whole time, else the slid x
+        # when that does; neither: the span's x, and the receipt says it covers her.
+        clear = not touches(cue, block(stayed, str(cue["text"])), faces)
+        if not clear and not touches(cue, block(moved, str(cue["text"])), faces):
+            slid.append(cue)
+        else:
+            kept.append(cue)
     overrides = dict(look.line_overrides or {})
     for cue in kept:
         overrides[cue["id"]] = {"position_x_frac": was, **(overrides.get(cue["id"]) or {})}
-    moved = replace(
-        look,
-        position_x_frac=x,
-        max_width_frac=min(budget, look.max_width_frac or budget),
-        line_overrides=overrides or None,
+    moved = replace(moved, line_overrides=overrides or None)
+    over_face = any(touches(cue, block(moved, str(cue["text"])), faces) for cue in slid) or any(
+        touches(cue, block(stayed, str(cue["text"])), faces) for cue in kept
     )
-    if any(touches(cue, block(moved, str(cue["text"])), faces) for cue in slid):
-        return no_room
-    stayed = replace(moved, position_x_frac=was)
-    over_face = any(touches(cue, block(stayed, str(cue["text"])), faces) for cue in kept)
     receipt = {"beside_speaker": True, **({"full_screen_x_frac": was} if kept else {})}
     return moved, over_face, receipt
 
