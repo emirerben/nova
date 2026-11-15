@@ -1590,6 +1590,26 @@
    "app/agents/editor_ops_v2/split_screen.py",
    "A blank block in a split screen is not available on this edit yet.",
    "Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor."
+  ],
+  [
+   "app/kria/approval_readiness.py",
+   "Before I make this, please choose:",
+   "Bunu yapmadan önce bir seçim yap:"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "No sound effects",
+   "Ses efekti yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "No sound effects, as asked.",
+   "İstediğin gibi ses efekti yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This video has sound effects.",
+   "Bu videoda ses efekti var."
   ]
  ],
  "retired": [
