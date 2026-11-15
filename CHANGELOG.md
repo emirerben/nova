@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.234.0] - 2026-11-15
+
+### Fixed
+- fix(api): room hum no longer holds a take join open (KRI-1409) (#2345) <!-- release-pr: 2345 -->
+
 ## [0.88.233.0] - 2026-11-15
 
 ### Changed
