@@ -368,27 +368,31 @@ def still_played_exclusions(
 
 
 def _clip_numbers(positions: Sequence[int]) -> tuple[str, str]:
-    """(en, tr) for 1-based clip numbers: "clip 2" / "clips 2 and 4", "2. klibi" / ..."""
+    """(numbers, tr) for 1-based clip numbers: "2" / "2 and 4" in the reply language (the
+    sentence carries the word "clip"), "2. klibi" / "2. ve 4. klipleri"."""
     shown = [str(p) for p in positions]
     if len(shown) == 1:
-        return f"clip {shown[0]}", f"{shown[0]}. klibi"
+        return shown[0], f"{shown[0]}. klibi"
     return (
-        f"clips {', '.join(shown[:-1])} and {shown[-1]}",
+        ", ".join(shown[:-1]) + say(en=" and ", tr=" ve ") + shown[-1],
         f"{', '.join(f'{p}.' for p in shown[:-1])} ve {shown[-1]}. klipleri",
     )
 
 
 def still_played_notice(positions: Sequence[int]) -> str:
     """The draft's line for ``still_played_exclusions``, by 1-based clip number."""
-    en, tr = _clip_numbers(positions)
+    numbers, tr = _clip_numbers(positions)
+    # Whole sentences per count: German inflects around the clip word (KRI-1362).
     one = len(positions) == 1
     return say(
-        en="I couldn't leave out {v1}, so {v2} still in the video.",
-        tr="{v3} çıkaramadım, o yüzden videoda {v4}.",
-        v1=en,
-        v2="it is" if one else "they are",
-        v3=tr,
-        v4="duruyor" if one else "duruyorlar",
+        en="I couldn't leave out clip {numbers}, so it is still in the video."
+        if one
+        else "I couldn't leave out clips {numbers}, so they are still in the video.",
+        tr="{clips_tr} çıkaramadım, o yüzden videoda duruyor."
+        if one
+        else "{clips_tr} çıkaramadım, o yüzden videoda duruyorlar.",
+        numbers=numbers,
+        clips_tr=tr,
     )
 
 
@@ -415,15 +419,17 @@ def length_exclusion_notice(
         if media_id in matched and media_id not in still_played
     ]
     if left_out:
-        en, tr = _clip_numbers(left_out)
+        numbers, tr = _clip_numbers(left_out)
         one = len(left_out) == 1
         return say(
-            en="I left out {v1} because {v2} too short to use.",
-            tr=("{v3} kullanılamayacak kadar kısa {v4} için çıkardım."),
-            v1=en,
-            v2="it is" if one else "they are",
-            v3=tr,
-            v4="olduğu" if one else "oldukları",
+            en="I left out clip {numbers} because it is too short to use."
+            if one
+            else "I left out clips {numbers} because they are too short to use.",
+            tr="{clips_tr} kullanılamayacak kadar kısa olduğu için çıkardım."
+            if one
+            else "{clips_tr} kullanılamayacak kadar kısa oldukları için çıkardım.",
+            numbers=numbers,
+            clips_tr=tr,
         )
     if not matched:
         return say(

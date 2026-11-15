@@ -61,7 +61,6 @@ _KNOWN_FSTRING_CALLS = frozenset(
     {
         ("agents/editor_ops_v2/timeline.py", "_coerce_reorder_clips_by"),
         ("kria/editor_sequence_timing.py", "sequence_timing_plan"),
-        ("kria/landscape_fit_ask.py", "_clips"),
         ("services/choice_questions.py", "_text_placement"),
         ("services/kria_editor_ops_diff.py", "_describe_text"),
         ("services/kria_editor_ops_diff.py", "_plural"),
@@ -121,20 +120,44 @@ def _index() -> object:
     return build, build.Index(build.app_sources())
 
 
-def _text(where: str, node: ast.AST) -> str | None:
-    """A templated en/tr: a string literal, or a module constant (also imported) holding one."""
+def _texts(where: str, node: ast.AST) -> list[str] | None:
+    """The templates a templated en/tr can be: a string literal, a module constant (also
+    imported) holding one, each branch of ``A if c else B``, or every entry of a module table
+    read as ``T[k]`` / ``T[k][i]`` (whole sentences per value, so German gets whole sentences,
+    KRI-1408). None when one of them is not a fixed string (it would not be a catalog key)."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
+        return [node.value]
+    if isinstance(node, ast.IfExp):
+        body, orelse = _texts(where, node.body), _texts(where, node.orelse)
+        return None if body is None or orelse is None else [*body, *orelse]
+    build, index = _index()
+    mod = index.modules[build.module_name("app/" + where.rsplit(":", 1)[0])]
     if isinstance(node, ast.Name):
-        build, index = _index()
-        rel = "app/" + where.rsplit(":", 1)[0]
-        mod = index.modules[build.module_name(rel)]
         try:
             value = index.resolve_name(mod, node.id)
         except build.Unresolved:
             return None
-        return value if isinstance(value, str) else None
-    return None
+        return [value] if isinstance(value, str) else None
+    part = None
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Subscript):
+        if not (isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, int)):
+            return None
+        part, node = node.slice.value, node.value
+    if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)):
+        return None
+    try:
+        table = index.resolve_name(mod, node.value.id)
+    except build.Unresolved:
+        return None
+    if not isinstance(table, build.TableRef):
+        return None
+    out = []
+    for _key, value, _line, problem in index.table_entries(table):
+        picked = value if part is None else (value[part] if isinstance(value, tuple) else None)
+        if problem is not None or not isinstance(picked, str):
+            return None
+        out.append(picked)
+    return out or None
 
 
 _CALLS = _say_calls()
@@ -187,16 +210,17 @@ def test_template_fields_match_the_values_passed(where: str, call: ast.Call) -> 
     assert None not in values, f"{where}: **kwargs hides which values a template gets"
     used: set[str] = set()
     for lang in ("en", "tr"):
-        text = _text(where, _kw(call, lang))
-        assert text is not None, (
-            f"{where}: templated {lang} must be a string literal or a module constant "
-            "(it is the catalog key)"
+        texts = _texts(where, _kw(call, lang))
+        assert texts is not None, (
+            f"{where}: templated {lang} must be a string literal, a module constant, a "
+            "conditional of those or a module table of them (it is the catalog key)"
         )
-        for name, _conv, spec in _fields(text):
-            assert name and name.isidentifier(), f"{where}: {lang} field {name!r} not a name"
-            assert name in values, f"{where}: {lang} uses {{{name}}} but the call does not pass it"
-            assert "{" not in (spec or ""), f"{where}: nested field in a format spec"
-            used.add(name)
+        for text in texts:
+            for name, _conv, spec in _fields(text):
+                assert name and name.isidentifier(), f"{where}: {lang} field {name!r} not a name"
+                assert name in values, f"{where}: {lang} uses {{{name}}} but the call lacks it"
+                assert "{" not in (spec or ""), f"{where}: nested field in a format spec"
+                used.add(name)
     assert used == values, f"{where}: values never used: {sorted(values - used)}"
 
 
@@ -228,7 +252,8 @@ def test_every_template_formats(where: str, call: ast.Call) -> None:
     """(3, 5) str.format never raises KeyError/IndexError on a template say() fills."""
     values = {k.arg for k in call.keywords if k.arg not in ("en", "tr")}
     for lang in ("en", "tr"):
-        _formats(_text(where, _kw(call, lang)), values)
+        for text in _texts(where, _kw(call, lang)) or []:
+            _formats(text, values)
 
 
 def _as_fstring(template: str) -> str:
@@ -248,17 +273,17 @@ def test_str_format_gives_the_fstring_text(where: str, call: ast.Call) -> None:
     """(2, 3) Filling a template equals evaluating the f-string it replaced, for each value type."""
     values = {k.arg for k in call.keywords if k.arg not in ("en", "tr")}
     for lang in ("en", "tr"):
-        template = _text(where, _kw(call, lang))
-        source = _as_fstring(template)
-        for dummy in ("x", 3, 1.5, ["a", "b"], None):
-            env = dict.fromkeys(values, dummy)
-            try:
-                expected = eval(source, {}, env)  # noqa: S307 - our own literal, no user input
-            except (ValueError, TypeError):
-                with pytest.raises((ValueError, TypeError)):
-                    template.format(**env)
-                continue
-            assert template.format(**env) == expected, f"{where}: {lang} differs for {dummy!r}"
+        for template in _texts(where, _kw(call, lang)) or []:
+            source = _as_fstring(template)
+            for dummy in ("x", 3, 1.5, ["a", "b"], None):
+                env = dict.fromkeys(values, dummy)
+                try:
+                    expected = eval(source, {}, env)  # noqa: S307 - our own literal, no input
+                except (ValueError, TypeError):
+                    with pytest.raises((ValueError, TypeError)):
+                        template.format(**env)
+                    continue
+                assert template.format(**env) == expected, f"{where}: {lang} differs, {dummy!r}"
 
 
 # ---------------------------------------------------------------- say() itself

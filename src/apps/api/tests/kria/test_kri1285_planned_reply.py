@@ -8,6 +8,7 @@ incident's own promise texts; the control keeps a genuine shortfall failing.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -152,13 +153,22 @@ def test_q2_run3_approval_text_keeps_every_promise():
     _whole_lines(text)
 
 
+def _cut_at_a_word(stored: str) -> str:
+    """A stored prod reply cut mid-word at the cap ("this label a…"), as the cut now ends it:
+    on the last whole word (KRI-1408)."""
+    if not stored.endswith("…"):
+        return stored
+    return re.sub(r"\S+$", "", stored[:-1]).rstrip().rstrip(",;:-") + "…"
+
+
 def test_q2_run3_with_the_switch_off_the_replies_are_exactly_the_stored_ones(monkeypatch):
     monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", False)
     review = bc.reply_from_receipts(_Q2_BRIEF, _q2_receipts("review_receipts"))
-    assert review == _Q2["stored_review_reply"].split("\n- Left out as agreed")[0]
+    # Prod cut this one mid-word ("this label a…").
+    assert review == _cut_at_a_word(_Q2["stored_review_reply"].split("\n- Left out as agreed")[0])
     draft = bc.reply_from_receipts(_Q2_BRIEF, _q2_receipts("draft_receipts"))
     stored = _Q2["stored_draft_reply"].split("\n", 1)[1].split("\n- Left out as agreed")[0]
-    assert draft == stored
+    assert draft == stored  # prod's cut already fell after a whole word ("it won't…")
 
 
 def _met(rid: str, reason: str | None = None) -> RequirementReceipt:
