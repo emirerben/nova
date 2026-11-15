@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.233.0] - 2026-11-15
+
+### Changed
+- test(ios): two split-panel editor UI tests allow for #2315's scroll and handle changes (KRI-1379) (#2361) <!-- release-pr: 2361 -->
+
 ## [0.88.232.0] - 2026-11-15
 
 ### Changed
