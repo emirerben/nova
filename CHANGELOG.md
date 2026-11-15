@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.247.0] - 2026-11-15
+
+### Changed
+- test(evals): re-record creative_direction just_fine fixture live (KRI-1428) (#2367) <!-- release-pr: 2367 -->
+
 ## [0.88.246.0] - 2026-11-15
 
 ### Fixed
