@@ -566,13 +566,14 @@ def test_box_text_always_reads_on_the_asked_box(monkeypatch, color, box, fill, o
 # --------------------------------------- KRI-1476: Q1 run 3 (job 3ef3cbe5), a face ask
 #
 # Run 3's brief filed "... in the top or bottom part of the screen, not over my face" (her
-# CARDS sentence) with ``keep_text_off: [face]``. Her two-word middle captions (y 0.62, on the
-# chin of the sampler's face box) then fell to y 0.86: kit rule "captions sit at 0.5-0.75"
-# FAIL, done-list "Partly: the captions sit lower than you asked".
+# cards sentence) with ``keep_text_off: [face]``. A face ask keeps every text off her face, so
+# her two-word middle captions (y 0.62, on the chin of the sampler's face box) had to move --
+# but they fell to y 0.86: kit rule "captions sit at 0.5-0.75" FAIL, done-list "Partly: the
+# captions sit lower than you asked".
 #
-# F1  The cards sentence's face ask moves her captions at all.
-# F2  A real "no text on my face" throws a middle block to the lower third although the spot
-#     just under her chin is clear.
+# F2  The face ask throws a middle block to the lower third although the spot just under her
+#     chin is clear.
+# F3  The face ask stops counting: a caption line left on her face.
 # F8  The done-list calls a block outside the middle row "in the middle", or a block still in
 #     the row "lower than you asked".
 # OFF The switch off renders run 3 exactly as it was.
@@ -618,37 +619,28 @@ def _q1_face_job(monkeypatch, face_ask):
     return job
 
 
-def _caption_centres(job) -> list[float]:
-    return [layer.anchor_y / CANVAS_H for layer in _caption_layers(job)]
-
-
-def test_q1_a_face_ask_about_her_cards_leaves_her_captions_on_her_spot(monkeypatch):
-    job = _q1_face_job(monkeypatch, Q1_CARDS_OFF_FACE)
-    variant = _run(job)
-
-    assert variant["caption_look_receipt"]["position_y_frac"] == 0.62
-    assert variant["caption_face_band_placement"] == {"status": "creator_spot_kept"}
-    assert "protected_text_regions" not in variant
-    centres = _caption_centres(job)
-    assert centres and all(0.55 <= y <= 0.70 for y in centres), sorted(set(centres))
-    assert _receipt(Q1_CAPTIONS, variant).status == "met"
-
-
-def test_q1_no_text_on_my_face_steps_her_captions_just_under_her_chin(monkeypatch):
-    job = _q1_face_job(monkeypatch, Q1_NO_TEXT_ON_FACE)
+@pytest.mark.parametrize(
+    "face_ask", [Q1_CARDS_OFF_FACE, Q1_NO_TEXT_ON_FACE], ids=["as_filed", "face_only"]
+)
+def test_q1_a_face_ask_steps_her_captions_just_under_her_chin(monkeypatch, face_ask):
+    job = _q1_face_job(monkeypatch, face_ask)
     variant = _run(job)
 
     look = variant["caption_look_receipt"]
     assert 0.62 < look["position_y_frac"] <= 0.68, look
     assert look["over_face"] is False
-    assert variant["protected_text_regions"]["texts"]["captions"] == "clear"
-    assert variant["protected_text_regions"]["face_texts"]["captions"] == "clear"
-    # Still the row she asked for, off her face: "Done", for the captions and for the face.
+    protected = variant["protected_text_regions"]
+    assert protected["targets"][0]["requirement_ids"] == [face_ask.id]
+    assert protected["texts"]["captions"] == "clear"
+    assert protected["face_texts"]["captions"] == "clear"
+    # No caption line reaches up to her chin: the ink starts under the face box.
+    centres = [layer.anchor_y / CANVAS_H for layer in _caption_layers(job)]
+    assert centres and all(0.62 < y <= 0.70 for y in centres), sorted(set(centres))
+    # Still the row she asked for, off her face: "Done" for the captions.
     assert _receipt(Q1_CAPTIONS, variant).status == "met"
-    assert _receipt(Q1_NO_TEXT_ON_FACE, variant).status == "met"
 
 
-def test_q1_switch_off_the_cards_face_ask_renders_run_3_as_it_was(monkeypatch):
+def test_q1_switch_off_the_face_ask_renders_run_3_as_it_was(monkeypatch):
     monkeypatch.setattr(settings, "keep_text_off_caption_spot_enabled", False)
     job = _q1_face_job(monkeypatch, Q1_CARDS_OFF_FACE)
     variant = _run(job)

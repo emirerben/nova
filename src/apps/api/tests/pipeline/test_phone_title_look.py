@@ -866,8 +866,8 @@ def _q1_caption_line(y_frac):
 @pytest.mark.parametrize(
     ("caption_y", "scale"),
     [
-        (0.62, 1.0),  # her asked spot kept (run 2, and run 3's cards-only face ask)
-        (0.66, 0.85),  # a real face ask: the captions step just under her chin
+        (0.62, 1.0),  # no face ask: her asked spot kept (run 2)
+        (0.66, 0.85),  # a face ask (run 3 as filed): the captions step just under her chin
         (0.86, 0.72),  # run 3 as rendered: the captions in the lower third
     ],
 )

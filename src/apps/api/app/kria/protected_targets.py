@@ -60,42 +60,6 @@ def _fact_entries(value: object) -> list[tuple[str, str]]:
     return entries
 
 
-# KRI-1476 (Qendresa Q1 run 3): "show the screenshot ... not over my face" is about her
-# cards, but the brief also filed it as ``keep_text_off: [face]``, so every text kept off her
-# face and her middle captions fell to the lower third. The requirement itself says which it
-# is: this typed fact, and no fact about captions or text beside it.
-VISUALS_OFF_FACE_KEY = "keep_visuals_off_face"
-_TEXT_FACT_WORDS = frozenset(
-    {"text", "texts", "caption", "captions", "subtitle", "subtitles", "title", "titles", "label"}
-)
-
-
-def _face_ask_is_about_visuals(req: Any, entries: list[tuple[str, str]]) -> bool:
-    from app.config import settings  # noqa: PLC0415
-
-    facts = req.facts
-    if (
-        not settings.keep_text_off_caption_spot_enabled
-        or facts.get(VISUALS_OFF_FACE_KEY) is not True
-    ):
-        return False
-    if any(kind != "face" for kind, _ in entries) or req.kind == "text" or req.literal:
-        return False
-    return not any(
-        _TEXT_FACT_WORDS.intersection(str(key).lower().split("_"))
-        for key in facts
-        if key != KEEP_TEXT_OFF_KEY
-    )
-
-
-def keep_text_off_entries(req: Any) -> list[tuple[str, str]]:
-    """What ``req`` asks to keep TEXT off, as ``(kind, label)``: its ``keep_text_off`` fact,
-    minus a face ask the same requirement says is only about the Visuals (the cards keep off
-    faces on their own). Anything less explicit is read as written."""
-    entries = _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY))
-    return [] if entries and _face_ask_is_about_visuals(req, entries) else entries
-
-
 def protected_targets(
     brief: CreativeBrief | None, marks: Iterable[ProtectedRegionSelection] = ()
 ) -> tuple[ProtectedTarget, ...]:
@@ -105,7 +69,7 @@ def protected_targets(
     labels: dict[tuple[str, str], str] = {}
     req_ids: dict[tuple[str, str], list[str]] = {}
     for req in brief.live() if brief is not None else ():
-        for kind, label in keep_text_off_entries(req):
+        for kind, label in _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY)):
             key = (kind, fold_text(label))
             if key not in labels:
                 order.append(key)
@@ -572,7 +536,6 @@ __all__ = [
     "ProtectedRegionSelection",
     "ProtectedTarget",
     "KEEP_TEXT_OFF_KEY",
-    "keep_text_off_entries",
     "binding_protected_regions",
     "build_protected_region_question",
     "clip_generations",

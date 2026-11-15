@@ -987,11 +987,11 @@ class Settings(BaseSettings):
     phone_caption_row_budget_enabled: bool = True
     # KRI-1476: a face the brief keeps text off (`keep_text_off`) no longer throws captions the
     # creator placed in the middle to the lower third. The caption ladder tries the spots just
-    # under the asked one first and the middle row reaches y 0.68 (under a talking face), and
-    # a face ask filed on a Visuals-only requirement (`keep_visuals_off_face`, no caption or
-    # text fact) is not a text ask. Default TRUE. False: the ladder, the row and every face
-    # ask are as before. Rollback: `fly secrets set KEEP_TEXT_OFF_CAPTION_SPOT_ENABLED=false`
-    # (api + worker) + restart.
+    # under the asked one first and the middle row reaches y 0.68 (under a talking face). The
+    # face ask itself is unchanged: every text still keeps off the face. Default TRUE. False:
+    # the ladder and the row are as before (a middle block on her chin falls to 0.86).
+    # Rollback: `fly secrets set KEEP_TEXT_OFF_CAPTION_SPOT_ENABLED=false` (api + worker) +
+    # restart.
     keep_text_off_caption_spot_enabled: bool = True
     # Prompt fidelity (animation): "with animations" / "animated text" reaches the rendered text.
     # Default TRUE. brief_view reads an animation ask at any text scope, an unnamed ask gets one
