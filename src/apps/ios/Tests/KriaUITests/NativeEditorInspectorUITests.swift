@@ -368,6 +368,14 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // A short gesture on blank ruler space can be interpreted as deselection.
         clip.tap()
         let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
+        // A selected bottom-panel row scrolls clear of the clip toolbar (KRI-1399). On a shorter screen (iPhone 17 Pro,
+        // the CI device) that carries the ruler and the playhead knob above the lane; scroll back to the top first.
+        let lane = app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch
+        // The timeline's own scrub gesture takes a vertical swipe over the blocks; the lane-title column scrolls the lane.
+        let titles = lane.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.2))
+        for _ in 0..<3 where !playhead.isHittable {
+            titles.press(forDuration: 0.05, thenDragTo: titles.withOffset(CGVector(dx: 0, dy: 160)))
+        }
         XCTAssertTrue(playhead.isHittable)
         let start = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: clip.frame.width / 2, dy: 0)),
