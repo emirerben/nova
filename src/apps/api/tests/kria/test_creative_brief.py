@@ -1610,12 +1610,9 @@ def test_long_replies_are_truncated_at_the_cap(monkeypatch, line_fit: bool) -> N
     ]
     reply = reply_from_receipts(brief, receipts, summary="Drafted.")
     assert reply.startswith("Not everything you asked for made it in:\n")
-    if line_fit:
-        # KRI-1485: a row that is not Done is never cut, so four long Partly rows stay whole.
-        assert reply.count("\n- Partly: " + "X" * 150 + " (" + "Y" * 200 + ")") == 4
-        assert "…" not in reply
-    else:
-        assert len(reply) <= 1200 and reply.endswith("…")
+    # KRI-1485: four Partly rows alone fill the chat, so the line fitter hands this text to the
+    # same shortening as with the switch off: never over 1200 characters.
+    assert len(reply) <= 1200 and reply.endswith("…")
 
 
 def test_main_creator_scope_recognisers_ignore_model_authored_brief_text() -> None:

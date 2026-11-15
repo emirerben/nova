@@ -831,3 +831,42 @@ def test_20_switch_off_is_the_same_labels_without_the_plate(monkeypatch):
         {k: v for k, v in r.items() if k != "plate"} for r in on["list_label_placement"]["rows"]
     ]
     assert plain == off["list_label_placement"]["rows"]
+
+
+# KRI-1484 review: the top band and the plate are for labels over the recordings behind her
+# while she is cut out SMALL (a speaker frame). A picture behind her full-size cut-out, or a
+# picture fill with no frame, keeps today's label spot and look.
+def test_21_with_no_speaker_frame_the_labels_keep_todays_spot_and_look(monkeypatch):
+    _example_switch(monkeypatch, True)
+    _plate(monkeypatch, True)
+    unframed = {k: v for k, v in SEQUENCE_BACKGROUND.items() if k != "speaker_frame"}
+    _job, variant = _run(monkeypatch, flag=True, background=unframed)
+
+    rows = _label_rows(variant)
+    assert [r["text"] for r in rows] == LABELS
+    assert not any("background_color" in r for r in rows)
+    assert not any(r.get("plate") for r in variant["list_label_placement"]["rows"])
+
+
+def test_22_backdrop_spans_need_her_in_a_frame():
+    from types import SimpleNamespace
+
+    window = SimpleNamespace(start_s=4.0, end_s=20.0)
+    frame = SimpleNamespace(width_fraction=0.42, x_fraction=0.76, y_fraction=0.8)
+
+    def lanes(kind, *, frame=None, windows=(), full=()):
+        background = SimpleNamespace(
+            kind=kind, speaker_frame=frame, windows=tuple(windows), full_screen_windows=tuple(full)
+        )
+        return SimpleNamespace(background=background)
+
+    assert gb._list_label_backdrop_spans(lanes("video"), 30.0) == ()
+    assert gb._list_label_backdrop_spans(lanes("image", windows=[window]), 30.0) == ()
+    assert gb._list_label_backdrop_spans(lanes("video", frame=frame), 30.0) == ((0.0, 30.0),)
+    assert gb._list_label_backdrop_spans(lanes("color", frame=frame, windows=[window]), 30.0) == (
+        (4.0, 20.0),
+    )
+    opening = SimpleNamespace(start_s=0.0, end_s=5.0)
+    assert gb._list_label_backdrop_spans(lanes("video", frame=frame, full=[opening]), 30.0) == (
+        (5.0, 30.0),
+    )

@@ -188,9 +188,10 @@ def test_a_reply_that_fits_is_never_changed(monkeypatch, enabled):
     assert '- Done: Show this label ("1. Label")' in text
 
 
-def test_rows_that_are_not_done_are_kept_whole_even_past_the_cap():
-    """Twelve Partly rows alone are longer than the cap: all stay, with their whole reasons;
-    the Done rows collapse into the count line."""
+def test_rows_that_are_not_done_alone_past_the_cap_get_todays_shortening(monkeypatch):
+    """Twelve Partly rows alone are longer than the cap. The chat never gets more than 1200
+    characters, so this one text falls back to the old shortening, byte for byte (review of
+    the Q2 commits)."""
     reason = "The arrow isn't in the video yet; you can draw one with the pen in the editor"
     misses = [
         _label_req(f"p{i}", f"GO {i}", f"End clip {i} with this text and a hand-drawn arrow")
@@ -201,14 +202,91 @@ def test_rows_that_are_not_done_are_kept_whole_even_past_the_cap():
         for i in range(6)
     ]
     receipts = [_partial(r.id, reason) for r in misses] + [_met(r.id, "It is there") for r in done]
-    text, _ = bc.reply_and_lead_from_receipts(_brief(*misses, *done), receipts)
+    brief = _brief(*misses, *done)
+    text, _ = bc.reply_and_lead_from_receipts(brief, receipts)
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", False)
+    old, _ = bc.reply_and_lead_from_receipts(brief, receipts)
 
-    for req in misses:
-        assert f'- Partly: {req.description} ("{req.literal}") ({reason})' in text
-    assert text.splitlines()[-1] == "- …and 6 more done"
-    assert "TIP" not in text
-    assert len(text) > bc.MAX_REPLY_CHARS
+    assert text == old
+    assert len(text) <= bc.MAX_REPLY_CHARS
+
+
+def test_the_reply_never_runs_past_the_cap_when_the_lines_to_look_at_are_long(monkeypatch):
+    """The "have a look" lines are not fitted: when they alone fill the chat, the reply is
+    today's cut, never longer than 1200 characters."""
+    done = [_label_req(f"d{i}", f"TIP {i}", f"Show this tip on clip {i}") for i in range(6)]
+    miss = _label_req("p1", "GO", "End with this text and a hand-drawn arrow")
+    looks = [
+        _req(f"l{i}", f"Put the photo of step {i} next to me when I explain it") for i in range(9)
+    ]
+    receipts = [
+        *(_met(r.id) for r in done),
+        _partial("p1", bc._CLOSING_ARROW_MISSING),
+        *(
+            RequirementReceipt(
+                requirement_id=r.id,
+                status="partial",
+                reason="It shows from 0:12 for 3 s; have a look at whether it covers the text "
+                "you are pointing at in the recording",
+                verification="unchecked",
+            )
+            for r in looks
+        ),
+    ]
+    brief = _brief(*done, miss, *looks)
+    text, _ = bc.reply_and_lead_from_receipts(brief, receipts)
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", False)
+    old, _ = bc.reply_and_lead_from_receipts(brief, receipts)
+
+    assert "Have a look at these in the video:" in text
+    assert len(text) <= bc.MAX_REPLY_CHARS
+    assert text == old
+
+
+def test_done_outcome_rows_lose_their_reasons_before_any_is_counted():
+    """The render's own group / label rows ("Done: text for clip 3 (reason)") carry their
+    reason inside the line: it goes before any Done row is counted away."""
+    long_reason = "it is on screen for the whole clip, in the middle, clear of your face"
+    outcomes = [
+        {"status": "met", "name": f"text for clip {i} of the walk", "reason": long_reason}
+        for i in range(14)
+    ]
+    miss = _req("p1", "End with a hand-drawn arrow")
+    text, _ = bc.reply_and_lead_from_receipts(
+        _brief(miss), [_partial("p1", bc._CLOSING_ARROW_MISSING)], outcomes=outcomes
+    )
+
+    assert "…and" not in text
+    for i in range(14):
+        assert f"- Done: text for clip {i} of the walk" in text
+    assert f"- Partly: End with a hand-drawn arrow ({bc._CLOSING_ARROW_MISSING})" in text
+    assert text.count(long_reason) < 14
+    assert len(text) <= bc.MAX_REPLY_CHARS
     _whole_lines(text)
+
+
+def test_a_composed_reply_drops_done_reasons_before_it_counts_any_row():
+    """A reply fitted as text (the held reply) reads the reason off a Done line with no quoted
+    text too, nested brackets included, and drops it before counting any row."""
+    reason = "It is kept exactly as you filmed it, every second of it (1.6 s outro too)"
+    lines = [
+        "Not everything you asked for made it in:",
+        *(f"- Done: Keep clip {i} as filmed ({reason})" for i in range(8)),
+        "- Partly: Add a song (A Talking video can't do this, so it stays as filmed)",
+    ]
+    text = "\n".join(lines)
+    room = len(text) - 4 * len(f" ({reason})")
+    fitted = bc.fit_reply_text(text, room)
+
+    assert len(fitted) <= room
+    assert "- …and" not in fitted
+    for i in range(8):
+        assert f"- Done: Keep clip {i} as filmed" in fitted
+    assert fitted.endswith(
+        "- Partly: Add a song (A Talking video can't do this, so it stays as filmed)"
+    )
+    assert 0 < fitted.count(f"({reason})") < 8
+    assert not any(line.endswith("(1.6 s outro too)") for line in fitted.splitlines()[-4:])
 
 
 def test_done_rows_lose_their_reasons_before_any_row_is_folded_into_the_count():
@@ -268,13 +346,17 @@ def test_only_rows_with_the_same_status_ask_and_reason_fold():
 
 
 @pytest.mark.parametrize(
-    ("language", "line"),
-    [("en", "…and 5 more done"), ("tr", "…ve 5 tane daha yapıldı")],
+    ("language", "line", "misses_n"),
+    # Turkish lines are shorter: one more Partly row brings the reply over the cap the same way.
+    [("en", "…and 5 more done", 7), ("tr", "…ve 5 tane daha yapıldı", 8)],
 )
-def test_the_count_line_counts_folded_labels_and_speaks_the_reply_language(language, line):
+def test_the_count_line_counts_folded_labels_and_speaks_the_reply_language(
+    language, line, misses_n
+):
+    # The rows that are not Done fit on their own (else the old shortening applies).
     misses = [
-        _label_req(f"p{i}", f"GO {i}", f"End clip {i} with this text and a hand-drawn arrow")
-        for i in range(14)
+        _label_req(f"p{i}", f"GO {i}", f"End clip {i} with this exact text and a hand-drawn arrow")
+        for i in range(misses_n)
     ]
     labels = [_label_req(f"r{i}", f"{i}. Label") for i in range(1, 5)]
     last = _label_req("d1", "THE END", "Close with this text")
@@ -286,6 +368,7 @@ def test_the_count_line_counts_folded_labels_and_speaks_the_reply_language(langu
     with reply_language_for(language):
         text, _ = bc.reply_and_lead_from_receipts(_brief(*misses, *labels, last), receipts)
     assert text.splitlines()[-1] == f"- {line}"  # four folded labels + one more ask
+    assert len(text) <= bc.MAX_REPLY_CHARS
 
 
 def test_the_count_line_is_german_on_a_german_turn(monkeypatch):

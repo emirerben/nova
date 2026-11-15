@@ -916,3 +916,28 @@ def test_w7_no_words_are_read_a_turkish_pair_works_the_same(monkeypatch):
     sibling = _audio("r13", "Sadece sesim: müzik olmasın.", {"audio_intent": "no_music"})
     row = _audio("r14", "Sadece sesim: ekran kayıtlarının sesi kapalı olsun.")
     assert _pair(sibling, row).status == "met"
+
+
+# KRI-1472 review: a row that shares the lead clause but asks for ANOTHER sound action is not
+# a restatement ("Music: no music." + "Music: add a whoosh on each cut." -> the whoosh is not
+# "Done"). The structure (same turn, same lead clause, no facts) is necessary, not enough: the
+# row must also not be read as a sound action by the brief's existing sound readers.
+@pytest.mark.parametrize(
+    ("sibling", "row"),
+    [
+        (
+            _audio("r13", "Music: no music.", {"audio_intent": "no_music"}),
+            _audio("r14", "Music: add a whoosh on each cut."),
+        ),
+        (
+            _audio("r13", "Voice: no music.", {"audio_intent": "no_music"}),
+            _audio("r14", "Voice: louder."),
+        ),
+    ],
+    ids=["whoosh", "louder"],
+)
+def test_w8_another_sound_action_under_the_same_lead_clause_is_not_done(monkeypatch, sibling, row):
+    _voice_switch(monkeypatch, True)
+    receipt = _pair(sibling, row)
+    assert receipt.status != "met", receipt
+    assert receipt.reason != "No music, as asked."

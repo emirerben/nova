@@ -1802,3 +1802,64 @@ def test_b8_an_editor_save_keeps_the_plate_on_the_server(monkeypatch):
     assert saved["background_color"] == PLATE
     [layer] = _compile_text_lane([saved], user_edited=True, timeline_duration_s=48.8)
     assert layer.background is not None
+
+
+# --- KRI-1480 review: a label named by its own trigger is never lost ----------------------
+#
+# Taken from the spoken-text lane, such a label used to show at the first hearing of its word.
+# If the list lane cannot time it (she says the items out of the typed order, so its words
+# come before the label before it), it must still show at that word, never nowhere; and never
+# inside another placed label's item. Ways it can go wrong: L1 the row is drawn nowhere;
+# L2 it lands inside another label's part; L3 the receipt claims the item instead of the word;
+# L4 a row with no trigger (item 19's own) changes.
+
+
+def _triggered_asks(*pairs):
+    return list_label_asks(
+        [_triggered(f"r{n}", label, trigger) for n, (label, trigger) in enumerate(pairs, 1)]
+    )
+
+
+def test_l1_l3_a_label_the_list_lane_cannot_time_shows_at_its_word(monkeypatch):
+    _example_switch(monkeypatch, True)
+    words = _talk("impeccable gives your agent taste", "then spec kit writes the spec first")
+    asks = _triggered_asks(("1. Spec-kit", "Spec-kit"), ("2. Impeccable", "Impeccable"))
+    rows, receipt = _rows(asks, [], words=words, duration=30.0)
+
+    by_text = {r["text"]: r for r in rows}
+    assert set(by_text) == {"1. Spec-kit", "2. Impeccable"}
+    assert by_text["2. Impeccable"]["start_s"] == pytest.approx(words[0]["start_s"])
+    second = next(r for r in receipt["rows"] if r["requirement_id"] == "r2")
+    assert (second["status"], second["basis"], second["trigger"]) == (
+        "placed",
+        "spoken_word",
+        "Impeccable",
+    )
+
+
+def test_l2_the_fallback_word_is_never_inside_another_label_on_screen(monkeypatch):
+    _example_switch(monkeypatch, True)
+    # "agents" alone before her list, then inside "trading agents" while label 3 is up; the
+    # typed list skips 2, so it is not counted and label 4 cannot be timed on its item.
+    words = _talk(
+        "agents are everywhere now",
+        "number one spec kit is first",
+        "number three trading agents is a firm",
+    )
+    asks = _triggered_asks(
+        ("1. Spec-kit", "Spec-kit"),
+        ("3. TradingAgents", "TradingAgents"),
+        ("4. Agents", "Agents"),
+    )
+    rows, receipt = _rows(asks, [], words=words, duration=40.0)
+    starts = {r["text"]: r["start_s"] for r in rows}
+    assert starts["4. Agents"] == pytest.approx(words[0]["start_s"])  # not inside label 3
+    fourth = next(r for r in receipt["rows"] if r["requirement_id"] == "r3")
+    assert fourth["basis"] == "spoken_word"
+
+
+def test_l4_without_triggers_an_unplaced_label_stays_not_heard(monkeypatch):
+    _example_switch(monkeypatch, True)
+    words = _talk("impeccable gives your agent taste", "then spec kit writes the spec first")
+    rows, receipt = _rows(_asks(["1. Spec-kit", "2. Impeccable"]), [], words=words, duration=30.0)
+    assert _status(receipt)["r2"] == "not_heard" and [r["text"] for r in rows] == ["1. Spec-kit"]

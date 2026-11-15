@@ -8858,7 +8858,11 @@ def unsaid_cue_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
     if not named or any(_trigger_heard(n, b.trigger) for b in beats for n in named):
         return None
     planned = (*facts.unheard_beat_triggers, *facts.dropped_beat_triggers)
-    if any(_trigger_heard(n, t) for t in planned for n in named) or _title_misses_for(facts, named):
+    if (
+        any(_trigger_heard(n, t) for t in planned for n in named)
+        or _title_misses_for(facts, named)
+        or any(_beat_room_drop(facts, n) for n in named)
+    ):
         return None  # a pop-in WAS planned for it: its own answer ("I never heard ...") stands
     takes = _take_transcripts(facts)
     if takes is None or any(_take_says(take, n) for take in takes for n in named):
@@ -8899,10 +8903,9 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         # guessed from the sentence pick which pop-ins the ask is about, never a verdict.
         named = _named_triggers(req)
         names = named or _cue_triggers(req)
+        # KRI-1486: her take never says the words. That sentence replaces only the cue's own
+        # verdict below ("No pop-in for ..."); every other problem of the row is still said.
         unsaid = unsaid_cue_reason(req, facts)
-        if unsaid is not None:
-            # KRI-1486: her take never says the words, so there is nothing to choose.
-            return _receipt(req, "partial", unsaid)
         if not facts.reaction_beats_available:
             problems.append(
                 say(
@@ -8938,6 +8941,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     delivered = True
                 else:
                     promises.append(_NARRATED_FOOTAGE_CUE_PLAN)
+            elif unsaid is not None:
+                problems.append(unsaid)
+                if sequence_problem:
+                    problems.append(sequence_problem)
+                delivered = bool(sequence_problem)
             else:
                 problems.append(
                     say(
@@ -9003,7 +9011,12 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 if not any(_trigger_heard(t, b.trigger) for b in beats)
                 and not any(_trigger_heard(t, n) for n in missing)
             ]
-            if missing:
+            if missing and unsaid is not None:
+                problems.append(unsaid)
+                if sequence_problem:
+                    problems.append(sequence_problem)
+                delivered = delivered or bool(sequence_problem)
+            elif missing:
                 problems.append(
                     sequence_problem
                     or say(
@@ -9094,6 +9107,8 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                         tr="Söylediğin kapanış rozetini bulamadım",
                     )
                 )
+    if wants_beats and unsaid is not None and problems == [unsaid] and not promises:
+        return _receipt(req, "partial", unsaid)  # KRI-1486: the whole answer, approvable
     if not problems:
         if (
             by_name
@@ -16607,6 +16622,24 @@ def _live_ask_for_caption_language(req: BriefRequirement, code: str) -> bool:
     return req.live and asks_caption_language(req) and _requested_caption_language(req) == code
 
 
+def _another_sound_action(req: BriefRequirement) -> bool:
+    """KRI-1472 review: the brief's own sound readers see another sound action in ``req``: a
+    sound effect ("add a whoosh on each cut"), a louder / raised sound, sound at words, or a
+    lower bed. Such a row is never a restatement of "only my voice", whatever its lead clause.
+    No new word list: these are the readers the other sound checks already use (the editor's
+    sound-effect cue, not `_SOUND_RE`, which also reads a plain "sound" / "sesi")."""
+    from app.kria.editor_receipts import _REGEX_CUES  # noqa: PLC0415 - import cycle
+
+    text = _req_text(req)
+    return bool(
+        _REGEX_CUES["sfx"].search(text)
+        or _BED_UP_RE.search(text)
+        or _wants_beats(req)
+        or _wants_bed_under_voice(req)
+        or requirement_clip_sound(req) is not None
+    )
+
+
 def build_receipts(
     requirements: Iterable[BriefRequirement],
     facts: PlanFacts,
@@ -16631,7 +16664,11 @@ def build_receipts(
     if any(_keeps_text_off_object(req) for req in requirements):
         # KRI-1475: another requirement keeps text off an object (`_closing_arrow_reason`).
         facts = dataclasses.replace(facts, text_kept_off_object=True)
-    restated = restated_voice_only_ids(requirements)
+    restated = frozenset(
+        req.id
+        for req in requirements
+        if req.id in restated_voice_only_ids(requirements) and not _another_sound_action(req)
+    )
     if restated:
         # KRI-1472: "Only my voice: ..." filed a second time with no fact of its own.
         facts = dataclasses.replace(facts, voice_only_restated=restated)
@@ -16878,39 +16915,81 @@ def _fold_reply_rows(rows: Sequence[ReplyRow]) -> list[ReplyRow]:
     return folded
 
 
-def fit_reply_rows(rows: Sequence[ReplyRow], room: int, *, hard: bool = False) -> list[str]:
+def _count_line(n: object, *, done: bool) -> str:
+    """The line that stands for ``n`` asks a fitted reply no longer names."""
+    if done:
+        return "- " + say(en="…and {n} more done", tr="…ve {n} tane daha yapıldı", n=n)
+    return "- " + say(en="…and {n} more", tr="…ve {n} tane daha", n=n)
+
+
+def _counted(line: str) -> tuple[int, bool] | None:
+    """``(n, done)`` when ``line`` is a count line an earlier fit wrote, else None: fitting a
+    fitted reply again adds to its count instead of reading it as one more row."""
+    for done in (True, False):
+        prefix, _, suffix = _count_line("\0", done=done).partition("\0")
+        number = line[len(prefix) : len(line) - len(suffix)]
+        if line.startswith(prefix) and line.endswith(suffix) and number.isdigit():
+            return int(number), done
+    return None
+
+
+def _split_reason(line: str) -> tuple[str, str]:
+    """A "Label: ask (reason)" line with no quoted text as ``(head, " (reason)")``: the last
+    bracket group at its end, nested brackets included; ``(line, "")`` without one."""
+    if not line.endswith(")"):
+        return line, ""
+    depth = 0
+    for index in range(len(line) - 1, 0, -1):
+        depth += {")": 1, "(": -1}.get(line[index], 0)
+        if depth == 0:
+            if line[index - 1] == " ":
+                return line[: index - 1], line[index - 1 :]
+            break
+    return line, ""
+
+
+def fit_reply_rows(
+    rows: Sequence[ReplyRow],
+    room: int,
+    *,
+    hard: bool = False,
+    counted_done: int = 0,
+    counted_more: int = 0,
+) -> list[str]:
     """``rows`` as reply lines ("- ...") in ``room`` characters, no line ever cut (KRI-1485).
 
     Only as far as needed, in this order: rows with the same status, ask and reason fold into
     one line naming each quoted text; Done rows lose their reasons (last first); Done rows
     fold into "…and N more done" (last first). A row that is not Done (Partly, Couldn't, Will
     do at render) is never dropped and keeps its reason: when those alone are longer than
-    ``room``, the lines run past it. ``hard`` (the held reply, bound by `KriaTurnPlan.response`)
-    then also counts the last rows into "…and N more", so it fits whenever one line can."""
+    ``room``, the lines run past it (the caller decides what then). ``hard`` (the held reply,
+    bound by `KriaTurnPlan.response`) then also counts the last rows into "…and N more", so it
+    fits whenever one line can. ``counted_done`` / ``counted_more`` are asks an earlier fit
+    already counted: they stay in the one count line."""
 
     def lines(shown: Sequence[ReplyRow], bare: Iterable[int], done: int, more: int) -> list[str]:
         bare = set(bare)
         out = [f"- {row.text(reason=index not in bare)}" for index, row in enumerate(shown)]
         if done:
-            out.append("- " + say(en="…and {n} more done", tr="…ve {n} tane daha yapıldı", n=done))
+            out.append(_count_line(done, done=True))
         if more:
-            out.append("- " + say(en="…and {n} more", tr="…ve {n} tane daha", n=more))
+            out.append(_count_line(more, done=False))
         return out
 
     def fits(candidate: Sequence[str]) -> bool:
         return sum(len(line) + 1 for line in candidate) - 1 <= room
 
     shown = list(rows)
-    if fits(lines(shown, (), 0, 0)):
-        return lines(shown, (), 0, 0)
+    done, more = counted_done, counted_more
+    if fits(lines(shown, (), done, more)):
+        return lines(shown, (), done, more)
     shown = _fold_reply_rows(shown)
     bare: set[int] = set()
     for index in reversed(range(len(shown))):
-        if fits(lines(shown, bare, 0, 0)):
+        if fits(lines(shown, bare, done, more)):
             break
         if shown[index].done and shown[index].tail:
             bare.add(index)
-    done = more = 0
     while not fits(lines(shown, bare, done, more)):
         index = next((i for i in reversed(range(len(shown))) if shown[i].done), None)
         if index is None and not (hard and shown):
@@ -16925,9 +17004,10 @@ def fit_reply_rows(rows: Sequence[ReplyRow], room: int, *, hard: bool = False) -
     return lines(shown, bare, done, more)
 
 
-# The ("...") that `BriefRequirement.text()` wrote after an ask, in a line Kria composed itself.
+# The ("...") that `BriefRequirement.text()` wrote after an ask (or the ("a", "b") of a row an
+# earlier fit folded), in a line Kria composed itself.
 _REPLY_ROW_LITERAL = re.compile(  # kri667: splits Kria's own reply line; reads no meaning
-    r'^- (?P<head>.+?) \("(?P<literal>[^"]+)"\)(?P<tail>(?:: .*| \(.*\))?)$'
+    r'^- (?P<head>.+?) \((?P<literals>"[^"]+"(?:, "[^"]+")*)\)(?P<tail>(?:: .*| \(.*\))?)$'
 )
 
 
@@ -16935,7 +17015,11 @@ def fit_reply_text(text: str, room: int) -> str:
     """A composed reply in ``room`` characters, for the held reply whose rows the caller has
     only as text: its first run of "- ..." lines goes through `fit_reply_rows` (``hard``), and
     every other line stays whole and in place. Only when those other lines alone are longer
-    than ``room`` is the text cut the old way, so the result always fits."""
+    than ``room`` is the text cut the old way, so the result always fits.
+
+    The text may already be fitted (the receipt reply, then the held reply around it): its
+    count lines are added to, folded rows keep each quoted text, and a Done line's reason is
+    read off it with or without quoted text, so it goes before any row is counted away."""
     if len(text) <= room:
         return text
     lines = text.split("\n")
@@ -16943,33 +17027,56 @@ def fit_reply_text(text: str, room: int) -> str:
     end = next((i for i in range(start, len(lines)) if not lines[i].startswith("- ")), len(lines))
     done_label = f"- {_label('met')}: "
     rows = []
+    counted = {True: 0, False: 0}
     for line in lines[start:end]:
+        count = _counted(line)
+        if count is not None:
+            counted[count[1]] += count[0]
+            continue
+        done = line.startswith(done_label)
         match = _REPLY_ROW_LITERAL.match(line)
-        rows.append(
-            ReplyRow(
-                head=match["head"] if match else line[2:],
-                literals=(match["literal"],) if match else (),
-                tail=match["tail"] if match else "",
-                done=line.startswith(done_label),
-            )
-        )
+        if match:
+            head, tail = match["head"], match["tail"]
+            literals = tuple(match["literals"][1:-1].split('", "'))
+        else:
+            head, tail = _split_reason(line[2:]) if done else (line[2:], "")
+            literals = ()
+        rows.append(ReplyRow(head=head, literals=literals, tail=tail, done=done))
     before, after = lines[:start], lines[end:]
     fixed = sum(len(line) + 1 for line in (*before, *after))
-    fitted = "\n".join([*before, *fit_reply_rows(rows, room - fixed, hard=True), *after])
+    fitted_rows = fit_reply_rows(
+        rows,
+        room - fixed,
+        hard=True,
+        counted_done=counted[True],
+        counted_more=counted[False],
+    )
+    fitted = "\n".join([*before, *fitted_rows, *after])
     return fitted if len(fitted) <= room else text[: max(0, room - 1)].rstrip() + "…"
 
 
 def _receipt_reply_rows(
-    outcome_lines: Sequence[str],
+    outcomes: Sequence[Mapping[str, Any]],
     judged: Sequence[RequirementReceipt],
     by_id: Mapping[str, BriefRequirement],
     guess_lines: Sequence[str],
 ) -> list[ReplyRow]:
-    """`reply_and_lead_from_receipts`'s lines as rows: each judged receipt in its parts (an
-    ask with its own quoted text can fold with its twins), the outcome lines before them and
-    the guesses line after them as written."""
-    done_label = f"{_label('met')}: "
-    rows = [ReplyRow(head=line, done=line.startswith(done_label)) for line in outcome_lines]
+    """`reply_and_lead_from_receipts`'s lines as rows: each outcome and each judged receipt in
+    its parts (an ask with its own quoted text can fold with its twins; a reason can go), the
+    guesses line after them as written."""
+    rows = []
+    for row in outcomes:
+        status = str(row.get("status") or "")
+        if status not in _LABEL or not row.get("name"):
+            continue
+        reason = _outcome_reason(str(row["reason"])).rstrip(".") if row.get("reason") else ""
+        rows.append(
+            ReplyRow(
+                head=f"{_label(status)}: {_outcome_name(row)}",
+                tail=f" ({reason})" if reason else "",
+                done=status == "met",
+            )
+        )
     for receipt in judged:
         req = by_id[receipt.requirement_id]
         folds = bool(req.literal and req.description)
@@ -17138,11 +17245,14 @@ def reply_and_lead_from_receipts(
 
         if _fit_settings.kria_reply_line_fit_enabled:
             # KRI-1485: fitted line by line; a row that is not Done is never dropped or cut.
+            # When those rows (or the lines around them) alone fill the chat, this text gets
+            # the shortening below: the reply never runs past MAX_REPLY_CHARS.
             prefix, suffix = text.rsplit(body, 1)
-            after = len(lines) - (1 if guesses else 0)
-            rows = _receipt_reply_rows(lines[: after - len(judged)], judged, by_id, lines[after:])
+            rows = _receipt_reply_rows(outcomes, judged, by_id, lines[-1:] if guesses else [])
             room = MAX_REPLY_CHARS - len(prefix) - len(suffix)
-            return prefix + "\n".join(fit_reply_rows(rows, room)) + suffix, lead
+            fitted = prefix + "\n".join(fit_reply_rows(rows, room)) + suffix
+            if len(fitted) <= MAX_REPLY_CHARS:
+                return fitted, lead
     if len(text) > MAX_REPLY_CHARS and judged and not (outcomes or guesses or unchecked):
         # Keep every requested action/status visible when its labels fit. A long
         # explanation must not consume the final action's display budget. Stored

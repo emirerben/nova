@@ -95,6 +95,9 @@ class ListLabelAsk:
     requirement_id: str
     text: str  # the literal as shown, whitespace-collapsed
     item: str  # the literal without its leading list marker
+    # KRI-1480: the spoken trigger of a label named by its own word (`names_own_item`), the
+    # word it falls back to when the list lane cannot time it. Empty: item 19's own labels.
+    triggers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -244,12 +247,14 @@ def list_label_asks(requirements: Iterable[Any]) -> tuple[ListLabelAsk, ...]:
         text = example_label(req) or (_collapse(req.literal) if req.scope == "global" else "")
         if not text:
             continue
-        if requirement_spoken_text(req) is not None and not names_own_item(req):
+        spoken = requirement_spoken_text(req)
+        if spoken is not None and not names_own_item(req):
             continue  # KRI-707's: never drawn twice
         item = label_item(text)
         if not any(char.isalnum() for char in item):
             continue
-        asks.append(ListLabelAsk(requirement_id=req.id, text=text, item=item))
+        triggers = tuple(spoken.triggers) if spoken is not None else ()
+        asks.append(ListLabelAsk(requirement_id=req.id, text=text, item=item, triggers=triggers))
     return tuple(asks)
 
 
@@ -747,6 +752,21 @@ def find_counted_list(
     return items if len(items) + 1 >= _MIN_LIST_ITEMS else []
 
 
+def _first_free_hearing(
+    ask: ListLabelAsk, words: Sequence[dict], starts: Mapping[str, float]
+) -> tuple[str, float] | None:
+    """The first time the take says one of ``ask.triggers`` (the spoken-text lane's matcher,
+    `phone_spoken_text.spoken_word_occurrences`) while no other placed label is on screen
+    (`HOLD_S` from its start): (trigger, start_s), or None."""
+    from app.pipeline.phone_spoken_text import spoken_word_occurrences  # noqa: PLC0415
+
+    shown = [at for rid, at in starts.items() if rid != ask.requirement_id]
+    for trigger, start_s, _end_s in spoken_word_occurrences(words, ask.triggers):
+        if not any(at - _EPS <= start_s < at + HOLD_S for at in shown):
+            return trigger, float(start_s)
+    return None
+
+
 def _counted_starts(
     marked: Sequence[ListLabelAsk],
     fallback: Sequence[ListLabelAsk],
@@ -1059,6 +1079,20 @@ def list_label_rows(
             found[parent.requirement_id] = 1 + len(extras.get(parent.requirement_id, []))
         except Exception as exc:  # noqa: BLE001 - a list that is not found is just item 1
             log.warning("phone_list_labels.spoken_list_failed", error=str(exc)[:200])
+    # KRI-1480: a label named by its own trigger that nothing above could time is shown where
+    # the spoken-text lane showed it, at the first hearing of that word, never while another
+    # label is on screen; never drawn nowhere.
+    for ask in asks:
+        if ask.triggers and ask.requirement_id not in starts:
+            try:
+                heard = _first_free_hearing(ask, words, starts)
+            except Exception as exc:  # noqa: BLE001 - the label is just not heard then
+                log.warning("phone_list_labels.trigger_fallback_failed", error=str(exc)[:200])
+                heard = None
+            if heard is not None:
+                starts[ask.requirement_id] = heard[1]
+                basis[ask.requirement_id] = {"basis": "spoken_word", "trigger": heard[0]}
+                unheard.discard(ask.requirement_id)
     every = [*asks, *(sub for subs in extras.values() for sub in subs)]
 
     status: dict[str, str] = {}

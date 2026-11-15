@@ -402,21 +402,12 @@ def test_overflow_keeps_each_request_and_status_without_mutating_receipts(
     reply = reply_from_receipts(T1_BRIEF, receipts, summary="Everything was done.")
     assert reply.startswith("Not everything you asked for made it in:\n")
     assert "Everything was done." not in reply
-    if line_fit:
-        # KRI-1485: a row that is not Done keeps its whole explanation; a Done row is named
-        # or counted. Nothing is cut.
-        explanation = "Explanation " * reason_size
-        for req, receipt in zip(T1_BRIEF.live(), receipts, strict=True):
-            if receipt.status == "met":
-                assert f"- Done: {req.text()}" in reply or "more done" in reply, req.id
-            else:
-                assert f"- Partly: {req.text()} ({explanation})" in reply, req.id
-        assert not reply.endswith("…")
-    else:
-        assert len(reply) <= MAX_REPLY_CHARS
-        assert reply.endswith("…")
-        for req, receipt in zip(T1_BRIEF.live(), receipts, strict=True):
-            assert req.text() in reply, req.id
-            label = "Done" if receipt.status == "met" else "Partly"
-            assert f"- {label}: {req.text()}" in reply, req.id
+    # KRI-1485: the Partly rows alone fill the chat, so the line fitter (`line_fit`) hands this
+    # text to the same shortening as with the switch off.
+    assert len(reply) <= MAX_REPLY_CHARS
+    assert reply.endswith("…")
+    for req, receipt in zip(T1_BRIEF.live(), receipts, strict=True):
+        assert req.text() in reply, req.id
+        label = "Done" if receipt.status == "met" else "Partly"
+        assert f"- {label}: {req.text()}" in reply, req.id
     assert [row.model_dump(mode="json") for row in receipts] == before

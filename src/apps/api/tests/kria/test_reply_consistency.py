@@ -17,7 +17,7 @@ import pytest
 
 from app.config import settings
 from app.kria import brief_checks
-from app.kria.brief import BriefRequirement
+from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.contracts import KriaTurnPlan, RequirementReceipt
 from app.kria.reply_consistency import (
     CLOSING_CARD,
@@ -504,3 +504,54 @@ def test_a_held_reply_far_too_long_still_fits_and_counts_every_row_it_leaves_out
     kept = lines[1:-1]
     assert kept == asked[: len(kept)] and kept
     assert lines[-1] == f"- …and {40 - len(kept)} more"
+
+
+def test_a_reply_fitted_twice_keeps_one_count_line_with_the_whole_total():
+    """Review of the Q2 commits: the receipt reply is fitted to 1200 ("…and 7 more done"), then
+    the held reply fits it again into what is left beside its tail. The count line is a count,
+    not a row: one line, every ask it stands for, and the same text as fitting it once."""
+    asks = [
+        BriefRequirement(
+            id=f"d{i}",
+            kind="text",
+            scope="global",
+            description=f"Keep clip number {i} exactly as it was filmed, with no changes",
+            literal=f"CLIP {i}",
+        )
+        for i in range(20)
+    ]
+    miss = BriefRequirement(id="p1", kind="text", scope="global", description="Add a song")
+    reason = brief_checks._CLOSING_ARROW_MISSING
+    receipts = [
+        *(
+            RequirementReceipt(requirement_id=a.id, status="met", verification="checked")
+            for a in asks
+        ),
+        RequirementReceipt(
+            requirement_id="p1", status="partial", reason=reason, verification="checked"
+        ),
+    ]
+    brief = CreativeBrief(version=1, requirements=[*asks, miss])
+    once, _ = brief_checks.reply_and_lead_from_receipts(brief, receipts)
+    assert sum(line.startswith("- …and") for line in once.split("\n")) == 1
+
+    tail = (
+        "I held this first draft back. " + "Tell me what to change and I'll prepare it again. " * 3
+    )
+    twice = _fit_reply(once, tail)
+    lines = _held(once, tail)
+
+    counts = [line for line in lines if line.startswith("- …and")]
+    named = sum(line.startswith("- Done: Keep clip number") for line in lines)
+    assert counts == [f"- …and {20 - named} more done"]
+    assert f"- Partly: Add a song ({reason})" in lines
+    # Fitting the already fitted reply equals fitting the whole list once.
+    whole = "\n".join(
+        [
+            "Not everything you asked for made it in:",
+            *(f'- Done: {a.description} ("{a.literal}")' for a in asks),
+            f"- Partly: Add a song ({reason})",
+        ]
+    )
+    assert twice == _fit_reply(whole, tail)
+    assert _fit_reply(twice[: -len(tail) - 1], tail) == twice

@@ -16353,12 +16353,13 @@ LIST_LABEL_PLATE_COLOR = "#141414"
 
 
 def _list_label_backdrop_spans(lanes: Any, timeline_s: float) -> tuple[tuple[float, float], ...]:
-    """KRI-1484: where a picture or recording plays behind her (a speaker-background window or
-    a picture fill), never where she is drawn full screen in her own take; cut-timeline
-    seconds, like the label rows. Empty without a background lane, or with a plain colour fill
-    and no windows."""
+    """KRI-1484: where a picture or recording plays behind her while she is cut out SMALL in a
+    speaker frame (a speaker-background window or a picture fill), never where she is drawn full
+    screen in her own take; cut-timeline seconds, like the label rows. Empty without a background
+    lane, without a speaker frame (a picture behind her full-size cut-out keeps today's label),
+    or with a plain colour fill and no windows."""
     background = lanes.background if lanes is not None else None
-    if background is None:
+    if background is None or background.speaker_frame is None:
         return ()
     if background.kind in ("image", "video"):
         spans = [(0.0, float(timeline_s))]

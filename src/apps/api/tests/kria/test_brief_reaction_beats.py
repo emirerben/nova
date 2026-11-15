@@ -813,3 +813,48 @@ def test_u7_the_finished_video_says_the_same_sentence():
         include_unchecked=True,
     )
     assert said.reason == NO_POP_IN
+
+
+# --- KRI-1486 review: the unsaid sentence replaces only the cue part of a row --------------
+#
+# The "You don't say ..." answer returned early, before the row's other checks, so an unsaid
+# cue in the same ask as a missing closing photo, a display the pop-ins do not have, or a
+# full-screen ask the even-slot layout spreads, came back as that one approvable sentence and
+# hid the rest. Ways it can go wrong: R1 another problem of the row is dropped; R2 the row
+# with another problem is approvable; R3 the plain unsaid row stops being exactly the sentence.
+
+
+def _with(req_facts: dict, **facts_changes):
+    req = _TRENDING.model_copy(
+        update={"facts": {"triggers": ["what’s hot this week"], **req_facts}}
+    )
+    facts = dataclasses.replace(
+        plan_facts_from_strategy(_strategy(_LOGO_BEAT), manifest=_manifest()),
+        phone_talking=True,
+        media_snapshot=_take(TAKE_SAYS),
+        **facts_changes,
+    )
+    [receipt] = build_receipts([req], facts, include_unchecked=True)
+    return receipt
+
+
+@pytest.mark.parametrize(
+    ("req_facts", "facts_changes", "also"),
+    [
+        ({"closing": "GitHub logo"}, {}, "doesn't end"),
+        ({"display_mode": "fullscreen"}, {}, "not full screen"),
+        ({"display_mode": "fullscreen"}, {"fullscreen_sequence": True}, "spread evenly"),
+    ],
+    ids=["closing-photo", "asked-display", "sequence"],
+)
+def test_r1_r2_every_other_problem_of_the_row_is_still_said(req_facts, facts_changes, also):
+    receipt = _with(req_facts, **facts_changes)
+    assert UNSAID_EN in receipt.reason and also in receipt.reason, receipt.reason
+    # Readiness approves only the exact sentence (`approval_readiness._promised_at_render`):
+    # with another problem said beside it, the row holds as it did before KRI-1486.
+    assert receipt.reason != UNSAID_EN and receipt.status != "met"
+
+
+def test_r3_the_plain_unsaid_row_is_still_exactly_the_sentence():
+    receipt = _with({})
+    assert (receipt.status, receipt.reason) == ("partial", UNSAID_EN)
