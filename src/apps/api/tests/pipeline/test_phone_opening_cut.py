@@ -19,6 +19,8 @@ from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
 from app.pipeline.silence_cut import build_cut_plan
 from app.services.phone_sources import PhoneSourceBinding
 
+pytestmark = pytest.mark.journey("kri-628-opening-cut")
+
 T1_R1 = (
     "Baştaki “Hazırlıklara başladın mı” kısmını ve uzun duraksamaları kes; video "
     "“Abonelerimize bir şey demek ister misin” sorusuyla başlasın."

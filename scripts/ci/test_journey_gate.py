@@ -72,7 +72,7 @@ class JourneyGateTests(unittest.TestCase):
         results.write_text(
             json.dumps(
                 {
-                    "testIdentifier": "KriaTests/DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone",
+                    "testIdentifier": f"KriaTests/{gate.NATIVE_EXPORT_TEST}",
                     "testStatus": "Success",
                 }
             )

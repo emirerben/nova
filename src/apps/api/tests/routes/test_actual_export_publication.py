@@ -23,6 +23,8 @@ from tests.routes.test_device_render import (  # noqa: F401
     scalar,
 )
 
+pytestmark = pytest.mark.journey("kri-492-length-ownership")
+
 
 @pytest.mark.parametrize("outcome", ["rejected", "partial", "unsupported"])
 @pytest.mark.parametrize("replacement", [False, True])

@@ -55,6 +55,8 @@ from app.services.creation_text_composition import (
     snapshot_copy_constraints,
 )
 
+pytestmark = pytest.mark.journey("kri-1124-withdrawn-labels")
+
 FX = json.loads(
     (Path(__file__).parent.parent / "fixtures" / "m4_leverkusen_withdrawn_labels.json").read_text(
         "utf-8"

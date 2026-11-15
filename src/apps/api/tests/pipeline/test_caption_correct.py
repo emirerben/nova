@@ -8,6 +8,8 @@ import pytest
 
 import app.pipeline.caption_correct as cc
 
+pytestmark = pytest.mark.journey("kri-708-caption-correction")
+
 _CUES = [
     {
         "text": "Koka Kola ayıcıkları",

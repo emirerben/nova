@@ -47,6 +47,8 @@ from app.kria.brief_checks import (  # noqa: PLC2701
 )
 from app.kria.reply_language import reply_language_for
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 _MEDAL = "asset-be13-medal.jpg"
 _WATCH = "asset-fe79-watch.jpg"
 
