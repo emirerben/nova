@@ -47,6 +47,14 @@ LABEL_Y_FRAC = 0.86
 # KRI-1471: where a label goes when her spot is taken (a card in the bottom band, a caption
 # line): the free band above her head, about y 0.08-0.16 for a one-line label.
 LABEL_TOP_Y_FRAC = 0.12
+# KRI-1484: her spot while the recordings play behind her (speaker small in a corner): the top
+# band, as the spoken-text lane draws a text there. Her 0.86 covers her chin in the corner
+# layout and a zoomed README page has text in every band, so the label also gets a plate.
+LABEL_BACKDROP_Y_FRAC = 0.15
+# Where a label goes when it cannot stay at her spot, tried in this order (the ONE place to
+# change it). "ladder": wherever the title placer's own rows put it clear of everything (0.5 /
+# 0.44 / 0.38 / just under her face); "top": the band above her head (`LABEL_TOP_Y_FRAC`).
+LABEL_FALLBACK_SPOTS: tuple[str, ...] = ("ladder", "top")
 # Her label look (V5 OCR + frames): bold cream text with a dark outline.
 LABEL_FONT_FAMILY = "TikTok Sans Bold"
 LABEL_COLOR = "#FCF3C3"
@@ -87,6 +95,9 @@ class ListLabelAsk:
     requirement_id: str
     text: str  # the literal as shown, whitespace-collapsed
     item: str  # the literal without its leading list marker
+    # KRI-1480: the spoken trigger of a label named by its own word (`names_own_item`), the
+    # word it falls back to when the list lane cannot time it. Empty: item 19's own labels.
+    triggers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -183,6 +194,43 @@ def example_label(req: Any) -> str | None:
     return examples[0] if len(examples) == 1 else None
 
 
+def names_own_item(req: Any) -> bool:
+    """KRI-1480 / KRI-1481: a numbered whole-video text ("4. Agents") whose spoken trigger only
+    names its own item (``triggers: ["Agents"]``) is a list label, not a text on a word.
+
+    Q2 run 3: filed that way, the labels went to the spoken-text lane, which shows a text at the
+    FIRST hearing of the word: "4. Agents" came up inside "Trading Agents" and "5. Claude code
+    game studio" never did ("Cloud Code Game Studios"). The list-label lane starts each label
+    with the recording it names, or on her k-th counted item. A trigger that names something
+    else ("show 1. Spec-kit when I say GitHub"), a text with no list marker, and a row the
+    creator pinned (a speaker, an occurrence, a hold) stay the spoken-text lane's."""
+    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+
+    if not _example_asks_on() or req.kind != "text" or req.scope != "global":
+        return False
+    text = _collapse(req.literal)
+    ask = requirement_spoken_text(req) if _has_explicit_marker(text) else None
+    if ask is None or ask.speaker or ask.occurrence is not None or ask.hold_s is not None:
+        return False
+    item = _tokens(label_item(text))
+
+    def _name(tokens: Sequence[str]) -> list[str]:
+        # "the Spec kit": a joiner is not part of the name (unless the name is only short words).
+        long = [token for token in tokens if len(token) > _MAX_JOINER_LETTERS]
+        return long or list(tokens)
+
+    def _covers(a: Sequence[str], b: Sequence[str]) -> bool:
+        return all(any(_same(token, other) for other in b) for token in a)
+
+    def _is_the_item(trigger: str) -> bool:
+        # The whole name, nothing else: "company" for "1. which company it sends data to?" is a
+        # word she says, and "Trading Agents" for "4. Agents" is another item.
+        said, name = _name(_tokens(trigger)), _name(item)
+        return bool(said) and _covers(said, name) and _covers(name, said)
+
+    return bool(item) and all(_is_the_item(trigger) for trigger in ask.triggers)
+
+
 def list_label_asks(requirements: Iterable[Any]) -> tuple[ListLabelAsk, ...]:
     """Every live global ``text`` requirement that no spoken trigger owns, in brief order.
 
@@ -199,12 +247,14 @@ def list_label_asks(requirements: Iterable[Any]) -> tuple[ListLabelAsk, ...]:
         text = example_label(req) or (_collapse(req.literal) if req.scope == "global" else "")
         if not text:
             continue
-        if requirement_spoken_text(req) is not None:
+        spoken = requirement_spoken_text(req)
+        if spoken is not None and not names_own_item(req):
             continue  # KRI-707's: never drawn twice
         item = label_item(text)
         if not any(char.isalnum() for char in item):
             continue
-        asks.append(ListLabelAsk(requirement_id=req.id, text=text, item=item))
+        triggers = tuple(spoken.triggers) if spoken is not None else ()
+        asks.append(ListLabelAsk(requirement_id=req.id, text=text, item=item, triggers=triggers))
     return tuple(asks)
 
 
@@ -702,6 +752,50 @@ def find_counted_list(
     return items if len(items) + 1 >= _MIN_LIST_ITEMS else []
 
 
+def _first_free_hearing(
+    ask: ListLabelAsk, words: Sequence[dict], starts: Mapping[str, float]
+) -> tuple[str, float] | None:
+    """The first time the take says one of ``ask.triggers`` (the spoken-text lane's matcher,
+    `phone_spoken_text.spoken_word_occurrences`) while no other placed label is on screen
+    (`HOLD_S` from its start): (trigger, start_s), or None."""
+    from app.pipeline.phone_spoken_text import spoken_word_occurrences  # noqa: PLC0415
+
+    shown = [at for rid, at in starts.items() if rid != ask.requirement_id]
+    for trigger, start_s, _end_s in spoken_word_occurrences(words, ask.triggers):
+        if not any(at - _EPS <= start_s < at + HOLD_S for at in shown):
+            return trigger, float(start_s)
+    return None
+
+
+def _counted_starts(
+    marked: Sequence[ListLabelAsk],
+    fallback: Sequence[ListLabelAsk],
+    words: Sequence[dict],
+    spans: Mapping[str, tuple[float, float]],
+) -> dict[str, float]:
+    """KRI-1480: a TYPED list numbered 1..N in order, counted aloud: label k starts on her k-th
+    counted item (`find_counted_list` from where label 1 is heard), never on the first hearing
+    of its word ("agents" in "Trading Agents" or "AI agents" is not her fourth item) and even
+    when its name is misheard ("Claude" / "Cloud"). Only for labels no recording names
+    (``fallback``); a list she does not count, or a label past her last counted item, keeps the
+    start its own words gave it. Requirement id -> start."""
+    if [marker_number(ask.text) for ask in marked] != list(range(1, len(marked) + 1)):
+        return {}
+    first = marked[0]
+    span = spans.get(first.requirement_id) or _ground_spans([first], words).get(
+        first.requirement_id
+    )
+    if span is None:
+        return {}
+    items = find_counted_list(words, first_start_s=span[0], first_end_s=span[1])
+    open_ids = {ask.requirement_id for ask in fallback}
+    return {
+        ask.requirement_id: item.start_s
+        for ask, item in zip(marked[1:], items, strict=False)
+        if ask.requirement_id in open_ids
+    }
+
+
 def _marker_parts(text: str) -> tuple[str, str] | None:
     """(digits, punctuation) of ``text``'s explicit marker, or None."""
     length, explicit = _read_marker(text)
@@ -827,33 +921,47 @@ def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: A
 
 
 def _clear_spot(row: dict, avoid: list, place: Callable, canvas: Any) -> tuple[dict, dict]:
-    """KRI-1471: ``place(row, avoid)`` at her spot and, when that leaves the label on something
-    else on screen (``text_overlap``: a card, a caption line, other text), once more from the
-    band above her head (`LABEL_TOP_Y_FRAC`, lower for a taller label so it stays under the top
-    margin). The move is taken only when it is clear of those and of every face; otherwise her
-    spot stays as placed, ``text_overlap`` and all, and the receipt row says so.
+    """KRI-1471: ``place(row, avoid)`` at her spot (`LABEL_Y_FRAC`) and, when the label does not
+    stay there clear of everything else on screen (a card, a caption line, other text), the
+    first clear spot of `LABEL_FALLBACK_SPOTS`, in that order. None clear: her spot as placed,
+    ``text_overlap`` and all, and the receipt row says so.
 
     The Q1 run 3 replay drew all five labels over their own screenshot cards: the placer's rows
     (her spot, the title's 0.5 / 0.44 / 0.38, just under her face) were all taken, and it went
     back to her spot. A label that is clear at her spot is placed once, exactly as before."""
     placed, placement = place(row, list(avoid))
-    if not _example_asks_on() or placement.get("text_overlap") is not True:
+    overlaps = placement.get("text_overlap") is True
+    kept = abs(float(placed.get("y_frac") or 0.0) - float(row.get("y_frac") or 0.0)) < 1e-4
+    if not _example_asks_on() or (kept and not overlaps):
         return placed, placement
+    blocked = ("text_overlap", "face_collision", "object_collision")
+    for spot in LABEL_FALLBACK_SPOTS:
+        if spot == "ladder":
+            if not overlaps:
+                return placed, placement  # where the placer's own rows put it
+            continue
+        moved, verdict = place({**row, "y_frac": _spot_y_frac(spot, row, canvas)}, list(avoid))
+        if verdict.get("status") in (None, "error", "best_effort") or any(
+            verdict.get(key) is True for key in blocked
+        ):
+            continue
+        status = "moved" if verdict.get("status") == "preset" else verdict["status"]
+        return moved, {**verdict, "status": status, "default_y_frac": row["y_frac"]}
+    return placed, placement
+
+
+def _spot_y_frac(spot: str, row: dict, canvas: Any) -> float:
+    """The centre y of a named fallback spot for this label ("top": above her head, lower for
+    a taller label so its ink stays under the top margin)."""
     from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
         _TOP_MARGIN_FRAC,
         _measure_title_box,
     )
 
+    if spot != "top":
+        raise ValueError(f"unknown label spot {spot!r}")
     box = _measure_title_box(row, canvas=canvas)
-    top = round(max(LABEL_TOP_Y_FRAC, _TOP_MARGIN_FRAC + (box.bottom - box.top) / 2 + 0.002), 4)
-    moved, verdict = place({**row, "y_frac": top}, list(avoid))
-    blocked = ("text_overlap", "face_collision", "object_collision")
-    if verdict.get("status") in (None, "error", "best_effort") or any(
-        verdict.get(key) is True for key in blocked
-    ):
-        return placed, placement
-    status = "moved" if verdict.get("status") == "preset" else verdict["status"]
-    return moved, {**verdict, "status": status, "default_y_frac": row["y_frac"]}
+    return round(max(LABEL_TOP_Y_FRAC, _TOP_MARGIN_FRAC + (box.bottom - box.top) / 2 + 0.002), 4)
 
 
 def list_label_rows(
@@ -866,8 +974,16 @@ def list_label_rows(
     place: Callable[[dict, list[NormalizedBox]], tuple[dict, dict]],
     avoid_for: Callable[[tuple[float, float], list[dict]], list[NormalizedBox]],
     phrases: Sequence[tuple[int, str]] | None = None,
+    over_backdrop: Callable[[tuple[float, float]], bool] | None = None,
+    backdrop_plate: str | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """One placed row per label that has its moment, plus the receipt of every ask.
+
+    KRI-1484: ``over_backdrop(window)`` says a label's whole time is over the recordings behind
+    her (a speaker-background window, not her full-screen take). There the label tries the top
+    band first (`LABEL_BACKDROP_Y_FRAC`, under KRI-1471's switch), and with ``backdrop_plate``
+    (a ``#RRGGBB`` the caller allows: its switch and ``authoredText``) it is drawn on that opaque
+    plate, its letters unchanged. Both absent: today's rows, byte for byte.
 
     ``phrases`` are (index, spoken_phrase) of EVERY phrased background entry, anchored or not
     (default: the anchors' own), so a label never takes a part of the list another label names.
@@ -920,10 +1036,18 @@ def list_label_rows(
         except Exception as exc:  # noqa: BLE001 - the take's words are a fallback, not a must
             log.warning("phone_list_labels.ground_failed", error=str(exc)[:200])
 
+    marked = [ask for ask in asks if _has_explicit_marker(ask.text)]
+    if len(marked) >= 2 and _example_asks_on():
+        try:
+            for rid, at in _counted_starts(marked, fallback, words, spans).items():
+                starts[rid] = at
+                basis[rid] = {"basis": "counted_list"}
+        except Exception as exc:  # noqa: BLE001 - the label keeps its own words
+            log.warning("phone_list_labels.counted_list_failed", error=str(exc)[:200])
+
     # Q1: ONE typed "1. ..." example heard on the take: the rest of the list is what she says next.
     found: dict[str, int] = {}
     extras: dict[str, list[ListLabelAsk]] = {}
-    marked = [ask for ask in asks if _has_explicit_marker(ask.text)]
     if (
         len(marked) == 1
         and marked[0].requirement_id in spans
@@ -955,6 +1079,20 @@ def list_label_rows(
             found[parent.requirement_id] = 1 + len(extras.get(parent.requirement_id, []))
         except Exception as exc:  # noqa: BLE001 - a list that is not found is just item 1
             log.warning("phone_list_labels.spoken_list_failed", error=str(exc)[:200])
+    # KRI-1480: a label named by its own trigger that nothing above could time is shown where
+    # the spoken-text lane showed it, at the first hearing of that word, never while another
+    # label is on screen; never drawn nowhere.
+    for ask in asks:
+        if ask.triggers and ask.requirement_id not in starts:
+            try:
+                heard = _first_free_hearing(ask, words, starts)
+            except Exception as exc:  # noqa: BLE001 - the label is just not heard then
+                log.warning("phone_list_labels.trigger_fallback_failed", error=str(exc)[:200])
+                heard = None
+            if heard is not None:
+                starts[ask.requirement_id] = heard[1]
+                basis[ask.requirement_id] = {"basis": "spoken_word", "trigger": heard[0]}
+                unheard.discard(ask.requirement_id)
     every = [*asks, *(sub for subs in extras.values() for sub in subs)]
 
     status: dict[str, str] = {}
@@ -993,6 +1131,11 @@ def list_label_rows(
         start, end = windows[rid]
         try:
             row = _label_element(ask, start_s=start, end_s=end, canvas=canvas)
+            backdrop = over_backdrop is not None and over_backdrop((start, end))
+            if backdrop and _example_asks_on():
+                row["y_frac"] = LABEL_BACKDROP_Y_FRAC  # KRI-1484: not her chin, not mid-page
+            if backdrop and backdrop_plate:
+                row["background_color"] = backdrop_plate
             avoid = avoid_for((start, end), list(rows))
             placed, placement = _clear_spot(row, list(avoid), place, canvas)
         except LabelTooLong:
@@ -1020,6 +1163,7 @@ def list_label_rows(
                 if placement.get("text_overlap") is True and _example_asks_on()
                 else {}
             ),
+            **({"plate": True} if placed.get("background_color") else {}),  # KRI-1484
         }
 
     receipt_rows: list[dict[str, Any]] = []

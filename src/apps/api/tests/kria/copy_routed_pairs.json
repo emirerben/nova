@@ -1597,6 +1597,21 @@
    "- Kararlaştırdığımız gibi çıkarıldı: {what}"
   ],
   [
+   "app/kria/brief_checks.py",
+   "You don't say {names} in your take, so nothing is shown for it",
+   "Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "…and {n} more done",
+   "…ve {n} tane daha yapıldı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "…and {n} more",
+   "…ve {n} tane daha"
+  ],
+  [
    "app/agents/editor_ops_v2/split_screen.py",
    "A blank block in a split screen needs the latest Kria update.",
    "Bölünmüş ekranda boş blok için Kria'nın son sürümü gerekiyor."
