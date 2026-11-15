@@ -757,7 +757,12 @@ def test_an_editor_save_and_reopen_keeps_her_captions_beside_her(monkeypatch):
         look=caption_look_from_variant(variant),
     )
 
-    assert drawn and _q2_rects(saved) == pytest.approx(drawn, abs=1e-6)
+    # Flattened: pytest.approx does not compare nested tuples on every pytest version CI runs.
+    reopened = _q2_rects(saved)
+    assert drawn and len(reopened) == len(drawn)
+    assert [v for rect in reopened for v in rect] == pytest.approx(
+        [v for rect in drawn for v in rect], abs=1e-6
+    )
 
 
 def test_the_worker_with_no_room_beside_her_keeps_her_spot_and_the_review_says_so(monkeypatch):
