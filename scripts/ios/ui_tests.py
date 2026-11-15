@@ -403,7 +403,10 @@ def bare_patterns(renames):
 def missing_swift_files(root, journeys=None):
     """Swift test files that a workflow or self-test names by path but are gone."""
     problems = []
-    for path in [*swift_followers(root, journeys)]:
+    fixtures = set(root.glob("scripts/ci/test_*.py"))
+    for path in swift_followers(root, journeys):
+        if path in fixtures:
+            continue
         for name in sorted(set(SWIFT_PATH.findall(path.read_text()))):
             if not (root / name).is_file():
                 problems.append(
