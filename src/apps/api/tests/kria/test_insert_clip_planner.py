@@ -431,7 +431,9 @@ def _extractor_prompt(**kw) -> str:
 # KRI-1327 (`subject_outline` for a line drawn around a person) moves it from 57f3bdbfedf26993….
 # KRI-1355 (the typed no-title ask, `title: "off"`) moves it from 50c7c030fd9d8b53….
 # KRI-1384 (every stated ask is recorded whatever the action) moves it from c0151ced250653122….
-_BRIEF_SECTION_BEFORE_INSERTS = "f8a8e0b7803194626019391a39bfefbf04ab1bfa8a40a75deafc68687ffbc8dc"
+# KRI-1405 (typed `no_sound_effects`; a kept ask after a simpler version is restated) moves it
+# from f8a8e0b780319462….
+_BRIEF_SECTION_BEFORE_INSERTS = "3799fbe71c7cd2fb0601d3db3581dd5fc6156d7a3a6b416ba668d927b50cc61b"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

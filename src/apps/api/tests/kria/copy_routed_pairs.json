@@ -108,6 +108,11 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "A voiceover edit always shows captions of what you say, and I'll check them against your request in the finished video",
+   "Seslendirmeli düzenleme söylediklerini her zaman altyazı olarak gösterir, bitmiş videoda da isteğine uyup uymadıklarını kontrol edeceğim"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "Cut \"{quote}\" ({round_s_removed}s, take {take_index})",
    "\"{quote}\" kesildi ({round_s_removed} sn, {take_index}. çekim)"
   ],
@@ -1572,6 +1577,16 @@
    "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az klip ya da daha az yazı işe yarar."
   ],
   [
+   "app/kria/brief_checks.py",
+   "When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s), but the part you named comes at {moment_at_s:.1f} s",
+   "{v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn), ama söylediğin kısım {moment_at_s:.1f}. saniyede geliyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s), but the part you named isn't in the stretch that plays",
+   "{v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn), ama söylediğin kısım oynayan bölümde yok"
+  ],
+  [
    "app/tasks/kria_runtime.py",
    "- Left out as agreed: {count} of your asks",
    "- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin"
@@ -1590,6 +1605,26 @@
    "app/agents/editor_ops_v2/split_screen.py",
    "A blank block in a split screen is not available on this edit yet.",
    "Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor."
+  ],
+  [
+   "app/kria/approval_readiness.py",
+   "Before I make this, please choose:",
+   "Bunu yapmadan önce bir seçim yap:"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "No sound effects",
+   "Ses efekti yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "No sound effects, as asked.",
+   "İstediğin gibi ses efekti yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This video has sound effects.",
+   "Bu videoda ses efekti var."
   ],
   [
    "app/kria/brief_checks.py",

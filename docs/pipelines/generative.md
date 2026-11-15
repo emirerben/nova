@@ -861,6 +861,52 @@ restart (restores the bucket split for unbound jobs; bound requests ask for reco
 cacio e pepe job, a pinned-last Cappadocia case from prod 38caaebd, and the Tigre
 spoken-cue case from prod ef8e35b8, KRI-590).
 
+### Named moments and leftover time in a narrated edit (KRI-1466)
+
+A clip came on screen on its word from its first frame, and a clip shorter than its
+step was slowed to fill it (`phone_narrated_plan._fit_step_window`). Kria TikTok video 1
+(job c8fcb7c0, 2026-11-14): "show the TOR on the big screen on "Tor"" put the goal clip
+on the word, but the screen reads TOR 2.76 s into the clip and the clip, being last,
+played at 0.496x over the remaining 15.4 s, so TOR came 5.6 s late while three other
+clips had 6.5-7 s of unseen footage.
+
+`_run_phone_narrated_job` now passes the placed steps through
+`app.pipeline.narrated_footage_fit.fit_steps_to_footage` before the record and the
+compile (the voice-placed branches only; an edit that follows a filming guide is left
+as it was):
+
+- **In-point.** `located_step_moments` looks for the creator's own words for the clip
+  (its resolved `include` / `order` clip intents) in the clip's recorded moments (this
+  render's `best_moments` plus the chat's stored clip record), with
+  `named_moments.locate_in_clip`: structured times only, one best match or nothing.
+  A located moment becomes the step's `source_start_s`. "The train" on a clip that is
+  the train throughout locates nothing.
+- **Leftover time.** A step whose clip would play below `MIN_STRETCH_RATE` (0.8) keeps
+  the clip at normal speed for what it has; the rest of the step becomes `<step>_fillN`
+  steps (1.5-4.5 s each) cut from footage the edit has not shown, never the clip just
+  before. Footage plays twice only with `video_reuse_policy: allow_repeat`; a gap the
+  unseen footage cannot fill is left to the old slow-down.
+- **Left alone.** A clip the creator ends on (a resolved `last` order intent or the
+  brief's `last_clip`) and the last clip when it plays on after the voice (KRI-842)
+  keep their whole step, and their in-point when moving it would slow them further.
+  The worker reads the approved plan only, never the request's words (KRI-470), so a
+  typed "each clip only once" has no carrier yet and still gets cuts of unseen footage.
+- **Record and receipt.** `narrated_alignment.steps` rows gain `fill: true` (no labels
+  or seats, so order and first/last receipts never read a filler as the named shot),
+  `source_start_s`, and `moment` (`words`, where it is in the clip, and `at_s`, the
+  second of the video it starts showing at, or null). The "When you say X, clip N of M
+  is on screen" review line (`brief_checks._footage_at_cue_problem`) adds "but the part
+  you named comes at T s" / "isn't in the stretch that plays" when a located moment the
+  requirement names starts more than 1 s after its clip.
+
+Trace: `narrated` / `narrated_footage_fit` (`fitted` with step counts, filler ids and
+moment times, or `failed`; a failure renders the steps as they were). Kill switch:
+`fly secrets set NARRATED_FOOTAGE_FIT_ENABLED=false --app nova-video` + worker restart
+(every clip from its first frame, slowed to fill, byte-identical). Guards:
+`tests/pipeline/test_narrated_footage_fit.py`,
+`tests/tasks/test_kri1466_narrated_named_moment.py` (the recorded job replayed; the
+expectation is the creator's own observation of the source, 3.2-4.7 s).
+
 ### Named-line cuts in a narrated voiceover (KRI-889)
 
 "Cut the line 'with bread, no'" / "cut my second 'thank you Karo'" on a narrated edit
