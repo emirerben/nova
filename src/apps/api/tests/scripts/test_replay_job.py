@@ -109,7 +109,8 @@ def test_replay_refuses_when_a_recorded_visual_is_no_longer_recoverable(stubbed)
 
 
 def _unnamed_snapshot(**overrides) -> dict:
-    """The binding shape of jobs since 2026-11-06: no media ids, only kind, duration, receipt."""
+    """A binding as the admin debug serves it for a job whose speech cleanup is still
+    required (4620fd7c): no media ids, only kind, duration, receipt."""
 
     snapshot = {
         "clip_assignments": [
@@ -165,6 +166,51 @@ def test_job_without_a_binding_replays_everything_the_item_holds(stubbed) -> Non
     info = stubbed(_job(None), _item())
     assert info["source_count"] == 4
     assert info["source_coverage"]["bound_to_recorded_media"] is False
+
+
+JOB_RAN_AT = "2026-10-21T13:05:04.458952Z"
+SCOPED_PHOTO = "6ae61e1a-96ff-4776-8f95-54ace669db23"
+
+
+def _job_without_visuals_key() -> dict:
+    """50f67a06: the binding names its clip and has no `visuals` key, so it says nothing
+    about the pool, while the job's own plan scopes a requirement to a pool photo."""
+
+    job = _job({"clip_assignments": [{"media_id": CLIP}]})
+    job["job"]["created_at"] = JOB_RAN_AT
+    job["job"]["assembly_plan"]["creator_render_requirements"] = {
+        "exact_texts": [{"media_id": f"asset-{USED_POOL}", "text": "Oblea"}]
+    }
+    return job
+
+
+def _dated_item() -> dict:
+    item = _item()
+    late, used = item["pool_assets"]
+    late["created_at"] = "2026-10-21T13:20:00Z"
+    used["created_at"] = "2026-10-21T12:52:12.939395Z"
+    return item
+
+
+def test_a_binding_without_a_visuals_key_keeps_the_pool_the_item_held_when_the_job_ran(
+    stubbed,
+) -> None:
+    info = stubbed(_job_without_visuals_key(), _dated_item())
+    assert any(USED_POOL in path for path in stubbed.copied)
+    assert not any(LATE_POOL in path for path in stubbed.copied)
+    coverage = info["source_coverage"]
+    assert coverage["pool_visuals_recorded"] is False
+    assert (coverage["pool_visuals_inferred"], coverage["pool_visuals_added_after_job"]) == (1, 1)
+    assert info["unseeded_state"]["pool_visuals_not_recorded"] == 1
+
+
+def test_pool_media_the_job_names_but_the_item_no_longer_holds_is_refused(stubbed) -> None:
+    job = _job_without_visuals_key()
+    job["job"]["assembly_plan"]["creator_render_requirements"]["exact_texts"].append(
+        {"media_id": f"asset-{SCOPED_PHOTO}", "text": "Merope"}
+    )
+    with pytest.raises(replay_job.ReplayJobError, match=SCOPED_PHOTO):
+        stubbed(job, _dated_item())
 
 
 def test_voiceover_outside_the_owner_prefix_is_refused(stubbed) -> None:
@@ -345,6 +391,49 @@ def test_the_first_message_that_got_another_reply_is_named() -> None:
     first = replay_job.first_divergent_turn(turns)
     assert first["message_index"] == 2 and first["production_turn_id"] == "b"
     assert (first["production_reply"], first["replay_reply"]) == ("approval", "reply")
+
+
+def test_a_message_whose_answer_could_not_be_sent_is_the_divergent_one(tmp_path) -> None:
+    import json
+
+    # 40684a25: message 1 got a clip question in both, message 2's tapped answer was not sent.
+    receipt = tmp_path / "replay-receipt.json"
+    diverged = {"production_turn_id": "b", "answer": "clip_selection", "reason": "no category"}
+    receipt.write_text(
+        json.dumps(
+            {
+                "turns": [{"production_turn_id": "a", "matches_production": True}],
+                "error": {"type": "TurnDiverged", "message": "x", "diverged_turn": diverged},
+            }
+        )
+    )
+    result = replay_job.summarize(receipt, tmp_path)
+    assert result["outcome"] == "diverged_from_production"
+    first = result["first_divergent_turn"]
+    assert (first["message_index"], first["production_turn_id"]) == (2, "b")
+    assert first["answer_not_sent"] == "clip_selection"
+
+
+def test_seeded_clips_that_do_not_bind_are_an_input_error_not_a_route_result(tmp_path) -> None:
+    import json
+
+    receipt = tmp_path / "replay-receipt.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "error": {
+                    "type": "ReplayInputError",
+                    "message": "seeded clips do not bind as phone sources",
+                    "input_error": True,
+                }
+            }
+        )
+    )
+    result = replay_job.summarize(receipt, tmp_path)
+    route = replay_job.compare_routes(_production(), _runs())
+    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    assert result["outcome"] == "input_error"
+    assert "phone sources" in result["failure_reason"]
 
 
 def test_clip_copies_are_pinned_to_the_generation_the_binding_recorded(

@@ -195,6 +195,39 @@ async def test_a_tapped_pool_asset_is_sent_as_the_replays_asset() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_category_the_replay_resolved_itself_is_left_out_of_the_answer() -> None:
+    # 40684a25: production asked `order:the-obelisco` and `exclude:anything-too-short-to-use`;
+    # the replay's server measured the short clips itself and asked only the first.
+    user_id, thread_id, _ = _seed_runtime_project()
+    production_question = "5b0c5d3e-3a4c-4b8e-9f6e-2d1a7c9b8e40"
+    asked = [
+        {"key": "order:the-obelisco", "candidate_media_ids": [CLIP]},
+        {"key": "exclude:anything-too-short-to-use", "candidate_media_ids": [CLIP]},
+    ]
+    picker = {"question_id": str(uuid.uuid4()), "categories": asked[:1]}
+    _ask(thread_id, "clip_question", picker)
+    recorded = {
+        "question_id": production_question,
+        "answers": [{"key": "exclude:anything-too-short-to-use", "media_ids": [CLIP]}],
+        "none_keys": ["order:the-obelisco"],
+        "skipped": False,
+    }
+
+    _, sent = await _send(
+        user_id,
+        thread_id,
+        _turn("None for the Obelisco, leave out clips 2 and 4", clip_selection=recorded),
+        _ids((production_question, "clip_question", {"categories": asked})),
+    )
+
+    stored = _stored(thread_id, "clip_selection")
+    assert (stored[0]["answers"], stored[0]["none_keys"]) == ([], ["order:the-obelisco"])
+    assert sent["remapped"]["clip_selection"]["not_asked_by_replay"] == [
+        "exclude:anything-too-short-to-use"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_you_choose_is_derived_again_against_the_replays_question() -> None:
     user_id, thread_id, _ = _seed_runtime_project()
     replay_question = str(uuid.uuid4())
