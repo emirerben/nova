@@ -1590,6 +1590,11 @@
    "app/agents/editor_ops_v2/split_screen.py",
    "A blank block in a split screen is not available on this edit yet.",
    "Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "One stays on for {longest:.0f} s, but you asked for a change about every {cadence:g} s: it stays while you're still talking about it and nothing else can come up yet. Add more for faster changes.",
+   "Biri {longest:.0f} sn ekranda kalıyor ama yaklaşık {cadence:g} saniyede bir değişmesini istedin: sen ondan bahsederken ekranda kalıyor ve henüz başka bir şey gösterilemiyor. Daha hızlı değişmesi için daha fazlasını ekle."
   ]
  ],
  "retired": [
