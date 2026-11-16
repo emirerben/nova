@@ -270,15 +270,15 @@ final class OverlayEditVerifyUITests: XCTestCase {
             XCTAssertTrue(cycled, "\(kind.name): second tap cycles to the other stacked item")
         }
         guard let working = second ?? first else { return }
-        // A stray choice sheet (captions) must never block the next gesture.
-        h.dismissCaptionChoice()
+        // No choice sheet (captions) may ever block the next gesture.
+        h.assertNoCaptionChoiceSheet()
 
         // (2) drag moves
         guard let m0 = h.read(working, kind: kind) else { return }
         let c = h.canvas.frame
         let dragPts = CGVector(dx: kind.drag.dx * c.width, dy: kind.drag.dy * c.height)
         point.press(forDuration: 0.15, thenDragTo: point.withOffset(dragPts))
-        h.dismissCaptionChoice()
+        h.assertNoCaptionChoiceSheet()
         h.shot("\(n)-3-after-drag")
         if let m1 = h.read(working, kind: kind) {
             let expectDX = Double(kind.drag.dx) * 100, expectDY = Double(kind.drag.dy) * 100
@@ -293,7 +293,7 @@ final class OverlayEditVerifyUITests: XCTestCase {
         let pinchTarget = kind.measuresTransformFrame ? h.app.descendants(matching: .any)["native-editor-drawing-transform"].firstMatch : h.canvas
         let beforePinch = h.sizeSignature(working, kind: kind)
         pinchTarget.pinch(withScale: 0.7, velocity: -1)
-        h.dismissCaptionChoice()
+        h.assertNoCaptionChoiceSheet()
         h.shot("\(n)-4-after-pinch")
         let afterPinch = h.sizeSignature(working, kind: kind)
         let pinchOK = afterPinch != beforePinch
@@ -312,7 +312,7 @@ final class OverlayEditVerifyUITests: XCTestCase {
             Verify.record(kind.name, "corner drag changes size", false, "no corner frame"); return
         }
         corner.press(forDuration: 0.15, thenDragTo: corner.withOffset(CGVector(dx: 25, dy: 25)))
-        h.dismissCaptionChoice()
+        h.assertNoCaptionChoiceSheet()
         h.shot("\(n)-5-after-corner-drag")
         let afterCorner = h.sizeSignature(working, kind: kind)
         let cornerOK = afterCorner != beforeCorner
@@ -449,9 +449,10 @@ struct Harness {
         return origin.withOffset(CGVector(dx: f.maxX - inset, dy: f.maxY - inset))
     }
 
-    func dismissCaptionChoice() {
-        let choice = app.buttons["All captions in this video"]
-        if choice.waitForExistence(timeout: 1) { choice.tap() }
+    /// A caption drag or pinch applies at once: no "Apply this caption change" sheet stands between two gestures (the
+    /// optional "Apply to all captions" button over the preview never blocks).
+    func assertNoCaptionChoiceSheet() {
+        XCTAssertFalse(app.buttons["All captions in this video"].waitForExistence(timeout: 1), "a caption scope sheet blocked the next gesture")
     }
 
     func shot(_ name: String) {

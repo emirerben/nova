@@ -665,38 +665,66 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-selection-boundary", "-ui-testing-editor-color-cuts"]
         app.launch()
-        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 30))
-        func pixels() -> [UInt8] {
-            let screenshot = app.screenshot().image.cgImage!
+        // Every element inside the preview container shares its identifier; the video canvas is the largest. A query
+        // can also come back empty for one sample (seen as {{inf, inf}, {0, 0}} on the sample taken as a 10 s wait
+        // times out, while the tree still shows the preview), which crashed the runner on a force-unwrapped crop
+        // (CI, 11-15). Such a sample is skipped and counted, and the failure names the last real pixel result.
+        var lastSkip = "", skipped = 0, lastPixels = "no pixel sample"
+        func pixels() -> [UInt8]? {
+            guard let screenshot = app.screenshot().image.cgImage, app.frame.width > 0 else {
+                lastSkip = "screenshot had no image"; skipped += 1; return nil
+            }
             let scale = Double(screenshot.width) / app.frame.width
-            let rect = preview.frame
-            let crop = screenshot.cropping(to: CGRect(x: (rect.minX + rect.width * 0.2) * scale,
-                y: (rect.minY + rect.height * 0.3) * scale,
-                width: rect.width * 0.6 * scale, height: rect.height * 0.2 * scale))!
+            let candidates = app.descendants(matching: .any).matching(identifier: "native-editor-preview").allElementsBoundByIndex
+                .filter(\.exists).map(\.frame)
+            guard let rect = candidates.max(by: { $0.width * $0.height < $1.width * $1.height }) else {
+                lastSkip = "no native-editor-preview element"; skipped += 1; return nil
+            }
+            let bounds = CGRect(x: 0, y: 0, width: screenshot.width, height: screenshot.height)
+            let region = CGRect(x: (rect.minX + rect.width * 0.2) * scale, y: (rect.minY + rect.height * 0.3) * scale,
+                                width: rect.width * 0.6 * scale, height: rect.height * 0.2 * scale).integral
+            guard region.width >= 1, region.height >= 1, bounds.contains(region),
+                  let crop = screenshot.cropping(to: region) else {
+                lastSkip = "preview \(NSCoder.string(for: rect)) of \(candidates.map(NSCoder.string(for:))) "
+                    + "gives crop \(NSCoder.string(for: region)) outside the \(screenshot.width)x\(screenshot.height) screenshot"
+                skipped += 1
+                return nil
+            }
             var bytes = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
-            let context = CGContext(data: &bytes, width: crop.width, height: crop.height,
+            guard let context = CGContext(data: &bytes, width: crop.width, height: crop.height,
                 bitsPerComponent: 8, bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                lastSkip = "no bitmap context for \(crop.width)x\(crop.height)"; skipped += 1; return nil
+            }
             context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
             return bytes
         }
         func assertPicture(blue: Bool, text: Bool, name: String) {
             let predicate = NSPredicate { _, _ in
-                let bytes = pixels()
+                guard let bytes = pixels() else { return false }
                 let backgrounds = stride(from: 0, to: bytes.count, by: 4).filter {
                     blue ? bytes[$0 + 2] > 200 && bytes[$0] < 50 : bytes[$0] > 200 && bytes[$0 + 2] < 50
                 }.count
                 let whites = stride(from: 0, to: bytes.count, by: 4).filter {
                     bytes[$0] > 220 && bytes[$0 + 1] > 220 && bytes[$0 + 2] > 220
                 }.count
+                lastPixels = "\(backgrounds) of \(bytes.count / 4) pixels \(blue ? "blue" : "red"), \(whites) white"
                 return backgrounds > bytes.count / 8 && (text ? whites > 20 : whites == 0)
             }
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 10), .completed, name)
+            skipped = 0; lastSkip = ""; lastPixels = "no pixel sample"
+            let matched = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 10) == .completed
+            XCTAssertTrue(matched, "\(name): last sample \(lastPixels); \(skipped) sample(s) skipped" + (skipped > 0 ? " (last: \(lastSkip))" : ""))
             let shot = XCTAttachment(screenshot: app.screenshot())
             shot.name = name
             shot.lifetime = .keepAlways
             add(shot)
+            if !matched {
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "\(name) accessibility tree"
+                tree.lifetime = .keepAlways
+                add(tree)
+            }
         }
         assertPicture(blue: false, text: false, name: "Initial preceding clip")
         app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
