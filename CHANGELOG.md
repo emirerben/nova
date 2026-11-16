@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.252.0] - 2026-11-16
+
+### Changed
+- fix(phone): degrade one bad row instead of refusing the video (KRI-1376) (#2312) <!-- release-pr: 2312 -->
+
 ## [0.88.251.0] - 2026-11-16
 
 ### Fixed
