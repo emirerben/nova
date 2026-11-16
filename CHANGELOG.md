@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.262.0] - 2026-11-16
+
+### Changed
+- feat(agents): record behavioural fallbacks on agent_run and in the fleet report (KRI-1429) (#2372) <!-- release-pr: 2372 -->
+
 ## [0.88.261.0] - 2026-11-16
 
 ### Changed
