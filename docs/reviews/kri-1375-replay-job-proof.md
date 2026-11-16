@@ -6,7 +6,7 @@ read-only from the bucket, and runs the Main Creator route and the real worker l
 `src/apps/api/tests/prod_flags.snapshot.json`.
 
 Commit ids in the sections before pass 7 name the commits as they were then. The branch was
-rebased since (2026-11-16, onto main ce7d705dc); a commit's subject finds its rebased copy.
+rebased since (2026-11-16, onto main 1700e3f77); a commit's subject finds its rebased copy.
 
 ## Pass 7: how often the proof job passes, and on which Main Creator model
 
@@ -58,8 +58,8 @@ What this does and does not show:
   `--main-creator production` replay of an older job needs a cap above 0.20.
 
 Commands: `make kria-replay-job JOB=1cb33402-12ee-4510-98b1-6c5c7558d23e MAX_COST_USD=0.30`
-(production model) and the same with `MAIN_CREATOR=snapshot`, code at 0f423658f (later commits
-change docs only).
+(production model) and the same with `MAIN_CREATOR=snapshot`, code at 4e486fb64 (the runs used its
+pre-rebase copy 0f423658f, the same code; later commits change docs only).
 
 ### The 11 chat jobs without a turn id (no model calls)
 
@@ -74,7 +74,7 @@ future reproduction.
 
 ### Offline proof (no model calls)
 
-`tests/scripts/test_replay_job.py`, committed red in 2055b895d before the fix (6 failing):
+`tests/scripts/test_replay_job.py`, committed red in 07d27df92 before the fix (6 failing):
 
 * `test_a_replay_plans_on_the_main_creator_model_production_ran_for_the_job`: production's model
   comes from its last non-fallback run before the job ended, the thinking level is the code
