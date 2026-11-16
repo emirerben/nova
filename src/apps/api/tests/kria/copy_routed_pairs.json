@@ -1970,6 +1970,16 @@
    "app/tasks/kria_runtime.py",
    "{count} takes sit later in the song than a 2-minute video can hold.",
    "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "This video is made from the one video you attached",
+   "Bu video eklediğin tek videodan yapılıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I added pictures but couldn't verify which moments they match, so check the pictures and their timing",
+   "Görselleri ekledim ama hangi anlara denk geldiklerini doğrulayamadım, görselleri ve zamanlamalarını kontrol et"
   ]
  ],
  "retired": [
