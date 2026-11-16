@@ -499,6 +499,194 @@ def test_a_reproduced_failure_stands_even_on_another_model() -> None:
     assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
 
 
+RESEARCH = "nova.research.public_facts"
+TEXT_LAYERS = "nova.research.text_layers"
+PRODUCTION_PLAN_FAILURE = {
+    "error_class": "ResearchUnavailable",
+    "error_tail": "This explanation needs a longer clip or shorter wording",
+}
+REPLAY_PLAN_FAILURE = {
+    "error_class": "TerminalError",
+    "error_tail": f"{RESEARCH}: schema — Search produced no usable cited evidence",
+}
+
+
+def _plan_failed_trace(failure: dict | None) -> list[dict]:
+    if failure is None:
+        return []
+    return [
+        {
+            "stage": "assembly",
+            "event": "phone_plan_failed",
+            "data": {"failure_reason": "phone_plan_failed", "kind": "bug", **failure},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("case", "production_research", "replay_runs", "complete", "failures", "expected", "named"),
+    [
+        (
+            "1be34fc8 as replayed on 2026-11-15",
+            "ok",
+            [(RESEARCH, "ok"), (TEXT_LAYERS, "ok"), (RESEARCH, "terminal_schema")],
+            True,
+            (PRODUCTION_PLAN_FAILURE, REPLAY_PLAN_FAILURE),
+            "failure_reason_matched_route_differs",
+            [TEXT_LAYERS, RESEARCH, "ResearchUnavailable", "TerminalError"],
+        ),
+        (
+            "same route, the replay's research failed where production's succeeded",
+            "ok",
+            [(RESEARCH, "terminal_schema")],
+            True,
+            (None, None),
+            "reproduction_unproven",
+            [RESEARCH],
+        ),
+        (
+            "same route and agents, another planning error",
+            "ok",
+            [(RESEARCH, "ok")],
+            True,
+            (PRODUCTION_PLAN_FAILURE, REPLAY_PLAN_FAILURE),
+            "reproduction_unproven",
+            ["ResearchUnavailable", "TerminalError"],
+        ),
+        (
+            "production's trace was cut off",
+            "ok",
+            [(RESEARCH, "ok")],
+            False,
+            (None, None),
+            "reproduction_unproven",
+            ["cut off"],
+        ),
+        (
+            "same route, same planning error",
+            "ok",
+            [(RESEARCH, "ok")],
+            True,
+            (PRODUCTION_PLAN_FAILURE, PRODUCTION_PLAN_FAILURE),
+            "reproduced",
+            [],
+        ),
+        (
+            "research failed in both",
+            "terminal_schema",
+            [(RESEARCH, "terminal_schema")],
+            True,
+            (REPLAY_PLAN_FAILURE, REPLAY_PLAN_FAILURE),
+            "reproduced",
+            [],
+        ),
+        (
+            "production recorded no planning error",
+            "ok",
+            [(RESEARCH, "ok")],
+            True,
+            (None, REPLAY_PLAN_FAILURE),
+            "reproduced",
+            [],
+        ),
+    ],
+)
+def test_a_matching_failure_reason_is_production_failure_only_on_production_route(
+    monkeypatch,
+    tmp_path,
+    case: str,
+    production_research: str,
+    replay_runs: list[tuple[str, str]],
+    complete: bool,
+    failures: tuple[dict | None, dict | None],
+    expected: str,
+    named: list[str],
+) -> None:
+    """Verifier, 1be34fc8 ("10 November" bilingual text, phone_plan_failed): every one of
+    production's eight agent runs succeeded and its plan failed with ResearchUnavailable after
+    the last caption binding. Today's code took the text-layers route, and the replay failed on
+    its second public-facts search (terminal_schema), yet printed
+    production_failure_reproduced: true because phone_plan_failed is a catch-all reason.
+
+    Ways this goes wrong: a reason match alone reads as reproduced; a replay-only agent, a
+    failure in an agent production ran cleanly, a cut-off trace or another planning error class
+    still read as reproduced; the verdict names no agent or error class; a real reproduction
+    (same route, the same agent failing, the same error) stops reading as one; a production job
+    with no recorded planning error can never be reproduced.
+    """
+
+    import json
+
+    production_runs = [
+        {"agent_name": name, "outcome": outcome, "model": GEMINI, "created_at": at}
+        for name, outcome, at in (
+            ("nova.edit.copilot", "ok", "2026-11-10T07:21:12Z"),
+            (RESEARCH, "ok", "2026-11-10T07:21:21Z"),
+            ("nova.research.caption_binding", "ok", "2026-11-10T07:21:58Z"),
+            ("nova.research.caption_binding", "ok", "2026-11-10T07:22:25Z"),
+            ("nova.edit.copilot", "ok", "2026-11-10T07:22:36Z"),
+            (RESEARCH, production_research, "2026-11-10T07:22:46Z"),
+            ("nova.research.caption_binding", "ok", "2026-11-10T07:23:17Z"),
+            ("nova.research.caption_binding", "ok", "2026-11-10T07:23:41Z"),
+        )
+    ]
+    trace = {
+        "agent_runs": [
+            {"agent_name": "nova.creator.main", "outcome": "ok", "model": GEMINI},
+            {"agent_name": "nova.plan.clip_intent_planner", "outcome": "ok", "model": GEMINI},
+        ],
+        "next_cursor": "older" if not complete else None,
+    }
+    monkeypatch.setattr(replay_job, "prod_get", lambda path: trace)
+    production = replay_job.production_agents(
+        ITEM, production_runs, until="2026-11-10T07:23:47Z", began="2026-11-10T07:21:03Z"
+    )
+    recorded = _runs(
+        ("nova.creator.main", "ok"),
+        ("nova.plan.clip_intent_planner", "ok"),
+        ("nova.edit.copilot", "ok"),
+        *replay_runs,
+    )
+    production_failure, replay_failure = failures
+    receipt = tmp_path / "replay-receipt.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "job": {
+                    "id": "6a3335a9-9286-4381-9544-0eb40e251847",
+                    "status": "processing_failed",
+                    "failure_reason": "phone_plan_failed",
+                    "pipeline_trace": _plan_failed_trace(replay_failure),
+                }
+            }
+        )
+    )
+    result = replay_job.summarize(receipt, tmp_path)
+    route = replay_job.compare_routes(production, recorded)
+    production_job = {"pipeline_trace": _plan_failed_trace(production_failure)}
+    replay_job.classify_failure(
+        result, route, "phone_plan_failed", replay_job.planning_failure(production_job)
+    )
+
+    assert result["outcome"] == "failed", case
+    assert result["failure_reason"] == "phone_plan_failed"
+    assert result["reproduction"] == expected, case
+    assert result["production_failure_reproduced"] is (expected == "reproduced")
+    gaps = " ".join(result["reproduction_gaps"])
+    assert all(name in gaps for name in named), (case, gaps)
+    assert bool(gaps) is (expected != "reproduced")
+
+
+def test_a_failure_inside_an_agent_production_never_ran_is_not_reproduced() -> None:
+    route = replay_job.compare_routes(
+        _production(), _runs(("nova.plan.semantic_edit_proposal", "terminal_schema"))
+    )
+    result = {"outcome": "failed", "failure_reason": "phone_plan_unsupported", "error_detail": None}
+    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    assert result["outcome"] == "diverged_from_production"
+    assert result["production_failure_reproduced"] is False
+
+
 def test_a_stalled_turn_is_not_reported_as_a_route_divergence(tmp_path) -> None:
     import json
 
