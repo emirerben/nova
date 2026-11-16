@@ -28,7 +28,9 @@ import re
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, ValidationError
+from pydantic.json_schema import SkipJsonSchema
 
+from app.agents._fallback import FallbackOutcome
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents._schemas.music_labels import MusicLabels
 from app.pipeline.prompt_loader import load_prompt
@@ -90,6 +92,9 @@ class RankedTrack(BaseModel):
 
 class MusicMatcherOutput(BaseModel):
     ranked: list[RankedTrack] = Field(min_length=1)
+    # KRI-1429: entries the parse refused while the answer still stood. Server-owned: out of
+    # the model-facing schema and out of every dump.
+    fallbacks: SkipJsonSchema[list[FallbackOutcome]] = Field(default_factory=list, exclude=True)
 
 
 # ── Prompt-injection sanitization ────────────────────────────────────────────
@@ -332,8 +337,20 @@ class MusicMatcherAgent(Agent[MusicMatcherInput, MusicMatcherOutput]):
                 f"(hallucinated={dropped_hallucinated}, invalid={dropped_invalid})"
             )
 
+        # A partial drop used to leave no trace: the run was `ok` and the caller got a shorter
+        # list (KRI-1429). Report it; an all-dropped answer already refuses above.
+        fallbacks = (
+            [
+                FallbackOutcome(
+                    kind="matcher_entries_dropped",
+                    detail=f"hallucinated={dropped_hallucinated},invalid={dropped_invalid}",
+                )
+            ]
+            if dropped_hallucinated or dropped_invalid
+            else []
+        )
         try:
-            return MusicMatcherOutput(ranked=kept)
+            return MusicMatcherOutput(ranked=kept, fallbacks=fallbacks)
         except ValidationError as exc:
             raise SchemaError(f"music_matcher: output validation — {exc}") from exc
 

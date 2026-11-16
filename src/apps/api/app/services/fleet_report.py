@@ -42,6 +42,11 @@ class AgentModelRow(BaseModel):
     failed_share: float
     fallback_calls: int
     fallback_share: float
+    # KRI-1429: runs that ended well while their output reported something it did not use
+    # (`agent_run.fallback_kind`), by kind. Not the provider-model fallback counted above.
+    behavioural_fallback_calls: int = 0
+    behavioural_fallback_share: float = 0.0
+    behavioural_fallback_kinds: dict[str, int] = {}
     outcomes: dict[str, int]
 
 
@@ -122,7 +127,8 @@ async def _agents(
                        percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) AS p50,
                        percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95,
                        count(*) FILTER (WHERE outcome NOT IN :success) AS failed_calls,
-                       count(*) FILTER (WHERE outcome = 'ok_fallback') AS fallback_calls
+                       count(*) FILTER (WHERE outcome = 'ok_fallback') AS fallback_calls,
+                       count(*) FILTER (WHERE fallback_kind IS NOT NULL) AS behavioural_calls
                 FROM agent_run
                 WHERE {_WINDOW}{env}
                 GROUP BY agent_name, model
@@ -147,6 +153,23 @@ async def _agents(
     by_pair: dict[tuple[str, str], dict[str, int]] = {}
     for row in outcomes:
         by_pair.setdefault((row["agent_name"], row["model"]), {})[row["outcome"]] = int(row["n"])
+    kind_rows = (
+        await db.execute(
+            text(
+                f"""
+                SELECT agent_name, model, fallback_kind, count(*) AS n
+                FROM agent_run WHERE {_WINDOW}{env} AND fallback_kind IS NOT NULL
+                GROUP BY agent_name, model, fallback_kind
+                """  # noqa: S608 - fixed fragments only; every value is a bound parameter
+            ),
+            {key: value for key, value in params.items() if key != "success"},
+        )
+    ).mappings()
+    kinds_by_pair: dict[tuple[str, str], dict[str, int]] = {}
+    for row in kind_rows:
+        counts = kinds_by_pair.setdefault((row["agent_name"], row["model"]), {})
+        for kind in str(row["fallback_kind"]).split(","):
+            counts[kind] = counts.get(kind, 0) + int(row["n"])
 
     agents = [
         AgentModelRow(
@@ -160,6 +183,11 @@ async def _agents(
             failed_share=_share(int(row["failed_calls"]), int(row["calls"])),
             fallback_calls=int(row["fallback_calls"]),
             fallback_share=_share(int(row["fallback_calls"]), int(row["calls"])),
+            behavioural_fallback_calls=int(row["behavioural_calls"]),
+            behavioural_fallback_share=_share(int(row["behavioural_calls"]), int(row["calls"])),
+            behavioural_fallback_kinds=dict(
+                sorted(kinds_by_pair.get((row["agent_name"], row["model"]), {}).items())
+            ),
             outcomes=dict(sorted(by_pair.get((row["agent_name"], row["model"]), {}).items())),
         )
         for row in totals
