@@ -326,8 +326,11 @@ def _compile_caption_layers(
                 look=look,
             )
         )
-    except UnsupportedPhonePlan:
-        raise
+    except UnsupportedPhonePlan as exc:
+        # The caption compiler's own refusals (a script face, the layer cap) name no reason.
+        raise UnsupportedPhonePlan(
+            str(exc), capability=exc.capability, reason="captions_compile", lane="captions"
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - untrusted cue content
         raise UnsupportedPhonePlan(
             f"unable to compile captions: {exc}", reason="captions_compile", lane="captions"
