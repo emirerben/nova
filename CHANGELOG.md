@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.256.0] - 2026-11-16
+
+### Changed
+- feat(kria): record refusal codes on turns and add a creation-health report (KRI-1382) (#2309) <!-- release-pr: 2309 -->
+
 ## [0.88.255.0] - 2026-11-16
 
 ### Changed
