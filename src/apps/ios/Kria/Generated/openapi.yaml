@@ -3907,6 +3907,147 @@
         "title": "EditorCaptionLinePlacement",
         "type": "object"
       },
+      "EditorCaptionTranslation": {
+        "additionalProperties": false,
+        "description": "The translated caption track (KRI-1501, docs/pipelines/dual-captions.md).\n\nPersisted as ``variant[\"caption_translation\"]``; each cue's line is its\n``caption_cues[*].translation``. ``outcome`` / ``dropped_cue_ids`` are server-owned: the\neditor sends them back unchanged or omits them.",
+        "properties": {
+          "color": {
+            "default": null,
+            "nullable": true,
+            "title": "Color",
+            "type": "string"
+          },
+          "dropped_cue_ids": {
+            "default": null,
+            "items": {
+              "maxLength": 160,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "nullable": true,
+            "title": "Dropped Cue Ids",
+            "type": "array"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "font": {
+            "default": null,
+            "nullable": true,
+            "title": "Font",
+            "type": "string"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "de",
+              "tr",
+              "pt"
+            ],
+            "title": "Language",
+            "type": "string"
+          },
+          "line_overrides": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EditorCaptionTranslationLine"
+            },
+            "default": null,
+            "maxProperties": 500,
+            "nullable": true,
+            "title": "Line Overrides",
+            "type": "object"
+          },
+          "outcome": {
+            "default": null,
+            "enum": [
+              "translated",
+              "partial",
+              "unmet"
+            ],
+            "nullable": true,
+            "title": "Outcome",
+            "type": "string"
+          },
+          "position_x_frac": {
+            "default": null,
+            "maximum": 0.95,
+            "minimum": 0.05,
+            "nullable": true,
+            "title": "Position X Frac",
+            "type": "number"
+          },
+          "position_y_frac": {
+            "default": null,
+            "maximum": 0.9,
+            "minimum": 0.1,
+            "nullable": true,
+            "title": "Position Y Frac",
+            "type": "number"
+          },
+          "size_px": {
+            "default": null,
+            "maximum": 120,
+            "minimum": 24,
+            "nullable": true,
+            "title": "Size Px",
+            "type": "integer"
+          },
+          "source_language": {
+            "default": null,
+            "maxLength": 16,
+            "nullable": true,
+            "title": "Source Language",
+            "type": "string"
+          },
+          "stroke_width": {
+            "default": null,
+            "maximum": 12,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Stroke Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "language"
+        ],
+        "title": "EditorCaptionTranslation",
+        "type": "object"
+      },
+      "EditorCaptionTranslationLine": {
+        "additionalProperties": false,
+        "description": "One translated line's own place and size (KRI-1501), keyed by cue id.",
+        "properties": {
+          "position_x_frac": {
+            "default": null,
+            "maximum": 0.95,
+            "minimum": 0.05,
+            "nullable": true,
+            "title": "Position X Frac",
+            "type": "number"
+          },
+          "position_y_frac": {
+            "default": null,
+            "maximum": 0.9,
+            "minimum": 0.1,
+            "nullable": true,
+            "title": "Position Y Frac",
+            "type": "number"
+          },
+          "size_px": {
+            "default": null,
+            "maximum": 120,
+            "minimum": 24,
+            "nullable": true,
+            "title": "Size Px",
+            "type": "integer"
+          }
+        },
+        "title": "EditorCaptionTranslationLine",
+        "type": "object"
+      },
       "EditorCommitBackgroundFocus": {
         "additionalProperties": false,
         "description": "Where a background picture is aimed (Qendresa item 18): the document's complete\n``{x, y, zoom}`` (0 = left/top edge, 1 = right/bottom edge; zoom a multiple of the cover\nscale). The same bounds as the recipe's `SpeakerBackgroundFocus`.",
@@ -4055,6 +4196,11 @@
             "nullable": true,
             "title": "Style",
             "type": "string"
+          },
+          "translation": {
+            "$ref": "#/components/schemas/EditorCaptionTranslation",
+            "default": null,
+            "nullable": true
           },
           "y_frac": {
             "default": null,

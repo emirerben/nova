@@ -318,6 +318,8 @@ enum EditorOpenIntent { case warm, open }
         let id: String
         let position: CGPoint
         let sizePx: Double
+        /// KRI-1501: the cue's translated line (its own track) rather than the spoken caption.
+        var translation = false
     }
     @Published private(set) var textInteractionFrame: TextInteractionFrame?
     struct MediaInteractionFrame {
@@ -347,7 +349,15 @@ enum EditorOpenIntent { case warm, open }
     /// The drawn layer of a caption cue at `time`. A line with hidden parts (KRI-1344) draws each visible part as its own
     /// layer (`caption-<id>`, `caption-<id>-1`, ...).
     private func captionLayerID(_ id: String, at time: Double) -> String {
-        let base = "caption-" + id
+        visiblePartLayerID("caption-" + id, at: time)
+    }
+
+    /// KRI-1501: the drawn layer of a cue's translated line (`caption-tr-<id>`, `caption-tr-<id>-1`, ...).
+    func translationLayerID(_ id: String, at time: Double) -> String {
+        visiblePartLayerID(NativeEditorRenderCompiler.translationLayerBase(cueID: id, in: document) ?? "caption-tr-" + id, at: time)
+    }
+
+    private func visiblePartLayerID(_ base: String, at time: Double) -> String {
         guard let preview = sourcePreview, preview.textSelectionBounds(id: base, time: time) == nil else { return base }
         return (1...16).lazy.map { base + "-\($0)" }.first { preview.textSelectionBounds(id: $0, time: time) != nil } ?? base
     }
@@ -360,14 +370,16 @@ enum EditorOpenIntent { case warm, open }
     /// A selected caption cue gets the same frozen stills as authored text: the scene below it, the scene above it and
     /// the caption alone, so a drag or pinch moves real caption pixels without rebuilding the preview on every sample.
     private func prepareCaptionInteraction() {
-        guard !isDirectManipulating, !isPlaying, let selection, selection.kind == .captionCue, offersCaptionStyleScope,
+        guard !isDirectManipulating, !isPlaying, let selection,
+              selection.kind == .captionCue ? offersCaptionStyleScope : selection.kind == .captionTranslation && canEditCaptionTranslation,
               let preview = sourcePreview, let item = player?.currentItem,
               sourcePreviewState == .ready else { return }
         let sequence = textInteractionSequence
         let time = min(currentTime, max(0, duration - 1.0 / 600))
         let renderFrame = previewFrameRenderer
-        let still = captionStill(id: selection.id)
-        let layerID = captionLayerID(selection.id, at: time)
+        let translates = selection.kind == .captionTranslation
+        let still = translates ? translationStill(id: selection.id) : captionStill(id: selection.id)
+        let layerID = translates ? translationLayerID(selection.id, at: time) : captionLayerID(selection.id, at: time)
         textInteractionTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(100))
@@ -386,7 +398,8 @@ enum EditorOpenIntent { case warm, open }
                 let below = try await image(layers.below)
                 let above = try await image(layers.above)
                 guard let self, !Task.isCancelled, self.textInteractionSequence == sequence,
-                      self.selection == selection, self.captionStill(id: selection.id) == still else { return }
+                      self.selection == selection,
+                      (translates ? self.translationStill(id: selection.id) : self.captionStill(id: selection.id)) == still else { return }
                 self.textInteractionFrame = TextInteractionFrame(element: nil, caption: still, time: time,
                     below: below, above: above, text: UIImage(cgImage: layers.text), rect: layers.rect)
             } catch {
@@ -2372,6 +2385,11 @@ enum EditorOpenIntent { case warm, open }
     func select(_ value: EditorSelection?, seekToStart: Bool = true) {
         selection = value
         selectionRequest &+= 1
+        // KRI-1501: a translated line pops in with its cue; park where it is fully drawn, like a caption line.
+        if seekToStart, let value, value.kind == .captionTranslation, let park = captionTranslationParkTime(id: value.id) {
+            seek(to: park)
+            return
+        }
         guard seekToStart, let value, let start = startTime(for: value) else { return }
         let frameDuration = player?.currentItem?.videoComposition?.frameDuration.seconds ?? 1.0 / 30
         // A sub-frame start otherwise decodes the preceding frame, before this item exists.
@@ -2425,6 +2443,13 @@ enum EditorOpenIntent { case warm, open }
         // An editable title has no `read_only`, so it is listed like any text.
         items += document.textElements.enumerated().filter { !document.isCaptionCueMirror($0.element) && !$0.element.isReadOnly }.map { index, item in projected(EditorSelection(kind: .text, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 300 + index), sourceIndex: index) }
         items += document.captionCues.enumerated().map { index, item in projected(EditorSelection(kind: .captionCue, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 400 + index), sourceIndex: index) }
+        // KRI-1501: the translated lines are their own track, timed by their cue. Listed only where the server offers
+        // the track (`editor_capabilities.caption_translation`), so every other edit keeps its lanes.
+        if offersCaptionTranslation, document.captionTranslation != nil {
+            items += document.captionCues.enumerated().filter { $0.element.translation != nil && !$0.element.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map { index, item in
+                projected(EditorSelection(kind: .captionTranslation, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 400 + index) + 1, sourceIndex: index)
+            }
+        }
         items += document.soundEffects.enumerated().map { index, item in projected(EditorSelection(kind: .soundEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 100 + index), sourceIndex: index) }
         items += document.mediaOverlays.enumerated().map { index, item in projected(EditorSelection(kind: .mediaOverlay, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 200 + index), sourceIndex: index) }
         items += document.visualBlocks.enumerated().map { index, item in projected(EditorSelection(kind: .visualBlock, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 150 + index), sourceIndex: index) }
@@ -5148,7 +5173,8 @@ enum EditorOpenIntent { case warm, open }
             // footprint for both selection handles and the danger-zone guide.
             return sourcePreview?.mediaSelectionBounds(id: "visual-\(selection.id)-\(selection.id)", time: time)
         }
-        let id = selection.kind == .captionCue ? captionLayerID(selection.id, at: time) : selection.id
+        let id = selection.kind == .captionCue ? captionLayerID(selection.id, at: time)
+            : selection.kind == .captionTranslation ? translationLayerID(selection.id, at: time) : selection.id
         return sourcePreview?.textSelectionBounds(id: id, time: time)
     }
 
@@ -8142,6 +8168,10 @@ enum EditorOpenIntent { case warm, open }
         case .speaker:
             // The speaker is the take itself: there is nothing to delete. Full screen is a Speaker choice instead.
             return false
+        case .captionTranslation:
+            // KRI-1501: deleting a translated line removes only that cue's translation; the spoken caption stays.
+            guard canEditCaptionTranslation, document.captionCues.first(where: { $0.id == selected.id })?.translation != nil else { return false }
+            setCaptionTranslationText(id: selected.id, text: "")
         case .carousel:
             guard document.carouselMoment != nil else { return false }
             transactDocument(section: .carouselMoment) { document in
@@ -8169,6 +8199,7 @@ enum EditorOpenIntent { case warm, open }
         case .drawing: return cleanDocument.drawings.contains { $0.id == selection.id }
         case .speakerBackgroundWindow: return cleanDocument.speakerBackground?.windows.contains { $0.localID == selection.id } ?? false
         case .speaker: return cleanDocument.speakerBackground?.speakerFrame != nil
+        case .captionTranslation: return cleanDocument.captionCues.contains { $0.id == selection.id && $0.translation != nil }
         case .carousel: return cleanDocument.carouselMoment?["id"] == .string(selection.id)
         }
     }
@@ -8308,9 +8339,23 @@ enum EditorOpenIntent { case warm, open }
 
     enum CaptionStyleScope: Equatable { case all, line(String) }
     @Published private(set) var captionPlacementMessage: String?
+    /// KRI-1501: the Translation panel's translate call (see `translateCaptions(to:)`).
+    @Published var captionTranslationStatus: CaptionTranslationStatus = .idle
+    /// The spoken text each translated line was made from in this session, so an edited spoken line shows its
+    /// translation may be out of date (`captionTranslationIsStale`). Not saved.
+    var captionTranslationSourceTexts: [String: String] = [:]
+    /// The cue as last saved (the baseline for a translation loaded with the edit).
+    func savedCaptionCue(id: String) -> EditorCaptionCue? { cleanDocument.captionCues.first { $0.id == id } }
+    /// The caption-translation route for this variant; nil without a signed-in target.
+    var captionTranslationAPI: ((CaptionTranslationRequest) async throws -> CaptionTranslationResponse)? {
+        guard let api, let itemID, let variantKey else { return nil }
+        return { try await api.captionTranslation(itemID: itemID, variantID: variantKey, request: $0) }
+    }
     private struct CaptionGestureChange {
         var id: String
         var values: [String: JSONValue]
+        /// KRI-1501: a drag or pinch of a translated line; "Apply to all" then moves every translated line.
+        var translation = false
     }
     private var captionGestureChange: CaptionGestureChange?
     private struct CaptionGestureOffer {
@@ -8324,6 +8369,8 @@ enum EditorOpenIntent { case warm, open }
     }
     /// The caption whose last drag or pinch can still be applied to every caption. Cleared by any other edit.
     @Published private(set) var captionGestureOfferID: String?
+    /// KRI-1501: the offer is for a translated line (its own track), not the spoken caption.
+    var captionGestureOfferIsTranslation: Bool { captionGestureOffer?.change.translation ?? false }
 
     func captionPosition(id: String) -> CGPoint {
         let appearance = document.captionMeta["appearance"]?.objectValue ?? [:]
@@ -8357,9 +8404,11 @@ enum EditorOpenIntent { case warm, open }
         rememberCaptionGesture(id: id, values: values)
     }
 
-    private func rememberCaptionGesture(id: String, values: [String: JSONValue]) {
-        guard offersCaptionStyleScope, isDirectManipulating else { return }
-        if captionGestureChange?.id != id { captionGestureChange = CaptionGestureChange(id: id, values: [:]) }
+    func rememberCaptionGesture(id: String, values: [String: JSONValue], translation: Bool = false) {
+        guard translation ? canEditCaptionTranslation : offersCaptionStyleScope, isDirectManipulating else { return }
+        if captionGestureChange?.id != id || captionGestureChange?.translation != translation {
+            captionGestureChange = CaptionGestureChange(id: id, values: [:], translation: translation)
+        }
         captionGestureChange?.values.merge(values) { _, value in value }
     }
 
@@ -8371,7 +8420,8 @@ enum EditorOpenIntent { case warm, open }
         guard applyToAll, !isDirectManipulating, transactionBaseline == nil,
               document == offer.result, undoStack.last == offer.baseline else { return }
         transactionBaseline = offer.baseline
-        writeCaptionStyle(.all, values: offer.change.values)
+        if offer.change.translation { writeTranslationStyle(.all, values: offer.change.values) }
+        else { writeCaptionStyle(.all, values: offer.change.values) }
         transactionBaseline = nil
     }
 
@@ -9631,7 +9681,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     /// `rebasesSplitLanes: false` is only for an edit that keeps every clip's window where it was.
-    private func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, _ body: (inout EditorDocument) -> Void) {
+    func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next)
         // A section lives while a clip with footage does. Blanks alone have nothing to play, so they go with it.
         let retainedSplitIDs = Set(next.clips.filter { !$0.removed && !$0.isBlank }.compactMap(\.splitSectionID))

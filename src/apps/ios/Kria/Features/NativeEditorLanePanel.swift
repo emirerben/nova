@@ -18,6 +18,8 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
     /// Scroll-phase changes of the panel's own ScrollView (user drags, deceleration,
     /// idle). Lets a panel react to hand scrolling without a competing DragGesture.
     var onScrollPhase: ((ScrollPhase) -> Void)? = nil
+    /// Tab titles when the raw values are not themselves catalog keys.
+    var tabTitle: ((Tab) -> String)? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -48,7 +50,7 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
                         .accessibilityIdentifier("native-editor-\(title.lowercased())-done")
                 }
                 if tabs.count > 1 {
-                    NativeEditorPanelTabs(tabs: tabs, selection: $tab, accessibilityPrefix: "native-editor-\(title.lowercased())")
+                    NativeEditorPanelTabs(tabs: tabs, selection: $tab, accessibilityPrefix: "native-editor-\(title.lowercased())", title: tabTitle)
                 }
             }
             .nativeEditorPanelResizeSurface()
@@ -105,6 +107,8 @@ struct NativeCaptionPanel: View {
     var editLines = 3
     /// Field line height, scaled by the editor alongside `editLines` for the same reason.
     var editLineHeight: CGFloat = 22
+    /// KRI-1501: opens the translated line's own panel; shown only where the server offers the track.
+    var onOpenTranslation: (() -> Void)? = nil
     let onDone: () -> Void
     @State private var tab: Tab = .edit
     @State private var fieldFocused = false
@@ -625,6 +629,12 @@ struct NativeCaptionPanel: View {
 
     private var showsCaptions: Bool { meta["enabled"] != .bool(false) }
 
+    /// "English" while a translated line shows, else "Off".
+    private var translationSummary: String {
+        guard let track = session.document.captionTranslation, track.enabled else { return String(localized: "Off", comment: "Translated caption line is turned off") }
+        return NativeEditorSession.captionLanguageName(track.language)
+    }
+
     /// Whole-video switches above the line list, so they are found where captions are edited.
     private var captionSwitches: some View {
         VStack(spacing: 0) {
@@ -647,6 +657,20 @@ struct NativeCaptionPanel: View {
             }
             // A hidden caption has nothing to highlight.
             .disabled(!session.canEditCaptionAppearance || !showsCaptions)
+            if session.offersCaptionTranslation, let onOpenTranslation {
+                Button(action: onOpenTranslation) {
+                    HStack(spacing: 8) {
+                        Text("Translated line").font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(translationSummary).font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
+                        Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(KriaColor.zinc)
+                    }
+                    .frame(minHeight: 52)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("native-editor-caption-translation")
+            }
         }
         .padding(.horizontal, 12)
         .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 12))
@@ -981,6 +1005,8 @@ struct NativePaperSlider: UIViewRepresentable {
 struct NativeCaptionScopeOffer: View {
     @ObservedObject var session: NativeEditorSession
     let captionID: String
+    /// KRI-1501: the gesture moved a translated line; "Apply to all" carries it to every translated line.
+    var translation = false
 
     var body: some View {
         // One short line: the preview can be only ~160pt wide while a panel is open.
@@ -995,14 +1021,15 @@ struct NativeCaptionScopeOffer: View {
                     .padding(.leading, 12).padding(.trailing, 2)
                     .frame(minHeight: 32)
             }
-            .accessibilityLabel("Apply to all captions")
+            .accessibilityLabel(translation ? String(localized: "Apply to all translated lines") : String(localized: "Apply to all captions"))
+            .accessibilityIdentifier("native-editor-caption-apply-all")
             Button {
                 session.finishCaptionGesture(applyToAll: false)
             } label: {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
                     .frame(width: 30, height: 32)
             }
-            .accessibilityLabel("Only this caption")
+            .accessibilityLabel(translation ? String(localized: "Only this translated line") : String(localized: "Only this caption"))
         }
         .foregroundStyle(.white)
         .background(.black.opacity(0.72), in: Capsule())

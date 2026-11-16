@@ -25,6 +25,12 @@ log = structlog.get_logger()
 PHONE_TEXT_STYLE_FIELD = "phone_text_style"
 PHONE_TEXT_STYLE_CLIENT_PROTOCOL = 10
 _POLICY: ContextVar[dict | None] = ContextVar("phone_text_style", default=None)
+# KRI-1501: the translated caption line one phone generation draws (a
+# `PhoneCaptionTranslationLook`), held per generation like `_POLICY` (a holder dict opened by
+# `phone_text_generation`, so it never outlives that one writer). None outside a generation.
+_CAPTION_TRANSLATION: ContextVar[dict | None] = ContextVar(
+    "phone_caption_translation", default=None
+)
 # WCAG AA for body text, the bar a caption over a speaker background must reach (Green 5).
 READABLE_CONTRAST = 4.5
 BACKGROUND_OUTLINE_PX = 4
@@ -288,15 +294,49 @@ def phone_text_generation(function):
 
     @wraps(function)
     def scoped(job_id, snapshot, *args, **kwargs):
-        with phone_text_policy_scope(snapshot.get(PHONE_TEXT_STYLE_FIELD)):
-            policy = _POLICY.get()
-            if policy is not None:
-                from app.services.phone_sources import PHONE_SOURCES_FIELD
-
-                policy["_source_bindings"] = snapshot.get(PHONE_SOURCES_FIELD) or []
-            return function(job_id, snapshot, *args, **kwargs)
+        translation_token = _CAPTION_TRANSLATION.set({})
+        try:
+            with phone_text_policy_scope(snapshot.get(PHONE_TEXT_STYLE_FIELD)):
+                return _scoped_generation(function, job_id, snapshot, *args, **kwargs)
+        finally:
+            _CAPTION_TRANSLATION.reset(translation_token)
 
     return scoped
+
+
+def _scoped_generation(function, job_id, snapshot, *args, **kwargs):
+    policy = _POLICY.get()
+    if policy is not None:
+        from app.services.phone_sources import PHONE_SOURCES_FIELD
+
+        policy["_source_bindings"] = snapshot.get(PHONE_SOURCES_FIELD) or []
+    return function(job_id, snapshot, *args, **kwargs)
+
+
+def register_generation_caption_translation(look) -> bool:
+    """KRI-1501: ``look`` (a `PhoneCaptionTranslationLook`, or None to clear) is the translated
+    caption line this generation draws; every caption compile of the generation without an
+    editor-authored translation look reads it (`generation_caption_translation`). Outside a
+    generation nothing is recorded (False)."""
+    holder = _CAPTION_TRANSLATION.get()
+    if holder is None:
+        return False
+    holder["look"] = look
+    return True
+
+
+def generation_caption_translation():
+    """The translated caption line this generation registered, else None."""
+    holder = _CAPTION_TRANSLATION.get()
+    return holder.get("look") if holder else None
+
+
+def generation_face_boxes() -> list:
+    """The faces this generation sampled, where the phone draws them (``policy["_face_boxes"]``:
+    ``{"box": (left, top, right, bottom) canvas fractions, "start_s", "end_s"}`` or a bare box).
+    Empty outside a generation or when none were sampled."""
+    policy = _POLICY.get()
+    return list(policy.get("_face_boxes") or []) if policy else []
 
 
 def generation_style_rows(

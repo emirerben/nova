@@ -331,6 +331,8 @@ protocol KriaAPIClient: ReviewPlanTransport, SlidePostProposalClient, SongRangeC
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]]
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue]
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
+    /// KRI-1501: translates the given caption cues for the translated-line track. Persists nothing.
+    func captionTranslation(itemID: String, variantID: String, request: CaptionTranslationRequest) async throws -> CaptionTranslationResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
     /// Live plan & review (contract v2): `GET creation-threads/{id}/plan`.
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot
@@ -609,6 +611,11 @@ extension KriaAPIClient {
     }
 
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse {
+        _ = itemID; _ = variantID; _ = request
+        throw APIError.unsupported
+    }
+
+    func captionTranslation(itemID: String, variantID: String, request: CaptionTranslationRequest) async throws -> CaptionTranslationResponse {
         _ = itemID; _ = variantID; _ = request
         throw APIError.unsupported
     }
@@ -1433,7 +1440,10 @@ enum KriaClientProtocolContract {
     /// and the `splitBlankPanel` capability. The server offers `editor_capabilities.split_blank_panel` only to this protocol
     /// (and only with `splitBlankPanel` verified) and answers 426 `client_update_required` (`split_blank_panel`) to an older
     /// build that saves, polls the timeline of, or renders an edit that holds one.
-    static let version = 51
+    /// 52 (two-language captions): draws a smaller translated caption line on its own editor track (cue `translation`,
+    /// `caption_meta.translation`), moves and styles it apart from the spoken line, and keeps both on Save. The server offers
+    /// `editor_capabilities.caption_translation` and plans a translated line only for this protocol with `dualCaptions` verified.
+    static let version = 52
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1836,6 +1846,10 @@ struct KriaAPI: KriaAPIClient {
         try await Perf.measureAsync("talk.save.editorCommit") {
             try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
         }
+    }
+    func captionTranslation(itemID: String, variantID: String, request translation: CaptionTranslationRequest) async throws -> CaptionTranslationResponse {
+        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/caption-translation", method: "POST",
+                          bodyData: try JSONEncoder().encode(translation), decode: CaptionTranslationResponse.self)
     }
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
         struct Body: Encodable {
@@ -2378,6 +2392,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "background_focus_disabled": String(localized: "Aiming the background isn’t available for this video yet. Your edits are still here."),
             "background_focus_invalid": String(localized: "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here."),
             "speaker_background_window_invalid": String(localized: "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here."),
+            // KRI-1501: the server turned the translated caption line off while this edit carries one.
+            "caption_translation_disabled": String(localized: "Translated caption lines aren’t available right now. Turn the translated line off and save again. Your edits are still here."),
             // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
             "client_update_required": String(localized: "Update Kria to save this edit. Your edits are still here."),
         ]
@@ -3134,7 +3150,7 @@ extension DraftSnapshot {
             let directKeys = [
                 "text_elements", "caption_cues", "caption_meta", "captions_enabled", "caption_size_px",
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled", "caption_editor_style",
-                "caption_margin_v", "caption_y_frac", "caption_animation_phases",
+                "caption_margin_v", "caption_y_frac", "caption_animation_phases", "caption_translation",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment", "speaker_background",
@@ -3154,6 +3170,10 @@ extension DraftSnapshot {
             // must not bring it back.
             if !isIntentionalEmpty, authoritativeVariant["caption_animation_phases"] == nil {
                 sections["caption_animation_phases"] = nil
+            }
+            // KRI-1501: the same for the translated-line track.
+            if !isIntentionalEmpty, authoritativeVariant["caption_translation"] == nil {
+                sections["caption_translation"] = nil
             }
             // Likewise a cleared Talk-to-camera background leaves the key off the variant (KRI-1165).
             if !isIntentionalEmpty, authoritativeVariant["speaker_background"] == nil {
