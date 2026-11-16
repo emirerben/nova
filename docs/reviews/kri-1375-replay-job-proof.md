@@ -5,6 +5,68 @@ with `scripts/admin.py --prod GET`, copies the footage the job's brief binding r
 read-only from the bucket, and runs the Main Creator route and the real worker locally under
 `src/apps/api/tests/prod_flags.snapshot.json`.
 
+## Pass 6 fix: a matching failure reason is not a reproduction (1be34fc8)
+
+The pass-6 verifier replayed 1be34fc8 (the "10 November" Turkish and English text, production
+2026-11-10, `phone_plan_failed`). Production's eight agent runs all ended `ok`, and its plan failed
+with `ResearchUnavailable` ("This explanation needs a longer clip or shorter wording") after the
+last caption binding. The replay took the `nova.research.text_layers` route and failed its second
+`nova.research.public_facts` search (`terminal_schema`). It still printed
+`production_failure_reproduced: true`, because the two reasons were the same catch-all string.
+
+### Run 12: 1be34fc8 on the fixed code, `reproduction_unproven`
+
+Command: `make kria-replay-job JOB=1be34fc8-6dd8-4d1c-878b-368a5ad45656 MAX_COST_USD=0.45`, code
+commit 47a6e8856, 2026-11-16 06:56 UTC. Driver exit 1 (outcome `failed`). Settled spend $0.2153
+over six agent runs.
+
+* Message 1 got an approval card, as in production (`matches_production: true`). The approved
+  render, job 8be64fa3, ended `processing_failed` with `phone_plan_failed`.
+* This time the replay took production's route: `replay_only_agents: []`. It never reached the
+  caption binding. Its first `nova.research.public_facts` search ended `terminal_schema`, on
+  `gemini-2.5-flash` like production's.
+* `planning_failure` (the replay job's last `phone_plan_failed` event): `TerminalSchemaError`,
+  "nova.research.public_facts: schema — Search produced no usable cited evidence".
+  `compared_production_render.planning_failure`: `ResearchUnavailable`, "This explanation needs a
+  longer clip or shorter wording".
+* Verdict: `reproduction: reproduction_unproven`, `production_failure_reproduced: false`. The
+  gaps name the agent and both errors:
+  * "nova.research.public_facts failed in the replay (terminal_schema), but every run of it
+    production recorded ended ok."
+  * "Production's plan failed with ResearchUnavailable (...); the replay's with
+    TerminalSchemaError (...)."
+* `model_differences`: the Main Creator ran on `gpt-6.1-sol`, production's on
+  `gemini-3.1-pro-preview` (the snapshot's current Main Creator model).
+
+The same output, classified by the code before the fix (540326a61), reads
+`production_failure_reproduced: true`:
+
+```
+pre-fix 540326a61 {"outcome": "failed", "failure_reason": "phone_plan_failed", "production_failure_reproduced": true, "reproduction": null}
+fixed {"outcome": "failed", "failure_reason": "phone_plan_failed", "production_failure_reproduced": false, "reproduction": "reproduction_unproven"}
+```
+
+Afterwards no scratch database, no Redis key of the run's namespace and no replay process was
+left.
+
+What this says about the job, not the tool: on the current code, 1be34fc8's public-facts search
+failed in both live replays (the verifier's and run 12), where production's two searches passed.
+That is outside KRI-1375.
+
+### Offline proof (no model calls)
+
+`tests/scripts/test_replay_job.py`, committed red in 540326a61 before the fix:
+
+* `test_a_matching_failure_reason_is_production_failure_only_on_production_route`, built from
+  1be34fc8's production runs and planning error, through `production_agents`, `summarize`,
+  `compare_routes` and `classify_failure`. The verifier's replay is
+  `failure_reason_matched_route_differs` and names text_layers, public_facts and both error
+  classes. The same route with a research failure production did not have, another planning
+  error class, or a cut-off trace is `reproduction_unproven`. The same route and error, a
+  research failure in both, or a production job with no planning error stay `reproduced`.
+* `test_a_failure_inside_an_agent_production_never_ran_is_not_reproduced`: a divergence no
+  longer carries `production_failure_reproduced: true`.
+
 ## Pass 5, round 2: e7bf7099 on the current code
 
 Paid calls this round settled $0.2749 in total, from the scratch databases' agent runs and one
@@ -380,3 +442,8 @@ recorded 15, 11 and 1 clips.
   `model_differences` says so, and runs 7 and 8 both diverged at message 1 under that difference.
   The replay does not yet run each job on its own production model.
 * Run 6 (`device_plan_ready`) predates pass 5. Runs 9 and 11 repeat it on the current code.
+* `reproduced` asks that every agent whose last replay run failed also failed in production, not
+  only the agent that ended the run. A fail-open agent that fails only in the replay therefore
+  reads `reproduction_unproven` even when the plan then fails where production's did; the gap
+  names it. A replay that stopped early is compared with production's earlier render without its
+  planning error, which is not read.
