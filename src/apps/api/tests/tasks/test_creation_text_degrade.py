@@ -69,6 +69,15 @@ Seventh review of #2314 (prod d4f1b2d8 replayed live), written before the fixes:
  29. her title, already on screen as confirmed copy, written again by the composer as a second
      line when she asked only for the title and its style, fails the video because that op is
      protected as her literal; or the only op placing her literal becomes droppable.
+
+Eighth review of #2314 (prod fba2c864 replayed live), written before the fixes:
+ 30. the composer's only op is refused for one bad value (prod fba2c864: ``patch_text`` with
+     ``"highlight_color": null``) while her words are already on screen, and the refusal is
+     read as a refusal of the whole answer, so her approved video fails;
+ 31. reading a refused op as one item lets an answer refused as a whole (over the op limit)
+     render too (failure mode 10 still holds);
+ 32. a row cut to the video's end keeps less than one frame and is drawn unreadably with no
+     note, where a row that cannot be shown is left out and said.
 """
 
 from __future__ import annotations
@@ -330,6 +339,17 @@ GATES = [
         gone="Past 4",
         reasons=("replay_failed",) * 5,
     ),
+    # Failure mode 32: cut to the end, less than one frame of it would be left.
+    Gate(
+        "replay_failed_sliver_at_the_end",
+        lambda snap: [
+            _add(GOOD),
+            _add("Almost gone", snap["total_duration_s"] - 0.01, snap["total_duration_s"] + 3),
+        ],
+        note="Left out one text change for “Almost gone” because I couldn't make it fit",
+        gone="Almost gone",
+        reasons=("replay_failed",),
+    ),
     Gate(
         "layer_shape",
         _paired,
@@ -367,6 +387,43 @@ GATES = [
         pinned=LINES,
         reasons=("incomplete",),
         keeps_good=False,
+    ),
+    # Failure mode 30: prod fba2c864's whole answer, one op the parser refuses for its null
+    # highlight, with her words already on screen.
+    Gate(
+        "incomplete_her_only_op_refused",
+        lambda snap: [
+            {
+                "op": "patch_text",
+                "selector": {"ids": [_title_id(snap)]},
+                "patch": {
+                    "font_family": "TikTok Sans",
+                    "size_px": 30,
+                    "color": "#FFFFFF",
+                    "highlight_color": None,
+                    "shadow_enabled": False,
+                    "position": "middle",
+                },
+            }
+        ],
+        note="I couldn't do every part of your text request, so the video shows the parts I could",
+        kept=TITLE,
+        brief=CreativeBrief(
+            version=1,
+            requirements=[
+                BriefRequirement(
+                    id="title",
+                    kind="text",
+                    scope="global",
+                    literal=TITLE,
+                    description=f'Put "{TITLE}" in the middle, small white text like TikTok\'s',
+                    facts={"position": "middle"},
+                )
+            ],
+        ),
+        reasons=("incomplete",),
+        keeps_good=False,
+        answer={"reply": "I've moved the text to the middle and made it smaller."},
     ),
     Gate(
         "hierarchy_unmet",
