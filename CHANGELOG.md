@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.255.0] - 2026-11-16
+
+### Changed
+- fix(kria): the thinking row names each step of a chat turn and keeps earlier rounds (KRI-1384) (#2326) <!-- release-pr: 2326 -->
+
 ## [0.88.254.0] - 2026-11-16
 
 ### Changed
