@@ -41,6 +41,7 @@ from typing import Any, ClassVar, Generic, Protocol, TypeVar
 import structlog
 from pydantic import BaseModel, ValidationError
 
+from app.agents._fallback import fallback_kind_of
 from app.agents._tool_calls import ToolRequest
 from app.agents.model_registry import model_spec, provider_of, supported_effort
 
@@ -651,6 +652,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 output_dict=self.project_output_for_observability(
                     output.model_dump() if hasattr(output, "model_dump") else None
                 ),
+                fallback_kind=fallback_kind_of(output),
             )
             return output
 
@@ -676,6 +678,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     output_dict=self.project_output_for_observability(
                         output.model_dump() if hasattr(output, "model_dump") else None
                     ),
+                    fallback_kind=fallback_kind_of(output),
                 )
                 mark_success = getattr(ctx.thought_summary_callback, "mark_model_success", None)
                 if callable(mark_success):
@@ -1395,6 +1398,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
         error: str | None = None,
         input_dict: dict[str, Any] | None = None,
         output_dict: dict[str, Any] | None = None,
+        fallback_kind: str | None = None,
     ) -> None:
         if self.spec.sensitive_io and error is not None:
             # `_safe_error` already reduced a classed error to a closed vocabulary
@@ -1452,6 +1456,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
         # diagnosable without round-tripping through Langfuse.
         if stats.last_raw_text is not None and outcome not in ("ok", "ok_fallback"):
             payload["raw_text_preview"] = stats.last_raw_text
+        if fallback_kind:
+            payload["behavioural_fallback"] = fallback_kind
         log.info("agent_run", **payload)
 
         # Persist one row to the agent_run table for the admin job-debug
@@ -1493,6 +1499,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 output_dict=output_dict,
                 raw_text=stats.last_full_raw_text,
                 error=error,
+                fallback_kind=fallback_kind,
             )
 
         # Optional Langfuse trace (no-op unless LANGFUSE_PUBLIC_KEY/SECRET_KEY

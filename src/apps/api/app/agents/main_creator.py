@@ -15,7 +15,9 @@ from typing import Any, ClassVar, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic.json_schema import SkipJsonSchema
 
+from app.agents._fallback import FallbackOutcome
 from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
@@ -1447,6 +1449,11 @@ class MainCreatorOutput(BaseModel):
     conversation_language: Literal["en", "tr", "de"] | None = Field(
         default=None, exclude_if=lambda v: v is None
     )
+    # KRI-1429: what the parse boundary dropped from an answer that otherwise stood (a story plan
+    # that cannot run on this edit). SERVER-owned: out of the model-facing schema and out of every
+    # dump, so no stored or wire form of an answer changes. The runtime reads the attribute and
+    # stores the kinds on the `agent_run` row; the fleet report shows the rate per agent.
+    fallbacks: SkipJsonSchema[list[FallbackOutcome]] = Field(default_factory=list, exclude=True)
 
 
 class CreativeCopyDecision(BaseModel):
@@ -1721,6 +1728,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
         self._schema_feedback = ""
+        fallbacks: list[FallbackOutcome] = []
         try:
             data = json.loads(raw_text)
             if not isinstance(data, dict):
@@ -1936,6 +1944,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                                 ),
                             )
                             strategy = strategy.model_copy(update={"editorial_plan": None})
+                            if not fallbacks:  # `finish` can run twice; one record per answer
+                                fallbacks.append(
+                                    FallbackOutcome(
+                                        kind="editorial_plan_dropped",
+                                        detail=",".join(misfit)[:120],
+                                    )
+                                )
                     return strategy
 
                 unrenderable: list[str] = []
@@ -1978,6 +1993,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 # Unsupported or disabled codes ("xx", "de" with German off) are None, not a
                 # schema retry: the chat keeps its stored language.
                 conversation_language=model_language(reported_language),
+                fallbacks=fallbacks,
             )
         except ValidationError as exc:
             # Tell the retry which contract fields failed, without echoing

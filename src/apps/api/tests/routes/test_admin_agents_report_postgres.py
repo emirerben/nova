@@ -330,3 +330,46 @@ def test_chat_turn_outcomes_bucket_proposed_as_applied_and_keep_stale_apart(seed
         "other": 2,
     }
     assert "training-eligible" in chat["scope"]
+
+
+def test_behavioural_fallbacks_are_counted_apart_from_failures_and_model_fallbacks(seeded):
+    """KRI-1429: runs that ended ok but dropped part of their answer have their own rate."""
+    ids = seeded
+
+    def run(outcome, fallback_kind):
+        persist_agent_run(
+            job_id=f"eval:{ids['tag']}",
+            segment_idx=None,
+            agent_name=ids["owner_less_agent"],
+            prompt_version="v1",
+            model=ids["primary"],
+            outcome=outcome,
+            attempts=1,
+            tokens_in=1,
+            tokens_out=1,
+            cost_usd=0.01,
+            latency_ms=10,
+            input_dict=None,
+            output_dict=None,
+            raw_text=None,
+            fallback_kind=fallback_kind,
+        )
+
+    run("ok", None)
+    run("ok", None)
+    run("ok", "editorial_plan_dropped")
+    run("ok", "editorial_plan_dropped,matcher_entries_dropped")
+    run("terminal_schema", None)
+
+    row = next(r for r in _get().json()["agents"] if r["agent_name"] == ids["owner_less_agent"])
+
+    assert row["calls"] == 5
+    assert row["behavioural_fallback_calls"] == 2
+    assert row["behavioural_fallback_share"] == pytest.approx(0.4)
+    assert row["behavioural_fallback_kinds"] == {
+        "editorial_plan_dropped": 2,
+        "matcher_entries_dropped": 1,
+    }
+    # Not the provider-model fallback, and not a failure.
+    assert row["fallback_calls"] == 0
+    assert row["failed_calls"] == 1
