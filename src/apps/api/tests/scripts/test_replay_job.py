@@ -639,7 +639,8 @@ def test_a_replay_plans_on_the_main_creator_model_production_ran_for_the_job(mon
     assert settings["main_creator_model"]["value"] == SOL
     assert settings["main_creator_thinking_level"]["value"] == "medium"
 
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as tmp:
+    temp_root = next(root for root in ("/private/tmp", "/tmp") if Path(root).is_dir())
+    with tempfile.TemporaryDirectory(dir=temp_root) as tmp:
         inputs = Path(tmp) / "inputs"
         inputs.mkdir()
         (inputs / "source-manifest.json").write_text("{}")
