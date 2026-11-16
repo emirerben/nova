@@ -1980,6 +1980,11 @@
    "app/kria/brief_checks.py",
    "I added pictures but couldn't verify which moments they match, so check the pictures and their timing",
    "Görselleri ekledim ama hangi anlara denk geldiklerini doğrulayamadım, görselleri ve zamanlamalarını kontrol et"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "One stays on for {longest:.0f} s, but you asked for a change about every {cadence:g} s: it stays while you're still talking about it and nothing else can come up yet. Add more for faster changes.",
+   "Biri {longest:.0f} sn ekranda kalıyor ama yaklaşık {cadence:g} saniyede bir değişmesini istedin: sen ondan bahsederken ekranda kalıyor ve henüz başka bir şey gösterilemiyor. Daha hızlı değişmesi için daha fazlasını ekle."
   ]
  ],
  "retired": [

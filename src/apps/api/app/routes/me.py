@@ -2047,11 +2047,34 @@ async def report_library_playback_failure(
     ).scalar_one_or_none()
     if owned is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    # Cigdem 2 (KRI-1497): a media-services reset is tagged, never downgraded. The editor tries to
+    # recover from it (KRI-626) but posts this report BEFORE trying, and a finished render whose
+    # retries run out reports nothing more, so this warning stays the only failure signal.
     log.warning(
         "editor_playback_failed",
         job_id=str(jid),
         user_id=str(user.id),
+        media_services_reset=_is_media_services_reset(body),
         **body.model_dump(),
+    )
+
+
+# AVErrorMediaServicesWereReset, and the expired-audio-session OSStatus ('!ses') the dead session
+# leaves on the next item: the same signature `NativeEditorSession.isMediaServicesResetFailure`
+# recovers from on the phone.
+_MEDIA_SERVICES_RESET_CODE = -11819
+_EXPIRED_AUDIO_SESSION_STATUS = 561210739
+
+
+def _is_media_services_reset(body: LibraryPlaybackDiagnostic) -> bool:
+    if body.error_domain == "AVFoundationErrorDomain" and (
+        body.error_code == _MEDIA_SERVICES_RESET_CODE
+        or body.underlying_code == _EXPIRED_AUDIO_SESSION_STATUS
+    ):
+        return True
+    return (
+        body.error_domain == "NSOSStatusErrorDomain"
+        and body.error_code == _EXPIRED_AUDIO_SESSION_STATUS
     )
 
 

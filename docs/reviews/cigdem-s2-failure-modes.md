@@ -107,3 +107,114 @@ readable floor is 40 px). Default and "large" unchanged.
 - `ruff`, focused pytest, `make verify-kria`, `bash scripts/preship-check.sh`.
 - Pending, needs a phone run after merge (and Yasin's OK for any paid run): planner places the
   collab post on the partnership sentence; S4 Turkish 2-minute run.
+
+# Çiğdem S2 "Cigdem 2" fixes — failure modes (written before the code)
+
+Run: 2026-11-15 17:59–18:07Z, thread `9ab37a68-baf2-4037-be07-8950e4e91fdd`, job
+`ef12ddfd-11b7-4ac3-9efa-69283f0ddced` (build 1997, protocol 51, server `e74148c6c`). Same prompt
+and take as ss2b. Linear: KRI-1493 (parent), KRI-1494, KRI-1492, KRI-1497, KRI-1498.
+
+## What the raw records say
+
+| Miss | Evidence | Decision point |
+|---|---|---|
+| Drone photo held 10.4–25.5 s (15.1 s) against "every 3-5 seconds", and neither the draft nor the review said so | stored `background_media` has no `cadence_s`; lane receipt has no `cadence_s`/`longest_s`; the brief recorded `background_cadence_min_s: 3`, `background_cadence_max_s: 5` | The planner is taught "3-5 seconds" = 4, which equals `DEFAULT_BACKGROUND_CADENCE_S`; `BackgroundMedia._omit_default_start` drops a 4.0 from the dump (proven: `cadence_s=4.0` dumps without it, `3.0` keeps it). So #2230's honest rhythm sentence (C) never fires for this exact ask. Even when it fires, S57 (never repeat) leaves no way to keep the pace with 4 pictures for 25 s. |
+| One 0.6 s pause at 22.8–23.4 s (output) | source silencedetect span 28.52–29.14 s; whisper stamped `So` 28.58–29.32 s (the pause sits in the token's HEAD); `story.` ends 28.58 s; stamped gap 0.00 s | Rule 0 carves only interior spans and (KRI-236) a sentence-final token's TAIL. A pause whisper stamps onto the HEAD of the next sentence's first token is invisible to rule 3 (stamped gap < `MAX_PAUSE_S`). |
+| `editor_playback_failed` for 3 jobs at 18:07:05/07Z | `-11819` then `-11800` with underlying `561210739` (`'!ses'`), 8 s after the device render completed; the creator saw nothing wrong | Not a playback bug: `NativeEditorSession.handleMediaServicesReset` (KRI-626) already rebuilds every player. The server logs these as warnings named "failed". |
+| (not a miss) "review never says what cleanup cut" (KRI-1498) | the `assistant_review` content ends "Speech cleanup cut what it heard as 2 long pauses and 2 restarted sentences (5.8 s)." | Filed in error from the receipt's `reason` field alone; the review text keeps the draft's promise. Closed, no code change. |
+
+## E. Keep the pace the creator named (background returns)
+
+Fix: (1) `BackgroundMedia.cadence_s` is `None` unless the creator named a pace, so an asked 4 s
+survives; (2) behind `BACKGROUND_KEEPS_ASKED_PACE_ENABLED` (default on), when a pace was named the
+layout keeps every window within `cadence_s + 1 s` (the receipt's own slack): a small overshoot
+pulls the next window in, a long hold after a picture's own sentence is filled by pictures already
+shown. No named pace: S57 unchanged (a longer scene beats a repeat).
+
+1. A strategy stored before the change (no `cadence_s`) → `None`, same as before: no pace, no
+   returns, no rhythm sentence.
+2. The planner writes `cadence_s` for an unasked pace → it is taught to set it only for a named
+   rhythm; if it does anyway, pictures return at a 4 s pace (no wrong content, only earlier
+   pictures). Not provable offline (paid replay); noted as a residual risk.
+3. A return shows a picture before its own word (spoils the reveal) → only pictures whose first
+   window already started can return.
+4. A return lands while the creator still talks about the current picture → the current picture
+   keeps its window to the end of the sentence that names it (and at least `cadence_s`); returns
+   start only after that.
+5. The same picture twice in a row (A, A) → each return differs from the window before it; with
+   only one other picture they alternate.
+6. A return flashes (a sliver) → the leftover is split into equal pieces of at most `cadence_s`,
+   each at least 1 s (a long hold is over `cadence_s + 1 s`, so the leftover is over 1 s).
+7. The first picture is too long and nothing was shown before it → no return is possible: the next
+   window is pulled in by up to 1 s when that brings it within the pace; otherwise the hold stays
+   and the reply says so truthfully (new wording: nothing else had come up yet).
+8. Pulling the next window in moves it before its word by more than 1 s → capped at 1 s, and never
+   before the previous window's own `cadence_s`.
+9. Phone limits (S62): over 40 windows, under 0.5 s, gaps, overlaps → windows stay sorted,
+   disjoint, cover every second they covered before, at most 40 (past the budget a hold stays
+   long and the reply says so).
+10. A full-screen opening (item 16), list labels (item 19), `unshown`/`left_out` receipts → returns
+   only split windows after the opening; a label anchors on an entry's FIRST window (unchanged);
+   receipts count distinct media (KRI-1177), so returns do not inflate "N photos".
+11. A video returns → it plays from its own `source_start_s` again (a loop, as the phone already
+   draws a video window).
+12. The editor's `set_background_sequence` rotation → not passed the flag: byte-identical.
+13. Flag off → layout byte-identical to today; only fix (1) remains, which makes #2230's sentence
+   fire for "3-5 seconds" as intended.
+14. The rhythm sentence says "none repeats" while pictures do return → with the flag on, the
+   sentence names the real reason for a remaining long hold (nothing else had come up yet).
+
+## F. A pause stamped onto the next sentence's first word (rule 0 head trim)
+
+Fix: the mirror of KRI-236's tail trim, V2 only (`_sentence_initial_head_carve`, kind
+`trim_sentence_head`): the token follows a sentence-final token (`. ? !`, no ellipsis); exactly ONE
+long (>= 0.6 s) span overlaps it by >= 0.3 s; that span covers the token's whole stamped head and
+starts within `SENTENCE_TAIL_REACH_S` of the previous token's end (no unexplained sound between);
+the token keeps >= `SENTENCE_HEAD_MIN_VOICED_S` (0.15 s) after the span. The token starts at the
+span end; a previous token whose stamped end runs into the span by less than the overlap minimum
+ends at the span start. `DETECTOR_VERSION` -> `mixed-gap-v5`.
+
+1. A quiet first syllable under the -30 dB floor is cut → rule 3 keeps `KEPT_GAP_S/2` (125 ms) of
+   the span before the voice, as for the tail trim.
+2. The previous word is not sentence-final ("and … so") → refused: a mid-sentence pause is a
+   hesitation the existing rules judge.
+3. Sound between the previous word and the span (a breath, a trailing syllable) → the reach check
+   refuses it.
+4. The token is mostly silence (a quiet word) → refused unless >= 0.15 s of it is outside the span.
+5. Several quiet patches in the token → refused (one span only), as for the tail trim.
+6. The span also overlaps the previous token's tail by >= 0.3 s → the tail rule handles it; the
+   head rule does not run twice on one pause.
+7. A first token of the take (no previous word) → refused.
+8. The cut moves a caption or a retake span → `retake_spans` index the original list (unchanged);
+   captions are re-timed from the reconciled words like every carve.
+9. Existing goldens (KRI-236 tail, "a..." split, the seeded property test) → unchanged; a negative
+   control with a voiced head (span ends in the token's middle with real voice after) stays whole.
+
+## G. Media-services reset reported as a playback failure
+
+Fix (revised after Emir's review of #2365): `/me/jobs/{id}/playback-diagnostics` keeps logging every
+report as the `editor_playback_failed` warning and adds `media_services_reset: true` when the error is
+the media-services reset (AVFoundation `-11819`, or `561210739` `'!ses'` as code or underlying code),
+so a reset can be told apart from other failures without hiding one. The first version logged it as
+`editor_playback_reset` at info level, which would also have hidden a reset the editor never
+recovered from: `handlePlayerItemFailure` posts the report BEFORE recovery, and a finished render
+whose retries run out (`surfaceUnplayableFinishedRender`) reports nothing more.
+
+1. A recovered reset still shows as a failure → accepted: the server cannot know the recovery
+   worked; the tag lets a dashboard count resets separately. Confirmed recovery would need the
+   client to report it (not in this PR).
+2. A reset whose retries run out → every report it sent stays a warning (the failure is visible).
+3. A report without error codes, or the same code in another domain → `media_services_reset:
+   false`, otherwise unchanged.
+
+## Checks
+
+- E: the real worker over the Cigdem 2 strategy (4 phrased pictures, `cadence_s` 4 through the
+  real repair) and the kit's ground-truth words: every picture on its word, no window over 5 s,
+  no return before its picture's first window, the drone sentence intact, receipt "met";
+  negative controls: no pace named (S57 unchanged), flag off (byte-identical layout).
+- F: golden case built from this take's stamped words and silencedetect spans (the cut removes
+  only inside 28.52–29.14 s and leaves <= 0.4 s); negative controls 2-5.
+- G: route tests: reset reports tagged and still warnings; a reset whose retries run out keeps
+  every failure; negative controls untagged.
+- Pending: the S2 rerun on the phone after merge (`tools/check_result.sh … S2`: every line PASS).

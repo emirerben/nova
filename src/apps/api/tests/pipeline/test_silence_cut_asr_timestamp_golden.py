@@ -510,7 +510,7 @@ def test_analysis_payload_carries_token_adjustments_and_round_trips():
 def test_detector_version_was_bumped_with_the_detector():
     # Snapshot reuse and the render-side cut cache key on this string; an
     # un-bumped detector change would keep serving pre-fix plans forever.
-    assert DETECTOR_VERSION == "mixed-gap-v8-voice-guard"
+    assert DETECTOR_VERSION == "mixed-gap-v9-sentence-head"
     assert Removal(0.0, 1.0, "silence").reason == "silence"  # import kept intentional
 
 
@@ -746,3 +746,139 @@ class TestSentenceFinalTailTrim:
         plan = _tail_plan(words)
         assert plan.diagnostics is not None
         assert all(item.kind != "trim_sentence_tail" for item in plan.diagnostics.token_adjustments)
+
+
+# Çiğdem S2 "Cigdem 2" golden (job ef12ddfd, 2026-11-15; failure modes F1-F9 in
+# docs/reviews/cigdem-s2-failure-modes.md). Words are the job's whisper tokens
+# (variants[0].overlay_transcript, source time) from "1 plus 1 equals 3 story." to the end;
+# silences are clip_speech.detect_silences(min_silence_s=0.1, ambient_adaptive=True) over the
+# same take. whisper stamped "So" from 28.58 s, the end of "story.", over the 0.62 s pause
+# (28.516-29.139); the voice starts ~29.14 s. Stamped gap 0.00 s, so rule 3 never looked and
+# the finished video kept a 0.6 s pause at 22.8 s.
+HEAD_DURATION_S = 31.228
+HEAD_WORDS = [
+    w(text, start, end)
+    for text, start, end in [
+        ("In", 25.06, 25.24),
+        ("short,", 25.24, 25.62),
+        ("it's", 25.62, 26.32),
+        ("a", 26.32, 26.5),
+        ("real", 26.5, 26.82),
+        ("1", 26.82, 27.0),
+        ("plus", 27.0, 27.28),
+        ("1", 27.28, 27.5),
+        ("equals", 27.5, 27.7),
+        ("3", 27.7, 28.08),
+        ("story.", 28.08, 28.58),
+        ("So", 28.58, 29.32),
+        ("what", 29.32, 29.58),
+        ("did", 29.58, 29.72),
+        ("you", 29.72, 29.92),
+        ("think", 29.92, 30.12),
+        ("of", 30.12, 30.3),
+        ("this", 30.3, 30.48),
+        ("collaboration?", 30.48, 31.04),
+    ]
+]
+HEAD_SILENCES = [(24.906, 25.367), (25.779, 26.007), (28.516, 29.139), (31.128, 31.231)]
+HEAD_VOICE_END_S = 28.516  # "story." stops where the silence starts
+HEAD_VOICE_START_S = 29.139  # "So" starts where it ends
+
+
+def _head_plan(words=HEAD_WORDS, silences=HEAD_SILENCES):
+    return build_cut_plan(
+        words, silences, HEAD_DURATION_S, mixed_gap_enabled=True, over_budget_policy="clamp"
+    )
+
+
+def _head_retext(old: str, new: str) -> list[dict]:
+    return [{**word, "text": new} if word["text"] == old else word for word in HEAD_WORDS]
+
+
+class TestSentenceInitialHeadTrim:
+    def test_a_pause_stamped_onto_the_next_sentences_first_word_is_tightened(self):
+        plan = _head_plan()
+        _assert_partition(plan, HEAD_DURATION_S)
+        kept_pause = (HEAD_VOICE_START_S - HEAD_VOICE_END_S) - _covered(
+            plan, HEAD_VOICE_END_S, HEAD_VOICE_START_S
+        )
+        assert kept_pause <= 0.4 + 1e-6, _rounded(plan)
+        # Only the silence goes: nothing of "story." or of the voiced "So".
+        assert _covered(plan, 28.08, HEAD_VOICE_END_S) == pytest.approx(0.0, abs=1e-9)
+        assert _covered(plan, HEAD_VOICE_START_S, 31.04) == pytest.approx(0.0, abs=1e-9)
+        assert plan.diagnostics is not None
+        kinds = {item.kind: item for item in plan.diagnostics.token_adjustments}
+        assert kinds["trim_sentence_head"].pieces == ((HEAD_VOICE_START_S, 29.32),)
+
+    def test_v1_is_untouched(self):
+        plan = build_cut_plan(
+            HEAD_WORDS, HEAD_SILENCES, HEAD_DURATION_S, over_budget_policy="clamp"
+        )
+        assert plan.version == 1
+        assert _covered(plan, HEAD_VOICE_END_S, HEAD_VOICE_START_S) == pytest.approx(0.0, abs=1e-9)
+
+    @pytest.mark.parametrize(
+        ("words", "silences", "why"),
+        [
+            (
+                _head_retext("story.", "story"),
+                HEAD_SILENCES,
+                "the word before is not sentence-final",
+            ),
+            (_head_retext("story.", "story..."), HEAD_SILENCES, "an ellipsis trails off"),
+            (
+                HEAD_WORDS,
+                [(lo, hi) if lo != 28.516 else (28.516, 29.25) for lo, hi in HEAD_SILENCES],
+                "under SENTENCE_HEAD_MIN_VOICED_S of the word is left after the silence",
+            ),
+            (
+                HEAD_WORDS,
+                [
+                    *[span for span in HEAD_SILENCES if span[0] != 28.516],
+                    (28.5, 28.75),
+                    (28.8, 29.139),
+                ],
+                "two quiet patches are a mumbled word",
+            ),
+        ],
+    )
+    def test_a_voiced_head_is_kept(self, words, silences, why):
+        plan = _head_plan(words, sorted(silences))
+        assert plan.diagnostics is not None
+        assert all(
+            item.kind != "trim_sentence_head" for item in plan.diagnostics.token_adjustments
+        ), (why, _rounded(plan))
+        # Nothing inside the stamped "So" is cut.
+        assert _covered(plan, 28.58, 29.32) == pytest.approx(0.0, abs=1e-9), (why, _rounded(plan))
+
+    def test_sound_between_the_sentence_end_and_the_silence_is_kept(self):
+        # A breath or a trailing syllable after "story." (0.32 s, past SENTENCE_TAIL_REACH_S)
+        # before a long quiet patch inside a long "So": nothing explains that sound.
+        words = [
+            {**word, "end_s": 29.9} if word["text"] == "So" else word
+            for word in HEAD_WORDS
+            if word["start_s"] < 29.3
+        ]
+        silences = [*[s for s in HEAD_SILENCES if s[0] != 28.516], (28.9, 29.6)]
+        plan = _head_plan(words, sorted(silences))
+        assert plan.diagnostics is not None
+        assert all(
+            item.kind != "trim_sentence_head" for item in plan.diagnostics.token_adjustments
+        ), _rounded(plan)
+        assert _covered(plan, 28.58, 29.9) == pytest.approx(0.0, abs=1e-9), _rounded(plan)
+
+    def test_the_first_word_of_the_take_is_left_to_the_leading_trim(self):
+        words = [word for word in HEAD_WORDS if word["start_s"] >= 28.58]
+        plan = _head_plan(words)
+        assert plan.diagnostics is not None
+        assert all(item.kind != "trim_sentence_head" for item in plan.diagnostics.token_adjustments)
+
+    def test_the_tail_trim_still_owns_a_pause_stamped_onto_the_sentence_end(self):
+        # KRI-236 unchanged: the same pause stamped onto "story."'s end is the tail trim's.
+        words = _head_retext("story.", "story.")
+        words = [{**word, "end_s": 29.12} if word["text"] == "story." else word for word in words]
+        words = [{**word, "start_s": 29.14} if word["text"] == "So" else word for word in words]
+        plan = _head_plan(words)
+        assert plan.diagnostics is not None
+        kinds = [item.kind for item in plan.diagnostics.token_adjustments]
+        assert "trim_sentence_tail" in kinds and "trim_sentence_head" not in kinds
