@@ -5,6 +5,86 @@ with `scripts/admin.py --prod GET`, copies the footage the job's brief binding r
 read-only from the bucket, and runs the Main Creator route and the real worker locally under
 `src/apps/api/tests/prod_flags.snapshot.json`.
 
+Commit ids in the sections before pass 7 name the commits as they were then. The branch was
+rebased since (2026-11-16, onto main ce7d705dc); a commit's subject finds its rebased copy.
+
+## Pass 7: how often the proof job passes, and on which Main Creator model
+
+What this command shows is that a replay is faithful and reports honestly. It does not show
+that a production failure reproduces: six of the chat jobs replayed so far diverged before
+their failing render, and 1cb33402 never failed as production did (see the runbook's "Fidelity
+limits").
+
+The round-2 verifier reran the proof job, 1cb33402, on the same code and model as run 13 and got
+a failure where run 13 got a device plan. One success was being read as proof. This pass:
+
+* Adds `--main-creator` (`MAIN_CREATOR=` in make). `production`, the default, plans on the model
+  production planned the job on; `snapshot` on today's setting. The output names the model and
+  why (`main_creator`).
+* Takes a chat job's turn from the thread's `render_queued` event when the job debug has no
+  `kria_turn_id`.
+* Treats an empty planning-error message (a bare `assert`) as no cause.
+* Has the PR template ask for the number of replays and what each produced.
+
+### 1cb33402, every replay on code that has the route checks
+
+Production (2026-10-25, Gemini 3.1 Pro Main Creator): message 1 got an approval card, and its
+render failed `phone_plan_unsupported` with `CreatorRenderContractError` "This edit is missing
+confirmed on-screen text."
+
+| Run (UTC, 2026-11-16) | Main Creator | Outcome | Route | Settled |
+| --- | --- | --- | --- | --- |
+| 13, 07:39 | `gpt-6.1-sol` (snapshot) | `device_plan_ready` | production's agents (`nova.creator.main`, `nova.plan.speech_excerpt_planner`) | $0.0866 |
+| verifier, 08:04 | `gpt-6.1-sol` (snapshot) | `failed`, `phone_plan_unsupported`, `SpeechMontageClarification` ("I couldn't work out which of your lines to play just now..."), `reproduction_unproven` | production's agents; the speech excerpt planner ended `terminal_schema` | $0.0874 (worker log) |
+| 10:26 | `gemini-3.1-pro-preview` (production) | `spend_cap_reached` after message 1's Main Creator call (cap 0.20) | not reached | $0.2050 |
+| 10:29 | `gemini-3.1-pro-preview` (production) | `device_plan_ready` | production's agents; `model_differences` empty | $0.1958 |
+| 10:31 | `gpt-6.1-sol` (snapshot) | `device_plan_ready` | another route: `nova.edit.copilot` wrote a `guided_story` title, no speech excerpt planner | $0.1258 |
+| 10:33 | `gpt-6.1-sol` (snapshot) | `device_plan_ready` | the same other route as 10:31 | $0.1147 |
+
+Pass rate on today's code: on the snapshot's Sol Main Creator, 3 of 4 runs reached a device
+plan (one of them on production's route) and 1 failed. On production's Gemini Main Creator, 1 of
+1 completed run reached a device plan; one more stopped at the spend cap before its render.
+Every run that got a reply to message 1 got an approval card, as production did.
+
+What this does and does not show:
+
+* On production's model and production's agents, today's code got past the failure once. One
+  run is a sample. The prompt is today's (`nova.creator.main` prompt `mc-5bf660a3e6b8`, production
+  `2026-10-25-v94`), so this does not say which change fixed it.
+* The failure did not reproduce in any run, so no run here is a `reproduced` result.
+* On Sol, the result varies between runs: a device plan on production's route, a failure in the
+  speech excerpt planner, and a device plan on another route.
+* A Gemini 3.1 Pro Main Creator call settled $0.205 (76 s) against Sol's $0.07, so a
+  `--main-creator production` replay of an older job needs a cap above 0.20.
+
+Commands: `make kria-replay-job JOB=1cb33402-12ee-4510-98b1-6c5c7558d23e MAX_COST_USD=0.30`
+(production model) and the same with `MAIN_CREATOR=snapshot`, code at 0f423658f (later commits
+change docs only).
+
+### The 11 chat jobs without a turn id (no model calls)
+
+`replay_job.py <id> --fetch-only` on the 11 jobs the verifier listed (prod GET and storage reads
+only). Each took its turn from the thread's `render_queued` event. Eight reach the replay, and
+`recorded_turns` accepts each recovered turn (approved, and it queued that job): 0c9f0a82 (message 7 of
+9), 150d30b4 (8 of 9), 1b2ce28c (3 of 4), 1e2d4937 (1 of 15), 3afe19cd (1 of 4), 8e3986c5 (4 of
+5), e4398b51 (5 of 5), be180d9f (9 of 9). Three are refused later on an older limit: 7b14c641,
+38caaebd and ef8e35b8 each have an id-less binding clip that two item clips of the same length
+match equally. 1e2d4937 and 3afe19cd render on message 1, so they are the best candidates for a
+future reproduction.
+
+### Offline proof (no model calls)
+
+`tests/scripts/test_replay_job.py`, committed red in 2055b895d before the fix (6 failing):
+
+* `test_a_replay_plans_on_the_main_creator_model_production_ran_for_the_job`: production's model
+  comes from its last non-fallback run before the job ended, the thinking level is the code
+  default, replay_creator's and the worker's environments both carry it, the committed snapshot
+  is untouched, and `snapshot` still gives Sol at `medium`.
+* `test_a_chat_job_without_a_recorded_turn_id_replays_up_to_the_turn_that_queued_it` and
+  `test_a_chat_job_whose_queuing_turn_is_unknown_is_refused_naming_the_turn` (7b14c641's thread
+  shape).
+* Two bare-assert cases in `test_only_the_cause_production_recorded_makes_a_replay_its_failure`.
+
 ## Pass 6, round 2: only production's exact recorded cause is a reproduction
 
 The round-2 verifier probed the round-1 classifier with real error classes and messages from 25
@@ -87,9 +167,10 @@ runs.
   `gemini-3.1-pro-preview`.
 * The receipt's job carries `generic_error_detail` (null, as the job did not fail).
 
-So on today's code and the snapshot's Main Creator, the plan production refused for missing
-on-screen text now reaches the phone. The other model is a named difference, so this is not
-proof that the code change alone fixed it.
+This is one sample, not proof that the plan now reaches the phone. The verifier's rerun on the
+same code and model (20261116T080433Z) ended `failed` (`phone_plan_unsupported`,
+`nova.plan.speech_excerpt_planner` `terminal_schema`, `SpeechMontageClarification`). Pass 7
+below reports the pass rate over more runs. The other model is a named difference as well.
 
 ### Run 14: 07efa44c, diverges at message 1
 

@@ -272,7 +272,10 @@ it settles (about $0.05), and the reservation must fit under the cap on top of w
 messages settled. When it does not, the ledger refuses it (`AiBudgetExceededError` in the worker
 log) and the Main Creator answers on its Gemini fallback, which `model_differences` then shows.
 e7bf7099's two Sol messages fit under 0.30 and not under 0.27 (2026-11-15), so allow about
-$0.25 plus $0.05 per earlier message. The clip analysis production planned with is restored
+$0.25 plus $0.05 per earlier message. A Gemini 3.1 Pro Main Creator (`--main-creator production`
+for a job from before 2026-11-14) costs about four times as much per message: one call on
+1cb33402 settled $0.205 in 76 s (2026-11-16), so a 0.20 cap stops such a run after its first
+call. The clip analysis production planned with is restored
 from the brief binding, so the replay does not analyse a clip twice. `route_comparison` prints
 `replay_agent_runs` and `replay_spend_usd` (the scratch database's agent-run costs); the worker log
 is `<run dir>/worker.log`.
@@ -491,9 +494,10 @@ flag the snapshot has not seen, so a new flag cannot silently run at its default
   failure reason when the plan cannot be built). What the phone then renders is not replayed;
   use the iOS gates for that.
 * Model output varies between runs; a different result on the same input is data, not a flake.
-  One run is a sample: 1cb33402 on the same code and model ended `device_plan_ready` once and
-  `failed` (`phone_plan_unsupported`, a `SpeechMontageClarification` from
-  `nova.plan.speech_excerpt_planner`) the next time. Report how many replays ran and what each
+  One run is a sample: four replays of 1cb33402 on the same code and Sol Main Creator (2026-11-16)
+  gave a device plan on production's route, a failure (`phone_plan_unsupported`, a
+  `SpeechMontageClarification` from `nova.plan.speech_excerpt_planner`), and two device plans on
+  another route (`nova.edit.copilot`, guided story). Report how many replays ran and what each
   ended with.
 
 ## In a PR
