@@ -11,8 +11,9 @@ server answers in the language the creator types (see `src/apps/api/app/kria/rep
 - `src/apps/ios/Kria/Resources/InfoPlist.xcstrings`: the permission prompts (camera, microphone,
   photos, speech).
 - Plural forms (`%lld clips`) are catalog variations; Turkish uses one form after numbers.
-- German and Turkish were drafted by AI on 2026-11-14 and are marked `needs_review` in the catalog.
-  After a native speaker checks a string, set its state to `translated`.
+- German and Turkish were drafted by AI on 2026-11-14 and approved by Yasin on 2026-11-16 (state
+  `translated`). New strings imported with `localization.py import` start as `needs_review` until
+  someone checks them; then import again with `--state translated`.
 
 ## Writing new screen text
 

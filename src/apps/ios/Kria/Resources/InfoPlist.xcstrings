@@ -1,126 +1,126 @@
 {
-  "sourceLanguage": "en",
-  "strings": {
-    "NSCameraUsageDescription": {
-      "comment": "iOS permission prompt",
-      "extractionState": "manual",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Nimm Videos für deine Edits in Kria auf."
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSCameraUsageDescription" : {
+      "comment" : "iOS permission prompt",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nimm Videos für deine Edits in Kria auf."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Record videos for your edits in Kria."
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record videos for your edits in Kria."
           }
         },
-        "tr": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Kria'daki düzenlemelerin için video çek."
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kria'daki düzenlemelerin için video çek."
           }
         }
       }
     },
-    "NSMicrophoneUsageDescription": {
-      "comment": "iOS permission prompt",
-      "extractionState": "manual",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Nimm Sprache und Ton für deine Talking-Videos auf und sprich mit Kria, statt zu tippen."
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "iOS permission prompt",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nimm Sprache und Ton für deine Talking-Videos auf und sprich mit Kria, statt zu tippen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Record narration and audio for your talking videos, and talk to Kria instead of typing."
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record narration and audio for your talking videos, and talk to Kria instead of typing."
           }
         },
-        "tr": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Konuşmalı videoların için anlatım ve ses kaydet, yazmak yerine Kria ile konuş."
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Konuşmalı videoların için anlatım ve ses kaydet, yazmak yerine Kria ile konuş."
           }
         }
       }
     },
-    "NSPhotoLibraryAddUsageDescription": {
-      "comment": "iOS permission prompt",
-      "extractionState": "manual",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Speichere fertige Kria-Fotos und -Videos in Fotos."
+    "NSPhotoLibraryAddUsageDescription" : {
+      "comment" : "iOS permission prompt",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speichere fertige Kria-Fotos und -Videos in Fotos."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save finished Kria photos and videos to Photos."
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save finished Kria photos and videos to Photos."
           }
         },
-        "tr": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Bitmiş Kria fotoğraflarını ve videolarını Fotoğraflar'a kaydet."
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bitmiş Kria fotoğraflarını ve videolarını Fotoğraflar'a kaydet."
           }
         }
       }
     },
-    "NSPhotoLibraryUsageDescription": {
-      "comment": "iOS permission prompt",
-      "extractionState": "manual",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Wähle Fotos und Videos aus und speichere fertige Beiträge."
+    "NSPhotoLibraryUsageDescription" : {
+      "comment" : "iOS permission prompt",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle Fotos und Videos aus und speichere fertige Beiträge."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose photos and videos and save finished posts."
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose photos and videos and save finished posts."
           }
         },
-        "tr": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Fotoğraf ve video seç, bitmiş gönderileri kaydet."
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraf ve video seç, bitmiş gönderileri kaydet."
           }
         }
       }
     },
-    "NSSpeechRecognitionUsageDescription": {
-      "comment": "iOS permission prompt",
-      "extractionState": "manual",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Macht aus dem, was du sagst, Text, wenn du mit Kria sprichst, statt zu tippen."
+    "NSSpeechRecognitionUsageDescription" : {
+      "comment" : "iOS permission prompt",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Macht aus dem, was du sagst, Text, wenn du mit Kria sprichst, statt zu tippen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Turn what you say into text when you talk to Kria instead of typing."
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn what you say into text when you talk to Kria instead of typing."
           }
         },
-        "tr": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Yazmak yerine Kria ile konuştuğunda söylediklerini yazıya çevir."
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yazmak yerine Kria ile konuştuğunda söylediklerini yazıya çevir."
           }
         }
       }
     }
   },
-  "version": "1.0"
+  "version" : "1.0"
 }
