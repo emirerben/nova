@@ -64,6 +64,11 @@ from app.kria.reply_language import (
     switching_message_id,
     thread_reply_language,
 )
+from app.kria.turn_outcome import (
+    APPROVAL_EXPIRED_CODE,
+    SOURCE_REPLACED_CODE,
+    outcome_diagnostics,
+)
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
     ContentPlan,
@@ -1220,11 +1225,13 @@ async def submit_turn(
         confirmed=confirmed,
     )
     inert_response: tuple[Literal["progress", "question"], str] | None = None
+    inert_code = ""
     with reply_language_for(reply_language):
         if scope is not None:
             pass  # "Update: captions, music" is never a status or help question
         elif duplicate is not None:
             inert_response = ("progress", duplicate_reply(duplicate))
+            inert_code = "duplicate_send"
         elif is_status_question(body.message):
             status = getattr(active, "status", None)
             if status in {"pending", "planning"}:
@@ -1251,6 +1258,7 @@ async def submit_turn(
                     tr="Şu anda devam eden bir düzenleme yok. Projenin son hâli kaydedildi.",
                 )
             inert_response = ("progress", message)
+            inert_code = "status_question"
         elif is_help_question(body.message):
             inert_response = (
                 "question",
@@ -1266,6 +1274,7 @@ async def submit_turn(
                     ),
                 ),
             )
+            inert_code = "help_question"
 
     if inert_response is not None:
         turn_value, message = inert_response
@@ -1330,7 +1339,10 @@ async def submit_turn(
             mode="respond",
             turn_value=turn_value,
             response=message,
-            **({"diagnostics": {"suggestion_pin": refusal}} if refusal is not None else {}),
+            diagnostics={
+                **({"suggestion_pin": refusal} if refusal is not None else {}),
+                **outcome_diagnostics("inert", inert_code),
+            },
         )
         db.add(
             CreatorAgentTurn(
@@ -2763,7 +2775,7 @@ async def _expire_blocking_approval(
         approval=approval,
         execution=locked.execution,
         plan_item=locked.plan_item,
-        code="approval_expired",
+        code=APPROVAL_EXPIRED_CODE,
         message=_thread_say(
             thread,
             en=(
@@ -2777,9 +2789,6 @@ async def _expire_blocking_approval(
         ),
         approval_status="expired",
     )
-
-
-SOURCE_REPLACED_CODE = "source_replaced"
 
 
 async def _approvals_made_for_replaced_source(
@@ -3331,7 +3340,7 @@ async def decide_approval(
             approval=approval,
             execution=execution,
             plan_item=plan_item,
-            code="approval_expired",
+            code=APPROVAL_EXPIRED_CODE,
             message=_APPROVAL_EXPIRED_COPY,
             approval_status="expired",
             event_message=_thread_say(

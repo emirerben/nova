@@ -73,6 +73,7 @@ from app.services.apple_account_revocation import (
     validate_apple_revocation_configuration,
 )
 from app.services.auth_locks import account_lifecycle_lock_key, acquire_auth_locks
+from app.services.cleared_failures import record_cleared_failure
 from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
@@ -2384,6 +2385,7 @@ async def retry_failed_job(
             },
         )
 
+    record_cleared_failure(locked_job, fallback_reason=f"no_reason_{locked_job.status}")
     locked_job.status = "queued"
     locked_job.error_detail = None
     locked_job.failure_reason = None

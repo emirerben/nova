@@ -18,6 +18,7 @@ from app.kria.contracts import KriaTurnPlan
 from app.kria.reply_language import say
 from app.kria.review_canon import canonical_json as _json
 from app.kria.review_canon import digest as _digest
+from app.kria.turn_outcome import outcome_diagnostics
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -310,6 +311,7 @@ def with_editor_review(
                     tr="Metni değiştirmek için onayın gerekiyor. Aynı kelimeleri koruyup "
                     "yalnızca zamanlamalarını ayarlayayım mı?",
                 ),
+                diagnostics=outcome_diagnostics("blocked", "editor_review_requires_confirmation"),
             ),
         )
     if (

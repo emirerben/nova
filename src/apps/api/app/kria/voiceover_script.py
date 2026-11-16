@@ -45,6 +45,7 @@ from app.config import settings
 from app.kria.contracts import KriaTurnPlan
 from app.kria.paid_call_scope import paid_call_request_id
 from app.kria.reply_language import current_reply_language, say
+from app.kria.turn_outcome import VOICEOVER_SCRIPT_FAILED, outcome_diagnostics
 from app.models import CreationThreadEvent
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
@@ -320,7 +321,11 @@ async def draft_script(
             turn_value="question",
             response=_reply("failed", revision=0, checks=()),
             voiceover_script=payload,
-            diagnostics={"code": "voiceover_script_failed", "clips": len(media_ids)},
+            diagnostics={
+                "code": VOICEOVER_SCRIPT_FAILED,
+                "clips": len(media_ids),
+                **outcome_diagnostics("recovery", VOICEOVER_SCRIPT_FAILED),
+            },
         )
     checks = list(output.needs_check)
     for check in unbacked_claims(output.text, [*lines, *creator_words]):
