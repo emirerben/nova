@@ -310,14 +310,15 @@ def _runs(*pairs: tuple[str, str], model: str = GEMINI, comparable: bool = True)
     }
 
 
-def test_a_session_scoped_agent_failure_does_not_relabel_a_reproduced_failure() -> None:
+def test_a_session_scoped_agent_failure_is_not_called_a_route_divergence() -> None:
     """Verifier, 19f61092: the clip-intent agents run on the Creator session alone
     (`creator_agent.py`, RunContext without a plan item), so production's item trace never
     lists them while the replay counted every run in its database.
 
-    Ways this goes wrong: a reproduced failure reads as `diverged_from_production` "inside
-    nova.plan.clip_request_resolver, which production never ran"; an unreproduced one names
-    that agent as replay-only; the spend total drops the runs left out of the comparison.
+    Ways this goes wrong: the failure reads as `diverged_from_production` "inside
+    nova.plan.clip_request_resolver, which production never ran"; that agent is named as
+    replay-only; the spend total drops the runs left out of the comparison; its failure, which
+    production's trace cannot show, still reads as production's (verifier P5).
     """
 
     recorded = _runs(("nova.creator.main", "ok"))
@@ -329,9 +330,13 @@ def test_a_session_scoped_agent_failure_does_not_relabel_a_reproduced_failure() 
     assert route["replay_only_agents"] == [] and route["diverged_failures"] == []
     assert route["replay_uncompared_agents"] == ["nova.plan.clip_request_resolver"]
     assert route["replay_spend_usd"] == 0.004
-    result = {"outcome": "failed", "failure_reason": "phone_plan_unsupported", "error_detail": None}
-    replay_job.classify_failure(result, route, {"failure_reason": "phone_plan_unsupported"})
-    assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
+    result = _failed_replay("phone_plan_unsupported", ORDERING_0701FCC9, ORDERING_REFUSAL)
+    replay_job.classify_failure(
+        result, route, _production_render("phone_plan_unsupported", detail=ORDERING_0701FCC9)
+    )
+    assert result["outcome"] == "failed"
+    assert result["reproduction"] == "reproduction_unproven"
+    assert "nova.plan.clip_request_resolver" in " ".join(result["reproduction_gaps"])
 
 
 @pytest.mark.parametrize(
@@ -494,8 +499,14 @@ def test_a_reproduced_failure_stands_even_on_another_model() -> None:
     route = replay_job.compare_routes(
         _production(main_model=SOL), _runs(("nova.creator.main", "ok"), model=GEMINI)
     )
-    result = {"outcome": "failed", "failure_reason": "phone_plan_unsupported", "error_detail": None}
-    replay_job.classify_failure(result, route, {"failure_reason": "phone_plan_unsupported"})
+    result = _failed_replay("phone_plan_unsupported", FIT_51F7124F["error_tail"], FIT_51F7124F)
+    replay_job.classify_failure(
+        result,
+        route,
+        _production_render(
+            "phone_plan_unsupported", FIT_51F7124F, detail=FIT_51F7124F["error_tail"]
+        ),
+    )
     assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
 
 
@@ -581,13 +592,13 @@ def _plan_failed_trace(failure: dict | None) -> list[dict]:
             [],
         ),
         (
-            "production recorded no planning error",
+            "production recorded no planning error and no error detail",
             "ok",
             [(RESEARCH, "ok")],
             True,
             (None, REPLAY_PLAN_FAILURE),
-            "reproduced",
-            [],
+            "reproduction_unproven",
+            ["no planning error"],
         ),
     ],
 )
@@ -612,7 +623,8 @@ def test_a_matching_failure_reason_is_production_failure_only_on_production_rout
     failure in an agent production ran cleanly, a cut-off trace or another planning error class
     still read as reproduced; the verdict names no agent or error class; a real reproduction
     (same route, the same agent failing, the same error) stops reading as one; a production job
-    with no recorded planning error can never be reproduced.
+    that recorded neither a planning error nor an error detail reads as reproduced on its reason
+    alone (verifier P3; jobs with an error detail are in the next test).
     """
 
     import json
@@ -680,6 +692,305 @@ def test_a_matching_failure_reason_is_production_failure_only_on_production_rout
     gaps = " ".join(result["reproduction_gaps"])
     assert all(name in gaps for name in named), (case, gaps)
     assert bool(gaps) is (expected != "reproduced")
+
+
+# Planning errors and error details production recorded (job debug reads, 2026-10/11).
+FIT_51F7124F = {
+    "error_class": "CreatorRenderContractError",
+    "error_tail": "This text cannot fit clearly in the requested area. Choose another placement "
+    "or shorter text.",
+}
+FONTS_40684A25 = {
+    "error_class": "CreatorRenderContractError",
+    "error_tail": "The eligible fonts cannot draw all text. Choose another font.",
+}
+INCOMPLETE_3C312AF4 = {
+    "error_class": "CreationTextCompositionError",
+    "error_tail": "Text composition is incomplete: Since the English translation had to be added "
+    "as new text in this step, it cannot be simultaneously targeted for a word-by-word sequence "
+    "split.",
+}
+INCOMPLETE_4E8C925D = {
+    "error_class": "CreationTextCompositionError",
+    "error_tail": "Text composition is incomplete: I can only split texts that already exist in "
+    "the timeline. I have added the full English translation at the bottom; please ask again in "
+    "the next turn to make it show word by word.",
+}
+COMPILE_E7BF7099 = {
+    "error_class": "CreationTextCompositionError",
+    "error_tail": "Text composition could not compile: Text changed before this edit could be "
+    "drafted",
+}
+ORDERING_0701FCC9 = "I can't verify this ordering rule from the approved media."
+ORDERING_REFUSAL = {"error_class": "CreatorRenderContractError", "error_tail": ORDERING_0701FCC9}
+SILENT_9734ED83 = (
+    "I couldn't hear anyone talking in your clips, so I can't play what you say. Add a clip "
+    "where you talk to the camera, or tell me to make it without speech."
+)
+GENERIC = object()
+
+
+def _generic(reason: str) -> str:
+    from app.tasks.content_plan_build import humanize_job_failure_reason
+
+    return humanize_job_failure_reason(reason)
+
+
+def _failed_replay(reason: str, detail: object, planning: dict | None) -> dict:
+    """What ``summarize`` makes of a receipt whose replayed job failed this way."""
+
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        receipt = Path(tmp) / "replay-receipt.json"
+        receipt.write_text(
+            json.dumps(
+                {
+                    "job": {
+                        "id": "6a3335a9-9286-4381-9544-0eb40e251847",
+                        "status": "processing_failed",
+                        "failure_reason": reason,
+                        "error_detail": _generic(reason) if detail is GENERIC else detail,
+                        "generic_error_detail": _generic(reason),
+                        "pipeline_trace": _plan_failed_trace(planning),
+                    }
+                }
+            )
+        )
+        return replay_job.summarize(receipt, Path(tmp))
+
+
+def _production_render(reason: str, planning: dict | None = None, *, detail: object = None) -> dict:
+    job = {
+        "failure_reason": reason,
+        "error_detail": _generic(reason) if detail is GENERIC else detail,
+        "pipeline_trace": _plan_failed_trace(planning),
+    }
+    return {
+        "failure_reason": reason,
+        "planning_failure": replay_job.planning_failure(job),
+        "error_detail": job["error_detail"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("case", "reason", "production", "replay", "expected", "named"),
+    [
+        (
+            "51f7124f's text-fit gate, 40684a25's font gate: one class",
+            "phone_plan_unsupported",
+            (FIT_51F7124F, FIT_51F7124F["error_tail"]),
+            (FONTS_40684A25, FONTS_40684A25["error_tail"]),
+            "reproduction_unproven",
+            [FIT_51F7124F["error_tail"], FONTS_40684A25["error_tail"]],
+        ),
+        (
+            "07efa44c and 51f7124f: the same text-fit gate",
+            "phone_plan_unsupported",
+            (FIT_51F7124F, FIT_51F7124F["error_tail"]),
+            (FIT_51F7124F, FIT_51F7124F["error_tail"]),
+            "reproduced",
+            [],
+        ),
+        (
+            "3c312af4 incomplete, e7bf7099 could not compile: one class",
+            "creation_text_failed",
+            (INCOMPLETE_3C312AF4, GENERIC),
+            (COMPILE_E7BF7099, GENERIC),
+            "reproduction_unproven",
+            ["Since the English translation", "could not compile"],
+        ),
+        (
+            "3c312af4 and 4e8c925d: both incomplete, the model gave other reasons",
+            "creation_text_failed",
+            (INCOMPLETE_3C312AF4, GENERIC),
+            (INCOMPLETE_4E8C925D, GENERIC),
+            "reproduction_unproven",
+            ["Since the English translation", "I can only split texts"],
+        ),
+        (
+            "production recorded a planning error, the replay none",
+            "phone_plan_unsupported",
+            (FIT_51F7124F, FIT_51F7124F["error_tail"]),
+            (None, ORDERING_0701FCC9),
+            "reproduction_unproven",
+            [FIT_51F7124F["error_tail"], "no planning error"],
+        ),
+        (
+            "older job: 0701fcc9's refusal, the replay 9734ed83's",
+            "phone_plan_unsupported",
+            (None, ORDERING_0701FCC9),
+            (None, SILENT_9734ED83),
+            "reproduction_unproven",
+            [ORDERING_0701FCC9, SILENT_9734ED83],
+        ),
+        (
+            "older job: 0701fcc9's refusal again (as f88555bc's)",
+            "phone_plan_unsupported",
+            (None, ORDERING_0701FCC9),
+            (ORDERING_REFUSAL, ORDERING_0701FCC9),
+            "reproduced",
+            [],
+        ),
+        (
+            "older job whose error detail is the generic sentence for its reason",
+            "phone_plan_failed",
+            (None, GENERIC),
+            (None, GENERIC),
+            "reproduction_unproven",
+            ["no planning error"],
+        ),
+        (
+            "older job with no error detail",
+            "phone_plan_failed",
+            (None, None),
+            (None, "gemini provider outcome unknown after 90.0s"),
+            "reproduction_unproven",
+            ["no planning error"],
+        ),
+    ],
+)
+def test_only_the_cause_production_recorded_makes_a_replay_its_failure(
+    case: str,
+    reason: str,
+    production: tuple[dict | None, object],
+    replay: tuple[dict | None, object],
+    expected: str,
+    named: list[str],
+) -> None:
+    """Verifier, pass 6 round 2: the error class is as much a catch-all as the reason.
+    CreatorRenderContractError covers the text-fit, font and missing-text gates;
+    CreationTextCompositionError covers every creation_text_failed job; and a production job
+    recorded before planning errors were (0701fcc9, 9734ed83, 1e79ff4f) was compared on its
+    reason alone though it stores a specific error detail.
+
+    Ways this goes wrong: one class with another message reads as reproduced (P1, P2); a
+    different error detail reads as reproduced (P3); a planning error on one side only reads as
+    reproduced (P6); the app's generic sentence for the reason, the same for every failure with
+    it, counts as a matching cause; production recording no cause at all reads as reproduced;
+    the gap hides either side's message, so a model-worded difference cannot be judged; the
+    same gate failing again (07efa44c and 51f7124f), or an older job's same refusal, stops
+    reading as reproduced.
+    """
+
+    route = replay_job.compare_routes(
+        _production(), _runs(("nova.creator.main", "ok"), ("nova.plan.clip_intent_planner", "ok"))
+    )
+    result = _failed_replay(reason, replay[1], replay[0])
+    replay_job.classify_failure(
+        result, route, _production_render(reason, production[0], detail=production[1])
+    )
+
+    assert result["outcome"] == "failed", case
+    assert result["reproduction"] == expected, case
+    assert result["production_failure_reproduced"] is (expected == "reproduced")
+    gaps = " ".join(result["reproduction_gaps"])
+    assert all(name in gaps for name in named), (case, gaps)
+    assert bool(gaps) is (expected != "reproduced"), case
+
+
+@pytest.mark.parametrize(
+    ("case", "began", "runs", "expected", "named"),
+    [
+        (
+            "P4: clip_intent_planner, not stored by production before 2026-10-31",
+            "2026-10-21T13:19:00Z",
+            [("nova.plan.clip_intent_planner", "terminal_schema", True)],
+            "reproduction_unproven",
+            ["nova.plan.clip_intent_planner", "terminal_schema"],
+        ),
+        (
+            "P5: clip_question on the Creator session",
+            "2026-11-10T07:00:00Z",
+            [("nova.video.clip_question", "terminal_schema", False)],
+            "reproduction_unproven",
+            ["nova.video.clip_question", "terminal_schema"],
+        ),
+        (
+            "the session-scoped agent failed, then got through",
+            "2026-11-10T07:00:00Z",
+            [
+                ("nova.video.clip_question", "terminal_schema", False),
+                ("nova.video.clip_question", "ok", False),
+            ],
+            "reproduced",
+            [],
+        ),
+    ],
+)
+def test_a_failure_production_cannot_show_is_not_production_failure(
+    monkeypatch, case: str, began: str, runs: list, expected: str, named: list[str]
+) -> None:
+    """Verifier P4/P5: an agent production's item trace cannot show (session-scoped, or not
+    stored yet when the job ran) is left out of the route comparison, so when its last replay
+    run failed, nothing said so and the matching cause read as reproduced.
+
+    Ways this goes wrong: such a failure reads as reproduced; it is named as a replay-only
+    agent or a divergence; an agent that failed and then got through blocks a reproduction.
+    """
+
+    trace = {
+        "agent_runs": [{"agent_name": "nova.creator.main", "outcome": "ok", "model": GEMINI}],
+        "next_cursor": None,
+    }
+    monkeypatch.setattr(replay_job, "prod_get", lambda path: trace)
+    production = replay_job.production_agents(ITEM, [], until=None, began=began)
+    recorded = _runs(("nova.creator.main", "ok"))
+    for name, outcome, comparable in runs:
+        recorded["runs"] += _runs((name, outcome), comparable=comparable)["runs"]
+    route = replay_job.compare_routes(production, recorded)
+    result = _failed_replay("phone_plan_unsupported", FIT_51F7124F["error_tail"], FIT_51F7124F)
+    replay_job.classify_failure(
+        result,
+        route,
+        _production_render(
+            "phone_plan_unsupported", FIT_51F7124F, detail=FIT_51F7124F["error_tail"]
+        ),
+    )
+
+    assert result["outcome"] == "failed", case
+    assert route["replay_only_agents"] == [] and route["diverged_failures"] == [], case
+    assert result["reproduction"] == expected, case
+    gaps = " ".join(result["reproduction_gaps"])
+    assert all(name in gaps for name in named), (case, gaps)
+
+
+def test_an_agent_that_failed_only_in_an_earlier_production_job_still_failed_only_in_replay(
+    monkeypatch,
+) -> None:
+    """Verifier P7: public_facts failed in an earlier production job of the item and passed in
+    the failed job itself; the replay's last public_facts run failed. Production's outcomes
+    were any run's, the replay's its last run's, so the replay's failure read as production's.
+
+    Ways this goes wrong: an earlier production failure covers the replay's; a production
+    failure in its last run of the agent stops counting.
+    """
+
+    def production_with(*outcomes: tuple[str, str]):
+        monkeypatch.setattr(
+            replay_job, "prod_get", lambda path: {"agent_runs": [], "next_cursor": None}
+        )
+        return replay_job.production_agents(
+            ITEM,
+            [
+                {"agent_name": RESEARCH, "outcome": outcome, "model": GEMINI, "created_at": at}
+                for outcome, at in outcomes
+            ],
+            until="2026-11-10T08:00:00Z",
+            began="2026-11-09T06:00:00Z",
+        )
+
+    recorded = _runs((RESEARCH, "terminal_schema"))
+    earlier_failure = production_with(
+        ("ok", "2026-11-10T07:30:00Z"), ("terminal_schema", "2026-11-09T07:00:00Z")
+    )
+    route = replay_job.compare_routes(earlier_failure, recorded)
+    assert [f["agent"] for f in route["failed_only_in_replay"]] == [RESEARCH]
+    last_failure = production_with(
+        ("ok", "2026-11-09T07:00:00Z"), ("terminal_schema", "2026-11-10T07:30:00Z")
+    )
+    assert replay_job.compare_routes(last_failure, recorded)["failed_only_in_replay"] == []
 
 
 def test_a_failure_inside_an_agent_production_never_ran_is_not_reproduced() -> None:
