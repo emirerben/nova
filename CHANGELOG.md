@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.250.0] - 2026-11-16
+
+### Changed
+- fix(kria): Çiğdem S1: no false holds on "use my video" or described pop-ins; captions and label off post text (KRI-1487) (#2364) <!-- release-pr: 2364 -->
+
 ## [0.88.249.0] - 2026-11-16
 
 ### Fixed
