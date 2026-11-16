@@ -11,8 +11,9 @@ the heartbeat never rewrites `assembly_plan` (models.Job), so it cannot race a r
 
 The creator's Retry on a failed render also reuses the chat turn: it flips the row back to
 `awaiting_approval` and clears `error`. The turn's failure is logged here too, on the turn's own
-`plan_json["diagnostics"]`, so a turn that failed and was retried stays a failed turn on the day
-it failed instead of turning into a success after the fact.
+`plan_json["diagnostics"]`, stamped with the time the turn failed (`completed_at`), not the time
+of the retry. A turn that failed and was retried therefore stays a failed turn on the day it
+failed, even when the retry comes days later, instead of turning into a success after the fact.
 """
 
 from __future__ import annotations
@@ -52,7 +53,9 @@ def record_cleared_turn_failure(turn: Any, *, now: datetime | None = None) -> bo
 
     A turn that is not `failed`, or that failed only because its draft sat undecided
     (`ABANDONED_DRAFT_CODES`: a success, not a fault), records nothing. A failed turn with no
-    error code is logged as `unknown_failure`, the code the report gives it.
+    error code is logged as `unknown_failure`, the code the report gives it. The entry carries the
+    failure time (`completed_at`, which `_fail_turn` and its sibling writers set); `now` is only
+    the fallback for a failed row that has none.
     """
     from app.kria.turn_outcome import ABANDONED_DRAFT_CODES  # noqa: PLC0415
 
@@ -64,7 +67,8 @@ def record_cleared_turn_failure(turn: Any, *, now: datetime | None = None) -> bo
     plan = dict(turn.plan_json or {})
     diagnostics = dict(plan.get("diagnostics") or {})
     log = [e for e in diagnostics.get(CLEARED_FAILURES_FIELD) or [] if isinstance(e, dict)]
-    log.append({"reason": code, "at": (now or datetime.now(UTC)).isoformat()})
+    failed_at = turn.completed_at or now or datetime.now(UTC)
+    log.append({"reason": code, "at": failed_at.isoformat()})
     diagnostics[CLEARED_FAILURES_FIELD] = log[-MAX_CLEARED_FAILURES:]
     plan["diagnostics"] = diagnostics
     turn.plan_json = plan

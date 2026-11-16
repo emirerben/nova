@@ -30,11 +30,13 @@ Failure modes the numbers must survive (each has an assertion):
   shows;
 * a failed iPhone render stops being counted once it is retried (the retry reuses the Job and
   clears `failure_reason`), so a phone failure leaves no evidence; or the same failure is logged
-  twice, or a cancelled or admin test Job's retried failure counts, or a malformed log entry
-  crashes the report;
+  twice, or an admin test Job's retried failure counts, or a cancelled Job's retried failure is
+  erased, or a malformed log entry crashes the report;
 * a render failure the creator retries (Retry on a failed Create video reuses the chat turn row,
   flips it back to `awaiting_approval` and clears its error) turns the failed turn into a success
-  after the fact, so a past day's failed-turn count drops and the failure leaves no evidence;
+  after the fact, so a past day's failed-turn count drops and the failure leaves no evidence; the
+  logged failure is dated by the retry instead of the day the turn failed (a retry on a later UTC
+  day moves it), or disappears when the retry is then cancelled;
 * the top-reasons list is one shared top N, so a long tail of `failed` codes pushes every refusal
   off it, the very rows the ticket is for;
 * the endpoint is readable without the admin token, or accepts a window it cannot afford.
@@ -56,8 +58,15 @@ from app.auth import SYNTHETIC_USER_ID
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
+from app.kria.runtime import cancel_turn
 from app.main import app
-from app.models import CREATOR_AGENT_TURN_STATUSES, CreatorAgentTurn, Job, User
+from app.models import (
+    CREATOR_AGENT_TURN_STATUSES,
+    CreationThread,
+    CreatorAgentTurn,
+    Job,
+    User,
+)
 from app.services.creation_health import (
     MAX_DAYS,
     TOP_REASONS,
@@ -372,34 +381,43 @@ async def test_a_retried_phone_failure_stays_a_failed_attempt(project):
     report = await _report(day, 1)
 
     assert report["renders"] == {
-        "attempts": 4,
+        "attempts": 5,
         "successes": 1,
-        "success_rate": 0.25,
+        "success_rate": 0.2,
         "in_progress": 1,
-        "failed": 3,
+        "failed": 4,
     }
     assert [(r["code"], r["count"]) for r in report["top_failure_reasons"]] == [
-        ("device_export_failed", 3)
+        ("device_export_failed", 4)
     ]
-    assert report["daily"][0]["renders"]["failed"] == 3
+    assert report["daily"][0]["renders"]["failed"] == 4
 
 
-@pytest.mark.asyncio
-async def test_a_render_failed_turn_the_creator_retries_stays_a_failed_turn(client):  # noqa: F811
-    http, _publish = client
+def _render_failed_turn_retried(http):
+    """A turn that failed on `day`, retried by the creator now (days after, in real time)."""
     case = seed_failed()
     day = _day()
-    at = day.replace(hour=0, minute=0, second=0) + timedelta(hours=1)
+    failed_at = day.replace(hour=0, minute=0, second=0) + timedelta(hours=1)
     with sync_session() as db:
         db.execute(
             update(CreatorAgentTurn)
             .where(CreatorAgentTurn.id == case.turn_id)
             .values(
-                created_at=at,
+                created_at=failed_at,
+                completed_at=failed_at + timedelta(minutes=10),
                 error={"code": "device_render_failed", "recovery": "manual", "retryable": False},
             )
         )
         db.commit()
+    return case, day
+
+
+@pytest.mark.asyncio
+async def test_a_render_failed_turn_the_creator_retries_later_stays_failed_on_its_own_day(
+    client,  # noqa: F811
+):
+    http, _publish = client
+    case, day = _render_failed_turn_retried(http)
 
     before = await _report(day, 1)
     assert before["turns"] == {
@@ -413,13 +431,7 @@ async def test_a_render_failed_turn_the_creator_retries_stays_a_failed_turn(clie
     assert recover(http, case).status_code == 202
     assert recover(http, case).status_code == 202
     with sync_session() as db:
-        turn = db.get(CreatorAgentTurn, case.turn_id)
-        assert turn.status == "awaiting_approval"
-        log = turn.plan_json["diagnostics"]["cleared_failures"]
-        turn.plan_json = {
-            "diagnostics": {"cleared_failures": [{**entry, "at": at.isoformat()} for entry in log]}
-        }
-        db.commit()
+        assert db.get(CreatorAgentTurn, case.turn_id).status == "awaiting_approval"
 
     after = await _report(day, 1)
 
@@ -432,6 +444,40 @@ async def test_a_render_failed_turn_the_creator_retries_stays_a_failed_turn(clie
     }
     assert [(r["source"], r["code"], r["count"]) for r in after["top_failure_reasons"]] == [
         ("turn", "device_render_failed", 1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_render_failure_stays_counted_when_the_creator_then_cancels_the_retry(
+    client,  # noqa: F811
+):
+    http, _publish = client
+    case, day = _render_failed_turn_retried(http)
+    assert recover(http, case).status_code == 202
+    with sync_session() as db:
+        revision = db.get(CreationThread, case.thread_id).revision
+    async with AsyncSessionLocal() as db:
+        cancelled, _next = await cancel_turn(
+            db,
+            thread_id=case.thread_id,
+            turn_id=case.turn_id,
+            creator_id=case.user_id,
+            expected_thread_revision=revision,
+        )
+    with sync_session() as db:
+        assert db.get(CreatorAgentTurn, case.turn_id).status == "cancelled"
+
+    report = await _report(day, 1)
+
+    assert report["turns"] == {
+        "attempts": 1,
+        "successes": 0,
+        "success_rate": 0.0,
+        "in_progress": 0,
+        "failed": 1,
+    }
+    assert [(r["code"], r["count"]) for r in report["top_failure_reasons"]] == [
+        ("device_render_failed", 1)
     ]
 
 

@@ -29,13 +29,16 @@ out of the rate.
 - failed: `status = 'failed'`, with `error.code` (any other code, including an Approve tap the
   system could not honour: `approval_target_stale`, a draft that was not ready).
   A failed turn the creator retries (the Retry on a failed Create video reuses the turn row and
-  resets it) logs its code first (`cleared_failures` on the turn's plan diagnostics), and that
-  failure counts as its own failed attempt on the UTC day it was recorded; the retry itself is
-  the row's own attempt, so a past day's failed count never drops because of a retry.
+  resets it) logs its code first (`cleared_failures` on the turn's plan diagnostics), stamped
+  with the time the turn failed. That failure counts as its own failed attempt on the UTC day it
+  failed, even when the retry comes days later, and stays counted if the retry is then cancelled
+  or superseded; the retry itself is the row's own attempt on the row's creation day, so a past
+  day's failed count never drops because of a retry.
 
 Render attempt. One `jobs` row created in the window, counted by its current outcome and its
 creation day, plus every failure a retry of that same Job erased (below). `cancelled` and `draft`
-jobs are not attempts, and neither are admin test renders (jobs owned by the synthetic admin user).
+jobs are not attempts themselves (a failure logged before the Job was cancelled still counts),
+and neither are admin test renders (jobs owned by the synthetic admin user).
 A re-render from a plan item mints a new Job and counts as a new attempt. An iPhone retry, the
 auto-resume of a timed-out phone, an admin retry and the creator's Retry on a failed Create video
 reuse the Job and clear `Job.failure_reason`; each failure they clear was logged first
@@ -121,9 +124,9 @@ DEFINITIONS: dict[str, str] = {
         "with the superseded outcome (a newer message arrived mid-turn), are not attempts; neither "
         "are inert turns (the same text sent again with a new client event id, a status or help "
         "question: answered without planning anything). Turns still running are in_progress and "
-        "left out of the rate. A failed turn the creator retries logs its failure first and "
-        "counts it as its own failed attempt on the day it was recorded; the retry is the turn's "
-        "own attempt."
+        "left out of the rate. A failed turn the creator retries logs its failure first, with the "
+        "time it failed, and counts it as its own failed attempt on the day it failed, even if "
+        "the retry comes later or is then cancelled; the retry is the turn's own attempt."
     ),
     "turn_success": (
         "The turn delivered its answer or draft and recorded no outcome code. refused, blocked "
@@ -139,10 +142,12 @@ DEFINITIONS: dict[str, str] = {
         "day it was recorded (an iPhone retry or auto-resume, an admin retry and the creator's "
         "Retry on a failed Create video reuse the Job and clear Job.failure_reason). A re-render "
         "from a plan item is a new Job and a new attempt. Cancelled and draft jobs, and admin "
-        "test renders (synthetic user), are not attempts. Jobs still running, and iPhone renders "
-        "still waiting on the phone, are in_progress. Not counted: failures a worker re-enqueue "
-        "or an in-place variant re-render clears (the same attempt run again), exports the "
-        "server repaired automatically, and a phone failure while an accepted video exists."
+        "test renders (synthetic user), are not attempts (a failure logged before a Job was "
+        "cancelled still counts, admin test renders never do). Jobs still running, and iPhone "
+        "renders still waiting on the phone, are in_progress. Not counted: failures a worker "
+        "re-enqueue or an in-place variant re-render clears (the same attempt run again), "
+        "exports the server repaired automatically, and a phone failure while an accepted video "
+        "exists."
     ),
     "render_success": (
         "A ready status, or posting_failed / posting_partial / clips_ready_partial (the render "
@@ -259,14 +264,13 @@ def _count_log_entries(logs: Any, since: datetime, until: datetime) -> list[tupl
 async def _cleared_turn_failure_rows(
     db: AsyncSession, since: datetime, until: datetime
 ) -> list[tuple[date, str, str | None, int]]:
+    # No status filter: the failure was logged when the turn really failed, so a retry the creator
+    # then cancelled or a newer message superseded does not take it back.
     log = CreatorAgentTurn.plan_json["diagnostics"][CLEARED_FAILURES_FIELD]
-    outcome_kind = CreatorAgentTurn.plan_json["diagnostics"]["outcome"]["kind"].astext
     logs = await db.execute(
         select(log).where(
             CreatorAgentTurn.updated_at >= since - _CLEARED_SCAN_SKEW,
             log.is_not(None),
-            CreatorAgentTurn.status.not_in(TURN_NOT_AN_ATTEMPT),
-            or_(outcome_kind.is_(None), outcome_kind.not_in(NOT_AN_ATTEMPT_OUTCOMES)),
         )
     )
     counted = _count_log_entries(logs, since, until)
@@ -276,13 +280,14 @@ async def _cleared_turn_failure_rows(
 async def _cleared_failure_rows(
     db: AsyncSession, since: datetime, until: datetime
 ) -> list[tuple[date, str, str | None, int]]:
+    # No status filter, as for turns: a failure the creator saw stays counted when the Job is
+    # cancelled afterwards. Admin test renders stay out.
     # `updated_at` only narrows the scan. `at` is the worker clock, `updated_at` the transaction's
     # start on the database clock, so a failure's `at` can trail the bump: allow for the skew.
     logs = await db.execute(
         select(Job.assembly_plan[CLEARED_FAILURES_FIELD]).where(
             Job.updated_at >= since - _CLEARED_SCAN_SKEW,
             Job.assembly_plan.has_key(CLEARED_FAILURES_FIELD),
-            Job.status.not_in(_RENDER_NOT_AN_ATTEMPT),
             Job.user_id != SYNTHETIC_USER_ID,
         )
     )
