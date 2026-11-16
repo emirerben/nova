@@ -40,8 +40,9 @@ make kria-replay-job JOB=<production job id>
    path>`), `device_plan_ready` (an iPhone job: the worker built and pinned the device render
    plan and the job sits `awaiting_device`; the plan is in `<run dir>/device-plan.json`; this is
    the success state of every phone-first job), `device_plan_incomplete` or `failed` (status,
-   failure reason and error detail, plus `production_failure_reproduced`: whether it is the
-   failure production hit), `main_creator_question` (an older, non-chat job only: the Main
+   failure reason and error detail, plus `reproduction` and `production_failure_reproduced`:
+   whether it is the failure production hit; see "Is it production's failure?"),
+   `main_creator_question` (an older, non-chat job only: the Main
    Creator asked a clarifying question instead of proposing a plan; the question text and reason
    code are printed and the run stops at once), or `diverged_from_production` (a chat turn
    production approved ended otherwise in the replay, or the replay failed inside, or after, an
@@ -62,7 +63,7 @@ For a phone-first job, which is every failed creation job since 2026-10-08 (the 
 `IOS_NATIVE_DEVICE_ONLY_ENABLED=true` from the job records), the end-to-end artifact is
 `device_plan_ready`: the pinned device render plan in `<run dir>/device-plan.json`, never an MP4.
 What the iPhone then renders is the iOS gates' job. A PR that fixes such a job states the plan
-(or the failure reason that remains, only when `production_failure_reproduced` is true) as its
+(or the failure reason that remains, only when `reproduction` is `reproduced`) as its
 replay result, says which message's render it is when the replay stopped early, and pairs it
 with the iOS render gate when the change touches the render.
 
@@ -244,6 +245,36 @@ $0.25 plus $0.05 per earlier message. The clip analysis production planned with 
 from the brief binding, so the replay does not analyse a clip twice. `route_comparison` prints
 `replay_agent_runs` and `replay_spend_usd` (the scratch database's agent-run costs); the worker log
 is `<run dir>/worker.log`.
+
+### Is it production's failure?
+
+A failed replay whose reason matches production's is not yet production's failure.
+`phone_plan_failed` and its siblings are catch-all reasons: on 1be34fc8 production's eight agent
+runs all succeeded and its plan failed with `ResearchUnavailable` ("This explanation needs a
+longer clip or shorter wording"), while the replay took today's `nova.research.text_layers` route
+and failed its second `nova.research.public_facts` search (`terminal_schema`). Both read
+`phone_plan_failed`. So a failed replay carries `reproduction`:
+
+* `reproduced`: the reason matches, production's trace is complete, the replay ran no agent
+  production did not, every agent whose last replay run failed also has a failed run in
+  production's trace (`failed_only_in_replay` is empty), and when both jobs recorded a
+  planning error (`planning_failure`, the job's last `phone_plan_failed` pipeline event; the
+  production one is in `compared_production_render`) the error class is the same. Only then is
+  `production_failure_reproduced` true.
+* `failure_reason_matched_route_differs`: the reason matches, but the replay ran agents
+  production never ran for the item.
+* `reproduction_unproven`: the reason matches on production's route, but an agent failed in
+  the replay that production got through, the planning error class differs, or production's
+  trace was cut off.
+* `failure_reason_differs`: another failure than production's (see above for when that is a
+  divergence).
+
+`reproduction_gaps` says, in one sentence each, which agents and errors stand in the way.
+Neither of the two middle verdicts says the failure is gone or that it remains; a fix PR cannot
+use them as its replay result. A job whose trace holds no `phone_plan_failed` event (a render
+failure, or a production job like f88555bc with an empty trace) has no `planning_failure`; then
+only the route and the agents are compared. A replay that stopped
+early is compared with production's render at that message, whose planning error is not read.
 
 ### Stalls
 

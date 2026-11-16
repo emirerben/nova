@@ -1894,6 +1894,7 @@ def _row_snapshot(db: Any, *, item_id: uuid.UUID, session_id: uuid.UUID) -> dict
             "error_detail": job.error_detail,
             "assembly_plan": job.assembly_plan,
             "all_candidates": job.all_candidates,
+            "pipeline_trace": job.pipeline_trace,
         }
         if job
         else None,
