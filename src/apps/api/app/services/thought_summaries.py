@@ -61,19 +61,54 @@ class ThoughtSummaryPublisher:
         self._last_write_at = 0.0
         self._attempt_started_at: datetime | None = None
         self._model_succeeded = False
+        self._kept = ""
+        self._fenced = False
+        self._ever_succeeded = False
+
+    def step(self, label: str) -> None:
+        """Name what the turn is doing now, as the heading the iPhone row shows.
+
+        The row shows the latest ``**heading**``. Gemini wrote one per step; Sol and Sonnet
+        send one summary per call, so the server marks the steps it knows. A step is kept
+        text, so a retry or a later round never wipes it. A turn that never parses clears
+        it with the rest.
+        """
+        label = " ".join(label.split())
+        if not label:
+            return
+        with self._lock:
+            if self._closed:
+                return
+            if not self._fenced:
+                self._discard_prior_request_locked()
+                self._fenced = True
+            generation = self._generation
+            heading = f"**{label}**"
+            self._kept = f"{self._kept}\n\n{heading}" if self._kept.strip() else heading
+        self._append(generation, f"\n\n{heading}" if self._text.strip() else heading, force=True)
 
     def begin_attempt(self) -> Callable[[str], None]:
+        """A retry replaces the failed attempt's text. A follow-up round keeps the last good one.
+
+        A repair or tool-result round is a new model call in the same turn. Wiping the row
+        when it starts would blank the thinking the creator was reading, so a round that
+        follows a parsed answer keeps that answer's summary and appends below it.
+        """
         with self._lock:
-            if self._generation == 0:
+            if not self._fenced:
                 self._discard_prior_request_locked()
-            self._discard_current_locked()
+                self._fenced = True
+            if self._model_succeeded and self._row_id is not None and not self._closed:
+                self._kept = self._text
+            else:
+                self._discard_current_locked()
             self._generation += 1
             generation = self._generation
-            self._text = ""
-            self._row_id = None
+            self._text = f"{self._kept}\n\n" if self._kept.strip() else ""
             self._closed = False
             self._last_write_at = 0.0
-            self._attempt_started_at = datetime.now(UTC)
+            if self._row_id is None:
+                self._attempt_started_at = datetime.now(UTC)
             self._model_succeeded = False
 
         def publish(chunk: str) -> None:
@@ -86,8 +121,9 @@ class ThoughtSummaryPublisher:
         with self._lock:
             if not self._closed and self._row_id is not None:
                 self._model_succeeded = True
+                self._ever_succeeded = True
 
-    def _append(self, generation: int, chunk: str) -> None:
+    def _append(self, generation: int, chunk: str, *, force: bool = False) -> None:
         if not isinstance(chunk, str) or not chunk:
             return
         with self._lock:
@@ -104,7 +140,7 @@ class ThoughtSummaryPublisher:
             # The client polls once per second. Avoid a database commit for
             # every provider token while still publishing the first text fast.
             now = time.monotonic()
-            if self._row_id is not None and now - self._last_write_at < 0.25:
+            if not force and self._row_id is not None and now - self._last_write_at < 0.25:
                 return
             try:
                 with sync_session() as db:
@@ -143,8 +179,12 @@ class ThoughtSummaryPublisher:
                 return
             self._closed = True
             if not self._model_succeeded:
+                if not self._ever_succeeded:
+                    self._kept = ""
                 self._discard_current_locked()
-                return
+                self._text = self._kept
+                if self._row_id is None:
+                    return
             if self._row_id is None or not self._text.strip():
                 return
             try:
@@ -165,22 +205,27 @@ class ThoughtSummaryPublisher:
             if self._closed:
                 return
             self._closed = True
+            self._kept = ""
             self._discard_current_locked()
 
     def _discard_current_locked(self) -> None:
+        """Drop the current attempt's text; text kept from an earlier round of the turn stays."""
         if self._row_id is None:
             return
+        keep = bool(self._kept.strip())
+        values = {"text": self._kept} if keep else {"status": "failed", "text": ""}
         try:
             with sync_session() as db:
                 db.execute(
                     update(ThoughtSummary)
                     .where(ThoughtSummary.id == self._row_id, ThoughtSummary.status == "streaming")
-                    .values(status="failed", text="")
+                    .values(**values)
                 )
                 db.commit()
         except Exception:  # noqa: BLE001 - an unavailable summary store cannot fail a retry
             log.warning("thought_summary_discard_failed")
-        self._row_id = None
+        if not keep:
+            self._row_id = None
 
     def _discard_prior_request_locked(self) -> None:
         """Fence unfinished rows left by an earlier worker for this request."""
@@ -213,6 +258,13 @@ def bind_thought_publisher(publisher: ThoughtSummaryPublisher | None) -> Iterato
 
 def current_thought_publisher() -> ThoughtSummaryPublisher | None:
     return _current_publisher.get()
+
+
+def publish_step(label: str) -> None:
+    """Mark a step of the running turn; a no-op outside a turn with a thinking row."""
+    publisher = _current_publisher.get()
+    if publisher is not None:
+        publisher.step(label)
 
 
 def publisher_for_creation(
