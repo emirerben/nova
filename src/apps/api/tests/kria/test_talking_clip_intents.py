@@ -91,7 +91,7 @@ def _cloud_talking_head_manifest():
 @pytest.mark.parametrize("intent", [CHAPTER_CAPTION, CITY_LABEL], ids=["caption", "label"])
 def test_talking_strategy_drops_footage_intents_with_a_notice(
     monkeypatch: pytest.MonkeyPatch,
-    prod_profile,
+    prod_profile_pre_cutover,
     manifest_factory,
     edit_format: str,
     media_ids: list[str],
@@ -115,7 +115,7 @@ def test_talking_strategy_drops_footage_intents_with_a_notice(
 
 
 def test_talking_strategy_without_footage_intents_has_no_notice(
-    monkeypatch: pytest.MonkeyPatch, prod_profile
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover
 ) -> None:
     monkeypatch.setattr(settings, "clip_intents_enabled", True)
     strategy = CreativeStrategy(
@@ -132,7 +132,7 @@ def test_talking_strategy_without_footage_intents_has_no_notice(
 
 
 def test_talking_transcript_labels_still_ask_for_a_voiceover(
-    monkeypatch: pytest.MonkeyPatch, prod_profile
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover
 ) -> None:
     monkeypatch.setattr(settings, "clip_intents_enabled", True)
     strategy = CreativeStrategy(
@@ -159,7 +159,7 @@ def test_talking_transcript_labels_still_ask_for_a_voiceover(
 
 
 def test_montage_keeps_footage_intents_for_the_inventory(
-    monkeypatch: pytest.MonkeyPatch, prod_profile
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover
 ) -> None:
     monkeypatch.setattr(settings, "clip_intents_enabled", True)
     manifest = capabilities.resolve_creator_manifest(
@@ -181,7 +181,9 @@ def test_montage_keeps_footage_intents_for_the_inventory(
     assert TALKING_CLIP_INTENTS_DROPPED_NOTICE not in checked.notices
 
 
-def test_flag_off_talking_compile_is_unchanged(monkeypatch: pytest.MonkeyPatch, prod_profile):
+def test_flag_off_talking_compile_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover
+):
     # Flag off, the model boundary already discards footage intents; the
     # compile adds no notice of its own (production today).
     monkeypatch.setattr(settings, "clip_intents_enabled", False)
@@ -271,7 +273,7 @@ async def _plan(monkeypatch: pytest.MonkeyPatch, models: _Models):  # noqa: ANN2
 
 @pytest.mark.asyncio
 async def test_add_captions_on_phone_talking_never_runs_the_clip_inventory(
-    monkeypatch: pytest.MonkeyPatch, prod_profile
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover
 ) -> None:
     models = _Models(_creator_answer(None))
 
@@ -292,7 +294,7 @@ async def test_add_captions_on_phone_talking_never_runs_the_clip_inventory(
 
 @pytest.mark.asyncio
 async def test_main_creator_chapter_caption_on_phone_talking_is_dropped_with_a_notice(
-    monkeypatch: pytest.MonkeyPatch, prod_profile
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover
 ) -> None:
     models = _Models(_creator_answer([CHAPTER_CAPTION.model_dump(mode="json")]))
 

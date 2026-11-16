@@ -275,6 +275,8 @@
         "src/apps/api/tests/evals/request_following/test_kri524_full_conversation_routing.py",
         "src/apps/api/tests/evals/request_following/test_kri524_live_captures.py",
         "src/apps/api/tests/evals/request_following/test_kri524_sequence_journey.py",
+        "src/apps/api/tests/evals/request_following/test_system_chain.py",
+        "src/apps/api/tests/evals/request_following/test_system_composition.py",
         "src/apps/api/tests/evals/request_following/test_postdeploy_title_sequence.py",
         "src/apps/ios/Kria/",
         "src/apps/ios/Packages/KriaMediaEngine/",
