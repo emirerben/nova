@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.257.0] - 2026-11-16
+
+### Changed
+- fix(kria): adopt a pre-approval re-check's normalization, ask when it touches an ask (KRI-1445) (#2369) <!-- release-pr: 2369 -->
+
 ## [0.88.256.0] - 2026-11-16
 
 ### Changed
