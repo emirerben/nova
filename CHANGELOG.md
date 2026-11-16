@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.258.0] - 2026-11-16
+
+### Changed
+- fix(kria): the model that reads the message decides the chat's reply language (KRI-1445) (#2368) <!-- release-pr: 2368 -->
+
 ## [0.88.257.0] - 2026-11-16
 
 ### Changed
