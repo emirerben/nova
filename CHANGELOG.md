@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.259.0] - 2026-11-16
+
+### Changed
+- test(kria): fail when a planner field is dropped by a route without a card line (KRI-1429) (#2371) <!-- release-pr: 2371 -->
+
 ## [0.88.258.0] - 2026-11-16
 
 ### Changed
