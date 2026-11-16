@@ -3338,6 +3338,25 @@ def test_retry_failed_job_reuses_owned_job_and_preserves_inputs(monkeypatch) -> 
 
 
 @pytest.mark.parametrize(
+    ("reason", "logged"),
+    [("encoder_timeout", "encoder_timeout"), (None, "no_reason_variants_failed")],
+)
+def test_retry_keeps_the_failure_the_report_was_counting(monkeypatch, reason, logged) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="variants_failed", assembly_plan={"variants": []})
+    job.failure_reason = reason
+    db = _db([_scalar(job), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.services.job_dispatch.enqueue_orchestrator", AsyncMock())
+
+    resp = client.post(f"/me/jobs/{job.id}/retry")
+
+    assert resp.status_code == 200
+    assert job.failure_reason is None
+    assert [e["reason"] for e in job.assembly_plan["cleared_failures"]] == [logged]
+
+
+@pytest.mark.parametrize(
     ("ios_device_only", "cloud_execution", "expected_status", "expected_code"),
     [
         (True, True, 422, "device_render_unsupported"),
