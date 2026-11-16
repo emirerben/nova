@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.249.0] - 2026-11-16
+
+### Fixed
+- fix(ios): move captions and picture cards on the preview as smoothly as text (KRI-1441) (#2334) <!-- release-pr: 2334 -->
+
 ## [0.88.248.0] - 2026-11-15
 
 ### Fixed
