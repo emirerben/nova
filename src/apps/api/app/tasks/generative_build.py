@@ -144,8 +144,10 @@ from app.services.job_phases import (
 from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
 from app.services.music_genre import asked_genres, genre_shortlist
 from app.services.phone_text_styling import (
+    adopt_generation_caption_move,
     caption_spot_is_asked,
     current_phone_text_policy,
+    fullscreen_picture_text,
     generation_caption_cues,
     generation_persisted_cues,
     generation_style_fields,
@@ -11052,6 +11054,8 @@ def _run_phone_subtitled_job(
                 )
             if protected_caption_look is not None:
                 framed_compile["caption_look"] = protected_caption_look
+                # KRI-1490: still the generated look (moved), so the legibility pass treats it.
+                adopt_generation_caption_move(protected_caption_look)
             protected_caption_avoid = _protected_caption_avoid(
                 cues,
                 caption_style=caption_style,
@@ -11251,8 +11255,9 @@ def _run_phone_subtitled_job(
                         "reason": _card_problem or "undrawable_text",
                     }
                     closing_card_spec = None
-            if corner_pins:
-                corner_text_rows_placed, corner_text_receipt = _phone_talking_corner_rows(
+
+            def _place_corner_rows(picture_text: Any = None) -> tuple[list[dict], Any]:
+                return _phone_talking_corner_rows(
                     corner_pins,
                     talk_end_s=talking_timeline_s,
                     binding=binding,
@@ -11276,8 +11281,12 @@ def _run_phone_subtitled_job(
                             )
                         ],
                     ),
+                    picture_text=picture_text,
                     **text_canvas,
                 )
+
+            if corner_pins:
+                corner_text_rows_placed, corner_text_receipt = _place_corner_rows()
 
             def _closing_rows_for(
                 photo_card: Any, speaker_frame: Mapping[str, Any] | None = None
@@ -12521,6 +12530,22 @@ def _run_phone_subtitled_job(
                         **text_canvas,
                     )
                     spoken_text_rows = spoken_text_rows + list_label_rows
+
+                if corner_text_rows_placed and lanes is not None:
+                    # KRI-1491: the full-screen pictures are known now; a corner line sitting on
+                    # one's own text (a post's account name) is placed again, off it if its
+                    # corner allows. No picture text under it: the line stays exactly as placed.
+                    picture_text = fullscreen_picture_text(lanes.overlays)
+                    if picture_text is not None and any(
+                        picture_text(
+                            (float(row["start_s"]), float(row["end_s"])),
+                            _measure_corner_row(row, text_canvas.get("canvas")),
+                        )
+                        for row in corner_text_rows_placed
+                    ):
+                        corner_text_rows_placed, corner_text_receipt = _place_corner_rows(
+                            picture_text
+                        )
 
                 recipe = None
                 attempts_remaining = 3
@@ -14392,6 +14417,7 @@ def _move_captions_off_title(
     caption_look, receipt = found
     if caption_look is not None:
         framed_compile["caption_look"] = caption_look
+        adopt_generation_caption_move(caption_look)  # KRI-1490: still the generated look
     return {"caption_move": receipt, "text_overlap": False}
 
 
@@ -15321,6 +15347,14 @@ def _closing_card_compile(spec: Any) -> dict[str, Any]:
     }
 
 
+def _measure_corner_row(row: dict, canvas: Any = None) -> Any:
+    """The ink box a corner row draws (the measure its placement used)."""
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
+
+    return _measure_title_box(row, canvas=canvas if canvas is not None else _STORY_CANVAS)
+
+
 def _phone_talking_corner_rows(
     pins: Sequence[Any],
     *,
@@ -15336,10 +15370,13 @@ def _phone_talking_corner_rows(
     avoid_rows: Sequence[dict] = (),
     clip_windows: Sequence[tuple[float, float]] | None = None,
     canvas: Any = None,
+    picture_text: Any = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """KRI-1342 item 7: the creator's corner text on a phone Talking edit, each row placed off
     every face its window shows and clear of the captions / title rows sharing its window
-    (`phone_talking_corner_text`). Returns the rows kept and the placement receipt."""
+    (`phone_talking_corner_text`). Returns the rows kept and the placement receipt.
+    ``picture_text`` (KRI-1491, `phone_text_styling.fullscreen_picture_text`): placed again once
+    the full-screen pictures are known, the row also keeps off their own text."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
     from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
@@ -15387,6 +15424,7 @@ def _phone_talking_corner_rows(
         scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
         position_x=position_x,
         caption_boxes=_avoid,
+        **({"picture_text": picture_text} if picture_text is not None else {}),
     )
     missing = unplaced_pins(pins, talk_end_s=talk_end_s, clip_windows=clip_windows)
     if missing:

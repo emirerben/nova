@@ -8829,6 +8829,21 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
     return {media_id: sha for media_id, sha in found.items() if media_id not in conflicted}
 
 
+def _phone_source_video_count(job: Any) -> int | None:
+    """KRI-1488: how many of the creator's own videos a phone render was made from (the job's
+    `_phone_sources_v1`; Visuals live apart, in `_phone_visuals_v1`). None when not recorded."""
+    sources = (job.assembly_plan or {}).get("_phone_sources_v1")
+    if not isinstance(sources, list):
+        return None
+    return sum(
+        1
+        for source in sources
+        if isinstance(source, dict)
+        and isinstance(source.get("original"), dict)
+        and source["original"].get("kind") == "video"
+    )
+
+
 def _cleanup_note_retake_cut_possible(contract: object) -> bool:
     """Could this render's speech cleanup have cut a restarted sentence (KRI-1176)?
 
@@ -8986,7 +9001,9 @@ def _approved_generation_requirements_review(
         from app.routes.generative_jobs import original_audio_recovery  # noqa: PLC0415
 
         facts = dataclasses.replace(
-            facts, original_audio_control=original_audio_recovery(job, variant)
+            facts,
+            original_audio_control=original_audio_recovery(job, variant),
+            attached_video_count=_phone_source_video_count(job),
         )
         if narrated is not None:
             # KRI-1357: which clip played under a named cue that had no pop-in.

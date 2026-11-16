@@ -1518,6 +1518,23 @@ class Settings(BaseSettings):
     # Default TRUE. False: the ask is read exactly as before. Rollback: `fly secrets set
     # VOICE_ONLY_ASK_ENABLED=false --app nova-video` + restart (api + worker).
     voice_only_ask_enabled: bool = True
+    # KRI-1488: a `select` row with no typed fact and no quoted words ("Use my talking video."
+    # filed on its own, Çiğdem S1 2026-11-15) is met when the edit is made from the ONE video the
+    # creator attached (`brief_checks._check_single_take_pointer`). Before, a phone Talking draft
+    # answered "A Talking video can't do this", held the draft and listed the row as left out.
+    # Several videos or a quoted word keep today's verdict. Default TRUE. False: byte-identical.
+    # Rollback: `fly secrets set SINGLE_TAKE_POINTER_ASK_ENABLED=false --app nova-video` + restart
+    # (api + worker).
+    single_take_pointer_ask_enabled: bool = True
+    # KRI-1489: a pop-in ask that DESCRIBES its moments ("when I mention the launch and Vela's 2
+    # posts") instead of quoting the spoken words is answered by the pop-ins the plan placed on
+    # other words when there are at least as many spare pop-ins as unmatched names
+    # (`brief_checks._described_names_uncovered`; counts only, no word matching). Before, the
+    # brief writer's `triggers` were matched word for word against the planner's spoken words,
+    # so the draft was held for "No pop-in for launch, Vela's 2 posts" though all four pictures
+    # were placed. Quoted words stay exact. Default TRUE. False: byte-identical. Rollback: `fly
+    # secrets set DESCRIBED_POPIN_NAMES_ENABLED=false --app nova-video` + restart (api + worker).
+    described_popin_names_enabled: bool = True
 
     # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
     # media only, "ok") takes the language of the creator's latest message typed in another of

@@ -125,11 +125,26 @@ def place_corner_row(
     captions: Sequence[NormalizedBox],
     measure: Callable[[dict], NormalizedBox],
     labels: Sequence[NormalizedBox] = (),
+    picture_text: Callable[[NormalizedBox], int] | None = None,
 ) -> tuple[dict | None, dict[str, Any]]:
     """``row`` at the first spot in its corner clear of every face and of every corner line
     already placed in an overlapping window (``labels``), and of the captions when any spot
     allows; stepping inward then shrinking. ``(None, receipt)`` when no spot in the corner
-    clears them."""
+    clears them.
+
+    ``picture_text`` (KRI-1491) counts the full-screen pictures in the row's window whose own
+    text (a post's account name, a headline) the box would sit on: among the spots the rules
+    above allow, the one on the fewest pictures' text wins, the nearest the corner on a tie, so a
+    corner already clear of them is kept exactly. ``None`` places exactly as before."""
+    if picture_text is not None:
+        return _place_off_picture_text(
+            row,
+            faces=faces,
+            captions=captions,
+            measure=measure,
+            labels=labels,
+            picture_text=picture_text,
+        )
     corner = str((row.get("source_params") or {}).get("corner") or "top_left")
     zone = corner.split("_", 1)[0]
     direction = {"top": 1.0, "bottom": -1.0}.get(zone, 0.0)
@@ -178,6 +193,65 @@ def place_corner_row(
     return None, {"status": "face_blocked", "corner": corner, "default_y_frac": base_y}
 
 
+def _place_off_picture_text(
+    row: dict,
+    *,
+    faces: Sequence[NormalizedBox],
+    captions: Sequence[NormalizedBox],
+    measure: Callable[[dict], NormalizedBox],
+    labels: Sequence[NormalizedBox],
+    picture_text: Callable[[NormalizedBox], int],
+) -> tuple[dict | None, dict[str, Any]]:
+    """`place_corner_row` with the picture-text count as the tie-breaker inside each rule tier:
+    every spot it would accept (clear of the captions first, else clear of faces only) is scored
+    by ``picture_text`` and the first with the lowest count is taken."""
+    corner = str((row.get("source_params") or {}).get("corner") or "top_left")
+    zone = corner.split("_", 1)[0]
+    direction = {"top": 1.0, "bottom": -1.0}.get(zone, 0.0)
+    padded = [face.padded(_FACE_PAD) for face in faces]
+    others = [label.padded(_LABEL_PAD) for label in labels]
+    base_y = float(row["y_frac"])
+    base_size = float(row.get("size_px") or 52)
+    steps = int(round(_MAX_INWARD / _STEP)) + 1 if direction else 1
+    best: dict[bool, tuple[int, dict, NormalizedBox, float, float]] = {}
+    for shrink in _SHRINK:
+        for step in range(steps):
+            y = round(base_y + direction * step * _STEP, 4)
+            candidate = {**row, "y_frac": y, "size_px": round(base_size * shrink, 1)}
+            box = measure(candidate)
+            if box.top < 0.0 or box.bottom > 1.0:
+                continue
+            if not _clear(box, padded, _MAX_FACE_COVERAGE):
+                continue
+            if any(box.intersection_area(other) > 0 for other in others):
+                continue
+            clear_of_captions = _clear(box, captions, _MAX_CAPTION_COVERAGE)
+            hits = picture_text(box)
+            if clear_of_captions not in best or hits < best[clear_of_captions][0]:
+                best[clear_of_captions] = (hits, candidate, box, y, shrink)
+            if clear_of_captions and hits == 0:
+                break
+        if best.get(True, (1,))[0] == 0:
+            break
+    chosen = best.get(True) or best.get(False)
+    if chosen is None:
+        return None, {"status": "face_blocked", "corner": corner, "default_y_frac": base_y}
+    hits, candidate, box, y, shrink = chosen
+    moved = y != base_y or shrink != 1.0
+    off_text = moved and hits < picture_text(measure(row))
+    return candidate, {
+        "status": "placed",
+        "corner": corner,
+        "y_frac": y,
+        "default_y_frac": base_y,
+        "shrink": shrink,
+        "box": box.as_dict(),
+        "moved_off": ["picture_text"] if off_text else ["face"] if moved else [],
+        "text_overlap": True not in best,
+        "picture_text": hits,
+    }
+
+
 def place_corner_text(
     rows: Sequence[dict],
     *,
@@ -190,10 +264,12 @@ def place_corner_text(
     position_x: float = 0.0,
     caption_boxes: Callable[[tuple[float, float]], Sequence[NormalizedBox]] | None = None,
     sample: Any = None,
+    picture_text: Callable[[tuple[float, float], NormalizedBox], int] | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Every corner row placed off the faces of its own window; the rows kept and a receipt
     (one entry per row, plus the face-sampling receipt). Never raises: a sampling failure
-    protects the conservative fallback face, as the title placement does."""
+    protects the conservative fallback face, as the title placement does. ``picture_text``
+    (KRI-1491, `place_corner_row`): the full-screen pictures' own text, by window."""
     from app.pipeline import phone_subtitled_title as pst  # noqa: PLC0415
 
     def measure(candidate: dict) -> NormalizedBox:
@@ -222,7 +298,16 @@ def place_corner_text(
                 box for (start, end), box in placed_boxes if start < window[1] and window[0] < end
             ]
             kept, entry = place_corner_row(
-                row, faces=faces, captions=captions, measure=measure, labels=labels
+                row,
+                faces=faces,
+                captions=captions,
+                measure=measure,
+                labels=labels,
+                picture_text=(
+                    (lambda box, window=window: picture_text(window, box))
+                    if picture_text is not None
+                    else None
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - never draw unplaced text on a face
             log.warning("corner_text_placement_failed", error=str(exc)[:200])

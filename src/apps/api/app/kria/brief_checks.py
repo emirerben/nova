@@ -783,6 +783,15 @@ class PlanFacts:
     # KRI-1015: another live requirement asked for this caption language, so the translation is
     # no miss on a captions ask that names none (the language row says where it came from).
     caption_translation_asked: bool = False
+    # KRI-1489: every word a live requirement of the brief names for a pop-in (typed `triggers`
+    # or quoted), so a pop-in another ask claims is never counted as a spare one.
+    brief_named_triggers: tuple[str, ...] = ()
+    # KRI-1489: the names of the live asks that want pop-ins (`_wants_beats`): the moments that
+    # compete for the same spare pop-ins, so one spare never answers two asks.
+    brief_beat_names: tuple[str, ...] = ()
+    # KRI-1488: the creator's own videos a finished phone render was made from (the job's
+    # `_phone_sources_v1`); None = not known. Read only by `_check_single_take_pointer`.
+    attached_video_count: int | None = None
     # KRI-547: how a phone Talking render framed a sideways speaker clip for a
     # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
     # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
@@ -7246,6 +7255,77 @@ def _trigger_heard(named: str, spoken: str) -> bool:
     return a == b or _contains_text(spoken, a) or _contains_text(named, b)
 
 
+def _named_count(name: str) -> int:
+    """How many moments one named entry stands for, by the number the brief writer copied into
+    it ("Vela's 2 posts" = 2); 1 without one. Digits only: nothing is read from words."""
+    for token in name.split():
+        digits = token.strip(".,;:!?()'\"")
+        if digits.isdigit() and 0 < int(digits) <= 10:
+            return int(digits)
+    return 1
+
+
+def _described_names_uncovered(
+    req: BriefRequirement,
+    missing: Sequence[str],
+    beats: Sequence[BeatFact],
+    names: Sequence[str],
+    facts: PlanFacts,
+) -> tuple[list[str], list[str]]:
+    """KRI-1489: ``(missing, uncertain)``: the moments still missing, and the ones the plan's
+    spare pop-ins may answer, which the server cannot confirm.
+
+    The brief writer files the moments of "When I mention the launch, Vela's 2 posts and the
+    billboards" under `triggers` in the creator's words ("launch", "Vela's 2 posts"); the planner,
+    which reads the take, puts the pictures on the words actually said ("launched", "five
+    years", "hinge"). Two model fields, two vocabularies: matching them word for word called
+    three placed pictures missing (Çiğdem S1, 2026-11-15). Nothing typed binds a pop-in to the
+    moment it stands for (its photo carries a camera file name, its word is the take's), and
+    words are never read (KRI-667), so a count is all there is, and a count is not proof: an
+    unrelated pop-in counts the same. Such moments are never "met": they are ``uncertain``, which
+    the reply says as a check for the creator (`_DESCRIBED_POPINS_PLAN`), approvable and never a
+    "Done".
+
+    Only an ask with at least one of its own words on a placed pop-in ("billboards") is read
+    this way: the planner worked that ask, and put the rest of its pictures on the words said.
+    An ask none of whose words has a pop-in keeps today's "No pop-in for X", whatever the count.
+    A pop-in is spare when no name of the brief claims it (this ask's, any other live ask's, a
+    quoted word). The count is brief-wide, so one spare pop-in can never stand for two asks'
+    moments: every name with no pop-in on its word (this ask's moments as filtered above, plus
+    every other live pop-in ask's, `brief_beat_names`) must be answered by EXACTLY as many spare
+    pop-ins as the moments they stand for ("2 posts" = 2). One spare too few or too many keeps
+    today's "No pop-in for X". A word the creator quoted is never uncertain.
+    Off (`DESCRIBED_POPIN_NAMES_ENABLED`): ``(missing, [])``."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not missing or not settings.described_popin_names_enabled:
+        return list(missing), []
+    quoted = {_fold(q) for q in _quoted_triggers(req)}
+    unquoted = [n for n in missing if _fold(n) not in quoted]
+    if not unquoted:
+        return list(missing), []
+    if not any(_trigger_heard(n, b.trigger) for n in names for b in beats):
+        # No pop-in on any word this ask names: nothing ties the plan's pop-ins to it.
+        return list(missing), []
+    own = {_fold(n) for n in names}
+    claimants = [*names, *facts.brief_named_triggers]
+    spare = [
+        b
+        for b in beats
+        if b.anchor != "title" and not any(_trigger_heard(n, b.trigger) for n in claimants)
+    ]
+    # Other pop-in asks' names that no pop-in answers want the same spare pop-ins.
+    elsewhere = [
+        n
+        for n in facts.brief_beat_names
+        if _fold(n) not in own and not any(_trigger_heard(n, b.trigger) for b in beats)
+    ]
+    wanted = sum(_named_count(n) for n in [*unquoted, *elsewhere])
+    if len(spare) != wanted:
+        return list(missing), []
+    return [n for n in missing if n not in unquoted], unquoted
+
+
 def _names(values: Iterable[str]) -> str:
     items = list(dict.fromkeys(values))
     shown = ", ".join(items[:_MAX_NAMED_IN_REASON])
@@ -7449,6 +7529,8 @@ _TEXT_CURVED = "curved"
 # KRI-994: the clip the creator asked to skip, or a photo in a "video clips only" edit, is
 # in the finished video after all (a pin or the plan's own placement kept it).
 _SKIPPED_CLIP_PLAYS = "The clip you asked to skip is still in the video"
+# KRI-1488: an untyped `select` row met by an edit made from the one video attached.
+_EDIT_USES_YOUR_TAKE = "This video is made from the one video you attached"
 _PHOTO_IN_CLIPS_ONLY = "The video still has a photo in it"
 # KRI-828: the freeze is planned, but no analysed moment of the clips matches the creator's
 # words for it (or two do), so no frame is guessed.
@@ -7562,6 +7644,14 @@ _TALKING_LIST_LABEL_PLAN = (
 # voiceover yet, so it is a promise, not "met"; the finished render's beat receipt decides
 # (placed = met, never heard = "I never heard ... in your voice").
 _NARRATED_BEAT_PLAN = "I'll show it when I hear those words in your voiceover"
+# KRI-1489: moments the creator described rather than quoted ("Vela's 2 posts"), which the plan's
+# other pop-ins may answer on the words she actually says. Only their count matches; nothing
+# says which picture stands for which moment (or that any does), so the line claims no match:
+# pictures were added, which moments they fit is the creator's check, never "Done".
+_DESCRIBED_POPINS_PLAN = (
+    "I added pictures but couldn't verify which moments they match, so check the pictures and "
+    "their timing"
+)
 # KRI-1357: a named spoken cue with no pop-in planned on a phone Voiceover DRAFT ("show the fans
 # clip at '1. FC Nürnberg'"). The narration places the footage on the words, and nothing typed
 # tells footage from a Visuals pop-in, so the draft promises only the check the finished
@@ -7615,6 +7705,8 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     # KRI-1356 / KRI-1357: a phone Voiceover draft's word cues wait for the voice.
     _NARRATED_BEAT_PLAN,
     _NARRATED_FOOTAGE_CUE_PLAN,
+    # KRI-1489: described moments answered only by a count of the other pop-ins.
+    _DESCRIBED_POPINS_PLAN,
     # KRI-1465: a phone Voiceover draft's captions wait for the render too.
     _NARRATED_CAPTIONS_PLAN,
 )
@@ -7789,6 +7881,7 @@ _REASON_TR: dict[str, str] = {
     _TEXT_CAME_OUT_STRAIGHT: "Bitmiş videoda yazı kavisli değil, düz",
     _TEXT_CURVED: "kavisli",
     _SKIPPED_CLIP_PLAYS: "Çıkarmanı istediğin klip hâlâ videoda",
+    _EDIT_USES_YOUR_TAKE: "Bu video eklediğin tek videodan yapılıyor",
     _PHOTO_IN_CLIPS_ONLY: "Videoda hâlâ bir fotoğraf var",
     _NO_FREEZE_FRAME: (
         "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
@@ -7969,6 +8062,10 @@ _REASON_TR: dict[str, str] = {
         "Konuşmanda o bölüm başladığında gösteririm; nerede başladığını duymazsam çıkmaz"
     ),
     _NARRATED_BEAT_PLAN: "Seslendirmende o sözleri duyduğumda gösteririm",
+    _DESCRIBED_POPINS_PLAN: (
+        "Görselleri ekledim ama hangi anlara denk geldiklerini doğrulayamadım, görselleri ve "
+        "zamanlamalarını kontrol et"
+    ),
     _NARRATED_FOOTAGE_CUE_PLAN: (
         "Klipler sesini takip ediyor, video hazır olunca o sözleri söylediğinde ekranda ne "
         "olduğunu kontrol edeceğim"
@@ -9271,6 +9368,12 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             # places on the words; nothing typed says which, so it is not "No pop-in".
             footage_cues = _footage_cues(facts, missing) if not sequence_problem else []
             missing = [n for n in missing if n not in footage_cues]
+            # KRI-1489: a described moment ("Vela's 2 posts") answered by the plan's other pop-ins.
+            # Never over KRI-1486: a take whose transcript says none of the words is a known fact.
+            if unsaid is None:
+                missing, uncertain = _described_names_uncovered(req, missing, beats, names, facts)
+                if uncertain:
+                    promises.append(_DESCRIBED_POPINS_PLAN)
             if unheard:
                 problems.append(
                     _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
@@ -16753,6 +16856,9 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                     return seated
             return _check_closing_speech(req, facts)
     if req.kind == "select":
+        pointer = _check_single_take_pointer(req, facts)
+        if pointer is not None:
+            return pointer
         typed = _check_select_typed(req, facts)
         if typed is not None:
             return typed
@@ -17169,6 +17275,51 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     )
 
 
+def untyped_select(req: BriefRequirement) -> bool:
+    """KRI-1488: a whole-video `select` row that carries no typed fact, no literal, no moment and
+    quotes no words: what it selects is in its words alone, which the server does not read
+    (KRI-667). A quoted word ("cut the second “Neredesin”") names a part of the footage, so that
+    row is a real selection and keeps its verdict. Off (`SINGLE_TAKE_POINTER_ASK_ENABLED`):
+    never."""
+    from app.config import settings  # noqa: PLC0415
+
+    if (
+        not settings.single_take_pointer_ask_enabled
+        or req.kind != "select"
+        or req.scope != "global"
+        or req.literal
+    ):
+        return False  # a clip-scoped row picks inside one clip: a real selection
+    facts = req.facts if isinstance(req.facts, Mapping) else {}
+    if any(value not in (None, "", [], {}, False) for value in facts.values()):
+        return False
+    return moment_ask(req) is None and not _quoted_triggers(req)
+
+
+def _check_single_take_pointer(
+    req: BriefRequirement, facts: PlanFacts
+) -> RequirementReceipt | None:
+    """KRI-1488: an untyped `select` row ("Use my talking video.", `untyped_select`) on an edit
+    made from the ONE video the creator attached: whatever the row picks among her videos, the
+    edit already uses that one, so it is met. Several videos, or a count the facts do not know:
+    None (today's verdict; a Talking draft still answers "can't")."""
+    if not untyped_select(req):
+        return None
+    count = (
+        facts.video_clip_count if facts.video_clip_count is not None else facts.attached_video_count
+    )
+    single = count == 1
+    if not single:
+        return None
+    return _receipt(
+        req,
+        "met",
+        say(en=_EDIT_USES_YOUR_TAKE, tr=_REASON_TR[_EDIT_USES_YOUR_TAKE]),
+        verification="checked",
+        stage="checked",
+    )
+
+
 def _talking_honest_receipt(
     req: BriefRequirement, receipt: RequirementReceipt, facts: PlanFacts
 ) -> RequirementReceipt:
@@ -17351,6 +17502,21 @@ def build_receipts(
     ):
         # KRI-1015: another requirement asked for this caption language.
         facts = dataclasses.replace(facts, caption_translation_asked=True)
+    named_anywhere = tuple(
+        dict.fromkeys(name for req in requirements if req.live for name in _named_triggers(req))
+    )
+    if named_anywhere:
+        beat_names = tuple(
+            dict.fromkeys(
+                name
+                for req in requirements
+                if req.live and _wants_beats(req)
+                for name in _named_triggers(req)
+            )
+        )
+        facts = dataclasses.replace(
+            facts, brief_named_triggers=named_anywhere, brief_beat_names=beat_names
+        )
     if _narrated_draft(facts) and facts.stated_voice_language is None:
         # KRI-1465: another requirement says which language the voiceover is in.
         stated = _stated_voice_language(requirements)

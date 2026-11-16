@@ -44,6 +44,8 @@ _STRONG_EDGE = 90
 # A band is calm when no slice of it (`_SLICE_FRAC` of the canvas wide, half-overlapping) has more
 # than this share of edge pixels: a single word at one end of the line counts, not its average.
 _CALM_COVERAGE = 0.04
+# Public: the corner label reads the same bar (KRI-1491, `fullscreen_picture_text`).
+CALM_COVERAGE = _CALM_COVERAGE
 _SLICE_FRAC = 0.12
 # With no calm band the line takes the least busy band; only a picture whose least busy band is
 # still this dense with strong edges (a page of text, a packed poster) hides the line there.

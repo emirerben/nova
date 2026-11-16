@@ -639,20 +639,7 @@ def register_generation_fullscreen(cards=(), cutaways=()) -> None:
     policy = _POLICY.get()
     if not policy or not settings.caption_legibility_enabled:
         return
-    pictures = []
-    for card in cards or ():
-        if getattr(card, "display_mode", None) != "fullscreen":
-            continue
-        pictures.append(
-            {
-                "path": card.gcs_path,
-                "kind": card.kind,
-                "source_start": float(card.source_start_s or 0.0),
-                "start_s": float(card.start_s),
-                "end_s": float(card.end_s),
-                "place": True,
-            }
-        )
+    pictures = _fullscreen_pictures(cards)
     for cutaway in cutaways or ():
         pictures.append(
             {
@@ -668,9 +655,63 @@ def register_generation_fullscreen(cards=(), cutaways=()) -> None:
     policy["_fullscreen_pictures"] = pictures
 
 
-def _fullscreen_grey(policy: dict) -> list[dict]:
-    """Each registered picture with its grey cover-fit (cached by path + time on the policy).
-    Bounded: at most 12 pictures, 12 s in all; a picture that fails to load is skipped."""
+def _fullscreen_pictures(cards) -> list[dict]:
+    """The full-screen photo/video cards among ``cards`` as `caption_legibility_pass` judges
+    them (`register_generation_fullscreen`)."""
+    return [
+        {
+            "path": card.gcs_path,
+            "kind": card.kind,
+            "source_start": float(card.source_start_s or 0.0),
+            "start_s": float(card.start_s),
+            "end_s": float(card.end_s),
+            "place": True,
+        }
+        for card in cards or ()
+        if getattr(card, "display_mode", None) == "fullscreen"
+    ]
+
+
+def fullscreen_picture_text(cards):
+    """KRI-1491: how many of the full-screen pictures in ``cards`` show their own text (any
+    edges: a headline, an account name) under a text box while they are up, as
+    ``count(window, box)`` (timeline seconds, canvas-fraction `NormalizedBox`). Measured with the
+    caption legibility pass's edge maps on the same grey cover-fit, so a label is judged the way a
+    caption line is. ``None`` with no policy, the switch off, or no picture that could be read:
+    callers then place exactly as before."""
+    from app.config import settings
+
+    policy = _POLICY.get()
+    if not policy or not settings.caption_legibility_enabled:
+        return None
+    pictures = _fullscreen_grey(policy, _fullscreen_pictures(cards))
+    if not pictures:
+        return None
+    from app.pipeline import caption_legibility as legibility
+
+    maps = [
+        (p["start_s"], p["end_s"], legibility.edge_maps(p["pixels"]))
+        for p in pictures
+        if p.get("place")
+    ]
+
+    def count(window, box) -> int:
+        edges = (box.left, box.top, box.right, box.bottom)
+        return sum(
+            1
+            for start, end, picture in maps
+            if start < window[1]
+            and window[0] < end
+            and legibility.band_coverage([picture], edges)[0] > legibility.CALM_COVERAGE
+        )
+
+    return count
+
+
+def _fullscreen_grey(policy: dict, pictures: list[dict] | None = None) -> list[dict]:
+    """Each registered picture (or each of ``pictures``) with its grey cover-fit (cached by path
+    + time on the policy). Bounded: at most 12 pictures, 12 s in all; a picture that fails to
+    load is skipped."""
     import tempfile
     import time
     from pathlib import Path
@@ -682,7 +723,8 @@ def _fullscreen_grey(policy: dict) -> list[dict]:
     out = []
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="caption-legibility-") as directory:
-        for index, picture in enumerate((policy.get("_fullscreen_pictures") or [])[:12]):
+        listed = pictures if pictures is not None else policy.get("_fullscreen_pictures") or []
+        for index, picture in enumerate(listed[:12]):
             at = (
                 None
                 if picture["kind"] == "image"
@@ -739,6 +781,21 @@ def _caption_block(look, text: str, canvas, *, y_frac: float | None = None):
     return (left, cy - height / 2, left + width, cy + height / 2)
 
 
+def adopt_generation_caption_move(look) -> None:
+    """KRI-1490: ``look`` is the policy's generated caption look moved by a generation step (off
+    a protected face or object, KRI-827; off the face band, KRI-632; off the title, KRI-1305),
+    which the worker then hands to every compile as ``caption_look``. Recorded so
+    `caption_legibility_pass` treats it as generated (it is not an editor-authored look): without
+    this the pass skipped every compile of such a job (Çiğdem S1, job 4bb9842c: no outline, lines
+    left on the post screenshots' headlines). No policy: nothing is recorded."""
+    policy = _POLICY.get()
+    if not policy or look is None:
+        return
+    moves = policy.setdefault("_caption_look_moves", [])
+    if not any(move is look for move in moves):
+        moves.append(look)
+
+
 def caption_legibility_pass(cues: list[dict], look, *, canvas) -> tuple[object, list[dict]]:
     """KRI-1343/1344 (`app.pipeline.caption_legibility`): the generated caption ``look`` with the
     treatment its measured backgrounds need, and ``cues`` with each line placed clear of a
@@ -746,8 +803,9 @@ def caption_legibility_pass(cues: list[dict], look, *, canvas) -> tuple[object, 
     cue's time cut around that picture). Runs on every compile from the look as first resolved, so
     a later compile that knows the full-screen pictures decides again with them.
 
-    Only a look this policy generated is treated: an editor-authored look (a Save, a chat edit)
-    is the creator's and passes through, as does everything with no policy or the switch off."""
+    Only a look this policy generated is treated (or one a generation step moved,
+    `adopt_generation_caption_move`): an editor-authored look (a Save, a chat edit) is the
+    creator's and passes through, as does everything with no policy or the switch off."""
     from dataclasses import replace
 
     from app.config import settings
@@ -757,8 +815,11 @@ def caption_legibility_pass(cues: list[dict], look, *, canvas) -> tuple[object, 
         not policy
         or not settings.caption_legibility_enabled
         or look is None
-        or look is not policy.get("caption_look")
         or not cues
+        or (
+            look is not policy.get("caption_look")
+            and not any(move is look for move in policy.get("_caption_look_moves") or ())
+        )
     ):
         return look, cues
     from app.pipeline import caption_legibility as legibility
