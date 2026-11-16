@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.0.0] - 2026-11-16
+
+### Added
+- feat(kria): two-language captions — spoken line plus a smaller translated line on its own editor track (KRI-1501) (#2373) <!-- release-pr: 2373 -->
+
 ## [0.88.262.0] - 2026-11-16
 
 ### Changed
