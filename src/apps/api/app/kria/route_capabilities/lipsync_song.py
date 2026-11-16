@@ -19,6 +19,8 @@ from app.kria.brief import BriefRequirement
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._lines import direction_line, pacing_line, stated_length
 from app.kria.route_capabilities._types import (
+    EDITORIAL_PLAN_NOT_RUN,
+    KNOWN_GAP,
     Applied,
     AskDecline,
     Handling,
@@ -142,3 +144,20 @@ def story_verdict(
 
     direction = story_direction(strategy)
     return None if direction is None else (direction, CREATOR_SONG)
+
+
+# Planner-settable fields this route's code never reads and its table does not mention: today a
+# value the planner sets here is dropped without a word (KRI-1429). Kept equal to the code scan by
+# `tests/kria/test_route_field_coverage.py`; delete an entry when the field is read or listed.
+UNREAD_DECLARED: dict[str, str] = {
+    "editorial_plan": EDITORIAL_PLAN_NOT_RUN,
+    "execution_contract": KNOWN_GAP,
+    "image_layout": KNOWN_GAP,
+    "mixed_media_timing": KNOWN_GAP,
+    "montage_audio": KNOWN_GAP,
+    "montage_cadence": KNOWN_GAP,
+    "render_program": KNOWN_GAP,
+    "shot_labels": KNOWN_GAP,
+    "split_screen": KNOWN_GAP,
+    "video_reuse_policy": KNOWN_GAP,
+}
