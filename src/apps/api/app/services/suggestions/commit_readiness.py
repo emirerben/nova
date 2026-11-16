@@ -244,6 +244,7 @@ def assess_readiness_sync(
     creator_request: str | None = None,
     prepared_collection_story: Any = None,
     prepared_research: Any = None,
+    adopt_recheck: bool = False,
 ) -> dict[str, Any]:
     """``assess_readiness`` over the facts both callers read the same way: the creator's marks,
     the compiled order preflight, the order sources and the phone plan's blockers.
@@ -298,6 +299,7 @@ def assess_readiness_sync(
             session, brief=brief, item_id=item.id, creator_id=creator_id
         ),
         plan_blockers=list(plan_blockers),
+        adopt_recheck=adopt_recheck,
     )
 
 

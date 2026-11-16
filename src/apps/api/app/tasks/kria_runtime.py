@@ -1994,7 +1994,10 @@ def _consented_policy_simplification(
     if not settings.kria_choice_questions_enabled or source_event is None:
         return None
     manifest = planned.readiness_manifest
-    refusal = simplification_refusal(manifest, strategy)
+    # 59f3707e: the brief names the asks a planning re-check's rewrite is about.
+    refusal = simplification_refusal(
+        manifest, strategy, brief=load_latest_brief_sync(db, thread_id)
+    )
     if refusal is None:
         return None
     rows = db.execute(
@@ -3607,7 +3610,20 @@ def _complete_draft_turn(
                 creator_request=_readiness_request,
                 prepared_collection_story=document.prepared_collection_story,
                 prepared_research=_readiness_research,
+                # 59f3707e: this draft is not offered yet, so a re-check rewrite no ask is
+                # about is drafted (and saved) instead of holding the first request.
+                adopt_recheck=apply_intent.tool_name == "draft.apply_strategy",
             )
+            adopted_strategy = readiness_report.pop("adopted_strategy", None)
+            if adopted_strategy is not None:
+                log.info(
+                    "kria_readiness_recheck_strategy_adopted",
+                    thread_id=str(thread.id),
+                    turn_id=str(turn.id),
+                    changed_fields=readiness_report["recheck"]["changed_fields"],
+                )
+                document = document.model_copy(update={"strategy": adopted_strategy})
+                snapshot, snapshot_hash = canonical_snapshot(document)
             policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
             readiness_report["requirements"] = [
                 {**row, "reason": policy_reasons[row["requirement_id"]]}
