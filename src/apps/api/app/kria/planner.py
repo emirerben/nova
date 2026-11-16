@@ -148,7 +148,14 @@ from app.kria.strategy_policy import (
 )
 from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
 from app.kria.turn_outcome import (
+    ANALYSIS_PENDING,
     CHANGE_REQUEST_SELECTED,
+    EDITOR_COPILOT_PREFIX,
+    EDITOR_TARGET_PREFIX,
+    FAILED_CORRECTION,
+    MEDIA_CHANGED_DURING_PLANNING,
+    REQUEST_TOO_LONG,
+    SPEECH_CUT_NEEDS_SAVE,
     UNRESOLVED_CHOICE,
     UNRESOLVED_REQUIREMENT,
     VOICEOVER_SCRIPT_UNAVAILABLE,
@@ -3023,6 +3030,7 @@ async def _plan_editor_revision(
             mode="respond",
             turn_value="recovery",
             response=localized_editor_state_reply(SPEECH_CUT_NEEDS_SAVE_REPLY),
+            diagnostics=outcome_diagnostics("recovery", SPEECH_CUT_NEEDS_SAVE),
         )
     if target.recovery_basis is not None:
         draft_plan = adapt_editor_action(
@@ -3035,6 +3043,7 @@ async def _plan_editor_revision(
                 mode="respond",
                 turn_value="recovery",
                 response=_failed_correction_alternative(),
+                diagnostics=outcome_diagnostics("recovery", FAILED_CORRECTION),
             )
         if response.ops:
             plan = adapt_editor_action(
@@ -3085,6 +3094,13 @@ async def _plan_editor_revision(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
             response=reply,
+            diagnostics=(
+                None
+                if response.outcome == "clarification"
+                else outcome_diagnostics(
+                    "refused", f"{EDITOR_COPILOT_PREFIX}{reason_code_slug(response.outcome)}"
+                )
+            ),
             # KRI-738: tappable lengths, only on a question and only those the reply states.
             reply_options=(
                 [
@@ -3236,6 +3252,7 @@ async def _load_creator_inputs(
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="recovery",
+                    diagnostics=outcome_diagnostics("recovery", REQUEST_TOO_LONG),
                     response=say(
                         en=(
                             "Your edit instructions are too long for me to match safely. "
@@ -3989,6 +4006,7 @@ async def _plan_voiceover_script(
                 mode="respond",
                 turn_value="recovery",
                 response=_clips_still_checking_reply(len(pending)),
+                diagnostics=outcome_diagnostics("recovery", ANALYSIS_PENDING),
             ),
             continuable=True,
             continue_reason="clip_analysis_pending",
@@ -6234,11 +6252,13 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
     """An editor-eligible ask on a rendered item whose editor target could not be
     loaded must not silently become a re-plan that replaces the draft with a render."""
     miss = _editor_target_miss.get()
+    target_code = f"{EDITOR_TARGET_PREFIX}{reason_code_slug(miss or 'unavailable')}"
     if miss in {"failed_draft_unavailable", "render_outcome_unknown"}:
         return PlannedKriaTurn(
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
+                diagnostics=outcome_diagnostics("recovery", target_code),
                 response=(
                     say(
                         en=(
@@ -6275,6 +6295,7 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
         plan=KriaTurnPlan(
             mode="respond",
             turn_value="recovery",
+            diagnostics=outcome_diagnostics("recovery", target_code),
             response=(
                 say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR)
                 if miss == "render_in_flight"
@@ -6317,6 +6338,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
+                diagnostics=outcome_diagnostics("recovery", MEDIA_CHANGED_DURING_PLANNING),
                 response=say(
                     en=(
                         "Your clips changed while I was planning. Your draft is unchanged; "
@@ -7916,6 +7938,7 @@ async def _plan_live_turn(
                         mode="respond",
                         turn_value="recovery",
                         response=_clips_still_checking_reply(len(pending_analysis_ids)),
+                        diagnostics=outcome_diagnostics("recovery", ANALYSIS_PENDING),
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
@@ -8007,6 +8030,7 @@ async def _plan_live_turn(
                         mode="respond",
                         turn_value="recovery",
                         response=_failed_correction_alternative(),
+                        diagnostics=outcome_diagnostics("recovery", FAILED_CORRECTION),
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,

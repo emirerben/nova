@@ -32,6 +32,9 @@ Failure modes the numbers must survive (each has an assertion):
   clears `failure_reason`), so a phone failure leaves no evidence; or the same failure is logged
   twice, or a cancelled or admin test Job's retried failure counts, or a malformed log entry
   crashes the report;
+* a render failure the creator retries (Retry on a failed Create video reuses the chat turn row,
+  flips it back to `awaiting_approval` and clears its error) turns the failed turn into a success
+  after the fact, so a past day's failed-turn count drops and the failure leaves no evidence;
 * the top-reasons list is one shared top N, so a long tail of `failed` codes pushes every refusal
   off it, the very rows the ticket is for;
 * the endpoint is readable without the admin token, or accepts a window it cannot afford.
@@ -72,6 +75,7 @@ from tests.kria.test_kri520_task_copy_postgres import (
     _in_thread,
     _overdue,
 )
+from tests.kria.test_render_retry_postgres import client, recover, seed_failed  # noqa: F401
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, _seed_user_turn
 
 TOKEN = "test-admin-token"
@@ -378,6 +382,57 @@ async def test_a_retried_phone_failure_stays_a_failed_attempt(project):
         ("device_export_failed", 3)
     ]
     assert report["daily"][0]["renders"]["failed"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_render_failed_turn_the_creator_retries_stays_a_failed_turn(client):  # noqa: F811
+    http, _publish = client
+    case = seed_failed()
+    day = _day()
+    at = day.replace(hour=0, minute=0, second=0) + timedelta(hours=1)
+    with sync_session() as db:
+        db.execute(
+            update(CreatorAgentTurn)
+            .where(CreatorAgentTurn.id == case.turn_id)
+            .values(
+                created_at=at,
+                error={"code": "device_render_failed", "recovery": "manual", "retryable": False},
+            )
+        )
+        db.commit()
+
+    before = await _report(day, 1)
+    assert before["turns"] == {
+        "attempts": 1,
+        "successes": 0,
+        "success_rate": 0.0,
+        "in_progress": 0,
+        "failed": 1,
+    }
+
+    assert recover(http, case).status_code == 202
+    assert recover(http, case).status_code == 202
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, case.turn_id)
+        assert turn.status == "awaiting_approval"
+        log = turn.plan_json["diagnostics"]["cleared_failures"]
+        turn.plan_json = {
+            "diagnostics": {"cleared_failures": [{**entry, "at": at.isoformat()} for entry in log]}
+        }
+        db.commit()
+
+    after = await _report(day, 1)
+
+    assert after["turns"] == {
+        "attempts": 2,
+        "successes": 1,
+        "success_rate": 0.5,
+        "in_progress": 0,
+        "failed": 1,
+    }
+    assert [(r["source"], r["code"], r["count"]) for r in after["top_failure_reasons"]] == [
+        ("turn", "device_render_failed", 1)
+    ]
 
 
 @pytest.mark.asyncio

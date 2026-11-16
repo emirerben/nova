@@ -37,7 +37,7 @@ _COVERAGE_STAGE_KIND: dict[str, OutcomeKind] = {
     "planning": "recovery",
     "analysis": "recovery",
 }
-_ANALYSIS_PENDING = "clip_analysis_pending"
+ANALYSIS_PENDING = "clip_analysis_pending"
 # A draft held back by a question reads the same whichever gate asked (the commit gate's
 # brief_coverage reason is `KEEP_OPEN_REASON`).
 UNRESOLVED_CHOICE = KEEP_OPEN_REASON
@@ -46,6 +46,12 @@ CHANGE_REQUEST_SELECTED = "change_request_selected"
 MOMENT_ORDER_QUESTION = "moment_order_question"
 SONG_ORDER_QUESTION = "song_order_question"
 SONG_RANGE_QUESTION = "song_range_question"
+SPEECH_CUT_NEEDS_SAVE = "speech_cut_needs_save"
+FAILED_CORRECTION = "failed_correction"
+MEDIA_CHANGED_DURING_PLANNING = "media_changed_during_planning"
+REQUEST_TOO_LONG = "request_too_long"
+EDITOR_TARGET_PREFIX = "editor_target_"
+EDITOR_COPILOT_PREFIX = "editor_"
 VOICEOVER_SCRIPT_UNAVAILABLE = "voiceover_script_unavailable"
 VOICEOVER_SCRIPT_FAILED = "voiceover_script_failed"
 CLIP_QUESTION = "clip_question"
@@ -134,7 +140,7 @@ def classify_response_turn(
             reason = _choice_code(plan) or reason
         return stamp_outcome(plan, kind, reason)
     if stage == "analysis":
-        return stamp_outcome(plan, "recovery", _ANALYSIS_PENDING)
+        return stamp_outcome(plan, "recovery", ANALYSIS_PENDING)
     pinned_reason = (pinned_refusal or {}).get("reason")
     if isinstance(pinned_reason, str) and pinned_reason:
         return stamp_outcome(plan, "refused", f"pin_{pinned_reason}")

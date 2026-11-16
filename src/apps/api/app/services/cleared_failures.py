@@ -8,6 +8,11 @@ before the clear, so it stays countable as its own failed attempt.
 
 The log lives in `Job.assembly_plan["cleared_failures"]`, not in a column: no migration, and
 the heartbeat never rewrites `assembly_plan` (models.Job), so it cannot race a retry.
+
+The creator's Retry on a failed render also reuses the chat turn: it flips the row back to
+`awaiting_approval` and clears `error`. The turn's failure is logged here too, on the turn's own
+`plan_json["diagnostics"]`, so a turn that failed and was retried stays a failed turn on the day
+it failed instead of turning into a success after the fact.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from typing import Any
 
 CLEARED_FAILURES_FIELD = "cleared_failures"
 MAX_CLEARED_FAILURES = 20
+UNKNOWN_TURN_FAILURE = "unknown_failure"
 
 
 def record_cleared_failure(
@@ -38,4 +44,28 @@ def record_cleared_failure(
     log.append({"reason": reason, "at": (now or datetime.now(UTC)).isoformat()})
     assembly[CLEARED_FAILURES_FIELD] = log[-MAX_CLEARED_FAILURES:]
     job.assembly_plan = assembly
+    return True
+
+
+def record_cleared_turn_failure(turn: Any, *, now: datetime | None = None) -> bool:
+    """Append a failed turn's error code to its own log; call it just before a retry resets it.
+
+    A turn that is not `failed`, or that failed only because its draft sat undecided
+    (`ABANDONED_DRAFT_CODES`: a success, not a fault), records nothing. A failed turn with no
+    error code is logged as `unknown_failure`, the code the report gives it.
+    """
+    from app.kria.turn_outcome import ABANDONED_DRAFT_CODES  # noqa: PLC0415
+
+    if turn.status != "failed":
+        return False
+    code = (turn.error or {}).get("code") or UNKNOWN_TURN_FAILURE
+    if code in ABANDONED_DRAFT_CODES:
+        return False
+    plan = dict(turn.plan_json or {})
+    diagnostics = dict(plan.get("diagnostics") or {})
+    log = [e for e in diagnostics.get(CLEARED_FAILURES_FIELD) or [] if isinstance(e, dict)]
+    log.append({"reason": code, "at": (now or datetime.now(UTC)).isoformat()})
+    diagnostics[CLEARED_FAILURES_FIELD] = log[-MAX_CLEARED_FAILURES:]
+    plan["diagnostics"] = diagnostics
+    turn.plan_json = plan
     return True

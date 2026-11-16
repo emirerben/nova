@@ -82,6 +82,9 @@ clears is first appended to `Job.assembly_plan["cleared_failures"]` (`app/servic
 a Job that failed with no reason is logged as `no_reason_<status>`, as the report counts it)
 and counts as its own failed attempt on the day it was recorded. Failures cleared by a worker
 re-enqueue or an in-place variant re-render are the same attempt run again and are not logged.
+The creator's Retry also resets the chat turn row (`failed` to `awaiting_approval`, error cleared), so
+`prepare_render_retry` first logs the turn's code to `plan_json["diagnostics"]["cleared_failures"]`
+and the report counts it the same way: a past day's failed-turn count never drops after a retry.
 The top reasons are the top 10 per stage and kind. Logic: `app/services/creation_health.py`.
 
 A draft the creator never decides is not a failure. The turn row ends `failed` with

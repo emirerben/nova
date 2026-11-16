@@ -5020,12 +5020,12 @@
         "A planner conflict question and a moment-order question are blocked turns, the same code the commit gate records",
         "A repeated send and a status or help question are inert turns, not attempts; admin test renders (synthetic user) are not attempts",
         "A Job a failed approval dispatch compensated (status failed, kria_dispatch_aborted) is a failed render",
-        "An iPhone retry, auto-resume, admin retry and the creator's Retry on a failed Create video log the failure they clear, so a retried failure stays a failed attempt (retry is its own attempt)",
+        "An iPhone retry, auto-resume, admin retry and the creator's Retry on a failed Create video log the failure they clear (the chat turn's own failure too, on its plan diagnostics), so a retried failure stays a failed attempt (retry is its own attempt)",
         "Title wording and authorship proposals are routine hand-offs, not blocked turns; each kind keeps its own top reasons so refusals are never cut by the volume of failed codes"
       ],
       "neighbours_gap": [
-        "A refusal reply built outside the stamped sites and the central conflict-question markers still counts as a success until it is stamped; the editor-capacity and length-waiting replies and the editor copilot no-op refusal are stamped at their site and covered by no replay of their own",
-        "A failure cleared by a worker re-enqueue or an in-place variant re-render (the same attempt run again) is not logged; neither is an export the server repaired automatically (see repair_history on the device record) or a phone failure while an accepted video exists"
+        "A refusal reply built outside the stamped sites and the central conflict-question markers still counts as a success until it is stamped; the editor-capacity, length-waiting, editor copilot (unsupported, stale, failed, no-op), editor-target and clips-changed-while-planning replies are stamped at their site and covered by the codes test, not by a replay of each",
+        "A failure cleared by a worker re-enqueue or an in-place variant re-render (the same attempt run again) is not logged; neither is a turn failure cleared by a self-healed render_dispatch_outcome_unknown (the video was delivered) or an export the server repaired automatically (see repair_history on the device record) or a phone failure while an accepted video exists"
       ],
       "red_control": "not_applicable"
     }

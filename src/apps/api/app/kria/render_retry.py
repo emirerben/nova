@@ -33,6 +33,7 @@ from app.models import (
     Job,
     PlanItem,
 )
+from app.services.cleared_failures import record_cleared_turn_failure
 from app.services.creation_thread_titles import conversation_revision_matches
 from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.device_render import (
@@ -532,6 +533,7 @@ async def prepare_render_retry(
     db.add(approval)
     await db.flush()
     execution.result = {**execution.result, "approval_id": str(approval.id)}
+    record_cleared_turn_failure(turn)
     turn.status = "awaiting_approval"
     turn.error = None
     turn.completed_at = None

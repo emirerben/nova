@@ -36,6 +36,9 @@ Failure modes (written before the code):
   does, so leaving them unclassified counts a held-back draft as a success;
 * the strategy check's "Should I make a simpler version?" refusal is stamped `refused` while the
   commit gate stamps the same question `blocked`, so one code shows up as two reasons;
+* the editor copilot's own refusals ("I can't do that", a stale or failed pass, a no-op) return a
+  `recovery` reply with no code, so they are pooled with six unrelated causes under
+  `unclassified_recovery` and the top-reasons list cannot tell them apart;
 * a message that is no creation request (the same text sent again, a status question) is a
   completed turn with no code, so it inflates both attempts and successes.
 """
@@ -47,6 +50,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import update
@@ -581,3 +585,63 @@ async def test_change_my_request_after_a_held_draft_is_not_a_creation_attempt(
         report = await creation_health(db, days=1, now=day)
     assert report["turns"]["attempts"] == 0
     assert report["top_failure_reasons"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        ("unsupported", ("refused", "editor_unsupported")),
+        ("stale", ("refused", "editor_stale")),
+        ("failed", ("refused", "editor_failed")),
+        ("no_effect", ("refused", "editor_no_effect")),
+        ("clarification", None),
+    ],
+)
+async def test_each_editor_copilot_refusal_records_its_own_code(
+    monkeypatch: pytest.MonkeyPatch, outcome: str, expected: tuple[str, str] | None
+) -> None:
+    monkeypatch.setattr(
+        planner,
+        "_load_editor_target",
+        AsyncMock(
+            return_value=planner._EditorTarget(job_id=uuid.uuid4(), snapshot={}, conversation=[])
+        ),
+    )
+    copilot = SimpleNamespace(ops=[], outcome=outcome, reply="That is not something I can do.")
+    monkeypatch.setattr(planner, "run_copilot_turn", AsyncMock(return_value=copilot))
+    plan = await planner._plan_editor_revision(
+        SimpleNamespace(rollback=AsyncMock()),
+        thread_id=uuid.uuid4(),
+        item=SimpleNamespace(id=uuid.uuid4()),
+        user_message="make it pop",
+    )
+    assert plan is not None
+
+    turn_id = await _run_case(
+        monkeypatch,
+        PlannedKriaTurn(plan=plan, manifest_hash="a" * 64, context_hash="b" * 64),
+        _unique_day(),
+    )
+
+    with sync_session() as db:
+        recorded = (
+            (db.get(CreatorAgentTurn, turn_id).plan_json or {}).get("diagnostics") or {}
+        ).get("outcome")
+    assert (
+        (recorded is None)
+        if expected is None
+        else ((recorded["kind"], recorded["code"]) == expected)
+    )
+
+
+@pytest.mark.parametrize(
+    "miss", ["render_in_flight", "editor_state_stale", "failed_draft_unavailable", "no_render"]
+)
+def test_each_editor_target_miss_records_its_own_recovery_code(miss: str) -> None:
+    token = planner._editor_target_miss.set(miss)
+    try:
+        planned = planner._editor_target_recovery(_manifest())
+    finally:
+        planner._editor_target_miss.reset(token)
+    assert read_outcome(planned.plan.diagnostics) == ("recovery", f"editor_target_{miss}")

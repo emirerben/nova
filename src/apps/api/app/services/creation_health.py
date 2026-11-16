@@ -28,6 +28,10 @@ out of the rate.
   and report a creator's choice as a system fault.
 - failed: `status = 'failed'`, with `error.code` (any other code, including an Approve tap the
   system could not honour: `approval_target_stale`, a draft that was not ready).
+  A failed turn the creator retries (the Retry on a failed Create video reuses the turn row and
+  resets it) logs its code first (`cleared_failures` on the turn's plan diagnostics), and that
+  failure counts as its own failed attempt on the UTC day it was recorded; the retry itself is
+  the row's own attempt, so a past day's failed count never drops because of a retry.
 
 Render attempt. One `jobs` row created in the window, counted by its current outcome and its
 creation day, plus every failure a retry of that same Job erased (below). `cancelled` and `draft`
@@ -60,7 +64,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import SYNTHETIC_USER_ID
 from app.kria.turn_outcome import ABANDONED_DRAFT_CODES
 from app.models import CreatorAgentTurn, Job
-from app.services.cleared_failures import CLEARED_FAILURES_FIELD
+from app.services.cleared_failures import CLEARED_FAILURES_FIELD, UNKNOWN_TURN_FAILURE
 from app.services.job_failure_reasons import JOB_FAILURE_COPY
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY, JobStatus
 
@@ -109,8 +113,6 @@ _RENDER_DEVICE_STATUS = JobStatus.AWAITING_DEVICE.value
 _RENDER_NOT_AN_ATTEMPT = (JobStatus.CANCELLED.value, JobStatus.DRAFT.value)
 _CLEARED_SCAN_SKEW = timedelta(minutes=5)
 
-UNKNOWN_TURN_FAILURE = "unknown_failure"
-
 DEFINITIONS: dict[str, str] = {
     "turn_attempt": (
         "One runtime-v2 chat turn created in the window (UTC day). A creator message is one turn, "
@@ -119,7 +121,9 @@ DEFINITIONS: dict[str, str] = {
         "with the superseded outcome (a newer message arrived mid-turn), are not attempts; neither "
         "are inert turns (the same text sent again with a new client event id, a status or help "
         "question: answered without planning anything). Turns still running are in_progress and "
-        "left out of the rate."
+        "left out of the rate. A failed turn the creator retries logs its failure first and "
+        "counts it as its own failed attempt on the day it was recorded; the retry is the turn's "
+        "own attempt."
     ),
     "turn_success": (
         "The turn delivered its answer or draft and recorded no outcome code. refused, blocked "
@@ -242,6 +246,33 @@ async def _render_rows(
     return [(d, b, c, int(n)) for d, b, c, n in rows.all()]
 
 
+def _count_log_entries(logs: Any, since: datetime, until: datetime) -> list[tuple[date, str, int]]:
+    counts: Counter[tuple[date, str]] = Counter()
+    for (log,) in logs.all():
+        for entry in log if isinstance(log, list) else []:
+            at = _entry_time(entry)
+            if at is not None and since <= at < until:
+                counts[(at.date(), str(entry.get("reason") or "no_reason"))] += 1
+    return [(day, reason, n) for (day, reason), n in counts.items()]
+
+
+async def _cleared_turn_failure_rows(
+    db: AsyncSession, since: datetime, until: datetime
+) -> list[tuple[date, str, str | None, int]]:
+    log = CreatorAgentTurn.plan_json["diagnostics"][CLEARED_FAILURES_FIELD]
+    outcome_kind = CreatorAgentTurn.plan_json["diagnostics"]["outcome"]["kind"].astext
+    logs = await db.execute(
+        select(log).where(
+            CreatorAgentTurn.updated_at >= since - _CLEARED_SCAN_SKEW,
+            log.is_not(None),
+            CreatorAgentTurn.status.not_in(TURN_NOT_AN_ATTEMPT),
+            or_(outcome_kind.is_(None), outcome_kind.not_in(NOT_AN_ATTEMPT_OUTCOMES)),
+        )
+    )
+    counted = _count_log_entries(logs, since, until)
+    return [(day, TURN_FAILED, reason, n) for day, reason, n in counted]
+
+
 async def _cleared_failure_rows(
     db: AsyncSession, since: datetime, until: datetime
 ) -> list[tuple[date, str, str | None, int]]:
@@ -255,13 +286,7 @@ async def _cleared_failure_rows(
             Job.user_id != SYNTHETIC_USER_ID,
         )
     )
-    counts: Counter[tuple[date, str]] = Counter()
-    for (log,) in logs.all():
-        for entry in log if isinstance(log, list) else []:
-            at = _entry_time(entry)
-            if at is not None and since <= at < until:
-                counts[(at.date(), str(entry.get("reason") or "no_reason"))] += 1
-    return [(day, "failed", reason, n) for (day, reason), n in counts.items()]
+    return [(day, "failed", reason, n) for day, reason, n in _count_log_entries(logs, since, until)]
 
 
 def _entry_time(entry: Any) -> datetime | None:
@@ -301,7 +326,10 @@ async def creation_health(
     now = now or datetime.now(UTC)
     since, until, window_days = _window(days, now)
     stages = {
-        "turns": await _turn_rows(db, since, until),
+        "turns": [
+            *await _turn_rows(db, since, until),
+            *await _cleared_turn_failure_rows(db, since, until),
+        ],
         "renders": [
             *await _render_rows(db, since, until),
             *await _cleared_failure_rows(db, since, until),
