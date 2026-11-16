@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.254.0] - 2026-11-16
+
+### Changed
+- fix(kria): degrade late text gates instead of failing the approved video (KRI-1376) (#2314) <!-- release-pr: 2314 -->
+
 ## [0.88.253.0] - 2026-11-16
 
 ### Added
