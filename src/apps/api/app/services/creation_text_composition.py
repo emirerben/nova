@@ -44,7 +44,7 @@ from app.services.creation_text_degrade import (
     literal_ops,
     shrink,
 )
-from app.services.editor_limits import FRAME_S
+from app.services.editor_limits import FRAME_S, MIN_TEXT_PIECE_S, TEXT_PIECE_TOLERANCE_S
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
 log = structlog.get_logger()
@@ -283,8 +283,8 @@ def _windows_in_video(raw_text: str, snapshot: Mapping[str, Any] | None) -> str:
     refused both of her labels as missing a detail. A clip the cut plays once has exactly one
     window, so a missing bound is that window's; a clip it plays twice or not at all is left
     for the parser to refuse. A window past either end of the video is cut to the video (it
-    ended 0.04 s past 20.003 s there), unless nothing of it is inside, which the replay still
-    rejects.
+    ended 0.04 s past 20.003 s there), unless less than one frame of it is inside, which the
+    replay still rejects.
     """
     try:
         data = json.loads(raw_text)
@@ -316,7 +316,11 @@ def _windows_in_video(raw_text: str, snapshot: Mapping[str, Any] | None) -> str:
         inside = [None if value is None else min(max(value, 0.0), total) for value in (start, end)]
         if total <= 0 or inside == [start, end]:
             continue
-        if start is not None and end is not None and not inside[0] < inside[1]:
+        if (
+            start is not None
+            and end is not None
+            and inside[1] - inside[0] < MIN_TEXT_PIECE_S - TEXT_PIECE_TOLERANCE_S
+        ):
             continue
         for key, value in zip(("start_s", "end_s"), inside, strict=True):
             if value is not None:
@@ -1778,8 +1782,6 @@ def _shared_span(owned: list[_ServerTimedSequence], total: float) -> tuple[float
     (`_check_research_layers`); each one's pieces share the span equally. Words that cannot be
     read one at a time inside the video are reported, never squeezed into flicker.
     """
-    from app.services.editor_limits import MIN_TEXT_PIECE_S  # noqa: PLC0415
-
     longest = max(len(item.words) for item in owned)
     needed = longest * MIN_TEXT_PIECE_S
     if needed > total + 1e-6:
@@ -2521,15 +2523,19 @@ def _compose_creation_text(
         unmet is not None
         and not degraded.ops
         and (
-            output.rejection_reasons
+            any(row.get("op") == "bundle" for row in output.rejection_reasons)
             or (
-                text_requirements is not None and not _meets_a_text_ask(composed, text_requirements)
+                not _meets_a_text_ask(composed, text_requirements)
+                if text_requirements is not None
+                else bool(output.rejection_reasons)
             )
         )
     ):
-        # Nothing the composer wrote renders, and it refused its whole answer or none of her
-        # text asks is on screen: the pass failed as a whole, not in one part. Without a brief
-        # (the draft's dry run) only a refused answer is known to be whole.
+        # Nothing the composer wrote renders, and the parser refused its answer as a whole (a
+        # ``bundle`` rejection: over the op limit, a broken atomic change) or none of her text
+        # asks is on screen: the pass failed as a whole, not in one part. With her words on
+        # screen an op refused on its own is one item (prod fba2c864: one null highlight).
+        # Without a brief (the draft's dry run) her asks are unknown, so any refusal is whole.
         raise unmet
     drops.extend(degraded.drops)
     drops.extend(_check_editorial_text(snapshot, composed))
