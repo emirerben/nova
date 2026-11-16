@@ -6219,22 +6219,6 @@
         }
       }
     },
-    "All captions in this video" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Alle Untertitel in diesem Video"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bu videodaki tüm altyazılar"
-          }
-        }
-      }
-    },
     "All text" : {
       "localizations" : {
         "de" : {
@@ -6871,18 +6855,34 @@
         }
       }
     },
-    "Apply this caption change" : {
+    "Apply to all" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Diese Untertitel-Änderung anwenden"
+            "state" : "needs_review",
+            "value" : "Auf alle anwenden"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bu altyazı değişikliğini uygula"
+            "state" : "needs_review",
+            "value" : "Tümüne uygula"
+          }
+        }
+      }
+    },
+    "Apply to all captions" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf alle Untertitel anwenden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tüm altyazılara uygula"
           }
         }
       }
@@ -9935,22 +9935,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Düzenlemene koymak için Fotoğraflar’dan veya Dosyalar’dan medya seç."
-          }
-        }
-      }
-    },
-    "Choose one caption or all. Only the changed size or position is applied. Other styling stays unchanged." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wähl einen Untertitel oder alle. Nur die geänderte Größe oder Position wird angewendet. Der restliche Stil bleibt unverändert."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bir altyazı veya hepsini seç. Yalnızca değiştirilen boyut ya da konum uygulanır. Diğer stil aynı kalır."
           }
         }
       }
@@ -18738,22 +18722,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Açıklamayı 2.200 karakterin altında tut."
-          }
-        }
-      }
-    },
-    "Keep this caption only" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nur diesen Untertitel behalten"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yalnızca bu altyazıyı tut"
           }
         }
       }

@@ -388,6 +388,8 @@ def needs_localizing(literal: _Literal) -> bool:
     value = literal.value
     if not looks_like_prose(value) or CODE_LIKE.match(value):
         return False
+    if re.search(r"(?:[A-Za-z]\w*:\\\((?:[^()]|\([^()]*\))*\);){2}", value):
+        return False  # "name:\(value);name:\(value)" diagnostics read by UI tests, never shown as words
     prefix = literal.line_prefix.strip()
     if prefix.startswith("case ") and "return" not in prefix:
         return False  # match patterns compare against server values
