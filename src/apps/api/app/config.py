@@ -1545,21 +1545,20 @@ class Settings(BaseSettings):
     # secrets set DESCRIBED_POPIN_NAMES_ENABLED=false --app nova-video` + restart (api + worker).
     described_popin_names_enabled: bool = True
 
-    # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
-    # media only, "ok") takes the language of the creator's latest message typed in another of
-    # their chats before the device language (`reply_language.creator_typed_language`). Default
-    # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
+    # Green 5 (2026-11-04): a chat with no stored language yet starts from the stored language of
+    # the creator's latest other chat before the device language
+    # (`reply_language.creator_stored_language`; no message is re-read). Default TRUE; false +
+    # restart (api) = device language only (KRI-784).
     kria_reply_language_history_enabled: bool = True
     # KRI-1362 (B): German chat replies. Chat sentences come from app/kria/copy/de.json, keyed
     # by the English sentence (missing line = English); German is detected from the creator's
     # words and the device language, and the models are told to reply in German. Default
     # FALSE until a German speaker has reviewed de.json; false = en/tr only, byte-identical.
     kria_german_replies_enabled: bool = False
-    # KRI-1363: the chat language follows only the words the creator says to Kria. Quoted
-    # text and a typed answer to a wording question are text for the video and never move
-    # the chat to the video's language; an established chat moves only on a message with no
-    # word of its language. Default TRUE; false + restart (api) = the previous detector,
-    # byte-identical.
+    # KRI-1363: the runtime-v1 (web) chat-language detector reads only the words the creator
+    # says to Kria: quoted text is text for the video. Runtime-v2 (Kria) chats never score
+    # words (their model reports `conversation_language`). Default TRUE; false + restart
+    # (api) = the previous detector, byte-identical.
     kria_reply_language_own_words_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,

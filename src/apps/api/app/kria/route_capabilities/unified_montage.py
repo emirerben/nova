@@ -16,6 +16,7 @@ from app.kria.reply_language import say
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._lines import direction_line, pacing_line
 from app.kria.route_capabilities._types import (
+    KNOWN_GAP,
     Applied,
     AskDecline,
     Handling,
@@ -269,3 +270,10 @@ def _crossfades(strategy: Mapping[str, Any]) -> str | None:
 
 
 NOTICES = {"transitions": _crossfades}
+
+# Planner-settable fields this route's code never reads and its table does not mention: today a
+# value the planner sets here is dropped without a word (KRI-1429). Kept equal to the code scan by
+# `tests/kria/test_route_field_coverage.py`; delete an entry when the field is read or listed.
+UNREAD_DECLARED: dict[str, str] = {
+    "split_screen": KNOWN_GAP,
+}

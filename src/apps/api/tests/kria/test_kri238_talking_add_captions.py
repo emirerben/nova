@@ -60,7 +60,7 @@ class _SameAnswerClient:
 
 @pytest.mark.asyncio
 async def test_add_captions_on_one_clip_phone_talking_project_proposes_captions(
-    monkeypatch: pytest.MonkeyPatch, prod_profile
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover
 ) -> None:
     client = _SameAnswerClient()
     monkeypatch.setattr(planner, "default_client", lambda: client)
@@ -83,7 +83,7 @@ async def test_add_captions_on_one_clip_phone_talking_project_proposes_captions(
     ids=["no-scope", "no-scope-no-ids"],
 )
 async def test_flag_on_answer_without_media_scope_still_captions_the_clip(
-    monkeypatch: pytest.MonkeyPatch, prod_profile, dropped: tuple[str, ...]
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover, dropped: tuple[str, ...]
 ) -> None:
     # With CLIP_INTENTS_ENABLED on, the live Main Creator left `media_scope` out
     # of this answer on every flag-on eval run (2026-10-01 rollout). Only "all"
@@ -109,7 +109,7 @@ async def test_flag_on_answer_without_media_scope_still_captions_the_clip(
 
 @pytest.mark.asyncio
 async def test_long_thread_sends_the_main_creator_its_bounded_latest_history(
-    monkeypatch: pytest.MonkeyPatch, prod_profile
+    monkeypatch: pytest.MonkeyPatch, prod_profile_pre_cutover
 ) -> None:
     # Prod thread e798bda2 failed every turn once it held more than 20 chat
     # messages: the planner loaded 24 and the Main Creator input allows 20.

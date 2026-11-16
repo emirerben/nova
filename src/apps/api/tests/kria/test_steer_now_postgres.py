@@ -15,6 +15,7 @@ this can fail, and which test pins each, are in docs/pipelines/steer-now.md.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -392,7 +393,9 @@ async def test_green5_steer_now_gives_one_card_for_the_typed_request(monkeypatch
         if user_message == GREEN5_CHIP:
             typed.append(await _send(user_id, thread_id, GREEN5_PROMPT, locale="tr-TR"))
             stops.append(await _steer(user_id, thread_id, chip.turn_id))
-        return _card_plan()
+            return _card_plan()
+        # The Main Creator reads the typed request and reports English (`conversation_language`).
+        return dataclasses.replace(_card_plan(), conversation_language="en")
 
     monkeypatch.setattr(rt, "_plan_with_live_agent", _planner)
     chip_run = await _run_turn(chip.turn_id)
@@ -407,14 +410,16 @@ async def test_green5_steer_now_gives_one_card_for_the_typed_request(monkeypatch
     assert chip_run["status"] == "ignored"
     assert _status(chip.turn_id) == "cancelled"
     assert _events(thread_id, "approval_requested") == []
-    # The chat says honestly what happened, in the chat's language (English after the request).
+    # The chat says honestly what happened, in the chat's language so far: no model has read the
+    # typed request yet, so the stop line keeps the device's Turkish; the reply that follows is
+    # the model's English.
     stop = _events(thread_id, "turn_cancelled")[-1]
     assert stop.payload["steered_to_turn_id"] == typed[0].turn_id
     line = _events(thread_id, "status_update")[-1]
     assert (line.role, line.payload["turn_id"], line.content) == (
         "assistant",
         chip.turn_id,
-        STOP_LINE_EN,
+        STOP_LINE_TR,
     )
     assert _status(typed[0].turn_id) == "pending"
 

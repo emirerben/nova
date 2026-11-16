@@ -327,9 +327,10 @@ async def test_item_context_passes_the_gate_through(prod_profile) -> None:
 
     async def _resolve(**kwargs):
         empty = MagicMock()
-        empty.scalars.return_value = []
+        empty.scalars.return_value.all.return_value = []
         db = AsyncMock()
-        db.execute.side_effect = [empty, empty, empty]
+        # Production's IOS_NATIVE_DEVICE_ONLY_ENABLED adds the thread-state read.
+        db.execute.return_value = empty
         manifest, _ = await creator_sessions.resolve_item_creator_context(
             db, item, persona=persona, **kwargs
         )

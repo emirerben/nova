@@ -624,30 +624,19 @@ def check_title_fit(fx: dict) -> dict:
 
 
 def _prod_flags() -> contextlib.ExitStack:
+    """The production settings snapshot (`tests/prod_flags.snapshot.json`), patched in."""
     from app.config import settings
 
+    if str(API) not in sys.path:
+        sys.path.insert(0, str(API))
+    from tests._prod_profile import prod_setting_overrides
+
     stack = contextlib.ExitStack()
-    flags = {
-        "phone_rendering_enabled": True,
-        "phone_render_user_ids": [],
-        "kria_runtime_v2_phone_enabled": True,
-        "kria_runtime_v2_phone_user_ids": [],
-        "guided_edit_capability_enabled": True,
-        "subtitled_archetype_enabled": True,
-        "clip_intents_enabled": True,
-        "clip_facts_enabled": True,
-        "kria_creative_brief_enabled": True,
-        "kria_creative_brief_user_ids": [],
-        "kria_brief_binding_enabled": True,
-        "kria_brief_binding_user_ids": [],
-        "kria_choice_questions_enabled": True,
-        "kria_plan_authority_enabled": True,
-        # The clip-analysis wait polls storage and the model; the clips here are already analysed.
-        "kria_clip_understanding_enabled": False,
-        "phone_render_verified_features": ["positionedText", "animatedText"],
-    }
-    for name, value in flags.items():
+    for name, value in prod_setting_overrides().items():
         stack.enter_context(patch.object(settings, name, value))
+    stack.enter_context(patch.object(settings, "phone_render_user_ids", []))
+    # The clip-analysis wait polls storage and the model; the clips here are already analysed.
+    stack.enter_context(patch.object(settings, "kria_clip_understanding_enabled", False))
     return stack
 
 

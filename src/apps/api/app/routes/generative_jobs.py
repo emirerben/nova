@@ -1193,6 +1193,13 @@ class TimelineSlotOut(BaseModel):
 
     model_config = {"extra": "allow"}
 
+    @field_validator("look_preset", mode="before")
+    @classmethod
+    def a_missing_look_is_no_look(cls, value: object) -> object:
+        # An edit saved before Save normalized a new placement's look holds null, and a saved
+        # edit is read back as its draft rows. A 500 here leaves the editor loading forever.
+        return "none" if value is None else value
+
 
 class NativeTimelineSourceOut(BaseModel):
     """An authorized original source; analysis proxies are never playback inputs."""

@@ -2448,6 +2448,10 @@ class AgentRun(Base):
     cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Behavioural fallbacks the run's output reported (KRI-1429): comma-joined kinds from
+    # `app.agents._fallback.FallbackKind`, NULL for a clean run. Not the provider-model fallback
+    # (`outcome = 'ok_fallback'`).
+    fallback_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     creator_agent_session: Mapped["CreatorAgentSession | None"] = relationship(

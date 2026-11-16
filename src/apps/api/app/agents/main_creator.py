@@ -15,7 +15,9 @@ from typing import Any, ClassVar, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic.json_schema import SkipJsonSchema
 
+from app.agents._fallback import FallbackOutcome
 from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
@@ -42,7 +44,7 @@ from app.agents.model_registry import cross_provider_fallback
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
 from app.kria.brief import LONG_REQUEST_MAX_UPDATES, BriefUpdate, parse_brief_updates
-from app.kria.reply_language import prompt_language_line
+from app.kria.reply_language import conversation_language_line, model_language
 from app.kria.take_trim import refile_take_trim
 from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
 from app.pipeline.phone_talking_cutaways import HOOK_FREE_S, MAX_WINDOW_S, TAIL_FREE_S
@@ -1441,6 +1443,17 @@ class MainCreatorOutput(BaseModel):
     creative_decision: CreativeCopyDecision | None = Field(
         default=None, exclude_if=lambda v: v is None
     )
+    # The language the creator writes to Kria in, read by this model from their own words
+    # (never the video's lyrics, titles or quotes). None = could not tell, or not offered now;
+    # the chat then keeps its stored language (app.kria.reply_language).
+    conversation_language: Literal["en", "tr", "de"] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+    # KRI-1429: what the parse boundary dropped from an answer that otherwise stood (a story plan
+    # that cannot run on this edit). SERVER-owned: out of the model-facing schema and out of every
+    # dump, so no stored or wire form of an answer changes. The runtime reads the attribute and
+    # stores the kinds on the `agent_run` row; the fleet report shows the rate per agent.
+    fallbacks: SkipJsonSchema[list[FallbackOutcome]] = Field(default_factory=list, exclude=True)
 
 
 class CreativeCopyDecision(BaseModel):
@@ -1700,17 +1713,22 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n\nFor newly authored audience-facing hook/title copy only "
                 "(not the chat reply): " + turkish_audience_instruction("tr")
             )
-        # KRI-520: the reply-language instruction goes last, where it wins over the
-        # English examples above. "" for English/unknown: byte-identical prompt.
-        language_line = prompt_language_line(input.reply_language)
+        # The chat-language instruction follows the turn, where it wins over the English
+        # examples above (only the per-turn server note and changed-request section follow).
+        # The stored language is context only: the model reports the language the creator
+        # writes in. "" with the reply-language kill switch off.
+        language_line = conversation_language_line(input.reply_language)
+        if language_line:
+            prompt = f"{prompt.rstrip(chr(10))}\n\n{language_line}\n"
         if input.server_note:
             prompt = f"{prompt.rstrip(chr(10))}\n\nSERVER CHECK\n{input.server_note}\n"
         if input.changes_request and input.brief_enabled:
             prompt = f"{prompt.rstrip(chr(10))}\n\n{CHANGED_REQUEST_SECTION}\n"
-        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
+        return prompt
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
         self._schema_feedback = ""
+        fallbacks: list[FallbackOutcome] = []
         try:
             data = json.loads(raw_text)
             if not isinstance(data, dict):
@@ -1718,6 +1736,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = _hoist_misplaced_declarations(data)
             data = _hoist_misplaced_brief_updates(data)
             data = _repair_creative_decision(data)
+            reported_language = data.get("conversation_language")
+            if isinstance(data.get("action"), dict) and "conversation_language" in data["action"]:
+                # Written inside `action` (extra="forbid"): read it there instead of a retry.
+                action_data = dict(data["action"])
+                nested_language = action_data.pop("conversation_language")
+                reported_language = reported_language or nested_language
+                data = {**data, "action": action_data}
             raw_action = _repair_action_envelope(data.get("action"))
             raw_action = _repair_story_structure(raw_action)
             if isinstance(raw_action, dict) and raw_action.get("kind") == "propose_strategy":
@@ -1919,6 +1944,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                                 ),
                             )
                             strategy = strategy.model_copy(update={"editorial_plan": None})
+                            if not fallbacks:  # `finish` can run twice; one record per answer
+                                fallbacks.append(
+                                    FallbackOutcome(
+                                        kind="editorial_plan_dropped",
+                                        detail=",".join(misfit)[:120],
+                                    )
+                                )
                     return strategy
 
                 unrenderable: list[str] = []
@@ -1958,6 +1990,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 and data.get("delegates_all_choices") is True
                 and not brief_updates,
                 starts_fresh=input.brief_enabled and data.get("starts_fresh") is True,
+                # Unsupported or disabled codes ("xx", "de" with German off) are None, not a
+                # schema retry: the chat keeps its stored language.
+                conversation_language=model_language(reported_language),
+                fallbacks=fallbacks,
             )
         except ValidationError as exc:
             # Tell the retry which contract fields failed, without echoing

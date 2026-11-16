@@ -75,20 +75,31 @@ def _state_and_last_reply(thread_id: uuid.UUID) -> tuple[dict, str | None]:
 
 
 @pytest.mark.asyncio
-async def test_turkish_status_question_is_answered_in_turkish_and_remembered() -> None:
+async def test_a_status_question_is_answered_in_the_stored_language() -> None:
+    """An instant reply (no model reads it) uses the chat's stored language; no word is scored."""
     user_id, thread_id, _ = _seed_runtime_project()
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        thread.state = {**(thread.state or {}), "reply_language": "tr"}
+        db.commit()
 
-    accepted = await _send(user_id, thread_id, "Nasıl gidiyor?", locale="en-US")
+    accepted = await _send(user_id, thread_id, "Status update", locale="en-US")
 
     assert accepted.status == "completed"
     state, reply = _state_and_last_reply(thread_id)
     assert state["reply_language"] == "tr"
     assert reply == "Şu anda devam eden bir düzenleme yok. Projenin son hâli kaydedildi."
 
-    # A tap-sent stock sentence and an English device keep the chat Turkish.
-    await _send(user_id, thread_id, "Suggest an edit.", locale="en-US")
-    state, _ = _state_and_last_reply(thread_id)
-    assert state["reply_language"] == "tr"
+
+@pytest.mark.asyncio
+async def test_a_new_chat_status_question_follows_the_device_not_its_words() -> None:
+    user_id, thread_id, _ = _seed_runtime_project()
+
+    await _send(user_id, thread_id, "Nasıl gidiyor?", locale="en-US")
+
+    state, reply = _state_and_last_reply(thread_id)
+    assert state["reply_language"] == "en"
+    assert reply == "There’s no edit running right now. Your latest project state is saved."
 
 
 @pytest.mark.asyncio
@@ -109,11 +120,11 @@ async def test_english_chat_is_unchanged(monkeypatch: pytest.MonkeyPatch) -> Non
     await _send(user_id, thread_id, "Status update")
 
     state, reply = _state_and_last_reply(thread_id)
-    assert state["reply_language"] == "en"
+    assert "reply_language" not in state  # nothing told: no device, no other chat
     assert reply == "There’s no edit running right now. Your latest project state is saved."
 
     monkeypatch.setattr(settings, "kria_reply_language_enabled", False)
     await _send(user_id, thread_id, "Nasıl gidiyor?", locale="tr-TR")
     state, reply = _state_and_last_reply(thread_id)
-    assert state["reply_language"] == "en"  # kill switch: nothing new is stored
+    assert "reply_language" not in state  # kill switch: nothing new is stored
     assert reply == "There’s no edit running right now. Your latest project state is saved."

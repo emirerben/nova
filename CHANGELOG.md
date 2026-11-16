@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.262.0] - 2026-11-16
+
+### Changed
+- feat(agents): record behavioural fallbacks on agent_run and in the fleet report (KRI-1429) (#2372) <!-- release-pr: 2372 -->
+
+## [0.88.261.0] - 2026-11-16
+
+### Changed
+- fix(editor): save a new placement's look as none so a saved edit reopens (KRI-1500) (#2370) <!-- release-pr: 2370 -->
+
+## [0.88.260.0] - 2026-11-16
+
+### Changed
+- feat(dev-platform): replay a production creation job from its id (KRI-1375) (#2310) <!-- release-pr: 2310 -->
+
+## [0.88.259.0] - 2026-11-16
+
+### Changed
+- test(kria): fail when a planner field is dropped by a route without a card line (KRI-1429) (#2371) <!-- release-pr: 2371 -->
+
+## [0.88.258.0] - 2026-11-16
+
+### Changed
+- fix(kria): the model that reads the message decides the chat's reply language (KRI-1445) (#2368) <!-- release-pr: 2368 -->
+
 ## [0.88.257.0] - 2026-11-16
 
 ### Changed

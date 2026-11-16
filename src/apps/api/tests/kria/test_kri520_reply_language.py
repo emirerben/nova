@@ -11,6 +11,7 @@ from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
 from app.agents.main_creator import MainCreatorAgent
 from app.kria.language import is_help_question, is_paraphrase_only, is_status_question
 from app.kria.reply_language import (
+    conversation_language_line,
     current_reply_language,
     detect_chat_language,
     is_client_stock_message,
@@ -165,13 +166,16 @@ def test_prompt_line_only_for_turkish() -> None:
     assert "exactly as the creator" in line
 
 
-def test_main_creator_prompt_gets_the_line_only_for_turkish() -> None:
+def test_main_creator_prompt_gives_the_stored_language_as_context_only() -> None:
+    # The Main Creator reads the message and reports `conversation_language`; the stored
+    # language is context, never the old "write in Turkish" order.
     agent = MainCreatorAgent(None)
-    english = agent.render_prompt(_input())
-    assert agent.render_prompt(_input().model_copy(update={"reply_language": "en"})) == english
+    english = agent.render_prompt(_input().model_copy(update={"reply_language": "en"}))
     turkish = agent.render_prompt(_input().model_copy(update={"reply_language": "tr"}))
-    assert turkish.startswith(english.rstrip("\n"))
-    assert turkish.endswith(prompt_language_line("tr") + "\n")
+    assert english.endswith(conversation_language_line("en") + "\n")
+    assert turkish.endswith(conversation_language_line("tr") + "\n")
+    assert prompt_language_line("tr") not in turkish
+    assert "conversation_language" in agent.render_prompt(_input())
     assert "reply_language" not in _input().model_dump()
 
 

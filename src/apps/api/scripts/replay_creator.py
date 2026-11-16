@@ -5,6 +5,8 @@ captured source bytes into a fresh local namespace, seeds the isolated replay
 database, calls the real Creator controllers, and writes an auditable receipt.
 The default run stops after Main Creator planning.  ``--render`` is an explicit
 opt-in to proposal generation, queue dispatch, and worker rendering.
+``--thread-events`` replays a runtime-v2 chat instead: the creator's recorded
+messages go through the Kria runtime's submit and approve controllers in order.
 
 The module has no application imports at module load time.  That matters for
 the safety checks: a stale shell with production environment variables must be
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import hashlib
 import json
 import mimetypes
@@ -40,8 +43,11 @@ DEFAULT_OUTPUT_ROOT = Path("/private/tmp/nova-creator-fidelity-runs")
 EXPECTED_SOURCE_COUNT = 40
 EXPECTED_VISUAL_COUNT = 39
 LOCAL_BUCKET = "creator-fidelity-local"
+# `awaiting_device` is the success state of an iPhone job: the worker pinned the device render
+# plan and the phone renders it, so a replay has no video to wait for.
 TERMINAL_JOB_STATUSES = frozenset(
     {
+        "awaiting_device",
         "done",
         "failed",
         "processing_failed",
@@ -56,6 +62,11 @@ class ReplaySafetyError(RuntimeError):
     """Raised when a replay could escape the local-only boundary."""
 
 
+class ReplayInputError(ReplaySafetyError):
+    """The seeded inputs are not the ones production ran on: a fact about the replay's inputs,
+    never about the route, so the run stops before any model call."""
+
+
 @dataclass(frozen=True)
 class ReplayInputs:
     manifest: dict[str, Any]
@@ -67,6 +78,7 @@ class ReplayInputs:
     manifest_hash: str
     clip_analysis_cache: dict[str, dict[str, Any]]
     transcript_cache: dict[str, Any]
+    recorded_assignments: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
 
 
 def _canonical_json(value: Any) -> str:
@@ -109,6 +121,12 @@ def _safe_filename(value: object, *, field: str) -> str:
     return name
 
 
+_SCRATCH_DATABASE = re.compile(r"nova_creator_fidelity_test(?:_[a-z0-9]{1,16})?")
+# Only the dev server's port. `fly proxy 15432:5432 -a nova-db` (export-template-text-snapshots
+# runbook) puts the production cluster on localhost too, so the host alone proves nothing.
+LOCAL_POSTGRES_PORT = 5432
+
+
 def _database_target(database_url: str) -> tuple[str, str]:
     parsed = urlsplit(database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
     host = (parsed.hostname or "").lower()
@@ -117,9 +135,18 @@ def _database_target(database_url: str) -> tuple[str, str]:
         raise ReplaySafetyError("Replay database must be PostgreSQL on localhost")
     if host not in {"localhost", "127.0.0.1", "::1"}:
         raise ReplaySafetyError(f"Refusing non-local replay database host: {host or '<missing>'}")
-    if database != "nova_creator_fidelity_test":
+    if (parsed.port or LOCAL_POSTGRES_PORT) != LOCAL_POSTGRES_PORT:
+        raise ReplaySafetyError(
+            f"Refusing replay database port {parsed.port}; only the local dev server on "
+            f"{LOCAL_POSTGRES_PORT} (a tunnel such as fly proxy also listens on localhost)"
+        )
+    if parsed.query:
+        # libpq reads host, hostaddr and service from the query and they override the netloc.
+        raise ReplaySafetyError("Refusing a replay database URL with a query string")
+    if not _SCRATCH_DATABASE.fullmatch(database):
         raise ReplaySafetyError(
             f"Refusing replay database {database!r}; expected nova_creator_fidelity_test"
+            " or nova_creator_fidelity_test_<run id>"
         )
     return host, database
 
@@ -198,6 +225,37 @@ def _extract_transcript_cache(job_debug: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+RECEIPT_FIELDS = (
+    "upload_contract",
+    "manifest_identity",
+    "has_audio",
+    "duration_s",
+    "pool_source",
+    "analysis",
+    "capture",
+    "shot_id",
+    "source_filename",
+)
+
+
+def _extract_recorded_assignments(job_debug: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The upload receipts, capture time and clip analysis the approved plan recorded.
+
+    The admin item debug summarizes clip assignments without their receipts; the job's
+    brief binding keeps the full rows. Its analysis is the one production planned with, so
+    the replay reuses it instead of paying for a second analysis of the same clip. Storage
+    and media-library ids stay the replay's own: the replay seeds no library rows.
+    """
+
+    plan = (job_debug.get("job") or {}).get("assembly_plan") or {}
+    snapshot = ((plan.get("creator_brief_binding") or {}).get("media_snapshot")) or {}
+    return {
+        str(row["media_id"]): {key: row[key] for key in RECEIPT_FIELDS if key in row}
+        for row in snapshot.get("clip_assignments") or []
+        if isinstance(row, dict) and row.get("media_id")
+    }
+
+
 def _normalise_clip_analysis(raw: dict[str, Any]) -> dict[str, Any]:
     analysis = dict(raw)
     detected_subject = analysis.get("detected_subject")
@@ -215,7 +273,11 @@ def _extract_clip_analysis_cache(
         return {}
     selected = (all_candidates.get("creator_strategy") or {}).get("selected_media_ids") or []
     selected_ids = [str(value) for value in selected]
-    source_ids = {str(source.get("id")) for source in sources if source.get("kind") == "video"}
+    source_ids = {
+        str(source.get("id"))
+        for source in sources
+        if source.get("kind") == "video" and not source.get("pool")
+    }
     result: dict[str, dict[str, Any]] = {}
     for raw in cache["clip_metas"]:
         if not isinstance(raw, dict):
@@ -321,6 +383,7 @@ def load_inputs(
         manifest_hash=sha256_json(manifest),
         clip_analysis_cache=_extract_clip_analysis_cache(job_debug, sources),
         transcript_cache=_extract_transcript_cache(job_debug),
+        recorded_assignments=_extract_recorded_assignments(job_debug),
     )
 
 
@@ -380,6 +443,110 @@ def _copy_source(source: dict[str, Any], object_path: str, storage: Any) -> dict
     }
 
 
+def _event_order(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(events, key=lambda event: int(event.get("sequence") or 0))
+
+
+def _sent_from_app(
+    thread_events: list[dict[str, Any]], job_debug: dict[str, Any], sources: list[dict[str, Any]]
+) -> bool:
+    """The iPhone app sends a client protocol with its messages, but a message event may carry
+    none (job f88555bc's do not). A phone-only job, or an analysis proxy among its clips (only
+    the app uploads one), was sent from the app all the same."""
+
+    from app.kria.media_sources import is_analysis_proxy_path
+
+    plan = (job_debug.get("job") or {}).get("assembly_plan") or {}
+    return (
+        any(
+            (event.get("payload") or {}).get("client_protocol") is not None
+            for event in thread_events
+            if event.get("kind") == "user_message"
+        )
+        or plan.get("native_device_only") is True
+        or any(
+            is_analysis_proxy_path(str(source["id"]))
+            for source in sources
+            if source["kind"] == "video" and not source.get("pool")
+        )
+    )
+
+
+def _require_phone_source_receipts(assignments: list[dict[str, Any]]) -> None:
+    """Seeded analysis proxies must bind as phone sources the way production's did.
+
+    Production's turn only dispatched because its receipts bound (``bind_phone_sources``);
+    seeded rows that do not bind leave the manifest without a phone source, and the runtime
+    then answers "Add at least one clip" without a model call. That is a defect of the
+    replay's inputs, not a route result.
+    """
+
+    from app.kria.media_sources import is_analysis_proxy_path
+    from app.services.phone_sources import bind_phone_sources
+
+    paths = [str(a["gcs_path"]) for a in assignments]
+    if not any(is_analysis_proxy_path(path) for path in paths):
+        return
+    try:
+        bind_phone_sources(assignments, paths)
+    except ValueError as exc:
+        raise ReplayInputError(
+            f"The seeded clips do not bind as verified phone sources ({exc}); production's "
+            "upload receipts were not fully recovered from the job debug, so the replay would "
+            "plan without footage"
+        ) from exc
+
+
+def _with_recorded_media(
+    projection: list[dict[str, Any]], thread_events: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Each replayed medium as production's thread projected it (filename, upload receipt)."""
+
+    recorded: dict[str, dict[str, Any]] = {}
+    for event in _event_order(thread_events):
+        if event.get("kind") != "media_added":
+            continue
+        for entry in (event.get("payload") or {}).get("media") or []:
+            if isinstance(entry, dict) and entry.get("media_id"):
+                recorded[str(entry["media_id"]).removeprefix("asset-")] = entry
+    return [
+        {**entry, **recorded.get(str(entry["media_id"]).removeprefix("asset-"), {})}
+        for entry in projection
+    ]
+
+
+# Production events before the first message that the app's thread creation writes; media is
+# re-projected from the replayed sources instead of copied.
+SEEDED_THREAD_EVENTS = frozenset({"format_prompt", "action_select_format"})
+
+
+def _runtime_seed_events(
+    thread_events: list[dict[str, Any]], media: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    seeded = [{"role": "system", "event_type": "thread_created", "content": None, "payload": None}]
+    for event in _event_order(thread_events):
+        if event.get("kind") == "user_message":
+            break
+        if event.get("kind") in SEEDED_THREAD_EVENTS:
+            seeded.append(
+                {
+                    "role": str(event.get("actor") or "system"),
+                    "event_type": str(event["kind"]),
+                    "content": event.get("content"),
+                    "payload": event.get("payload"),
+                }
+            )
+    seeded.append(
+        {
+            "role": "user",
+            "event_type": "media_added",
+            "content": None,
+            "payload": {"media": media, "media_count": len(media)},
+        }
+    )
+    return seeded
+
+
 def seed_replay_database(
     *,
     inputs: ReplayInputs,
@@ -388,8 +555,15 @@ def seed_replay_database(
     thread_id: uuid.UUID,
     plan_id: uuid.UUID,
     item_id: uuid.UUID,
+    session_id: uuid.UUID | None = None,
+    thread_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Copy sources and create the minimum owned graph the real controllers need."""
+    """Copy sources and create the minimum owned graph the real controllers need.
+
+    With ``thread_events`` (a runtime-v2 production thread) the thread is a runtime-v2 one
+    with its own Creator session, set up the way the app's thread creation and media attach
+    leave it before the creator's first message.
+    """
 
     from app import storage
     from app.database import sync_session
@@ -397,6 +571,7 @@ def seed_replay_database(
         ContentPlan,
         CreationThread,
         CreationThreadEvent,
+        CreatorAgentSession,
         Persona,
         PlanItem,
         PlanItemAsset,
@@ -409,11 +584,17 @@ def seed_replay_database(
         (inputs.item_debug.get("item") or {}) if isinstance(inputs.item_debug, dict) else {}
     )
     source_debug = _source_debug_map(inputs.item_debug)
-    videos = [source for source in inputs.sources if source["kind"] == "video"]
-    images = [source for source in inputs.sources if source["kind"] == "image"]
+    videos = [
+        source for source in inputs.sources if source["kind"] == "video" and not source.get("pool")
+    ]
+    pool_sources = [
+        source
+        for source in inputs.sources
+        if source["kind"] == "image" or (source["kind"] == "video" and source.get("pool"))
+    ]
     audio = [source for source in inputs.sources if source["kind"] == "audio"]
-    if len(audio) != 1:
-        raise ReplaySafetyError("Replay requires exactly one voiceover source")
+    if len(audio) > 1:
+        raise ReplaySafetyError("Replay accepts at most one voiceover source")
 
     assignments: list[dict[str, Any]] = []
     imported: list[dict[str, Any]] = []
@@ -431,19 +612,25 @@ def seed_replay_database(
             "storage_generation": copied["generation"],
             "has_audio": None,
         }
+        assignment.update(inputs.recorded_assignments.get(source["id"], {}))
         if analysis is not None:
             assignment["analysis"] = analysis
         assignments.append(assignment)
         imported.append({"source_id": source["id"], "kind": source["kind"], **copied})
+    _require_phone_source_receipts(assignments)
 
-    voiceover = audio[0]
-    voiceover_path = f"users/{user_id}/creation-threads/{thread_id}/{voiceover['id']}"
-    voiceover_copy = _copy_source(voiceover, voiceover_path, storage)
-    voiceover_duration = _probe_duration(Path(voiceover["local_path"]))
-    imported.append({"source_id": voiceover["id"], "kind": "audio", **voiceover_copy})
+    voiceover = audio[0] if audio else None
+    voiceover_path: str | None = None
+    voiceover_copy: dict[str, Any] = {}
+    voiceover_duration: float | None = None
+    if voiceover is not None:
+        voiceover_path = f"users/{user_id}/creation-threads/{thread_id}/{voiceover['id']}"
+        voiceover_copy = _copy_source(voiceover, voiceover_path, storage)
+        voiceover_duration = _probe_duration(Path(voiceover["local_path"]))
+        imported.append({"source_id": voiceover["id"], "kind": "audio", **voiceover_copy})
 
     asset_rows: list[dict[str, Any]] = []
-    for source in images:
+    for source in pool_sources:
         asset_id = uuid.uuid5(user_id, f"replay-pool-asset:{source['id']}")
         filename = str(source.get("source_filename") or Path(source["local_path"]).name)
         safe_filename = _safe_filename(filename, field="source filename")
@@ -461,6 +648,9 @@ def seed_replay_database(
                 if isinstance(source.get("analysis"), dict)
                 else {},
                 "filename": filename,
+                "duration_s": _probe_duration(Path(source["local_path"]))
+                if source["kind"] == "video"
+                else None,
             }
         )
         imported.append({"source_id": source["id"], "kind": source["kind"], **copied})
@@ -487,14 +677,15 @@ def seed_replay_database(
         }
         for assignment, source in zip(assignments, videos, strict=True)
     ]
-    media_projection.append(
-        {
-            "media_id": voiceover["id"],
-            "kind": "audio",
-            "filename": voiceover.get("source_filename") or voiceover["id"],
-            "content_type": _content_type(voiceover),
-        }
-    )
+    if voiceover is not None:
+        media_projection.append(
+            {
+                "media_id": voiceover["id"],
+                "kind": "audio",
+                "filename": voiceover.get("source_filename") or voiceover["id"],
+                "content_type": _content_type(voiceover),
+            }
+        )
 
     with sync_session() as db:
         persona_id = uuid.uuid5(user_id, "replay-persona")
@@ -534,32 +725,64 @@ def seed_replay_database(
             clip_gcs_paths=[assignment["gcs_path"] for assignment in assignments],
             clip_assignments=assignments,
             voiceover_gcs_path=voiceover_path,
-            voiceover_generation=voiceover_copy["generation"],
+            voiceover_generation=voiceover_copy.get("generation"),
             voiceover_duration_s=voiceover_duration,
-            audio_mode="voiceover",
+            **({"audio_mode": "voiceover"} if voiceover is not None else {}),
             theme=str(old_persona.get("theme") or "") or None,
             user_edited=True,
         )
-        thread = CreationThread(
-            id=thread_id,
-            creator_id=user_id,
-            content_plan_id=plan_id,
-            active_plan_item_id=item_id,
-            title="Creator prompt fidelity replay",
-            revision=1,
-            state={
+        if thread_events is None:
+            state: dict[str, Any] = {
                 "intent": inputs.seed_description,
                 "edit_format": item_format,
                 "media": media_projection,
                 "media_count": len(media_projection),
                 "title_source": "replay",
-            },
+            }
+            seed_events = [
+                {
+                    "role": "user",
+                    "event_type": "thread_created",
+                    "content": inputs.seed_description,
+                    "payload": {"source": "local_creator_replay"},
+                }
+            ]
+            session = None
+        else:
+            media_projection = _with_recorded_media(media_projection, thread_events)
+            state = {
+                "media": media_projection,
+                "media_count": len(media_projection),
+                "edit_format": item_format,
+            }
+            if _sent_from_app(thread_events, inputs.job_debug, inputs.sources):
+                from app.services.phone_destination import with_device_intent
+
+                state = with_device_intent(state, native_client=True, user_id=user_id) or state
+            seed_events = _runtime_seed_events(thread_events, media_projection)
+            session = CreatorAgentSession(
+                id=session_id or uuid.uuid4(),
+                creator_id=user_id,
+                plan_item_id=item_id,
+                ownership_epoch=0,
+            )
+        thread = CreationThread(
+            id=thread_id,
+            creator_id=user_id,
+            runtime_version=1 if session is None else 2,
+            content_plan_id=plan_id,
+            active_plan_item_id=item_id,
+            active_creator_agent_session_id=session.id if session is not None else None,
+            title="Creator prompt fidelity replay",
+            revision=len(seed_events),
+            state=state,
         )
         # The database enforces composite owner foreign keys that are not all
         # represented as ORM relationships. Flush in dependency order.
-        for row in (user, persona, plan, item, thread):
-            db.add(row)
-            db.flush()
+        for row in (user, persona, plan, item, session, thread):
+            if row is not None:
+                db.add(row)
+                db.flush()
         for row in asset_rows:
             db.add(
                 PlanItemAsset(
@@ -567,7 +790,8 @@ def seed_replay_database(
                     plan_item_id=item_id,
                     user_id=user_id,
                     gcs_path=row["object_path"],
-                    kind="image",
+                    kind=row["source"]["kind"],
+                    duration_s=row["duration_s"],
                     source_filename=row["filename"],
                     upload_content_type=row["copy"]["content_type"],
                     upload_size_bytes=row["copy"]["size"],
@@ -577,22 +801,21 @@ def seed_replay_database(
                     client_upload_id=f"replay:{row['source']['id']}",
                     aspect=float(row["aspect"]) if row["aspect"] else None,
                     analysis=row["analysis"],
+                    capture=row["source"].get("capture"),
                     status="uploaded",
                     media_status="pending",
                 )
             )
-        db.add(
-            CreationThreadEvent(
-                thread_id=thread_id,
-                sequence=0,
-                client_event_id=f"replay-seed-{user_id.hex}",
-                role="user",
-                event_type="thread_created",
-                content=inputs.seed_description,
-                payload={"source": "local_creator_replay"},
-                revision=1,
+        for sequence, event in enumerate(seed_events):
+            db.add(
+                CreationThreadEvent(
+                    thread_id=thread_id,
+                    sequence=sequence,
+                    client_event_id=f"replay-seed-{sequence}-{user_id.hex}",
+                    revision=sequence + 1,
+                    **event,
+                )
             )
-        )
         db.commit()
 
     return {
@@ -600,11 +823,18 @@ def seed_replay_database(
         "content_plan_id": str(plan_id),
         "plan_item_id": str(item_id),
         "thread_id": str(thread_id),
+        "runtime_version": 1 if session is None else 2,
+        "seed_events": [event["event_type"] for event in seed_events],
         "source_count": len(imported),
         "imported": imported,
         "cached_clip_analysis_count": len(inputs.clip_analysis_cache),
         "voiceover_duration_s": voiceover_duration,
         "storage_root": str(storage_root),
+        # Pool assets get a fresh id per run; clips keep production's media id.
+        "media_ids": {
+            f"asset-{str(row['source']['id']).removeprefix('asset-')}": f"asset-{row['id']}"
+            for row in asset_rows
+        },
     }
 
 
@@ -677,29 +907,91 @@ def analyze_replay_media(*, item_id: uuid.UUID) -> dict[str, Any]:
     }
 
 
+class MainCreatorQuestion(ReplaySafetyError):
+    """Planning stopped on a clarifying question; only the creator can answer it."""
+
+    def __init__(self, question: dict[str, Any]) -> None:
+        self.question = question
+        super().__init__(
+            "Main Creator asked a question instead of proposing a plan "
+            f"({question.get('reason_code') or 'no reason code'}): {question.get('message')}"
+        )
+
+
+PREPARING = frozenset({"queued", "analyzing", "resolving"})
+
+
+def _open_question(plan: dict[str, Any]) -> dict[str, Any] | None:
+    """The question the session is waiting on, once clip preparation has stopped feeding it."""
+
+    if (plan.get("preparation") or {}).get("status") in PREPARING:
+        return None
+    events = plan.get("events") or []
+    if not events or events[-1].get("event_type") != "assistant_question":
+        return None
+    payload = events[-1].get("payload") or {}
+    return {
+        key: payload[key]
+        for key in ("message", "reason_code", "options", "choice_question")
+        if payload.get(key)
+    }
+
+
 async def run_creator_planning(
     *,
     item_id: uuid.UUID,
     seed_description: str,
     user_id: uuid.UUID,
+    timeout_s: float = 600.0,
+    poll_interval_s: float = 5.0,
 ) -> dict[str, Any]:
+    """Start the Main Creator session, then wait for the worker to produce a pending plan."""
+
+    from starlette.requests import Request
+
     from app.database import AsyncSessionLocal
     from app.models import User
-    from app.routes.creator_agent import StartBody, start_creator_session_controller
+    from app.routes.creator_agent import (
+        StartBody,
+        get_creator_session,
+        start_creator_session_controller,
+    )
 
     async with AsyncSessionLocal() as db:
         user = await db.get(User, user_id)
         if user is None:
             raise ReplaySafetyError("Seeded replay user disappeared before planning")
         started = await start_creator_session_controller(
-            None,
+            Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
             str(item_id),
             StartBody(message=seed_description, client_event_id=f"replay-plan-{uuid.uuid4().hex}"),
             user,
             db,
             allow_chat=True,
         )
-        return started.model_dump(mode="json")
+    plan = started.model_dump(mode="json")
+    deadline = time.monotonic() + timeout_s
+    while not plan.get("pending_plan"):
+        if plan.get("status") in {"failed", "cancelled"}:
+            raise ReplaySafetyError(f"Main Creator planning ended as {plan['status']}")
+        question = _open_question(plan)
+        if question is not None:
+            raise MainCreatorQuestion(question)
+        if time.monotonic() > deadline:
+            raise ReplayStalled(
+                {
+                    "lease_lapsed": False,
+                    "session_status": plan.get("status"),
+                    "reason": f"Timed out after {timeout_s:.0f} s waiting for a Main Creator plan",
+                }
+            )
+        await asyncio.sleep(min(max(poll_interval_s, 0.2), 30.0))
+        async with AsyncSessionLocal() as db:
+            user = await db.get(User, user_id)
+            polled = await get_creator_session(str(item_id), user, db)
+        if polled is not None:
+            plan = polled.model_dump(mode="json")
+    return plan
 
 
 async def confirm_creator_plan(
@@ -735,9 +1027,851 @@ async def confirm_creator_plan(
         return confirmed.model_dump(mode="json")
 
 
+TURN_SETTLED = frozenset({"awaiting_approval", "completed", "failed", "cancelled", "superseded"})
+# What the app sends beside the text of a message; the user_message event stores each one.
+ANSWER_FIELDS = (
+    "clip_selection",
+    "choice_selection",
+    "song_order",
+    "song_range",
+    "moment_order",
+    "protected_region",
+    "scope",
+    "manual_edits",
+)
+
+
+class TurnDiverged(ReplaySafetyError):
+    """The replayed turn ended where production's did not, so later turns cannot follow it."""
+
+    def __init__(self, detail: dict[str, Any]) -> None:
+        self.detail = detail
+        super().__init__(detail["reason"])
+
+
+class ReplayStalled(ReplaySafetyError):
+    """The replay stopped waiting: a statement about the local run, not about the route."""
+
+    def __init__(self, detail: dict[str, Any]) -> None:
+        self.detail = detail
+        super().__init__(detail["reason"])
+
+
+# The question each structured answer names. The server mints every question id (uuid4), so a
+# recorded id never names a question of the replay: the answer is sent to the replay's own open
+# question of the same kind, and only when that question offers what the creator tapped.
+ANSWER_QUESTION_KEYS = {
+    "clip_selection": "clip_question",
+    "choice_selection": "choice_question",
+    "song_order": "song_order_question",
+    "song_range": "song_range_question",
+    "moment_order": "moment_order_question",
+}
+
+
+@dataclass
+class ReplayIds:
+    """Production ids the recorded messages name, and what each one is in the replay.
+
+    ``turns`` grows as messages are replayed; ``media`` holds every medium whose replay id
+    differs (pool assets are re-minted per run; clips keep production's media id).
+    """
+
+    questions: dict[str, tuple[str, dict[str, Any]]]
+    media: dict[str, str]
+    turns: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+def production_questions(
+    thread_events: list[dict[str, Any]],
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    """Every question production's thread asked, by question id: (payload key, question)."""
+
+    asked: dict[str, tuple[str, dict[str, Any]]] = {}
+    for event in _event_order(thread_events):
+        payload = event.get("payload") or {}
+        for key in ANSWER_QUESTION_KEYS.values():
+            question = payload.get(key)
+            if isinstance(question, dict) and question.get("question_id"):
+                asked[str(question["question_id"])] = (key, question)
+    return asked
+
+
+def _question_summary(question: dict[str, Any] | None) -> dict[str, Any] | None:
+    if question is None:
+        return None
+    summary = {
+        key: question[key] for key in ("question_id", "conflict", "kind") if question.get(key)
+    }
+    if question.get("options"):
+        summary["options"] = [o.get("key") for o in question["options"] if isinstance(o, dict)]
+    if question.get("categories"):
+        summary["categories"] = [
+            c.get("key") for c in question["categories"] if isinstance(c, dict)
+        ]
+    return summary
+
+
+def reply_shape(events: list[tuple[str, dict[str, Any]]]) -> str:
+    """What a message got back, coarse enough to compare a replay with production.
+
+    ``events`` are ``(event_type, payload)`` after the creator's message.
+    """
+
+    kinds = [kind for kind, _ in events]
+    if "approval_requested" in kinds:
+        return "approval"
+    for _, payload in events:
+        for key in ANSWER_QUESTION_KEYS.values():
+            question = payload.get(key)
+            if isinstance(question, dict):
+                label = question.get("conflict") or question.get("kind")
+                return f"{key}:{label}" if label else key
+    if "draft_applied" in kinds:
+        return "draft"
+    if "assistant_error" in kinds:
+        return "error"
+    return "reply"
+
+
+def _replay_open_question(
+    key: str, events: list[tuple[str, dict[str, Any]]]
+) -> dict[str, Any] | None:
+    """The replay thread's question an answer of this kind can target, by the runtime's rules."""
+
+    from app.services.choice_questions import latest_open_choice_question
+    from app.services.clip_selection import latest_open_clip_question
+    from app.services.creative_copy_decisions import latest_open_creative_question
+
+    if key == "clip_question":
+        return latest_open_clip_question(events)
+    if key == "choice_question":
+        return latest_open_choice_question(events) or latest_open_creative_question(events)
+    return next(
+        (
+            payload[key]
+            for role, payload in reversed(events)
+            if role == "assistant" and isinstance(payload.get(key), dict)
+        ),
+        None,
+    )
+
+
+def _with_replay_media(value: Any, media: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        return media.get(value, value)
+    if isinstance(value, list):
+        return [_with_replay_media(item, media) for item in value]
+    if isinstance(value, dict):
+        return {key: _with_replay_media(item, media) for key, item in value.items()}
+    return value
+
+
+def _why_unanswerable(
+    field: str,
+    answer: dict[str, Any],
+    asked: dict[str, Any] | None,
+    open_question: dict[str, Any] | None,
+) -> str | None:
+    key = ANSWER_QUESTION_KEYS[field]
+    if open_question is None:
+        return f"the replay has no open {key} for it to answer"
+    if asked is not None and asked.get("conflict") != open_question.get("conflict"):
+        return (
+            f"production's question was {asked.get('conflict')!r}, the replay's open one is "
+            f"{open_question.get('conflict')!r}"
+        )
+    if field == "choice_selection":
+        offered = {o.get("key") for o in open_question.get("options") or [] if isinstance(o, dict)}
+        if answer.get("option_key") not in offered:
+            return f"the replay's question does not offer {answer.get('option_key')!r}"
+    if field == "clip_selection":
+        categories = {
+            c.get("key"): c for c in open_question.get("categories") or [] if isinstance(c, dict)
+        }
+        named = [a.get("key") for a in answer.get("answers") or []] + list(
+            answer.get("none_keys") or []
+        )
+        if missing := [k for k in named if k not in categories]:
+            return f"the replay's clip question has no {', '.join(map(str, missing))}"
+        for row in answer.get("answers") or []:
+            offered = set(categories[row["key"]].get("candidate_media_ids") or [])
+            if unoffered := sorted(set(row.get("media_ids") or []) - offered):
+                return f"the replay's {row['key']!r} does not offer {', '.join(unoffered)}"
+    return None
+
+
+class AnswerUnreplayable(ReplaySafetyError):
+    def __init__(self, detail: dict[str, Any]) -> None:
+        self.detail = detail
+        super().__init__(detail["reason"])
+
+
+def remap_answer(
+    field: str,
+    answer: dict[str, Any],
+    *,
+    ids: ReplayIds,
+    replay_events: list[tuple[str, dict[str, Any]]],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The recorded answer, aimed at the replay's own question and media.
+
+    Returns the answer and, for a question answer, which production question id it replaced.
+    Raises ``AnswerUnreplayable`` when the replay's open question is not the one production's
+    creator answered: the replay's previous reply already differed from production's.
+    """
+
+    answer = _with_replay_media(answer, ids.media)
+    key = ANSWER_QUESTION_KEYS.get(field)
+    if key is None:
+        return answer, None
+    recorded_id = str(answer.get("question_id") or "")
+    asked = ids.questions.get(recorded_id, (key, None))[1]
+    open_question = _replay_open_question(key, replay_events)
+    not_asked: list[str] = []
+    if field == "clip_selection" and open_question is not None:
+        answer, not_asked = _without_unasked_categories(answer, open_question)
+    reason = _why_unanswerable(field, answer, asked, open_question)
+    if reason or open_question is None:
+        raise AnswerUnreplayable(
+            {
+                "answer": field,
+                "reason": f"The creator's {field} answered production's question {recorded_id}; "
+                f"{reason}, so the replay's previous reply already differed from production's",
+                "production_question": _question_summary(asked),
+                "replay_question": _question_summary(open_question),
+            }
+        )
+    replay_id = str(open_question["question_id"])
+    return {**answer, "question_id": replay_id}, {
+        "production_question_id": recorded_id,
+        "replay_question_id": replay_id,
+        **({"not_asked_by_replay": not_asked} if not_asked else {}),
+    }
+
+
+def _without_unasked_categories(
+    answer: dict[str, Any], question: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """The clip answer without the categories the replay's question did not ask.
+
+    The replay's server can settle a category itself (job 40684a25: it measured the
+    too-short clips and asked only the order), which is exactly what a fix may change; the
+    creator's answer to such a category has nothing left to answer. An answer naming none of
+    the replay's categories is returned whole, so it is refused as a divergence.
+    """
+
+    asked = {c.get("key") for c in question.get("categories") or [] if isinstance(c, dict)}
+    rows = [row for row in answer.get("answers") or [] if row.get("key") in asked]
+    none_keys = [key for key in answer.get("none_keys") or [] if key in asked]
+    if not rows and not none_keys:
+        return answer, []
+    dropped = [
+        str(row.get("key")) for row in answer.get("answers") or [] if row.get("key") not in asked
+    ] + [str(key) for key in answer.get("none_keys") or [] if key not in asked]
+    return {**answer, "answers": rows, "none_keys": none_keys}, dropped
+
+
+@dataclass(frozen=True)
+class RecordedTurn:
+    """One creator message of the production thread, as its user_message event recorded it."""
+
+    turn_id: str
+    message: str
+    client_protocol: int | None
+    payload: dict[str, Any]
+    approved: bool
+    # The render the approval queued and the failure code the thread showed for it, if any.
+    job_id: str | None = None
+    render_failure: str | None = None
+    # What production's thread showed after this message (`reply_shape`).
+    production_reply: str | None = None
+
+
+def _production_replies(thread_events: list[dict[str, Any]]) -> dict[str, str]:
+    """``reply_shape`` of production's events after each creator message, by turn id."""
+
+    replies: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    current: str | None = None
+    for event in _event_order(thread_events):
+        payload = event.get("payload") or {}
+        if event.get("kind") == "user_message":
+            current = str(payload.get("turn_id") or "") or None
+            if current is not None:
+                replies[current] = []
+        elif current is not None:
+            replies[current].append((str(event.get("kind")), payload))
+    return {turn_id: reply_shape(events) for turn_id, events in replies.items()}
+
+
+def recorded_turns(thread_events: list[dict[str, Any]], target_turn_id: str) -> list[RecordedTurn]:
+    """The creator's messages in order, up to the one whose approval dispatched the job."""
+
+    def by_turn(kind: str, key: str) -> dict[str, Any]:
+        return {
+            str((event.get("payload") or {}).get("turn_id")): (event.get("payload") or {}).get(key)
+            for event in _event_order(thread_events)
+            if event.get("kind") == kind
+        }
+
+    approved = by_turn("approval_approved", "approval_id")
+    queued_jobs = by_turn("render_queued", "job_id")
+    render_failures = by_turn("assistant_render_failed", "code")
+    replies = _production_replies(thread_events)
+    turns: list[RecordedTurn] = []
+    for event in _event_order(thread_events):
+        payload = event.get("payload") or {}
+        if event.get("kind") != "user_message" or not payload.get("turn_id"):
+            continue
+        protocol = payload.get("client_protocol")
+        turn = RecordedTurn(
+            turn_id=str(payload["turn_id"]),
+            message=str(event.get("content") or ""),
+            client_protocol=int(protocol) if isinstance(protocol, int) else None,
+            payload=payload,
+            approved=str(payload["turn_id"]) in approved,
+            job_id=queued_jobs.get(str(payload["turn_id"])),
+            render_failure=render_failures.get(str(payload["turn_id"])),
+            production_reply=replies.get(str(payload["turn_id"])),
+        )
+        turns.append(turn)
+        if turn.turn_id == target_turn_id:
+            if not turn.approved:
+                raise ReplaySafetyError(
+                    f"Production turn {target_turn_id} dispatched the job without a recorded "
+                    "approval; only approval-dispatched jobs can be replayed turn by turn"
+                )
+            return turns
+    raise ReplaySafetyError(f"The thread records no creator message for turn {target_turn_id}")
+
+
+def _model_fields(field: str) -> set[str] | None:
+    from typing import get_args
+
+    from pydantic import BaseModel
+
+    from app.kria.api_schemas import SubmitTurnBody
+
+    annotation = SubmitTurnBody.model_fields[field].annotation
+    model = next(
+        (
+            arg
+            for arg in get_args(annotation)
+            if isinstance(arg, type) and issubclass(arg, BaseModel)
+        ),
+        None,
+    )
+    return set(model.model_fields) if model is not None else None
+
+
+def _turn_body(
+    turn: RecordedTurn,
+    *,
+    revision: int,
+    ids: ReplayIds,
+    replay_events: list[tuple[str, dict[str, Any]]],
+) -> tuple[Any, dict[str, Any]]:
+    """The request body the app sent, with production ids mapped to the replay's.
+
+    A choice the server derived from the creator's words (``delegated``: "you choose";
+    ``reanswer``: the label of another option of a closed question) is not sent: the replay's
+    server derives it again from the same words against its own questions.
+    """
+
+    from pydantic import ValidationError
+
+    from app.kria.api_schemas import SubmitTurnBody
+
+    answers: dict[str, Any] = {}
+    sent: dict[str, Any] = {"answers": [], "remapped": {}, "rederived_from_text": []}
+    for field in ANSWER_FIELDS:
+        value = turn.payload.get(field)
+        if value is None:
+            continue
+        if field == "choice_selection" and isinstance(value, dict):
+            if value.get("delegated") or value.get("reanswer"):
+                sent["rederived_from_text"].append(field)
+                continue
+        allowed = _model_fields(field)
+        if allowed is not None and isinstance(value, dict):
+            # The server stamps its own keys onto the stored answer (`delegated`, generations).
+            value = {key: item for key, item in value.items() if key in allowed}
+        value, remapped = remap_answer(field, value, ids=ids, replay_events=replay_events)
+        if remapped is not None:
+            sent["remapped"][field] = remapped
+        answers[field] = value
+    sent["answers"] = sorted(answers)
+    link = turn.payload.get("request_outcome_link") or {}
+    context = {
+        key: link[key] for key in ("relation", "client_build", "client_version") if link.get(key)
+    }
+    if ids.turns.get(str(link.get("parent_turn_id"))):
+        context["parent_turn_id"] = ids.turns[str(link["parent_turn_id"])]
+    try:
+        body = SubmitTurnBody.model_validate(
+            {
+                "message": turn.message,
+                "client_event_id": f"replay-turn-{uuid.uuid4().hex}",
+                "expected_thread_revision": revision,
+                **({"outcome_context": context} if context.get("relation") else {}),
+                **answers,
+            }
+        )
+    except ValidationError as exc:
+        raise ReplaySafetyError(
+            f"Production message of turn {turn.turn_id} does not rebuild as a request "
+            f"({sorted(answers)}): {exc.errors()[:2]}"
+        ) from exc
+    return body, sent
+
+
+async def _thread_events(db: Any, thread_id: uuid.UUID) -> list[tuple[str, dict[str, Any]]]:
+    """The replay thread as the runtime's question checks read it."""
+
+    from sqlalchemy import select
+
+    from app.models import CreationThreadEvent
+    from app.services.choice_questions import tag_event
+
+    rows = (
+        await db.execute(
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    return [tag_event(role, payload, kind, content) for role, payload, kind, content in rows]
+
+
+async def submit_recorded_turn(
+    *,
+    thread_id: uuid.UUID,
+    user_id: uuid.UUID,
+    turn: RecordedTurn,
+    ids: ReplayIds,
+) -> tuple[str, dict[str, Any]]:
+    """Send one recorded message the way `POST /creation-threads/<id>/turns` does."""
+
+    from app.database import AsyncSessionLocal
+    from app.kria.runtime import RuntimeFailure, submit_turn
+    from app.models import CreationThread
+    from app.routes.kria_runtime import _publish_turn
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    set_client_protocol(turn.client_protocol)
+    try:
+        async with AsyncSessionLocal() as db:
+            thread = await db.get(CreationThread, thread_id)
+            if thread is None:
+                raise ReplaySafetyError("Seeded replay thread disappeared")
+            try:
+                body, sent = _turn_body(
+                    turn,
+                    revision=int(thread.revision),
+                    ids=ids,
+                    replay_events=await _thread_events(db, thread_id),
+                )
+            except AnswerUnreplayable as unreplayable:
+                raise TurnDiverged(
+                    {"production_turn_id": turn.turn_id, **unreplayable.detail}
+                ) from unreplayable
+            try:
+                accepted, should_publish = await submit_turn(
+                    db, thread_id=thread_id, creator_id=user_id, body=body
+                )
+            except RuntimeFailure as failure:
+                await db.rollback()
+                raise TurnDiverged(
+                    {
+                        "production_turn_id": turn.turn_id,
+                        "answers_sent": sent,
+                        "reason": f"The runtime refused the creator's message of production turn "
+                        f"{turn.turn_id}: {failure.code}: {failure.message}",
+                    }
+                ) from failure
+    finally:
+        clear_request_context()
+    if should_publish:
+        _publish_turn(accepted.turn_id)
+    return accepted.turn_id, sent
+
+
+async def approve_replayed_turn(
+    *,
+    thread_id: uuid.UUID,
+    user_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    client_protocol: int | None,
+    render_shape: dict[str, str],
+) -> str:
+    """Approve the turn's pending approval the way the app's Approve tap does."""
+
+    from sqlalchemy import select
+
+    from app.database import AsyncSessionLocal
+    from app.kria.api_schemas import ApprovalDecisionBody
+    from app.kria.runtime import RuntimeFailure, approval_fingerprint, decide_approval
+    from app.models import CreationThread, CreatorAgentApproval
+    from app.routes.kria_runtime import _publish_approval, _publish_turn
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    set_client_protocol(client_protocol)
+    try:
+        async with AsyncSessionLocal() as db:
+            approval = (
+                (
+                    await db.execute(
+                        select(CreatorAgentApproval)
+                        .where(
+                            CreatorAgentApproval.turn_id == turn_id,
+                            CreatorAgentApproval.status == "pending",
+                        )
+                        .order_by(CreatorAgentApproval.created_at.desc())
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            thread = await db.get(CreationThread, thread_id)
+            if approval is None or thread is None:
+                raise ReplaySafetyError(f"Replay turn {turn_id} has no pending approval")
+            body = ApprovalDecisionBody(
+                expected_thread_revision=int(thread.revision),
+                expected_draft_revision=int(approval.draft_revision or 0),
+                expected_approval_fingerprint=approval_fingerprint(approval),
+                **render_shape,
+            )
+            try:
+                decided, successor = await decide_approval(
+                    db,
+                    thread_id=thread_id,
+                    approval_id=approval.id,
+                    creator_id=user_id,
+                    decision="approve",
+                    body=body,
+                )
+            except RuntimeFailure as failure:
+                await db.rollback()
+                raise ReplaySafetyError(
+                    f"The runtime refused the approval: {failure.code}: {failure.message}"
+                ) from failure
+    finally:
+        clear_request_context()
+    _publish_approval(decided.approval_id)
+    if successor is not None:
+        _publish_turn(successor)
+    return decided.approval_id
+
+
+class ReconcileBeat:
+    """Production's beat runs ``tasks.reconcile_kria_turns`` every minute; a replay has none.
+
+    Without it a turn whose lease lapsed (its worker was busy past the 15 s lease, as on a cold
+    start) stays ``planning`` until the replay's timeout. The sweep republishes it as
+    production's beat does.
+    """
+
+    def __init__(self, interval_s: float = 60.0) -> None:
+        self.interval_s = interval_s
+        self.last = time.monotonic()
+        self.sweeps = 0
+        self.published = 0
+        self.errors: list[str] = []
+
+    def tick(self) -> None:
+        if time.monotonic() - self.last < self.interval_s:
+            return
+        self.last = time.monotonic()
+        from app.tasks.kria_runtime import reconcile_kria_turns
+
+        try:
+            result = reconcile_kria_turns()
+        except Exception as exc:  # noqa: BLE001 - production's beat logs a failed sweep and goes on
+            self.errors.append(f"{type(exc).__name__}: {exc}"[:200])
+            return
+        self.sweeps += 1
+        self.published += int(result.get("published") or 0)
+
+    def receipt(self) -> dict[str, Any]:
+        return {"sweeps": self.sweeps, "published": self.published, "errors": self.errors}
+
+
+def _turn_lease(turn_id: uuid.UUID) -> dict[str, Any]:
+    from sqlalchemy import func, select
+
+    from app.database import sync_session
+    from app.models import CreatorAgentTurn
+
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, turn_id)
+        now = db.execute(select(func.now())).scalar_one()
+        if turn is None:
+            return {"turn_id": str(turn_id), "status": None, "lease_lapsed": False}
+        return {
+            "turn_id": str(turn_id),
+            "status": turn.status,
+            "lease_lapsed": turn.status in {"pending", "planning"}
+            and turn.lease_expires_at is not None
+            and turn.lease_expires_at < now,
+            "abandoned_claims": int(turn.abandoned_claims or 0),
+        }
+
+
+def wait_for_turn(
+    turn_id: uuid.UUID,
+    *,
+    settled: frozenset[str],
+    timeout_s: float,
+    poll_interval_s: float,
+    beat: ReconcileBeat,
+) -> dict[str, Any]:
+    from app.database import sync_session
+    from app.models import CreatorAgentTurn
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, turn_id)
+            state = {"status": turn.status, "error": turn.error} if turn else {"status": None}
+        if state["status"] in settled:
+            return state
+        if time.monotonic() > deadline:
+            lease = _turn_lease(turn_id)
+            lapsed = (
+                ", its lease lapsed and no worker took it back" if lease["lease_lapsed"] else ""
+            )
+            raise ReplayStalled(
+                {
+                    **lease,
+                    "reason": f"Timed out after {timeout_s:.0f} s waiting for Kria turn "
+                    f"{turn_id}; last status {state['status']}{lapsed}",
+                }
+            )
+        beat.tick()
+        time.sleep(min(max(poll_interval_s, 0.2), 30.0))
+
+
+def turn_reply(turn_id: uuid.UUID) -> dict[str, Any]:
+    """What the thread showed after the replayed message: event kinds and the last reply."""
+
+    from app.database import sync_session
+    from app.models import CreationThreadEvent, CreatorAgentTurn
+
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, turn_id)
+        source = db.get(CreationThreadEvent, turn.source_event_id) if turn else None
+        rows = (
+            db.query(CreationThreadEvent)
+            .filter(
+                CreationThreadEvent.thread_id == turn.thread_id,
+                CreationThreadEvent.sequence > source.sequence,
+            )
+            .order_by(CreationThreadEvent.sequence)
+            .all()
+            if source is not None
+            else []
+        )
+        reply = next((row for row in reversed(rows) if row.role == "assistant"), None)
+        question = next(
+            (
+                _question_summary(row.payload[key])
+                for row in rows
+                for key in ANSWER_QUESTION_KEYS.values()
+                if isinstance((row.payload or {}).get(key), dict)
+            ),
+            None,
+        )
+        return {
+            "events": [row.event_type for row in rows],
+            "reply_kind": reply.event_type if reply else None,
+            "reply": (reply.content or "")[:400] if reply else None,
+            "reply_code": (reply.payload or {}).get("code") if reply else None,
+            "replay_reply": reply_shape([(row.event_type, row.payload or {}) for row in rows]),
+            **({"question": question} if question else {}),
+        }
+
+
+def _item_job_id(item_id: uuid.UUID) -> str | None:
+    from app.database import sync_session
+    from app.models import PlanItem
+
+    with sync_session() as db:
+        item = db.get(PlanItem, item_id)
+        return str(item.current_job_id) if item and item.current_job_id else None
+
+
+def _render_shape(job_debug: dict[str, Any]) -> dict[str, str]:
+    """The shape the creator picked for the production job; a default is the server's own."""
+
+    shape = ((job_debug.get("job") or {}).get("all_candidates") or {}).get("creator_render_shape")
+    if not isinstance(shape, dict) or shape.get("origin") != "explicit_pick":
+        return {}
+    return {
+        **{key: shape[key] for key in ("output_orientation", "landscape_fit") if shape.get(key)},
+        "render_shape_origin": "explicit_pick",
+    }
+
+
+def replay_recorded_thread(
+    runner: asyncio.Runner,
+    *,
+    ids: dict[str, uuid.UUID],
+    turns: list[RecordedTurn],
+    replay_ids: ReplayIds,
+    render_shape: dict[str, str],
+    timeout_s: float,
+    poll_interval_s: float,
+    log: list[dict[str, Any]],
+    on_progress: Callable[[], None],
+    beat: ReconcileBeat,
+) -> dict[str, Any]:
+    """Send the creator's messages in order and approve where the creator approved.
+
+    Each message waits for the previous turn (and any render it approved) to settle, as in
+    production. A turn that production approved must reach an approval in the replay too;
+    otherwise the replay stops with what the replay showed instead.
+    """
+
+    worker_state: dict[str, Any] = {}
+    for index, recorded in enumerate(turns):
+        target = index == len(turns) - 1
+        replay_turn_id, answers = runner.run(
+            submit_recorded_turn(
+                thread_id=ids["thread_id"],
+                user_id=ids["user_id"],
+                turn=recorded,
+                ids=replay_ids,
+            )
+        )
+        replay_ids.turns[recorded.turn_id] = replay_turn_id
+        entry: dict[str, Any] = {
+            "production_turn_id": recorded.turn_id,
+            "replay_turn_id": replay_turn_id,
+            "message": recorded.message[:300],
+            "client_protocol": recorded.client_protocol,
+            "answers_sent": answers,
+            "production_approved": recorded.approved,
+            "production_reply": recorded.production_reply,
+        }
+        log.append(entry)
+        state = wait_for_turn(
+            uuid.UUID(replay_turn_id),
+            settled=TURN_SETTLED,
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+            beat=beat,
+        )
+        entry.update(status=state["status"], **turn_reply(uuid.UUID(replay_turn_id)))
+        entry["matches_production"] = entry["replay_reply"] == recorded.production_reply
+        on_progress()
+        if not recorded.approved:
+            continue
+        if state["status"] != "awaiting_approval":
+            raise TurnDiverged(
+                {
+                    "production_turn_id": recorded.turn_id,
+                    "replay_turn_id": replay_turn_id,
+                    "replay_status": state["status"],
+                    "replay_reply": entry.get("reply"),
+                    "reason": f"Production approved a draft after the creator's message "
+                    f"{recorded.message[:80]!r}; the replay's turn ended {state['status']} "
+                    f"({entry.get('reply_kind')}: {str(entry.get('reply'))[:160]!r}) instead",
+                }
+            )
+        previous_job_id = _item_job_id(ids["item_id"])
+        entry["approval_id"] = runner.run(
+            approve_replayed_turn(
+                thread_id=ids["thread_id"],
+                user_id=ids["user_id"],
+                turn_id=uuid.UUID(replay_turn_id),
+                client_protocol=recorded.client_protocol,
+                render_shape=render_shape if target else {},
+            )
+        )
+        worker_state = wait_for_worker(
+            item_id=ids["item_id"],
+            session_id=ids["session_id"],
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+            previous_job_id=previous_job_id,
+            turn_id=uuid.UUID(replay_turn_id),
+            beat=beat,
+        )
+        job = worker_state.get("job") or {}
+        entry["job"] = {key: job.get(key) for key in ("id", "status", "failure_reason")}
+        on_progress()
+        if target:
+            break
+        if stop := _stop_after_render(recorded, job):
+            worker_state["stopped_early"] = {
+                "after_production_turn": recorded.turn_id,
+                "messages_replayed": index + 1,
+                "messages_recorded": len(turns),
+                "production_render": {
+                    "job_id": recorded.job_id,
+                    "failure_reason": recorded.render_failure,
+                },
+                "replay_render": entry["job"],
+                "reason": stop,
+            }
+            return worker_state
+        # Both renders failed: the creator read that before the next message.
+        try:
+            wait_for_turn(
+                uuid.UUID(replay_turn_id),
+                settled=TURN_SETTLED - {"awaiting_approval"},
+                timeout_s=min(timeout_s, 300.0),
+                poll_interval_s=poll_interval_s,
+                beat=beat,
+            )
+        except ReplayStalled:
+            entry["turn_settled_after_render"] = False
+    return worker_state
+
+
+FAILED_JOB_STATUSES = frozenset({"failed", "processing_failed"})
+
+
+def _stop_after_render(recorded: RecordedTurn, job: dict[str, Any]) -> str | None:
+    """Why the replay cannot send the creator's next message after this render, or None.
+
+    The next message answered what production's render did. When the replay's render did
+    something else, that message no longer fits; a render waiting for a phone also holds
+    every later turn of the thread, since only a phone finishes it.
+    """
+
+    replay_failed = job.get("status") in FAILED_JOB_STATUSES
+    if recorded.render_failure is not None and not replay_failed:
+        return (
+            f"Production's render after this message failed ({recorded.render_failure}); the "
+            f"replay's ended {job.get('status')}. The creator's later messages answered that "
+            "failure, so they are not sent and this render is the result."
+        )
+    if replay_failed and recorded.render_failure is None:
+        return (
+            f"The replay's render after this message failed ({job.get('failure_reason')}) "
+            "where production's did not; the later messages followed production's render."
+        )
+    if job.get("status") == "awaiting_device":
+        return (
+            "This render waits for a phone (awaiting_device) and the next message would queue "
+            "behind it, so the replay stops with this device plan."
+        )
+    return None
+
+
 def _row_snapshot(db: Any, *, item_id: uuid.UUID, session_id: uuid.UUID) -> dict[str, Any]:
     from app.models import CreatorAgentSession, Job, PlanItem
     from app.schemas.edit_proposal import parse_edit_proposal
+    from app.tasks.content_plan_build import humanize_job_failure_reason
 
     item = db.get(PlanItem, item_id)
     session = db.get(CreatorAgentSession, session_id)
@@ -759,8 +1893,12 @@ def _row_snapshot(db: Any, *, item_id: uuid.UUID, session_id: uuid.UUID) -> dict
             "status": job.status,
             "failure_reason": job.failure_reason,
             "error_detail": job.error_detail,
+            # What the status routes show for this reason when nothing more specific was
+            # stored, so a matching detail that is only this proves no common cause.
+            "generic_error_detail": humanize_job_failure_reason(job.failure_reason),
             "assembly_plan": job.assembly_plan,
             "all_candidates": job.all_candidates,
+            "pipeline_trace": job.pipeline_trace,
         }
         if job
         else None,
@@ -826,9 +1964,19 @@ def wait_for_worker(
     timeout_s: float,
     poll_interval_s: float,
     on_snapshot: Callable[[dict[str, Any]], None] | None = None,
+    previous_job_id: str | None = None,
+    turn_id: uuid.UUID | None = None,
+    beat: ReconcileBeat | None = None,
 ) -> dict[str, Any]:
+    """Wait for the job a confirmation (or, with ``turn_id``, a Kria approval) dispatched.
+
+    ``previous_job_id`` is the item's job before the approval: an earlier turn's render that
+    already ended must not be read as this one.
+    """
+
     from app import storage
     from app.database import sync_session
+    from app.models import CreatorAgentTurn
 
     deadline = time.monotonic() + timeout_s
     last: dict[str, Any] = {}
@@ -851,24 +1999,92 @@ def wait_for_worker(
             if on_snapshot is not None:
                 on_snapshot(last)
             job = last.get("job") or {}
-            proposal = last.get("proposal") or {}
-            session_state = last.get("session") or {}
-            if not job and session_state.get("status") in {"failed", "cancelled"}:
-                raise ReplaySafetyError(
-                    f"Creator execution stopped before dispatch: {session_state['status']}"
-                )
+            if previous_job_id is not None and job.get("id") == previous_job_id:
+                job = {}
+            if turn_id is not None:
+                turn = db.get(CreatorAgentTurn, turn_id)
+                turn_status = turn.status if turn is not None else None
+                if not job and turn_status in TURN_SETTLED - {"awaiting_approval"}:
+                    raise ReplaySafetyError(
+                        f"The approved Kria turn ended {turn_status} without dispatching a "
+                        f"render: {turn.error if turn is not None else None}"
+                    )
+            else:
+                proposal = last.get("proposal") or {}
+                session_state = last.get("session") or {}
+                if not job and session_state.get("status") in {"failed", "cancelled"}:
+                    raise ReplaySafetyError(
+                        f"Creator execution stopped before dispatch: {session_state['status']}"
+                    )
+                if proposal.get("status") == "failed" and not job:
+                    raise ReplaySafetyError(
+                        "Proposal worker failed before dispatch: "
+                        f"{proposal.get('failure') or proposal}"
+                    )
             if job.get("status") in TERMINAL_JOB_STATUSES:
+                last["job"] = job
                 last["outputs"] = _output_receipts(last, storage, source_paths)
                 return last
-            if proposal.get("status") == "failed" and not job:
-                raise ReplaySafetyError(
-                    f"Proposal worker failed before dispatch: {proposal.get('failure') or proposal}"
-                )
+        if beat is not None:
+            beat.tick()
         time.sleep(min(max(poll_interval_s, 0.2), 30.0))
-    raise ReplaySafetyError(f"Timed out waiting for proposal/worker; last state: {last}")
+    job = last.get("job") or {}
+    raise ReplayStalled(
+        {
+            **(_turn_lease(turn_id) if turn_id is not None else {"lease_lapsed": False}),
+            "job": {key: job.get(key) for key in ("id", "status", "failure_reason")},
+            "reason": f"Timed out after {timeout_s:.0f} s waiting for the dispatched job; last "
+            f"job status {job.get('status')}, session {(last.get('session') or {}).get('status')}",
+        }
+    )
 
 
-def _configure_environment(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+def device_plan_receipt(job: dict[str, Any] | None, output_dir: Path) -> dict[str, Any] | None:
+    """The pinned iPhone render plan of a job that ended `awaiting_device`, else None."""
+
+    if not job or job.get("status") != "awaiting_device":
+        return None
+    from app.services.device_render import DEVICE_RENDER_FIELD
+
+    assembly_plan = job.get("assembly_plan") if isinstance(job.get("assembly_plan"), dict) else {}
+    variants = [v for v in assembly_plan.get("variants") or [] if isinstance(v, dict)]
+    records = assembly_plan.get(DEVICE_RENDER_FIELD)
+    records = records if isinstance(records, dict) else {}
+    variant_ids = [str(v.get("variant_id")) for v in variants]
+    path = output_dir / "device-plan.json"
+    path.write_text(
+        json.dumps(
+            {"job_id": job.get("id"), "variants": variants, "device_render": records},
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "path": str(path),
+        "variant_ids": variant_ids,
+        "pinned_variant_ids": sorted(records),
+        "complete": bool(variant_ids) and all(vid in records for vid in variant_ids),
+    }
+
+
+def snapshot_environment(snapshot_path: Path) -> dict[str, str]:
+    """Environment variables that make ``Settings`` read the production snapshot values."""
+
+    entries = _read_json(snapshot_path).get("settings")
+    if not isinstance(entries, dict):
+        raise ReplaySafetyError(f"Not a production flag snapshot: {snapshot_path}")
+    return {
+        name.upper(): json.dumps(entry["value"])
+        if not isinstance(entry["value"], str)
+        else entry["value"]
+        for name, entry in entries.items()
+        if entry.get("source") != "default"
+    }
+
+
+def build_environment(args: argparse.Namespace, *, output_dir: Path) -> dict[str, str]:
     database_url = str(args.database_url or os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL)
     redis_url = str(args.redis_url or DEFAULT_REDIS_URL)
     source_root = Path(args.manifest).expanduser().resolve().parent
@@ -879,20 +2095,19 @@ def _configure_environment(args: argparse.Namespace, *, output_dir: Path) -> dic
         destination_root=output_dir,
         source_root=source_root,
     )
-    redis_host, redis_database = _redis_target(redis_url)
-    if args.render and not args.enable_fidelity:
-        raise ReplaySafetyError("--render requires --enable-fidelity")
-    storage_root = output_dir / "storage"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.update(
+    _redis_target(redis_url)
+    prod_flags = getattr(args, "prod_flags", None)
+    if args.render and not args.enable_fidelity and prod_flags is None:
+        raise ReplaySafetyError("--render requires --enable-fidelity or --prod-flags")
+    environment: dict[str, str] = snapshot_environment(prod_flags) if prod_flags else {}
+    environment.update(
         {
             "DATABASE_URL": database_url,
             "STORAGE_PROVIDER": "local",
             "STORAGE_BUCKET": LOCAL_BUCKET,
             "E2E_FIXTURES": "true",
-            "LOCAL_STORAGE_ROOT": str(storage_root),
+            "LOCAL_STORAGE_ROOT": str(output_dir / "storage"),
             "LOCAL_STORAGE_BASE_URL": "http://127.0.0.1:8000/dev-qa/storage",
-            "CREATOR_PROMPT_FIDELITY_ENABLED": "true" if args.enable_fidelity else "false",
             "MAIN_CREATOR_AGENT_ENABLED": "true",
             "MAIN_CREATOR_AGENT_ROLLOUT_PERCENT": "100",
             "MAIN_CREATOR_AGENT_EXECUTION_ENABLED": "true",
@@ -904,19 +2119,35 @@ def _configure_environment(args: argparse.Namespace, *, output_dir: Path) -> dic
             "REDIS_URL": redis_url,
         }
     )
+    if prod_flags is None:
+        environment["CREATOR_PROMPT_FIDELITY_ENABLED"] = "true" if args.enable_fidelity else "false"
+    return environment
+
+
+def _configure_environment(args: argparse.Namespace, *, output_dir: Path) -> dict[str, Any]:
+    environment = build_environment(args, output_dir=output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.update(environment)
+    database_url = environment["DATABASE_URL"]
+    redis_host, redis_database = _redis_target(environment["REDIS_URL"])
     return {
         "database_url": database_url,
         "database_host": _database_target(database_url)[0],
         "database_name": _database_target(database_url)[1],
-        "redis_url": redis_url,
+        "redis_url": environment["REDIS_URL"],
         "redis_host": redis_host,
         "redis_database": redis_database,
         "storage_provider": "local",
         "storage_bucket": LOCAL_BUCKET,
         "e2e_fixtures": True,
-        "storage_root": str(storage_root),
+        "storage_root": environment["LOCAL_STORAGE_ROOT"],
         "destination_root": str(output_dir),
-        "creator_prompt_fidelity_enabled": bool(args.enable_fidelity),
+        "creator_prompt_fidelity_enabled": environment["CREATOR_PROMPT_FIDELITY_ENABLED"] == "true"
+        if "CREATOR_PROMPT_FIDELITY_ENABLED" in environment
+        else None,
+        "prod_flag_snapshot": str(prod_flags)
+        if (prod_flags := getattr(args, "prod_flags", None))
+        else None,
         "main_creator_agent_enabled": True,
         "main_creator_agent_rollout_percent": 100,
         "main_creator_agent_execution_enabled": True,
@@ -953,6 +2184,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="allow a manifest other than the pinned 40-source input",
     )
+    parser.add_argument(
+        "--prod-flags",
+        type=Path,
+        default=None,
+        help="flag snapshot (tests/prod_flags.snapshot.json); replaces --enable-fidelity",
+    )
+    parser.add_argument(
+        "--thread-events",
+        type=Path,
+        default=None,
+        help="production runtime-v2 thread events ({'events': [...]}); replays its messages "
+        "turn by turn up to the job debug's kria_turn_id",
+    )
     parser.add_argument("--timeout-s", type=float, default=1800.0)
     parser.add_argument("--poll-interval-s", type=float, default=5.0)
     return parser
@@ -976,9 +2220,13 @@ def main(argv: list[str] | None = None) -> int:
             "manifest": str(args.manifest.expanduser().resolve()),
             "job_debug": str(args.job_debug.expanduser().resolve()),
             "item_debug": str(args.item_debug.expanduser().resolve()),
+            "thread_events": str(args.thread_events.expanduser().resolve())
+            if args.thread_events
+            else None,
         },
     }
     runner = asyncio.Runner()
+    beat = ReconcileBeat()
     try:
         receipt["runtime"] = _configure_environment(args, output_dir=output_dir)
         _write_receipt(receipt_path, receipt)
@@ -1003,7 +2251,20 @@ def main(argv: list[str] | None = None) -> int:
             "transcript": inputs.transcript_cache,
         }
         _write_receipt(receipt_path, receipt)
-        ids = {key: uuid.uuid4() for key in ("user_id", "thread_id", "plan_id", "item_id")}
+        thread_events = _read_json(args.thread_events).get("events") if args.thread_events else None
+        if thread_events is not None and not args.render:
+            raise ReplaySafetyError(
+                "A runtime-v2 thread replay approves and renders: pass --render"
+            )
+        turns = (
+            recorded_turns(thread_events, str(inputs.job_debug.get("kria_turn_id") or ""))
+            if thread_events is not None
+            else None
+        )
+        ids = {
+            key: uuid.uuid4()
+            for key in ("user_id", "thread_id", "plan_id", "item_id", "session_id")
+        }
         receipt["seed"] = seed_replay_database(
             inputs=inputs,
             output_dir=output_dir,
@@ -1011,15 +2272,46 @@ def main(argv: list[str] | None = None) -> int:
             thread_id=ids["thread_id"],
             plan_id=ids["plan_id"],
             item_id=ids["item_id"],
+            session_id=ids["session_id"],
+            thread_events=thread_events,
         )
         _write_receipt(receipt_path, receipt)
         receipt["analysis"] = analyze_replay_media(item_id=ids["item_id"])
         _write_receipt(receipt_path, receipt)
+        if turns is not None:
+            receipt["turns"] = []
+            worker_state = replay_recorded_thread(
+                runner,
+                ids=ids,
+                turns=turns,
+                replay_ids=ReplayIds(
+                    questions=production_questions(thread_events or []),
+                    media=dict(receipt["seed"]["media_ids"]),
+                ),
+                render_shape=_render_shape(inputs.job_debug),
+                timeout_s=args.timeout_s,
+                poll_interval_s=args.poll_interval_s,
+                log=receipt["turns"],
+                on_progress=lambda: _write_receipt(receipt_path, receipt),
+                beat=beat,
+            )
+            receipt["reconcile"] = beat.receipt()
+            receipt["worker"] = worker_state
+            receipt["job"] = worker_state.get("job")
+            receipt["outputs"] = worker_state.get("outputs", [])
+            receipt["device_plan"] = device_plan_receipt(worker_state.get("job"), output_dir)
+            receipt["stopped_early"] = worker_state.get("stopped_early")
+            receipt["finished_at"] = datetime.now(UTC).isoformat()
+            _write_receipt(receipt_path, receipt)
+            print(json.dumps({"receipt": str(receipt_path), "mode": "thread", "status": "ok"}))
+            return 0
         plan = runner.run(
             run_creator_planning(
                 item_id=ids["item_id"],
                 seed_description=inputs.seed_description,
                 user_id=ids["user_id"],
+                timeout_s=args.timeout_s,
+                poll_interval_s=args.poll_interval_s,
             )
         )
         receipt["planning"] = {
@@ -1054,10 +2346,13 @@ def main(argv: list[str] | None = None) -> int:
                         "updated_at": datetime.now(UTC).isoformat(),
                     },
                 ),
+                beat=beat,
             )
+            receipt["reconcile"] = beat.receipt()
             receipt["worker"] = worker_state
             receipt["job"] = worker_state.get("job")
             receipt["outputs"] = worker_state.get("outputs", [])
+            receipt["device_plan"] = device_plan_receipt(worker_state.get("job"), output_dir)
         receipt["finished_at"] = datetime.now(UTC).isoformat()
         _write_receipt(receipt_path, receipt)
         print(json.dumps({"receipt": str(receipt_path), "mode": receipt["mode"], "status": "ok"}))
@@ -1071,6 +2366,15 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - receipt must capture driver failures
         receipt["finished_at"] = datetime.now(UTC).isoformat()
         receipt["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        receipt["reconcile"] = beat.receipt()
+        if isinstance(exc, MainCreatorQuestion):
+            receipt["error"]["question"] = exc.question
+        if isinstance(exc, TurnDiverged):
+            receipt["error"]["diverged_turn"] = exc.detail
+        if isinstance(exc, ReplayStalled):
+            receipt["error"]["stalled"] = exc.detail
+        if isinstance(exc, ReplayInputError):
+            receipt["error"]["input_error"] = True
         try:
             _write_receipt(receipt_path, receipt)
         except OSError:

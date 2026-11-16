@@ -459,6 +459,7 @@ async def test_status_turn_completes_immediately_without_consuming_successor_slo
                 _Result(scalars=[]),  # free-text choice lookup (KRI-476)
                 _Result(scalars=[active]),
                 _Result(scalar=None),  # KRI-552: the creator's latest message (copy check)
+                _Result(scalar=None),  # no stored language: the latest other chat's
                 _Result(scalar=4),
                 _Result(scalar=5),
             ]
@@ -525,6 +526,7 @@ async def test_second_turn_is_one_unpublished_queued_successor() -> None:
                 _Result(scalars=[]),  # free-text choice lookup (KRI-476)
                 _Result(scalars=[active]),
                 _Result(scalar=None),  # KRI-552: the creator's latest message (copy check)
+                _Result(scalar=None),  # no stored language: the latest other chat's
                 _Result(scalar=None),
                 _Result(scalar=4),
             ]
@@ -568,6 +570,7 @@ async def test_submit_rejects_during_successor_promotion_window() -> None:
                 _Result(scalars=[]),  # free-text choice lookup (KRI-476)
                 _Result(scalars=[]),
                 _Result(scalar=None),  # KRI-552: the creator's latest message (copy check)
+                _Result(scalar=None),  # no stored language: the latest other chat's
                 _Result(scalar=queued),
             ]
         )
@@ -1769,6 +1772,7 @@ async def test_first_inert_prompt_also_reserves_title_generation():
                 _Result(scalars=[]),  # free-text choice lookup (KRI-476)
                 _Result(scalars=[]),
                 _Result(scalar=None),  # KRI-552: the creator's latest message (copy check)
+                _Result(scalar=None),  # no stored language: the latest other chat's
                 _Result(scalar=1),
                 _Result(scalar=2),
             ]

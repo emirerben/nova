@@ -550,6 +550,7 @@ def resolve_authored_phone_slots(
     import math
     import uuid
 
+    from app.pipeline.look_presets import normalize_look_preset
     from app.routes.generative_jobs import _TIMELINE_MAX_SLOTS, TIMELINE_MAX_TOTAL_S
     from app.services.phone_editor_sources import phone_editor_source_revision
 
@@ -687,6 +688,11 @@ def resolve_authored_phone_slots(
                 **({"in_s": 0.0} if source["kind"] == "image" else {}),
                 **({"tilt": tilt} if tilt is not None else {}),
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
+                # A new placement has no look. Stored as null it fails the timeline response,
+                # and a saved edit is read back as these rows.
+                "look_preset": normalize_look_preset(
+                    slot.look_preset if slot.look_preset is not None else old.get("look_preset")
+                ),
                 "source_gcs_path": source["gcs_path"],
                 "source_duration_s": bound,
                 "source_kind": source["kind"],
