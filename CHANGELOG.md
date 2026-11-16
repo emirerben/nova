@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.261.0] - 2026-11-16
+
+### Changed
+- fix(editor): save a new placement's look as none so a saved edit reopens (KRI-1500) (#2370) <!-- release-pr: 2370 -->
+
 ## [0.88.260.0] - 2026-11-16
 
 ### Changed
