@@ -81,6 +81,12 @@ never asked. So a chat job is replayed the way the app drove it:
   client protocol, the job is `native_device_only`, or its clips are analysis proxies, which only
   the app uploads; f88555bc's messages carry no protocol). Each medium carries production's
   projection (filename, upload receipt).
+* The job's turn is the job debug's `kria_turn_id`. The debug finds it through a Creator
+  execution that targets the job, and 11 of 29 failed chat jobs of 2026-10-08 to 10-15 have
+  none (38caaebd, 7b14c641 and others). For those the turn is the one the thread's
+  `render_queued` event for the job names (`target_turn.from: render_queued` in the output). A
+  job with no such event, or with events naming two turns, is refused before any model call,
+  naming the turn as unknown.
 * Every `user_message` up to the job's `kria_turn_id` goes through `submit_turn`, the function
   behind `POST /creation-threads/<id>/turns`, in order, with the client protocol the app build
   sent (`X-Kria-Client-Protocol`, recorded on the event), its `request_outcome_link` (parent turn
@@ -170,6 +176,29 @@ divergence too. A prompt version difference is expected (the code changed since 
 difference means the replay did not run on production's model, and `input_differences.models`
 repeats it. Before the run the driver prints production's models for the item next to the
 Main Creator model the replay will use.
+
+### Which Main Creator model
+
+The Main Creator answers every chat message, so its model decides whether the replay gets
+production's replies and reaches the failing render. `--main-creator` (`MAIN_CREATOR=` in make)
+picks it, and the output repeats the choice in `main_creator` (`model`, `thinking_level`, `from`,
+`why`):
+
+* `production` (the default, to reproduce): the model of production's last `nova.creator.main`
+  run for the item before the job ended that did not answer on a fallback (an `ok_fallback` run
+  records the fallback's model). The thinking level is the snapshot's when that is also the
+  snapshot's model, otherwise the code default: agent runs do not record it, and production's
+  Gemini Main Creator ran at the default until the KRI-1390 rollout set `gpt-6.1-sol` and
+  `medium` together (`docs/reviews/kri-1384/sol-main-creator.md`). With no Main Creator run on
+  record, the snapshot's model stands in and `why` says so.
+* `snapshot`: today's production setting (`gpt-6.1-sol`, `medium`). Use it to ask whether the
+  job works for a creator today, not to reproduce.
+
+The choice is written into the run's own `<run dir>/prod-flags.json`, which both
+`replay_creator.py` and the worker read; the committed snapshot is not changed. Other agents
+keep the snapshot's models (`model_differences` names any that differ), and prompts are always
+today's (`prompt_version_differences`), so a pinned model narrows the drift but does not remove
+it: d6c58d7b diverged at message 2 with no model difference, on a newer Main Creator prompt.
 
 `input_differences` also counts production state the replay does not recreate:
 `media_library_backed_media` (media the thread took from the media library; the library's
@@ -278,7 +307,10 @@ what production holds (`compared_production_render`):
 
 * A planning error (`planning_failure`, the job's last `phone_plan_failed` pipeline event): the
   replay must record the same error class and the same message (`error_tail`). A replay with no
-  planning error is not production's failure.
+  planning error is not production's failure. An empty message is no cause: a bare `assert`
+  (six in `phone_*` modules, for example `phone_card_layout.py` and `phone_captions.py`) records
+  `AssertionError` and nothing else, so two different asserts would match on the class alone;
+  such a replay reads `reproduction_unproven`.
 * No planning error (jobs from before the event was recorded, such as 0701fcc9, 9734ed83 and
   1e79ff4f): the replay's `error_detail` must equal production's. A detail that is only the
   app's generic sentence for the reason (`generic_error_detail`, which the replay's receipt
@@ -416,7 +448,7 @@ Evidence order: a newer production observation (a live read, job data, a digest 
 outranks a doc line written before it. A doc line outranks an observation only when it records a
 change applied after it. `EDIT_WIDE_LOOKS_ENABLED` shows the rule: CLAUDE.md listed it "off" from
 its dark ship (#857, 2026-08-18), the 2026-10-08 digest showed it on, so the snapshot keeps it on
-(`reconciled:edit-wide-looks-2026-11-14`) and the CLAUDE.md line now says both.
+(`reconciled:edit-wide-looks-2026-11-14`) and the CLAUDE.md line now says it is on in prod.
 
 Record a flag with `set` when a repo source states production's value (CLAUDE.md, DECISIONS.md,
 a runbook that names the applied Fly secret) or when someone with secret access tells you; put
@@ -443,14 +475,30 @@ flag the snapshot has not seen, so a new flag cannot silently run at its default
   2026-11-15, all at message 1). Answering for the creator from their later messages would be
   the stand-in evidence this command exists to replace. Such a job cannot carry a fix PR's
   proof: replay a later job that failed the same way, or write "n/a" with the reason.
+* A chat job whose prompt or model drifted since it ran usually cannot reach its failing render.
+  Each message is a chance for today's Main Creator to reply otherwise, and every later message
+  then answers a reply the replay never gave. On 2026-11-15 and 16, 40684a25 (Sol against
+  production's Gemini) and 19f61092, f88555bc, 50f67a06 and 07efa44c diverged at message 1, and
+  d6c58d7b (same model, newer prompt) at message 2. `--main-creator production` removes the
+  model drift, not the prompt drift. For proof, prefer a job whose render came on the first
+  message (`creator_messages` and `target_turn` are printed before any spend; 1e2d4937 and
+  3afe19cd are such jobs).
+* Input recovery still refuses some jobs before any spend: of the 11 chat jobs without a
+  `kria_turn_id`, 7b14c641, 38caaebd and ef8e35b8 have an id-less binding clip that two item
+  clips match equally (see the shape matching above).
 * A device-render job (`native_device_only`) ends in a server-side plan, not an MP4. The replay
   reproduces everything up to and including that plan (`device_plan_ready` on success, the
   failure reason when the plan cannot be built). What the phone then renders is not replayed;
   use the iOS gates for that.
 * Model output varies between runs; a different result on the same input is data, not a flake.
-  State both outcomes in the PR.
+  One run is a sample: 1cb33402 on the same code and model ended `device_plan_ready` once and
+  `failed` (`phone_plan_unsupported`, a `SpeechMontageClarification` from
+  `nova.plan.speech_excerpt_planner`) the next time. Report how many replays ran and what each
+  ended with.
 
 ## In a PR
 
-A creation-bug fix PR names the production job id it replayed and what the run produced (see
-`.github/PULL_REQUEST_TEMPLATE.md`).
+A creation-bug fix PR names the production job id it replayed, which Main Creator model it ran on
+(`main_creator`), how many replays it ran and what each produced, as a count such as "3 of 4
+`device_plan_ready`" (see `.github/PULL_REQUEST_TEMPLATE.md`). A single success is one sample,
+not proof that the failure is gone.
