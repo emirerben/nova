@@ -1871,6 +1871,7 @@ def _stop_after_render(recorded: RecordedTurn, job: dict[str, Any]) -> str | Non
 def _row_snapshot(db: Any, *, item_id: uuid.UUID, session_id: uuid.UUID) -> dict[str, Any]:
     from app.models import CreatorAgentSession, Job, PlanItem
     from app.schemas.edit_proposal import parse_edit_proposal
+    from app.tasks.content_plan_build import humanize_job_failure_reason
 
     item = db.get(PlanItem, item_id)
     session = db.get(CreatorAgentSession, session_id)
@@ -1892,6 +1893,9 @@ def _row_snapshot(db: Any, *, item_id: uuid.UUID, session_id: uuid.UUID) -> dict
             "status": job.status,
             "failure_reason": job.failure_reason,
             "error_detail": job.error_detail,
+            # What the status routes show for this reason when nothing more specific was
+            # stored, so a matching detail that is only this proves no common cause.
+            "generic_error_detail": humanize_job_failure_reason(job.failure_reason),
             "assembly_plan": job.assembly_plan,
             "all_candidates": job.all_candidates,
             "pipeline_trace": job.pipeline_trace,

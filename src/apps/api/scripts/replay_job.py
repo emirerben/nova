@@ -1033,7 +1033,7 @@ RECORDED_IN_PRODUCTION_FROM = {
 @dataclass(frozen=True)
 class ProductionAgents:
     """What production ran for the plan item up to the job's end: agents, models, prompts and
-    the outcomes of their runs.
+    the outcome of each agent's last run.
 
     ``unrecorded`` holds agents production did not store yet when the job's thread began.
     """
@@ -1042,7 +1042,7 @@ class ProductionAgents:
     prompt_versions: dict[str, frozenset[str]]
     trace_complete: bool
     unrecorded: frozenset[str] = frozenset()
-    outcomes: dict[str, frozenset[str]] = field(default_factory=dict)
+    last_outcomes: dict[str, str] = field(default_factory=dict)
 
     @property
     def names(self) -> set[str]:
@@ -1057,6 +1057,12 @@ def _by_agent(runs: list[dict[str, Any]], key: str) -> dict[str, frozenset[str]]
             if run.get(key):
                 found[run["agent_name"]].add(str(run[key]))
     return {name: frozenset(values) for name, values in found.items()}
+
+
+def _last_outcomes(runs: list[dict[str, Any]]) -> dict[str, str]:
+    """Each agent's outcome on its last run, ``runs`` being in the order they ran."""
+
+    return {run["agent_name"]: run.get("outcome") for run in runs if run.get("agent_name")}
 
 
 def production_agents(
@@ -1088,7 +1094,7 @@ def production_agents(
     return ProductionAgents(
         models=_by_agent(runs, "model"),
         prompt_versions=_by_agent(runs, "prompt_version"),
-        outcomes=_by_agent(runs, "outcome"),
+        last_outcomes=_last_outcomes(sorted(runs, key=lambda r: str(r.get("created_at") or ""))),
         trace_complete=complete,
         unrecorded=frozenset(
             name
@@ -1137,20 +1143,16 @@ def compare_routes(production: ProductionAgents, recorded: dict[str, Any]) -> di
     """
 
     success = set(recorded["success"])
-    compared = [
-        run
-        for run in recorded["runs"]
-        if run["comparable"] and run["agent_name"] not in production.unrecorded
-    ]
-    last_outcome: dict[str, str] = {}
-    for run in compared:
-        last_outcome[run["agent_name"]] = run["outcome"]
+    compared: list[dict[str, Any]] = []
+    left_out: list[dict[str, Any]] = []
+    for run in recorded["runs"]:
+        comparable = run["comparable"] and run["agent_name"] not in production.unrecorded
+        (compared if comparable else left_out).append(run)
+    last_outcome = _last_outcomes(compared)
     ran = sorted(last_outcome)
     failed = sorted(name for name, outcome in last_outcome.items() if outcome not in success)
     names = production.names
-    failed_in_production = {
-        name for name, outcomes in production.outcomes.items() if outcomes - success
-    }
+    uncompared = _last_outcomes(left_out)
     return {
         "production_agents": sorted(names),
         "production_trace_complete": production.trace_complete,
@@ -1158,23 +1160,25 @@ def compare_routes(production: ProductionAgents, recorded: dict[str, Any]) -> di
         "replay_only_agents": sorted(set(ran) - names),
         "replay_failed_agents": failed,
         "diverged_failures": sorted(set(failed) - names) if production.trace_complete else [],
-        # Agents production ran without a failure whose last replay run failed: the replay
-        # broke where production got through.
+        # Agents whose last run failed in the replay but not in production: the replay broke
+        # where production got through.
         "failed_only_in_replay": [
             {
                 "agent": name,
                 "replay": last_outcome[name],
-                "production": sorted(production.outcomes.get(name, ())),
+                "production": production.last_outcomes.get(name),
             }
             for name in failed
-            if name in names and name not in failed_in_production
+            if name in names and production.last_outcomes.get(name) in success | {None}
         ],
         # Runs production's trace cannot show (session-scoped, or not stored yet when the
-        # job ran), so they prove no divergence.
-        "replay_uncompared_agents": sorted(
-            {run["agent_name"] for run in recorded["runs"]}
-            - {run["agent_name"] for run in compared}
-        ),
+        # job ran), so they prove no divergence; nor can a failure among them be production's.
+        "replay_uncompared_agents": sorted(set(uncompared) - set(last_outcome)),
+        "failed_uncompared_agents": [
+            {"agent": name, "replay": outcome}
+            for name, outcome in sorted(uncompared.items())
+            if name not in last_outcome and outcome not in success
+        ],
         "replay_models": {
             name: sorted(models) for name, models in _by_agent(compared, "model").items()
         },
@@ -1202,14 +1206,66 @@ def planning_failure(job: dict[str, Any] | None) -> dict[str, Any] | None:
     return {"error_class": data["error_class"], "error_tail": data.get("error_tail")}
 
 
+def _planning_error(failure: dict[str, Any]) -> str:
+    return f"{failure['error_class']} ({failure.get('error_tail')!r})"
+
+
+def _cause_gap(production: dict[str, Any], replay: dict[str, Any]) -> str | None:
+    """Why the replay's recorded cause is not shown to be production's, or None when it is.
+
+    A failure reason and an error class each cover many unrelated failures (one
+    CreatorRenderContractError is the text-fit gate, another the font gate), so only the exact
+    cause production recorded counts: its planning error's class and message or, for a job
+    from before planning errors were recorded, its error detail unless that is the app's generic
+    sentence for the reason. A message worded by a model that differs is left to the reader,
+    with both shown.
+    """
+
+    ours, theirs = production.get("planning_failure"), replay.get("planning_failure")
+    if ours:
+        if theirs is None:
+            return (
+                f"Production's plan failed with {_planning_error(ours)}; the replay recorded no "
+                f"planning error (its error detail: {replay.get('error_detail')!r})."
+            )
+        if (ours["error_class"], ours.get("error_tail")) != (
+            theirs["error_class"],
+            theirs.get("error_tail"),
+        ):
+            return (
+                f"Production's plan failed with {_planning_error(ours)}; the replay's with "
+                f"{_planning_error(theirs)}."
+            )
+        return None
+    reason, detail = production.get("failure_reason"), production.get("error_detail")
+    generic = replay.get("generic_error_detail")
+    if not detail:
+        return (
+            f"Production recorded no planning error and no error detail, only {reason}, so "
+            "the replay's failure cannot be shown to be the same one."
+        )
+    if generic is None or detail == generic:
+        known = "is" if generic else "may be"
+        return (
+            f"Production recorded no planning error, and its error detail {known} the app's "
+            f"generic sentence for {reason} ({detail!r}), so the replay's failure cannot be "
+            "shown to be the same one."
+        )
+    if detail != replay.get("error_detail"):
+        return (
+            f"Production's job failed with {detail!r}; the replay's with "
+            f"{replay.get('error_detail')!r}."
+        )
+    return None
+
+
 def _reproduction_gaps(
-    route: dict[str, Any],
-    production_failure: dict[str, Any] | None,
-    replay_failure: dict[str, Any] | None,
+    route: dict[str, Any], production: dict[str, Any], replay: dict[str, Any]
 ) -> list[str]:
     """Why a replay that ended with production's failure reason may still not be production's
     failure. ``phone_plan_failed`` and its siblings are catch-all reasons, so the route, the
-    agent that failed and the recorded planning error have to agree as well."""
+    agents that failed and the exact recorded cause have to agree as well, and a failure
+    production's trace cannot show counts against it."""
 
     gaps: list[str] = []
     if not route["production_trace_complete"]:
@@ -1223,21 +1279,25 @@ def _reproduction_gaps(
             "ran for this item."
         )
     gaps.extend(
-        f"{failed['agent']} failed in the replay ({failed['replay']}), but every run of it "
-        f"production recorded ended {'/'.join(failed['production']) or 'with no outcome'}."
+        f"{failed['agent']} failed in the replay ({failed['replay']}), but production's last "
+        f"run of it ended {failed['production'] or 'with no outcome recorded'}."
         for failed in route["failed_only_in_replay"]
     )
-    if (
-        production_failure
-        and replay_failure
-        and production_failure["error_class"] != replay_failure["error_class"]
-    ):
-        gaps.append(
-            f"Production's plan failed with {production_failure['error_class']} "
-            f"({production_failure.get('error_tail')!r}); the replay's with "
-            f"{replay_failure['error_class']} ({replay_failure.get('error_tail')!r})."
-        )
+    gaps.extend(
+        f"{failed['agent']} failed in the replay ({failed['replay']}), and production's trace "
+        "for this item cannot show it (it runs on the Creator session, or production did not "
+        "store it yet), so whether it failed there is unknown."
+        for failed in route["failed_uncompared_agents"]
+    )
+    if gap := _cause_gap(production, replay):
+        gaps.append(gap)
     return gaps
+
+
+def _production_failure_text(production: dict[str, Any]) -> str:
+    failure = production.get("planning_failure")
+    cause = _planning_error(failure) if failure else repr(production.get("error_detail"))
+    return f"{production.get('failure_reason')}: {cause}"
 
 
 def classify_failure(
@@ -1246,13 +1306,15 @@ def classify_failure(
     """Say whether a failed replay is the production job's failure or one of its own.
 
     ``production`` is the production render the replay is compared with
-    (``compared_production_render``): its ``failure_reason`` and ``planning_failure``.
+    (``compared_production_render``): its ``failure_reason``, ``planning_failure`` and
+    ``error_detail``.
 
     ``reproduction`` is ``reproduced`` only when the reason matches, the replay ran no agent
-    production did not, every agent that failed in the replay also failed in production, and
-    the recorded planning errors (when both jobs have one) are of the same class. A matching
-    reason short of that is ``failure_reason_matched_route_differs`` or
-    ``reproduction_unproven``, with ``reproduction_gaps`` naming the agents and errors.
+    production did not, every agent whose last replay run failed also failed last in
+    production and none failed that production's trace cannot show, and the replay recorded
+    production's exact cause (``_cause_gap``). A matching reason short of that is
+    ``failure_reason_matched_route_differs`` or ``reproduction_unproven``, with
+    ``reproduction_gaps`` naming the agents and both causes.
 
     A failure inside an agent production never ran, or a different failure reached after
     such agents, did not happen where production failed: printing it as the job's
@@ -1263,13 +1325,7 @@ def classify_failure(
         return
     production_reason = production.get("failure_reason")
     reasons_differ = result["failure_reason"] != production_reason
-    gaps = (
-        []
-        if reasons_differ
-        else _reproduction_gaps(
-            route, production.get("planning_failure"), result.get("planning_failure")
-        )
-    )
+    gaps = [] if reasons_differ else _reproduction_gaps(route, production, result)
     if reasons_differ:
         verdict = "failure_reason_differs"
     elif not gaps:
@@ -1281,20 +1337,34 @@ def classify_failure(
     result["production_failure_reproduced"] = verdict == "reproduced"
     result["reproduction"] = verdict
     result["reproduction_gaps"] = gaps
-    if route["diverged_failures"]:
-        where = f"inside {', '.join(route['diverged_failures'])}, which production never ran"
-    elif reasons_differ and route["production_trace_complete"] and route["replay_only_agents"]:
+    check = "check the flag snapshot (scripts/prod_flag_snapshot.py unverified) and the turns"
+    if route["diverged_failures"] or (
+        reasons_differ and route["production_trace_complete"] and route["replay_only_agents"]
+    ):
         where = (
-            f"with {result['failure_reason']} after running "
-            f"{', '.join(route['replay_only_agents'])}, which production never ran (production "
-            f"failed with {production_reason})"
+            f"inside {', '.join(route['diverged_failures'])}"
+            if route["diverged_failures"]
+            else f"with {result['failure_reason']} after running "
+            f"{', '.join(route['replay_only_agents'])}"
+        )
+        explanation = (
+            f"The replay failed {where}, which production never ran for this plan item. "
+            f"Production's job failed with {_production_failure_text(production)} before "
+            "running them or on another route, so the replay's failure is not production's: "
+            "replay_failure is what the replay hit. If production's failure is a timeout or "
+            f"a provider error, production stopped earlier than the replay; otherwise {check}."
         )
     elif reasons_differ and route["model_differences"]:
         models = ", ".join(
             f"{d['agent']} on {'/'.join(d['replay'])} (production {'/'.join(d['production'])})"
             for d in route["model_differences"]
         )
-        where = f"with {result['failure_reason']} after running {models}"
+        explanation = (
+            f"The replay failed with {result['failure_reason']} after running {models} for "
+            f"this plan item; production failed with {_production_failure_text(production)}. "
+            "It did not fail where production did, so it is not the production job's failure: "
+            f"replay_failure is what the replay hit; {check}."
+        )
     else:
         return
     result["replay_failure"] = {
@@ -1302,11 +1372,7 @@ def classify_failure(
         "error_detail": result["error_detail"],
     }
     result["outcome"] = "diverged_from_production"
-    result["failure_reason"] = (
-        f"The replay failed {where} for this plan item. It did not fail where production did, "
-        "so it is not the production job's failure: replay_failure is what the replay hit; "
-        "check the flag snapshot (scripts/prod_flag_snapshot.py unverified) and the turns."
-    )
+    result["failure_reason"] = explanation
 
 
 SUCCEEDED = frozenset({"video_rendered", "device_plan_ready"})
@@ -1348,6 +1414,7 @@ def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
         "replayed_job_status": job.get("status"),
         "failure_reason": None if outcome in SUCCEEDED else job.get("failure_reason") or error,
         "error_detail": job.get("error_detail"),
+        "generic_error_detail": job.get("generic_error_detail"),
         "planning_failure": planning_failure(job),
         "video_paths": videos,
         "device_plan": device_plan,
@@ -1505,11 +1572,11 @@ def main(argv: list[str] | None = None) -> int:
             "job_id": job_id,
             "failure_reason": info["job"].get("failure_reason"),
         }
-        # Only the job read here carries production's pipeline trace; an earlier render's
-        # planning error is unknown, so it is not compared.
-        compared["planning_failure"] = (
-            planning_failure(info["job"]) if compared["job_id"] == job_id else None
-        )
+        # Only the job read here carries production's pipeline trace and error detail; an
+        # earlier render's cause is unknown, so it is not compared.
+        read_here = compared["job_id"] == job_id
+        compared["planning_failure"] = planning_failure(info["job"]) if read_here else None
+        compared["error_detail"] = info["job"].get("error_detail") if read_here else None
         result["compared_production_render"] = compared
         classify_failure(result, route, compared)
         result["source_job"] = {
