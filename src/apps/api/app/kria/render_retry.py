@@ -418,6 +418,7 @@ async def prepare_render_retry(
             db.add(renewal)
             await db.flush()
             existing.result = {**existing.result, "approval_id": str(renewal.id)}
+            record_cleared_turn_failure(rows[CreatorAgentTurn])
             existing.status = "awaiting_approval"
             existing.error = None
             existing.completed_at = None
@@ -696,6 +697,7 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
                 approval.status = "cancelled"
                 turn.status = "failed"
                 turn.error = execution.error
+                turn.completed_at = datetime.now(UTC)
                 from app.tasks.kria_runtime import _append_sync_event  # noqa: PLC0415
 
                 _append_sync_event(

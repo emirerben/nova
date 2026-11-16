@@ -58,11 +58,13 @@ from app.auth import SYNTHETIC_USER_ID
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
+from app.kria.render_retry import claim_render_retry
 from app.kria.runtime import cancel_turn
 from app.main import app
 from app.models import (
     CREATOR_AGENT_TURN_STATUSES,
     CreationThread,
+    CreatorAgentApproval,
     CreatorAgentTurn,
     Job,
     User,
@@ -478,6 +480,54 @@ async def test_a_render_failure_stays_counted_when_the_creator_then_cancels_the_
     }
     assert [(r["code"], r["count"]) for r in report["top_failure_reasons"]] == [
         ("device_render_failed", 1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_retry_the_server_refuses_then_renewed_logs_both_failures(
+    client,  # noqa: F811
+):
+    http, _publish = client
+    case, day = _render_failed_turn_retried(http)
+    first = recover(http, case).json()
+    approval_id = uuid.UUID(first["approval_id"])
+    with sync_session() as db:
+        approval = db.get(CreatorAgentApproval, approval_id)
+        approval.status = "approved"
+        approval.draft_revision += 1
+        db.commit()
+
+    assert claim_render_retry(approval_id) == (True, None)
+    with sync_session() as db:
+        refused = db.get(CreatorAgentTurn, case.turn_id)
+        assert refused.status == "failed"
+        assert refused.completed_at is not None
+        assert refused.completed_at > day + timedelta(days=1)
+        db.execute(
+            update(CreatorAgentTurn)
+            .where(CreatorAgentTurn.id == case.turn_id)
+            .values(completed_at=day + timedelta(hours=2))
+        )
+        db.commit()
+
+    with sync_session() as db:
+        revision = db.get(CreationThread, case.thread_id).revision
+    assert recover(http, case, revision).status_code == 202
+    with sync_session() as db:
+        assert db.get(CreatorAgentTurn, case.turn_id).status == "awaiting_approval"
+
+    report = await _report(day, 1)
+
+    assert report["turns"] == {
+        "attempts": 3,
+        "successes": 1,
+        "success_rate": pytest.approx(1 / 3, abs=0.001),
+        "in_progress": 0,
+        "failed": 2,
+    }
+    assert sorted((r["source"], r["code"], r["count"]) for r in report["top_failure_reasons"]) == [
+        ("turn", "device_render_failed", 1),
+        ("turn", "render_retry_target_stale", 1),
     ]
 
 
