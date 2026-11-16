@@ -2581,8 +2581,9 @@ def _run_draft_attempt(
                 }
             )
         # Same composition lane for guided proposals, before they are offered for
-        # approval. Fail visibly on incomplete text behavior; never use the base
-        # proposal as a silent fallback after the composition step failed.
+        # approval. A gate that names one bad item leaves it out and the card says so
+        # (KRI-1376); any other rejection fails the draft. Never use the base proposal
+        # as a silent fallback after the composition step failed.
         from app.services.creation_text_composition import (  # noqa: PLC0415
             compose_creation_text,
             snapshot_copy_constraints,
@@ -2590,12 +2591,30 @@ def _run_draft_attempt(
         from app.services.edit_proposals import _validated_scheduled_draft  # noqa: PLC0415
 
         snapshot = _validated_scheduled_draft(snapshot, current)
+        text_drops: list = []
         snapshot = compose_creation_text(
             snapshot,
             creator_request=brief.creator_request,
             ctx=RunContext(plan_item_id=item_id, request_id=f"creation-text:{attempt_id}"),
             copy_constraints=snapshot_copy_constraints(snapshot),
+            drops=text_drops,
         )
+        if text_drops:
+            from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+            from app.services.creation_text_degrade import text_drop_notes  # noqa: PLC0415
+
+            # KRI-1376: the approval card names what the text pass left out, in the chat's
+            # language. Its lines keep their room under the card's cap; older lines give way.
+            with reply_language_for(_chat_reply_language(iid, owner_id)):
+                notes = text_drop_notes(text_drops)[:6]
+            earlier = [message for message in snapshot.adjustments if message not in notes]
+            snapshot = snapshot.model_copy(
+                update={
+                    "adjustments": [
+                        message[:160] for message in [*earlier[: 6 - len(notes)], *notes]
+                    ]
+                }
+            )
         # Composition can change text treatment after the earlier dry run. Check
         # the final program before offering it for approval, not on the worker.
         validate_proposal_compiles(snapshot)

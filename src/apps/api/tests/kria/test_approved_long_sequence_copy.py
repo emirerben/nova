@@ -190,13 +190,20 @@ def test_the_text_pass_cannot_reword_the_approved_translation(monkeypatch) -> No
 
     monkeypatch.setattr(CreationTextComposer, "run", reword)
     brief = _brief()
-
-    with pytest.raises(CreationTextCompositionError, match="confirmed copy|Text changed before"):
-        compose_creation_text(
-            _plan(brief).snapshot,
-            creator_request="Use this wording",
-            text_requirements=brief.live(),
-        )
+    drops = []
+    # KRI-1376: the reword is dropped; the approved words render, still word by word.
+    composed = compose_creation_text(
+        _plan(brief).snapshot,
+        creator_request="Use this wording",
+        text_requirements=brief.live(),
+        drops=drops,
+    )
+    rows = compile_proposal_execution_plan(composed)["text_elements"]
+    assert "Short" not in [row["text"] for row in rows]
+    assert [row["text"] for row in _pieces(rows, ENGLISH)] == ENGLISH.split()
+    assert [(drop.action, drop.op, drop.text) for drop in drops] == [
+        ("dropped", "rewrite_text", ENGLISH)
+    ]
 
 
 def _compose(monkeypatch, answer):
