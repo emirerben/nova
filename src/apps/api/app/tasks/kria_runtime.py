@@ -108,7 +108,10 @@ from app.kria.reply_language import (
     bind_reply_language,
     current_reply_language,
     detect_chat_language,
+    model_conversation_language,
+    model_language_scope,
     release_reply_language,
+    remember_reply_language,
     reply_language_for,
     say,
     thread_reply_language,
@@ -798,7 +801,11 @@ def _complete_response_turn(
     brief_delegation_read_ids: tuple[str, ...] = (),
     pinned_refusal: dict[str, Any] | None = None,
     pinned_spend: dict[str, Any] | None = None,
+    conversation_language: str | None = None,
 ) -> _Completion:
+    """``conversation_language`` is the language the model that read the creator's message
+    reported (`PlannedKriaTurn.conversation_language`); stored on the thread in this commit,
+    after the lease and revision fences. None keeps the stored language."""
     plan = classify_response_turn(plan, brief_coverage, pinned_refusal)
     if pinned_spend is not None:
         plan = plan.model_copy(
@@ -831,6 +838,7 @@ def _complete_response_turn(
             turn.lease_expires_at = None
             db.commit()
             return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        remember_reply_language(thread, conversation_language)
         if brief_expected_version is not None:
             current_brief = load_latest_brief_sync(db, thread.id)
             if brief_expected_version != (current_brief.version if current_brief else 0):
@@ -2538,6 +2546,8 @@ def _complete_draft_turn(
             turn.lease_expires_at = None
             db.commit()
             return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        # The language the model read this message in, stored with the turn it completes.
+        remember_reply_language(thread, planned.conversation_language)
 
         if planned.media_snapshot is not None:
             from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
@@ -2592,6 +2602,7 @@ def _complete_draft_turn(
                 lease_owner=lease_owner,
                 lease_epoch=lease_epoch,
                 claimed_thread_revision=claimed_thread_revision,
+                conversation_language=planned.conversation_language,
                 plan=KriaTurnPlan(mode="respond", turn_value="question", response=copy_problem),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
@@ -3969,6 +3980,7 @@ def _complete_draft_turn(
                 lease_owner=lease_owner,
                 lease_epoch=lease_epoch,
                 claimed_thread_revision=claimed_thread_revision,
+                conversation_language=planned.conversation_language,
                 plan=mark_plan,
                 brief_updates=_refusal_brief_updates(
                     planned,
@@ -4115,6 +4127,7 @@ def _complete_draft_turn(
                 lease_owner=lease_owner,
                 lease_epoch=lease_epoch,
                 claimed_thread_revision=claimed_thread_revision,
+                conversation_language=planned.conversation_language,
                 plan=recovery,
                 brief_updates=_refusal_brief_updates(planned, planned.brief_updates),
                 brief_delegated=planned.brief_delegated,
@@ -4221,6 +4234,7 @@ def _complete_draft_turn(
                     lease_owner=lease_owner,
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
+                    conversation_language=planned.conversation_language,
                     plan=blocked_plan,
                     # Auto omissions were speculative and rolled back too. Preserve
                     # the original request; recompute omissions after the real choice.
@@ -4811,7 +4825,7 @@ async def _plan_with_live_agent(
                     item_id=uuid.UUID(str(snapshot["item_id"])),
                     creator_id=uuid.UUID(str(snapshot["creator_id"])),
                 )
-            with bind_thought_publisher(thought_publisher):
+            with bind_thought_publisher(thought_publisher), model_language_scope():
                 planned = await plan_live_turn(
                     db,
                     thread_id=uuid.UUID(str(snapshot["thread_id"])),
@@ -4840,7 +4854,9 @@ async def _plan_with_live_agent(
                     creator_id=snapshot["creator_id"],
                     item_id=snapshot["item_id"],
                 )
-                return planned
+                # The language the reading model reported this run; the caller rebinds to it.
+                read = model_conversation_language()
+                return replace(planned, conversation_language=read) if read else planned
     finally:
         turn_deadline.reset(deadline)
         start_degraded_retry.reset(degraded_token)
@@ -5917,6 +5933,11 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         **({"answers_clip_question": True} if answers_clip_question else {}),
                     )
                 )
+                if getattr(planned, "conversation_language", None) is not None:
+                    # Planning ran in its own context: every reply after it (research, gates,
+                    # receipts, failures) follows the language the model read.
+                    release_reply_language(language_token)
+                    language_token = bind_reply_language(planned.conversation_language)
                 planned = _useful_plan(planned, user_message=user_message)
                 # KRI-1236: the tap's omissions are the card's list, applied by the server.
                 planned = _without_tap_removals(planned, snapshot)
@@ -5990,6 +6011,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     lease_owner=lease_owner,
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
+                    conversation_language=planned.conversation_language,
                     plan=planned.plan,
                     brief_updates=planned.brief_updates,
                     creative_copy_resolution=planned.creative_copy_resolution,
@@ -6026,6 +6048,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_owner=lease_owner,
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
+                        conversation_language=planned.conversation_language,
                         plan=planned.plan,
                         pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
@@ -6051,6 +6074,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_owner=lease_owner,
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
+                        conversation_language=planned.conversation_language,
                         plan=planned.plan,
                         pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
@@ -6086,6 +6110,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_owner=lease_owner,
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
+                        conversation_language=planned.conversation_language,
                         plan=planned.plan,
                         pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
@@ -6117,6 +6142,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_owner=lease_owner,
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
+                        conversation_language=planned.conversation_language,
                         plan=planned.plan,
                         pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
@@ -6299,17 +6325,34 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         turn_run_recorder.reset(recorder_token)
 
 
+def _is_latest_creator_message(db, thread_id: uuid.UUID, event_id: uuid.UUID) -> bool:  # noqa: ANN001
+    """True when ``event_id`` is the thread's newest creator message (under the thread lock)."""
+    latest = db.execute(
+        select(CreationThreadEvent.id)
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role == "user",
+            CreationThreadEvent.event_type == "user_message",
+        )
+        .order_by(CreationThreadEvent.sequence.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return latest == event_id
+
+
 async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):
     engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
-            return await extract_deferred_brief(
-                db,
-                thread_id=uuid.UUID(str(snapshot["thread_id"])),
-                item_id=uuid.UUID(str(snapshot["item_id"])),
-                creator_id=uuid.UUID(str(snapshot["creator_id"])),
-                user_message=user_message,
-            )
+            with model_language_scope():
+                updates, route = await extract_deferred_brief(
+                    db,
+                    thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                    item_id=uuid.UUID(str(snapshot["item_id"])),
+                    creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                    user_message=user_message,
+                )
+                return updates, route, model_conversation_language()
     finally:
         await engine.dispose()
 
@@ -6374,12 +6417,13 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             return {"turn_id": turn_id, "status": "ignored"}
         snapshot = _snapshot(thread)
         message = _model_message(source, language=snapshot.get("reply_language"))
+        source_id = source.id
     if not snapshot.get("item_id"):
         return {"turn_id": turn_id, "status": "ignored"}
     try:
         # KRI-520: the extraction runs under the chat's language, like the turn it follows.
         with reply_language_for(snapshot.get("reply_language")):
-            updates, route = asyncio.run(_extract_brief_async(snapshot, message))
+            updates, route, read_language = asyncio.run(_extract_brief_async(snapshot, message))
     except Exception:  # noqa: BLE001 - best-effort context
         log.warning("kria_deferred_brief_failed", turn_id=turn_id, exc_info=True)
         return {"turn_id": turn_id, "status": "failed"}
@@ -6389,6 +6433,11 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             .where(CreationThread.id == uuid.UUID(str(snapshot["thread_id"])))
             .with_for_update()
         ).scalar_one()
+        # The copilot answered this turn first; the extractor read the same message, so the
+        # chat's next reply follows the language it reported. Only while that message is still
+        # the creator's latest: a newer turn's model already decided for a newer message.
+        if read_language is not None and _is_latest_creator_message(db, thread.id, source_id):
+            remember_reply_language(thread, read_language)
         _bind_thread_language(language, thread)
         if updates:
             persist_brief_version_sync(db, thread_id=thread.id, turn_id=identifier, updates=updates)

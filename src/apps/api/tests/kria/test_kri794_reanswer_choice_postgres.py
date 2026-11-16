@@ -471,7 +471,20 @@ async def test_the_kept_note_quotes_words_that_re_answer_after_the_language_chan
     user_id, thread_id, _, question = await _answered(monkeypatch)
     await _decide(user_id, thread_id, "deny")
 
+    # The chat's language is the reading model's call (`conversation_language`); the planner
+    # stand-in reports what a model reads in this Turkish sentence.
+    from app.kria import planner
+    from app.kria.reply_language import adopt_conversation_language
+
+    stand_in = planner._plan_live_turn
+
+    async def _reads_turkish(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        adopt_conversation_language("tr")
+        return await stand_in(*args, **kwargs)
+
+    monkeypatch.setattr(planner, "_plan_live_turn", _reads_turkish)
     await _say(user_id, thread_id, "Biraz daha hızlı yap lütfen")
+    monkeypatch.setattr(planner, "_plan_live_turn", stand_in)
 
     summary = _last_summary(thread_id)
     hint = f'Değiştirmek için "{UNORDERED_LABEL}" yaz.'

@@ -72,7 +72,7 @@ def test_german_messages_read_as_german(german_on: None) -> None:
 
 
 def test_german_wiring_dry(prod_profile, german_on: None) -> None:  # noqa: ARG001
-    from app.kria.reply_language import prompt_language_line
+    from app.kria.reply_language import conversation_language_line, prompt_language_line
 
     german_line = prompt_language_line("de")
     assert german_line, "German replies are on: the German language line must exist"
@@ -88,7 +88,13 @@ def test_german_wiring_dry(prod_profile, german_on: None) -> None:  # noqa: ARG0
             assert pair["de"] in prompt, "German message missing from the prompt"
             if AGENTS[pair["agent"]].get("reply_language") and input_dict.get("reply_language"):
                 assert input_dict["reply_language"] == "de", input_dict["reply_language"]
-                assert german_line in prompt, "agent is not told to answer in German"
+                # The Main Creator reads the language itself; a German chat so far is context.
+                told = (
+                    conversation_language_line("de")
+                    if pair["agent"] == "main_creator"
+                    else german_line
+                )
+                assert told in prompt, "agent is not told to answer in German"
             output = _replay_run(agent, input_dict, f"parity-dry/{pair['id']}/de")
             decision = project(pair["agent"], output.model_dump(mode="json"), pair["compare"])
             assert isinstance(decision, dict) and decision

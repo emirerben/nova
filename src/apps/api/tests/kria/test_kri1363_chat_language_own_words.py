@@ -1,5 +1,7 @@
 """KRI-1363: the chat answers in the language the creator writes, not the video's language.
 
+The word detector below now serves runtime-v1 (web) chats and non-chat prompts only.
+
 An English chat that carried Turkish text for the video (quoted captions, "Title: ...", a bare
 title typed as the answer to "what words for the title?") moved to Turkish: the detector counted
 every word of the message as the creator talking. The messages below are the reproduction from
@@ -16,8 +18,8 @@ Ways the fix could go wrong, written down before the code:
    Green 4 message opens "Yorumla episode 9: ... Make the whole video like a green screen: ...".
 6. The creator really changes language mid-chat and Kria never follows.
 7. A mixed message (their own words in both languages) flips the chat on video text again.
-8. A bare title typed as the answer to a wording question moves the chat; or the guard also
-   freezes the language on an ordinary question (clip picker, simpler version).
+8. (Removed: the runtime-v2 chat no longer scores words, so the wording-question guard went
+   with it. Its model reports `conversation_language`; see test_model_owned_reply_language.py.)
 9. Turkish chat + English video text has the same bug the other way.
 10. A message that is ONLY video text ("'Günaydın İstanbul'") sets the language of a new chat.
 11. The kill switch does not restore the old detector byte for byte.
@@ -33,7 +35,6 @@ import pytest
 
 from app.config import settings
 from app.kria.reply_language import (
-    asks_for_video_text,
     detect_chat_language,
     resolve_reply_language,
 )
@@ -193,56 +194,6 @@ def test_video_text_inside_a_sentence_holds_the_chat_only_when_marked() -> None:
     assert resolve_reply_language(f'Add a title that says "{title}"', previous="en") == "en"
     assert resolve_reply_language(f"Add a title that says: {title}", previous="en") == "tr"
     assert resolve_reply_language(f"Add this title: {title}", previous="en") == "en"
-
-
-# -- 8: a typed answer to a wording question -------------------------------------------------
-
-
-def _asked(question: dict) -> tuple[str, dict]:
-    return ("assistant", {"choice_question": question})
-
-
-TITLE_QUESTION = {"question_id": "q1", "conflict": "title_text", "allow_free_text": True}
-HOOK_QUESTION = {
-    "question_id": "q2",
-    "conflict": "creative_copy",
-    "creative_target": "opening_title",
-    "allow_free_text": True,
-}
-SIMPLER_QUESTION = {
-    "question_id": "q3",
-    "kind": "strategy_refusal",
-    "conflict": "simplification_requires_choice",
-    "allow_free_text": True,
-}
-
-
-@pytest.mark.parametrize("question", [TITLE_QUESTION, HOOK_QUESTION])
-def test_an_open_wording_question_asks_for_video_text(question: dict) -> None:
-    events = [("user", {}), _asked(question)]
-    assert asks_for_video_text(events) is True
-
-
-def test_other_questions_and_answered_ones_do_not() -> None:
-    assert asks_for_video_text([("user", {}), _asked(SIMPLER_QUESTION)]) is False
-    assert asks_for_video_text([("user", {})]) is False
-    answered = [
-        ("user", {}),
-        _asked(TITLE_QUESTION),
-        ("user", {"choice_selection": {"question_id": "q1", "option_key": "no_title"}}),
-    ]
-    assert asks_for_video_text(answered) is False
-
-
-def test_a_bare_title_typed_as_the_answer_keeps_the_chat_language() -> None:
-    assert resolve_reply_language(BARE_TR_TITLE, previous="en", answers_video_text=True) == "en"
-    # The same words with no wording question open are the creator changing language.
-    assert resolve_reply_language(BARE_TR_TITLE, previous="en") == "tr"
-
-
-def test_the_kill_switch_ignores_the_wording_question(old_detector) -> None:
-    assert resolve_reply_language(BARE_TR_TITLE, previous="en", answers_video_text=True) == "tr"
-    assert asks_for_video_text([("user", {}), _asked(TITLE_QUESTION)]) is False
 
 
 # KRI-1362 x KRI-1363 (both on): German follows the same "own words" rule.

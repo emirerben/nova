@@ -68,9 +68,8 @@ from app.kria.media_sources import (
 )
 from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.reply_language import (
-    creator_typed_language,
+    creator_stored_language,
     detect_chat_language,
-    needs_typed_history,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -4486,16 +4485,15 @@ async def create_thread(
         content=body.message,
         client_event_id=body.client_event_id,
     )
-    # KRI-784: a clearly Turkish/English first message sets the chat's language, so
-    # a short follow-up ("ok") keeps it. The device language only picks this
+    # KRI-784: a clearly Turkish/English first message sets a runtime-v1 (web) chat's
+    # language, so a short follow-up ("ok") keeps it. A runtime-v2 chat sends no message here
+    # (422 above): its model decides on the first turn. The device language only picks this
     # prompt's copy and is never stored.
     remember_reply_language(thread, detect_chat_language(body.message))
-    # Green 5: a new chat greets in the language the creator types in their other chats when
+    # Green 5: a new chat greets in the stored language of the creator's latest other chat when
     # its first message (if any) does not say; the device language is the last resort.
-    typed_elsewhere = (
-        await creator_typed_language(db, creator_id=user.id, exclude_thread_id=thread.id)
-        if needs_typed_history(body.message, None)
-        else None
+    typed_elsewhere = await creator_stored_language(
+        db, creator_id=user.id, exclude_thread_id=thread.id
     )
     await _append(
         db,

@@ -25,6 +25,7 @@ from app.agents.main_creator import (
     MainCreatorInput,
 )
 from app.config import settings
+from app.kria.reply_language import conversation_language_line
 from tests.agents.test_main_creator_agent import _input, _manifest
 
 pytestmark = pytest.mark.journey("kri-586-hook-copy")
@@ -162,7 +163,9 @@ def test_prompt_without_a_song_preserves_base_under_editorial_skills(
         + "\n\n"
     )
     assert prompt.startswith(skills)
-    base_prompt = prompt.removeprefix(skills)
+    # The chat-language line (model-owned reply language) follows the unchanged base.
+    line = conversation_language_line(None)
+    base_prompt = prompt.removeprefix(skills).removesuffix(f"\n\n{line}\n") + "\n"
     assert (
         hashlib.sha256(base_prompt.encode()).hexdigest()
         == PRE_CHANGE_PROMPT_SHA[(clip_intents, brief)]
