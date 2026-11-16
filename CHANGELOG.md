@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.260.0] - 2026-11-16
+
+### Changed
+- feat(dev-platform): replay a production creation job from its id (KRI-1375) (#2310) <!-- release-pr: 2310 -->
+
 ## [0.88.259.0] - 2026-11-16
 
 ### Changed
