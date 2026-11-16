@@ -60,6 +60,7 @@ from app.kria.brief_checks import (
     plan_facts_from_phone_variant,
     plan_facts_from_rendered_montage,
     plan_facts_from_strategy,
+    render_promise_ids,
     reply_and_lead_from_receipts,
     reply_from_receipts,
     requirements_to_check_at_draft,
@@ -3509,6 +3510,9 @@ def _complete_draft_turn(
                             receipts,
                             summary=arguments.summary,
                             notices=draft_notices,
+                            # KRI-1508: the Talking captions plan reads as the promise
+                            # approval readiness already takes it for, never "Partly".
+                            planned_ids=render_promise_ids(answered, receipts, facts),
                             # Outside readiness a route decline follows the planner's
                             # summary instead of replacing it (registry on).
                             declines_after_summary=route_name is not None
@@ -3951,7 +3955,14 @@ def _complete_draft_turn(
                 planned.policy_notices,
             )
             kept = (
-                reply_from_receipts(brief, kept_receipts, notices=kept_notices) if checked else ""
+                reply_from_receipts(
+                    brief,
+                    kept_receipts,
+                    notices=kept_notices,
+                    planned_ids=render_promise_ids(checked, kept_receipts, facts),
+                )
+                if checked
+                else ""
             )
             reply_text = "\n".join(
                 part

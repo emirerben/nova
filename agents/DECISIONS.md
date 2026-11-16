@@ -3929,3 +3929,38 @@ Reversal condition. If "cleanup clipped the start of my sentence" traces to a
 **Gap:** server copy written before any model reads a message (a Steer-now stop line, an instant status reply) is in the stored language. A copilot-only turn (no Main Creator, no brief extractor first) replies in the stored language; the deferred extraction then stores the language it read for the next turn.
 **Kill switch:** `KRIA_REPLY_LANGUAGE_ENABLED=false`: no line in the prompt, the field is ignored, nothing is stored.
 **Guards:** `tests/kria/test_model_owned_reply_language.py`, `tests/kria/test_model_owned_reply_language_postgres.py`.
+
+## [2026-11-17] Cleanup moves words stamped into the pause after their voice (KRI-1506/1507, job 887f89d6)
+
+Context. Cusco DJI T2 "list 1": the speaker says "Kilitli sistemler", pauses ~1.9 s, then
+"yıkılmayı zorlaştırıyor". whisper-1 stamped "Kilitli sistemler" 13.96–15.24 s, wholly inside the
+pause (silence 13.384–15.288 s); the words' voice (12.306–13.384 s) had no word. The label and
+caption came 1.6 s late, the pause looked like speech so cleanup kept it (2.05 s, the take's
+longest), and rule 2 proposed the real words as an acoustic filler (only the KRI-1017 voice guard
+kept them). Rule 0 cannot help: it never carves a whole token, by design.
+
+Decision. Before planning, the preflight analysis moves such a run onto the wordless voice
+(`app/pipeline/late_word_realign.py`, called from `speech_cleanup_analysis._late_words_realigned`)
+and stores the moved words, so the cut, the captions and the list labels all read them. Every
+condition must hold: the words each lie >= 90% in ONE silence span >= `TOKEN_SILENCE_MIN_S` and
+form one run; the next word is not stamped in that pause too; the island (the sound between the
+last pause >= 0.25 s and this one) has no earlier word in it (0.1 s slack); its length is within
+2x of the run's stamps and holds the run's syllables at <= `SQUEEZE_MAX_SYLLABLES_PER_S`; and the
+KRI-1017 voicing detector hears >= 30% voicing in the island and <= 0.05 s under the stamps. The
+run maps linearly onto the island, never before the previous word's end. `DETECTOR_VERSION` →
+`mixed-gap-v10-late-words`; switch `SPEECH_CLEANUP_LATE_WORDS_ENABLED` (default on, in the policy
+fingerprint).
+
+Why it is safe enough. Two detectors that do not share a signal (silencedetect's level spans and
+the periodicity-based voicing detector) must both say the stamps are dead air and the island is a
+voice; quiet speech under the stamps is voiced and refuses the move. Moving words never cuts
+anything itself; the voice guard still judges every cut. The mirror shape (words stamped BEFORE
+their voice) has not been seen and is not moved.
+
+Evidence. T2 replayed on the real clip: "Kilitli" 13.96 → 12.31 s (voice-band truth 12.30 s), the
+pause cut to 0.39 s, every other cut unchanged; label 2 at 11.27 s in the cut take where the audio
+has "kilitli" at about 11.25 s. No move on 12 recorded word/silence fixtures or on the Cusco T3,
+Çiğdem S2 and S4 kit runs. Guards: `tests/tasks/test_kri1502_cusco_t2_replay.py`,
+`tests/pipeline/test_late_word_realign.py`. Failure modes:
+`docs/reviews/kri-1502-late-words-failure-modes.md`. Not covered: ~1 s pauses whose stamps stretch
+over a mid-sentence pause (T2 keeps four), a follow-up.

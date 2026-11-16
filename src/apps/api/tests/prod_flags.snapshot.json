@@ -1419,6 +1419,10 @@
       "source": "default",
       "value": true
     },
+    "speech_cleanup_late_words_enabled": {
+      "source": "default",
+      "value": true
+    },
     "speech_cleanup_long_pauses_enabled": {
       "source": "default",
       "value": false

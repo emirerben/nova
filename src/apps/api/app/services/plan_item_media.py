@@ -75,6 +75,8 @@ def current_detector_policy() -> str:
             # The filler check moves and drops filler cuts for identical media; its switch must
             # retire analyses made under the other setting.
             f"filler-check={'enabled' if settings.speech_cleanup_filler_check_enabled else 'off'}",
+            # Moving late-stamped words changes the cut and the stored words (KRI-1506).
+            f"late-words={'enabled' if settings.speech_cleanup_late_words_enabled else 'off'}",
         )
     )
 
