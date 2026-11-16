@@ -2110,6 +2110,18 @@
     "Left out {count} text changes I couldn't make fit": "{count} Textänderungen, die ich nicht unterbringen konnte, habe ich weggelassen",
     "Left out {count} explanations that didn't fit their part of the video": "{count} Erklärungen, die nicht in ihren Teil des Videos passten, habe ich weggelassen",
     "I couldn't add {text} the way you asked": "Ich konnte {text} nicht so hinzufügen, wie du es wolltest",
-    "I couldn't size {text} exactly as you asked": "Ich konnte {text} nicht genau in der gewünschten Größe einstellen"
+    "I couldn't size {text} exactly as you asked": "Ich konnte {text} nicht genau in der gewünschten Größe einstellen",
+    "they'll be in the language that's spoken, with a smaller line in {language} under each one, and I'll check that in the finished video": "sie sind in der gesprochenen Sprache, mit einer kleineren Zeile auf {language} unter jedem, und das prüfe ich im fertigen Video",
+    "this app version can't show a second line in {language} under the captions, so they'll only be in the language that's spoken": "diese App-Version kann keine zweite Zeile auf {language} unter den Untertiteln zeigen, deshalb sind sie nur in der gesprochenen Sprache",
+    "I can't add a second line in {language} under the captions yet, so they'll only be in the language that's spoken": "Ich kann noch keine zweite Zeile auf {language} unter die Untertitel setzen, deshalb sind sie nur in der gesprochenen Sprache",
+    "You speak {language}, so there's no other language to put under the captions.": "Du sprichst {language}, deshalb gibt es keine andere Sprache für eine Zeile unter den Untertiteln.",
+    "There's no line in {language} under the captions.": "Unter den Untertiteln gibt es keine Zeile auf {language}.",
+    "The line in {language} under the captions is switched off.": "Die Zeile auf {language} unter den Untertiteln ist ausgeschaltet.",
+    "I couldn't translate the captions into {language}, so there's no line in {language} under them.": "Ich konnte die Untertitel nicht auf {language} übersetzen, deshalb gibt es darunter keine Zeile auf {language}.",
+    "The line under the captions is in {language_name_rendered}, not {language_name_asked}.": "Die Zeile unter den Untertiteln ist auf {language_name_rendered}, nicht auf {language_name_asked}.",
+    "{count} caption has no line in {language} under it.": "{count} Untertitel hat keine Zeile auf {language} darunter.",
+    "{count} captions have no line in {language} under them.": "{count} Untertitel haben keine Zeile auf {language} darunter.",
+    "I couldn't check the line in {language} under the captions.": "Ich konnte die Zeile auf {language} unter den Untertiteln nicht prüfen.",
+    "Each caption has a smaller line in {language} under it.": "Unter jedem Untertitel steht eine kleinere Zeile auf {language}."
   }
 }

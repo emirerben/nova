@@ -807,6 +807,22 @@ enum NativeEditorRenderError: Error, Equatable {
                     ? min(renderedCues[index].endS, renderedCues[index + 1].startS)
                     : renderedCues[index].endS
             }
+            // KRI-1501: the translated-line track, drawn under (or over) each cue that has a `translation`.
+            // Drawn only where the server offers the track for this build (`editor_capabilities.caption_translation`):
+            // with its gate closed the server compiles no translated line, so neither does the preview.
+            let translationTrack = document.capabilities["caption_translation"]?.languages == nil ? nil
+                : document.captionTranslation.flatMap { $0.enabled ? $0 : nil }
+            var translationFaces: [String: String] = [:]
+            if let translationTrack {
+                var texts: [String: [String]] = [:]
+                for cue in document.captionCues {
+                    guard let line = cue.translation else { continue }
+                    texts[translationTrack.font ?? cue.raw["font_family"]?.stringValue ?? family, default: []].append(line)
+                }
+                translationFaces = texts.reduce(into: [String: String]()) { faces, entry in
+                    faces[entry.key] = glyphFallback.family(entry.key, for: entry.value.joined(separator: " "))
+                }
+            }
             for cue in document.captionCues where !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let own = appearance["line_overrides"]?.objectValue?[cue.id]?.objectValue ?? [:]
                 var captionStyle = defaultCaptionStyle
@@ -839,6 +855,7 @@ enum NativeEditorRenderError: Error, Equatable {
                                                             cueEnd: cue.endS, start: item.start, end: fullCueEnd)
                 let spanCut = captionSpans.count != 1 || captionSpans.first.map { $0.0 != item.start || $0.1 != fullCueEnd } ?? true
                 let cueWordFloor = previousWordEnd
+                let spokenLayerStart = text.count
                 for (spanIndex, captionSpan) in captionSpans.enumerated() {
                 // Each visible part times its words from the same floor (the previous line's last word); the
                 // part's own start then holds back the words before it.
@@ -924,6 +941,19 @@ enum NativeEditorRenderError: Error, Equatable {
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
                         effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none, background: layout.background))
                 }
+                }
+                if let translationTrack, let line = cue.translation, text.count > spokenLayerStart {
+                    let requested = translationTrack.font ?? cue.raw["font_family"]?.stringValue ?? family
+                    let face = translationFaces[requested] ?? requested
+                    let translationFont = try resolveFont(captionFont[face] ?? face)
+                    // The server twin animates a translated line with the cue's (or the all-captions) phases, else a
+                    // plain pop-in (`phone_captions._translation_layer`).
+                    let phases = Self.captionPhases(cue.raw["animation_phases"]) ?? defaultCaptionPhases
+                    text.append(contentsOf: try translationLayers(
+                        cueID: cue.id, index: renderedCues.firstIndex { $0.id == cue.id } ?? 0, line: line, track: translationTrack,
+                        spoken: Array(text[spokenLayerStart...]), spokenFont: font, spokenStyle: captionStyle, font: translationFont,
+                        fontID: try registerFont(translationFont), fontVariations: fontInstances[face] ?? [:],
+                        spans: captionSpans, canvas: canvas, phases: phases))
                 }
             }
         }
@@ -1537,6 +1567,118 @@ enum NativeEditorRenderError: Error, Equatable {
             return CGRect(x: bounds.minX / Double(canvas.width), y: bounds.minY / Double(canvas.height),
                           width: bounds.width / Double(canvas.width), height: bounds.height / Double(canvas.height))
         } catch { return nil }
+    }
+
+    /// KRI-1501: the translated layer id of the cue at `index` in the drawn (non-empty, start-sorted) cue list:
+    /// `caption-tr-<index>`, the server recipe's id (`phone_captions._compile_translation_layers`).
+    static func translationLayerBase(cueID: String, in document: EditorDocument) -> String? {
+        let rendered = document.captionCues
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.startS == $1.startS ? $0.id < $1.id : $0.startS < $1.startS }
+        return rendered.firstIndex { $0.id == cueID }.map { "caption-tr-\($0)" }
+    }
+
+    /// The device watermark's rect plus its clearance gap, in canvas px. Mirrors `phone_captions.watermark_keepout_rect`.
+    static func watermarkKeepout(canvas: Canvas) -> CGRect {
+        let width = Double(canvas.width), height = Double(canvas.height)
+        let scale = min(width / 1080, height / 1920)
+        let bottom = height - 445 * scale, gap = 12 * scale
+        return CGRect(x: 60 * scale - gap, y: bottom - 59 * scale - gap, width: 133 * scale + 2 * gap, height: 59 * scale + 2 * gap)
+    }
+
+    /// KRI-1501: the translated line for one cue: one row in plain fill + stroke (no shadow, the spoken stroke colour),
+    /// no karaoke, entering with the cue's phases or a pop-in, one layer per visible part of the cue
+    /// (`caption-tr-<index>[-n]`). Mirrors `phone_captions._translation_layer` step for step, with the numbers in
+    /// `CaptionTranslationLook`:
+    ///   - size: the line override, else the track's `size_px`, else `round(0.6 × spoken size)` clamped 28–120;
+    ///   - one row: while `width + stroke` > 0.9 × canvas width the size becomes
+    ///     `min(size − 1, floor(size × limit / width))`; below 24 px the line is dropped (never wrapped or cut);
+    ///   - x: the line's (or track's) `position_x_frac`, else the spoken block's centre; an attached line is kept
+    ///     inside 0.05–0.95 of the width;
+    ///   - detached (`position_y_frac` set): centred at that y;
+    ///   - attached: under the spoken block with a 0.25 × size gap, else above it; a placement must end above 0.90
+    ///     of the height and start below 0.05; touching the watermark it slides right just past it when it still
+    ///     ends inside 0.95 of the width. Neither placement usable ⇒ dropped.
+    /// Known difference: the preview measures typographic blocks (`AuthoredTextLayout.blockBounds`), the server glyph
+    /// ink, and the preview has no face boxes (the server also avoids faces).
+    private func translationLayers(cueID: String, index: Int, line: String, track: EditorCaptionTranslation, spoken: [PortableTextLayer],
+                                   spokenFont: URL, spokenStyle: AuthoredTextLayout.Style, font: URL, fontID: String,
+                                   fontVariations: [String: Double], spans: [(Double, Double)], canvas: Canvas,
+                                   phases: TextAnimationPhases?) throws -> [PortableTextLayer] {
+        let row = line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !row.isEmpty, !spans.isEmpty else { return [] }
+        let width = Double(canvas.width), height = Double(canvas.height)
+        let spokenBlock = spoken.compactMap { AuthoredTextLayout.blockBounds(of: $0, fontURL: spokenFont) }
+            .reduce(CGRect.null) { $0.union($1) }
+        guard !spokenBlock.isNull else { return [] }
+        let own = track.lineOverrides[cueID] ?? [:]
+        let spokenSize = spoken.first?.runs.first?.fontSize ?? spokenStyle.size
+        var size = CaptionTranslationLook.clampedSize(own["size_px"]?.numberValue ?? track.sizePx
+            ?? CaptionTranslationLook.defaultSize(spoken: spokenSize))
+        let stroke = track.strokeWidth ?? CaptionTranslationLook.defaultStroke(spoken: spokenStyle.strokeWidth)
+        var style = AuthoredTextLayout.Style(fontAssetID: fontID, size: size,
+            widthFraction: 10, xFraction: 0.5, yFraction: 0.5, alignment: .center,
+            color: try ink(track.color.map(JSONValue.string), fallback: CaptionTranslationLook.defaultColor),
+            stroke: spokenStyle.stroke, strokeWidth: stroke, shadows: [], fontVariations: fontVariations)
+        let base = "caption-tr-\(index)"
+        func measure(_ px: Double) throws -> CGRect? {
+            var trial = style; trial.size = px
+            let layer = try AuthoredTextLayout.compile(id: base, text: row, start: spans[0].0, end: spans[0].1,
+                                                       style: trial, fontURL: font, canvas: canvas)
+            guard layer.runs.count == 1 else { return nil }
+            return AuthoredTextLayout.blockBounds(of: layer, fontURL: font)
+        }
+        guard var box = try measure(size) else { return [] }
+        let limit = CaptionTranslationLook.widthBudgetFraction * width
+        while box.width + stroke > limit {
+            let smaller = min(size - 1, (size * limit / (box.width + stroke)).rounded(.down))
+            guard smaller >= CaptionTranslationLook.minimumFitSize, let next = try measure(smaller) else { return [] }
+            size = smaller
+            box = next
+        }
+        style.size = size
+        let xSet = own["position_x_frac"]?.numberValue ?? track.positionXFrac
+        let ySet = own["position_y_frac"]?.numberValue ?? track.positionYFrac
+        var centerX = xSet.map { min(CaptionTranslationLook.xRange.upperBound, max(CaptionTranslationLook.xRange.lowerBound, $0)) * width }
+            ?? spokenBlock.midX
+        var centerY: Double
+        if let ySet {
+            centerY = min(CaptionTranslationLook.yRange.upperBound, max(CaptionTranslationLook.yRange.lowerBound, ySet)) * height
+        } else {
+            let margin = (1 - CaptionTranslationLook.widthBudgetFraction) / 2 * width
+            centerX = min(max(centerX, margin + box.width / 2), width - margin - box.width / 2)
+            let gap = CaptionTranslationLook.gapFactor * size
+            let budget = CaptionTranslationLook.frameBudgetFraction * height
+            let keepout = Self.watermarkKeepout(canvas: canvas)
+            var placed: (Double, Double)?
+            for cy in [spokenBlock.maxY + gap + box.height / 2, spokenBlock.minY - gap - box.height / 2] {
+                var line = CGRect(x: centerX - box.width / 2, y: cy - box.height / 2, width: box.width, height: box.height)
+                guard line.maxY <= budget, line.minY >= CaptionTranslationLook.topFraction * height else { continue }
+                if line.intersects(keepout) {
+                    let dx = keepout.maxX - line.minX + 1
+                    guard line.maxX + dx <= (1 - (1 - CaptionTranslationLook.widthBudgetFraction) / 2) * width else { continue }
+                    line = line.offsetBy(dx: dx, dy: 0)
+                }
+                placed = (Double(line.midX), cy)
+                break
+            }
+            guard let placed else { return [] }
+            centerX = placed.0
+            centerY = placed.1
+        }
+        style.xFraction = centerX / width
+        style.yFraction = centerY / height
+        return try spans.enumerated().map { part, span in
+            let id = base + (part == 0 ? "" : "-\(part)")
+            if let phases {
+                return try AuthoredTextLayout.compile(id: id, text: row, start: span.0, end: span.1, style: style,
+                                                      fontURL: font, canvas: canvas, phases: phases)
+            }
+            let layout = try AuthoredTextLayout.compile(id: id, text: row, start: span.0, end: span.1, style: style,
+                                                        fontURL: font, canvas: canvas)
+            return PortableTextLayer(id: layout.id, start: layout.start, end: layout.end, anchorX: layout.anchorX,
+                                     anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs, effect: .popIn)
+        }
     }
 
     private func resolveFont(_ family: String) throws -> URL {

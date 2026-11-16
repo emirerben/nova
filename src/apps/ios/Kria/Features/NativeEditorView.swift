@@ -800,8 +800,11 @@ struct NativeEditorView: View {
         case .captions:
             NativeCaptionPanel(
                 session: session, editingCueID: $captionEditingCueID,
-                loopToggleRequest: captionLoopRequest, editLines: captionEditLines, editLineHeight: captionLineHeight
+                loopToggleRequest: captionLoopRequest, editLines: captionEditLines, editLineHeight: captionLineHeight,
+                onOpenTranslation: { changePanel(to: .translation) }
             ) { changePanel(to: nil) }
+        case .translation:
+            NativeCaptionTranslationPanel(session: session) { changePanel(to: nil) }
         case .visuals:
             NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .background:
@@ -841,7 +844,7 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .captions, .visuals, .background, .sounds, .drawing, .split: changePanel(to: nil)
+        case .captions, .translation, .visuals, .background, .sounds, .drawing, .split: changePanel(to: nil)
         case .speaker:
             if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
             changePanel(to: nil)
@@ -1006,6 +1009,10 @@ struct NativeEditorView: View {
             && session.document.textElements.first(where: { $0.id == selection.id })?.isCaption == true
         if selection.kind == .captionCue || isTextLaneCaption {
             changePanel(to: .captions)
+            return
+        }
+        if selection.kind == .captionTranslation {
+            changePanel(to: .translation)
             return
         }
         if selection.kind == .text {
@@ -1203,6 +1210,7 @@ private enum NativeEditorInspector: Identifiable {
             case .clip: return String(localized: "Clip", comment: "Kind of timeline item")
             case .text: return String(localized: "Text", comment: "Kind of timeline item")
             case .captionCue: return String(localized: "Caption", comment: "Kind of timeline item")
+            case .captionTranslation: return String(localized: "Translated caption", comment: "Editor object name: the smaller translated line under a caption")
             case .music: return String(localized: "Music", comment: "Kind of timeline item")
             case .soundEffect: return String(localized: "Sound effect")
             case .mediaOverlay: return String(localized: "Overlay", comment: "Kind of timeline item")

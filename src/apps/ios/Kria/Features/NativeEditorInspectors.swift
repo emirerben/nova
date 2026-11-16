@@ -75,6 +75,9 @@ struct NativeSelectionInspector: View {
             NativeSelectedTextInspector(selection: selection, session: session)
         case .captionCue:
             NativeSelectedCaptionInspector(selection: selection, session: session)
+        case .captionTranslation:
+            // KRI-1501: the translated line opens its own bottom panel (`NativeCaptionTranslationPanel`).
+            Form { Section { Text("Drag the translated line on the video to move it. Pinch to resize.").foregroundStyle(KriaColor.zinc) } }
         case .music:
             NativeSelectedMusicInspector(selection: selection, session: session)
         case .soundEffect, .mediaOverlay, .visualBlock, .motionScene, .cameraEffect, .carousel, .drawing:

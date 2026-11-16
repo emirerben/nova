@@ -99,6 +99,7 @@ from app.pipeline.caption_language import (
     canonical_caption_language,
     caption_language_decision,
     caption_language_verdict,
+    resolve_dual_translation_language,
 )
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.explicit_speech_cut import speech_cut_tokens
@@ -783,6 +784,11 @@ class PlanFacts:
     # KRI-1015: another live requirement asked for this caption language, so the translation is
     # no miss on a captions ask that names none (the language row says where it came from).
     caption_translation_asked: bool = False
+    # KRI-1501: the finished variant's `caption_translation` record (the second, translated
+    # caption line: language, outcome, the editor switch) and the translated line each caption
+    # cue carries, in cue order. None = no record: no second line is claimed drawn.
+    caption_translation: Mapping[str, Any] | None = None
+    caption_translation_texts: tuple[str, ...] = ()
     # KRI-1489: every word a live requirement of the brief names for a pop-in (typed `triggers`
     # or quoted), so a pop-in another ask claims is never counted as a spare one.
     brief_named_triggers: tuple[str, ...] = ()
@@ -3727,6 +3733,19 @@ def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     translated = variant.get("caption_translated_from")
     if isinstance(translated, str) and translated.strip():
         facts["caption_translated_from"] = translated.strip().casefold()
+    # KRI-1501: the second line as the variant carries it now (an editor Save writes both).
+    record = variant.get("caption_translation")
+    if isinstance(record, Mapping):
+        facts["caption_translation"] = dict(record)
+    facts["caption_translation_texts"] = tuple(
+        line
+        for line in (
+            " ".join(str(cue.get("translation") or "").split())
+            for cue in (cues if isinstance(cues, list) else ())
+            if isinstance(cue, Mapping) and str(cue.get("text") or "").strip()
+        )
+        if line
+    )
     return facts
 
 
@@ -13775,7 +13794,11 @@ def _check_narrated_timing(req: BriefRequirement, facts: PlanFacts) -> Requireme
 
 def _requested_caption_language(req: BriefRequirement) -> str | None:
     """The language a captions ask wants ("English subtitles", "captions in Turkish"), as
-    a code, else None. "English subtitles translated from the Turkish voiceover" is English."""
+    a code, else None. "English subtitles translated from the Turkish voiceover" is English.
+    KRI-1501: a two-line ask ("Turkish captions with English under it") names none: the spoken
+    line stays as spoken and the second line is judged on its own (`_dual_caption_ask`)."""
+    if _dual_caption_languages(req):
+        return None
     stated = _caption_language_fact(req)
     if stated is not None:
         return stated
@@ -13800,6 +13823,219 @@ def _keeps_spoken_languages(req: BriefRequirement) -> bool:
     for the English parts, Turkish captions for the Turkish parts"): it asks for no one language,
     so the first language name in it is no ask (`caption_language_decision`)."""
     return caption_language_decision(_req_text(req)).keep_spoken
+
+
+def _dual_caption_languages(req: BriefRequirement) -> tuple[str, ...]:
+    """KRI-1501: the languages of a two-line captions ask in the requirement's own words
+    (`caption_language_decision(...).translation_languages`, line language first); () else."""
+    return caption_language_decision(_req_text(req)).translation_languages
+
+
+def _dual_caption_ask(req: BriefRequirement) -> tuple[str, ...]:
+    """`_dual_caption_languages` of a captions ask that keeps its captions on."""
+    if not _wants_captions(req) or _wants_no_captions(req):
+        return ()
+    return _dual_caption_languages(req)
+
+
+def _dual_captions_drawable(client_protocol: int | None) -> tuple[bool, bool]:
+    """(planned, server_ready) for a second caption line (KRI-1501).
+
+    ``planned`` is `phone_rollout.dual_captions_planned_for` for the drafting build (the turn's,
+    else the request's). With no build known (approval readiness re-derives the promise without
+    one) the server gate alone decides, like `_caption_shape_drawable`. ``server_ready`` is the
+    flag and the device check without the build: True with ``planned`` False means the app
+    version is what is missing.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.phone_rollout import dual_captions_planned_for  # noqa: PLC0415
+
+    ready = bool(
+        settings.dual_captions_enabled
+        and "dualCaptions" in set(settings.phone_render_verified_features)
+    )
+    build = client_protocol if client_protocol is not None else current_client_protocol()
+    if build is None:
+        return ready, ready
+    return dual_captions_planned_for(build), ready
+
+
+def _dual_line_language(asked: Sequence[str], spoken: str | None) -> str | None:
+    """The language the second line will be in: resolved against the spoken language when it
+    is known (`resolve_dual_translation_language`), else the asked line language (the first
+    named) when the feature covers it. None = no line can be promised."""
+    from app.services.phone_rollout import DUAL_CAPTION_LANGUAGES  # noqa: PLC0415
+
+    said = canonical_caption_language(spoken).split("-", 1)[0]
+    if said:
+        return resolve_dual_translation_language(asked, said)
+    return asked[0] if asked and asked[0] in DUAL_CAPTION_LANGUAGES else None
+
+
+def _dual_caption_plan(req: BriefRequirement, facts: PlanFacts) -> tuple[str, bool] | None:
+    """KRI-1501: what a phone Talking draft says about a second caption line, and whether it
+    is a promise. None when the ask names no second line.
+
+    Gate on: the captions stay in the spoken language with a smaller translated line under
+    them. Gate off, an older app build, or a language the feature does not cover: said plainly,
+    never promised (the captions stay in the spoken language)."""
+    asked = _dual_caption_ask(req)
+    if not asked:
+        return None
+    line = _dual_line_language(asked, facts.spoken_language)
+    planned, ready = _dual_captions_drawable(facts.client_protocol)
+    language = _language_name(line or asked[0])
+    if line is not None and planned:
+        return (
+            say(
+                en="they'll be in the language that's spoken, with a smaller line in {language} "
+                "under each one, and I'll check that in the finished video",
+                tr="altyazılar konuşulan dilde olacak, her birinin altında daha küçük bir "
+                "{language} satır olacak, bunu bitmiş videoda kontrol edeceğim",
+                language=language,
+            ),
+            True,
+        )
+    if line is not None and ready:
+        return (
+            say(
+                en="this app version can't show a second line in {language} under the captions, "
+                "so they'll only be in the language that's spoken",
+                tr="bu uygulama sürümü altyazıların altında ikinci bir {language} satır "
+                "gösteremiyor, altyazılar yalnızca konuşulan dilde olacak",
+                language=language,
+            ),
+            False,
+        )
+    return (
+        say(
+            en="I can't add a second line in {language} under the captions yet, so they'll only "
+            "be in the language that's spoken",
+            tr="altyazıların altına şimdilik ikinci bir {language} satır ekleyemiyorum, "
+            "altyazılar yalnızca konuşulan dilde olacak",
+            language=language,
+        ),
+        False,
+    )
+
+
+def _dual_caption_receipt(req: BriefRequirement, facts: PlanFacts) -> tuple[str, bool] | None:
+    """KRI-1501: the second caption line on a finished video, read from the variant's
+    `caption_translation` record AND the translated lines its cues carry: (sentence, met).
+
+    Never "met" for a line that was not drawn: no record, an "unmet" or unknown outcome, the
+    editor switch off, a "translated" record whose cues carry no line, dropped lines, or lines
+    in another language than the one asked. None when the ask names no second line."""
+    asked = _dual_caption_ask(req)
+    if not asked:
+        return None
+    spoken = str(facts.caption_language or "").casefold().split("-")[0]
+    record = facts.caption_translation
+    lines = facts.caption_translation_texts
+    if record is None:
+        line = _dual_line_language(asked, spoken)
+        if line is None and spoken and all(code == spoken for code in asked):
+            return (
+                say(
+                    en="You speak {language}, so there's no other language to put under the "
+                    "captions.",
+                    tr="{language} konuşuyorsun, bu yüzden altyazıların altına konacak başka bir "
+                    "dil yok.",
+                    language=_language_name(spoken),
+                ),
+                False,
+            )
+        return (
+            say(
+                en="There's no line in {language} under the captions.",
+                tr="Altyazıların altında {language} satır yok.",
+                language=_language_name(line or asked[0]),
+            ),
+            False,
+        )
+    drawn = str(record.get("language") or "").casefold().split("-")[0]
+    wanted = _dual_line_language(asked, spoken) or asked[0]
+    language = _language_name(drawn or wanted)
+    if record.get("enabled") is False:
+        return (
+            say(
+                en="The line in {language} under the captions is switched off.",
+                tr="Altyazıların altındaki {language} satır kapalı.",
+                language=language,
+            ),
+            False,
+        )
+    if record.get("outcome") == "unmet" or not lines:
+        return (
+            say(
+                en="I couldn't translate the captions into {language}, so there's no line in "
+                "{language} under them.",
+                tr="Altyazıların {language} çevirisini yapamadım, bu yüzden altlarında "
+                "{language} satır yok.",
+                language=language,
+            ),
+            False,
+        )
+    if drawn and drawn not in asked:
+        return (
+            say(
+                en="The line under the captions is in {language_name_rendered}, not "
+                "{language_name_asked}.",
+                tr="Altyazıların altındaki satır {language_name_asked} değil, "
+                "{language_name_rendered}.",
+                language_name_rendered=_language_name(drawn),
+                language_name_asked=_language_name(wanted),
+            ),
+            False,
+        )
+    verdict, detected = caption_language_verdict(lines, drawn or wanted)
+    if verdict == "contradicted" and detected:
+        return (
+            say(
+                en="The line under the captions is in {language_name_rendered}, not "
+                "{language_name_asked}.",
+                tr="Altyazıların altındaki satır {language_name_asked} değil, "
+                "{language_name_rendered}.",
+                language_name_rendered=_language_name(detected),
+                language_name_asked=language,
+            ),
+            False,
+        )
+    dropped = record.get("dropped_cue_ids")
+    missing = max(
+        len(dropped) if isinstance(dropped, list) else 0,
+        len(facts.caption_texts or ()) - len(lines),
+    )
+    if missing > 0 or record.get("outcome") == "partial":
+        return (
+            say(
+                en="{count} caption has no line in {language} under it."
+                if missing == 1
+                else "{count} captions have no line in {language} under them.",
+                tr="{count} altyazının altında {language} satır yok.",
+                count=max(missing, 1),
+                language=language,
+            ),
+            False,
+        )
+    if record.get("outcome") != "translated":
+        return (
+            say(
+                en="I couldn't check the line in {language} under the captions.",
+                tr="Altyazıların altındaki {language} satırı kontrol edemedim.",
+                language=language,
+            ),
+            False,
+        )
+    return (
+        say(
+            en="Each caption has a smaller line in {language} under it.",
+            tr="Her altyazının altında daha küçük bir {language} satır var.",
+            language=language,
+        ),
+        True,
+    )
 
 
 def _translated_from(facts: PlanFacts, rendered: str) -> str:
@@ -13978,7 +14214,7 @@ def _asked_caption_language(req: BriefRequirement) -> str | None:
     found = _requested_caption_language(req)
     if found is not None:
         return found
-    if _keeps_spoken_languages(req):
+    if _keeps_spoken_languages(req) or _dual_caption_languages(req):
         return None
     wording = loose_text(_req_text(req))
     for pattern in _LOOSE_CAPTION_LANGUAGE_PATTERNS:
@@ -14194,7 +14430,11 @@ def _caption_words_ask(req: BriefRequirement, *, look_typed: bool = False) -> bo
     `caption_look_ask` judged on its own (KRI-1177), so look words never disqualify it."""
     if _wants_no_captions(req):
         return False
-    if _asked_caption_language(req) is None and not _asks_spelling(req):
+    if (
+        _asked_caption_language(req) is None
+        and not _asks_spelling(req)
+        and not _dual_caption_ask(req)  # KRI-1501
+    ):
         return False
     look = _req_text(req)
     for name in _spelled_names(req) or ():
@@ -14329,6 +14569,9 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
             )
         else:
             done.append(_captions_in(rendered, _translated_from(facts, rendered)))
+    dual = _dual_caption_receipt(req, facts)  # KRI-1501: the second, translated line
+    if dual is not None:
+        (done if dual[1] else misses).append(dual[0])
     if _wants_word_captions(req) and facts.caption_style not in {"karaoke", "kinetic"}:
         misses.append(
             say(
@@ -14476,6 +14719,9 @@ def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementR
                     language=language,
                 )
             )
+    dual = _dual_caption_plan(req, facts)  # KRI-1501: a second, translated caption line
+    if dual is not None:
+        parts.append(dual[0])
     if names:
         one = len(names) == 1
         parts.append(
@@ -14539,6 +14785,9 @@ def talking_caption_promise(req: BriefRequirement, facts: PlanFacts) -> str | No
     asked = _asked_caption_language(req)
     if asked is not None and not can_deliver_caption_language(asked):
         return None
+    dual = _dual_caption_plan(req, facts)
+    if dual is not None and not dual[1]:
+        return None  # KRI-1501: the second line can't be drawn for this build
     if not _spelled_names(req) and _asks_spelling(req):
         return None
     if look_ask is None:

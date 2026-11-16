@@ -947,6 +947,15 @@ class Settings(BaseSettings):
     # otherwise captions are byte-identical to before and the receipt says what was not drawn.
     # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
     phone_caption_shape_enabled: bool = False
+    # Two-language captions: the spoken-language caption keeps its words and a smaller
+    # translated line (its own editor track) shows for the same stretch of speech. Default
+    # FALSE. Applied only when `dualCaptions` is in PHONE_RENDER_VERIFIED_FEATURES and the app
+    # build declares >= `dual_captions_min_client_protocol` (its editor draws, moves and keeps
+    # the translated line); otherwise captions are byte-identical and a chat ask is told the
+    # translated line is not drawn yet. Languages: en/de/tr/pt.
+    # Apply: `fly secrets set DUAL_CAPTIONS_ENABLED=true` (api + worker) + restart.
+    dual_captions_enabled: bool = False
+    dual_captions_min_client_protocol: int = 52
     # Qendresa item 15: the card layout on phone Talking edits. Screenshot / recording cards
     # take her size and place (up to full width, in the band above her face or below her
     # caption row, never on her face or captions), up to 14 cards, a named screenshot may open

@@ -7930,6 +7930,161 @@ async def editor_commit_item(
         )
 
 
+def _caption_translation_glossary(job: Job) -> tuple[str, ...]:
+    """The creator's own names and spellings (kept verbatim by the translator), exactly as the
+    worker reads them; none when they cannot be read (a translation never fails on it)."""
+    try:
+        from app.tasks.generative_build import _caption_glossary  # noqa: PLC0415
+
+        return tuple(
+            _caption_glossary(copy.deepcopy(job.assembly_plan or {}), job.all_candidates or {})
+        )
+    except Exception:  # noqa: BLE001 - the glossary only protects names
+        return ()
+
+
+class CaptionTranslationCueIn(BaseModel):
+    """One caption line to translate (KRI-1501): its id, final text and time."""
+
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
+    id: str = Field(min_length=1, max_length=160)
+    text: str = Field(max_length=600)
+    start_s: float = Field(ge=0, le=7200)
+    end_s: float = Field(ge=0, le=7200)
+
+
+class CaptionTranslationRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    language: Literal["en", "de", "tr", "pt"]
+    cues: list[CaptionTranslationCueIn] = Field(min_length=1, max_length=500)
+
+
+class CaptionTranslationLineOut(BaseModel):
+    id: str
+    text: str | None
+
+
+class CaptionTranslationResponse(BaseModel):
+    language: str
+    source_language: str
+    outcome: Literal["translated", "partial", "unmet"]
+    translations: list[CaptionTranslationLineOut]
+    dropped_cue_ids: list[str]
+
+
+# The switch route makes one paid model call per request on client-supplied text: bounded by
+# the same per-IP / per-caller limits as the other paid editor routes and by its total text.
+CAPTION_TRANSLATION_MAX_CHARS = 20_000
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/caption-translation",
+    response_model=CaptionTranslationResponse,
+)
+@limiter.limit("10/minute", key_func=get_real_ip)
+@limiter.limit("60/hour", key_func=_edit_conversation_rate_key)
+async def caption_translation_item(
+    request: Request,
+    item_id: str,
+    variant_id: str,
+    body: CaptionTranslationRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CaptionTranslationResponse:
+    """KRI-1501: the editor's translation switch -- translate these caption lines, store nothing.
+
+    The answer is applied in the editor and saved by the normal editor-commit Save
+    (``caption_cues[*].translation`` + ``caption_meta.translation``). Same owner check as the
+    Save; the same gate as the capability (`dual_captions_planned_for` for this app build):
+    426 ``client_update_required`` below the minimum build, 422 ``caption_translation_disabled``
+    otherwise. 422 ``caption_translation_same_language`` when the lines are already spoken in
+    ``language``; 422 ``caption_translation_too_long`` past `CAPTION_TRANSLATION_MAX_CHARS` of
+    text. Rate-limited (429) like the other paid editor routes; the call itself goes through
+    the AI usage ledger (`metered_chat_completion`). A failed translation is an ``unmet``
+    answer, never an error.
+    """
+    from app.pipeline.caption_language import (  # noqa: PLC0415
+        SUPPORTED_CAPTION_LANGUAGES,
+        detect_text_language,
+    )
+    from app.pipeline.caption_translate import translate_caption_lines  # noqa: PLC0415
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.phone_rollout import dual_captions_planned_for  # noqa: PLC0415
+
+    protocol = current_client_protocol()
+    if not dual_captions_planned_for(protocol):
+        if (
+            settings.dual_captions_enabled
+            and "dualCaptions" in set(settings.phone_render_verified_features)
+            and (protocol is None or protocol < settings.dual_captions_min_client_protocol)
+        ):
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "caption_translation",
+                    "minimum_client_protocol": settings.dual_captions_min_client_protocol,
+                },
+            )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "caption_translation_disabled"},
+        )
+    job = await _owned_item_render_job(item_id, user.id, db)
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if not variant.get("caption_cues"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "caption_translation_no_captions"},
+        )
+    ids = [cue.id for cue in body.cues]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Caption line IDs must be unique.",
+        )
+    texts = [cue.text for cue in body.cues]
+    if sum(len(text) for text in texts) > CAPTION_TRANSLATION_MAX_CHARS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "caption_translation_too_long"},
+        )
+    # Read like the worker (`_plan_dual_captions`): the lines' own text first; the stored label
+    # (which can echo a whisper hint) only when the text cannot tell.
+    spoken = detect_text_language(" ".join(texts)) or ""
+    if not spoken:
+        stored = str(variant.get("caption_language") or "").strip().casefold().split("-")[0]
+        spoken = stored if stored in SUPPORTED_CAPTION_LANGUAGES else ""
+    if spoken == body.language:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "caption_translation_same_language"},
+        )
+    result = await run_in_threadpool(
+        translate_caption_lines,
+        texts,
+        [max(0.0, cue.end_s - cue.start_s) for cue in body.cues],
+        source_language=spoken,
+        target_language=body.language,
+        glossary=_caption_translation_glossary(job),
+        enabled=True,
+        job_id=str(job.id),
+        variant_id=variant_id,
+    )
+    return CaptionTranslationResponse(
+        language=body.language,
+        source_language=spoken,
+        outcome=result.outcome,
+        translations=[
+            CaptionTranslationLineOut(id=cue_id, text=line)
+            for cue_id, line in zip(ids, result.lines, strict=True)
+        ],
+        dropped_cue_ids=[ids[index] for index in result.dropped],
+    )
+
+
 # The refusals that mean "your copy is older than the server's": reloading answers them. The
 # phone answered every 409 that way before `problem` existed, and it still reads the guided
 # revision token mismatch as one.

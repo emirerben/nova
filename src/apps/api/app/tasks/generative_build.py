@@ -9617,6 +9617,12 @@ def _run_phone_subtitled_job(
     caption_language_req = coerce_caption_language_request(
         all_candidates.get("caption_language_request")
     )
+    if all_candidates.get("caption_translation_request"):
+        # KRI-1501: a two-language ask keeps the spoken line as spoken (the translated line is
+        # added under it, `_plan_dual_captions`); it never replaces the spoken words.
+        caption_language_req = None
+    # KRI-1501: the variant's `caption_translation` record; set where the captions are built.
+    caption_translation_receipt: dict | None = None
     caption_style = (
         "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
     )
@@ -11047,6 +11053,15 @@ def _run_phone_subtitled_job(
                 all_candidates=all_candidates,
                 cut_plan=cut_plan,
                 clip_metas=clip_metas,
+                job_id=job_id,
+            )
+            # KRI-1501: two-language captions -- the translated line of each FINAL cue (after
+            # correction, re-splitting and the creator's spellings). No ask: nothing changes.
+            cues, caption_translation_receipt = _plan_dual_captions(
+                cues,
+                all_candidates=all_candidates,
+                spoken_language=caption_spoken_lang or str(detected_lang or ""),
+                glossary=_caption_glossary(snapshot, all_candidates),
                 job_id=job_id,
             )
 
@@ -13105,6 +13120,8 @@ def _run_phone_subtitled_job(
         }
         if caption_translated_from:
             new_entry["caption_translated_from"] = caption_translated_from  # KRI-1015
+        if caption_translation_receipt is not None:
+            new_entry["caption_translation"] = caption_translation_receipt  # KRI-1501
         if media_lanes_enabled:
             if not ending_lane_only:
                 new_entry["overlay_transcript"] = raw_words
@@ -15701,6 +15718,130 @@ def _phone_caption_spellings(
     return tuple(targets)
 
 
+def _plan_dual_captions(
+    cues: list,
+    *,
+    all_candidates: dict,
+    spoken_language: str,
+    glossary: Sequence[str] = (),
+    job_id: str | None = None,
+    variant_id: str = "subtitled",
+) -> tuple[list, dict | None]:
+    """KRI-1501 (docs/pipelines/dual-captions.md): the creator's two-language ask, planned.
+
+    Returns ``(cues, caption_translation)``. No ask (``caption_translation_request`` absent):
+    ``(cues, None)``, the exact cues given. With an ask, ``caption_translation`` is the variant
+    document the receipt and the editor read: when the job's app build passes
+    `dual_captions_planned_for` and a translated language resolves, each cue whose line was
+    translated carries ``translation`` and the document is the contract's track
+    (``enabled``, ``language``, ``source_language``, look fields null, ``outcome``,
+    ``dropped_cue_ids``), registered for this generation's caption compiles. Otherwise the cues
+    are unchanged and the document is ``{"outcome": "unmet", "reason": ...}`` so the receipt can
+    say the translated line is not drawn. The spoken words are never touched.
+    """
+    request = all_candidates.get("caption_translation_request")
+    if not isinstance(request, list) or not request:
+        return cues, None
+    from app.pipeline.caption_language import (  # noqa: PLC0415
+        SUPPORTED_CAPTION_LANGUAGES,
+        detect_text_language,
+    )
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        dual_captions_planned_for,
+        stamped_client_protocol,
+    )
+
+    codes = [code.strip().casefold() for code in request if isinstance(code, str) and code.strip()]
+    texts = [str(cue.get("text") or "") if isinstance(cue, dict) else "" for cue in cues or []]
+    # The captions' own text says what language the spoken line is in (a whisper label can
+    # echo a hint); the stamped language only stands in when the text cannot tell.
+    spoken = detect_text_language(" ".join(texts)) or ""
+    if not spoken:
+        stamped = str(spoken_language or "").strip().casefold().split("-")[0]
+        spoken = stamped if stamped in SUPPORTED_CAPTION_LANGUAGES else ""
+
+    def unmet(reason: str, **extra: Any) -> tuple[list, dict]:
+        document = {"outcome": "unmet", "reason": reason, "requested": codes, **extra}
+        if spoken:
+            document["source_language"] = spoken
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "captions", "caption_translation_unmet", {"variant_id": variant_id, **document}
+        )
+        return cues, document
+
+    if not dual_captions_planned_for(
+        stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+    ):
+        return unmet("dual_captions_unavailable")
+    if not cues:
+        return unmet("no_captions")
+    from app.pipeline.caption_language import resolve_dual_translation_language  # noqa: PLC0415
+
+    target = resolve_dual_translation_language(codes, spoken)
+    if not target:
+        return unmet("no_translation_language")
+    from app.pipeline.caption_translate import translate_caption_lines  # noqa: PLC0415
+    from app.pipeline.phone_captions import (  # noqa: PLC0415
+        TRANSLATION_DEFAULT_COLOR,
+        caption_translation_look,
+    )
+    from app.services.phone_text_styling import (  # noqa: PLC0415
+        register_generation_caption_translation,
+    )
+
+    # A translated line and its moved place are keyed by cue id: every cue gets the id the
+    # iPhone editor would derive for an id-less row (`native-caption-<index>`).
+    keyed = [
+        cue
+        if not isinstance(cue, dict) or isinstance(cue.get("id"), str)
+        else {**cue, "id": f"native-caption-{index}"}
+        for index, cue in enumerate(cues)
+    ]
+    durations = [
+        max(0.0, float(cue.get("end_s", 0.0)) - float(cue.get("start_s", 0.0)))
+        if isinstance(cue, dict)
+        else 0.0
+        for cue in keyed
+    ]
+    result = translate_caption_lines(
+        texts,
+        durations,
+        source_language=spoken,
+        target_language=target,
+        glossary=glossary,
+        enabled=True,
+        job_id=job_id,
+        variant_id=variant_id,
+    )
+    if result.outcome == "unmet":
+        return unmet(result.reason or "translation_failed", language=target)
+    translated = [
+        {**cue, "translation": line} if line and isinstance(cue, dict) else cue
+        for cue, line in zip(keyed, result.lines, strict=True)
+    ]
+    document = {
+        "enabled": True,
+        "language": target,
+        "source_language": spoken,
+        "size_px": None,
+        "color": TRANSLATION_DEFAULT_COLOR,
+        "font": None,
+        "stroke_width": None,
+        "position_x_frac": None,
+        "position_y_frac": None,
+        "line_overrides": {},
+        "outcome": result.outcome,
+        "dropped_cue_ids": [
+            keyed[index]["id"] for index in result.dropped if isinstance(keyed[index], dict)
+        ],
+    }
+
+    register_generation_caption_translation(caption_translation_look(document))
+    return translated, document
+
+
 def _phone_talking_caption_text(
     cues: list,
     *,
@@ -17664,6 +17805,9 @@ def _run_phone_narrated_job(
     caption_language_req = coerce_caption_language_request(
         all_candidates.get("caption_language_request")
     )
+    if all_candidates.get("caption_translation_request"):
+        caption_language_req = None  # KRI-1501: a two-language ask keeps the spoken words
+    caption_translation_receipt: dict | None = None  # KRI-1501: set where captions are built
     # KRI-455: the confirmed title burns like the cloud narrated intro.
     raw_opening_title = (all_candidates.get("creator_strategy") or {}).get("opening_title")
     opening_title = raw_opening_title if isinstance(raw_opening_title, str) else None
@@ -18087,6 +18231,15 @@ def _run_phone_narrated_job(
                 # KRI-1177: this writer draws the typed caption look too, so the asked case is
                 # the cue text here as well (else its receipt reads as a look later changed).
                 cues = generation_caption_cues(cues, language=detected_lang)
+                # KRI-1501: two-language captions, on the final cue texts (as phone Talking).
+                cues, caption_translation_receipt = _plan_dual_captions(
+                    cues,
+                    all_candidates=all_candidates,
+                    spoken_language=str(spoken_lang or ""),
+                    glossary=_caption_glossary(snapshot, all_candidates),
+                    job_id=job_id,
+                    variant_id="narrated",
+                )
 
             # KRI-533: what the worker pinned, and the receipts it can judge from it
             # (a first/last clip, a clip-group timing, the caption language). Like the
@@ -18576,6 +18729,8 @@ def _run_phone_narrated_job(
             "original_audio_level": float(recipe.audio.original_volume),
             "ok": False,
         }
+        if caption_translation_receipt is not None:
+            new_entry["caption_translation"] = caption_translation_receipt  # KRI-1501
         # KRI-455: the editor preview draws text from the variant, not the
         # pinned recipe, so keep the title element the recipe was compiled from.
         title_elements = narrated_title_text_elements(

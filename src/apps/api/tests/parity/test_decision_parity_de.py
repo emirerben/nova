@@ -163,8 +163,6 @@ GAPS: dict[str, str] = {
     "D32": "classify_memory_candidate: no German wording for durable memory (all my videos)",
     "D34": "explicitly_temporary: no German wording for temporary style change",
     "D35": "_named_cues: no German wording for font change cue",
-    "D36": "parse_caption_language_request: no German wording for English captions",
-    "D37": "parse_caption_language_request: no German wording for Turkish captions",
     "D37b": "parse_caption_language_request: no German wording for Spanish captions",
     "D40": "_adjust_hook_score: no German wording for hook filler penalty",
     "C2-02": (

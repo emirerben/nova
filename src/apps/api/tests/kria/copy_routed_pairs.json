@@ -2230,6 +2230,66 @@
    "app/kria/approval_readiness.py",
    "This renderer would change part of what you asked for in this edit.",
    "Bu oluşturucu bu düzenlemede istediğin şeylerin bir kısmını değiştirir."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "they'll be in the language that's spoken, with a smaller line in {language} under each one, and I'll check that in the finished video",
+   "altyazılar konuşulan dilde olacak, her birinin altında daha küçük bir {language} satır olacak, bunu bitmiş videoda kontrol edeceğim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "this app version can't show a second line in {language} under the captions, so they'll only be in the language that's spoken",
+   "bu uygulama sürümü altyazıların altında ikinci bir {language} satır gösteremiyor, altyazılar yalnızca konuşulan dilde olacak"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't add a second line in {language} under the captions yet, so they'll only be in the language that's spoken",
+   "altyazıların altına şimdilik ikinci bir {language} satır ekleyemiyorum, altyazılar yalnızca konuşulan dilde olacak"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You speak {language}, so there's no other language to put under the captions.",
+   "{language} konuşuyorsun, bu yüzden altyazıların altına konacak başka bir dil yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "There's no line in {language} under the captions.",
+   "Altyazıların altında {language} satır yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The line in {language} under the captions is switched off.",
+   "Altyazıların altındaki {language} satır kapalı."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't translate the captions into {language}, so there's no line in {language} under them.",
+   "Altyazıların {language} çevirisini yapamadım, bu yüzden altlarında {language} satır yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The line under the captions is in {language_name_rendered}, not {language_name_asked}.",
+   "Altyazıların altındaki satır {language_name_asked} değil, {language_name_rendered}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} caption has no line in {language} under it.",
+   "{count} altyazının altında {language} satır yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} captions have no line in {language} under them.",
+   "{count} altyazının altında {language} satır yok."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't check the line in {language} under the captions.",
+   "Altyazıların altındaki {language} satırı kontrol edemedim."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Each caption has a smaller line in {language} under it.",
+   "Her altyazının altında daha küçük bir {language} satır var."
   ]
  ],
  "retired": [

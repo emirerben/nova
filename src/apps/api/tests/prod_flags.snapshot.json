@@ -293,6 +293,14 @@
       "source": "default",
       "value": true
     },
+    "dual_captions_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "dual_captions_min_client_protocol": {
+      "source": "default",
+      "value": 52
+    },
     "e2e_fixtures": {
       "source": "default",
       "value": false

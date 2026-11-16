@@ -73,10 +73,17 @@ class CaptionLanguage:
     aliases: tuple[str, ...] = ()
 
 
+def _de(name: str) -> tuple[str, ...]:
+    """A German language name with its adjective endings, folded ("englisch", "englische",
+    "Englischen", ...; KRI-1501). Exact words, never a stem: "deutsch" must not read
+    "Deutschland"."""
+    return tuple(name + ending for ending in ("", "e", "en", "er", "es"))
+
+
 CAPTION_LANGUAGES: tuple[CaptionLanguage, ...] = (
-    CaptionLanguage("en", "English", "İngilizce", ("english",), ("ingilizce",)),
-    CaptionLanguage("tr", "Turkish", "Türkçe", ("turkish",), ("turkce",)),
-    CaptionLanguage("de", "German", "Almanca", ("german", "deutsch"), ("almanca",)),
+    CaptionLanguage("en", "English", "İngilizce", ("english", *_de("englisch")), ("ingilizce",)),
+    CaptionLanguage("tr", "Turkish", "Türkçe", ("turkish", *_de("turkisch")), ("turkce",)),
+    CaptionLanguage("de", "German", "Almanca", ("german", *_de("deutsch")), ("almanca",)),
     CaptionLanguage("es", "Spanish", "İspanyolca", ("spanish", "espanol"), ("ispanyolca",)),
     CaptionLanguage("fr", "French", "Fransızca", ("french", "francais"), ("fransizca",)),
     CaptionLanguage("it", "Italian", "İtalyanca", ("italian", "italiano"), ("italyanca",)),
@@ -88,7 +95,13 @@ CAPTION_LANGUAGES: tuple[CaptionLanguage, ...] = (
         ("dutch", "nederlands"),
         ("hollandaca", "felemenkce", "flemenkce"),
     ),
-    CaptionLanguage("pt", "Portuguese", "Portekizce", ("portuguese", "portugues"), ("portekizce",)),
+    CaptionLanguage(
+        "pt",
+        "Portuguese",
+        "Portekizce",
+        ("portuguese", "portugues", *_de("portugiesisch")),
+        ("portekizce",),
+    ),
     # KRI-1192
     CaptionLanguage("el", "Greek", "Yunanca", ("greek",), ("yunanca",)),
     CaptionLanguage("ko", "Korean", "Korece", ("korean",), ("korece",)),
@@ -253,7 +266,7 @@ def _fold(text: str) -> str:
 
 
 # Words that name captions, as a regex source (folded text: "altyazı" is "altyazi").
-_CW = r"(?:captions?|captioned|captioning|subtitles?|subtitled|subs|alt\s?yazi\w*)"
+_CW = r"(?:captions?|captioned|captioning|subtitles?|subtitled|subs|alt\s?yazi\w*|untertitel\w*)"
 _CAPTION_KEYWORD = re.compile(rf"\b{_CW}\b")
 
 # What may follow a bare "captions <language>" for the language to be the ask ("make the
@@ -263,7 +276,7 @@ _CAPTION_KEYWORD = re.compile(rf"\b{_CW}\b")
 # language for the captions. Also used by the brief side's identical bare pattern.
 ASK_END = (
     r"(?=\s*(?:$|[.,;:!?)\]\"']|\b(?:please|pls|plz|too|also|for|and|or|so|then|now|instead|"
-    r"but|olsun|olacak|olarak|olsa|lutfen|yap\w*|ver|ekle\w*|koy\w*|ve|ile|veya)\b))"
+    r"but|olsun|olacak|olarak|olsa|lutfen|yap\w*|ver|ekle\w*|koy\w*|ve|ile|veya|bitte|und|oder)\b))"
 )
 
 
@@ -305,6 +318,8 @@ def _binding_patterns(lang: CaptionLanguage) -> tuple[re.Pattern[str], ...]:
         re.compile(rf"\b({lng})\s+(?:olarak|cevir\w*)\b"),
         # "translate the subtitles into Spanish"
         re.compile(rf"\btranslat\w*\s+(?:\w+\s+){{0,3}}?(?:in|into|to)\s+({lng})\b"),
+        # KRI-1501: "Untertitel (bitte) auf Englisch", "die Untertitel ins Englische übersetzen"
+        re.compile(rf"\b{_CW}\s+(?:\w+\s+){{0,2}}?(?:auf|ins)\s+({lng})\b"),
     )
 
 
@@ -314,20 +329,36 @@ _BINDINGS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = tuple(
 # A language that names the voice, never the captions: "he speaks Spanish", "his English
 # voice", "İngilizce konuşuyor" (checked on the words just before the language).
 _SPOKEN_BEFORE = re.compile(
-    r"\b(?:speak\w*|spoken|voice\w*|konus\w*|anlat\w*|dub\w*)\s+(?:(?:in|the|with)\s+)?$"
+    r"\b(?:speak\w*|spoken|voice\w*|konus\w*|anlat\w*|dub\w*|sprech\w*|sprich\w*|gesprochen)"
+    r"\s+(?:(?:in|the|with|auf)\s+)?$"
+)
+# A caption clause continued without its noun: "Englische Untertitel für die englischen Teile,
+# TÜRKISCHE FÜR DIE TÜRKISCHEN" / "..., Turkish for the Turkish" (KRI-1501: German elides the
+# noun, so the second language of a KRI-1015 mixed ask was lost and the first one won).
+_ELIDED_CAPTION_CLAUSES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (
+        lang.code,
+        re.compile(
+            rf"^\s*(?:(?:and|und|ve)\s+)?{_language_source(lang)}\s+(?:for|fur)\s+"
+            rf"(?:(?:the|die|den|my|meine\w*)\s+)?{_language_source(lang)}\b"
+        ),
+    )
+    for lang in CAPTION_LANGUAGES
 )
 # Two languages joined into one mention ("Spanish and English subtitles").
 _JOINED = re.compile(r"^\s*(?:and|or|&|\+|/|ve|ile|veya)?\s*$")
 # A clause ends at sentence punctuation or a contrastive conjunction — "Türkçe
 # konuşuyorum AMA altyazılar İngilizce olsun" binds İngilizce to the captions.
-_CLAUSE_SPLIT = re.compile(r"[.!?;,\n]+|\b(?:but|though|however|ama|fakat|ancak|lakin)\b")
+_CLAUSE_SPLIT = re.compile(
+    r"[.!?;,\n]+|\b(?:but|though|however|ama|fakat|ancak|lakin|aber|jedoch|sondern)\b"
+)
 _NEGATION = re.compile(
     r"\b(?:don'?t|do\s+not|dont|never|without|no|not|"
-    r"istemiyorum|istemem|olmasin\w*|degil|yapma|koyma)\b"
+    r"istemiyorum|istemem|olmasin\w*|degil|yapma|koyma|kein\w*|nicht|ohne)\b"
 )
 # In a clause naming two languages, the target is the one after a direction word
 # ("turkish captions IN english", "İngilizceye çevir").
-_TARGET_MARKER = re.compile(r"\b(?:in|into|to)\s+$")
+_TARGET_MARKER = re.compile(r"\b(?:in|into|to|auf|ins)\s+$")
 # Turkish dative of an exonym ending in a vowel: "İngilizceye", "İspanyolcaya",
 # "Almancaya", with or without the apostrophe ("İngilizce'ye").
 _DATIVE = re.compile(r"\w*y[ae]\b|\w+['’]y[ae]\b")
@@ -368,6 +399,153 @@ def _bound_mentions(clause: str) -> list[tuple[int, int, str]]:
     return bound
 
 
+# ---------------------------------------------------------- two caption lines (KRI-1501)
+#
+# "Turkish captions with English under it": the spoken line stays as spoken and a smaller
+# translated line is drawn under it (docs/pipelines/dual-captions.md). The ask needs a caption
+# word and a "second line" marker; the language bound to the marker comes first, so the worker
+# translates INTO it, then every other language the message names.
+
+# Where the second line goes ("English under it", "Englisch darunter", "altına İngilizce").
+_UNDER = r"(?:under|underneath|below|beneath|darunter|unterhalb)"
+# What may follow "<language> under" for it to be about a caption line: the end of the clause,
+# or what it sits under. "English captions, keep it under 30 seconds" is not a second line.
+_UNDER_END = (
+    r"(?=\s*(?:$|[,.;:!?)\]\"']|\b(?:it|them|that|this|those|these|each|every|the|my|their|"
+    r"captions?|subtitles?|untertitel\w*|den|dem|die|bitte|please|too)\b))"
+)
+# The noun that names the translated line itself.
+_LINE_NOUN = (
+    r"(?:translation|translated|line|lines|text|version|ubersetzung\w*|zeile\w*|"
+    r"ceviri(?:si|sini|siyle|li)?|satir\w*)"
+)
+# A marker that names two lines without binding a language ("bilingual captions").
+_DUAL_FREE = re.compile(
+    r"\b(?:bilingual|dual[-\s]?language|dual\s+(?:captions?|subtitles?|subs)"
+    r"|two[-\s]languages?|second\s+(?:caption\s+|subtitle\s+)?line"
+    r"|zweisprachig\w*|zweite\w*\s+zeile\w*|cift\s+dil\w*|iki\s+dil\w*|ikinci\s+satir\w*)\b"
+)
+# A translation noun ("with an English translation", "İngilizce çevirisi", "englische
+# Übersetzung"): a second line (the message names captions, `_dual_languages`).
+_TRANSLATION_NOUN = r"(?:translation|ubersetzung\w*|ceviri(?:si|sini|siyle|li)?)"
+# "no translation", "remove the English line", "keine Übersetzung", "çeviri olmasın".
+_DUAL_NEGATION = re.compile(
+    r"\b(?:no|not|don'?t|dont|without|remove|drop|delete|hide|kein\w*|nicht|ohne|entfern\w*|"
+    r"losch\w*)\s+(?:[^\W\d]+\s+){0,3}?(?:translat\w*|lines?|ubersetz\w*|zeile\w*|bilingual|"
+    r"zweisprachig\w*|second)\b"
+    r"|\b(?:ceviri\w*|satir\w*|iki\s+dil\w*)\s+(?:[^\W\d]+\s+)?"
+    r"(?:olmasin\w*|istemiyorum|istemem|yok|kaldir\w*|sil\w*)\b"
+)
+# Sentence split for a two-line ask: commas stay inside ("zweisprachige Untertitel, Englisch
+# darunter" is one ask).
+_SENTENCE_SPLIT = re.compile(r"[.!?;\n]+")
+
+
+def _dual_patterns(lang: CaptionLanguage) -> tuple[re.Pattern[str], ...]:
+    """The ways ``lang`` is bound to a second caption line; group 1 is the language. A message
+    with no caption word never gets here (`_dual_languages`)."""
+    lng = _language_source(lang)
+    words = r"(?:\s+[^\W\d]+){0,4}?"  # a few words, never a number or across punctuation
+    return (
+        # "English under it", "English translation underneath", "Englisch darunter"
+        re.compile(rf"\b({lng})(?:\s+{_LINE_NOUN})?\s+{_UNDER}\b{_UNDER_END}"),
+        # "below it in English", "darunter auf Türkisch"
+        re.compile(rf"\b{_UNDER}\b{words}\s+(?:in|into|auf|ins)\s+({lng})\b"),
+        # "translate the captions into English underneath"
+        re.compile(rf"\btranslat\w*{words}\s+(?:in|into|to)\s+({lng})\s+(?:\w+\s+)?{_UNDER}\b"),
+        # "a Portuguese line under the subtitles", "an English translation of each line below"
+        re.compile(rf"\b({lng})\s+{_LINE_NOUN}\b{words}\s+{_UNDER}\b"),
+        # Turkish: "altına İngilizce çeviri", "altında da İngilizcesi", "alt satırda Almanca"
+        re.compile(rf"\b(?:alt(?:ina|inda)|alt\s+satir\w*)\s+(?:(?:da|de|bir|kucuk)\s+)*({lng})"),
+        # German: "unter den Untertiteln bitte eine englische Zeile", "Englisch unter den
+        # Untertiteln"
+        re.compile(
+            rf"\bunter\s+(?:den|die|dem)\s+untertitel\w*{words}\s+(?:auf\s+|ins\s+)?({lng})"
+        ),
+        re.compile(rf"\b({lng}){words}\s+unter\s+(?:den|die|dem)\s+untertitel\w*"),
+        # "a second line in German", "zweite Zeile auf Englisch"
+        re.compile(
+            rf"\b(?:second|zweite\w*|ikinci)\s+(?:\w+\s+)?(?:line|zeile\w*|satir\w*)"
+            rf"\s+(?:in|auf|ins)?\s*({lng})"
+        ),
+        # "with an English translation", "englische Übersetzung", "Almanca çevirisi",
+        # "Übersetzung auf Englisch"
+        re.compile(rf"\b({lng})\s+{_TRANSLATION_NOUN}\b"),
+        re.compile(rf"\bubersetzung\w*\s+(?:auf|ins|in)\s+({lng})\b"),
+    )
+
+
+_DUAL_BINDINGS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = tuple(
+    (lang.code, _dual_patterns(lang)) for lang in CAPTION_LANGUAGES
+)
+# The `_dual_patterns` that also read as WHERE the captions go: "captions in English below the
+# title" and "put the captions below my chin in English" are English captions placed somewhere,
+# so a language the caption word itself binds (`_bound_mentions`) is no second line there.
+_PLACEMENT_READINGS = frozenset({0, 1, 3})
+
+
+def _dual_languages(message: str) -> tuple[str, ...]:
+    """The languages of a two-line caption ask in ONE folded message, line language first;
+    () when the message makes no such ask (no caption word, no marker, negated, or no
+    language named)."""
+    if not _CAPTION_KEYWORD.search(message):
+        return ()
+    bound: list[tuple[int, str]] = []
+    marked = False
+    offset = 0
+    for sentence in _SENTENCE_SPLIT.split(message):
+        start = message.find(sentence, offset)
+        offset = start + len(sentence)
+        if not sentence.strip() or _DUAL_NEGATION.search(sentence):
+            continue
+        has_caption_word = bool(_CAPTION_KEYWORD.search(sentence))
+        if has_caption_word and _DUAL_FREE.search(sentence):
+            marked = True
+        captions_bound = {pos for pos, _, _ in _bound_mentions(sentence)}
+        for code, patterns in _DUAL_BINDINGS:
+            for index, pattern in enumerate(patterns):
+                for found in pattern.finditer(sentence):
+                    if _SPOKEN_BEFORE.search(sentence[: found.start(1)]):
+                        continue
+                    if index in _PLACEMENT_READINGS and found.start(1) in captions_bound:
+                        continue
+                    bound.append((start + found.start(1), code))
+                    marked = True
+    if not marked:
+        return ()
+    ordered = [code for _, code in sorted(bound)]
+    others = sorted(
+        (m.start(), code) for code, pattern in _LANGUAGE_PATTERNS for m in pattern.finditer(message)
+    )
+    return tuple(dict.fromkeys([*ordered, *(code for _, code in others)]))
+
+
+def _drops_dual(message: str) -> bool:
+    """ONE folded message turns the second caption line off ("no translation", "remove the
+    English line", "keine Übersetzung", "İngilizce satırı kaldır")."""
+    return bool(_DUAL_NEGATION.search(message))
+
+
+def resolve_dual_translation_language(requested: Sequence[str], spoken: str | None) -> str | None:
+    """The language the second caption line is translated into (KRI-1501), else None.
+
+    The first code in ``requested`` (a dual ask's ``translation_languages``) that is one of
+    ``phone_rollout.DUAL_CAPTION_LANGUAGES`` and is not the ``spoken`` language; None when the
+    spoken language itself is not one of them (or unknown), or nothing else is left. A two-line
+    ask never translates the spoken line into itself.
+    """
+    from app.services.phone_rollout import DUAL_CAPTION_LANGUAGES  # noqa: PLC0415
+
+    said = canonical_caption_language(spoken).split("-", 1)[0]
+    if said not in DUAL_CAPTION_LANGUAGES:
+        return None
+    for code in requested:
+        key = canonical_caption_language(code).split("-", 1)[0]
+        if key in DUAL_CAPTION_LANGUAGES and key != said:
+            return key
+    return None
+
+
 @dataclass(frozen=True)
 class CaptionLanguageDecision:
     """What the creator's words say about the caption language (KRI-1015).
@@ -375,19 +553,33 @@ class CaptionLanguageDecision:
     ``target`` is the one language the captions are asked in. ``keep_spoken`` is the
     creator captioning two languages each as itself (a mixed take keeps every stretch in
     the language it is spoken in): no target, and nothing may be translated.
+    ``translation_languages`` (KRI-1501) is a two-line ask: the spoken line stays as spoken
+    (no target, not keep_spoken) and a smaller line is translated into the first of these
+    that is not the spoken language (`resolve_dual_translation_language`).
     """
 
     target: str | None = None
     keep_spoken: bool = False
+    translation_languages: tuple[str, ...] = ()
 
 
 def _message_decision(message: str) -> CaptionLanguageDecision | None:
     """The caption-language decision of ONE creator message; None when it makes none."""
+    dual = _dual_languages(message)
+    if dual:
+        return CaptionLanguageDecision(translation_languages=dual)
     asked: set[str] = set()
     keep_spoken = False
+    after_caption_clause = False
     for clause in _CLAUSE_SPLIT.split(message):
+        if clause and not _CAPTION_KEYWORD.search(clause) and after_caption_clause:
+            elided = {code for code, pattern in _ELIDED_CAPTION_CLAUSES if pattern.match(clause)}
+            if len(elided) == 1 and not _NEGATION.search(clause):
+                asked |= elided
+                continue
         if not clause or not _CAPTION_KEYWORD.search(clause):
             continue
+        after_caption_clause = True
         if _NEGATION.search(clause):
             continue
         hits = _bound_mentions(clause)
@@ -440,7 +632,12 @@ def caption_language_decision(text: str | None) -> CaptionLanguageDecision:
     folded = _fold(text or "").replace("’", "'")
     decision = CaptionLanguageDecision()
     for line in folded.splitlines():
-        decision = _message_decision(line) or decision
+        found = _message_decision(line)
+        if found is not None:
+            decision = found
+        elif decision.translation_languages and _drops_dual(line):
+            # KRI-1501: "no translation" after a two-line ask: captions as spoken.
+            decision = CaptionLanguageDecision()
     return decision
 
 
