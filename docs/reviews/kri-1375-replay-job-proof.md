@@ -5,6 +5,134 @@ with `scripts/admin.py --prod GET`, copies the footage the job's brief binding r
 read-only from the bucket, and runs the Main Creator route and the real worker locally under
 `src/apps/api/tests/prod_flags.snapshot.json`.
 
+## Pass 6, round 2: only production's exact recorded cause is a reproduction
+
+The round-2 verifier probed the round-1 classifier with real error classes and messages from 25
+production job debugs. Seven shapes read `reproduction: reproduced` with no gap:
+
+* P1, P2. One error class, another message. `CreatorRenderContractError` is 51f7124f's "This text
+  cannot fit clearly in the requested area" and 40684a25's "The eligible fonts cannot draw all
+  text". `CreationTextCompositionError` is every `creation_text_failed` job (3c312af4 "incomplete:
+  Since the English translation...", e7bf7099 "could not compile: Text changed...").
+* P3. A production job from before planning errors were recorded (0701fcc9, 9734ed83, 1e79ff4f)
+  was compared on its reason alone, though its `error_detail` names the cause.
+* P4, P5. The replay's failing agent is one production's trace cannot show: not stored yet when
+  the job ran, or run on the Creator session.
+* P6. Production recorded a planning error and the replay none.
+* P7. The agent failed only in an earlier production job of the item; production's outcomes were
+  any run's, the replay's its last run's.
+
+Root cause: the comparison listed known differences and called everything else a match. Every
+field it checked (the reason, the error class) is a category many failures share, and evidence
+it could not check counted as agreement. The fix turns that around:
+
+* The cause must match exactly. With a production planning error, the replay must record the
+  same class and the same message. Without one, the replay's `error_detail` must equal
+  production's, unless production's is only the app's generic sentence for the reason
+  (`generic_error_detail`, which `replay_creator` now writes into the receipt) or missing. Then
+  the verdict is `reproduction_unproven`.
+* An agent production's trace cannot show whose last replay run failed is listed in
+  `failed_uncompared_agents` and is a gap.
+* Production's side uses each agent's last run, like the replay's.
+* A `diverged_from_production` explanation names production's own failure and says production
+  may have stopped before those agents (round-2 minor finding on 1e79ff4f).
+
+### The verifier's probes, before and after (no model calls)
+
+`probe_classify.py` from the verifier, adapted only to pass production's error detail (P3 uses
+0701fcc9's):
+
+```
+== previous head 76cdb2a85
+P1 creation_text same class different cause: outcome=failed reproduction=reproduced reproduced=True
+P2 render contract same class different gate: outcome=failed reproduction=reproduced reproduced=True
+P3 no prod planning event, different error_detail: outcome=failed reproduction=reproduced reproduced=True
+P4 failure in unrecorded agent: outcome=failed reproduction=reproduced reproduced=True
+P5 failure in non-comparable agent: outcome=failed reproduction=reproduced reproduced=True
+P6 replay recorded no planning error: outcome=failed reproduction=reproduced reproduced=True
+P7 failure only in an earlier prod job: outcome=failed reproduction=reproduced reproduced=True
+== fixed head
+P1 creation_text same class different cause: outcome=failed reproduction=reproduction_unproven reproduced=False
+P2 render contract same class different gate: outcome=failed reproduction=reproduction_unproven reproduced=False
+P3 no prod planning event, different error_detail: outcome=failed reproduction=reproduction_unproven reproduced=False
+P4 failure in unrecorded agent: outcome=failed reproduction=reproduction_unproven reproduced=False
+P5 failure in non-comparable agent: outcome=failed reproduction=reproduction_unproven reproduced=False
+P6 replay recorded no planning error: outcome=failed reproduction=reproduction_unproven reproduced=False
+P7 failure only in an earlier prod job: outcome=failed reproduction=reproduction_unproven reproduced=False
+```
+
+Each fixed probe's gaps name its own cause. For example, P2: "Production's plan failed with
+CreatorRenderContractError ('This text cannot fit clearly in the requested area. Choose another
+placement or shorter text.'); the replay's with CreatorRenderContractError ('The eligible fonts
+cannot draw all text. Choose another font.')." P4 also gets "nova.plan.clip_intent_planner failed
+in the replay (terminal_schema), and production's trace for this item cannot show it...".
+
+### Run 13: 1cb33402 on the fixed code, `device_plan_ready`
+
+Command: `make kria-replay-job JOB=1cb33402-12ee-4510-98b1-6c5c7558d23e MAX_COST_USD=0.45`, code
+commit 817278276, 2026-11-16 07:39 UTC. Driver exit 0. Settled spend $0.0866 over four agent
+runs.
+
+* Production (2026-10-25): message 1's render failed `phone_plan_unsupported`, planning error
+  `CreatorRenderContractError` "This edit is missing confirmed on-screen text." The creator's
+  second message ("Add it") then rendered.
+* The replay seeded all 8 recorded sources (`bound_to_recorded_media: true`). Message 1 got an
+  approval card, as in production (`matches_production: true`). The approved render, job
+  5cff0c02, ended `awaiting_device` with a complete pinned device plan (`device_plan_ready`).
+* Route: `replay_agents` and `production_agents` are both `nova.creator.main` and
+  `nova.plan.speech_excerpt_planner`; `replay_only_agents`, `failed_only_in_replay` and
+  `failed_uncompared_agents` are empty. The clip-intent planner and resolver are uncompared
+  (production did not store them before 2026-10-31).
+* `model_differences`: the Main Creator ran on `gpt-6.1-sol`, production's on
+  `gemini-3.1-pro-preview`.
+* The receipt's job carries `generic_error_detail` (null, as the job did not fail).
+
+So on today's code and the snapshot's Main Creator, the plan production refused for missing
+on-screen text now reaches the phone. The other model is a named difference, so this is not
+proof that the code change alone fixed it.
+
+### Run 14: 07efa44c, diverges at message 1
+
+`make kria-replay-job JOB=07efa44c-051f-43c2-99d9-ed567408034e MAX_COST_USD=0.40`, same commit,
+07:41 UTC. Driver exit 1, settled $0.0857 over six agent runs. Production's message 1 got the
+`simplification_requires_choice` question; the replay's got
+`ask_user:unsupported_audio_visual_combination`, so the creator's tapped answer did not fit and
+the replay stopped (`diverged_from_production`, `first_divergent_turn.message_index: 1`). It
+never reached message 2's render, whose text-fit failure was the target. Main Creator on Sol
+again, production's on Gemini 3.1 Pro.
+
+Paid calls this round: $0.1723 (runs 13 and 14). Scratch databases dropped, no replay process
+left, and no Redis key of either run's namespace remains.
+
+### Live runs re-classified on the fixed code (no model calls)
+
+The saved receipt and `route_comparison` of two live runs, classified again:
+
+* 1e79ff4f, the verifier's run 20261116T071547Z: still `diverged_from_production`,
+  `failure_reason_differs`. The explanation now reads "...Production's job failed with
+  phone_plan_failed: 'gemini provider outcome unknown after 90.0s' before running them or on
+  another route... If production's failure is a timeout or a provider error, production stopped
+  earlier than the replay; otherwise check the flag snapshot...".
+* 1be34fc8 run 12 (20261116T065633Z): still `reproduction_unproven` with the same two gaps.
+
+### Offline proof (no model calls)
+
+`tests/scripts/test_replay_job.py`, committed red in 1ee659bb7 before the fix (12 failing):
+
+* `test_only_the_cause_production_recorded_makes_a_replay_its_failure`: nine pairs of real
+  production causes. Another message under one class, a planning error on one side only, another
+  error detail, a generic detail and no detail are `reproduction_unproven`, and the gaps print
+  both messages. The same text-fit gate twice (07efa44c, 51f7124f) and 0701fcc9's refusal again
+  (as f88555bc's) stay `reproduced`.
+* `test_a_failure_production_cannot_show_is_not_production_failure`: P4 and P5 are unproven; a
+  session-scoped agent that failed and then got through does not block a reproduction.
+* `test_an_agent_that_failed_only_in_an_earlier_production_job_still_failed_only_in_replay`: P7.
+* `test_a_session_scoped_agent_failure_is_not_called_a_route_divergence` (renamed): such a
+  failure is still never a divergence, and is now unproven instead of reproduced.
+
+The four Postgres replay test files (11 tests) pass on a scratch `_test` database migrated to
+head.
+
 ## Pass 6 fix: a matching failure reason is not a reproduction (1be34fc8)
 
 The pass-6 verifier replayed 1be34fc8 (the "10 November" Turkish and English text, production
