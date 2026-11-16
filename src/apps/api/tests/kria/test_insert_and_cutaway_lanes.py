@@ -96,11 +96,14 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # whatever the action); the values before it were 62cb90f0 / 2c83102a / f2f80a6e / d0df791e.
 # Re-pinned for KRI-1405 (typed `no_sound_effects`; a kept ask after the simpler-version tap is
 # restated as a change); the values before it were 06f5d356 / 1d71c192 / 071e27a1 / 08910143.
+# Re-pinned for the model-owned chat language: every Main Creator prompt now ends its turn with
+# the CHAT LANGUAGE line (`conversation_language`); the values before it were abe644f4 /
+# 05b2007d / d5b8a2cf / 271524fd.
 MAIN_PROMPT_SHA = {
-    "neither": "abe644f4f0c40f0d25ee16002414164441a6f40f51e78e84b5f538335898fb7a",
-    (True, True): "05b2007d1e103fc02547ca7d220b10552d248c6724d679fc435441a2d66e59bd",
-    (True, False): "d5b8a2cf7acd05d304a50ede9d081a1254a98389b49711bfd04500f630feab03",
-    (False, True): "271524fda4a83fa74b8a9c3600fd494bbb6e6e6d7ede8874fcec34e9297c22c6",
+    "neither": "3731664d04a3721259f88cc6429c51fc9f8b618144574b5bcee1fb1255f4fa43",
+    (True, True): "12f7087f5535d26d8c25a23f58a3b390653c4bd1aaf3bbced3f350a003e2efa3",
+    (True, False): "bcc90d2467a7b44da54e911b21db5fc44713cd98bc68251af45343fdef04d9b2",
+    (False, True): "823890fc955fa42dc3fde8f10296ab80b4c3ddab22b681b748bfe798f1fc8a9f",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

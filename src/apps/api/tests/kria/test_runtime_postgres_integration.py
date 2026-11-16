@@ -3837,6 +3837,8 @@ async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_n
             brief_route="replan",
             brief_clip_ids=("clip-1",),
             brief_manifest=manifest,
+            # The Main Creator read the creator's Turkish (model-owned chat language).
+            conversation_language="tr",
         )
 
     monkeypatch.setattr(settings, "main_creator_agent_enabled", True)

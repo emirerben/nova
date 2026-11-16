@@ -48,20 +48,11 @@ from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
 from app.kria.removed_messages import REMOVED_WHILE_WAITING
 from app.kria.reply_language import (
-    VIDEO_TEXT_ASK_KEY,
-    asks_for_video_text,
-    creator_typed_language,
-    earlier_reply_language,
-    is_video_text,
-    needs_typed_history,
-    own_words_enabled,
+    creator_stored_language,
+    locale_language,
     remember_reply_language,
     reply_language_for,
-    resolve_reply_language,
     say,
-    short_reply_in,
-    speaks_in,
-    switching_message_id,
     thread_reply_language,
 )
 from app.kria.turn_outcome import (
@@ -865,91 +856,6 @@ async def _validate_scoped_turn(
     return scope
 
 
-async def _answers_video_text_question(db: AsyncSession, thread: CreationThread) -> bool:
-    """True when the open question asks for words for the video (KRI-1363).
-
-    Read only when a message would move the chat to another language, so a normal turn pays
-    nothing for it.
-    """
-    if not own_words_enabled():
-        return False
-    rows = (
-        await db.execute(
-            select(
-                CreationThreadEvent.role,
-                CreationThreadEvent.payload,
-                CreationThreadEvent.event_type,
-                CreationThreadEvent.content,
-                select(CreatorAgentTurn.plan_json[VIDEO_TEXT_ASK_KEY].astext)
-                .where(CreatorAgentTurn.observed_event_id == CreationThreadEvent.id)
-                .limit(1)
-                .scalar_subquery(),
-            )
-            .where(
-                CreationThreadEvent.thread_id == thread.id,
-                CreationThreadEvent.role.in_({"user", "assistant"}),
-            )
-            .order_by(CreationThreadEvent.sequence)
-        )
-    ).all()
-    return asks_for_video_text(
-        tag_event(
-            role,
-            {**(payload or {}), VIDEO_TEXT_ASK_KEY: True} if asks == "true" else payload,
-            event_type,
-            content,
-        )
-        for role, payload, event_type, content, asks in rows
-    )
-
-
-async def _switched_by_video_text(db: AsyncSession, thread: CreationThread) -> bool:
-    """True when the message that made the chat's latest switch is now the video's text.
-
-    The video's text is the latest brief's exact words. Read only for a short reply in the
-    chat's earlier language.
-    """
-    client_event_id = switching_message_id(thread)
-    if client_event_id is None:
-        return False
-    switching = (
-        await db.execute(
-            select(CreationThreadEvent.content).where(
-                CreationThreadEvent.thread_id == thread.id,
-                CreationThreadEvent.client_event_id == client_event_id,
-                CreationThreadEvent.role == "user",
-            )
-        )
-    ).scalar_one_or_none()
-    if not switching:
-        return False
-    return is_video_text(switching, await _video_text_literals(db, thread))
-
-
-async def _video_text_literals(db: AsyncSession, thread: CreationThread) -> list[str]:
-    """The video's text: the latest brief's exact words."""
-    try:
-        brief = await load_latest_brief(db, thread.id)
-    except ValueError:
-        return []
-    return [req.literal for req in brief.live() if req.literal] if brief else []
-
-
-async def _confirms_reply_language(
-    db: AsyncSession, thread: CreationThread, message: str | None, language: str | None
-) -> bool:
-    """True when ``message`` is the creator's own sentence in the chat's current ``language``.
-
-    Read only while a switch-back record is kept. Words typed as the answer to a wording
-    question, or the video's text pasted again, are not the creator's own sentence.
-    """
-    if switching_message_id(thread) is None or not speaks_in(message, language):
-        return False
-    if await _answers_video_text_question(db, thread):
-        return False
-    return not is_video_text(message, await _video_text_literals(db, thread))
-
-
 async def submit_turn(
     db: AsyncSession,
     *,
@@ -962,8 +868,8 @@ async def submit_turn(
 ) -> tuple[TurnAccepted, bool]:
     """Commit a user event and pending turn together, before broker I/O.
 
-    ``locale`` is the request's raw ``Accept-Language``: the chat's reply language
-    falls back to it when the creator's words don't say (KRI-520).
+    ``locale`` is the request's raw ``Accept-Language``: a chat with no stored language and
+    no stored language on the creator's latest other chat starts from it (KRI-520).
 
     ``_expected_revision_override`` is internal: set only on the single re-entry
     after an overdue approval was lazily expired (that expiry bumps the thread
@@ -1173,57 +1079,16 @@ async def submit_turn(
         and body.moment_order is None
     ):
         duplicate = await find_duplicate_send(db, thread, body.message)
-    # KRI-520: the chat's reply language after this message, stored on the locked
-    # thread row (committed with the event below; rolled back with a refusal).
-    previous_language = thread_reply_language(thread)
-    # Green 5: a chat that has not told yet and a message that does not say (a chip tap)
-    # takes the language the creator types in their other chats before the device's.
-    typed_elsewhere = (
-        await creator_typed_language(db, creator_id=creator_id, exclude_thread_id=thread.id)
-        if needs_typed_history(body.message, previous_language)
-        else None
-    )
-    reply_language = resolve_reply_language(
-        body.message, previous=previous_language, locale=locale, typed_elsewhere=typed_elsewhere
-    )
-    if (
-        previous_language is not None
-        and reply_language != previous_language
-        and await _answers_video_text_question(db, thread)
-    ):
-        # KRI-1363: words typed for a title are the video's language, not the chat's.
-        reply_language = resolve_reply_language(
-            body.message,
-            previous=previous_language,
-            locale=locale,
-            typed_elsewhere=typed_elsewhere,
-            answers_video_text=True,
-        )
-    earlier_language = earlier_reply_language(thread)
-    restored = bool(
-        previous_language is not None
-        and reply_language == previous_language
-        and earlier_language not in (None, previous_language)
-        and short_reply_in(body.message, earlier_language)
-        and await _switched_by_video_text(db, thread)
-    )
-    if restored:
-        # Only pasted video text moved the chat: "Do it" in the earlier language takes it back.
-        reply_language = earlier_language
-    # A real sentence in the chat's language ends any switch-back record: a later "Yes" is
-    # then the creator answering in the language they chose, not a way back.
-    confirmed = (
-        not restored
-        and reply_language == previous_language
-        and await _confirms_reply_language(db, thread, body.message, reply_language)
-    )
-    remember_reply_language(
-        thread,
-        reply_language,
-        restored=restored,
-        switched_by=body.client_event_id,
-        confirmed=confirmed,
-    )
+    # The chat's language is decided by the model that reads this message (the worker stores its
+    # `conversation_language`). No word is scored here: an instant reply below uses the stored
+    # language, and a chat nothing has told yet starts from the creator's latest other chat's
+    # stored language, then the device's, kept on the locked row as the model's context.
+    reply_language = thread_reply_language(thread)
+    if reply_language is None:
+        reply_language = await creator_stored_language(
+            db, creator_id=creator_id, exclude_thread_id=thread.id
+        ) or locale_language(locale)
+        remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
     inert_code = ""
     with reply_language_for(reply_language):

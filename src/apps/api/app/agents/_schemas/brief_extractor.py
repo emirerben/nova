@@ -31,6 +31,9 @@ class BriefExtractionInput(BaseModel):
     # KRI-1360: this message answers the creator's "Change my request" tap. False (default):
     # the prompt is byte-identical and the field is left out of input dumps.
     changes_request: bool = Field(default=False, exclude_if=lambda v: not v)
+    # The chat's stored language, as context for `conversation_language` on a live rendered
+    # follow-up (`require_request_scope`). None: left out of input dumps, prompt unchanged.
+    reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
 
 
 class BriefExtractionOutput(BaseModel):
@@ -43,3 +46,8 @@ class BriefExtractionOutput(BaseModel):
     starts_fresh: bool = False
     request_scope: Literal["edit", "rebuild", "clarify"] | None = None
     clarification: str | None = Field(default=None, max_length=1_000)
+    # The language the creator writes to Kria in, read from their own words (never the video's
+    # text). None = could not tell or not offered now: the chat keeps its stored language.
+    conversation_language: Literal["en", "tr", "de"] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )

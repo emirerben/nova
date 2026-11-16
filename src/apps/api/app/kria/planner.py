@@ -134,7 +134,7 @@ from app.kria.order_replacement import OrderReplacementProof
 from app.kria.paid_call_scope import paid_call_request_id
 from app.kria.removed_messages import is_removed, removed_turn_ids
 from app.kria.reply_language import (
-    asks_for_video_words,
+    adopt_conversation_language,
     current_reply_language,
     is_client_stock_message,
     say,
@@ -1141,6 +1141,10 @@ class PlannedKriaTurn:
     # the stored action ran as built, and the digest of the editor state it compiles against,
     # which the draft commit re-checks inside the row lock. None for every other turn.
     suggestion_pin: dict | None = field(default=None, compare=False, repr=False)
+    # The language the model that read the creator's message says they write in (Main Creator
+    # or brief extractor `conversation_language`); None when no model ran or it could not tell.
+    # The worker rebinds the turn's copy to it and stores it with the completed turn.
+    conversation_language: str | None = None
 
 
 async def _withdraw_stuck_pins(
@@ -1373,7 +1377,6 @@ def adapt_creator_action(
             mode="respond",
             turn_value="question",
             response=action.question,
-            asks_video_text=asks_for_video_words(action.reason_code),
             diagnostics=diagnostics,
         )
     if isinstance(action, DraftVoiceoverScript):
@@ -3522,6 +3525,8 @@ async def _call_brief_extractor(
         insert_clips_open=_insert_clips_open(inputs),
         # KRI-1360: the same "Change my request" marker the Main Creator input carries.
         changes_request=getattr(inputs.agent_input, "changes_request", False),
+        # Context for the model's `conversation_language`; never an order.
+        reply_language=current_reply_language(),
     )
 
     def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -3576,6 +3581,13 @@ async def _call_brief_extractor(
         output_cls=BriefExtractionOutput,
         call=_call,
     )
+
+
+def _adopt_read_language(output: object) -> None:
+    """The model that read the creator's message reported their language: every later reply,
+    server copy and agent this turn runs (clip intents, readiness, receipts, the copilot) follows
+    it. A stand-in output without the field, or None, keeps the stored language."""
+    adopt_conversation_language(getattr(output, "conversation_language", None))
 
 
 def _extraction_request_scope(
@@ -3768,6 +3780,7 @@ async def _plan_from_creator_output(
         )
     if replaced is not None:
         output = replaced
+        _adopt_read_language(replaced)
         if stale_capability_refusal(output.action, manifest, effective_brief) is not None:
             return PlannedKriaTurn(
                 plan=KriaTurnPlan(
@@ -7893,6 +7906,7 @@ async def _plan_live_turn(
                         prior_brief=prior_brief,
                     )
                 )
+                _adopt_read_language(extraction_outputs[-1])
                 if batch is not None:
                     pre_extracted_retrieved_ids.extend(batch.requirement_ids)
             semantic_request_scope, clarification = _extraction_request_scope(extraction_outputs)
@@ -8144,6 +8158,7 @@ async def _plan_live_turn(
                     creator_agent_session_id=creator_agent_session_id,
                 )
             )
+            _adopt_read_language(outputs[-1])
             if batch is not None:
                 retrieved_ids.extend(batch.requirement_ids)
         output = outputs[-1]
@@ -8530,6 +8545,7 @@ async def extract_deferred_brief(
             prior_brief=prior_brief,
         )
         extraction_outputs.append(output)
+        _adopt_read_language(output)
     scope, _clarification = _extraction_request_scope(extraction_outputs)
     if scope == "clarify":
         return (), None

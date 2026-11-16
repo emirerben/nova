@@ -227,7 +227,15 @@ async def test_fm2_a_stamping_crash_never_plans_the_card_as_free_text(world, mon
 
 @pytest.mark.asyncio
 async def test_fm2_no_longer_fits_speaks_the_chats_language(world):
+    from app.database import sync_session
+    from app.models import CreationThread
+
     seeded = h.seed_ready_thread()
+    # A tap runs no model, so it answers in the chat's stored language (model-owned language).
+    with sync_session() as db:
+        thread = db.get(CreationThread, seeded.thread_id)
+        thread.state = {**(thread.state or {}), "reply_language": "tr"}
+        db.commit()
     await h.serve(seeded)
     before = h.counts(seeded)
     accepted, _ = await h.submit(
