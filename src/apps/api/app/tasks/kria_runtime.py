@@ -3612,7 +3612,10 @@ def _complete_draft_turn(
                 prepared_research=_readiness_research,
                 # 59f3707e: this draft is not offered yet, so a re-check rewrite no ask is
                 # about is drafted (and saved) instead of holding the first request.
-                adopt_recheck=apply_intent.tool_name == "draft.apply_strategy",
+                # Research is pinned to the planner's strategy (`research_preview`), so a draft
+                # with prepared research keeps the strict check.
+                adopt_recheck=apply_intent.tool_name == "draft.apply_strategy"
+                and planned.prepared_research is None,
             )
             adopted_strategy = readiness_report.pop("adopted_strategy", None)
             if adopted_strategy is not None:
@@ -3622,7 +3625,20 @@ def _complete_draft_turn(
                     turn_id=str(turn.id),
                     changed_fields=readiness_report["recheck"]["changed_fields"],
                 )
-                document = document.model_copy(update={"strategy": adopted_strategy})
+                from app.agents._schemas.creator_agent import (  # noqa: PLC0415
+                    CreativeStrategy,
+                )
+
+                # The card's chips name the strategy the draft saves.
+                changes = _strategy_changes(
+                    arguments.model_copy(
+                        update={"strategy": CreativeStrategy.model_validate(adopted_strategy)}
+                    ),
+                    route=route_name,
+                )
+                document = document.model_copy(
+                    update={"strategy": adopted_strategy, "changes": changes}
+                )
                 snapshot, snapshot_hash = canonical_snapshot(document)
             policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
             readiness_report["requirements"] = [

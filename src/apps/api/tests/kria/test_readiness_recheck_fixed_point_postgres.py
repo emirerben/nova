@@ -331,6 +331,8 @@ async def test_the_incident_drafts_the_renderers_normalization_and_names_it(monk
     assert not any(text in (reply.content or "") for text in OPAQUE)
     head = _head(thread_id)
     assert head.snapshot_json["strategy"]["pacing"] == "fast"
+    # The card's chips name what the draft saves, never the pace it replaced.
+    assert not {"Tempo: Dengeli", "Balanced pacing"} & set(head.snapshot_json["changes"])
     assert head.snapshot_json["strategy"]["pinned_texts"] == [
         {"text": SPACED, "corner": "bottom_center"}
     ]
