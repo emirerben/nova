@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.251.0] - 2026-11-16
+
+### Fixed
+- fix(kria): Çiğdem S2 "Cigdem 2" — keep the pace the creator names, cut a pause stamped onto the next sentence, tag a media-services reset (KRI-1494, KRI-1492, KRI-1497) (#2365) <!-- release-pr: 2365 -->
+
 ## [0.88.250.0] - 2026-11-16
 
 ### Changed
