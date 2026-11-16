@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.253.0] - 2026-11-16
+
+### Added
+- feat(ios): iPhone screens in German and Turkish (KRI-1452) (#2347) <!-- release-pr: 2347 -->
+
 ## [0.88.252.0] - 2026-11-16
 
 ### Changed
