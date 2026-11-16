@@ -20,6 +20,7 @@
     "MomentOrderUITests": "creation",
     "NativeCaptionAnimationUITests": "editor",
     "NativeCaptionVisualUITests": "editor",
+    "NativeDualCaptionUITests": "editor",
     "NativeEditorInspectorUITests": "editor",
     "NativeEditorPlaybackAdmissionUITests": "editor",
     "NativeQuickAddMenuUITests": "editor",

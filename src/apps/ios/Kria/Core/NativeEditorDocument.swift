@@ -16,6 +16,9 @@ enum EditorSelectionKind: String, Codable, CaseIterable, Hashable, Sendable {
     /// The Talk-to-camera speaker drawn small in a frame (`speaker_background.speaker_frame`), moved and resized by hand
     /// on the preview. The id is `speakerID` globally or a slot id for one occurrence.
     case speaker
+    /// KRI-1501: one cue's translated caption line (`caption_cues[i].translation`), its own editor track. Client-only;
+    /// the id is the cue's id.
+    case captionTranslation = "caption_translation"
 }
 
 struct EditorSelection: Codable, Equatable, Hashable, Sendable {
@@ -103,11 +106,15 @@ struct EditorCapability: Codable, Equatable, Sendable {
     /// The server's current value for a settings capability (`orientation`,
     /// `landscape_fit`), e.g. `"portrait"` / `"fit"`. Nil for lane capabilities.
     var value: String?
+    /// KRI-1501: `editor_capabilities.caption_translation = {"languages": [...]}`, the languages the translated caption
+    /// line may use. Nil for every other capability.
+    var languages: [String]?
 
-    init(editable: Bool, reason: String? = nil, value: String? = nil) {
+    init(editable: Bool, reason: String? = nil, value: String? = nil, languages: [String]? = nil) {
         self.editable = editable
         self.reason = reason
         self.value = value
+        self.languages = languages
     }
 
     init(from decoder: Decoder) throws {
@@ -119,12 +126,14 @@ struct EditorCapability: Codable, Equatable, Sendable {
         editable = object["editable"]?.boolValue ?? false
         reason = object["reason"]?.stringValue
         value = object["value"]?.stringValue
+        languages = object["languages"]?.arrayValue?.compactMap(\.stringValue)
     }
 
     func encode(to encoder: Encoder) throws {
         var object: [String: JSONValue] = ["editable": .bool(editable)]
         if let reason { object["reason"] = .string(reason) }
         if let value { object["value"] = .string(value) }
+        if let languages { object["languages"] = .array(languages.map(JSONValue.string)) }
         try object.encode(to: encoder)
     }
 }
@@ -1311,6 +1320,8 @@ private extension EditorDocument {
             ("shape", ["caption_shape"]),
             // KRI-1007: a cue-native variant stores the all-captions animation beside its caption fields.
             ("animation_phases", ["caption_animation_phases"]),
+            // KRI-1501: the translated-line track, persisted on the variant as `caption_translation`.
+            ("translation", ["caption_translation"]),
         ]
         for (canonicalKey, keys) in aliases {
             if let value = value(for: canonicalKey, aliases: keys) { result[canonicalKey] = value }
@@ -1450,6 +1461,13 @@ private extension EditorDocument {
             // `music_operations.window`, `lanes.text`). A capability object
             // with `editable`/`reason` is a leaf; preserve its reason instead
             // of collapsing the whole parent to an unusable false value.
+            // KRI-1501: `caption_translation` is offered as `{"languages": [...]}`; its presence is the gate.
+            if let languages = objectValue["languages"]?.arrayValue {
+                result[prefix] = EditorCapability(editable: objectValue["editable"]?.boolValue ?? true,
+                                                  reason: objectValue["reason"]?.stringValue,
+                                                  languages: languages.compactMap(\.stringValue))
+                return
+            }
             let isLeaf = objectValue["editable"] != nil
                 || (objectValue["reason"] != nil
                     && objectValue.keys.allSatisfy { $0 == "editable" || $0 == "reason" })

@@ -3364,25 +3364,80 @@ def _op_set_media_duration(state: _DraftState, op: dict[str, Any]) -> None:
     state.changed.add("timeline")
 
 
+# The fields of the editor's translated caption track (`EditorCaptionTranslation`).
+_CAPTION_TRANSLATION_KEYS = frozenset(
+    {
+        "enabled",
+        "language",
+        "source_language",
+        "size_px",
+        "color",
+        "font",
+        "stroke_width",
+        "position_x_frac",
+        "position_y_frac",
+        "line_overrides",
+        "outcome",
+        "dropped_cue_ids",
+    }
+)
+
+
+def _drop_stale_translations(state: _DraftState, rows: list[dict[str, Any]]) -> int:
+    """KRI-1501: a caption line whose words were rewritten loses its translated line (it would
+    show the old sentence in the second language). Its id joins the track's ``dropped_cue_ids``
+    and the track's outcome becomes "partial", so the receipt never calls it translated.
+    Returns how many translated lines were removed."""
+    dropped = [
+        row["id"] if isinstance(row.get("id"), str) else ""
+        for row in rows
+        if str(row.pop("translation", None) or "").strip()
+    ]
+    if not dropped:
+        return 0
+    stored = state.caption_patch.get("translation") or state.variant.get("caption_translation")
+    if isinstance(stored, dict) and stored.get("language"):
+        track = {k: copy.deepcopy(v) for k, v in stored.items() if k in _CAPTION_TRANSLATION_KEYS}
+        ids = [*(track.get("dropped_cue_ids") or []), *(cue_id for cue_id in dropped if cue_id)]
+        track["dropped_cue_ids"] = list(dict.fromkeys(ids))
+        track["outcome"] = "partial"
+        state.caption_patch["translation"] = track
+        state.changed.add("caption_meta")
+    return len(dropped)
+
+
+def _stale_translation_summary(op: dict[str, Any], count: int) -> str | None:
+    if not count:
+        return None
+    lines = "its translated line" if count == 1 else f"{count} translated lines"
+    return f"{_summary(op)}; removed {lines} (they no longer matched the words)"
+
+
 def _op_edit_caption(state: _DraftState, op: dict[str, Any]) -> None:
     index = _require_index(state.captions, op.get("cue_index"), "Caption")
-    state.captions[index]["text"] = str(op["text"])
+    row = state.captions[index]
+    text = str(op["text"])
+    stale = _drop_stale_translations(state, [row]) if text != str(row.get("text") or "") else 0
+    row["text"] = text
     state.changed.add("captions")
+    state.summary = _stale_translation_summary(op, stale) or state.summary
 
 
 def _op_replace_caption_text(state: _DraftState, op: dict[str, Any]) -> None:
     find = str(op["find"])
     replace = str(op["replace"])
-    replaced = 0
+    rewritten: list[dict[str, Any]] = []
     for row in state.captions:
         current = str(row.get("text") or "")
         updated = current.replace(find, replace)
         if updated != current:
             row["text"] = updated
-            replaced += 1
-    if not replaced:
+            rewritten.append(row)
+    if not rewritten:
         raise KriaEditorOpError(f'No captions contain "{find}"')
     state.changed.add("captions")
+    stale = _drop_stale_translations(state, rewritten)
+    state.summary = _stale_translation_summary(op, stale) or state.summary
 
 
 def _op_set_caption_timing(state: _DraftState, op: dict[str, Any]) -> None:

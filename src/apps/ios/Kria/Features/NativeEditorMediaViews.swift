@@ -215,6 +215,19 @@ struct NativeVideoPreview: View {
                     detail: nil,
                     scale: CGFloat(session.captionStyleSize(.line(item.id)) / 78)
                 )
+            case .captionTranslation:
+                // KRI-1501: the translated line is its own object, so a tap on it never selects the spoken caption.
+                guard captionsEnabled, session.captionTranslationEnabled else { return nil }
+                return NativeEditorPreviewObject(
+                    item: item,
+                    text: document.captionCues.first(where: { $0.id == item.id })?.translation,
+                    position: session.captionTranslationPosition(id: item.id),
+                    style: nil,
+                    title: String(localized: "Translated caption", comment: "Editor object name: the smaller translated line under a caption"),
+                    render: .caption,
+                    detail: nil,
+                    scale: CGFloat(session.captionTranslationSize(.line(item.id)) / 78)
+                )
             case .soundEffect:
                 let effect = document.soundEffects.first { $0.id == item.id }
                 return NativeEditorPreviewObject(
@@ -319,10 +332,13 @@ struct NativeVideoPreview: View {
 
     private func commitLiveText() {
         if let caption = liveCaption {
-            if liveText.translation != .zero {
-                session.setCaptionGesturePosition(id: caption.id, position: CGPoint(x: caption.position.x + liveText.translation.x,
-                                                                                    y: caption.position.y + liveText.translation.y))
+            let moved = CGPoint(x: caption.position.x + liveText.translation.x, y: caption.position.y + liveText.translation.y)
+            if caption.translation {
+                if liveText.translation != .zero { session.setCaptionTranslationGesturePosition(id: caption.id, position: moved) }
+                if liveText.scale != 1 { session.setCaptionTranslationGestureSize(id: caption.id, size: caption.sizePx * liveText.scale) }
+                return
             }
+            if liveText.translation != .zero { session.setCaptionGesturePosition(id: caption.id, position: moved) }
             if liveText.scale != 1 { session.setCaptionGestureSize(id: caption.id, size: caption.sizePx * liveText.scale) }
             return
         }
@@ -342,12 +358,13 @@ struct NativeVideoPreview: View {
 
     /// Pins a caption cue for a drag, pinch or corner resize: the gesture moves its frozen still (when prepared for it
     /// exactly as it is drawn now) and commits once on release, the same as authored text.
-    private func beginLiveCaption(_ id: String) {
-        guard liveCaption == nil else { return }
-        let still = session.captionStill(id: id)
+    private func beginLiveCaption(_ selection: EditorSelection) {
+        guard liveCaption == nil, selection.kind == .captionCue || selection.kind == .captionTranslation else { return }
+        let id = selection.id
+        let still = selection.kind == .captionTranslation ? session.translationStill(id: id) : session.captionStill(id: id)
         liveCaption = still
         liveText.begin(baseline: TextTransformBaseline(id: id, anchor: still.position, sizePx: still.sizePx, widthFrac: 1, rotationDeg: 0),
-                       bounds: session.previewSelectionBounds(for: EditorSelection(kind: .captionCue, id: id), at: clock.currentTime)
+                       bounds: session.previewSelectionBounds(for: selection, at: clock.currentTime)
                            .map(TextTransformBounds.init))
         if let prepared = session.textInteractionFrame, prepared.caption == still,
            abs(prepared.time - clock.currentTime) < 0.01 { liveTextFrame = prepared }
@@ -357,7 +374,8 @@ struct NativeVideoPreview: View {
     /// would not keep.
     private func resizeLiveCaption(by requested: Double, in canvas: CGSize) {
         guard let caption = liveCaption, caption.sizePx > 0, requested.isFinite else { return }
-        let scale = min(max(requested, 36 / caption.sizePx), 160 / caption.sizePx)
+        let range = caption.translation ? CaptionTranslationLook.sizeRange : 36...160
+        let scale = min(max(requested, range.lowerBound / caption.sizePx), range.upperBound / caption.sizePx)
         let baseline = TextTransformBaseline(id: caption.id, anchor: caption.position, sizePx: caption.sizePx, widthFrac: 1, rotationDeg: 0)
         liveText.resize(current: baseline, scale: scale, rotation: 0, snapRotation: false)
         if liveTextFrame != nil { liveTextSampleCount += 1 }
@@ -386,7 +404,9 @@ struct NativeVideoPreview: View {
             let centre = NativeDrawingTransformLayer.centre(of: drawing, in: size)
             return CGRect(x: centre.x - box.width / 2, y: centre.y - box.height / 2, width: box.width, height: box.height)
         }
-        if object.item.id == (liveTextBaseline?.id ?? liveCaption?.id), let live = liveText.frame(in: size) {
+        let isLive = liveTextBaseline.map { $0.id == object.item.id }
+            ?? liveCaption.map { $0.id == object.item.id && $0.translation == (object.item.kind == .captionTranslation) } ?? false
+        if isLive, let live = liveText.frame(in: size) {
             return live
         }
         if let geometry = session.previewSelectionBounds(for: object.item.selection, at: clock.currentTime) {
@@ -544,7 +564,21 @@ struct NativeVideoPreview: View {
             if !isNearSelectedCorner(point, in: size) { onEmptyTap?() }
             return
         }
-        let ordered = candidates.map(\.selection)
+        var ordered = candidates.map(\.selection)
+        // KRI-1501: a caption and its translated line sit a few points apart, so their 44 pt hit targets overlap. The
+        // line actually under the finger (else the nearer one) wins, so a tap never selects the other track.
+        if ordered.contains(where: { $0.kind == .captionCue }), ordered.contains(where: { $0.kind == .captionTranslation }) {
+            func distance(_ selection: EditorSelection) -> CGFloat {
+                guard selection.kind == .captionCue || selection.kind == .captionTranslation,
+                      let object = objects.first(where: { $0.item.selection == selection }) else { return .infinity }
+                let box = frame(for: object, in: size)
+                return box.contains(point) ? 0 : max(box.minY - point.y, point.y - box.maxY, 0) + 1
+            }
+            let captions = ordered.filter { $0.kind == .captionCue || $0.kind == .captionTranslation }
+                .enumerated().sorted { (distance($0.element), $0.offset) < (distance($1.element), $1.offset) }.map(\.element)
+            var next = captions.makeIterator()
+            ordered = ordered.map { $0.kind == .captionCue || $0.kind == .captionTranslation ? next.next()! : $0 }
+        }
         let next: EditorSelection
         // Kept as canvas fractions: selecting a caption or drawing opens a panel that resizes the preview, so the
         // same spot on the picture is a different point value on the next tap.
@@ -568,7 +602,7 @@ struct NativeVideoPreview: View {
             return speakerCorners(for: selection, in: size).contains { NativeTextTransformMath.inGrabZone(point, corner: $0) }
         }
         let bounds = frame(for: selected, in: size)
-        let reach = selected.item.kind == .text || selected.item.kind == .captionCue
+        let reach = selected.item.kind == .text || selected.item.kind == .captionCue || selected.item.kind == .captionTranslation
             ? [NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)]
             : NativeTextTransformMath.corners(of: bounds, rotationDegrees: selected.rotation)
         return reach.contains { NativeTextTransformMath.inGrabZone(point, corner: $0) }
@@ -663,7 +697,7 @@ struct NativeVideoPreview: View {
             }
         }
         // A caption cue: its one corner handle resizes (captions do not rotate), like the text handle.
-        if directMoveObjectID == nil, let selection = session.selection, selection.kind == .captionCue,
+        if directMoveObjectID == nil, let selection = session.selection, selection.kind == .captionCue || selection.kind == .captionTranslation,
            let selected = objects.first(where: { $0.item.selection == selection }), canDirectlyPosition(selected) {
             let bounds = frame(for: selected, in: size)
             let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: 0)
@@ -674,7 +708,7 @@ struct NativeVideoPreview: View {
                 transformCenter = CGPoint(x: bounds.midX, y: bounds.midY)
                 transformStartVector = CGVector(dx: value.startLocation.x - bounds.midX, dy: value.startLocation.y - bounds.midY)
                 session.beginDirectManipulation()
-                beginLiveCaption(selected.item.id)
+                beginLiveCaption(selected.item.selection)
             }
         }
         // The framed speaker: any corner resizes about the centre (no rotation; the wire has none).
@@ -756,7 +790,7 @@ struct NativeVideoPreview: View {
             if object.item.kind == .speaker { beginSpeakerGesture(object.item.selection) }
             else if object.item.kind == .mediaOverlay || object.item.kind == .visualBlock { beginMediaStill(object) }
             session.beginDirectManipulation()
-            if object.item.kind == .captionCue { beginLiveCaption(object.item.id) }
+            beginLiveCaption(object.item.selection)
         }
         guard let objectID = directMoveObjectID,
               let baseline = directMoveBaseline,
@@ -772,7 +806,7 @@ struct NativeVideoPreview: View {
         } else if object.item.kind == .speaker {
             guard let viewport = session.speakerViewport(for: object.item.selection, at: clock.currentTime) else { return }
             onMove(NativeSpeakerPanelGeometry.movedPosition(from: baseline, translation: value.translation, canvas: size, viewport: viewport))
-        } else if object.item.kind == .captionCue {
+        } else if object.item.kind == .captionCue || object.item.kind == .captionTranslation {
             guard liveCaption != nil else { return }
             // The same safe range `setCaptionGesturePosition` stores.
             liveText.move(to: CGPoint(x: min(0.95, max(0.05, position.x)), y: min(0.90, max(0.10, position.y))))
@@ -872,7 +906,7 @@ struct NativeVideoPreview: View {
                     if object.item.kind == .speaker { beginSpeakerGesture(object.item.selection) }
                     else if object.item.kind == .mediaOverlay || object.item.kind == .visualBlock { beginMediaStill(object) }
                     session.beginDirectManipulation()
-                    if object.item.kind == .captionCue { beginLiveCaption(object.item.id) }
+                    beginLiveCaption(object.item.selection)
                 }
                 guard let objectID = directResizeObjectID,
                       let baseline = directResizeBaseline,
@@ -881,7 +915,7 @@ struct NativeVideoPreview: View {
                 if let text = directResizeTextBaseline {
                     resizeText(text, scale: value, rotation: 0, canvas: size)
                     updateTextAlignment(in: size)
-                } else if object.item.kind == .captionCue {
+                } else if object.item.kind == .captionCue || object.item.kind == .captionTranslation {
                     resizeLiveCaption(by: Double(value), in: size)
                 } else if object.item.kind == .speaker {
                     onResize(baseline * value)
@@ -900,6 +934,8 @@ struct NativeVideoPreview: View {
         switch object.item.kind {
         case .captionCue:
             return session.offersCaptionStyleScope && session.hasSourcePreview
+        case .captionTranslation:
+            return session.canEditCaptionTranslation && session.hasSourcePreview
         case .text:
             return session.canEdit(.text)
         case .mediaOverlay:
@@ -922,6 +958,8 @@ struct NativeVideoPreview: View {
         switch object.item.kind {
         case .captionCue:
             return { point in session.setCaptionGesturePosition(id: object.item.id, position: point) }
+        case .captionTranslation:
+            return { point in session.setCaptionTranslationGesturePosition(id: object.item.id, position: point) }
         case .text:
             return { point in session.setTextPosition(id: object.item.id, x: point.x, y: point.y) }
         case .mediaOverlay:
@@ -943,6 +981,8 @@ struct NativeVideoPreview: View {
         switch object.item.kind {
         case .captionCue:
             return { scale in session.setCaptionGestureSize(id: object.item.id, size: Double(scale) * 78) }
+        case .captionTranslation:
+            return { scale in session.setCaptionTranslationGestureSize(id: object.item.id, size: Double(scale) * 78) }
         case .text:
             return { scale in session.setTextWidth(id: object.item.id, width: scale) }
         case .mediaOverlay:
@@ -1222,10 +1262,11 @@ struct NativeVideoPreview: View {
 
             if let captionID = session.captionGestureOfferID, !session.isDirectManipulating, !session.isPlaying {
                 // On the half of the picture away from the caption, so it never covers the next grab.
-                NativeCaptionScopeOffer(session: session, captionID: captionID)
+                let translation = session.captionGestureOfferIsTranslation
+                NativeCaptionScopeOffer(session: session, captionID: captionID, translation: translation)
                     .padding(10)
                     .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: session.captionPosition(id: captionID).y > 0.5 ? .top : .bottom)
+                           alignment: (translation ? session.captionTranslationPosition(id: captionID) : session.captionPosition(id: captionID)).y > 0.5 ? .top : .bottom)
                     .transition(.opacity)
             }
 
@@ -2030,6 +2071,8 @@ struct NativeMiniStrip: View {
         let ids = captionTextIDs
         return timelineItems.filter { $0.kind == .captionCue || ($0.kind == .text && ids.contains($0.id)) }
     }
+    /// KRI-1501: the translated lines, a track of their own under Captions (only where the server offers it).
+    private var translationItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .captionTranslation } }
     private var soundEffectItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .soundEffect } }
     private var mediaOverlayItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .mediaOverlay } }
     private var visualBlockItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .visualBlock } }
@@ -2058,7 +2101,7 @@ struct NativeMiniStrip: View {
 
     private func makeRows() -> [TrackRow] {
         let groups: [(String, [NativeEditorTimelineItem])] = [
-            ("TEXT", textItems), ("CAPTIONS", captionItems), ("MUSIC", musicItems),
+            ("TEXT", textItems), ("CAPTIONS", captionItems), ("TRANSLATION", translationItems), ("MUSIC", musicItems),
             ("SFX", soundEffectItems), ("OVERLAY", mediaOverlayItems),
             ("VISUAL", visualBlockItems),
             // KRI-1162: present only while the edit has timed backgrounds, so every other edit keeps its lane list.
@@ -2463,6 +2506,7 @@ struct NativeMiniStrip: View {
         switch key {
         case "TEXT": String(localized: "Text", comment: "Timeline lane label")
         case "CAPTIONS": String(localized: "Captions", comment: "Timeline lane label")
+        case "TRANSLATION": String(localized: "Translation", comment: "Timeline lane label: the smaller translated caption line")
         case "MUSIC": String(localized: "Music", comment: "Timeline lane label")
         case "SFX": String(localized: "SFX", comment: "Timeline lane label: sound effects (acronym)")
         case "OVERLAY": String(localized: "Overlay", comment: "Timeline lane label: photo or video card over the video")
@@ -2972,6 +3016,8 @@ struct NativeMiniStrip: View {
             let document = session.document
             let content = document.captionCues.first { $0.id == item.id }?.text
             return content ?? laneTitle
+        case .captionTranslation:
+            return session.document.captionCues.first { $0.id == item.id }?.translation ?? laneTitle
         case .music:
             if let title = session.document.music?.raw["title"]?.stringValue { return String(localized: "Music: \(title)") }
             if let trackID = session.document.music?.trackID { return String(localized: "Music: \(trackID)") }

@@ -2163,6 +2163,64 @@
         }
       }
     },
+    "%lld lines couldn’t be translated, so they show no translated line." : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Zeile konnte nicht übersetzt werden und zeigt keine Übersetzung."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Zeilen konnten nicht übersetzt werden und zeigen keine Übersetzung."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld line couldn’t be translated, so it shows no translated line."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld lines couldn’t be translated, so they show no translated line."
+                }
+              }
+            }
+          }
+        },
+        "tr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld satır çevrilemedi, bu satırlarda çeviri görünmüyor."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld satır çevrilemedi, bu satırlarda çeviri görünmüyor."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld lines have their own animation. Changing all captions replaces them." : {
       "localizations" : {
         "de" : {
@@ -4793,6 +4851,22 @@
         }
       }
     },
+    "Add a smaller line under your captions in a second language. Pick the language:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Füg unter deinen Untertiteln eine kleinere Zeile in einer zweiten Sprache hinzu. Wähl die Sprache:"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Altyazılarının altına ikinci bir dilde daha küçük bir satır ekle. Dili seç:"
+          }
+        }
+      }
+    },
     "Add a song, then your takes of you singing along. Kria lines them up with the music." : {
       "localizations" : {
         "de" : {
@@ -6219,6 +6293,22 @@
         }
       }
     },
+    "All lines" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle Zeilen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tüm satırlar"
+          }
+        }
+      }
+    },
     "All text" : {
       "localizations" : {
         "de" : {
@@ -6899,6 +6989,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tüm slaytlara uygula"
+          }
+        }
+      }
+    },
+    "Apply to all translated lines" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf alle übersetzten Zeilen anwenden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tüm çeviri satırlarına uygula"
           }
         }
       }
@@ -8595,6 +8701,22 @@
         }
       }
     },
+    "Captions are in %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sprache der Untertitel: %@."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Altyazı dili: %@."
+          }
+        }
+      }
+    },
     "Captions aren’t available for this edit." : {
       "localizations" : {
         "de" : {
@@ -8992,6 +9114,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Değişen satır"
+          }
+        }
+      }
+    },
+    "Changes every translated line." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ändert alle übersetzten Zeilen."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tüm çeviri satırlarını değiştirir."
           }
         }
       }
@@ -12536,6 +12674,22 @@
         }
       }
     },
+    "Couldn’t translate the captions into %@. Nothing changed. Try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Untertitel konnten nicht übersetzt werden (%@). Nichts wurde geändert. Versuch es noch mal."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Altyazılar çevrilemedi (%@). Hiçbir şey değişmedi. Tekrar dene."
+          }
+        }
+      }
+    },
     "Cover" : {
       "localizations" : {
         "de" : {
@@ -12899,6 +13053,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Özel yazı rengi"
+          }
+        }
+      }
+    },
+    "Custom translated line color" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eigene Farbe für die übersetzte Zeile"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırı için özel renk"
           }
         }
       }
@@ -13975,6 +14145,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kaydırmak için kutuyu sürükle. Uzatmak veya kısaltmak için bir kenarı sürükle."
+          }
+        }
+      }
+    },
+    "Drag the translated line on the video to move it. Pinch to resize." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zieh die übersetzte Zeile im Video, um sie zu verschieben. Mit zwei Fingern änderst du die Größe."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Taşımak için çeviri satırını videoda sürükle. Boyutunu iki parmakla değiştir."
           }
         }
       }
@@ -20594,6 +20780,22 @@
         }
       }
     },
+    "Language" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sprache"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dil"
+          }
+        }
+      }
+    },
     "Latest" : {
       "localizations" : {
         "de" : {
@@ -20944,6 +21146,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Satır %lld, %@, %@ – %@"
+          }
+        }
+      }
+    },
+    "Lines" : {
+      "comment" : "Translation panel tab: the translated lines",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zeilen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Satırlar"
           }
         }
       }
@@ -23731,6 +23950,22 @@
         }
       }
     },
+    "No translated line" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Übersetzung"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri yok"
+          }
+        }
+      }
+    },
     "No usable moment" : {
       "localizations" : {
         "de" : {
@@ -24527,6 +24762,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Yalnızca bu konu aranır. Klipların ve yönün gizli kalır."
+          }
+        }
+      }
+    },
+    "Only this translated line" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nur diese übersetzte Zeile"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yalnızca bu çeviri satırı"
           }
         }
       }
@@ -28831,6 +29082,22 @@
         }
       }
     },
+    "Re-translate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neu übersetzen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeniden çevir"
+          }
+        }
+      }
+    },
     "Read by AI" : {
       "localizations" : {
         "de" : {
@@ -31891,6 +32158,22 @@
         }
       }
     },
+    "Same as captions" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wie die Untertitel"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Altyazıyla aynı"
+          }
+        }
+      }
+    },
     "Save" : {
       "localizations" : {
         "de" : {
@@ -33666,6 +33949,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daha az göster"
+          }
+        }
+      }
+    },
+    "Show translated line" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Übersetzte Zeile anzeigen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırını göster"
           }
         }
       }
@@ -38391,6 +38690,22 @@
         }
       }
     },
+    "The caption changed. This translation may be out of date." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Untertitel wurde geändert. Diese Übersetzung ist vielleicht nicht mehr aktuell."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Altyazı değişti. Bu çeviri güncel olmayabilir."
+          }
+        }
+      }
+    },
     "The chat for this idea was deleted, so it can't open again. Ask for another idea to start a new chat." : {
       "localizations" : {
         "de" : {
@@ -39507,6 +39822,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sonra: “%@”"
+          }
+        }
+      }
+    },
+    "There are no captions to translate yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Es gibt noch keine Untertitel zum Übersetzen."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Henüz çevrilecek altyazı yok."
           }
         }
       }
@@ -42250,6 +42581,22 @@
         }
       }
     },
+    "To change one line, tap it on the video or in Lines first." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Um eine Zeile zu ändern, tipp sie zuerst im Video oder unter „Zeilen“ an."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tek bir satırı değiştirmek için önce videoda ya da Satırlar'da ona dokun."
+          }
+        }
+      }
+    },
     "Too generic" : {
       "localizations" : {
         "de" : {
@@ -42294,6 +42641,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Çok uzun"
+          }
+        }
+      }
+    },
+    "Too many lines to translate at once. Nothing changed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zu viele Zeilen auf einmal zum Übersetzen. Nichts wurde geändert."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aynı anda çevrilecek çok fazla satır var. Hiçbir şey değişmedi."
+          }
+        }
+      }
+    },
+    "Too many translations in a row. Try again in a minute." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zu viele Übersetzungen hintereinander. Versuch es in einer Minute noch mal."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arka arkaya çok fazla çeviri yapıldı. Bir dakika sonra tekrar dene."
           }
         }
       }
@@ -42441,6 +42820,185 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Geçişler şu an kullanılamıyor. Klibi düz kesmeye ayarla ve tekrar kaydet. Düzenlemelerin hâlâ burada."
+          }
+        }
+      }
+    },
+    "Translated caption" : {
+      "comment" : "Editor object name: the smaller translated line under a caption",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Übersetzte Untertitelzeile"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri altyazı"
+          }
+        }
+      }
+    },
+    "Translated caption lines aren’t available right now. Turn the translated line off and save again. Your edits are still here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Übersetzte Untertitelzeilen sind gerade nicht verfügbar. Schalte die übersetzte Zeile aus und speichere noch mal. Deine Änderungen sind noch da."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri altyazı satırları şu anda kullanılamıyor. Çeviri satırını kapat ve tekrar kaydet. Düzenlemelerin hâlâ burada."
+          }
+        }
+      }
+    },
+    "Translated line" : {
+      "comment" : "Panel title: the smaller translated caption line",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Übersetzte Zeile"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırı"
+          }
+        }
+      }
+    },
+    "Translated line %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Übersetzte Zeile %lld"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırı %lld"
+          }
+        }
+      }
+    },
+    "Translated line color %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Farbe der übersetzten Zeile %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırı rengi %@"
+          }
+        }
+      }
+    },
+    "Translated line font" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schrift der übersetzten Zeile"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırı yazı tipi"
+          }
+        }
+      }
+    },
+    "Translated line outline" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontur der übersetzten Zeile"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırı konturu"
+          }
+        }
+      }
+    },
+    "Translated line size in output pixels" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Größe der übersetzten Zeile in Ausgabepixeln"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çıktı pikselinde çeviri satırı boyutu"
+          }
+        }
+      }
+    },
+    "Translated lines aren’t available right now. Nothing changed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Übersetzte Zeilen sind gerade nicht verfügbar. Nichts wurde geändert."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırları şu anda kullanılamıyor. Hiçbir şey değişmedi."
+          }
+        }
+      }
+    },
+    "Translating into %@…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird übersetzt (%@) …"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çevriliyor (%@)…"
+          }
+        }
+      }
+    },
+    "Translation" : {
+      "comment" : "Timeline lane label: the smaller translated caption line",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Übersetzung"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri"
           }
         }
       }
@@ -43022,6 +43580,22 @@
         }
       }
     },
+    "Under the captions" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unter den Untertiteln"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Altyazının altında"
+          }
+        }
+      }
+    },
     "Undo" : {
       "localizations" : {
         "de" : {
@@ -43272,6 +43846,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kria’yı güncelle"
+          }
+        }
+      }
+    },
+    "Update Kria to add a translated line." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktualisiere Kria, um eine übersetzte Zeile hinzuzufügen."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırı eklemek için Kria'yı güncelle."
           }
         }
       }
@@ -46307,6 +46897,22 @@
         }
       }
     },
+    "You can also drag or pinch a translated line on the video." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Du kannst eine übersetzte Zeile auch im Video ziehen oder mit zwei Fingern skalieren."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çeviri satırını videoda sürükleyebilir ya da iki parmakla büyütüp küçültebilirsin."
+          }
+        }
+      }
+    },
     "You can also send a message to change the direction." : {
       "localizations" : {
         "de" : {
@@ -46831,6 +47437,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bunun yerine kameranın sesi çalar. Kaydetmeden önce bunu geri alabilirsin."
+          }
+        }
+      }
+    },
+    "Your captions are already in %@. Pick another language." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Untertitel sind schon auf %@. Wähl eine andere Sprache."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Altyazıların zaten %@. Başka bir dil seç."
           }
         }
       }
@@ -48621,6 +49243,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Çevrimdışısın"
+          }
+        }
+      }
+    },
+    "You’re offline. Connect and try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Du bist offline. Verbinde dich und versuch es noch mal."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çevrimdışısın. Bağlan ve tekrar dene."
           }
         }
       }

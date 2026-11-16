@@ -92,6 +92,7 @@ enum NativeEditorUITestFixtures {
         if arguments.contains("-ui-testing-editor-gameday-reset") { UserDefaults.standard.removeObject(forKey: gamedaySavedKey) }
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
         var value = draft(for: shape)
+        if arguments.contains("-ui-testing-editor-dual-captions") { value = dualCaptions(arguments: arguments) }
         if arguments.contains("-ui-testing-editor-text-bend") {
             // KRI-646: the server advertises `editor_capabilities.text_bend` to a protocol-9 build on a device-rendered variant.
             var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
@@ -686,6 +687,76 @@ enum NativeEditorUITestFixtures {
             ]),
         ])
     }()
+
+    // MARK: KRI-1501 two-language captions
+
+    /// The same two talking lines in each two-language-caption language. Line 0 in German is the longest case: as a
+    /// translated line it is wider than 0.9 of the frame at its default size and must shrink to stay one row.
+    static let dualCaptionLines: [String: [String]] = [
+        "tr": ["3 tane stratejide birleştiriyorlar.", "İlki en kolayı."],
+        "en": ["They combine it through three strategies.", "The first one is the easiest."],
+        "de": ["Sie verbinden das in drei Strategien, die kaum jemand nutzt.", "Die erste ist die einfachste."],
+        "pt": ["Eles combinam isso em três estratégias.", "A primeira é a mais fácil."],
+    ]
+
+    /// `-ui-testing-editor-dual-captions`: a phone Talking edit with a spoken caption track and a translated-line
+    /// track. `-ui-testing-editor-dual-pair-<spoken>-<translated>` picks the pair (default `tr-en`);
+    /// `-ui-testing-editor-dual-captions-no-capability` drops `editor_capabilities.caption_translation` (the server's
+    /// gate is closed for this build).
+    static func dualCaptions(arguments: [String]) -> EditorDraft {
+        let pair = arguments.first { $0.hasPrefix("-ui-testing-editor-dual-pair-") }?
+            .dropFirst("-ui-testing-editor-dual-pair-".count).split(separator: "-").map(String.init) ?? []
+        let spoken = pair.count == 2 && dualCaptionLines[pair[0]] != nil ? pair[0] : "tr"
+        let translated = pair.count == 2 && dualCaptionLines[pair[1]] != nil && pair[1] != spoken ? pair[1] : (spoken == "en" ? "tr" : "en")
+        let clips = [clip(900, start: 0, duration: 6)]
+        let windows: [(Double, Double)] = [(1.2, 3.7), (3.7, 5.6)]
+        let spokenLines = dualCaptionLines[spoken] ?? [], translatedLines = dualCaptionLines[translated] ?? []
+        var capabilities: [String: JSONValue] = [
+            "timeline": .bool(true),
+            "caption_cues": .object(["editable": .bool(true)]),
+            "caption_meta": .object(["editable": .bool(true)]),
+            "caption_editor_style": .bool(true),
+            "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+        ]
+        if !arguments.contains("-ui-testing-editor-dual-captions-no-capability") {
+            capabilities["caption_translation"] = .object(["languages": .array(["de", "en", "pt", "tr"].map(JSONValue.string))])
+        }
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "caption_cues": .array(windows.enumerated().map { index, window in .object([
+                "text": .string(spokenLines[index]), "start_s": .number(window.0), "end_s": .number(window.1),
+                "translation": .string(translatedLines[index]),
+            ]) }),
+            "caption_meta": .object([
+                "enabled": .bool(true), "style": .string("sentence"),
+                "translation": EditorCaptionTranslation(language: translated, sourceLanguage: spoken, outcome: "translated").json,
+            ]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "caption_language": .string(spoken),
+            "editor_capabilities": .object(capabilities),
+        ])
+    }
+
+    /// The translate route's stand-in for UI tests: each cue's text is looked up in `dualCaptionLines`; a text it does
+    /// not know comes back dropped, like a line the server's language check refuses.
+    static func dualCaptionTranslation(for request: CaptionTranslationRequest) -> CaptionTranslationResponse {
+        var source: String?
+        let lines = request.cues.map { cue -> CaptionTranslationResponse.Line in
+            for (language, texts) in dualCaptionLines {
+                if let index = texts.firstIndex(of: cue.text) {
+                    source = source ?? language
+                    return .init(id: cue.id, text: dualCaptionLines[request.language]?[index])
+                }
+            }
+            return .init(id: cue.id, text: nil)
+        }
+        let dropped = lines.filter { $0.text == nil }.map(\.id)
+        return CaptionTranslationResponse(language: request.language, sourceLanguage: source,
+            outcome: dropped.isEmpty ? "translated" : dropped.count == lines.count ? "unmet" : "partial",
+            translations: lines, droppedCueIDs: dropped)
+    }
 
     static let songCaptions: EditorDraft = {
         let clips = [clip(910, start: 0, duration: 6)]
