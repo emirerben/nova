@@ -770,7 +770,35 @@ def speech_cut_diff() -> EditorDiff:
 # ------------------------------------------------------------------------ describing
 
 
+# Count phrases as whole catalog keys: German plurals are not "+s" (KRI-1362). The Turkish
+# side stays the caller's noun.
+_COUNT_PHRASES = {
+    "clip": ("{count} clip", "{count} {noun_tr}"),
+    "clips": ("{count} clips", "{count} {noun_tr}"),
+    "label": ("{count} label", "{count} {noun_tr}"),
+    "labels": ("{count} labels", "{count} {noun_tr}"),
+    "text": ("{count} text", "{count} {noun_tr}"),
+    "texts": ("{count} texts", "{count} {noun_tr}"),
+    "caption": ("{count} caption", "{count} {noun_tr}"),
+    "captions": ("{count} captions", "{count} {noun_tr}"),
+    "sound effect": ("{count} sound effect", "{count} {noun_tr}"),
+    "sound effects": ("{count} sound effects", "{count} {noun_tr}"),
+    "camera effect": ("{count} camera effect", "{count} {noun_tr}"),
+    "camera effects": ("{count} camera effects", "{count} {noun_tr}"),
+    "picture": ("{count} picture", "{count} {noun_tr}"),
+    "pictures": ("{count} pictures", "{count} {noun_tr}"),
+}
+
+
 def _plural(count: int, noun: str, noun_tr: str) -> str:
+    key = noun if count == 1 else f"{noun}s"
+    if key in _COUNT_PHRASES:
+        return say(
+            en=_COUNT_PHRASES[key][0],
+            tr=_COUNT_PHRASES[key][1],
+            count=count,
+            noun_tr=noun_tr,
+        )
     return say(
         en=f"{count} {noun}" if count == 1 else f"{count} {noun}s",
         tr=f"{count} {noun_tr}",
@@ -824,17 +852,51 @@ _ENTRANCE_EN = {
 _ENTRANCE_TR = {
     edge: vocab.label_tr for edge, vocab in TEXT_ANIMATION_VOCAB.items() if edge != "none"
 }
-_CASE_EN = {
-    "upper": "UPPERCASE",
-    "lower": "lowercase",
-    "title": "Title Case",
-    "none": "its original case",
+# One whole sentence per side or case, so German never gets an English word (KRI-1362).
+_LINED_UP = {
+    "left": ("Lined up {who} on the left", "{who} sola hizalandı"),
+    "right": ("Lined up {who} on the right", "{who} sağa hizalandı"),
+    "center": ("Lined up {who} on the center", "{who} ortaya hizalandı"),
 }
-_CASE_TR = {
-    "upper": "BÜYÜK HARF",
-    "lower": "küçük harf",
-    "title": "Baş Harfler Büyük",
-    "none": "özgün harf",
+_ALIGNED = {
+    "left": ("Aligned {who} to the left", "{who} sola hizalandı"),
+    "right": ("Aligned {who} to the right", "{who} sağa hizalandı"),
+    "center": ("Aligned {who} to the center", "{who} ortaya hizalandı"),
+}
+_MOVED_TO = {
+    "top": ("Moved {who} to the top", "{who} üst konuma taşındı"),
+    "middle": ("Moved {who} to the middle", "{who} orta konuma taşındı"),
+    "bottom": ("Moved {who} to the bottom", "{who} alt konuma taşındı"),
+}
+_CAPTIONS_MOVED_TO = {
+    "top": ("Moved the captions to the top", "Altyazılar üst konuma taşındı"),
+    "middle": ("Moved the captions to the middle", "Altyazılar orta konuma taşındı"),
+    "bottom": ("Moved the captions to the bottom", "Altyazılar alt konuma taşındı"),
+}
+_CASE_SET = {
+    "upper": ("Set {who} to UPPERCASE", "{who} → BÜYÜK HARF"),
+    "lower": ("Set {who} to lowercase", "{who} → küçük harf"),
+    "title": ("Set {who} to Title Case", "{who} → Baş Harfler Büyük"),
+    "none": ("Set {who} to its original case", "{who} → özgün harf"),
+    "": ("Set {who} to a new case", "{who} → yeni harf biçimi"),
+}
+_PLAIN_CHANGED = {
+    "highlight_color": ("Changed the highlight colour of {who}", "{who} için vurgu rengi değişti"),
+    "background_color": ("Changed the background of {who}", "{who} için arka plan değişti"),
+    "letter_spacing": ("Changed the letter spacing of {who}", "{who} için harf aralığı değişti"),
+    "line_spacing": ("Changed the line spacing of {who}", "{who} için satır aralığı değişti"),
+    "max_width_frac": ("Changed the text width of {who}", "{who} için yazı genişliği değişti"),
+    "stroke_width": ("Changed the outline of {who}", "{who} için kontur değişti"),
+    "shadow_enabled": ("Changed the shadow of {who}", "{who} için gölge değişti"),
+    "rotation_deg": ("Changed the rotation of {who}", "{who} için dönüş değişti"),
+    "bend": ("Changed the Bend of {who}", "{who} için Kavis değişti"),
+    "behind_subject": (
+        "Changed the behind-subject look of {who}",
+        "{who} için özne arkası görünümü değişti",
+    ),
+    "exit": ("Changed the exit animation of {who}", "{who} için çıkış animasyonu değişti"),
+    "loop": ("Changed the looping animation of {who}", "{who} için döngü animasyonu değişti"),
+    "speed": ("Changed the animation speed of {who}", "{who} için animasyon hızı değişti"),
 }
 _PLAIN_LABELS = {
     "highlight_color": ("highlight colour", "vurgu rengi"),
@@ -928,15 +990,21 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
     if name == "size":
         old, new = _num(first.before), _num(first.after)
         if len(entry.targets) == 1 and old is not None and new is not None:
-            word_en, word_tr = ("bigger", "büyüttüm") if new > old else ("smaller", "küçülttüm")
+            bigger = new > old
             return say(
-                en="Made {who} {word_en} ({old:g}→{new:g}px)",
-                tr="{who} {word_tr} ({old:g}→{new:g}px)",
+                en=(
+                    "Made {who} bigger ({old:g}→{new:g}px)"
+                    if bigger
+                    else "Made {who} smaller ({old:g}→{new:g}px)"
+                ),
+                tr=(
+                    "{who} büyüttüm ({old:g}→{new:g}px)"
+                    if bigger
+                    else "{who} küçülttüm ({old:g}→{new:g}px)"
+                ),
                 who=who,
-                word_en=word_en,
                 old=old,
                 new=new,
-                word_tr=word_tr,
             )
         return say(en="Resized {who}", tr="{who} yeniden boyutlandı", who=who)
     if name == "position":
@@ -944,6 +1012,9 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
         befores = [t.before for t in entry.targets if isinstance(t.before, tuple)]
         named = afters[0][0] if afters and afters[0][0] not in (None, "custom") else None
         if named and len({a[0] for a in afters}) == 1:
+            spot = str(named)
+            if spot in _MOVED_TO:
+                return say(en=_MOVED_TO[spot][0], tr=_MOVED_TO[spot][1], who=who)
             spot_tr = {"top": "üst", "middle": "orta", "bottom": "alt"}.get(str(named), str(named))
             return say(
                 en="Moved {who} to the {named}",
@@ -959,16 +1030,12 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
         )
         if len(xs) == 1 and height_kept and isinstance(next(iter(xs)), float):
             horizontal, _vertical = _where(next(iter(xs)), None)
-            return say(
-                en="Lined up {who} on the {horizontal}",
-                tr="{who} {v1} hizalandı",
-                who=who,
-                horizontal=horizontal,
-                v1=_SIDE_TR[horizontal],
-            )
+            return say(en=_LINED_UP[horizontal][0], tr=_LINED_UP[horizontal][1], who=who)
         return say(en="Moved {who}", tr="{who} taşındı", who=who)
     if name == "alignment":
         side = str(common) if isinstance(common, str) else None
+        if side in _ALIGNED:
+            return say(en=_ALIGNED[side][0], tr=_ALIGNED[side][1], who=who)
         if side:
             return say(
                 en="Aligned {who} to the {side}",
@@ -979,13 +1046,8 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
             )
         return say(en="Changed the alignment of {who}", tr="{who} hizalaması değişti", who=who)
     if name == "text_case":
-        return say(
-            en="Set {who} to {case_en_get_str_common}",
-            tr="{who} → {case_tr_get_str_common}",
-            who=who,
-            case_en_get_str_common=_CASE_EN.get(str(common), "a new case"),
-            case_tr_get_str_common=_CASE_TR.get(str(common), "yeni harf biçimi"),
-        )
+        case = str(common) if str(common) in _CASE_SET else ""
+        return say(en=_CASE_SET[case][0], tr=_CASE_SET[case][1], who=who)
     if name == "timing":
         if (
             len(entry.targets) == 1
@@ -1006,6 +1068,8 @@ def _describe_text(entry: DiffEntry, who: str) -> str:
                 span_first_after=span(first.after),
             )
         return say(en="Retimed {who}", tr="{who} zamanlaması değişti", who=who)
+    if name in _PLAIN_CHANGED:
+        return say(en=_PLAIN_CHANGED[name][0], tr=_PLAIN_CHANGED[name][1], who=who)
     en, tr = _PLAIN_LABELS.get(name, (name.replace("_", " "), name.replace("_", " ")))
     return say(en="Changed the {v1} of {who}", tr="{who} için {v2} değişti", v1=en, who=who, v2=tr)
 
@@ -1042,13 +1106,7 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
     is_number = isinstance(after, (int, float)) and not isinstance(after, bool)
     if name == "y_frac" and is_number:
         _horizontal, vertical = _where(None, float(after))
-        spot_tr = {"top": "üst", "middle": "orta", "bottom": "alt"}[vertical]
-        return say(
-            en="Moved the captions to the {vertical}",
-            tr="Altyazılar {spot_tr} konuma taşındı",
-            vertical=vertical,
-            spot_tr=spot_tr,
-        )
+        return say(en=_CAPTIONS_MOVED_TO[vertical][0], tr=_CAPTIONS_MOVED_TO[vertical][1])
     if name == "enabled" and isinstance(after, bool):
         if after:
             return say(en="Turned the captions on", tr="Altyazılar açıldı")
@@ -1131,12 +1189,30 @@ def _describe_tilt(entry: DiffEntry, who: str) -> str:
             kind, f"{kind} arka plan"
         )
     if all(before.rotation_deg == tilt.rotation_deg for before in befores):
+        # One whole sentence per backdrop, so German never gets an English word (KRI-1362).
+        if backdrop is None:
+            return say(
+                en="Changed the background behind {who}: plain",
+                tr="{who} arka planı değişti: düz",
+                who=who,
+            )
+        if kind == "blur":
+            return say(
+                en="Changed the background behind {who}: blurred background",
+                tr="{who} arka planı değişti: bulanık arka plan",
+                who=who,
+            )
+        if kind == "media":
+            return say(
+                en="Changed the background behind {who}: photo or video behind it",
+                tr="{who} arka planı değişti: arkasında fotoğraf ya da video",
+                who=who,
+            )
         return say(
-            en="Changed the background behind {who}: {v1}",
-            tr="{who} arka planı değişti: {v2}",
+            en="Changed the background behind {who}: {kind} background",
+            tr="{who} arka planı değişti: {kind} arka plan",
             who=who,
-            v1=behind_en or "plain",
-            v2=behind_tr or "düz",
+            kind=kind,
         )
     amount = f"{abs(tilt.rotation_deg):g}"
     side_en, side_tr = ("right", "sağa") if tilt.rotation_deg > 0 else ("left", "sola")
@@ -1147,6 +1223,14 @@ def _describe_tilt(entry: DiffEntry, who: str) -> str:
         en=f"Tilted {who} {amount} degrees {side_en}" + (f", {behind_en}" if behind_en else ""),
         tr=f"{who} {amount} derece {side_tr} eğildi" + (f", {behind_tr}" if behind_tr else ""),
     )
+
+
+# Whole sentences per verb: German puts the verb last (KRI-1362).
+_ADDED_REMOVED = {
+    "added": ("Added {what}", "{what} eklendi"),
+    "removed": ("Removed {what}", "{what} kaldırıldı"),
+    "changed": ("Changed {what}", "{what} değişti"),
+}
 
 
 def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
@@ -1279,26 +1363,18 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
         noun = (
             ("sound effect", "ses efekti") if lane == "sfx" else ("camera effect", "kamera efekti")
         )
-        verb = {"added": ("Added", "eklendi"), "removed": ("Removed", "kaldırıldı")}.get(
-            name, ("Changed", "değişti")
-        )
+        verb = name if name in _ADDED_REMOVED else "changed"
         return say(
-            en="{verb_0} {v1}",
-            tr="{v1} {verb_1}",
-            verb_0=verb[0],
-            v1=_plural(len(entry.targets), noun[0], noun[1]),
-            verb_1=verb[1],
+            en=_ADDED_REMOVED[verb][0],
+            tr=_ADDED_REMOVED[verb][1],
+            what=_plural(len(entry.targets), noun[0], noun[1]),
         )
     if lane == "media_overlays":
-        verb = {"added": ("Added", "eklendi"), "removed": ("Removed", "kaldırıldı")}.get(
-            name, ("Changed", "değişti")
-        )
+        verb = name if name in _ADDED_REMOVED else "changed"
         return say(
-            en="{verb_0} {plural_len_entry_targets}",
-            tr="{plural_len_entry_targets} {verb_1}",
-            verb_0=verb[0],
-            plural_len_entry_targets=_plural(len(entry.targets), "picture", "görsel"),
-            verb_1=verb[1],
+            en=_ADDED_REMOVED[verb][0],
+            tr=_ADDED_REMOVED[verb][1],
+            what=_plural(len(entry.targets), "picture", "görsel"),
         )
     if lane == "visual_media":
         return say(en="Removed visual items", tr="Görsel öğeler kaldırıldı")

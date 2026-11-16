@@ -64,7 +64,13 @@ def _background(*, cadence: float | None):
     return background
 
 
-def _run(monkeypatch, *, cadence: float | None):
+def _run(monkeypatch, *, cadence: float | None, pace_kept: bool = False):
+    # KRI-1494 (Cigdem 2): with a named pace and the switch on, pictures already shown come back
+    # to keep it. The ss2b behaviour below (S57: each once, one long hold, the review says so) is
+    # what the switch-off layout still does.
+    from app.config import settings  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "background_keeps_asked_pace_enabled", pace_kept)
     job = _green3_job(monkeypatch, _background(cadence=cadence))
     gb._run_generative_job(str(job.id))
     assert job.status == "awaiting_device"
@@ -87,6 +93,18 @@ def test_a_photo_held_past_the_asked_rhythm_is_told_and_partial(monkeypatch):
     assert "Add more for faster changes." in receipt.reason
     # The rest of the ask is still reported.
     assert "you're small at the bottom right" in receipt.reason
+
+
+def test_with_the_pace_kept_the_same_plan_is_met(monkeypatch):
+    """KRI-1494: the same five ss2b photos at the named pace -- pictures come back, none stays
+    over 5 s, and the review says the ask is done."""
+    lane, receipt = _run(monkeypatch, cadence=CADENCE_S, pace_kept=True)
+
+    assert lane["cadence_s"] == CADENCE_S
+    assert lane["longest_s"] <= CADENCE_S + 1.0, lane
+    assert lane["media"] == 5
+    assert receipt.status == "met"
+    assert "One stays on" not in receipt.reason
 
 
 def test_no_named_rhythm_keeps_the_old_receipt(monkeypatch):

@@ -148,7 +148,10 @@ log = structlog.get_logger()
 # v129 (KRI-1420): add_split_panel_clip, a second clip in a split panel from the approved source
 # pool, taught in the SPLIT SCREEN fragment (prompts/edit_copilot_ops/split_screen.txt), printed
 # only where split_screen_available is true, so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v129"
+# v130 (KRI-1457): add_split_blank and set_split_blank_color, a flat-colour block in a split panel
+# (prompts/edit_copilot_ops/split_blank.txt), printed only where split_blank_available is true (a
+# protocol 51 build with splitBlankPanel verified), so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v130"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1807,6 +1810,11 @@ def _format_snapshot(snapshot: dict) -> str:
                 max_chars=100,
             )
             media_kind = _field(slot.get("media_kind") or slot.get("kind") or "", max_chars=12)
+            blank_color = (
+                f" color={_field(slot.get('color'), max_chars=8)!r}"
+                if slot.get("media_kind") == "blank"
+                else ""
+            )
             facts_text = _format_slot_facts(slot.get("facts"), _field)
             seen = slot.get("seen")
             if isinstance(seen, dict) and seen.get("text"):
@@ -1815,7 +1823,7 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"({_field(seen.get('provenance') or 'vision', max_chars=12)})"
                 )
             lines.append(
-                f"{i}. media_id={media_id!r} media_kind={media_kind!r} "
+                f"{i}. media_id={media_id!r} media_kind={media_kind!r}{blank_color} "
                 f"output={_fmt_range(start, end)} duration={_fmt_num(duration)}s "
                 f"in={_fmt_num(in_s)}s source={_fmt_num(source)}s moment={moment!r} "
                 f"look_preset={look_preset!r} "
@@ -4081,9 +4089,9 @@ def _story_direction_not_staged(direction: str) -> str:
     """The registry's direction line (`route_capabilities._lines.direction_line`) for a story
     direction: the editor drawer stages fast-montage cuts only (no client stages story beats),
     so nothing changes, and the creator reads why."""
-    from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
+    from app.kria.route_capabilities._lines import direction_line  # noqa: PLC0415
 
-    line = lines.direction_line(
+    line = direction_line(
         "fast_montage",
         "this editor can only restage it as a fast montage, so nothing changed. "
         "A different direction needs a fresh edit",
@@ -4535,6 +4543,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                         "her görsel ne kadar kısa olsun?"
                     ),
                 )
+            elif (referent or "clips") in _HOW_SHORT_QUESTIONS:
+                # German needs the noun inside the sentence (KRI-1362).
+                question = _HOW_SHORT_QUESTIONS[referent or "clips"]
+                reply = say(en=question[0], tr=question[1])
             else:
                 reply = say(
                     en="How short should the {v1} be?",
@@ -4796,6 +4808,11 @@ class ChatEditCopilotAgent(EditCopilotAgent):
 
 
 _TR_REFERENT_NOUNS = {"images": "Görseller", "videos": "Videolar", "clips": "Klipler"}
+_HOW_SHORT_QUESTIONS = {
+    "images": ("How short should the images be?", "Görseller ne kadar kısa olsun?"),
+    "videos": ("How short should the videos be?", "Videolar ne kadar kısa olsun?"),
+    "clips": ("How short should the clips be?", "Klipler ne kadar kısa olsun?"),
+}
 
 
 def _server_reply(ops: list[dict], notes: str) -> str:
@@ -4808,19 +4825,19 @@ def _server_reply(ops: list[dict], notes: str) -> str:
             if op.get("mode") == "append":
                 parts.append(
                     say(
-                        en="Added the filming hour to {count} clip{v1}.",
+                        en="Added the filming hour to {count} clip."
+                        if count == 1
+                        else "Added the filming hour to {count} clips.",
                         tr="{count} klibe çekim saatini ekledim.",
                         count=count,
-                        v1="s" if count != 1 else "",
                     )
                 )
             else:
                 parts.append(
                     say(
-                        en="Labelled {count} clip{v1}.",
+                        en="Labelled {count} clip." if count == 1 else "Labelled {count} clips.",
                         tr="{count} klibe etiket ekledim.",
                         count=count,
-                        v1="s" if count != 1 else "",
                     )
                 )
         else:
@@ -5594,23 +5611,21 @@ def _ground_descriptive_captions(
         state.reply_notes.append(
             say(
                 en=(
-                    "Clip{v1} {names} "
-                    '{v2}\'t look like "{words}" from '
-                    "what I saw, so I didn't put that wording on "
-                    "{v3}. Tell me what "
-                    "{v4}, or ask me to describe "
+                    "Clip {names} doesn't look like \"{words}\" from what I saw, so I didn't "
+                    "put that wording on it. Tell me what it is, or ask me to describe what I see."
+                )
+                if len(mismatched) == 1
+                else (
+                    "Clips {names} don't look like \"{words}\" from what I saw, so I didn't "
+                    "put that wording on them. Tell me what they are, or ask me to describe "
                     "what I see."
                 ),
                 tr=(
                     'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
                     "ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
                 ),
-                v1="s" if len(mismatched) != 1 else "",
                 names=names,
-                v2="don" if len(mismatched) != 1 else "doesn",
                 words=words,
-                v3="them" if len(mismatched) != 1 else "it",
-                v4="they are" if len(mismatched) != 1 else "it is",
             )
         )
     if not written:
@@ -5648,30 +5663,31 @@ def _ground_descriptive_captions(
         + "."
     )
     if unseen:
-        plural = "s" if len(unseen) != 1 else ""
         state.reply_notes.append(
             say(
                 en=(
-                    "I left out clip{plural} {join_unseen}: I can't tell what "
-                    "{v1}. Tell me and I'll add "
-                    "{v2}."
+                    "I left out clips {join_unseen}: I can't tell what they show. "
+                    "Tell me and I'll add them."
+                )
+                if len(unseen) != 1
+                else (
+                    "I left out clip {join_unseen}: I can't tell what it shows. "
+                    "Tell me and I'll add it."
                 ),
                 tr=(
                     "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. "
                     "Söylersen ekleyeyim."
                 ),
-                plural=plural,
                 join_unseen=", ".join(unseen),
-                v1="they show" if plural else "it shows",
-                v2="them" if plural else "it",
             )
         )
     if skipped:
         state.reply_notes.append(
             say(
-                en=("I didn't caption clip{v1} {join_skipped}."),
+                en="I didn't caption clip {join_skipped}."
+                if len(skipped) == 1
+                else "I didn't caption clips {join_skipped}.",
                 tr="Klip {join_skipped} için yazı eklemedim.",
-                v1="s" if len(skipped) != 1 else "",
                 join_skipped=", ".join(skipped),
             )
         )
@@ -5871,12 +5887,12 @@ def _coerce_label_each_clip(
         labels.append(entry)
     if from_time:
         if untimed:
-            plural = "s" if len(untimed) != 1 else ""
             state.reply_notes.append(
                 say(
-                    en="No filming time for clip{plural} {join_untimed}.",
+                    en="No filming time for clip {join_untimed}."
+                    if len(untimed) == 1
+                    else "No filming time for clips {join_untimed}.",
                     tr="Klip {join_untimed} için çekim saati yok.",
-                    plural=plural,
                     join_untimed=", ".join(untimed),
                 )
             )

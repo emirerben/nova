@@ -2,6 +2,86 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.251.0] - 2026-11-16
+
+### Fixed
+- fix(kria): Çiğdem S2 "Cigdem 2" — keep the pace the creator names, cut a pause stamped onto the next sentence, tag a media-services reset (KRI-1494, KRI-1492, KRI-1497) (#2365) <!-- release-pr: 2365 -->
+
+## [0.88.250.0] - 2026-11-16
+
+### Changed
+- fix(kria): Çiğdem S1: no false holds on "use my video" or described pop-ins; captions and label off post text (KRI-1487) (#2364) <!-- release-pr: 2364 -->
+
+## [0.88.249.0] - 2026-11-16
+
+### Fixed
+- fix(ios): move captions and picture cards on the preview as smoothly as text (KRI-1441) (#2334) <!-- release-pr: 2334 -->
+
+## [0.88.248.0] - 2026-11-15
+
+### Fixed
+- fix(kria): German chat replies say whole German sentences (KRI-1408) (#2352) <!-- release-pr: 2352 -->
+
+## [0.88.247.0] - 2026-11-15
+
+### Changed
+- test(evals): re-record creative_direction just_fine fixture live (KRI-1428) (#2367) <!-- release-pr: 2367 -->
+
+## [0.88.246.0] - 2026-11-15
+
+### Fixed
+- fix(kria): Qendresa Q2 run 3: labels at their own item, no false holds, nothing on her corner face, full replies (KRI-1479) (#2363) <!-- release-pr: 2363 -->
+
+## [0.88.245.0] - 2026-11-15
+
+### Changed
+- test(evals): overlay_generation eval and an every-agent-has-an-eval guard (KRI-1428) (#2362) <!-- release-pr: 2362 -->
+
+## [0.88.244.0] - 2026-11-15
+
+### Fixed
+- fix(kria): withdrawn clips stay withdrawn, no needless Voiceover holds, named moments on the word (KRI-1464, KRI-1465, KRI-1466) (#2359) <!-- release-pr: 2359 -->
+
+## [0.88.243.0] - 2026-11-15
+
+### Changed
+- fix(kria): German Talking promises never hold the draft (KRI-1405) (#2348) <!-- release-pr: 2348 -->
+
+## [0.88.242.0] - 2026-11-15
+
+### Fixed
+- fix(ios): the editor no longer aborts when the live preview takes over the finished video (KRI-1404) (#2333) <!-- release-pr: 2333 -->
+
+## [0.88.241.0] - 2026-11-15
+
+### Changed
+- test(ios): editor-ready UI test waits for the background warm instead of 4 s (KRI-1467) (#2358) <!-- release-pr: 2358 -->
+
+## [0.88.240.0] - 2026-11-15
+
+### Changed
+- feat(api): chat places and recolours a split panel blank (KRI-1457) (#2355) <!-- release-pr: 2355 -->
+
+## [0.88.239.0] - 2026-11-15
+
+### Changed
+- fix(ios): write no source offset for a cut or left-trimmed photo (KRI-1440) (#2356) <!-- release-pr: 2356 -->
+
+## [0.88.238.0] - 2026-11-15
+
+### Fixed
+- fix(kria): Qendresa Q1 run 3: no false holds; captions, title, ending, labels and cards as asked (KRI-1468) (#2360) <!-- release-pr: 2360 -->
+
+## [0.88.237.0] - 2026-11-15
+
+### Changed
+- test(kria): German twins of the Turkish understanding tests + closed-list fixes (KRI-1453) (#2354) <!-- release-pr: 2354 -->
+
+## [0.88.236.0] - 2026-11-15
+
+### Changed
+- feat(notifications): push copy in the chat's language — EN/TR/DE (KRI-1144) (#2349) <!-- release-pr: 2349 -->
+
 ## [0.88.235.0] - 2026-11-15
 
 ### Changed

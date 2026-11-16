@@ -102,15 +102,27 @@ Q2_CAPTIONS = BriefRequirement(
 LIGHT_GREY = 0xE5 / 255
 LIME = {(0x84, 0xCC, 0x16), (0xC5, 0xF8, 0x2A)}
 
-# Where her face is DRAWN with the corner preset: a typical upright face box (0.33-0.67 x
-# 0.22-0.40 of the take) mapped through `small_bottom_right` (kit test_q2_caption_over_corner_face).
+# Where her face is DRAWN with the corner preset. KRI-1483: her real face (Q2 run 3, job 77c63496:
+# 0.207-0.845 x 0.211-0.618 of the take), not the kit's typical 0.33-0.67 x 0.22-0.40 box, which
+# is small enough to sit above a box at y 0.79 and so never caught the box on her face.
+Q2_TAKE_FACE = (0.2067, 0.2113, 0.8452, 0.6175)
 _F = SPEAKER_FRAME_PRESETS["small_bottom_right"]
 CORNER_FACE = (
-    _F["x_fraction"] + (0.33 - 0.5) * _F["width_fraction"],
-    _F["y_fraction"] + (0.22 - 0.5) * _F["width_fraction"],
-    _F["x_fraction"] + (0.67 - 0.5) * _F["width_fraction"],
-    _F["y_fraction"] + (0.40 - 0.5) * _F["width_fraction"],
+    _F["x_fraction"] + (Q2_TAKE_FACE[0] - 0.5) * _F["width_fraction"],
+    _F["y_fraction"] + (Q2_TAKE_FACE[1] - 0.5) * _F["width_fraction"],
+    _F["x_fraction"] + (Q2_TAKE_FACE[2] - 0.5) * _F["width_fraction"],
+    _F["y_fraction"] + (Q2_TAKE_FACE[3] - 0.5) * _F["width_fraction"],
 )
+_REAL_ENVIRONMENT = styling._ensure_generation_environment
+
+
+def _her_take_face(monkeypatch, face=Q2_TAKE_FACE):
+    """Her face reaches placement the way prod samples it: the real environment pass (the
+    harness stubs it out), with simulated I/O."""
+    from tests.tasks.test_caption_corner_face import _simulate_environment
+
+    monkeypatch.setattr(styling, "_ensure_generation_environment", _REAL_ENVIRONMENT)
+    _simulate_environment(monkeypatch, face)
 
 
 def _shape_job(
@@ -225,6 +237,7 @@ def test_q1_two_white_words_the_spoken_one_bright_the_other_dimmed(monkeypatch):
 
 def test_q2_black_words_in_a_light_grey_rounded_box_low_and_off_her_face(monkeypatch):
     job = _shape_job(monkeypatch, [R1, Q2_CAPTIONS, R4], request=Q2_PROMPT, corner=True)
+    _her_take_face(monkeypatch)
     variant = _run(job)
     layers = _caption_layers(job)
     assert len(layers) > 10

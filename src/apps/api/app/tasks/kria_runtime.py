@@ -129,6 +129,7 @@ from app.kria.route_disclosure import (
     with_route_declines,
 )
 from app.kria.select_asks import exclusion_facts, only_video_ask
+from app.kria.text_trim import trim_at_word
 from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
@@ -1114,6 +1115,42 @@ _EDIT_FORMAT_TR = {
     "slides": "Slayt",
 }
 
+# Whole chips and words per machine value, so German never shows the English value (KRI-1362).
+_PACING_CHIPS = {
+    "relaxed": ("Relaxed pacing", "Tempo: Sakin"),
+    "balanced": ("Balanced pacing", "Tempo: Dengeli"),
+    "fast": ("Fast pacing", "Tempo: Hızlı"),
+}
+_EDIT_FORMAT_CHIPS = {
+    "montage": ("Montage format", "Format: Montaj"),
+    "talking_head": ("Talking Head format", "Format: Kameraya konuşma"),
+    "day_vlog": ("Day Vlog format", "Format: Günlük vlog"),
+    "single_hero": ("Single Hero format", "Format: Tek kahraman klip"),
+    "subtitled": ("Subtitled format", "Format: Altyazılı"),
+    "narrated": ("Narrated format", "Format: Seslendirmeli"),
+    "narrated_planned": ("Narrated Planned format", "Format: Seslendirmeli"),
+    "narrated_ready": ("Narrated Ready format", "Format: Seslendirmeli"),
+    "slides": ("Slides format", "Format: Slayt"),
+}
+# The Turkish summary leaves these words out, so their Turkish side is the English word (the same
+# keys as `route_capabilities._lines._VALUE_NAMES`, one translation each).
+_PACING_WORDS = {
+    "relaxed": ("relaxed", "relaxed"),
+    "balanced": ("balanced", "balanced"),
+    "fast": ("fast", "fast"),
+}
+_EDIT_FORMAT_WORDS = {
+    "montage": ("montage", "montage"),
+    "talking_head": ("talking head", "talking head"),
+    "day_vlog": ("day vlog", "day vlog"),
+    "single_hero": ("single hero", "single hero"),
+    "subtitled": ("subtitled", "subtitled"),
+    "narrated": ("narrated", "narrated"),
+    "narrated_planned": ("narrated planned", "narrated planned"),
+    "narrated_ready": ("narrated ready", "narrated ready"),
+    "slides": ("slides", "slides"),
+}
+
 
 def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
     """The card's chips. With ``route`` (the draft's render route) a pace the route does not
@@ -1124,23 +1161,30 @@ def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
     pacing = strategy.pacing.replace("_", " ").title()
     edit_format = strategy.edit_format.replace("_", " ").title()
     pace_shown = route is None or not asked_only() or not route_ignores(route, "pacing")
-    values = [
-        arguments.summary,
-        say(
+    if strategy.pacing in _PACING_CHIPS:
+        pacing_chip = say(
+            en=_PACING_CHIPS[strategy.pacing][0], tr=_PACING_CHIPS[strategy.pacing][1]
+        )
+    else:
+        pacing_chip = say(
             en="{pacing} pacing",
             tr="Tempo: {v1}",
             pacing=pacing,
             v1=_PACING_TR.get(strategy.pacing, pacing),
         )
-        if pace_shown
-        else None,
-        say(
+    if strategy.edit_format in _EDIT_FORMAT_CHIPS:
+        format_chip = say(
+            en=_EDIT_FORMAT_CHIPS[strategy.edit_format][0],
+            tr=_EDIT_FORMAT_CHIPS[strategy.edit_format][1],
+        )
+    else:
+        format_chip = say(
             en="{edit_format} format",
             tr="Format: {v1}",
             edit_format=edit_format,
             v1=_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format),
-        ),
-    ]
+        )
+    values = [arguments.summary, pacing_chip if pace_shown else None, format_chip]
     return list(dict.fromkeys(value for value in values if value))[:3]
 
 
@@ -1210,17 +1254,32 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
         ):
             if intent.tool_name == "draft.apply_editor_ops":
                 count = len(arguments.get("operations") or [])
-                suffix = "s" if count != 1 else ""
                 arguments["summary"] = say(
-                    en="I prepared {count} reversible editor change{suffix}.",
+                    en=(
+                        "I prepared {count} reversible editor change."
+                        if count == 1
+                        else "I prepared {count} reversible editor changes."
+                    ),
                     tr="Editörde {count} geri alınabilir değişiklik hazırladım.",
                     count=count,
-                    suffix=suffix,
                 )
             else:
                 strategy = arguments.get("strategy") or {}
-                pacing = str(strategy.get("pacing") or "focused").replace("_", " ")
-                edit_format = str(strategy.get("edit_format") or "video").replace("_", " ")
+                raw_pacing = str(strategy.get("pacing") or "focused")
+                raw_format = str(strategy.get("edit_format") or "video")
+                pacing = (
+                    say(en=_PACING_WORDS[raw_pacing][0], tr=_PACING_WORDS[raw_pacing][1])
+                    if raw_pacing in _PACING_WORDS
+                    else raw_pacing.replace("_", " ")
+                )
+                edit_format = (
+                    say(
+                        en=_EDIT_FORMAT_WORDS[raw_format][0],
+                        tr=_EDIT_FORMAT_WORDS[raw_format][1],
+                    )
+                    if raw_format in _EDIT_FORMAT_WORDS
+                    else raw_format.replace("_", " ")
+                )
                 arguments["summary"] = say(
                     en="I prepared a {pacing} {edit_format} draft around the available footage.",
                     # The pace and format words are machine values (English), so the
@@ -1542,7 +1601,8 @@ def _simpler_version_offer(
     if not named:
         return "", question
     kept = {req.id for req in named if req.id in arrow_only_ids}
-    listed = "; ".join(_arrow_label(req) if req.id in kept else req.text() for req in named)
+    # KRI-1465: `listed()`, so asks that are sentences never read ".;" or end the list "..".
+    listed = "; ".join(_arrow_label(req) if req.id in kept else req.listed() for req in named)
     sentence = say(
         en="The simpler version leaves out: {listed}.",
         tr="Daha basit sürümde çıkarılacak: {listed}.",
@@ -1583,14 +1643,22 @@ def _fit_reply(
     """``body``, then ``tail`` on its own line, within the turn plan's response limit. The
     tail (what is held back, what the simpler version leaves out, the question) stays whole;
     the receipt lines above it are shortened first. The route heads-up (``notice``, the end of
-    ``body``) keeps whole sentences and names the ones that do not fit on its compact line."""
+    ``body``) keeps whole sentences and names the ones that do not fit on its compact line.
+
+    KRI-1485: the receipt lines are fitted line by line (`brief_checks.fit_reply_text`): rows
+    that only differ in their quoted text fold into one, then the last rows become "…and N
+    more"; no line is cut in the middle. KRIA_REPLY_LINE_FIT_ENABLED=false: the old cut."""
     room = _MAX_TURN_RESPONSE_CHARS - len(tail) - 1
     if notice and len(body) > room and body.endswith(notice):
         head = body[: -len(notice)].rstrip("\n")
         fitted = card_text_within(disclosures, room - len(head) - 1)
         body = f"{head}\n{fitted}" if head else fitted
-    if len(body) > room:
-        body = body[: max(0, room - 1)].rstrip() + "…"
+    if len(body) > room and settings.kria_reply_line_fit_enabled:
+        from app.kria.brief_checks import fit_reply_text  # noqa: PLC0415
+
+        body = fit_reply_text(body, room)
+    elif len(body) > room:
+        body = trim_at_word(body, max(0, room))
     return f"{body}\n{tail}"
 
 
@@ -1657,12 +1725,15 @@ def _arrow_only_ids(
     Prod thread b931bc4e (Qendresa Q1): "Make it without these" removed r10, "End with comment
     REPO and an arrow", so the words went with the arrow.
     """
-    from app.kria.brief_checks import _CLOSING_ARROW_MISSING, _REASON_TR  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CLOSING_ARROW_MISSING,
+        reason_in_every_language,
+    )
     from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
 
     if brief is None:
         return frozenset()
-    missing = {_CLOSING_ARROW_MISSING, _REASON_TR.get(_CLOSING_ARROW_MISSING) or ""} - {""}
+    missing = set(reason_in_every_language(_CLOSING_ARROW_MISSING))
     reasons = {str(row.get("requirement_id")): row.get("reason") for row in rows}
     wanted = set(unmet_ids)
     return frozenset(
@@ -1776,6 +1847,31 @@ def _offered_brief_revision(
         and brief.version == offered + 1
         and bool(written)
         and written <= {str(req_id) for req_id in named}
+    )
+
+
+def _kept_after_tap(
+    updates: Sequence[BriefUpdate],
+    offered_ids: Sequence[str],
+    source_event: CreationThreadEvent | None,
+) -> frozenset[str]:
+    """KRI-1405: the offered asks the creator kept after tapping "Make it without these".
+
+    Prod thread 8044373b (ylab, 2026-11-13): the tap turn asked whether the captions go too,
+    the creator tapped "Untertitel wie gewünscht behalten", and the draft still left the
+    captions out under the earlier tap (KRI-1323) while the video had them. An answer on a
+    LATER card that restates an offered ask (a `change` of its id) keeps it: it comes off the
+    drop list and the rest stay left out. A restatement on the tap's own turn says nothing new
+    (KRI-1113), so only a choice on another card counts.
+    """
+    selection = (source_event.payload or {}).get("choice_selection") if source_event else None
+    if not isinstance(selection, Mapping) or selection.get("option_key") == "simpler_version":
+        return frozenset()
+    offered = {str(req_id) for req_id in offered_ids}
+    return frozenset(
+        str(update.target_requirement_id)
+        for update in updates
+        if update.operation == "change" and str(update.target_requirement_id) in offered
     )
 
 
@@ -2940,6 +3036,8 @@ def _complete_draft_turn(
             thread.creator_id
         )
         readiness_report = None
+        # KRI-1405: the readiness hold reply as first written, so the card can re-head it.
+        readiness_hold_text: str | None = None
         consented = None
         if readiness_required and apply_intent.tool_name == "draft.apply_strategy":
             consented = _consented_policy_simplification(
@@ -3519,6 +3617,7 @@ def _complete_draft_turn(
             ]
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
+                readiness_hold_text = reply_text
             elif document.prepared_collection_story is not None:
                 # The frozen execution checker owns this selected requirement;
                 # persist its checked verdict in the receipt as well as approval.
@@ -3631,6 +3730,25 @@ def _complete_draft_turn(
             )
             else None
         )
+        kept_after_tap = (
+            _kept_after_tap(
+                planned.brief_updates,
+                unmet_ids,
+                db.get(CreationThreadEvent, turn.source_event_id),
+            )
+            if simpler_consent is not None
+            else frozenset()
+        )
+        if kept_after_tap:
+            # KRI-1405: what the creator kept after the tap is not left out; the rest still is.
+            log.info(
+                "kria_simpler_kept_after_tap",
+                thread_id=str(thread.id),
+                requirement_ids=sorted(kept_after_tap),
+            )
+            unmet_ids = [req_id for req_id in unmet_ids if req_id not in kept_after_tap]
+            if not unmet_ids:
+                simpler_consent = None
         simpler_version_chosen = simpler_consent is not None
         # KRI-968: only an offer that named these requirements lets a reply say "as agreed".
         agreed_omission_ids = list(unmet_ids) if simpler_consent == "named" else []
@@ -3914,6 +4032,9 @@ def _complete_draft_turn(
             )
             # KRI-1236: a list too long to name whole gets no card, never an unnamed one.
             can_offer_simpler = can_offer_simpler and simpler_question is not None
+            if can_offer_simpler and reply_text == readiness_hold_text:
+                # KRI-1405: the card follows, so asks it can leave out read as a choice.
+                reply_text = readiness_reply(brief, readiness_report, offers_choice=True)
             ask = (
                 simpler_version_ask()
                 if can_offer_simpler
@@ -8551,10 +8672,11 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    "{count} take{v1} no usable singing or "
-                    "words, so {v2} in as short muted "
-                    "clip{v3}. Trim or remove "
-                    "{v4} in the editor."
+                    "{count} take has no usable singing or words, so it is in as short muted "
+                    "clip. Trim or remove it in the editor."
+                    if count == 1
+                    else "{count} takes have no usable singing or words, so they are in as short "
+                    "muted clips. Trim or remove them in the editor."
                 ),
                 tr=(
                     "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve "
@@ -8562,10 +8684,6 @@ def _user_song_note(job: Job) -> str:
                     "kaldırabilirsin."
                 ),
                 count=count,
-                v1=" has" if count == 1 else "s have",
-                v2="it is" if count == 1 else "they are",
-                v3="" if count == 1 else "s",
-                v4="it" if count == 1 else "them",
             )
         )
     low = receipt.get("low_confidence_ids")
@@ -8574,17 +8692,17 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    "{count} take{v1} placed by my best guess "
-                    "and may be slightly off; check {v2} in the "
-                    "editor."
+                    "{count} take is placed by my best guess and may be slightly off; check it "
+                    "in the editor."
+                    if count == 1
+                    else "{count} takes are placed by my best guess and may be slightly off; "
+                    "check them in the editor."
                 ),
                 tr=(
                     "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; "
                     "editörde kontrol et."
                 ),
                 count=count,
-                v1=" is" if count == 1 else "s are",
-                v2="it" if count == 1 else "them",
             )
         )
     outside = receipt.get("placed_outside_ids")
@@ -8592,13 +8710,16 @@ def _user_song_note(job: Job) -> str:
         count = len(outside)
         notes.append(
             say(
-                en=("{count} take{v1} later in the song than a 2-minute video can hold."),
+                en=(
+                    "{count} take sits later in the song than a 2-minute video can hold."
+                    if count == 1
+                    else "{count} takes sit later in the song than a 2-minute video can hold."
+                ),
                 tr=(
                     "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha "
                     "geride kalıyor."
                 ),
                 count=count,
-                v1=" sits" if count == 1 else "s sit",
             )
         )
     placed = receipt.get("placed")
@@ -8610,10 +8731,13 @@ def _user_song_note(job: Job) -> str:
     if by_lyrics:
         notes.append(
             say(
-                en="I matched {by_lyrics} take{v1} by your singing.",
+                en=(
+                    "I matched {by_lyrics} take by your singing."
+                    if by_lyrics == 1
+                    else "I matched {by_lyrics} takes by your singing."
+                ),
                 tr="{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim.",
                 by_lyrics=by_lyrics,
-                v1="" if by_lyrics == 1 else "s",
             )
         )
     return " ".join(notes)
@@ -8703,6 +8827,21 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
         if isinstance(original, dict):
             take(row.get("media_id"), original.get("sha256"))
     return {media_id: sha for media_id, sha in found.items() if media_id not in conflicted}
+
+
+def _phone_source_video_count(job: Any) -> int | None:
+    """KRI-1488: how many of the creator's own videos a phone render was made from (the job's
+    `_phone_sources_v1`; Visuals live apart, in `_phone_visuals_v1`). None when not recorded."""
+    sources = (job.assembly_plan or {}).get("_phone_sources_v1")
+    if not isinstance(sources, list):
+        return None
+    return sum(
+        1
+        for source in sources
+        if isinstance(source, dict)
+        and isinstance(source.get("original"), dict)
+        and source["original"].get("kind") == "video"
+    )
 
 
 def _cleanup_note_retake_cut_possible(contract: object) -> bool:
@@ -8862,7 +9001,9 @@ def _approved_generation_requirements_review(
         from app.routes.generative_jobs import original_audio_recovery  # noqa: PLC0415
 
         facts = dataclasses.replace(
-            facts, original_audio_control=original_audio_recovery(job, variant)
+            facts,
+            original_audio_control=original_audio_recovery(job, variant),
+            attached_video_count=_phone_source_video_count(job),
         )
         if narrated is not None:
             # KRI-1357: which clip played under a named cue that had no pop-in.

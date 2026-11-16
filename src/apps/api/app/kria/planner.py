@@ -92,6 +92,7 @@ from app.kria.brief_checks import (
     _fact_flag,
     _wants_whole_take,
     ask_text,
+    brief_asks_no_captions,
     spoken_text_literals,
     whole_line_quotes,
 )
@@ -217,6 +218,7 @@ from app.services.clip_intent_planning import (
     sequence_text_literals,
     shot_captions_safe,
     whole_video_text_asks,
+    withdrawn_clip_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_order_sequence import stated_anchors
@@ -806,10 +808,11 @@ def _moment_count_notice(
     else:
         return None
     return say(
-        en="I could fit {planned} {v1}, not {count}.",
+        en="I could fit {planned} moment, not {count}."
+        if planned == 1
+        else "I could fit {planned} moments, not {count}.",
         tr="{count} değil, {planned} an sığdırabildim.",
         planned=planned,
-        v1="moment" if planned == 1 else "moments",
         count=count,
     )
 
@@ -4460,6 +4463,8 @@ async def _plan_turn_clip_intents(
     brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
     # KRI-1111: the creator withdrew every ask for clip text Kria writes ("leave the names out").
     text_withdrawn = authored_text_withdrawn(effective_brief)
+    # KRI-1464: the clips the creator took out of the request ("... without the screen recordings").
+    withdrawn_asks = withdrawn_clip_asks(effective_brief)
     await _kick_clip_understanding(item_id, intent_clips)
     # KRI-1125: one photo is never silently the answer for two ordered beats, and a typed
     # correction newer than the tap that caused it sends the beat back to the resolver.
@@ -4508,6 +4513,7 @@ async def _plan_turn_clip_intents(
         **({"checked_inventory": checked_inventory} if checked_inventory else {}),
         **({"brief_anchors": brief_anchors} if brief_anchors else {}),
         **({"authored_text_asks_withdrawn": True} if text_withdrawn else {}),
+        **({"withdrawn_asks": withdrawn_asks} if withdrawn_asks else {}),
         # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
         # never a clip question; its receipt tells the creator.
         **(
@@ -4975,6 +4981,15 @@ async def _plan_creator_action(
         # silently drops what it can't draw while the reply claims it.
         check_kwargs: dict[str, Any] = {
             "simplify_unsupported": True,
+            # KRI-1465: a plan that turns captions off when no live ask wants that keeps them
+            # with a notice, never a second "simpler version?" question. Omitted otherwise.
+            **(
+                {"creator_asked_no_captions": False}
+                if action.strategy.caption_style == "none"
+                and effective_brief is not None
+                and not brief_asks_no_captions(effective_brief)
+                else {}
+            ),
             # KRI-1365: on footage with no sound, a camera-audio strategy falls back to the
             # draft's sound (or music), unless the creator asked for the camera sound.
             **(

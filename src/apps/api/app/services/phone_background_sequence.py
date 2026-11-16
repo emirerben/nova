@@ -62,12 +62,24 @@ is said another way, for every phrased entry:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 MIN_WINDOW_S = 0.5
 MAX_WINDOWS = 40
 _EPS = 1e-6
+
+# Çiğdem S2 "Cigdem 2" (KRI-1494, E1-E14 in docs/reviews/cigdem-s2-failure-modes.md): with a NAMED
+# pace a window may outlast it by this much (the finished-video receipt's own slack: "3-5 seconds"
+# is recorded as 4, so over 5 s is outside the ask) ...
+PACE_SLACK_S = 1.0
+# ... a window over it by no more than this brings the next picture in early instead ...
+PACE_LEAD_MAX_S = 1.0
+# ... and a returning picture stays at least this long (never a flash).
+RETURN_MIN_S = 1.0
+_SENTENCE_FINAL = (".", "?", "!")
+_TRAILING_OFF = ("...", "\u2026")
 
 
 @dataclass(frozen=True)
@@ -100,6 +112,8 @@ class SequenceLayout:
     # Item 19: where each anchored entry's words are said (output seconds), for the list labels.
     # Read-only extra; it never takes part in equality, so a layout compares by windows/notes.
     anchor_s: Mapping[int, float] = field(default_factory=dict, compare=False)
+    # KRI-1494: the creator named a pace and it was kept (pictures may return). Read-only extra.
+    pace_kept: bool = field(default=False, compare=False)
 
 
 def kept_duration(keep_segments: Sequence[tuple[float, float]] | None, full_s: float) -> float:
@@ -532,6 +546,107 @@ def _one_window_per_photo(
     return out
 
 
+def pace_limit_s(cadence_s: float) -> float:
+    """The longest a background window may stay once the creator named ``cadence_s``."""
+    return float(cadence_s) + PACE_SLACK_S
+
+
+def _sentence_ends(
+    words: Sequence[dict] | None, keep_segments: Sequence[tuple[float, float]] | None
+) -> list[float]:
+    """Output seconds where a spoken sentence ends (a word ending ". ? !", never an ellipsis)."""
+    ends: list[float] = []
+    for word in words or ():
+        if not isinstance(word, dict):
+            continue
+        text = str(word.get("text") or "").strip()
+        if not text.endswith(_SENTENCE_FINAL) or text.endswith(_TRAILING_OFF):
+            continue
+        start, end = word.get("start_s"), word.get("end_s")
+        if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in (start, end)):
+            continue
+        # A word's end can sit exactly on a cut boundary: read the instant just before it.
+        at = to_output_time(max(float(start), float(end) - 1e-3), keep_segments)
+        if at is not None:
+            ends.append(at + 1e-3)
+    return sorted(ends)
+
+
+def _keep_pace(
+    layout: SequenceLayout,
+    entries: Sequence[SequenceEntry],
+    *,
+    cadence_s: float,
+    sentence_ends: Sequence[float],
+) -> SequenceLayout:
+    """KRI-1494: no window outlasts the creator's named pace by more than ``PACE_SLACK_S``.
+
+    * Over it by at most ``PACE_LEAD_MAX_S``: the next window (touching it) starts that much
+      earlier, never before this one has had ``cadence_s`` (E7, E8).
+    * Longer: the picture keeps its window for ``cadence_s`` or to the end of the sentence it
+      opened in, whichever is later (E4), then pictures already shown take turns over the rest,
+      most recent first, never the same picture twice in a row (E3, E5), in equal pieces of at
+      most ``cadence_s`` and at least ``RETURN_MIN_S`` (E6). A picture nothing came before has
+      nothing to return to and keeps its hold, as does a hold once ``MAX_WINDOWS`` is reached
+      (E7, E9); the receipt then says so.
+    """
+    limit = pace_limit_s(cadence_s)
+    key = {e.index: e.media_key if e.media_key is not None else f"#{e.index}" for e in entries}
+    windows = list(layout.windows)
+    for i in range(len(windows) - 1):
+        cur, nxt = windows[i], windows[i + 1]
+        over = (cur.end_s - cur.start_s) - limit
+        if over <= _EPS or over > PACE_LEAD_MAX_S + _EPS or abs(nxt.start_s - cur.end_s) > _EPS:
+            continue
+        switch = cur.end_s - over
+        if switch < cur.start_s + cadence_s - _EPS:
+            continue
+        windows[i] = OutputWindow(cur.index, cur.start_s, switch)
+        windows[i + 1] = OutputWindow(nxt.index, switch, nxt.end_s)
+
+    out: list[OutputWindow] = []
+    shown: list[int] = []  # entry indexes in the order their picture first showed
+    budget = MAX_WINDOWS - len(windows)
+    for window in windows:
+        if all(key[j] != key[window.index] for j in shown):
+            shown.append(window.index)
+        others = [j for j in reversed(shown) if key[j] != key[window.index]]
+        if window.end_s - window.start_s <= limit + _EPS or not others or budget <= 0:
+            out.append(window)
+            continue
+        own_end = window.start_s + cadence_s
+        sentence_end = next((at for at in sentence_ends if at > window.start_s + _EPS), None)
+        if sentence_end is not None and sentence_end > own_end:
+            own_end = min(sentence_end, window.end_s)
+        rest = window.end_s - own_end
+        if rest < RETURN_MIN_S - _EPS:
+            out.append(window)
+            continue
+        count = max(1, min(math.ceil(rest / cadence_s - 1e-9), budget))
+        budget -= count
+        out.append(OutputWindow(window.index, window.start_s, own_end))
+        turn = others if len(others) > 1 else [*others, window.index]
+        position, previous, t = 0, key[window.index], own_end
+        piece = rest / count
+        for n in range(count):
+            pick = turn[position % len(turn)]
+            if key[pick] == previous:
+                position += 1
+                pick = turn[position % len(turn)]
+            position += 1
+            end = window.end_s if n == count - 1 else t + piece
+            out.append(OutputWindow(pick, t, end))
+            previous, t = key[pick], end
+    return SequenceLayout(
+        windows=tuple(out),
+        notes=layout.notes,
+        cadence_s=layout.cadence_s,
+        anchored=layout.anchored,
+        anchor_s=layout.anchor_s,
+        pace_kept=True,
+    )
+
+
 def lay_out(
     entries: Sequence[SequenceEntry],
     *,
@@ -541,8 +656,13 @@ def lay_out(
     keep_segments: Sequence[tuple[float, float]] | None,
     fill_key: str | None = None,
     opening_s: float | None = None,
+    keep_pace: bool = False,
 ) -> SequenceLayout:
     """The windows of ``entries`` on a kept take of ``take_s`` seconds, plus honest notes.
+
+    ``keep_pace`` (KRI-1494): the creator NAMED ``cadence_s`` and
+    ``BACKGROUND_KEEPS_ASKED_PACE_ENABLED`` is on, so ``_keep_pace`` keeps every window within it
+    (pictures already shown may return). False: every output exactly as before (S57).
 
     ``fill_key`` is the fill's photo identity (None for a plain colour): when it names one of the
     entries' photos the fill is never left to show in a gap, so that photo cannot come back (S57).
@@ -576,7 +696,7 @@ def lay_out(
     entries = _one_window_per_photo(entries, anchors, notes)
     fill_is_photo = fill_key is not None and any(e.media_key == fill_key for e in entries)
     if anchors and phrased_all:
-        return _lay_out_on_the_word(
+        layout = _lay_out_on_the_word(
             entries,
             anchors,
             notes,
@@ -585,6 +705,7 @@ def lay_out(
             fill_is_photo=fill_is_photo,
             opening_s=opening,
         )
+        return _paced(layout, entries, keep_pace, cadence_s, words, keep_segments)
     if opening > _EPS:
         # An entry heard during the full-screen opening joins the rotation (list order) instead of
         # being dropped with the part of the take the opening covers.
@@ -597,7 +718,10 @@ def lay_out(
         # A rotation: every entry once, back to back, stretched to cover the take (S57) -- the
         # part after the full-screen opening when there is one.
         span = take_s - opening
-        current = max(cadence_s, span / len(pending), span / MAX_WINDOWS)
+        # KRI-1494: a named pace is kept, so the rotation is not stretched to cover the take; the
+        # last picture's hold is then filled by pictures already shown (`_keep_pace`).
+        stretch = () if keep_pace else (span / len(pending),)
+        current = max(cadence_s, *stretch, span / MAX_WINDOWS)
     windows: list[OutputWindow] = []
     placed: list[tuple[float, int]] = sorted((at, idx) for idx, at in anchors.items())
     occupied: list[OutputWindow] = []
@@ -627,12 +751,32 @@ def lay_out(
     if current != cadence_s:
         notes.append({"lane": "background", "reason": "cadence_stretched"})
     unique_notes = list({tuple(sorted(note.items())): note for note in notes}.values())
-    return SequenceLayout(
+    layout = SequenceLayout(
         windows=tuple(windows),
         notes=tuple(unique_notes),
         cadence_s=current,
         anchored=frozenset(anchors),
         anchor_s=dict(anchors),
+    )
+    return _paced(layout, entries, keep_pace, cadence_s, words, keep_segments)
+
+
+def _paced(
+    layout: SequenceLayout,
+    entries: Sequence[SequenceEntry],
+    keep_pace: bool,
+    cadence_s: float,
+    words: Sequence[dict] | None,
+    keep_segments: Sequence[tuple[float, float]] | None,
+) -> SequenceLayout:
+    """``layout`` with the creator's named pace kept (``keep_pace``), else unchanged."""
+    if not keep_pace or not layout.windows:
+        return layout
+    return _keep_pace(
+        layout,
+        entries,
+        cadence_s=cadence_s,
+        sentence_ends=_sentence_ends(words, keep_segments),
     )
 
 

@@ -117,6 +117,9 @@ enum EditorOpenIntent { case warm, open }
             // item, which the creator sees as a hitch. State that is not in the document (a staged chat draft, the
             // pending text) schedules its own rebuild through its own explicit call, not through this observer.
             guard document != oldValue else { return }
+            if let offer = captionGestureOffer, document != offer.result { captionGestureOffer = nil }
+            // A card or speaker still cut before this change shows the old scene; the next gesture waits for a fresh one.
+            if mediaInteractionFrame != nil { mediaInteractionFrame = nil }
             // KRI-432: a song volume change on a settled preview is applied to the player, not rebuilt.
             if liveSongVolumeActive, sourcePreviewSettled, let built = previewBuiltDocument,
                Self.differsOnlyBySongVolume(document, built) {
@@ -128,7 +131,12 @@ enum EditorOpenIntent { case warm, open }
     }
     /// Cross-kind selection is the source of truth. `selectedClipID` below is
     /// a source-compatible adapter for the first-pass clip views.
-    @Published private(set) var selection: EditorSelection? { didSet { prepareInteractionLayers() } }
+    @Published private(set) var selection: EditorSelection? {
+        didSet {
+            if let offer = captionGestureOffer, selection?.id != offer.change.id { captionGestureOffer = nil }
+            prepareInteractionLayers()
+        }
+    }
     @Published private(set) var selectionRequest = 0
     /// KRI-1162: bumped to ask the editor view to open the Background tool (from the lane or an inspector).
     @Published private(set) var backgroundToolRequest = 0
@@ -296,12 +304,20 @@ enum EditorOpenIntent { case warm, open }
     @Published private(set) var loadState: NativeEditorLoadState = .loaded
     @Published var player: AVPlayer?
     struct TextInteractionFrame {
-        let element: EditorTextElement
+        /// The authored text this still was cut for; nil for a caption cue (see `caption`).
+        let element: EditorTextElement?
+        /// A caption cue's id and the place and size it was drawn at: the still is stale once either changes.
+        var caption: CaptionStill? = nil
         let time: Double
         let below: UIImage
         let above: UIImage
         let text: UIImage
         let rect: CGRect
+    }
+    struct CaptionStill: Equatable {
+        let id: String
+        let position: CGPoint
+        let sizePx: Double
     }
     @Published private(set) var textInteractionFrame: TextInteractionFrame?
     struct MediaInteractionFrame {
@@ -324,7 +340,62 @@ enum EditorOpenIntent { case warm, open }
         textInteractionTask?.cancel()
         textInteractionSequence += 1
         prepareTextInteraction()
+        prepareCaptionInteraction()
         prepareMediaInteraction()
+    }
+
+    /// The drawn layer of a caption cue at `time`. A line with hidden parts (KRI-1344) draws each visible part as its own
+    /// layer (`caption-<id>`, `caption-<id>-1`, ...).
+    private func captionLayerID(_ id: String, at time: Double) -> String {
+        let base = "caption-" + id
+        guard let preview = sourcePreview, preview.textSelectionBounds(id: base, time: time) == nil else { return base }
+        return (1...16).lazy.map { base + "-\($0)" }.first { preview.textSelectionBounds(id: $0, time: time) != nil } ?? base
+    }
+
+    /// The caption the creator moves or resizes on the preview, in place and size right now.
+    func captionStill(id: String) -> CaptionStill {
+        CaptionStill(id: id, position: captionPosition(id: id), sizePx: captionStyleSize(.line(id)))
+    }
+
+    /// A selected caption cue gets the same frozen stills as authored text: the scene below it, the scene above it and
+    /// the caption alone, so a drag or pinch moves real caption pixels without rebuilding the preview on every sample.
+    private func prepareCaptionInteraction() {
+        guard !isDirectManipulating, !isPlaying, let selection, selection.kind == .captionCue, offersCaptionStyleScope,
+              let preview = sourcePreview, let item = player?.currentItem,
+              sourcePreviewState == .ready else { return }
+        let sequence = textInteractionSequence
+        let time = min(currentTime, max(0, duration - 1.0 / 600))
+        let renderFrame = previewFrameRenderer
+        let still = captionStill(id: selection.id)
+        let layerID = captionLayerID(selection.id, at: time)
+        textInteractionTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+                try Task.checkCancellation()
+                let layers = try preview.textInteractionLayers(id: layerID, time: time)
+                @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    try Task.checkCancellation()
+                    let generator = AVAssetImageGenerator(asset: item.asset)
+                    generator.videoComposition = composition
+                    generator.maximumSize = CGSize(width: 1080, height: 1920)
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+                    let frame = try await renderFrame(generator, CMTime(seconds: time, preferredTimescale: 600))
+                    return UIImage(cgImage: frame.image)
+                }
+                let below = try await image(layers.below)
+                let above = try await image(layers.above)
+                guard let self, !Task.isCancelled, self.textInteractionSequence == sequence,
+                      self.selection == selection, self.captionStill(id: selection.id) == still else { return }
+                self.textInteractionFrame = TextInteractionFrame(element: nil, caption: still, time: time,
+                    below: below, above: above, text: UIImage(cgImage: layers.text), rect: layers.rect)
+            } catch {
+                guard !Task.isCancelled else { return }
+                #if DEBUG
+                NativePreviewDiagnostics.failure("caption-interaction-prepare", error: error)
+                #endif
+            }
+        }
     }
 
     private func prepareTextInteraction() {
@@ -1408,8 +1479,18 @@ enum EditorOpenIntent { case warm, open }
     /// Past it the picture offers Retry. Internal so tests can shorten it.
     var retainedPreviewPreparationBound: Duration = .seconds(8)
     private var retainedPreviewPreparationTask: Task<Void, Never>?
-    /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`.
-    var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> AVPlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
+    /// What warming the live item left behind. From the moment the warm-up builds `player` on the item, that player
+    /// is the only one that may ever hold it: AVFoundation detaches an item from its player asynchronously, so giving
+    /// the same item to a new `AVPlayer` right after `replaceCurrentItem(with: nil)` throws "cannot be associated
+    /// with more than one instance of AVPlayer" and aborts the app (KRI-1404). `isPrerolled` says whether it reached
+    /// the requested time decoded and prerolled (the smooth hand-off); otherwise it still runs the plain swap.
+    struct WarmedLivePlayer {
+        let player: AVPlayer
+        let isPrerolled: Bool
+    }
+    /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`. Nil means the item was
+    /// never attached to any player.
+    var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> WarmedLivePlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
     private var playbackControlEpoch: UInt64 = 0
     private var previewResumeIntent: (owner: NativeEditorPreviewOwner, epoch: UInt64)?
 
@@ -2269,8 +2350,15 @@ enum EditorOpenIntent { case warm, open }
         beginTransaction()
     }
     func endDirectManipulation() {
-        if captionGestureChange == nil { endTransaction() }
-        else { captionGestureChoicePresented = true }
+        // A caption gesture changes only that caption, at once: no question blocks the next drag. "Apply to all
+        // captions" stays on offer (a small button over the preview) until the next edit.
+        let captionChange = captionGestureChange
+        let baseline = transactionBaseline
+        captionGestureChange = nil
+        endTransaction()
+        if let captionChange, let baseline, document != baseline {
+            captionGestureOffer = CaptionGestureOffer(change: captionChange, baseline: baseline, result: document)
+        }
         isDirectManipulating = false
         // A drag that starts on an unselected speaker selects them mid-gesture, while the editor's routing waits for the
         // gesture to end: route that selection now so the speaker's panel opens on release.
@@ -4909,12 +4997,17 @@ enum EditorOpenIntent { case warm, open }
             guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             // The finished render is playing: ready the live item on its own player first, so the swap below is not
             // a pause, a detach, a seek and a resume in front of the creator's eyes.
+            // KRI-1404: once the warm-up has built its player on the live item, `warmHolder` is the only player that may
+            // hold that item. Every path below either installs it (smooth hand-off or plain swap) or drops this build.
+            var warmHolder: AVPlayer?
             var warmed: (player: AVPlayer, time: TimeInterval)?
             if retainedPreview != nil || (isPlaying && player != nil && player === finishedRenderPlayer) {
                 let target = currentTime
-                if let candidate = await prerolledPlayerProvider(preview.preview.playerItem, target) { warmed = (candidate, target) }
+                let attempt = await prerolledPlayerProvider(preview.preview.playerItem, target)
+                warmHolder = attempt?.player
+                if let attempt, attempt.isPrerolled { warmed = (attempt.player, target) }
                 guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
-                    warmed?.player.replaceCurrentItem(with: nil)
+                    warmHolder?.replaceCurrentItem(with: nil)
                     return
                 }
             }
@@ -4929,8 +5022,8 @@ enum EditorOpenIntent { case warm, open }
                     return
                 }
                 // A miss is the plain swap, not a failure: the retained picture stays until the live frame is admitted.
-                if reached { warmed = (candidate.player, target) }
-                else { candidate.player.replaceCurrentItem(with: nil); warmed = nil }
+                // The missed player keeps the item; the plain swap below runs on it.
+                warmed = reached ? (candidate.player, target) : nil
             }
             let latestTime = currentTime
             let resumePlayback = isPlaying || shouldResumeRetainedPreview
@@ -4938,13 +5031,18 @@ enum EditorOpenIntent { case warm, open }
             if let warmed {
                 // The creator paused or scrubbed while it warmed, or it took long enough to be far behind: the plain path.
                 if retainedPreview != nil || (resumePlayback && abs(latestTime - warmed.time) <= Self.warmHandoffMaxDrift) { adopted = warmed.player }
-                else { warmed.player.replaceCurrentItem(with: nil) }
                 NativePreviewDiagnostics.note("live-handoff", fields: [
                     "prerolled": "1", "adopted": adopted == nil ? "0" : "1",
                     "driftMs": String(Int(abs(latestTime - warmed.time) * 1000))])
+            } else if warmHolder != nil {
+                NativePreviewDiagnostics.note("live-handoff", fields: ["prerolled": "0", "adopted": "0"])
             }
+            // Not adopted: the plain swap (seek or position below) runs on the player already holding the item, set up
+            // like a fresh one, instead of attaching that item to a second player.
+            if adopted == nil { warmHolder?.automaticallyWaitsToMinimizeStalling = true }
             sourcePreview = preview
-            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe), adopting: adopted)
+            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe),
+                          reusing: adopted ?? warmHolder)
             watchSpeakerBackground(of: preview)
             liveSongVolumeActive = liveVolume
             previewBuiltDocument = baseline
@@ -5050,7 +5148,7 @@ enum EditorOpenIntent { case warm, open }
             // footprint for both selection handles and the danger-zone guide.
             return sourcePreview?.mediaSelectionBounds(id: "visual-\(selection.id)-\(selection.id)", time: time)
         }
-        let id = selection.kind == .captionCue ? "caption-" + selection.id : selection.id
+        let id = selection.kind == .captionCue ? captionLayerID(selection.id, at: time) : selection.id
         return sourcePreview?.textSelectionBounds(id: id, time: time)
     }
 
@@ -5501,12 +5599,15 @@ enum EditorOpenIntent { case warm, open }
                 splitHint = endText + (aligned ? String(localized: " · aligned") : "") + (outOfFootage ? String(localized: " · out of footage") : "")
             }
         }
+        // A photo has no source clock: only its length changes, and the server refuses a photo with a source offset.
+        let still = isStillSlot(slot)
+        if still { resized.start = slot.inS }
         // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
         if abs(resized.start - slot.inS) >= 1e-9 { slot.raw["source_start_locked"] = .bool(true) }
         slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
         slot.durationS = abs(resized.length - currentDuration) < 1e-9 && slot.durationS != nil
             ? slot.durationS : max(minimumClipDuration, resized.length)
-        if slot.raw["source_end_s"] != nil {
+        if !still, slot.raw["source_end_s"] != nil {
             slot.raw["source_end_s"] = .number(resized.start + resized.length * rate)
         }
         // A blank has no source window to move.
@@ -5658,6 +5759,7 @@ enum EditorOpenIntent { case warm, open }
     func slideSourceWindow(by offset: TimeInterval) {
         guard canEditTimeline, offset.isFinite, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
         let slot = document.clips[index]
+        guard !isStillSlot(slot) else { return }
         if slot.raw["freeze_frame_s"]?.numberValue != nil {
             let clock = NativeClipSourceClock(slot: slot)
             let limit = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
@@ -8206,12 +8308,22 @@ enum EditorOpenIntent { case warm, open }
 
     enum CaptionStyleScope: Equatable { case all, line(String) }
     @Published private(set) var captionPlacementMessage: String?
-    @Published var captionGestureChoicePresented = false
     private struct CaptionGestureChange {
         var id: String
         var values: [String: JSONValue]
     }
     private var captionGestureChange: CaptionGestureChange?
+    private struct CaptionGestureOffer {
+        var change: CaptionGestureChange
+        /// The document before the gesture (the gesture's undo step) and right after it.
+        var baseline: EditorDocument
+        var result: EditorDocument
+    }
+    private var captionGestureOffer: CaptionGestureOffer? {
+        didSet { captionGestureOfferID = captionGestureOffer?.change.id }
+    }
+    /// The caption whose last drag or pinch can still be applied to every caption. Cleared by any other edit.
+    @Published private(set) var captionGestureOfferID: String?
 
     func captionPosition(id: String) -> CGPoint {
         let appearance = document.captionMeta["appearance"]?.objectValue ?? [:]
@@ -8251,12 +8363,16 @@ enum EditorOpenIntent { case warm, open }
         captionGestureChange?.values.merge(values) { _, value in value }
     }
 
+    /// Answers the "Apply to all captions" offer. Applying folds into the gesture's own undo step, so one Undo
+    /// returns every caption to where it was before the drag. Stale offers (any edit since) do nothing.
     func finishCaptionGesture(applyToAll: Bool) {
-        guard let change = captionGestureChange else { return }
-        captionGestureChange = nil
-        captionGestureChoicePresented = false
-        if applyToAll { writeCaptionStyle(.all, values: change.values) }
-        endTransaction()
+        guard let offer = captionGestureOffer else { return }
+        captionGestureOffer = nil
+        guard applyToAll, !isDirectManipulating, transactionBaseline == nil,
+              document == offer.result, undoStack.last == offer.baseline else { return }
+        transactionBaseline = offer.baseline
+        writeCaptionStyle(.all, values: offer.change.values)
+        transactionBaseline = nil
     }
 
     var offersCaptionStyleScope: Bool { canEditCaptionAppearance && canEditCaptionMeta && canEdit("caption_style_scope") }
@@ -10858,26 +10974,27 @@ enum EditorOpenIntent { case warm, open }
     /// How far playback may have moved on while a live item warmed before that player is still adopted.
     nonisolated private static let warmHandoffMaxDrift: TimeInterval = 0.35
 
-    /// A player holding `item`, seeked to `time` with zero tolerance and prerolled to play at rate 1, or nil when it
-    /// could not get there in about two seconds (the caller then takes the plain swap). Nothing is playing on it.
-    private static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> AVPlayer? {
+    /// A player holding `item`, seeked to `time` with zero tolerance and prerolled to play at rate 1 — or, when it
+    /// could not get there in about two seconds, the same player marked not prerolled, still holding the item for the
+    /// caller's plain swap (KRI-1404: it must never be detached here and re-attached elsewhere). Nothing plays on it.
+    private static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> WarmedLivePlayer {
         let candidate = AVPlayer(playerItem: item)
         candidate.automaticallyWaitsToMinimizeStalling = false
         var waited = 0
         while candidate.status != .readyToPlay {
             waited += 1
-            if candidate.status == .failed || Task.isCancelled || waited > 100 { candidate.replaceCurrentItem(with: nil); return nil }
+            if candidate.status == .failed || Task.isCancelled || waited > 100 { return WarmedLivePlayer(player: candidate, isPrerolled: false) }
             try? await Task.sleep(for: .milliseconds(20))
         }
-        guard await candidate.seek(to: CMTime(seconds: max(0, time), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero),
-              await candidate.preroll(atRate: 1) else {
-            candidate.replaceCurrentItem(with: nil)
-            return nil
+        guard await candidate.seek(to: CMTime(seconds: max(0, time), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) else {
+            return WarmedLivePlayer(player: candidate, isPrerolled: false)
         }
-        return candidate
+        return WarmedLivePlayer(player: candidate, isPrerolled: await candidate.preroll(atRate: 1))
     }
 
-    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil, adopting prerolled: AVPlayer? = nil) {
+    /// `holder`, when given, is the player already holding `item` (the warm-up's); it is used instead of a new one,
+    /// because the same item can never be attached to a second player (KRI-1404).
+    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil, reusing holder: AVPlayer? = nil) {
         playbackSeekTarget = nil
         cancelScrubFrames()
         seekRecoveryTask?.cancel()
@@ -10901,7 +11018,7 @@ enum EditorOpenIntent { case warm, open }
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
         if retainedPreview?.player !== player { player?.replaceCurrentItem(with: nil) }
-        let next = prerolled ?? AVPlayer(playerItem: item)
+        let next = holder ?? AVPlayer(playerItem: item)
         player = next
         previewDisplayTicket = currentPreviewWork
         observingPlayer = next
@@ -12079,15 +12196,16 @@ extension NativeEditorSession {
         transactDocument(section: .timeline) { value in
             let slot = value.clips[index]
             let duration = slot.durationS ?? (found.clip.end - found.clip.start)
-            var right = Self.piece(of: slot, from: local, to: duration, length: duration, rate: rate)
+            var right = Self.piece(of: slot, from: local, to: duration, length: duration, rate: rate, still: still)
             right.id = UUID().uuidString; right.parentSegmentID = still ? nil : slot.id
-            value.clips.replaceSubrange(index...index, with: [Self.piece(of: slot, from: 0, to: local, length: duration, rate: rate), right])
+            value.clips.replaceSubrange(index...index, with: [Self.piece(of: slot, from: 0, to: local, length: duration, rate: rate, still: still), right])
         }
     }
 
     /// The part of `slot` (lasting `length`) from `a` to `b` output seconds after its start, on the same source clock and
     /// at the same place in its panel. A part that starts late locks its source start; one that ends early cuts after it.
-    private static func piece(of slot: EditorTimelineSlot, from a: Double, to b: Double, length: Double, rate: Double) -> EditorTimelineSlot {
+    /// A photo (`still`) has no source clock, so its parts keep `in_s` 0 and never lock a source start.
+    private static func piece(of slot: EditorTimelineSlot, from a: Double, to b: Double, length: Double, rate: Double, still: Bool) -> EditorTimelineSlot {
         let late = a > 0.000001, early = b < length - 0.000001
         guard late || early else { return slot }
         var piece = slot
@@ -12099,13 +12217,15 @@ extension NativeEditorSession {
         }
         if slot.raw["freeze_frame_s"]?.numberValue != nil {
             piece = NativeClipSourceClock(slot: slot).sliced(from: a, to: b).applying(to: slot)
+        } else if still {
+            piece.durationS = b - a
         } else {
             piece.inS = slot.inS + a * rate
             piece.durationS = b - a
             if early, slot.raw["source_end_s"] != nil { piece.raw["source_end_s"] = .number(slot.inS + b * rate) }
         }
         piece.durationBeats = nil
-        if late { piece.raw["source_start_locked"] = .bool(true) }
+        if late, !still { piece.raw["source_start_locked"] = .bool(true) }
         if early { piece.transitionAfter = "cut"; piece.transitionDurationS = nil }
         if slot.splitSectionID != nil { piece.raw["split_offset_s"] = .number(slot.splitOffsetS + a) }
         return piece
@@ -12258,8 +12378,9 @@ extension NativeEditorSession {
             let parts = candidates.compactMap { candidate in candidate.span.map { (start: $0.start, end: $0.end, inSection: candidate.inSection) } }
                 .sorted { $0.start < $1.start }
             for (position, part) in parts.enumerated() {
-                var piece = Self.piece(of: slot, from: part.start - slot.splitOffsetS, to: part.end - slot.splitOffsetS, length: length, rate: rate)
-                if position > 0 { piece.id = UUID().uuidString; piece.parentSegmentID = isStillSlot(slot) ? nil : slot.id }
+                let still = isStillSlot(slot)
+                var piece = Self.piece(of: slot, from: part.start - slot.splitOffsetS, to: part.end - slot.splitOffsetS, length: length, rate: rate, still: still)
+                if position > 0 { piece.id = UUID().uuidString; piece.parentSegmentID = still ? nil : slot.id }
                 if part.inSection {
                     if side == .untilPlayhead { piece.raw["split_offset_s"] = .number(part.start - cut) }
                     sectionSlots.append(piece)
@@ -12320,7 +12441,7 @@ extension NativeEditorSession {
             let left = run[index - 1].slot, length = left.durationS ?? 0, shared = run[index - 1].end - run[index].start
             let replayed = NativeEditorInteraction.transitionOverlap(left: left, leftDuration: length, rightDuration: run[index].slot.durationS ?? 0)
             guard abs(replayed - shared) > 0.001 else { continue }
-            run[index - 1].slot = Self.piece(of: left, from: 0, to: length - shared, length: length, rate: run[index - 1].rate)
+            run[index - 1].slot = Self.piece(of: left, from: 0, to: length - shared, length: length, rate: run[index - 1].rate, still: isStillSlot(left))
             run[index - 1].end = run[index].start
         }
         // Where clips only touch, no transition ever played; keep it that way now that they are ordinary clips.

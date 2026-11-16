@@ -10,7 +10,7 @@
       },
       {
         "file": "app/kria/planner.py",
-        "line": 7030,
+        "line": 7045,
         "tr": "{v1} güncellendi."
       }
     ],
@@ -68,7 +68,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 268,
+        "line": 270,
         "tr": "başlık"
       },
       {

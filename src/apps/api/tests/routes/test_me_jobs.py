@@ -1569,6 +1569,92 @@ def test_playback_diagnostics_drops_a_trace_that_is_not_fixed_labels_and_counts(
         assert events[0]["error_code"] == -11800, "the rest of the report is kept"
 
 
+# Cigdem 2 (job ef12ddfd, failure modes G1-G3): iOS restarted its media services 8 s after a phone
+# render; the editor's KRI-626 recovery rebuilt every player. Its reports: `-11819`, then `-11800`
+# over `'!ses'` (561210739). The editor posts each report BEFORE it tries to recover, and a
+# finished render whose retries run out reports nothing more (`surfaceUnplayableFinishedRender`).
+_RESET_REPORTS = (
+    {
+        **_PLAYBACK_DIAGNOSTIC,
+        "error_code": -11819,
+        "underlying_domain": None,
+        "underlying_code": None,
+    },
+    {
+        **_PLAYBACK_DIAGNOSTIC,
+        "player_kind": "finished",
+        "source_state": "preparing",
+        "error_code": -11800,
+        "underlying_code": 561210739,
+    },
+    {
+        **_PLAYBACK_DIAGNOSTIC,
+        "error_domain": "NSOSStatusErrorDomain",
+        "error_code": 561210739,
+        "underlying_domain": None,
+        "underlying_code": None,
+    },
+)
+
+
+def _post_diagnostics(bodies) -> list[dict]:
+    user = _user()
+    url = _diagnostics_url(uuid.uuid4())
+    events = []
+    for body in bodies:
+        db = _db([_scalar(uuid.uuid4())])
+        _override(user, db)
+        with structlog.testing.capture_logs() as logs:
+            assert client.post(url, json=body).status_code == 204
+        events.extend(logs)
+    return events
+
+
+def test_playback_diagnostics_tags_a_media_services_reset_and_keeps_it_a_failure() -> None:
+    """A reset is tagged so it can be told apart, never downgraded: the server cannot know
+    whether the editor's recovery worked."""
+    events = _post_diagnostics(_RESET_REPORTS)
+    assert [e["event"] for e in events] == ["editor_playback_failed"] * len(_RESET_REPORTS)
+    assert all(e["log_level"] == "warning" for e in events)
+    assert all(e["media_services_reset"] is True for e in events)
+    assert [e["error_code"] for e in events] == [b["error_code"] for b in _RESET_REPORTS]
+    # Negative control: the same code in another domain, and a real failure, are not resets.
+    others = _post_diagnostics(
+        (
+            {
+                **_PLAYBACK_DIAGNOSTIC,
+                "error_domain": "preview.speaker_background.hidden_run",
+                "error_code": -11819,
+                "underlying_domain": None,
+                "underlying_code": None,
+            },
+            _PLAYBACK_DIAGNOSTIC,
+        )
+    )
+    assert [e["event"] for e in others] == ["editor_playback_failed"] * 2
+    assert all(e["log_level"] == "warning" for e in others)
+    assert all(e["media_services_reset"] is False for e in others)
+
+
+def test_a_reset_whose_retries_run_out_still_logs_every_failure() -> None:
+    """Emir's review of #2365: the finished render fails on the reset, each retry fails again with
+    the same signature, and then the retries run out (the phone sends nothing after that). Every
+    one of those reports stays a playback-failure warning, so the failed recovery is visible."""
+    first_live, finished_dead, _status = _RESET_REPORTS
+    retry_fails = {**finished_dead, "source_state": "ready"}
+    sequence = (first_live, finished_dead, retry_fails, retry_fails, retry_fails)
+    events = _post_diagnostics(sequence)
+    assert [e["event"] for e in events] == ["editor_playback_failed"] * len(sequence)
+    assert all(e["log_level"] == "warning" and e["media_services_reset"] for e in events)
+    assert [e["player_kind"] for e in events] == [
+        "live",
+        "finished",
+        "finished",
+        "finished",
+        "finished",
+    ]
+
+
 _RECORDER_DIAGNOSTIC = {
     "kind": "take_silent",
     "audio_category": "playAndRecord",

@@ -1561,6 +1561,7 @@
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/reply_consistency.py",
         "src/apps/api/tests/fixtures/kria_reply_consistency/",
+        "src/apps/api/tests/fixtures/kri1485_q2_run3_replies.json",
         "src/apps/api/tests/kria/test_reply_consistency.py",
         "src/apps/api/app/kria/caption_look_ask.py",
         "src/apps/api/tests/fixtures/green3_9bad2d75_caption_look_no_music.json",
@@ -3241,6 +3242,7 @@
       "paths": [
         "src/apps/api/app/services/phone_background_sequence.py",
         "src/apps/api/tests/tasks/test_speaker_background_on_the_word.py",
+        "src/apps/api/tests/fixtures/cigdem2_ef12ddfd_background_pace.json",
         "src/apps/api/tests/fixtures/green3_9bad2d75_backgrounds_on_word.json",
         "src/apps/api/prompts/edit_copilot_ops/speaker_background_windows.txt",
         "src/apps/api/tests/kria/test_speaker_background_windows.py",
@@ -3585,6 +3587,7 @@
         "src/apps/api/app/pipeline/phone_initial_split_screen.py",
         "src/apps/api/app/services/initial_split_screen.py",
         "src/apps/api/app/services/split_screen_editor.py",
+        "src/apps/api/prompts/edit_copilot_ops/split_blank.txt",
         "src/apps/api/prompts/edit_copilot_ops/split_screen.txt",
         "src/apps/api/prompts/main_creator_split_screen.txt",
         "src/apps/api/tests/fixtures/split_screen_timeline.json",
@@ -3780,6 +3783,7 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_sound_effects.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_speaker_background.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_speaker_frame_by_hand.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_blank.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_clip_offset.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_clip_order.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_split_screen_create.json",
@@ -3879,6 +3883,17 @@
         "src/apps/api/tests/kria/test_split_full_screen_parity.py",
         "src/apps/api/tests/kria/test_kri1394_split_full_screen.py",
         "src/apps/ios/Tests/KriaTests/NativeSplitFullScreenParityTests.swift"
+      ]
+    },
+    {
+      "id": "kri-1466-narrated-named-moment",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_narrated_footage_fit.py tests/tasks/test_kri1466_narrated_named_moment.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/pipeline/test_phone_narrated_plan.py tests/kria/test_brief_checks_narrated_alignment.py",
+      "paths": [
+        "src/apps/api/app/pipeline/narrated_footage_fit.py",
+        "src/apps/api/tests/fixtures/narrated_alignment/kri1466_tor_moment.json",
+        "src/apps/api/tests/pipeline/test_narrated_footage_fit.py",
+        "src/apps/api/tests/tasks/test_kri1466_narrated_named_moment.py"
       ]
     }
   ]

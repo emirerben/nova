@@ -94,8 +94,9 @@ class FitVerdict:
 
 def _clips(n: int) -> str:
     return say(
-        en=f"{n} sideways clip" if n == 1 else f"{n} sideways clips",
-        tr=f"{n} yatay klip",
+        en="{n} sideways clip" if n == 1 else "{n} sideways clips",
+        tr="{n} yatay klip",
+        n=n,
     )
 
 

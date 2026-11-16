@@ -6518,9 +6518,9 @@ def _copilot_montage_pace_note(request_op: dict) -> str | None:
     `EditProposalSnapshot`, `deterministic_fast_cuts` takes none, the web drawer accepts 0.4 to
     1.2 s cuts), so a balanced or relaxed ask is named on the reply, never claimed and never put
     on the op."""
-    from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
+    from app.kria.route_capabilities._lines import pacing_line  # noqa: PLC0415
 
-    return lines.pacing_line(
+    return pacing_line(
         lambda value, _strategy: value == "fast",
         "a fast montage keeps its short cuts",
         "hızlı montaj kısa kesimlerini koruyor",
