@@ -79,9 +79,9 @@ struct ReviewerSignInView: View {
             try auth.signIn(with: session, displayName: "Kria Reviewer")
             dismiss()
         } catch APIError.requestFailed(status: 401, detail: _) {
-            errorMessage = "Invalid email or password."
+            errorMessage = String(localized: "Invalid email or password.")
         } catch APIError.requestFailed(status: 404, detail: _) {
-            errorMessage = "Email sign-in isn't enabled for this app."
+            errorMessage = String(localized: "Email sign-in isn't enabled for this app.")
         } catch {
             errorMessage = error.localizedDescription
         }

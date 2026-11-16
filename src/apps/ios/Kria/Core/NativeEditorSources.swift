@@ -203,11 +203,11 @@ enum NativePhoneTalkingSource {
     /// build has never heard of still gets an honest line.
     static func rangeClosedCopy(reason: String?) -> String {
         switch reason {
-        case "talking_range_multi_clip": "Range works on single-clip talking videos for now."
-        case "talking_range_word_cuts": "Range isn’t available after removing words from this video yet."
-        case "talking_range_processed_audio": "Range isn’t available after cleaning up this video’s sound yet."
-        case "talking_range_cut_mismatch": "This video’s cut changed. Make the video again to choose a range."
-        default: "Range isn’t available for this video yet."
+        case "talking_range_multi_clip": String(localized: "Range works on single-clip talking videos for now.")
+        case "talking_range_word_cuts": String(localized: "Range isn’t available after removing words from this video yet.")
+        case "talking_range_processed_audio": String(localized: "Range isn’t available after cleaning up this video’s sound yet.")
+        case "talking_range_cut_mismatch": String(localized: "This video’s cut changed. Make the video again to choose a range.")
+        default: String(localized: "Range isn’t available for this video yet.")
         }
     }
 

@@ -123,14 +123,14 @@ struct SavedUploadsView: View {
             } else if error == nil {
                 Group {
                     if query.isEmpty, let onChoosePhotos {
-                        KriaEmptyState(title: "No saved uploads yet",
-                                       message: "Add media to a post from Photos or Files. Your uploads will appear here for reuse.",
-                                       action: "Choose from Photos", actionRole: .secondary, titleStyle: .heading, onAction: onChoosePhotos)
+                        KriaEmptyState(title: String(localized: "No saved uploads yet"),
+                                       message: String(localized: "Add media to a post from Photos or Files. Your uploads will appear here for reuse."),
+                                       action: String(localized: "Choose from Photos"), actionRole: .secondary, titleStyle: .heading, onAction: onChoosePhotos)
                     } else {
                         ContentUnavailableView(
-                            query.isEmpty ? "No saved uploads yet" : "No matching uploads",
+                            query.isEmpty ? String(localized: "No saved uploads yet") : String(localized: "No matching uploads"),
                             systemImage: "square.stack",
-                            description: Text(query.isEmpty ? "Add media to a post from Photos or Files. Your uploads will appear here for reuse." : "Try another filename.")
+                            description: Text(query.isEmpty ? String(localized: "Add media to a post from Photos or Files. Your uploads will appear here for reuse.") : String(localized: "Try another filename."))
                         )
                     }
                 }
@@ -144,7 +144,7 @@ struct SavedUploadsView: View {
                 assets: assets, selected: $selected, limit: budget, owner: owner, api: api,
                 state: tileState, detail: detail,
                 tileID: { "saved-upload-tile-\($0.id)" },
-                message: progress ?? notice ?? (loading ? "Loading more…" : nil),
+                message: progress ?? notice ?? (loading ? String(localized: "Loading more…") : nil),
                 onBlockedTap: blockedTap,
                 onNearEnd: loadNextPage
             ) { asset in menu(asset) }
@@ -197,7 +197,7 @@ struct SavedUploadsView: View {
 
     private func detail(_ asset: SavedMediaAsset) -> String {
         let text = eligibility(asset).text
-        return asset.storageWarnings.isEmpty ? text : "\(text). Cloud copy expires soon."
+        return asset.storageWarnings.isEmpty ? text : String(localized: "\(text). Cloud copy expires soon.")
     }
 
     /// Repairable tiles open Files first and are picked once the file is verified; the rest say why not.
@@ -209,7 +209,7 @@ struct SavedUploadsView: View {
         switch result.action {
         case .locateOriginal: requestRelink(asset, cloud: false)
         case .restoreCloudCopy: requestRelink(asset, cloud: true)
-        default: notice = result.text.hasSuffix(".") ? result.text : "\(result.text). This can’t be added to this post."
+        default: notice = result.text.hasSuffix(".") ? result.text : String(localized: "\(result.text). This can’t be added to this post.")
         }
     }
 
@@ -268,7 +268,7 @@ struct SavedUploadsView: View {
             localIDs.insert(asset.id)
             error = nil; notice = nil
             if tileState(updated) == .selectable, !selected.contains(updated.id), selected.count < budget { selected.append(updated.id) }
-        } catch { self.error = "This file must match the original video. \(error.localizedDescription)"; loadFailed = false }
+        } catch { self.error = String(localized: "This file must match the original video. \(error.localizedDescription)"); loadFailed = false }
     }
 
     private func replace(_ updated: SavedMediaAsset) {
@@ -328,8 +328,8 @@ struct SavedUploadsView: View {
         defer { committing = false; progress = nil }
         for (index, id) in ids.enumerated() {
             guard let asset = pool[id] else { selected.removeAll { $0 == id }; continue }
-            progress = ids.count > 1 ? "Adding \(index + 1) of \(ids.count)…" : "Adding…"
-            if eligibility(asset).action == .uploadOriginal { progress = "Uploading full-quality original…" }
+            progress = ids.count > 1 ? String(localized: "Adding \(index + 1) of \(ids.count)…") : String(localized: "Adding…")
+            if eligibility(asset).action == .uploadOriginal { progress = String(localized: "Uploading full-quality original…") }
             guard await add(asset) else { return }
             selected.removeAll { $0 == id }
         }
@@ -359,7 +359,7 @@ struct SavedUploadsView: View {
                 // Only the generation-drift conflict means the cloud copy changed: restore it from
                 // the original, then add. A device-only video already re-uploaded its original in
                 // attach, so another relink would only loop; its message stays on screen.
-                self.error = "The cloud copy of this file changed. Tap it and choose the original to restore it."
+                self.error = String(localized: "The cloud copy of this file changed. Tap it and choose the original to restore it.")
                 staleCloud.insert(asset.id); selected.removeAll { $0 == asset.id }
             }
             return false

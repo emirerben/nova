@@ -25,8 +25,8 @@ struct KriaMediaRow<Thumbnail: View>: View {
         case none
         /// A finished item that needs no action: the green check disc.
         case check
-        case remove(label: String = "Remove", () -> Void)
-        case menu(label: String = "More actions", [KriaMenuAction])
+        case remove(label: String = String(localized: "Remove"), () -> Void)
+        case menu(label: String = String(localized: "More actions"), [KriaMenuAction])
     }
 
     let name: String
@@ -165,7 +165,7 @@ struct KriaStepRail: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityElement(children: .combine)
-                        .accessibilityLabel("\(steps[index]), \(index < current ? "done" : index == current ? "current step" : "not started")")
+                        .accessibilityLabel(index < current ? String(localized: "\(steps[index]), done") : index == current ? String(localized: "\(steps[index]), current step") : String(localized: "\(steps[index]), not started"))
                     }
                 }
             }

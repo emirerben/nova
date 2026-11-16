@@ -84,8 +84,8 @@ private struct ObjectMarkActiveCard: View {
     private var isLoadingFrame: Bool { localURL != nil && !frameIsReady }
 
     var body: some View {
-        KriaQuestionCard(title: "Draw a box around the \(question.label)",
-                         helper: "Pick a moment where it’s in view while you talk.") {
+        KriaQuestionCard(title: String(localized: "Draw a box around the \(question.label)"),
+                         helper: String(localized: "Pick a moment where it’s in view while you talk.")) {
             if question.mediaIDs.count > 1 { clipPicker }
             frameArea
             if duration > 0.2, localURL != nil {
@@ -97,7 +97,7 @@ private struct ObjectMarkActiveCard: View {
                     Slider(value: $time, in: 0...duration) { Text("Moment") }
                         .tint(KriaColor.ink)
                         .accessibilityLabel("Moment in the clip")
-                        .accessibilityValue(String(format: "%.1f seconds", time))
+                        .accessibilityValue(String(localized: "\(time, format: .number.precision(.fractionLength(1))) seconds"))
                         .accessibilityIdentifier("object-mark-time")
                         .disabled(isSending)
                 }
@@ -109,7 +109,7 @@ private struct ObjectMarkActiveCard: View {
                 .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true, isLoading: isSending))
                 // The box is sent with `time`: only once that moment's frame is the one on screen.
                 .disabled(isSending || !frameIsReady)
-                .kriaDisabledReason(isLoadingFrame ? "Wait for the frame to load." : nil)
+                .kriaDisabledReason(isLoadingFrame ? String(localized: "Wait for the frame to load.") : nil)
                 .accessibilityIdentifier("object-mark-send")
         }
         .excludesDrawerGesture()
@@ -156,8 +156,8 @@ private struct ObjectMarkActiveCard: View {
     @ViewBuilder private var frameArea: some View {
         if localURL == nil {
             Text(question.mediaIDs.count > 1
-                 ? "This clip isn’t on this iPhone. Pick another clip."
-                 : "This clip isn’t on this iPhone, so it can’t be marked here.")
+                 ? String(localized: "This clip isn’t on this iPhone. Pick another clip.")
+                 : String(localized: "This clip isn’t on this iPhone, so it can’t be marked here."))
                 .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)

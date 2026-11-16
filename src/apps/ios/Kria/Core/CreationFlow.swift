@@ -244,7 +244,7 @@ struct CreationMediaLimit: Codable, Equatable, Sendable {
 
 enum CreationMediaRole: String, Codable, CaseIterable, Sendable {
     case clip, visual, voiceover, song
-    var title: String { switch self { case .clip: "Footage"; case .visual: "Visuals"; case .voiceover: "Voiceover"; case .song: "Song" } }
+    var title: String { switch self { case .clip: String(localized: "Footage"); case .visual: String(localized: "Visuals"); case .voiceover: String(localized: "Voiceover"); case .song: String(localized: "Song", comment: "Media role: a music track") } }
     var capabilityKey: String { switch self { case .clip: "clips"; case .visual: "visuals"; case .voiceover: "voiceover"; case .song: "song" } }
     /// Audio roles upload their full file as an audio attachment (never an analysis proxy).
     var isAudio: Bool { self == .voiceover || self == .song }
@@ -414,7 +414,7 @@ struct CreationAttachedMedia: Identifiable {
             }
             let role = fields["role"]?.stringValue
             let range = role == "song" ? SongFilmingRange.parse(fields["song_range"]) : nil
-            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), libraryAssetID: fields["library_asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)), uploadPurpose: purpose, durationS: duration, role: role, filmingRange: range)
+            return Self(id: id, filename: fields["filename"]?.stringValue ?? String(localized: "Attached media"), kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), libraryAssetID: fields["library_asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)), uploadPurpose: purpose, durationS: duration, role: role, filmingRange: range)
         }
     }
     /// The attached song, if the server reports one (KRI-374): a `media` entry with `role == "song"`, or a
@@ -424,7 +424,7 @@ struct CreationAttachedMedia: Identifiable {
         guard let fields = state["song"]?.objectValue,
               let id = fields["media_id"]?.stringValue ?? fields["id"]?.stringValue, !id.isEmpty else { return nil }
         let duration = fields["duration_s"]?.numberValue.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        return Self(id: id, filename: fields["filename"]?.stringValue ?? "Your song", kind: "audio", previewURL: nil, durationS: duration, role: "song")
+        return Self(id: id, filename: fields["filename"]?.stringValue ?? String(localized: "Your song"), kind: "audio", previewURL: nil, durationS: duration, role: "song")
     }
 }
 
@@ -448,17 +448,17 @@ enum ProjectUploadDestination: Equatable {
         switch self {
         case .phone, .cloud: nil
         case .phoneVisuals(let kinds):
-            kinds == [.image] ? "Add photos here, and videos in Footage. Kria renders your video on this iPhone."
-                : kinds == [.video] ? "Add supporting videos here. Kria renders your video on this iPhone."
-                : "Add photos or supporting videos here. Kria renders your video on this iPhone."
-        case .checking: "Checking how this project renders…"
-        case .paused: "Rendering on iPhone is temporarily unavailable. Your project is saved; try again later."
+            kinds == [.image] ? String(localized: "Add photos here, and videos in Footage. Kria renders your video on this iPhone.")
+                : kinds == [.video] ? String(localized: "Add supporting videos here. Kria renders your video on this iPhone.")
+                : String(localized: "Add photos or supporting videos here. Kria renders your video on this iPhone.")
+        case .checking: String(localized: "Checking how this project renders…")
+        case .paused: String(localized: "Rendering on iPhone is temporarily unavailable. Your project is saved; try again later.")
         // KRI-141: name the control that clears this. Removing the listed footage empties
         // `sourcePurposes`, so the next upload resolves to one destination again.
-        case .mixed: "Some footage in this project was uploaded for a different kind of render. Remove the clips listed under Footage, then add them again to continue."
-        case .visualsUnavailableOnPhone: "Visuals aren’t available yet for videos rendered on iPhone. Continue with your footage; Kria renders it on this iPhone."
-        case .voiceoverUnavailableOnPhone: "Voiceover isn’t available yet for videos rendered on iPhone. Your project is saved."
-        case .cloudProjectUnavailableOnPhone: "This project has cloud footage, so it can’t be changed on this iPhone. You can still play its existing video."
+        case .mixed: String(localized: "Some footage in this project was uploaded for a different kind of render. Remove the clips listed under Footage, then add them again to continue.")
+        case .visualsUnavailableOnPhone: String(localized: "Visuals aren’t available yet for videos rendered on iPhone. Continue with your footage; Kria renders it on this iPhone.")
+        case .voiceoverUnavailableOnPhone: String(localized: "Voiceover isn’t available yet for videos rendered on iPhone. Your project is saved.")
+        case .cloudProjectUnavailableOnPhone: String(localized: "This project has cloud footage, so it can’t be changed on this iPhone. You can still play its existing video.")
         }
     }
 

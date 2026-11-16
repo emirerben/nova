@@ -63,7 +63,7 @@ struct WorkspaceHeader: View {
                 titleHidden: projectsDrawerOpen
             ) {
                 Button(action: openProjects) { KriaIcon(.menu).frame(width: 44, height: 44).kriaFloatingSurface(Circle()) }
-                    .accessibilityLabel(projectsDrawerOpen ? "Close projects" : "Open projects")
+                    .accessibilityLabel(projectsDrawerOpen ? String(localized: "Close projects") : String(localized: "Open projects"))
                     .accessibilityIdentifier("workspace-menu-toggle")
             } trailing: {
                 ProjectActionsMenu(project: project, floating: true)
@@ -98,7 +98,7 @@ struct ProjectsDrawer: View {
                     KriaIcon(.gallery)
                     Text("Gallery").font(KriaFont.body(15).weight(.medium))
                     Spacer()
-                    Text("\(model.libraryProjects.count)\(model.libraryNextCursor == nil ? "" : "+") \(model.libraryProjects.count == 1 && model.libraryNextCursor == nil ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    Text(String(localized: "\(model.libraryProjects.count)\(model.libraryNextCursor == nil ? "" : "+") videos")).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 }.frame(minHeight: 44).padding(.horizontal, 12)
             }
             if let openCollections {
@@ -253,7 +253,7 @@ struct ChatMessageRow: View {
                     .background { Self.userBubbleShape.fill(KriaColor.ink) }
                     .opacity(message.isPending ? 0.68 : 1)
                     .copyableMessage(message.content, previewShape: Self.userBubbleShape)
-                    .accessibilityLabel("You: \(message.content)")
+                    .accessibilityLabel(String(localized: "You: \(message.content)"))
                     .accessibilityIdentifier("chat-message-\(message.id)")
                     .onAppear {
                         Perf.endOpenOnNextFrame("launch.toPixels")
@@ -277,7 +277,7 @@ struct ChatMessageRow: View {
                     .copyableMessage(shownContent, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     // On the text, not the stack: a stack's label is applied to
                     // every child, which read each option chip as the question.
-                    .accessibilityLabel("Kria: \(shownContent)")
+                    .accessibilityLabel(String(localized: "Kria: \(shownContent)"))
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
                         options: message.options,
@@ -419,8 +419,8 @@ struct FormatStage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             AssistantHeading(
-                title: "What are we making?",
-                bodyText: "Choose a starting point. We can shape the details together.",
+                title: String(localized: "What are we making?"),
+                bodyText: String(localized: "Choose a starting point. We can shape the details together."),
                 isFormatHeading: true
             )
             GeometryReader { viewport in
@@ -486,9 +486,9 @@ private struct FormatVideoCard: View {
                 .buttonStyle(.plain)
                 .disabled(isBusy)
                 .accessibilityLabel(format.title)
-                .accessibilityValue(edit == nil ? "Image preview" : playing ? "Playing preview" : "Paused preview")
+                .accessibilityValue(edit == nil ? String(localized: "Image preview") : playing ? String(localized: "Playing preview") : String(localized: "Paused preview"))
                 .accessibilityIdentifier("format-\(format.serverValue)")
-                .accessibilityHint("Choose \(format.title) as this creation format")
+                .accessibilityHint(String(localized: "Choose \(format.title) as this creation format"))
                 if edit != nil {
                     Button { paused.toggle() } label: {
                         Image(systemName: paused ? "play.fill" : "pause.fill")
@@ -499,7 +499,7 @@ private struct FormatVideoCard: View {
                     }
                     .buttonStyle(.plain)
                     .padding(5)
-                    .accessibilityLabel(paused ? "Play format preview" : "Pause format preview")
+                    .accessibilityLabel(paused ? String(localized: "Play format preview") : String(localized: "Pause format preview"))
                     .accessibilityIdentifier("format-preview-playback-\(format.serverValue)")
                 }
             }
@@ -528,9 +528,9 @@ private struct SlidePostFormatCard: View {
                 .buttonStyle(.plain)
                 .disabled(isBusy)
                 .accessibilityIdentifier("format-slides")
-                .accessibilityLabel("Slider")
-                .accessibilityValue("Slide \(slideIndex % SlidePostFormatCover.frames.count + 1) of \(SlidePostFormatCover.frames.count)")
-                .accessibilityHint("Choose Slider as this creation format")
+                .accessibilityLabel(String(localized: "Slider", comment: "Name of the slideshow-post format"))
+                .accessibilityValue(String(localized: "Slide \(slideIndex % SlidePostFormatCover.frames.count + 1) of \(SlidePostFormatCover.frames.count)"))
+                .accessibilityHint(String(localized: "Choose Slider as this creation format"))
                 // The swipe strip must not expand the selection button's accessibility frame.
                 .accessibilityElement(children: .ignore)
 
@@ -545,7 +545,7 @@ private struct SlidePostFormatCard: View {
                 .buttonStyle(.plain)
                 .padding(.trailing, 5)
                 .padding(.bottom, 5)
-                .accessibilityLabel(paused ? "Play format preview" : "Pause format preview")
+                .accessibilityLabel(paused ? String(localized: "Play format preview") : String(localized: "Pause format preview"))
                 .accessibilityIdentifier("slide-format-cover-playback")
             }
             Text("Slider")
@@ -560,23 +560,28 @@ private struct SlidePostFormatCard: View {
 enum FootageStageCopy {
     /// "1 clip", "10 clips".
     static func count(_ value: Int, _ noun: String) -> String {
-        "\(value) \(noun)\(value == 1 ? "" : "s")"
+        switch noun {
+        case "item": String(localized: "\(value) items")
+        case "clip": String(localized: "\(value) clips")
+        case "file": String(localized: "\(value) files")
+        default: "\(value) \(noun)\(value == 1 ? "" : "s")"
+        }
     }
 
     /// Talking to camera: one take, or (KRI-719) the take plus clips shown
     /// while the creator talks when the server allows more than one.
     static func talkingBody(maximumClipCount: Int) -> String {
         maximumClipCount > 1
-            ? "Record yourself talking, or upload that video. Add clips to show while you talk."
-            : "Record one clear take, or upload one you already have. I’ll keep your voice at the center."
+            ? String(localized: "Record yourself talking, or upload that video. Add clips to show while you talk.")
+            : String(localized: "Record one clear take, or upload one you already have. I’ll keep your voice at the center.")
     }
 
     /// The Add media sheet's footage subtitle.
     static func attachmentSubtitle(talking: Bool, maximumClipCount: Int) -> String {
-        guard talking else { return "Choose the clips you want Kria to work with." }
+        guard talking else { return String(localized: "Choose the clips you want Kria to work with.") }
         return maximumClipCount > 1
-            ? "Record yourself, or upload a video you already have. Add clips to show while you talk."
-            : "Record yourself, or upload a video you already have."
+            ? String(localized: "Record yourself, or upload a video you already have. Add clips to show while you talk.")
+            : String(localized: "Record yourself, or upload a video you already have.")
     }
 }
 
@@ -626,30 +631,29 @@ struct FootageStage: View {
     private var talkingLeads: Bool { format == .talkingToCamera && readiness.attachedCount == 0 && readiness.pendingCount == 0 }
     private var hasMedia: Bool { readiness.attachedCount > 0 || readiness.pendingCount > 0 }
     private var limitText: String {
-        format.usesVisualPool ? "Up to \(FootageStageCopy.count(maximumClipCount, "item"))" : "Up to \(FootageStageCopy.count(maximumClipCount, "clip"))"
+        format.usesVisualPool ? String(localized: "Up to \(FootageStageCopy.count(maximumClipCount, "item"))") : String(localized: "Up to \(FootageStageCopy.count(maximumClipCount, "clip"))")
     }
     private var reachedLimit: Bool { !format.usesVisualPool && mediaCount + readiness.pendingCount >= maximumClipCount }
 
     private var sourceOptions: [KriaSourceOption] {
         let canAdd = !reachedLimit && !isBusy
-        let noun = format.usesVisualPool ? "media" : "video"
         return [
-            format.usesVisualPool ? nil : recordFootage.map { KriaSourceOption.record(caption: "Film now", identifier: "record-footage", isEnabled: canAdd, action: $0) },
-            KriaSourceOption.upload(caption: "Use existing \(noun)", identifier: format.usesVisualPool ? "choose-photos-videos" : "choose-videos", isEnabled: canAdd, action: addFootage)
+            format.usesVisualPool ? nil : recordFootage.map { KriaSourceOption.record(caption: String(localized: "Film now"), identifier: "record-footage", isEnabled: canAdd, action: $0) },
+            KriaSourceOption.upload(caption: format.usesVisualPool ? String(localized: "Use existing media") : String(localized: "Use existing video"), identifier: format.usesVisualPool ? "choose-photos-videos" : "choose-videos", isEnabled: canAdd, action: addFootage)
         ].compactMap { $0 }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(format.usesVisualPool ? "Add photos & videos" : "Add your footage").kriaType(.heading).foregroundStyle(KriaColor.ink)
+                Text(format.usesVisualPool ? String(localized: "Add photos & videos") : String(localized: "Add your footage")).kriaType(.heading).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                 if !hasMedia {
                     Text(format.usesVisualPool
-                         ? "Choose the photos and videos for your post. You can mix both."
+                         ? String(localized: "Choose the photos and videos for your post. You can mix both.")
                          : format == .talkingToCamera
                          ? FootageStageCopy.talkingBody(maximumClipCount: maximumClipCount)
-                         : "Record new clips or upload the moments you want me to work with.")
+                         : String(localized: "Record new clips or upload the moments you want me to work with."))
                         .kriaType(.body).foregroundStyle(KriaColor.mutedInk)
                 }
             }
@@ -659,8 +663,8 @@ struct FootageStage: View {
                 HStack(spacing: 8) {
                     if readiness.attachedCount > 0, readiness.pendingCount == 0 { KriaCheckDisc(size: 16) }
                     Text(readiness.pendingCount > 0
-                         ? "Uploading \(FootageStageCopy.count(readiness.pendingCount, "file"))…"
-                         : "\(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips") ready")
+                         ? String(localized: "Uploading \(FootageStageCopy.count(readiness.pendingCount, "file"))…")
+                         : String(localized: "\(readiness.attachedCount) clips ready"))
                         .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                 }
                 .accessibilityElement(children: .combine)
@@ -681,7 +685,7 @@ struct FootageStage: View {
             if hasMedia, reachedLimit {
                 // At the most clips there is nothing to add: say so, and offer the place where a clip can be removed.
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("You’ve added \(FootageStageCopy.count(maximumClipCount, "clip")), the most for this format. Remove one to add another.")
+                    Text(String(localized: "You’ve added \(FootageStageCopy.count(maximumClipCount, "clip")), the most for this format. Remove one to add another."))
                         .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                     if let manageFootage {
                         Button("Manage clips", action: manageFootage)
@@ -691,7 +695,7 @@ struct FootageStage: View {
                 }
             } else if hasMedia {
                 // The composer's + is the one way to add more: Record, Upload, script and the rest live in its tray.
-                Text(format.usesVisualPool ? "Add more photos or videos with the + button." : "Add more clips with the + button.")
+                Text(format.usesVisualPool ? String(localized: "Add more photos or videos with the + button.") : String(localized: "Add more clips with the + button."))
                     .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                     .accessibilityIdentifier("footage-add-more-hint")
             } else {
@@ -706,14 +710,14 @@ struct FootageStage: View {
                 KriaNoticeCard(
                     tone: .failure, title: UploadFailureBanner.message(for: failures),
                     action: UploadFailureBanner.canRetry(failures)
-                        ? KriaNoticeAction(title: "Retry") { for failure in failures where failure.cause == .uploadFailed { retryFailure(failure.id) } } : nil,
-                    link: KriaNoticeAction(title: "Dismiss") { failures.forEach { dismissFailure($0.id) } })
+                        ? KriaNoticeAction(title: String(localized: "Retry")) { for failure in failures where failure.cause == .uploadFailed { retryFailure(failure.id) } } : nil,
+                    link: KriaNoticeAction(title: String(localized: "Dismiss")) { failures.forEach { dismissFailure($0.id) } })
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("footage-upload-failures")
             }
 
             if visualsReadiness.attachedCount > 0 {
-                Text("\(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals") ready")
+                Text(String(localized: "\(visualsReadiness.attachedCount) visuals ready"))
                     .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
             }
         }
@@ -801,11 +805,11 @@ struct DirectionStage: View {
         // summary is chat-sized text, and nothing here repeats it or says what this draft doesn't decide.
         VStack(alignment: .leading, spacing: 12) {
             AssistantHeading(
-                title: approval.retryOfExecutionID == nil ? "Here’s the direction I’ll use" : "Retry your approved edit",
-                bodyText: approval.retryOfExecutionID == nil ? nil : "This reruns the saved edit with the same clips, text, timing and audio."
+                title: approval.retryOfExecutionID == nil ? String(localized: "Here’s the direction I’ll use") : String(localized: "Retry your approved edit"),
+                bodyText: approval.retryOfExecutionID == nil ? nil : String(localized: "This reruns the saved edit with the same clips, text, timing and audio.")
             )
 
-            ChatResponseText(content: directionTitle.isEmpty ? "A considered first cut" : directionTitle, startedAt: responseStartedAt)
+            ChatResponseText(content: directionTitle.isEmpty ? String(localized: "A considered first cut") : directionTitle, startedAt: responseStartedAt)
                 .font(KriaFont.body(15))
                 .lineSpacing(2)
                 .foregroundStyle(KriaColor.ink)
@@ -825,7 +829,7 @@ struct DirectionStage: View {
 
             cleanupActions
 
-            Button(approval.retryOfExecutionID == nil ? "Change direction" : "Cancel retry") { decide("deny", nil, nil) }
+            Button(approval.retryOfExecutionID == nil ? String(localized: "Change direction") : String(localized: "Cancel retry")) { decide("deny", nil, nil) }
                 .buttonStyle(CanonicalSecondaryButtonStyle())
                 .disabled(isBusy)
         }
@@ -836,7 +840,7 @@ struct DirectionStage: View {
         let resolution = cleanupResolution
         switch resolution.offer {
         case .plain:
-            Button(approval.retryOfExecutionID == nil ? "Create this video" : "Retry approved edit") { decide("approve", nil, resolution.analysisID) }
+            Button(approval.retryOfExecutionID == nil ? String(localized: "Create this video") : String(localized: "Retry approved edit")) { decide("approve", nil, resolution.analysisID) }
                 .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
         case .checking where speechCheckTimedOut:
@@ -889,15 +893,15 @@ struct RenderingStage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AssistantHeading(
-                title: "I’m shaping your video",
-                bodyText: "Your direction is locked. I’m assembling the story, sound, and final details now."
+                title: String(localized: "I’m shaping your video"),
+                bodyText: String(localized: "Your direction is locked. I’m assembling the story, sound, and final details now.")
             )
 
             VStack(alignment: .leading, spacing: 0) {
                 RenderStep(
                     icon: nil,
                     isActive: true,
-                    title: isPreparing ? "Preparing your footage and edit" : "Rendering final video",
+                    title: isPreparing ? String(localized: "Preparing your footage and edit") : String(localized: "Rendering final video"),
                     detail: preparationDetail
                 )
             }
@@ -923,9 +927,9 @@ struct RenderingStage: View {
 
     private var preparationDetail: String {
         if isPreparing, preparationTotal > 0 {
-            return "\(preparationMessage ?? "Preparing your clips…") · \(preparationCompleted) of \(preparationTotal) ready"
+            return String(localized: "\(preparationMessage ?? String(localized: "Preparing your clips…")) · \(preparationCompleted) of \(preparationTotal) ready")
         }
-        return preparationMessage ?? "Timing varies with footage length"
+        return preparationMessage ?? String(localized: "Timing varies with footage length")
     }
 }
 
@@ -1056,8 +1060,8 @@ struct ReadyStage: View {
                     }
                 } else {
                     PlanChipFlow(spacing: 8) {
-                        PromptChip(text: "Try a stronger opening", action: suggest)
-                        PromptChip(text: "Make it warmer", action: suggest)
+                        PromptChip(text: "Try a stronger opening", label: String(localized: "Try a stronger opening"), action: suggest)
+                        PromptChip(text: "Make it warmer", label: String(localized: "Make it warmer"), action: suggest)
                     }
                 }
             }
@@ -1079,10 +1083,12 @@ private struct ProjectPosterPlaceholder: View {
 
 private struct PromptChip: View {
     let text: String
+    /// What the creator reads; `text` is what gets sent.
+    var label: String? = nil
     let action: (String) -> Void
     var body: some View {
-        KriaAnswerChip(title: text) { action(text) }
-            .accessibilityLabel("Use suggestion: \(text)")
+        KriaAnswerChip(title: label ?? text) { action(text) }
+            .accessibilityLabel(String(localized: "Use suggestion: \(label ?? text)"))
     }
 }
 
@@ -1129,8 +1135,8 @@ struct KriaFilledChip: View {
 
     var body: some View {
         KriaAnswerChip(title: text, caption: caption, state: state, isSuggestion: true, isLead: isPrimary, action: action)
-            .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
-            .accessibilityValue(isPrimary ? "Recommended" : "")
+            .accessibilityLabel(caption.map { String(localized: "\(text), \($0)") } ?? text)
+            .accessibilityValue(isPrimary ? String(localized: "Recommended") : "")
     }
 }
 
@@ -1153,7 +1159,7 @@ struct SuggestionChipRow: View {
                         .opacity(sendingID != nil && sendingID != chip.id ? 0.4 : 1)
                         .disabled(sendingID != nil)
                         .accessibilityIdentifier("suggestion-chip-\(index)")
-                        .accessibilityHint("Sends this to Kria")
+                        .accessibilityHint(String(localized: "Sends this to Kria"))
                 }
             }
             .transition(.opacity)
@@ -1183,9 +1189,9 @@ struct ReplyOptionRows: View {
 }
 
 struct FailedStage: View {
-    var title = "Your video wasn't made"
-    var bodyText = "Your direction and footage are safe. Refresh the project or tell me what you want to change."
-    var retryLabel = "Refresh project"
+    var title = String(localized: "Your video wasn't made")
+    var bodyText = String(localized: "Your direction and footage are safe. Refresh the project or tell me what you want to change.")
+    var retryLabel = String(localized: "Refresh project")
     var retry: (() -> Void)?
     /// Structural failures need a correction in the saved conversation.
     /// Retrying the same request cannot resolve them.
@@ -1268,13 +1274,13 @@ struct ChatFailure: Equatable {
     /// the connection only when the request never got a response.
     init(_ summary: String, error: Error) {
         let cause = RequestFailureCause(error)
-        let reason = cause == .connection ? "Check your connection and try again." : error.localizedDescription
+        let reason = cause == .connection ? String(localized: "Check your connection and try again.") : error.localizedDescription
         self.init("\(summary) \(reason)", cause: cause)
     }
 
-    var title: String { cause == .connection ? "Connection interrupted" : "Something went wrong" }
+    var title: String { cause == .connection ? String(localized: "Connection interrupted") : String(localized: "Something went wrong") }
     /// The card's button reloads the chat; it doesn't resend the failed request.
-    var retryLabel: String { cause == .connection ? "Reconnect" : "Refresh" }
+    var retryLabel: String { cause == .connection ? String(localized: "Reconnect") : String(localized: "Refresh") }
 }
 
 struct RecoveryCard: View {
@@ -1306,16 +1312,15 @@ enum UploadFailureBanner {
         let unreadable = failures.filter { $0.cause == .unreadable }.count
         let failedUpload = failures.filter { $0.cause == .uploadFailed }.count
         let cannotResume = failures.filter { $0.cause == .cannotResume }.count
-        func files(_ n: Int) -> String { n == 1 ? "1 file" : "\(n) files" }
         switch (unreadable > 0, failedUpload > 0, cannotResume > 0) {
         case (true, false, false):
-            return "\(files(unreadable)) couldn’t be read and won’t be sent"
+            return String(localized: "\(unreadable) files couldn’t be read and won’t be sent")
         case (false, true, false):
-            return "\(files(failedUpload)) couldn’t upload"
+            return String(localized: "\(failedUpload) files couldn’t upload")
         case (false, false, true):
-            return "\(files(cannotResume)) couldn’t be resumed and won’t be sent"
+            return String(localized: "\(cannotResume) files couldn’t be resumed and won’t be sent")
         default:
-            return "\(files(failures.count)) won’t be sent"
+            return String(localized: "\(failures.count) files won’t be sent")
         }
     }
 
@@ -1332,7 +1337,7 @@ struct ChatComposer: View {
     let canAttach: Bool
     var canSendWithoutText = false
     var blocksSubmission = false
-    var placeholder = "Tell Kria what you want…"
+    var placeholder = String(localized: "Tell Kria what you want…")
     /// The question the creator is answering in their own words. Shown as a capsule above the field.
     var answering: String? = nil
     var cancelAnswering: () -> Void = {}
@@ -1423,10 +1428,10 @@ struct ChatComposer: View {
                     }
                 }
                 .disabled(attachMenu == nil && !canAttach)
-                .accessibilityLabel(showsTray ? "Close attach menu" : "Attach footage")
-                .accessibilityHint(attachMenu?.disabledReason ?? (canAttach ? "" : "Choose a video format first"))
+                .accessibilityLabel(showsTray ? String(localized: "Close attach menu") : String(localized: "Attach footage"))
+                .accessibilityHint(attachMenu?.disabledReason ?? (canAttach ? "" : String(localized: "Choose a video format first")))
                 .accessibilityIdentifier("chat-attach")
-                TextField(dictation?.isListening == true && text.isEmpty ? "Listening…" : placeholder, text: $text, axis: .vertical)
+                TextField(dictation?.isListening == true && text.isEmpty ? String(localized: "Listening…") : placeholder, text: $text, axis: .vertical)
                     .font(KriaFont.body(15)).lineLimit(1...4)
                     .frame(minHeight: 44).accessibilityLabel("Message Kria")
                     .focused(isFocused)
@@ -1443,7 +1448,7 @@ struct ChatComposer: View {
                 if let dictation {
                     Button { toggleDictation(dictation) } label: { DictationMicLabel(dictation: dictation) }
                         .disabled(dictationIsBusy || (isSending && !dictation.isListening))
-                        .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate message")
+                        .accessibilityLabel(dictation.isListening ? String(localized: "Stop dictation") : String(localized: "Dictate message"))
                         .accessibilityIdentifier("chat-dictate")
                 }
                 Button(action: sendTapped) {
@@ -1451,7 +1456,7 @@ struct ChatComposer: View {
                         .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
                         .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
                 }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
-                    .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
+                    .accessibilityLabel(isSending ? String(localized: "Sending message") : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "Send clips") : String(localized: "Send message")))
                     .accessibilityIdentifier("chat-send-message")
             }
         }

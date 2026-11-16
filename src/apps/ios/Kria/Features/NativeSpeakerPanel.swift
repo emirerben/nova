@@ -23,9 +23,9 @@ struct NativeSpeakerPanel: View {
     }
 
     private static let spots: [(preset: String, label: String, symbol: String)] = [
-        ("small_top_left", "Top left", "arrow.up.left"), ("small_top_right", "Top right", "arrow.up.right"),
-        ("small_bottom_left", "Bottom left", "arrow.down.left"), ("small_bottom_right", "Bottom right", "arrow.down.right"),
-        ("full", "Full screen", "arrow.up.left.and.arrow.down.right"),
+        ("small_top_left", String(localized: "Top left"), "arrow.up.left"), ("small_top_right", String(localized: "Top right"), "arrow.up.right"),
+        ("small_bottom_left", String(localized: "Bottom left"), "arrow.down.left"), ("small_bottom_right", String(localized: "Bottom right"), "arrow.down.right"),
+        ("full", String(localized: "Full screen"), "arrow.up.left.and.arrow.down.right"),
     ]
 
     var body: some View {
@@ -33,11 +33,11 @@ struct NativeSpeakerPanel: View {
         let scoped = session.usesScopedSpeakerFrame(for: selected)
         let inPanel = session.document.clips.first { $0.id == selected.id }?.splitSectionID != nil
         let width = session.speakerEditingFrame(for: selected)?.widthFraction ?? 1
-        NativeEditorLanePanel(title: "You", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }) {
+        NativeEditorLanePanel(title: "You", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }, heading: String(localized: "You", comment: "Panel title for the speaker (the creator) in the video")) {
             VStack(alignment: .leading, spacing: 12) {
                 Text(scoped
-                    ? "Drag yourself to move. Pinch, or drag a corner, to resize. Changes affect only this clip."
-                    : "Drag yourself on the video to move. Pinch, or drag a corner, to resize. One spot and size for the whole video.")
+                    ? String(localized: "Drag yourself to move. Pinch, or drag a corner, to resize. Changes affect only this clip.")
+                    : String(localized: "Drag yourself on the video to move. Pinch, or drag a corner, to resize. One spot and size for the whole video."))
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("native-editor-speaker-hint")
@@ -50,7 +50,7 @@ struct NativeSpeakerPanel: View {
                     onEditingChanged: { sliderTarget = $0 ? selected : nil }) {
                         Text("Size")
                     }
-                    .accessibilityValue("\(Int((width * 100).rounded())) percent of the \(inPanel ? "panel" : "video") width")
+                    .accessibilityValue(inPanel ? String(localized: "\(Int((width * 100).rounded())) percent of the panel width") : String(localized: "\(Int((width * 100).rounded())) percent of the video width"))
                     .accessibilityIdentifier("native-editor-speaker-size")
                     Text("\(Int((width * 100).rounded()))%").font(KriaFont.body(13).monospacedDigit())
                         .frame(minWidth: 40, alignment: .trailing)
@@ -67,7 +67,7 @@ struct NativeSpeakerPanel: View {
                                 .contentShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(inPanel && spot.preset == "full" ? "Fill panel" : spot.label)
+                        .accessibilityLabel(inPanel && spot.preset == "full" ? String(localized: "Fill panel") : spot.label)
                         .accessibilityAddTraits(active ? .isSelected : [])
                         .accessibilityIdentifier("native-editor-speaker-spot-" + spot.preset)
                     }

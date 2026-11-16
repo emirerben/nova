@@ -71,7 +71,7 @@ import KriaMediaEngine
         let next = DrawingStrokeTools.normalized([point.x, point.y])
         if let last = livePoints.last, hypot(last[0] - next[0], last[1] - next[1]) < 0.0005 { return }
         if livePoints.count >= DrawingLimits.maxPointsPerStroke {
-            note = "That stroke is as long as it can be."
+            note = String(localized: "That stroke is as long as it can be.")
             return
         }
         if let message = budget(committedPointCount + livePoints.count + 1, strokes.count + 1) {

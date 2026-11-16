@@ -56,9 +56,9 @@ enum CinematicBakeState: String, Codable, Sendable {
 
     var creatorMessage: String {
         switch self {
-        case .rawReview, .baking: "Applying your Cinematic look in the background. You can keep reviewing."
-        case .baked: "Recorded in Cinematic."
-        case .standardKept: "Cinematic couldn’t be applied to this take, so it’s in standard mode."
+        case .rawReview, .baking: String(localized: "Applying your Cinematic look in the background. You can keep reviewing.")
+        case .baked: String(localized: "Recorded in Cinematic.")
+        case .standardKept: String(localized: "Cinematic couldn’t be applied to this take, so it’s in standard mode.")
         }
     }
 }

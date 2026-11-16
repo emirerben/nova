@@ -56,7 +56,7 @@ struct WhatsNewView: View {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 44).accessibilityIdentifier("whats-new-loading")
                 } else if let latest = visible.first {
                     VStack(alignment: .leading, spacing: 14) {
-                        KriaSectionLabel(title: "Latest")
+                        KriaSectionLabel(title: String(localized: "Latest"))
                         WhatsNewReleaseView(release: latest, open: { destination = $0 })
                     }
                     let earlier = Array(visible.dropFirst())
@@ -133,7 +133,7 @@ private struct WhatsNewReleaseView: View {
             ForEach(release.features) { WhatsNewFeatureCard(feature: $0, open: open) }
             if !release.fixes.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    KriaSectionLabel(title: "Also improved")
+                    KriaSectionLabel(title: String(localized: "Also improved"))
                     ForEach(Array(release.fixes.enumerated()), id: \.offset) { _, fix in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Text("•").font(KriaFont.body(15)).foregroundStyle(KriaColor.zinc).accessibilityHidden(true)

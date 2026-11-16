@@ -132,7 +132,7 @@ private struct DeviceSourceRecoveryView: View {
         loading = true
         defer { loading = false }
         do { targets = try await sessions.sourcesNeedingRelink(key); message = nil }
-        catch { message = "Kria couldn’t check these files. Try again when the project has loaded." }
+        catch { message = String(localized: "Kria couldn’t check these files. Try again when the project has loaded.") }
     }
 }
 
@@ -160,8 +160,8 @@ struct DeviceOriginalRelinkRow: View {
             Task {
                 defer { checking = false }
                 do { try await relink(file) }
-                catch APIError.conflict { message = "This edit changed while Kria checked the file. Choose it again." }
-                catch { message = "That file couldn’t be verified. Choose the unmodified original used for this project." }
+                catch APIError.conflict { message = String(localized: "This edit changed while Kria checked the file. Choose it again.") }
+                catch { message = String(localized: "That file couldn’t be verified. Choose the unmodified original used for this project.") }
             }
         }
     }
@@ -174,35 +174,35 @@ enum DeviceRenderAttentionCopy {
     /// short server `reason` string, then a generic line, so an unrecognized
     /// or missing code never blanks the row.
     static let reasonMessage: [String: String] = [
-        "export_failed": "The render couldn’t finish on this iPhone. Your project is saved.",
-        "insufficient_storage": "This iPhone is low on storage. Free up space, then try again.",
-        "thermal": "This iPhone needs to cool down before rendering again.",
+        "export_failed": String(localized: "The render couldn’t finish on this iPhone. Your project is saved."),
+        "insufficient_storage": String(localized: "This iPhone is low on storage. Free up space, then try again."),
+        "thermal": String(localized: "This iPhone needs to cool down before rendering again."),
         // Structural, not transient: retrying compiles the same recipe again and fails the
         // same way, so "Try again" is hidden and the card offers the conversation instead
         // (a change-required reason, see `changeReasons`).
-        "unsupported_recipe": "This edit uses something this iPhone can’t render yet. Your project is saved. Review it in chat and Kria will make a version this iPhone can render.",
+        "unsupported_recipe": String(localized: "This edit uses something this iPhone can’t render yet. Your project is saved. Review it in chat and Kria will make a version this iPhone can render."),
         // Distinct from `unsupported_recipe`: the renderer itself is out of date for this
         // recipe (version/schema mismatch), not a specific feature it can't produce.
         // "Start a new edit" wouldn't fix that -- updating the app would.
-        "renderer_outdated": "This edit uses something newer than this version of Kria. Your project is saved.",
-        "cancelled_by_user": "You paused this render. Your project is saved; resume it any time.",
+        "renderer_outdated": String(localized: "This edit uses something newer than this version of Kria. Your project is saved."),
+        "cancelled_by_user": String(localized: "You paused this render. Your project is saved; resume it any time."),
         // KRI-141: the server's stale-render reaper (`device_render_reaper.py`) gave up
         // after a day with no word from this iPhone -- usually Kria was closed or the
         // phone slept mid-render. Transient, so "Try again" stays.
-        "timed_out": "Kria stopped waiting after a day without hearing from this iPhone. Your project is saved. Keep Kria open and try again.",
+        "timed_out": String(localized: "Kria stopped waiting after a day without hearing from this iPhone. Your project is saved. Keep Kria open and try again."),
         // This iPhone can't render the recipe right now for a reason of its own (not
         // heat or storage). Try again comes back once the phone can render it
         // (`DeviceRenderSessions.apply` clears the reason then).
-        "device_unavailable": "This iPhone can’t render this edit right now. Your project is saved.",
+        "device_unavailable": String(localized: "This iPhone can’t render this edit right now. Your project is saved."),
         // An original clip (or its analysis proxy) isn't on this iPhone; relinking fixes it.
-        "original_missing": "An original video for this edit isn’t on this iPhone. Find the original file and Kria will finish the video.",
+        "original_missing": String(localized: "An original video for this edit isn’t on this iPhone. Find the original file and Kria will finish the video."),
         // The approved requirements behind the pinned recipe changed. Retrying re-pins
         // the same recipe and is refused again; the next step is in chat.
-        "contract_changed": "This edit’s approved details changed after it was prepared. Your project is saved. Review the updated edit in chat.",
+        "contract_changed": String(localized: "This edit’s approved details changed after it was prepared. Your project is saved. Review the updated edit in chat."),
         // The job was cancelled outside this iPhone (another device, the web, or Kria).
-        DeviceRenderSessions.jobCancelledReason: "This render was stopped. Your project is saved.",
+        DeviceRenderSessions.jobCancelledReason: String(localized: "This render was stopped. Your project is saved."),
         // A decline this build made earlier no longer holds: it renders the recipe now.
-        renderableReason: "Kria can render this edit on your iPhone now. Try again to start it.",
+        renderableReason: String(localized: "Kria can render this edit on your iPhone now. Try again to start it."),
     ]
 
     /// Set by the phone itself (never by the server): a `renderer_outdated` or
@@ -276,26 +276,26 @@ enum DeviceRenderAttentionCopy {
     /// Title, detail and quiet note for a render that waits instead of failing.
     static func waitingTitle(_ wait: DeviceRenderWait) -> String? {
         switch wait {
-        case .cooling: "Waiting for your iPhone to cool down"
-        case .storage(let bytes): bytes > 0 ? "Free up \(formattedBytes(bytes)) to render" : "Waiting for storage"
-        case .checking: "Checking your render"
+        case .cooling: String(localized: "Waiting for your iPhone to cool down")
+        case .storage(let bytes): bytes > 0 ? String(localized: "Free up \(formattedBytes(bytes)) to render") : String(localized: "Waiting for storage")
+        case .checking: String(localized: "Checking your render")
         case .connection, .server: nil
         }
     }
 
     static func waitingDetail(_ wait: DeviceRenderWait) -> String? {
         switch wait {
-        case .cooling: "Rendering starts automatically when it’s cooler. Your project is saved."
-        case .storage: "This iPhone is low on storage. Rendering starts automatically once there’s room."
-        case .checking: "Kria is checking this render. It continues automatically."
+        case .cooling: String(localized: "Rendering starts automatically when it’s cooler. Your project is saved.")
+        case .storage: String(localized: "This iPhone is low on storage. Rendering starts automatically once there’s room.")
+        case .checking: String(localized: "Kria is checking this render. It continues automatically.")
         case .connection, .server: nil
         }
     }
 
     static func waitingNote(_ wait: DeviceRenderWait) -> String? {
         switch wait {
-        case .connection: "Waiting for connection. Kria will continue automatically."
-        case .server: "Kria is busy. Your render will continue automatically."
+        case .connection: String(localized: "Waiting for connection. Kria will continue automatically.")
+        case .server: String(localized: "Kria is busy. Your render will continue automatically.")
         case .cooling, .storage, .checking: nil
         }
     }
@@ -312,9 +312,9 @@ enum DeviceRenderAttentionCopy {
         if let reasonCode, let mapped = reasonMessage[reasonCode] { return mapped }
         if let fallback, fallback.count <= 160 { return fallback }
         if let reasonCode, changeReasons.contains(reasonCode) {
-            return "This edit needs a change before it can render again. Your project is saved."
+            return String(localized: "This edit needs a change before it can render again. Your project is saved.")
         }
-        return "Your project is saved. You can wait and try again."
+        return String(localized: "Your project is saved. You can wait and try again.")
     }
 
     /// `unsupported_recipe` means the compiled recipe itself is outside what this
@@ -388,7 +388,7 @@ struct DeviceRenderStatusCard: View {
             // Heat, storage and checking resume by themselves; quiet network waits keep the buttons.
             if presentation.waiting?.isQuiet != false,
                DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode, originalsMissing: originalsMissing) {
-                Button(DeviceRenderAttentionCopy.isPaused(presentation) ? "Resume" : presentation.localFile == nil ? "Try again" : "Retry sync") {
+                Button(DeviceRenderAttentionCopy.isPaused(presentation) ? String(localized: "Resume") : presentation.localFile == nil ? String(localized: "Try again") : String(localized: "Retry sync")) {
                     guard presentation.requiresServerRetry, let retryNeedsAttention else {
                         retry(); return
                     }
@@ -444,7 +444,7 @@ struct DeviceRenderStatusCard: View {
         defer { isSaving = false }
         do {
             try await photoLibrarySaver.saveVideo(at: file)
-            saveMessage = "Saved to Photos."
+            saveMessage = String(localized: "Saved to Photos.")
         } catch {
             saveMessage = error.localizedDescription
         }
@@ -462,46 +462,46 @@ struct DeviceRenderStatusCard: View {
     }
 
     private var title: String {
-        if presentation.outputVerificationPending { return "Checking your video" }
-        if let attempt = presentation.repairAttempt { return "Repairing your video (\(attempt) of 2)" }
+        if presentation.outputVerificationPending { return String(localized: "Checking your video") }
+        if let attempt = presentation.repairAttempt { return String(localized: "Repairing your video (\(attempt) of 2)") }
         if let title = presentation.waiting.flatMap(DeviceRenderAttentionCopy.waitingTitle) { return title }
         return switch presentation.phase {
-        case .preparing: "Preparing on your iPhone"
-        case .rendering: "Rendering on your iPhone"
-        case .localReady: "Ready on this iPhone"
-        case .syncing: "Syncing your video"
-        case .synced: "Your video is synced"
-        case .cancelled: DeviceRenderAttentionCopy.isPaused(presentation) ? "Rendering paused" : "Rendering stopped"
-        case .needsAttention where presentation.reasonCode == "renderer_outdated": "Update Kria to render this edit"
-        case .needsAttention where DeviceRenderAttentionCopy.needsChange(presentation): "This edit needs a change"
-        case .needsAttention where presentation.reasonCode == "original_missing": "This edit needs its original clips"
-        case .needsAttention where presentation.reasonCode == DeviceRenderAttentionCopy.renderableReason: "Ready to render on this iPhone"
-        case .needsAttention: originalsMissing ? "This edit needs its original clips" : "This edit needs your attention"
-        case .superseded: "Your edit changed"
+        case .preparing: String(localized: "Preparing on your iPhone")
+        case .rendering: String(localized: "Rendering on your iPhone")
+        case .localReady: String(localized: "Ready on this iPhone")
+        case .syncing: String(localized: "Syncing your video")
+        case .synced: String(localized: "Your video is synced")
+        case .cancelled: DeviceRenderAttentionCopy.isPaused(presentation) ? String(localized: "Rendering paused") : String(localized: "Rendering stopped")
+        case .needsAttention where presentation.reasonCode == "renderer_outdated": String(localized: "Update Kria to render this edit")
+        case .needsAttention where DeviceRenderAttentionCopy.needsChange(presentation): String(localized: "This edit needs a change")
+        case .needsAttention where presentation.reasonCode == "original_missing": String(localized: "This edit needs its original clips")
+        case .needsAttention where presentation.reasonCode == DeviceRenderAttentionCopy.renderableReason: String(localized: "Ready to render on this iPhone")
+        case .needsAttention: originalsMissing ? String(localized: "This edit needs its original clips") : String(localized: "This edit needs your attention")
+        case .superseded: String(localized: "Your edit changed")
         }
     }
     private var detail: String {
-        if presentation.outputVerificationPending { return "Checking the exported picture, text and sound against your approved edit." }
+        if presentation.outputVerificationPending { return String(localized: "Checking the exported picture, text and sound against your approved edit.") }
         if let detail = presentation.waiting.flatMap(DeviceRenderAttentionCopy.waitingDetail) { return detail }
         if presentation.phase == .localReady, DeviceRenderAttentionCopy.needsChange(presentation) {
-            return "You can watch and share it on this iPhone. To sync it, review the edit in chat and Kria will make a version this iPhone can render."
+            return String(localized: "You can watch and share it on this iPhone. To sync it, review the edit in chat and Kria will make a version this iPhone can render.")
         }
         if presentation.phase == .localReady, DeviceRenderAttentionCopy.needsUpdate(presentation) {
-            return "You can watch and share it on this iPhone. Update Kria to sync it."
+            return String(localized: "You can watch and share it on this iPhone. Update Kria to sync it.")
         }
         if presentation.phase == .needsAttention, let reasonCode = presentation.reasonCode,
-           DeviceRenderAttentionCopy.structuralReasons.contains(reasonCode) { return "Your project is saved." }
+           DeviceRenderAttentionCopy.structuralReasons.contains(reasonCode) { return String(localized: "Your project is saved.") }
         return switch presentation.phase {
-        case .preparing: "Getting the original footage and selected assets ready."
-        case .rendering: "Keep Kria open while the video finishes."
-        case .localReady: "You can watch and share it now. It will appear on your other devices after syncing."
-        case .syncing: "Your video is ready to watch and share while it uploads."
-        case .synced: "Available in your Gallery and on your other devices."
+        case .preparing: String(localized: "Getting the original footage and selected assets ready.")
+        case .rendering: String(localized: "Keep Kria open while the video finishes.")
+        case .localReady: String(localized: "You can watch and share it now. It will appear on your other devices after syncing.")
+        case .syncing: String(localized: "Your video is ready to watch and share while it uploads.")
+        case .synced: String(localized: "Available in your Gallery and on your other devices.")
         case .cancelled: DeviceRenderAttentionCopy.isPaused(presentation)
-            ? "Your project and original footage are saved. Resume when you’re ready."
-            : "Your project and original footage are saved."
-        case .needsAttention: originalsMissing ? "Your project is saved." : "Your project is saved. You can wait and try again."
-        case .superseded: "Kria will use the latest approved version."
+            ? String(localized: "Your project and original footage are saved. Resume when you’re ready.")
+            : String(localized: "Your project and original footage are saved.")
+        case .needsAttention: originalsMissing ? String(localized: "Your project is saved.") : String(localized: "Your project is saved. You can wait and try again.")
+        case .superseded: String(localized: "Kria will use the latest approved version.")
         }
     }
 }

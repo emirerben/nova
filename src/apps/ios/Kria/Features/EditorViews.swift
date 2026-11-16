@@ -246,13 +246,13 @@ struct ResultsView: View {
                 Button("Edit video") { showsEditor = true }
                     .buttonStyle(KriaPrimaryButtonStyle())
                 Button("Save to Photos") { Task { await saveToPhotos() } }.buttonStyle(KriaPrimaryButtonStyle()).disabled(playbackURL == nil)
-                Button(isPreparingShare ? "Preparing…" : "Share") { Task { await prepareShare() } }
+                Button(isPreparingShare ? String(localized: "Preparing…") : String(localized: "Share")) { Task { await prepareShare() } }
                     .buttonStyle(KriaSecondaryButtonStyle())
                     .disabled(playbackURL == nil || isPreparingShare)
             }
-            Button { Task { await refreshPlayback() } } label: { Label(isRefreshingPlayback ? "Refreshing link…" : "Refresh playback link", systemImage: "arrow.clockwise") }
+            Button { Task { await refreshPlayback() } } label: { Label(isRefreshingPlayback ? String(localized: "Refreshing link…") : String(localized: "Refresh playback link"), systemImage: "arrow.clockwise") }
                 .font(KriaFont.body(14).weight(.semibold)).disabled(isRefreshingPlayback)
-            Text(message ?? "Ready in your project receipt.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            Text(message ?? String(localized: "Ready in your project receipt.")).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
         }
         .padding(24)
         .task { await refreshPlayback(); await loadSongReference() }
@@ -295,7 +295,7 @@ struct ResultsView: View {
             let localFile = try await downloadFreshVideo()
             defer { try? FileManager.default.removeItem(at: localFile) }
             try await PhotoLibrarySaver().saveVideo(at: localFile)
-            message = "Saved to Photos."
+            message = String(localized: "Saved to Photos.")
         } catch { message = error.localizedDescription }
     }
 
@@ -361,8 +361,8 @@ enum NativeEditorVideoDownloadError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unavailable: "This video isn’t available to download yet."
-        case .rendering: "Save your changes and wait for the updated video before downloading."
+        case .unavailable: String(localized: "This video isn’t available to download yet.")
+        case .rendering: String(localized: "Save your changes and wait for the updated video before downloading.")
         }
     }
 }

@@ -15,11 +15,11 @@ extension CreationFormat {
     /// One line under the title when the creator is choosing between types.
     var rowDetail: String {
         switch self {
-        case .talkingToCamera: "One clear take, your voice at the center"
-        case .montage: "Many clips cut together to a beat"
-        case .narrated: "Your voice over footage you already have"
-        case .lipsync: "Film yourself to a song"
-        case .slides: "Photos and videos as slides"
+        case .talkingToCamera: String(localized: "One clear take, your voice at the center")
+        case .montage: String(localized: "Many clips cut together to a beat")
+        case .narrated: String(localized: "Your voice over footage you already have")
+        case .lipsync: String(localized: "Film yourself to a song")
+        case .slides: String(localized: "Photos and videos as slides")
         }
     }
 }
@@ -121,8 +121,8 @@ struct ChatAttachMenu {
     /// Opens Add media on its clip list. Offered with the limit notice, where a clip can be removed.
     var manageClips: (() -> Void)?
 
-    fileprivate var existingNoun: String { takesPhotos ? "photos and videos" : "video" }
-    fileprivate var sourcesNoun: String { takesPhotos ? "photos and videos" : "videos" }
+    fileprivate var existingDetail: String { takesPhotos ? String(localized: "Use existing photos and videos") : String(localized: "Use existing video") }
+    fileprivate var sourcesNoun: String { takesPhotos ? String(localized: "photos and videos") : String(localized: "videos") }
 }
 
 /// The floating tray over the composer (Paper S3.05): Record, Upload, then optional script and voiceover. Upload
@@ -176,29 +176,29 @@ struct ChatAttachTray: View {
                 UploadSourceRows(noun: menu.sourcesNoun, offersSaved: menu.offersSaved) { kind in close(); menu.upload(kind) }
             } else {
                 if let record = menu.record {
-                    row("video.fill", "Record", recordEnabled && menu.room != .open ? "Replaces your take" : "Film now", id: "attach-record", isEnabled: recordEnabled) { close(); record() }
+                    row("video.fill", String(localized: "Record", comment: "Attach menu: film with the camera"), recordEnabled && menu.room != .open ? String(localized: "Replaces your take") : String(localized: "Film now"), id: "attach-record", isEnabled: recordEnabled) { close(); record() }
                 }
-                row("photo.on.rectangle", "Upload", "Use existing \(menu.existingNoun)", id: "attach-upload", isEnabled: uploadEnabled) { choosingSource = true }
+                row("photo.on.rectangle", String(localized: "Upload", comment: "Attach menu: add existing media"), menu.existingDetail, id: "attach-upload", isEnabled: uploadEnabled) { choosingSource = true }
                 if let addScript = menu.addScript {
-                    row("text.alignleft", "Add script", "Shows while you record", id: "attach-script", isEnabled: recordEnabled) { close(); addScript() }
+                    row("text.alignleft", String(localized: "Add script"), String(localized: "Shows while you record"), id: "attach-script", isEnabled: recordEnabled) { close(); addScript() }
                 }
                 if let addVoiceover = menu.addVoiceover {
-                    row("mic.fill", "Add voiceover", "Record, upload or AI voice", id: "attach-voiceover") { close(); addVoiceover() }
+                    row("mic.fill", String(localized: "Add voiceover"), String(localized: "Record, upload or AI voice"), id: "attach-voiceover") { close(); addVoiceover() }
                 }
                 if let addSong = menu.addSong {
-                    row("music.note", "Add song", "Cut to a song or lip-sync", id: "attach-song") { close(); addSong() }
+                    row("music.note", String(localized: "Add song"), String(localized: "Cut to a song or lip-sync"), id: "attach-song") { close(); addSong() }
                 }
                 if let addOverlays = menu.addOverlays {
-                    row("square.on.square", "Add overlays", "Photos and clips for context", id: "attach-overlays") { close(); addOverlays() }
+                    row("square.on.square", String(localized: "Add overlays"), String(localized: "Photos and clips for context"), id: "attach-overlays") { close(); addOverlays() }
                 }
                 if enabled, case let .full(count, _) = menu.room {
                     // At the most clips there is nothing to add: say so, and offer where a clip can be removed.
-                    Text("You’ve added \(FootageStageCopy.count(count, "clip")), the most for this format.")
+                    Text(String(localized: "You’ve added \(count) clips, the most for this format."))
                         .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4).padding(.top, 4)
                         .accessibilityIdentifier("attach-tray-full")
                     if let manageClips = menu.manageClips {
-                        row("square.stack", "Manage clips", "Remove one to add another", id: "attach-manage") { close(); manageClips() }
+                        row("square.stack", String(localized: "Manage clips"), String(localized: "Remove one to add another"), id: "attach-manage") { close(); manageClips() }
                     }
                 }
                 if let reason = menu.disabledReason {
@@ -235,16 +235,16 @@ struct NoSpeechRecoveryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            KriaNoticeCard(tone: .failure, title: "We couldn’t hear any speech in this video",
-                           message: "Record it again or choose a different video.")
+            KriaNoticeCard(tone: .failure, title: String(localized: "We couldn’t hear any speech in this video"),
+                           message: String(localized: "Record it again or choose a different video."))
                 .accessibilityIdentifier("speech-cleanup-no-speech")
             if recordAgain != nil || chooseAnother != nil {
                 KriaSourceRow(options: [
                     recordAgain.map { action in
-                        KriaSourceOption(id: "record-again", symbol: KriaSourceOption.recordSymbol, title: "Record again", identifier: "no-speech-record", action: action)
+                        KriaSourceOption(id: "record-again", symbol: KriaSourceOption.recordSymbol, title: String(localized: "Record again"), identifier: "no-speech-record", action: action)
                     },
                     chooseAnother.map { action in
-                        KriaSourceOption(id: "upload-another", symbol: KriaSourceOption.uploadSymbol, title: "Upload another", identifier: "no-speech-upload", action: action)
+                        KriaSourceOption(id: "upload-another", symbol: KriaSourceOption.uploadSymbol, title: String(localized: "Upload another"), identifier: "no-speech-upload", action: action)
                     }
                 ].compactMap { $0 }, layout: .compact)
             }

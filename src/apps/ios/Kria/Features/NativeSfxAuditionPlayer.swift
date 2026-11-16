@@ -89,7 +89,7 @@ struct NativeSfxPlayButton: View {
             .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(player.playingID == id ? "Pause \(name)" : "Play \(name)")
+        .accessibilityLabel(player.playingID == id ? String(localized: "Pause \(name)") : String(localized: "Play \(name)"))
         .accessibilityIdentifier("native-editor-sfx-audition-\(id)")
     }
 }

@@ -106,14 +106,14 @@ struct PlanBlockFeed: View {
     private var header: some View {
         VStack(spacing: 2) {
             KriaShimmerText(
-                effectivePhase == .planning ? "Making your video" : "Your plan is ready",
+                effectivePhase == .planning ? String(localized: "Making your video") : String(localized: "Your plan is ready"),
                 font: KriaFont.body(17).weight(.semibold), color: KriaColor.ink,
                 isShimmering: effectivePhase == .planning
             )
             .accessibilityIdentifier("plan-feed.header")
             .accessibilityAddTraits(.isHeader)
             if effectivePhase != .planning {
-                Text(reviewAvailable ? "Tap a row for details, or change it" : "Tap a row for details")
+                Text(reviewAvailable ? String(localized: "Tap a row for details, or change it") : String(localized: "Tap a row for details"))
                     .font(KriaFont.body(13))
                     .foregroundStyle(KriaColor.mutedInk)
             }
@@ -220,7 +220,7 @@ struct PlanBlockFeed: View {
     private func changeButton(_ block: PlanBlock) -> some View {
         let live = reviewAvailable
         return Button { openReview?(block.section) } label: {
-            KriaPlanPill(title: "Change", style: .change)
+            KriaPlanPill(title: String(localized: "Change"), style: .change)
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
@@ -228,7 +228,7 @@ struct PlanBlockFeed: View {
         .disabled(!live)
         .opacity(live ? 1 : 0.45)
         .accessibilityLabel("Change \(block.section.label)")
-        .accessibilityHint(live ? "Opens the review" : "Not available yet")
+        .accessibilityHint(live ? String(localized: "Opens the review") : String(localized: "Not available yet"))
         .accessibilityIdentifier("plan-feed.change.\(block.section.rawValue)")
     }
 
@@ -256,9 +256,9 @@ struct PlanBlockFeed: View {
 
     private func accessibilityValue(_ block: PlanBlock, expanded: Bool) -> String {
         switch block.state {
-        case .waiting: "waiting"
-        case .deciding: "deciding"
-        case .decided: "decided, \(expanded ? "expanded" : "collapsed"). \(block.displaySummary)"
+        case .waiting: String(localized: "waiting")
+        case .deciding: String(localized: "deciding")
+        case .decided: expanded ? String(localized: "decided, expanded. \(block.displaySummary)") : String(localized: "decided, collapsed. \(block.displaySummary)")
         }
     }
 
@@ -295,7 +295,7 @@ struct PlanBlockFeed: View {
 
     // MARK: Bottom panel
 
-    private var countsText: String { "\(display.decidedCount) of \(display.totalCount) decided" }
+    private var countsText: String { String(localized: "\(display.decidedCount) of \(display.totalCount) decided") }
 
     /// Glass panel: status line, Stop, progress, and (on an older server) the expand-all toggle. Planning shows no
     /// Create button: Create already happened.
@@ -311,7 +311,7 @@ struct PlanBlockFeed: View {
                     .accessibilityAddTraits(.isHeader)
                 if canStop || isStopping {
                     Button(action: stop) {
-                        Text(isStopping ? "Stopping…" : "Stop")
+                        Text(isStopping ? String(localized: "Stopping…") : String(localized: "Stop"))
                             .font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
                             .padding(.horizontal, 6)
                             .frame(minHeight: 44)
@@ -319,7 +319,7 @@ struct PlanBlockFeed: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(isStopping)
-                    .accessibilityLabel(isStopping ? "Stopping the render" : "Stop the render")
+                    .accessibilityLabel(isStopping ? String(localized: "Stopping the render") : String(localized: "Stop the render"))
                     .accessibilityIdentifier("plan-feed-stop")
                 }
             }
@@ -335,7 +335,7 @@ struct PlanBlockFeed: View {
         let font = KriaFont.body(15).weight(.semibold)
         switch effectivePhase {
         case .planning: Text("Planning · \(countsText)").font(font).foregroundStyle(KriaColor.ink)
-        case .rendering: KriaShimmerText("Making your video", font: font, color: KriaColor.ink)
+        case .rendering: KriaShimmerText(String(localized: "Making your video"), font: font, color: KriaColor.ink)
         case .ready: Text("Plan ready · \(countsText)").font(font).foregroundStyle(KriaColor.ink)
         }
     }
@@ -351,7 +351,7 @@ struct PlanBlockFeed: View {
             KriaProgressTrack(progress: renderFraction)
                 .accessibilityElement()
                 .accessibilityLabel("Making your video")
-                .accessibilityValue(renderFraction.map { "\(Int(($0 * 100).rounded())) percent" } ?? "in progress")
+                .accessibilityValue(renderFraction.map { String(localized: "\(Int(($0 * 100).rounded())) percent") } ?? String(localized: "in progress"))
                 .accessibilityIdentifier("plan-feed.progress")
         } else {
             KriaProgressTrack(progress: display.progress)
@@ -371,7 +371,7 @@ struct PlanBlockFeed: View {
             HStack(spacing: 8) {
                 Image(systemName: reviewingAll ? "chevron.up" : "list.bullet.rectangle")
                     .font(.system(size: 13, weight: .semibold))
-                Text(reviewingAll ? "Collapse plan" : "Review plan")
+                Text(reviewingAll ? String(localized: "Collapse plan") : String(localized: "Review plan"))
                     .font(KriaFont.body(15).weight(.semibold))
             }
             .foregroundStyle(KriaColor.ink)
@@ -394,7 +394,7 @@ struct PlanBlockFeed: View {
     private func announceNewlyDecided() {
         for block in display.blocks where block.state == .decided && !announced.contains(block.section) {
             announced.insert(block.section)
-            let spoken = block.skipped ? "\(block.section.label) not used" : "\(block.section.label) decided. \(block.displaySummary)"
+            let spoken = block.skipped ? String(localized: "\(block.section.label) not used") : String(localized: "\(block.section.label) decided. \(block.displaySummary)")
             UIAccessibility.post(notification: .announcement, argument: spoken)
         }
     }

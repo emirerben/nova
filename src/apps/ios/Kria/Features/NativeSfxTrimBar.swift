@@ -34,10 +34,10 @@ struct NativeSfxTrimBar: View {
                     .frame(width: max(0, x(end) - x(start) + handleWidth * 2))
                     .offset(x: x(start) - handleWidth)
                     .allowsHitTesting(false)
-                handle(label: "Trim start", value: start, position: x(start) - handleWidth / 2, usable: usable) { origin, delta in
+                handle(label: String(localized: "Trim start"), value: start, position: x(start) - handleWidth / 2, usable: usable) { origin, delta in
                     onChange(min(max(0, origin + delta), end - minimum), end)
                 } adjust: { step in onChange(min(max(0, start + step), end - minimum), end) }
-                handle(label: "Trim end", value: end, position: x(end) - handleWidth / 2, usable: usable) { origin, delta in
+                handle(label: String(localized: "Trim end"), value: end, position: x(end) - handleWidth / 2, usable: usable) { origin, delta in
                     onChange(start, max(start + minimum, min(source, origin + delta)))
                 } adjust: { step in onChange(start, max(start + minimum, min(source, end + step))) }
             }

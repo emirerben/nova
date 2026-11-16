@@ -9,7 +9,7 @@ struct CameraRollPageHeader: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            CameraRollCircleButton(identifier: "camera-roll-back", label: "Back", action: { dismiss() }) {
+            CameraRollCircleButton(identifier: "camera-roll-back", label: String(localized: "Back"), action: { dismiss() }) {
                 Image(systemName: "chevron.left").font(.system(size: 16, weight: .semibold)).foregroundStyle(KriaColor.ink)
             }
             Text(title).font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink).lineLimit(1)
@@ -46,7 +46,7 @@ struct CameraRollTasteView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CameraRollPageHeader(title: "Your taste")
+            CameraRollPageHeader(title: String(localized: "Your taste"))
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -152,7 +152,7 @@ struct CameraRollTasteView: View {
         busy = true; error = nil; defer { busy = false }
         let entries = rules.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard entries.count <= 12, entries.allSatisfy({ $0.count <= 500 }), entries.joined().count <= 4000 else {
-            error = "Keep up to 12 short preferences, with 500 characters each."; return
+            error = String(localized: "Keep up to 12 short preferences, with 500 characters each."); return
         }
         let notes = Dictionary(uniqueKeysWithValues: current.examples.filter { selected.contains($0.projectID) }.compactMap { example -> (String, String)? in
             guard let note = example.contextualNote else { return nil }; return (example.projectID.uuidString, note)

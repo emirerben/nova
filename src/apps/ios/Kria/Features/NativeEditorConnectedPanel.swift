@@ -37,11 +37,12 @@ struct NativeEditorPanelResizeGrabber: View {
     let accessibilityIdentifier: String
     var topAligned = false
     var bounds: ClosedRange<CGFloat> = 0...1
-    var accessibilityTitle = "Editor panel size"
-    var accessibilityHint = "Swipe up or down to resize the editor panel"
+    var accessibilityTitle = String(localized: "Editor panel size")
+    var accessibilityHint = String(localized: "Swipe up or down to resize the editor panel")
     /// Spoken value, given the current value and its bounds.
     var describe: (CGFloat, ClosedRange<CGFloat>) -> String = { value, bounds in
-        "\(Int(((value - bounds.lowerBound) / max(0.0001, bounds.upperBound - bounds.lowerBound)) * 100)) percent expanded"
+        let percent = Int(((value - bounds.lowerBound) / max(0.0001, bounds.upperBound - bounds.lowerBound)) * 100)
+        return String(localized: "\(percent) percent expanded")
     }
     /// Signed fraction of the span added by a VoiceOver "increment".
     var incrementFraction: CGFloat = 0.25
@@ -320,12 +321,14 @@ struct NativeEditorPanelTabs<Tab: Hashable & RawRepresentable>: View where Tab.R
     var identifier: ((Tab) -> String)?
     /// A segment that cannot be chosen right now; the screen shows why next to the control.
     var isEnabled: ((Tab) -> Bool)?
+    /// Display title; defaults to the raw value looked up as a localization key.
+    var title: ((Tab) -> String)?
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(tabs, id: \.self) { value in
                 Button { selection = value } label: {
-                    Text(value.rawValue)
+                    (title.map { Text(verbatim: $0(value)) } ?? Text(LocalizedStringKey(value.rawValue)))
                         .font(KriaFont.body(14).weight(value == selection ? .semibold : .regular))
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         .lineLimit(1)

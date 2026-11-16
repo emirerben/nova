@@ -391,13 +391,12 @@ struct SongTimelineSurface: View {
 
     private func blockLabel(_ segment: SongTimelineState.Segment) -> String {
         let delta = state.delta(of: segment.mediaID) ?? segment.start
-        var text = "Clip \(clipNumber(segment.mediaID)), starts at \(DurationFormatter.clock(max(0, delta)))"
-        if segment.hidden { text += ", hidden behind another clip" }
-        return text
+        if segment.hidden { return String(localized: "Clip \(clipNumber(segment.mediaID)), starts at \(DurationFormatter.clock(max(0, delta))), hidden behind another clip") }
+        return String(localized: "Clip \(clipNumber(segment.mediaID)), starts at \(DurationFormatter.clock(max(0, delta)))")
     }
 
     private func blockFace(id: String, width: CGFloat, uncertain: Bool, hidden: Bool, selected: Bool, lifted: Bool) -> some View {
-        let title = hidden ? "Clip \(clipNumber(id)) · hidden" : "Clip \(clipNumber(id))"
+        let title = hidden ? String(localized: "Clip \(clipNumber(id)) · hidden") : String(localized: "Clip \(clipNumber(id))")
         return ZStack(alignment: .bottomLeading) {
             SongTimelineThumbnail(media: media(id), width: width, height: Layout.clipHeight)
                 .background(lifted ? KriaColor.butter : KriaColor.sky)
@@ -429,7 +428,7 @@ struct SongTimelineSurface: View {
         let hit = max(44, width)
         let x = axis.x(gap.start) - (hit - width) / 2
         let selected = selection == .gap(gap.index)
-        let label = "Empty spot \(DurationFormatter.clock(gap.start)) to \(DurationFormatter.clock(gap.end))"
+        let label = String(localized: "Empty spot \(DurationFormatter.clock(gap.start)) to \(DurationFormatter.clock(gap.end))")
         return Button {
             if !isSending { actions.selectGap(gap.index) }
         } label: {

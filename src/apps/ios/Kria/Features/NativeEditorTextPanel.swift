@@ -149,13 +149,13 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                             EmptyView()
                         } else if usesAccessibilityLayout {
                             VStack(spacing: 8) {
-                                timingField("Start", isStart: true)
-                                timingField("End", isStart: false)
+                                timingField(String(localized: "Start", comment: "Text timing field: when the text appears"), isStart: true)
+                                timingField(String(localized: "End", comment: "Text timing field: when the text disappears"), isStart: false)
                             }
                         } else {
                             HStack {
-                                timingField("Start", isStart: true)
-                                timingField("End", isStart: false)
+                                timingField(String(localized: "Start", comment: "Text timing field: when the text appears"), isStart: true)
+                                timingField(String(localized: "End", comment: "Text timing field: when the text disappears"), isStart: false)
                             }
                         }
                     case .style: styleControls
@@ -220,7 +220,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
 
     private func timingField(_ title: String, isStart: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title + " (seconds)").font(KriaFont.body(12))
+            Text(String(localized: "\(title) (seconds)")).font(KriaFont.body(12))
             TextField(title, value: Binding(
                 get: {
                     guard let item else { return 0 }
@@ -247,15 +247,15 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                             session.applyTextPreset(id: id, preset: preset)
                         } label: {
                             if string("editor_preset", "Simple") == preset {
-                                Label(preset, systemImage: "checkmark")
+                                Label(Self.presetTitle(preset), systemImage: "checkmark")
                             } else {
-                                Text(preset)
+                                Text(Self.presetTitle(preset))
                             }
                         }
                     }
                 } label: {
                     HStack(spacing: 12) {
-                        Text(string("editor_preset", "Simple"))
+                        Text(Self.presetTitle(string("editor_preset", "Simple")))
                             .font(KriaFont.body(14))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 12, weight: .semibold))
@@ -281,11 +281,11 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             }
             sizeControl
             colorControl
-            propertyRow("Outline", key: "stroke_width", range: 0...20, unit: "px", colorKey: "stroke_color")
-            propertyRow("Shadow", key: "shadow_opacity", range: 0...1, unit: "%", colorKey: "shadow_color")
+            propertyRow(String(localized: "Outline", comment: "Text outline (stroke) around letters"), key: "stroke_width", range: 0...20, unit: "px", colorKey: "stroke_color")
+            propertyRow(String(localized: "Shadow"), key: "shadow_opacity", range: 0...1, unit: "%", colorKey: "shadow_color")
             placementControl
-            positionControl("Horizontal position", key: "x_frac")
-            positionControl("Vertical position", key: "y_frac")
+            positionControl(String(localized: "Horizontal position"), key: "x_frac")
+            positionControl(String(localized: "Vertical position"), key: "y_frac")
             rotationControl
             bendControl
         }
@@ -309,7 +309,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             )
             VStack(alignment: .leading, spacing: 2) {
                 sliderRow(
-                    "Bend", accessibilityName: "Text bend", value: bend, range: -100...100, step: 1,
+                    String(localized: "Bend", comment: "Slider: curve the text along an arc"), accessibilityName: String(localized: "Text bend"), value: bend, range: -100...100, step: 1,
                     valueText: shown > 0 ? "+\(shown)" : "\(shown)", accessibilityValue: "\(shown)",
                     identifier: "native-editor-text-bend"
                 )
@@ -328,7 +328,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         let explicitPhases: Bool = item?.raw["animation_phases"]?.objectValue != nil
         let typewriter: Bool = phases["entrance"]?.stringValue == "typewriter" || phases["exit"]?.stringValue == "typewriter"
         let legacy: PortableTextLayer.Effect = explicitPhases ? .none : (PortableTextLayer.Effect(rawValue: string("effect", "none")) ?? .none)
-        return PortableTextLayer.bendSupported(effect: legacy, phasesTypewriter: typewriter) ? nil : "Bend isn't available with this animation."
+        return PortableTextLayer.bendSupported(effect: legacy, phasesTypewriter: typewriter) ? nil : String(localized: "Bend isn't available with this animation.")
     }
 
     /// KRI-646: rotation is a slider. The canvas twist gesture can store any angle up to ±360, so
@@ -343,8 +343,8 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             }
         )
         return sliderRow(
-            "Rotation", accessibilityName: "Text rotation", value: rotation, range: -180...180, step: 1,
-            valueText: "\(degrees)°", accessibilityValue: "\(degrees) degrees",
+            String(localized: "Rotation"), accessibilityName: String(localized: "Text rotation"), value: rotation, range: -180...180, step: 1,
+            valueText: "\(degrees)°", accessibilityValue: String(localized: "\(degrees) degrees"),
             identifier: "native-editor-text-rotation"
         )
     }
@@ -413,7 +413,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                         .frame(minWidth: 44, maxWidth: expanded ? .infinity : nil, minHeight: 44)
                         .background(string("alignment", "center") == alignment ? KriaColor.selectionSoft : KriaColor.softZinc)
                 }
-                .accessibilityLabel("Align text \(alignment)")
+                .accessibilityLabel(Self.alignmentLabel(alignment))
                 .accessibilityAddTraits(string("alignment", "center") == alignment ? .isSelected : [])
             }
         }
@@ -529,14 +529,31 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         }
     }
 
+    private static func presetTitle(_ preset: String) -> String {
+        switch preset {
+        case "Simple": String(localized: "Simple", comment: "Text style preset: plain text")
+        case "Bold": String(localized: "Bold", comment: "Text style preset: bold text")
+        case "Highlight": String(localized: "Highlight", comment: "Text style preset: text on a highlighted box")
+        default: preset
+        }
+    }
+
+    private static func alignmentLabel(_ alignment: String) -> String {
+        switch alignment {
+        case "left": String(localized: "Align text left")
+        case "right": String(localized: "Align text right")
+        default: String(localized: "Align text center")
+        }
+    }
+
     private static func placementLabel(_ placement: NativeTextBlockPlacement) -> String {
         switch placement {
-        case .left: "Place text at the left edge"
-        case .center: "Center text horizontally"
-        case .right: "Place text at the right edge"
-        case .top: "Place text at the top"
-        case .middle: "Center text vertically"
-        case .bottom: "Place text at the bottom"
+        case .left: String(localized: "Place text at the left edge")
+        case .center: String(localized: "Center text horizontally")
+        case .right: String(localized: "Place text at the right edge")
+        case .top: String(localized: "Place text at the top")
+        case .middle: String(localized: "Center text vertically")
+        case .bottom: String(localized: "Place text at the bottom")
         }
     }
 
@@ -554,16 +571,16 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             }
         )
         return sliderRow(
-            key == "x_frac" ? "Horizontal" : "Vertical", accessibilityName: "Text \(title.lowercased())",
+            key == "x_frac" ? String(localized: "Horizontal") : String(localized: "Vertical"), accessibilityName: key == "x_frac" ? String(localized: "Text horizontal position") : String(localized: "Text vertical position"),
             value: position, range: 0...1, step: 0.01, valueText: "\(percent)%",
-            accessibilityValue: "\(percent) percent", identifier: "native-editor-text-position-" + axis
+            accessibilityValue: String(localized: "\(percent) percent"), identifier: "native-editor-text-position-" + axis
         )
     }
 
     private var animationControls: some View {
         NativeAnimationPhasePicker(
             session: session, clock: previewClock, phases: phases, identifierPrefix: "native-editor-text-animation",
-            speedNote: "Changes motion speed. Text timing stays the same.", usesAccessibilityLayout: usesAccessibilityLayout,
+            speedNote: String(localized: "Changes motion speed. Text timing stays the same."), usesAccessibilityLayout: usesAccessibilityLayout,
             onEffect: { session.setTextPhase(id: id, phase: $0, effect: $1) },
             onSpeed: { session.setTextAnimationSpeed(id: id, speed: $0) }
         )
@@ -667,7 +684,7 @@ struct LineEditorConfiguration: Equatable {
     /// server's unit). `nil` = unlimited.
     var maxLength: Int? = nil
     var usesKriaBodyFont = false
-    var accessibilityLabel = "Text"
+    var accessibilityLabel = String(localized: "Text")
 
     /// KRI-240 caption line: wraps, Return moves to the next line (Done on the last),
     /// never auto-replaces words, and asks for a keyboard in the caption language.
@@ -690,7 +707,7 @@ struct LineEditorConfiguration: Equatable {
         // The server's caption cue limit: a longer line fails the whole Save.
         config.maxLength = 600
         config.usesKriaBodyFont = true
-        config.accessibilityLabel = "Caption"
+        config.accessibilityLabel = String(localized: "Caption")
         return config
     }
 
@@ -785,7 +802,7 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
         view.returnKeyType = .default
         view.textContainer.widthTracksTextView = false
         view.textContainer.heightTracksTextView = false
-        view.accessibilityLabel = "Text"
+        view.accessibilityLabel = String(localized: "Text")
         view.accessibilityIdentifier = identifier
         configuration.apply(to: view)
         view.appliedConfiguration = configuration

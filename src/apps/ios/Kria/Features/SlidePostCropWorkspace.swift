@@ -38,8 +38,8 @@ struct SlidePostCropWorkspace: View {
                 .accessibilityIdentifier("slidepost-crop-done")
             }
             if allowsLandscape { shapeControl } else {
-                Text(showsFit ? "Every slide uses the post size (\(postSize.rawValue)). Change it in Size."
-                     : "Instagram keeps one shape for every slide")
+                Text(showsFit ? String(localized: "Every slide uses the post size (\(postSize.rawValue)). Change it in Size.")
+                     : String(localized: "Instagram keeps one shape for every slide"))
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
                     .accessibilityIdentifier("slidepost-crop-shape-note")
             }
@@ -64,8 +64,8 @@ struct SlidePostCropWorkspace: View {
     private var fitControl: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                fitModeButton("Fill", on: fit == nil, id: "slidepost-crop-fit-fill") { session.setFit(slideID: slide.id, nil) }
-                fitModeButton("Fit", on: fit != nil, id: "slidepost-crop-fit-fit") { session.setFit(slideID: slide.id, fit ?? .blur) }
+                fitModeButton(String(localized: "Fill", comment: "Photo fills the frame, edges trimmed"), on: fit == nil, id: "slidepost-crop-fit-fill") { session.setFit(slideID: slide.id, nil) }
+                fitModeButton(String(localized: "Fit", comment: "Photo fits inside the frame with bars around it"), on: fit != nil, id: "slidepost-crop-fit-fit") { session.setFit(slideID: slide.id, fit ?? .blur) }
             }
             if let fit {
                 HStack(spacing: 8) {
@@ -101,8 +101,8 @@ struct SlidePostCropWorkspace: View {
 
     private var shapeControl: some View {
         HStack(spacing: 8) {
-            shapeButton(.portrait, "Vertical", symbol: "rectangle.portrait")
-            shapeButton(.landscape, "Landscape", symbol: "rectangle")
+            shapeButton(.portrait, String(localized: "Vertical"), symbol: "rectangle.portrait")
+            shapeButton(.landscape, String(localized: "Landscape"), symbol: "rectangle")
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("slidepost-crop-shape")

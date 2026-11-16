@@ -181,8 +181,8 @@ extension NativeEditorSession {
 
     /// Why Tilt is greyed out for the selected clip, or nil when it is available.
     func tiltBlockedReason(for selection: EditorSelection?) -> String? {
-        guard let selection, selection.kind == .clip else { return "Select a clip to tilt it." }
-        if !canTiltClips { return document.capabilities["clips.tilt"]?.reason.map(nativeEditorWireLabel) ?? "Tilt isn’t available for this edit." }
+        guard let selection, selection.kind == .clip else { return String(localized: "Select a clip to tilt it.") }
+        if !canTiltClips { return document.capabilities["clips.tilt"]?.reason.map(nativeEditorWireLabel) ?? String(localized: "Tilt isn’t available for this edit.") }
         guard let slotID = timelineClips.first(where: { $0.id.uuidString == selection.id })?.slotID,
               let slot = document.clips.first(where: { $0.id == slotID }) else { return nil }
         return Self.tiltBlockedReason(for: slot)
@@ -190,9 +190,9 @@ extension NativeEditorSession {
 
     static func tiltBlockedReason(for slot: EditorTimelineSlot) -> String? {
         if ![nil, "none"].contains(slot.lookPreset) || !(slot.lookAdjustments?.isEmpty ?? true) {
-            return "A clip with a colour look can’t be tilted. Remove the look first."
+            return String(localized: "A clip with a colour look can’t be tilted. Remove the look first.")
         }
-        if slot.raw["layout"]?.stringValue == "supporting_card" { return "Supporting cards keep their own layout." }
+        if slot.raw["layout"]?.stringValue == "supporting_card" { return String(localized: "Supporting cards keep their own layout.") }
         return nil
     }
 

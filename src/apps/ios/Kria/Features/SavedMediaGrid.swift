@@ -71,7 +71,7 @@ struct SavedMediaGrid<MenuContent: View>: View {
             }
             .accessibilityIdentifier("saved-uploads-grid")
             GalleryFooter(
-                text: message ?? limitMessage ?? "\(selected.count) of \(limit) selected · slide across to select",
+                text: message ?? limitMessage ?? String(localized: "\(selected.count) of \(limit) selected · slide across to select"),
                 identifier: "saved-uploads-count"
             )
         }
@@ -91,13 +91,13 @@ struct SavedMediaGrid<MenuContent: View>: View {
         case .selectable:
             var next = current
             if next.toggle(asset.id.uuidString) == .refusedAtLimit {
-                limitMessage = "You can choose up to \(limit) here."
+                limitMessage = String(localized: "You can choose up to \(limit) here.")
                 tapToken += 1
                 return
             }
             write(next)
         case .inPost:
-            limitMessage = "Already in this post."
+            limitMessage = String(localized: "Already in this post.")
             tapToken += 1
         case .adding:
             break
@@ -143,14 +143,14 @@ struct SavedMediaGrid<MenuContent: View>: View {
 
     private static func kindLabel(_ asset: SavedMediaAsset) -> String {
         switch asset.kind {
-        case "video": asset.durationSeconds.map { "Video, \(GalleryTileChrome.duration($0))" } ?? "Video"
-        case "audio": "Audio"
-        default: "Photo"
+        case "video": asset.durationSeconds.map { String(localized: "Video, \(GalleryTileChrome.duration($0))") } ?? String(localized: "Video")
+        case "audio": String(localized: "Audio")
+        default: String(localized: "Photo")
         }
     }
 
     private static func selectionLabel(number: Int?, state: SavedTileState) -> String {
-        if state == .inPost { return "In this post" }
-        return number.map { "Selected, \($0)" } ?? "Not selected"
+        if state == .inPost { return String(localized: "In this post") }
+        return number.map { String(localized: "Selected, \($0)") } ?? String(localized: "Not selected")
     }
 }

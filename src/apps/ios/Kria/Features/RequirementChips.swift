@@ -18,18 +18,18 @@ enum RequirementOutcome: String, Equatable, Sendable {
     /// Plain words for VoiceOver and for a chip whose requirement text hasn't loaded yet.
     var word: String {
         switch self {
-        case .met: "Done"
-        case .partial: "Partly done"
-        case .notPossible: "Couldn’t do"
+        case .met: String(localized: "Done")
+        case .partial: String(localized: "Partly done")
+        case .notPossible: String(localized: "Couldn’t do")
         }
     }
 
     /// Shown when the tapped chip has no reason of its own.
     var defaultReason: String {
         switch self {
-        case .met: "Done as you asked."
-        case .partial: "Only part of this was possible."
-        case .notPossible: "This wasn’t possible with the footage you gave me."
+        case .met: String(localized: "Done as you asked.")
+        case .partial: String(localized: "Only part of this was possible.")
+        case .notPossible: String(localized: "This wasn’t possible with the footage you gave me.")
         }
     }
 }
@@ -46,11 +46,11 @@ struct InferredLabel: Equatable, Sendable, Identifiable {
 
     /// "I guessed Harbor Point for clip 4"; without a clip number, just the guess.
     var guessSentence: String {
-        clipNumber.map { "I guessed \(text) for clip \($0)" } ?? "I guessed \(text)"
+        clipNumber.map { String(localized: "I guessed \(text) for clip \($0)") } ?? String(localized: "I guessed \(text)")
     }
 
     /// The short form on a chip: "Clip 2: Maya".
-    var chipLabel: String { clipNumber.map { "Clip \($0): \(text)" } ?? text }
+    var chipLabel: String { clipNumber.map { String(localized: "Clip \($0): \(text)") } ?? text }
 
     /// The opening of the correction, left for the creator to finish with the right name.
     var correctionPrompt: String {
@@ -125,7 +125,7 @@ struct CreativeBriefRequirement: Equatable, Sendable, Identifiable {
         // KRI-1289: one clause ("show each one as big text") becomes one requirement per list item, all with
         // the same description. The item's own text is what tells the rows apart, so it follows the lead.
         if !lead.isEmpty, !exact.isEmpty, !lead.localizedCaseInsensitiveContains(exact) {
-            return "\(lead) (\"\(exact)\")"
+            return String(localized: "\(lead) (\"\(exact)\")")
         }
         return [lead, exact, words(scope)].first { !$0.isEmpty }
     }
@@ -232,12 +232,12 @@ struct RequirementChipsView: View {
                 ForEach(Array(rows.enumerated()), id: \.element.requirementID) { offset, receipt in
                     RequirementReceiptRow(
                         receipt: receipt,
-                        title: showsTitles ? (requirements[receipt.requirementID]?.chipTitle ?? "Request \(offset + 1)") : nil,
+                        title: showsTitles ? (requirements[receipt.requirementID]?.chipTitle ?? String(localized: "Request \(offset + 1)")) : nil,
                         showsReason: showsReasons
                     )
                 }
                 if !alsoChanged.isEmpty {
-                    Text("Also: " + alsoChanged.joined(separator: "; "))
+                    Text(String(localized: "Also: \(alsoChanged.joined(separator: "; "))"))
                         .kriaType(.label)
                         .foregroundStyle(KriaColor.mutedInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -263,17 +263,17 @@ private struct RequirementReceiptRow: View {
     /// False when the prose above already states the reason (no `reply_lead`).
     var showsReason: Bool = true
 
-    private var meaning: String { receipt.isUnchecked ? "Have a look" : receipt.outcome.word }
+    private var meaning: String { receipt.isUnchecked ? String(localized: "Have a look") : receipt.outcome.word }
 
     private var reason: String {
-        receipt.reason ?? (receipt.isUnchecked ? "Have a look at this one in the video." : receipt.outcome.defaultReason)
+        receipt.reason ?? (receipt.isUnchecked ? String(localized: "Have a look at this one in the video.") : receipt.outcome.defaultReason)
     }
 
     private var spokenLabel: String {
         switch (title, showsReason) {
-        case let (title?, true): "\(meaning): \(title). \(reason)"
-        case let (title?, false): "\(meaning): \(title)"
-        case (nil, _): "\(meaning): \(reason)"
+        case let (title?, true): String(localized: "\(meaning): \(title). \(reason)")
+        case let (title?, false): String(localized: "\(meaning): \(title)")
+        case (nil, _): String(localized: "\(meaning): \(reason)")
         }
     }
 

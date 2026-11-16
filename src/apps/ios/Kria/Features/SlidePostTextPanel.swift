@@ -132,7 +132,7 @@ struct SlidePostTextPanel: View {
                 ForEach(Array(texts.enumerated()), id: \.element.id) { index, element in
                     let on = element.id == selected?.id
                     Button { session.selectedTextID = element.id } label: {
-                        Text(element.text.isEmpty ? "Text \(index + 1)" : String(element.text.prefix(14)))
+                        Text(element.text.isEmpty ? String(localized: "Text \(index + 1)") : String(element.text.prefix(14)))
                             .font(KriaFont.body(13).weight(on ? .semibold : .regular)).lineLimit(1)
                             .foregroundStyle(on ? KriaColor.mutedInk : KriaColor.ink)
                             .padding(.horizontal, 14).frame(minHeight: 44)
@@ -151,7 +151,7 @@ struct SlidePostTextPanel: View {
         Button {
             session.applyStyleToAllSlides(slideID: slideID, textID: element.id)
             let others = (session.draft?.slides.count ?? 1) - 1
-            appliedMessage = others > 0 ? "Style applied to \(others) other slide\(others == 1 ? "" : "s")" : nil
+            appliedMessage = others > 0 ? String(localized: "Style applied to \(others) other slides") : nil
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } label: {
             Text("Apply to all slides").frame(maxWidth: .infinity, minHeight: 44)
@@ -171,8 +171,8 @@ struct SlidePostLookPanel: View {
     /// stadium_diffusion / olive_film are retired from the picker (web parity); drafts that already
     /// use them still render.
     static let looks: [(String, String)] = [
-        ("none", "Original"),
-        ("smoky_split_tone", "Smoky Split-Tone"), ("golden_hour", "Golden Hour"), ("faded_analog", "Faded Analog"),
+        ("none", String(localized: "Original", comment: "Photo look: no filter applied")),
+        ("smoky_split_tone", String(localized: "Smoky Split-Tone")), ("golden_hour", String(localized: "Golden Hour")), ("faded_analog", String(localized: "Faded Analog")),
     ]
     private var current: String { session.draft?.slides.first { $0.id == slideID }?.edits?.lookPreset ?? "none" }
 

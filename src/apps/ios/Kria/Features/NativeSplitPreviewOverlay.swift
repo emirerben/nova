@@ -76,7 +76,7 @@ struct NativeSplitPreviewOverlay: View {
                 .offset(x: rect.minX, y: rect.minY)
                 .allowsHitTesting(false)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(NativeSplitScreenRows.panelTitle(index: index, count: section.panelCount)) panel")
+                .accessibilityLabel("\(NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: index, count: section.panelCount))) panel")
                 .accessibilityAddTraits(selected == index ? [.isButton, .isSelected] : .isButton)
                 .accessibilityAction { Self.choose(panel: index, context: context, session: session, pick: $pick) }
                 .accessibilityIdentifier("native-editor-split-panel-\(index)")
@@ -162,7 +162,7 @@ private struct NativeSplitDividerHandle: View {
     }
 
     private var upperTitle: String {
-        NativeSplitScreenRows.panelTitle(index: upper, count: section.panelCount).lowercased()
+        NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: upper, count: section.panelCount))
     }
 
     var body: some View {

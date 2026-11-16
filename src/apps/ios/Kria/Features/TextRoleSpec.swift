@@ -28,25 +28,25 @@ struct TextRoleSpec: Identifiable, Sendable {
     let usualPosition: String?
     var id: String { role }
 
-    static let kriaPicksPlacement = "Kria picks the clearest spot"
+    static let kriaPicksPlacement = String(localized: "Kria picks the clearest spot")
 
     static let all: [TextRoleSpec] = [
-        TextRoleSpec(role: "all_text", label: "All text", blurb: "Every kind of text below, unless you set one differently.",
+        TextRoleSpec(role: "all_text", label: String(localized: "All text"), blurb: String(localized: "Every kind of text below, unless you set one differently."),
                      sample: "", sizePx: 0, defaultAnchor: TextAnchor(x: 0.5, y: 0.5, alignment: "center"),
                      maxWidthFrac: nil, keepsUsualSpot: false, usualPosition: nil),
-        TextRoleSpec(role: "title", label: "Title", blurb: "The big opening line in the first seconds.",
+        TextRoleSpec(role: "title", label: String(localized: "Title"), blurb: String(localized: "The big opening line in the first seconds."),
                      sample: "Weekend in Istanbul", sizePx: 90, defaultAnchor: TextAnchor(x: 0.08, y: 0.27, alignment: "left"),
                      maxWidthFrac: 0.62, keepsUsualSpot: false, usualPosition: nil),
-        TextRoleSpec(role: "label", label: "Label", blurb: "A short tag like a name, place or score.",
+        TextRoleSpec(role: "label", label: String(localized: "Label", comment: "Text type: a short tag like a name, place or score"), blurb: String(localized: "A short tag like a name, place or score."),
                      sample: "Day 1", sizePx: 56, defaultAnchor: TextAnchor(x: 0.5, y: 0.78, alignment: "center"),
                      maxWidthFrac: nil, keepsUsualSpot: true, usualPosition: "bottom"),
-        TextRoleSpec(role: "pinned", label: "Corner text", blurb: "A small note that stays in a corner for the whole video.",
+        TextRoleSpec(role: "pinned", label: String(localized: "Corner text"), blurb: String(localized: "A small note that stays in a corner for the whole video."),
                      sample: "Part 2", sizePx: 52, defaultAnchor: TextAnchor(x: 0.92, y: 0.12, alignment: "right"),
                      maxWidthFrac: nil, keepsUsualSpot: true, usualPosition: nil),
-        TextRoleSpec(role: "caption", label: "Caption", blurb: "Your spoken words, shown as you say them.",
+        TextRoleSpec(role: "caption", label: String(localized: "Caption"), blurb: String(localized: "Your spoken words, shown as you say them."),
                      sample: "and then we found this tiny café", sizePx: 78, defaultAnchor: TextAnchor(x: 0.5, y: 0.90, alignment: "center"),
                      maxWidthFrac: 0.84, keepsUsualSpot: false, usualPosition: nil),
-        TextRoleSpec(role: "lyric", label: "Lyric", blurb: "Song words, shown in time with the music.",
+        TextRoleSpec(role: "lyric", label: String(localized: "Lyric"), blurb: String(localized: "Song words, shown in time with the music."),
                      sample: "I'll be waiting right here", sizePx: 58, defaultAnchor: TextAnchor(x: 0.5, y: 0.62, alignment: "center"),
                      maxWidthFrac: nil, keepsUsualSpot: false, usualPosition: nil),
     ]
@@ -64,10 +64,21 @@ struct TextRoleSpec: Identifiable, Sendable {
         "bottom_left": TextAnchor(x: 0.08, y: 0.78, alignment: "left"), "bottom": TextAnchor(x: 0.5, y: 0.78, alignment: "center"),
         "bottom_right": TextAnchor(x: 0.92, y: 0.78, alignment: "right"),
     ]
-    static let fallbackColorHint = "White, black or gray, whichever reads best on each shot."
+    static let fallbackColorHint = String(localized: "White, black or gray, whichever reads best on each shot.")
     static let fallbackCaptionFont = "TikTok Sans Bold"
 
-    static func positionName(_ key: String) -> String { key.replacingOccurrences(of: "_", with: " ").capitalized }
+    static func positionName(_ key: String) -> String {
+        switch key {
+        case "top_left": String(localized: "Top left")
+        case "top": String(localized: "Top", comment: "Text position: top centre of the frame")
+        case "top_right": String(localized: "Top right")
+        case "middle": String(localized: "Middle", comment: "Text position: middle of the frame")
+        case "bottom_left": String(localized: "Bottom left")
+        case "bottom": String(localized: "Bottom", comment: "Text position: bottom centre of the frame")
+        case "bottom_right": String(localized: "Bottom right")
+        default: key.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
 }
 
 /// What Kria does for a type when nothing is saved, worded for the screen. Built from the server's
@@ -82,7 +93,7 @@ struct TextRoleDefaults: Equatable, Sendable {
     let usualPosition: String?
     let colorHint: String
     /// The placement default in a few words, for the one-line summary beside the preview.
-    var shortPlacement: String { usualPosition != nil ? "Usual spot" : placement == TextRoleSpec.kriaPicksPlacement ? "Kria picks" : "Your corner" }
+    var shortPlacement: String { usualPosition != nil ? String(localized: "Usual spot") : placement == TextRoleSpec.kriaPicksPlacement ? String(localized: "Kria picks") : String(localized: "Your corner") }
 }
 
 struct TextStyleDefaults: Decodable, Sendable {
@@ -129,10 +140,10 @@ extension TextRoleSpec {
             return value.prefix(1).uppercased() + value.dropFirst()
         }
         return TextRoleDefaults(
-            outline: word(remote?.outline, "Off"), shadow: word(remote?.shadow, "Off"), color: word(remote?.color, "Auto"),
-            font: remote?.font == nil || remote?.font == "auto" ? "Kria picks" : (remote?.font ?? "Kria picks"),
+            outline: word(remote?.outline, String(localized: "Off")), shadow: word(remote?.shadow, String(localized: "Off")), color: word(remote?.color, String(localized: "Auto")),
+            font: remote?.font == nil || remote?.font == "auto" ? String(localized: "Kria picks") : (remote?.font ?? String(localized: "Kria picks")),
             fontHint: remote?.fontHint ?? (role == "caption" ? fallbackCaptionFont : nil),
-            placement: !keepsUsual ? kriaPicksPlacement : (usual != nil ? "Usual spot" : "The corner you pick"),
+            placement: !keepsUsual ? kriaPicksPlacement : (usual != nil ? String(localized: "Usual spot") : String(localized: "The corner you pick")),
             usualPosition: usual,
             colorHint: server?.colorHint ?? fallbackColorHint)
     }

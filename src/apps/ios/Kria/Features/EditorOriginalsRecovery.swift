@@ -27,8 +27,8 @@ struct EditorOriginalsRecoveryView: View {
                 // Never claim the files are here while the preview says they are not.
                 if !loading && targets.isEmpty {
                     Text(session.sourcePreviewState == .originalsUnavailable
-                         ? "Kria couldn’t tell which files are missing. Open this edit on the device that imported it."
-                         : "The original files are available on this iPhone.")
+                         ? String(localized: "Kria couldn’t tell which files are missing. Open this edit on the device that imported it.")
+                         : String(localized: "The original files are available on this iPhone."))
                         .font(KriaFont.body(14))
                         .accessibilityIdentifier("editor-originals-none")
                 }

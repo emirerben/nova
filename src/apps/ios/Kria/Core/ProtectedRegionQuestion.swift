@@ -29,7 +29,7 @@ struct ProtectedRegionQuestion: Equatable, Sendable {
     }
 
     /// "Mark the plate".
-    var actionTitle: String { "Mark the \(label)" }
+    var actionTitle: String { String(localized: "Mark the \(label)") }
 }
 
 /// `protected_region` on the submit-turn body, exactly as the server's `ProtectedRegionIn` names it.
@@ -145,7 +145,7 @@ struct ProtectedRegionProblem: Equatable {
         if case .requestFailed(_, let detail) = error, let message = detail.problemMessage ?? detail.message {
             self.message = message
         } else {
-            self.message = "That mark didn't go through. Draw a box around the object and try again."
+            self.message = String(localized: "That mark didn't go through. Draw a box around the object and try again.")
         }
     }
 }

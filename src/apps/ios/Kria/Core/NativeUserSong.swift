@@ -11,8 +11,8 @@ struct NativeUserSong: Equatable, Sendable {
 
         var label: String {
             switch self {
-            case .background: "Background"
-            case .lipsync: "Lip-sync · master audio"
+            case .background: String(localized: "Background", comment: "Song mode: song plays as background music")
+            case .lipsync: String(localized: "Lip-sync · master audio")
             }
         }
     }
@@ -324,13 +324,13 @@ struct NativeEditorYourSong: Equatable, Sendable {
     let window: String
     let mode: String?
 
-    static let fallbackTitle = "Your song"
-    static let helperCopy = "This is the song you added. Camera audio is muted so it plays alone, until you turn up Original audio."
-    static let songEndsEarlyCopy = "Song ends before the video does."
-    static let songStoppedCopy = "Song stops where you set it, before the video ends."
-    static let lipSyncLockCopy = "Lip-sync keeps the song where you filmed it."
-    static let lipSyncTrimHintCopy = "Trimming cuts your video to match."
-    static let removedHelperCopy = "Song removed. Your camera audio plays instead."
+    static let fallbackTitle = String(localized: "Your song")
+    static let helperCopy = String(localized: "This is the song you added. Camera audio is muted so it plays alone, until you turn up Original audio.")
+    static let songEndsEarlyCopy = String(localized: "Song ends before the video does.")
+    static let songStoppedCopy = String(localized: "Song stops where you set it, before the video ends.")
+    static let lipSyncLockCopy = String(localized: "Lip-sync keeps the song where you filmed it.")
+    static let lipSyncTrimHintCopy = String(localized: "Trimming cuts your video to match.")
+    static let removedHelperCopy = String(localized: "Song removed. Your camera audio plays instead.")
 
     var accessibilitySummary: String {
         [title, window, mode].compactMap { $0 }.joined(separator: ", ")
@@ -353,7 +353,7 @@ struct NativeEditorYourSong: Equatable, Sendable {
     }
 
     static func windowLabel(start: TimeInterval, end: TimeInterval) -> String {
-        "Plays \(timecode(start)) – \(timecode(end))"
+        String(localized: "Plays \(timecode(start)) – \(timecode(end))")
     }
 
     /// `m:ss`, rounded to the nearest second.
@@ -395,8 +395,8 @@ struct NativeEditorYourSongControls: Equatable, Sendable {
     var barStartS: Double = 0
     var barEndS: Double = 0
 
-    var startLabel: String { "Starts at \(NativeEditorYourSong.timecode(startS))" }
-    var endLabel: String { "Ends at \(NativeEditorYourSong.timecode(endS))" }
+    var startLabel: String { String(localized: "Starts at \(NativeEditorYourSong.timecode(startS))") }
+    var endLabel: String { String(localized: "Ends at \(NativeEditorYourSong.timecode(endS))") }
     var rangeLabel: String { NativeEditorYourSong.windowLabel(start: startS, end: endS) }
 
     /// Background: the lowest end the handle allows at the current start (a second of song).
