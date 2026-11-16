@@ -34,10 +34,13 @@ kria-replay:
 # Needs gcloud read access to the bucket and ADMIN_PROD_API_KEY (docs/runbooks/replay-from-job-id.md).
 # MAX_COST_USD (at most 2.00): the ledger reserves Sol/OpenAI planning against it, and the run
 # stops once its agent runs settled more (Gemini included; the crossing call can overshoot).
+# MAIN_CREATOR=production (default) plans on the model production planned the job on;
+# MAIN_CREATOR=snapshot on today's production setting.
 MAX_COST_USD ?= 1.00
+MAIN_CREATOR ?= production
 kria-replay-job:
-	@test -n "$(JOB)" || { echo "usage: make kria-replay-job JOB=<production job id> [MAX_COST_USD=1.00]"; exit 2; }
-	(cd $(API_DIR) && $(API_LOCAL_PYTHON) scripts/replay_job.py $(JOB) --max-cost-usd $(MAX_COST_USD))
+	@test -n "$(JOB)" || { echo "usage: make kria-replay-job JOB=<production job id> [MAX_COST_USD=1.00] [MAIN_CREATOR=production|snapshot]"; exit 2; }
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) scripts/replay_job.py $(JOB) --max-cost-usd $(MAX_COST_USD) --main-creator $(MAIN_CREATOR))
 
 verify-kria:
 	KRIA_VERIFY_PYTHON="$(abspath $(API_PYTHON))" bash scripts/verify-kria.sh

@@ -11,7 +11,8 @@ production settings with the real models. This command does that from a failed j
    <local>`` (read only; nothing is ever written to it).
 2. Writes the source manifest ``replay_creator.py`` consumes.
 3. Recreates the scratch database, starts a Celery worker on its own queue namespace, and runs
-   ``replay_creator.py --render`` under ``tests/prod_flags.snapshot.json``. A chat job is
+   ``replay_creator.py --render`` under ``tests/prod_flags.snapshot.json``, with the Main
+   Creator on the model production planned the job on (``--main-creator``). A chat job is
    replayed message by message through the Kria runtime, each with the app build's client
    protocol, approving where the creator approved; an older job through the Main Creator.
 4. Prints the rendered video path or device plan, or the status and failure reason of the
@@ -221,18 +222,47 @@ def production_thread_events(thread_id: str) -> list[dict[str, Any]]:
     raise ReplayJobError(f"Thread {thread_id} has more than {THREAD_EVENT_PAGES * 500} events")
 
 
+def _queuing_turn(job_id: str, thread_events: list[dict[str, Any]]) -> str:
+    """The turn whose approval queued the job, from the thread's ``render_queued`` events."""
+
+    turns = {
+        str(payload.get("turn_id"))
+        for event in thread_events
+        if event.get("kind") == "render_queued"
+        and str((payload := event.get("payload") or {}).get("job_id")) == job_id
+        and payload.get("turn_id")
+    }
+    if len(turns) != 1:
+        found = (
+            "no render_queued event" if not turns else f"render_queued events of {len(turns)} turns"
+        )
+        raise ReplayJobError(
+            f"The job debug records no Kria turn id and the thread has {found} for job "
+            f"{job_id}, so the turn that queued it is unknown"
+        )
+    return turns.pop()
+
+
 def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]:
     job_debug = prod_get(f"/admin/jobs/{job_id}/debug")
     job = job_debug["job"]
     thread_events: list[dict[str, Any]] | None = None
+    target_turn: dict[str, str] | None = None
     if job_debug.get("runtime_version") == 2:
         # The app's chat thread made this job: its messages, not the compiled request, are
         # what the replay sends.
-        if not job_debug.get("thread_id") or not job_debug.get("kria_turn_id"):
+        if not job_debug.get("thread_id"):
             raise ReplayJobError(
-                "A runtime-v2 job without a thread and Kria turn id cannot be replayed turn by turn"
+                "A runtime-v2 job without a thread cannot be replayed turn by turn"
             )
         thread_events = production_thread_events(str(job_debug["thread_id"]))
+        if job_debug.get("kria_turn_id"):
+            target_turn = {"turn_id": str(job_debug["kria_turn_id"]), "from": "job_debug"}
+        else:
+            # The job debug finds the turn through a Creator execution targeting the job; 11
+            # failed chat jobs of 2026-10-08 to 10-15 have none, but their threads name it.
+            target_turn = {"turn_id": _queuing_turn(job_id, thread_events), "from": "render_queued"}
+            job_debug["kria_turn_id"] = target_turn["turn_id"]
     item_id = job.get("content_plan_item_id")
     if not item_id:
         raise ReplayJobError(
@@ -364,6 +394,7 @@ def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]
         "item_id": str(item_id),
         "unseeded_state": _unseeded_state(job, recorded, thread_events, chosen),
         "thread_events": inputs_dir / "thread-events.json" if thread_events else None,
+        "target_turn": target_turn,
         "creator_messages": sum(1 for e in thread_events or [] if e.get("kind") == "user_message"),
         "began_at": began.isoformat() if began else None,
         "job_agent_runs": list(job_debug.get("agent_runs") or []),
@@ -1043,10 +1074,26 @@ class ProductionAgents:
     trace_complete: bool
     unrecorded: frozenset[str] = frozenset()
     last_outcomes: dict[str, str] = field(default_factory=dict)
+    configured_models: dict[str, str] = field(default_factory=dict)
 
     @property
     def names(self) -> set[str]:
         return set(self.models)
+
+
+def _configured_models(runs: list[dict[str, Any]]) -> dict[str, str]:
+    """Each agent's model on its last run that did not answer on a fallback model, ``runs``
+    being in the order they ran; an ``ok_fallback`` run records the fallback's model."""
+
+    last_any: dict[str, str] = {}
+    last_primary: dict[str, str] = {}
+    for run in runs:
+        name, model = run.get("agent_name"), run.get("model")
+        if name and model:
+            last_any[name] = str(model)
+            if run.get("outcome") != "ok_fallback":
+                last_primary[name] = str(model)
+    return {**last_any, **last_primary}
 
 
 def _by_agent(runs: list[dict[str, Any]], key: str) -> dict[str, frozenset[str]]:
@@ -1091,10 +1138,12 @@ def production_agents(
     if until:
         runs = [r for r in runs if not r.get("created_at") or str(r["created_at"]) <= until]
     started = _parse_time(began)
+    in_order = sorted(runs, key=lambda r: str(r.get("created_at") or ""))
     return ProductionAgents(
         models=_by_agent(runs, "model"),
         prompt_versions=_by_agent(runs, "prompt_version"),
-        last_outcomes=_last_outcomes(sorted(runs, key=lambda r: str(r.get("created_at") or ""))),
+        last_outcomes=_last_outcomes(in_order),
+        configured_models=_configured_models(in_order),
         trace_complete=complete,
         unrecorded=frozenset(
             name
@@ -1102,6 +1151,72 @@ def production_agents(
             if started is None or started < _parse_time(since)
         ),
     )
+
+
+MAIN_CREATOR = "nova.creator.main"
+MAIN_CREATOR_SOURCE = "replay:main-creator"
+
+
+def choose_main_creator(
+    production: ProductionAgents, settings: dict[str, Any], wanted: str
+) -> dict[str, Any]:
+    """The Main Creator model and thinking level the replay plans on.
+
+    ``production`` is the model production planned this job on, so a chat job can take
+    production's route to its failing render; ``snapshot`` is today's production setting.
+    Agent runs do not record the thinking level: the snapshot's goes with the snapshot's model,
+    and another model runs at the code default (``thinking_level`` None), as production's
+    Gemini Main Creator did until the Sol rollout set both
+    (``docs/reviews/kri-1384/sol-main-creator.md``).
+    """
+
+    today = {
+        "model": settings["main_creator_model"]["value"],
+        "thinking_level": settings["main_creator_thinking_level"]["value"],
+        "from": "snapshot",
+    }
+    recorded = production.configured_models.get(MAIN_CREATOR)
+    if wanted == "snapshot":
+        why = "requested: today's production setting"
+        if recorded and recorded != today["model"]:
+            why += (
+                f"; production planned this job on {recorded}, so a chat job usually gets "
+                "another reply at some message and never reaches its failing render"
+            )
+        return {**today, "why": why}
+    if recorded is None:
+        return {
+            **today,
+            "why": "production recorded no nova.creator.main run with a model for this item "
+            "before the job ended, so the snapshot's model stands in",
+        }
+    if recorded == today["model"]:
+        return {**today, "from": "production", "why": f"production planned this job on {recorded}"}
+    return {
+        "model": recorded,
+        "thinking_level": None,
+        "from": "production",
+        "why": f"production planned this job on {recorded} (the snapshot has {today['model']}); "
+        "thinking level: the code default, which agent runs do not record",
+    }
+
+
+def write_replay_flags(choice: dict[str, Any], run_dir: Path) -> Path:
+    """The production snapshot with the chosen Main Creator, written into the run directory."""
+
+    snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    snapshot["sources"][MAIN_CREATOR_SOURCE] = f"replay_job.py --main-creator: {choice['why']}"
+    settings = snapshot["settings"]
+    settings["main_creator_model"] = {"source": MAIN_CREATOR_SOURCE, "value": choice["model"]}
+    settings["main_creator_thinking_level"] = (
+        {"source": MAIN_CREATOR_SOURCE, "value": choice["thinking_level"]}
+        if choice["thinking_level"] is not None
+        else {"source": "default", "value": None}
+    )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / "prod-flags.json"
+    path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def replay_agents(env: dict[str, str], item_id: str | None) -> dict[str, Any]:
@@ -1217,8 +1332,8 @@ def _cause_gap(production: dict[str, Any], replay: dict[str, Any]) -> str | None
     CreatorRenderContractError is the text-fit gate, another the font gate), so only the exact
     cause production recorded counts: its planning error's class and message or, for a job
     from before planning errors were recorded, its error detail unless that is the app's generic
-    sentence for the reason. A message worded by a model that differs is left to the reader,
-    with both shown.
+    sentence for the reason. An empty message (a bare assert) is no cause. A message worded by
+    a model that differs is left to the reader, with both shown.
     """
 
     ours, theirs = production.get("planning_failure"), replay.get("planning_failure")
@@ -1235,6 +1350,12 @@ def _cause_gap(production: dict[str, Any], replay: dict[str, Any]) -> str | None
             return (
                 f"Production's plan failed with {_planning_error(ours)}; the replay's with "
                 f"{_planning_error(theirs)}."
+            )
+        if not str(ours.get("error_tail") or "").strip():
+            return (
+                f"Production's plan failed with {ours['error_class']} and no message (a bare "
+                "assert records none), so its exact cause is unknown and the replay's same "
+                "class cannot be shown to be the same failure."
             )
         return None
     reason, detail = production.get("failure_reason"), production.get("error_detail")
@@ -1477,6 +1598,13 @@ def main(argv: list[str] | None = None) -> int:
         default=1.0,
         help="stop once the replay's agent runs settled more than this (USD), at most 2.00",
     )
+    parser.add_argument(
+        "--main-creator",
+        choices=("production", "snapshot"),
+        default="production",
+        help="plan on the Main Creator model production planned this job on (default, to\n"
+        "reproduce) or on the snapshot's, today's setting",
+    )
     parser.add_argument("--fetch-only", action="store_true", help="stop after writing the inputs")
     args = parser.parse_args(argv)
     try:
@@ -1502,6 +1630,7 @@ def main(argv: list[str] | None = None) -> int:
             f"job {job_id}: status={info['job']['status']} "
             f"reason={info['job'].get('failure_reason')} sources={info['source_count']} "
             f"creator_messages={info['creator_messages']} "
+            f"target_turn={json.dumps(info['target_turn'])} "
             f"coverage={json.dumps(info['source_coverage'])}"
         )
         if args.fetch_only:
@@ -1510,18 +1639,24 @@ def main(argv: list[str] | None = None) -> int:
         production = production_agents(
             info["item_id"], info["job_agent_runs"], info["job"].get("updated_at"), info["began_at"]
         )
-        planned = json.loads(SNAPSHOT.read_text(encoding="utf-8"))["settings"]
+        choice = choose_main_creator(
+            production,
+            json.loads(SNAPSHOT.read_text(encoding="utf-8"))["settings"],
+            args.main_creator,
+        )
         print(
             "production models for this item: "
             + json.dumps({name: sorted(m) for name, m in sorted(production.models.items())})
-            + f"; the replay's Main Creator: {planned['main_creator_model']['value']}"
+            + f"\nthe replay's Main Creator: {choice['model']} (from the {choice['from']}: "
+            + f"{choice['why']})"
         )
         run_dir.mkdir(parents=True)
+        flags = write_replay_flags(choice, run_dir)
         scratch_url = scratch_database_url(
             dotenv, f"{SCRATCH_DATABASE_PREFIX}{uuid.uuid4().hex[:12]}"
         )
         env = replay_environment(dotenv, scratch_url, namespace, max_cost_usd=args.max_cost_usd)
-        worker_env = {**_creator_environment(env, run_dir, inputs_dir), **env}
+        worker_env = {**_creator_environment(env, run_dir, inputs_dir, flags), **env}
         try:
             recreate_scratch_database(scratch_url, env)
         except (OperationalError, subprocess.CalledProcessError) as exc:
@@ -1543,7 +1678,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--output-dir",
                 str(run_dir),
                 "--prod-flags",
-                str(SNAPSHOT),
+                str(flags),
                 "--database-url",
                 scratch_url,
                 "--allow-source-count-drift",
@@ -1561,6 +1696,7 @@ def main(argv: list[str] | None = None) -> int:
         if capped_at is not None and result["outcome"] not in SUCCEEDED:
             mark_spend_cap(result, capped_at, args.max_cost_usd)
         result["worker_warm_s"] = warm_s
+        result["main_creator"] = choice
         route = compare_routes(production, replay_agents(worker_env, result["replay_plan_item_id"]))
         result["route_comparison"] = route
         result["input_differences"] = {
@@ -1612,7 +1748,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"scratch database not dropped: {exc}", file=sys.stderr)
 
 
-def _creator_environment(env: dict[str, str], run_dir: Path, inputs_dir: Path) -> dict[str, str]:
+def _creator_environment(
+    env: dict[str, str], run_dir: Path, inputs_dir: Path, flags: Path
+) -> dict[str, str]:
     """The environment replay_creator would export, so the worker sees the same settings."""
 
     sys.path.insert(0, str(API_ROOT / "scripts"))
@@ -1625,7 +1763,7 @@ def _creator_environment(env: dict[str, str], run_dir: Path, inputs_dir: Path) -
             "--output-dir",
             str(run_dir),
             "--prod-flags",
-            str(SNAPSHOT),
+            str(flags),
             "--database-url",
             env["DATABASE_URL"],
             "--render",
