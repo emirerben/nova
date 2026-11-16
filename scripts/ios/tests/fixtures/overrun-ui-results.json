@@ -1,5 +1,5 @@
 {
-  "_source": "Real 'xcrun xcresulttool get test-results tests --compact' output from nightly run 43415393573, shard 5/5 (Xcode 26.3, iOS 26.2), trimmed to the test that ran past its 3 minute allowance and one passing sibling. xcodebuild did not retry the overrun, so it has no Repetition children. Device info stripped. KRI-1379.",
+  "_source": "Real 'xcrun xcresulttool get test-results tests --compact' output from nightly run 43415393573, shard 5/5 (Xcode 26.3, iOS 26.2), trimmed to the test that ran past its 3 minute allowance and one passing sibling, with the class and test names replaced by synthetic ones so a rename of a real UI test cannot break this fixture. xcodebuild did not retry the overrun, so it has no Repetition children. Device info stripped. KRI-1379.",
   "testNodes": [
     {
       "name": "Kria",
@@ -13,8 +13,8 @@
           "result": "Failed",
           "children": [
             {
-              "name": "NativeEditorInspectorUITests",
-              "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/NativeEditorInspectorUITests",
+              "name": "OverrunProbeUITests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/OverrunProbeUITests",
               "nodeType": "Test Suite",
               "result": "Failed",
               "children": [
@@ -27,18 +27,18 @@
                   ],
                   "duration": "3m",
                   "durationInSeconds": 180,
-                  "name": "testSoundEffectsHomeLibraryEditTrimFlow()",
-                  "nodeIdentifier": "NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow()",
-                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow",
+                  "name": "testRunsPastItsAllowance()",
+                  "nodeIdentifier": "OverrunProbeUITests/testRunsPastItsAllowance()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/OverrunProbeUITests/testRunsPastItsAllowance",
                   "nodeType": "Test Case",
                   "result": "Failed"
                 },
                 {
                   "duration": "16s",
                   "durationInSeconds": 16.819658994674683,
-                  "name": "testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt()",
-                  "nodeIdentifier": "NativeEditorInspectorUITests/testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt()",
-                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/NativeEditorInspectorUITests/testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt",
+                  "name": "testFinishesQuickly()",
+                  "nodeIdentifier": "OverrunProbeUITests/testFinishesQuickly()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/OverrunProbeUITests/testFinishesQuickly",
                   "nodeType": "Test Case",
                   "result": "Passed"
                 }

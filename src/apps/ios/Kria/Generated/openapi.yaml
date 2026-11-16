@@ -3538,6 +3538,7 @@
                 "backgroundFocus",
                 "splitScreen",
                 "splitCollapse",
+                "splitBlankPanel",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -3687,6 +3688,7 @@
                 "backgroundFocus",
                 "splitScreen",
                 "splitCollapse",
+                "splitBlankPanel",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -5284,8 +5286,16 @@
             "type": "number"
           },
           "clip_index": {
+            "default": null,
+            "nullable": true,
             "title": "Clip Index",
             "type": "integer"
+          },
+          "color": {
+            "default": null,
+            "nullable": true,
+            "title": "Color",
+            "type": "string"
           },
           "duration_beats": {
             "default": null,
@@ -5502,7 +5512,6 @@
           }
         },
         "required": [
-          "clip_index",
           "in_s"
         ],
         "title": "EditorStateTimelineSlot",
@@ -10502,6 +10511,50 @@
         "title": "QuestionnaireBody",
         "type": "object"
       },
+      "RecipeSplitBlank": {
+        "additionalProperties": false,
+        "description": "A flat-colour block drawn in one panel for one window (protocol 51, `splitBlankPanel`).",
+        "properties": {
+          "color": {
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "panel_index": {
+            "maximum": 2,
+            "minimum": 0,
+            "title": "Panel Index",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "panel_index",
+          "start",
+          "end",
+          "color"
+        ],
+        "title": "RecipeSplitBlank",
+        "type": "object"
+      },
       "RecipeSplitScreenSection": {
         "additionalProperties": false,
         "properties": {
@@ -10510,6 +10563,14 @@
             "pattern": "^#[0-9a-fA-F]{6}$",
             "title": "Background Color",
             "type": "string"
+          },
+          "blanks": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeSplitBlank"
+            },
+            "maxItems": 300,
+            "title": "Blanks",
+            "type": "array"
           },
           "collapse_empty_panels": {
             "default": false,
@@ -15102,8 +15163,16 @@
             "type": "number"
           },
           "clip_index": {
+            "default": null,
+            "nullable": true,
             "title": "Clip Index",
             "type": "integer"
+          },
+          "color": {
+            "default": null,
+            "nullable": true,
+            "title": "Color",
+            "type": "string"
           },
           "duration_beats": {
             "default": null,
@@ -15164,6 +15233,12 @@
             ],
             "nullable": true,
             "title": "Look Preset",
+            "type": "string"
+          },
+          "media_kind": {
+            "default": null,
+            "nullable": true,
+            "title": "Media Kind",
             "type": "string"
           },
           "media_transform": {
@@ -15295,7 +15370,6 @@
           }
         },
         "required": [
-          "clip_index",
           "in_s"
         ],
         "title": "TimelineSlotEdit",

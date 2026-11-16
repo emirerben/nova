@@ -67,7 +67,6 @@ from app.agents.audio_template import (
     AUDIO_TEMPLATE_PROMPT_VERSION,
     AudioTemplateAgent,
 )
-from app.agents.beat_aligner import BEAT_ALIGNER_PROMPT_VERSION, BeatAlignerAgent
 from app.agents.brief_extractor import (
     BRIEF_EXTRACTOR_PROMPT_SOURCES,
     BRIEF_EXTRACTOR_PROMPT_VERSION,
@@ -81,6 +80,7 @@ from app.agents.main_creator import (
 )
 from app.agents.persona_generator import PersonaGeneratorAgent
 from app.services.creation_text_composition import (
+    CREATION_TEXT_COMPOSER_PROMPT_EXTRA,
     CREATION_TEXT_COMPOSER_PROMPT_SOURCES,
     CREATION_TEXT_COMPOSER_PROMPT_VERSION,
     CreationTextComposer,
@@ -110,7 +110,6 @@ LOADS_PROMPT_FILES = {
 }
 ALL_SOURCES = [
     *LOADS_PROMPT_FILES.values(),
-    ("app/agents/beat_aligner.py",),
     _RESEARCH_PROMPT_SOURCES,
     _RESEARCH_LAYERS_PROMPT_SOURCES,
     CREATION_TEXT_COMPOSER_PROMPT_SOURCES,
@@ -158,6 +157,14 @@ def test_fingerprint_is_stable(tmp_path: Path) -> None:
     assert re.fullmatch(r"xx-[0-9a-f]{12}", first)
 
 
+def test_extra_value_moves_the_version(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("x")
+    plain = fp.prompt_fingerprint("p", ["a.txt"], root=tmp_path)
+    thirty = fp.prompt_fingerprint("p", ["a.txt"], root=tmp_path, extra="30")
+    assert thirty != plain
+    assert thirty != fp.prompt_fingerprint("p", ["a.txt"], root=tmp_path, extra="60")
+
+
 def test_any_byte_change_moves_the_version(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("Teach the planner one rule.\n")
     (tmp_path / "b.txt").write_text("Second file.\n")
@@ -201,7 +208,6 @@ def test_derived_specs_stamp_their_fingerprint() -> None:
             AUDIO_TEMPLATE_PROMPT_VERSION,
             AUDIO_TEMPLATE_PROMPT_SOURCES,
         ),
-        BeatAlignerAgent.spec: ("ba", BEAT_ALIGNER_PROMPT_VERSION, ("app/agents/beat_aligner.py",)),
         ResearchCopyAgent.spec: ("rc", None, _RESEARCH_PROMPT_SOURCES),
         ResearchLayersAgent.spec: ("rl", None, _RESEARCH_LAYERS_PROMPT_SOURCES),
         ResearchReviewAgent.spec: ("rr", None, _RESEARCH_PROMPT_SOURCES),
@@ -212,7 +218,8 @@ def test_derived_specs_stamp_their_fingerprint() -> None:
         ),
     }
     for spec, (prefix, constant, sources) in expected.items():
-        assert spec.prompt_version == fp.prompt_fingerprint(prefix, sources), spec.name
+        extra = CREATION_TEXT_COMPOSER_PROMPT_EXTRA if prefix == "ct" else ""
+        assert spec.prompt_version == fp.prompt_fingerprint(prefix, sources, extra=extra), spec.name
         if constant is not None:
             assert spec.prompt_version == constant, spec.name
     versions = [spec.prompt_version for spec in expected]

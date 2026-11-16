@@ -17,6 +17,7 @@ from typing import Any
 from app.config import settings
 from app.kria.brief import BriefRequirement
 from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._lines import direction_line, pacing_line, stated_length
 from app.kria.route_capabilities._types import (
     Applied,
     AskDecline,
@@ -58,18 +59,18 @@ FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
     "pacing": RecordedOnly(
-        lines.pacing_line(
+        pacing_line(
             lambda _value, _s: False,
             "your song sets where the cuts fall",
             "kesimlerin yerini şarkın belirliyor",
         )
     ),
     "direction": NotApplied(
-        lines.direction_line("fast_montage", "it is cut to your song", "şarkına göre kesiliyor")
+        direction_line("fast_montage", "it is cut to your song", "şarkına göre kesiliyor")
     ),
     "caption_style": NotApplied(lines.song_caption_style),
     "target_duration_s": NotApplied(
-        lines.stated_length("its length follows your song", "uzunluğu şarkını takip ediyor")
+        stated_length("its length follows your song", "uzunluğu şarkını takip ediyor")
     ),
     "title_animation": NotApplied(WithAsks(_title_animation)),
     "label_position": NotApplied(lines.label_position),

@@ -104,7 +104,7 @@ def sequence_read_floor_s(requirements: Iterable[Any] | None) -> float | None:
     approved counts; phrase asks and build-ups are paced in the composer's own pieces, and words
     research has yet to write have no length to plan for.
     """
-    from app.services.sequence_pacing import MIN_TEXT_PIECE_S  # noqa: PLC0415
+    from app.services.editor_limits import MIN_TEXT_PIECE_S  # noqa: PLC0415
 
     words = [
         len((req.literal or "").split())

@@ -253,3 +253,45 @@ failed: the camera opened (screen recordings), but the fixture's take, which `Te
 exports with `AVAssetExportSession` on first load, appeared after the tests' 10 s and 20 s waits. All 7
 passed when rerun alone, and a second run of all 18 in the first run's order, on the branch rebased onto
 `main`, passed 18 of 18.
+
+## Editor inspector tests red in the 2026-11-14 nightly (run 43586322483, base 63da5ce11)
+
+Five `NativeEditorInspectorUITests` failed 3 of 3 in the nightly and passed in the 2026-11-13 one. Two causes, both
+changes that merged in between. Neither is a wrong seek in the app.
+
+| Test | Flipped by | Cause | Verdict |
+| --- | --- | --- | --- |
+| `testTimelineSwipesSeekUnderFixedPlayhead`, `testQuickSwipeStartingOnTextScrubsWithoutMovingBlock`, `testLongPressMovesTextTimingWithoutOpeningInspector` | #2317 (741617e17, KRI-1410) | A quick drag now glides on after release (intended). XCUITest's 0.05 s drags start the glide, so the time lands seconds past the release (0:03.2, 0:04.4 where 0:00.0 was expected) | Test, already fixed on main by #2344 (KRI-1450): the glide is off under `-ui-testing-editor` |
+| `testSplitPanelHandleExtensionGrowsSectionAndClampsAtMinimumWithoutMovingPeers` | #2315 (fc0aaa58a, KRI-1399) | The trailing trim handle's touch box now hangs outward from a narrow block, so the drop of the test's extension drag moved 22 pt right, from 356 to 378 on a 402 pt screen. That is inside the 56 pt edge zone where the timeline scrolls itself, and the drag ends with a 0.2 s hold, so the clip grew to 7.2 to 8.6 s instead of at most 6.5 s | Test: it dropped the finger in the edge scroll zone. The old drop (356) was inside it too, at about a quarter of the scroll speed, which the 6.5 s bound absorbed |
+| `testSplitPanelTrimCutDuplicateAndUndoKeepPeersExact` | #2315 (fc0aaa58a, KRI-1399) | Selecting the Bottom panel's clip scrolls the lanes up one row (new, intended: the clip must clear the floating toolbar). The lanes stay scrolled when the Top clip is selected next, so the playhead handle sits under the transport bar and `playhead.isHittable` is false. Everything after it (cut count 3 vs 4, durations 0.0 / 2.8 vs 1.4, `Invalid scale 3.50 greater than maximum possible scale 2.96`) follows from the cut never happening | Test: it grabbed a handle that a lane scroll had moved under the transport bar |
+
+Failure modes considered for the two #2315 tests (the glide trio is #2344's list):
+1. The app seeks to a wrong time or loses the selection: the TrimCut test asserts the selection survives the playhead drag, and it does.
+2. The handle drag measures auto-scroll, not the drag: shown by the 7.2 to 8.6 s results; the new assertion fails before the drag if the drop lies in the zone.
+3. The playhead handle is covered: scrolling the lanes back to the top, bounded to 4 swipes, then the existing `isHittable` assertion.
+4. The fix hides a real regression: the lanes scroll and the handle geometry are both intended by #2315's own unit tests (`NativeTrimHandleGeometryTests`).
+
+### Evidence
+
+Own simulator clone (iPhone 17 Pro, iOS 26.5), own `-derivedDataPath`, no retries, no sleeps.
+
+| Commit | Handle extension + trim/cut |
+| --- | --- |
+| fe8b40b84 (#2299 parent) | 3 of 3 + 3 of 3 pass |
+| b31e11ebc (#2299) | 3 of 3 + 3 of 3 pass |
+| 741617e17 (#2317) | 2 of 2 + 2 of 2 pass (the hold in `dragHandle` stops the glide) |
+| fc0aaa58a (#2315) | fail + fail (8.2 s; playhead not hittable) |
+| c97850fbb (main) | 5 of 5 fail each, same messages as CI |
+| this branch | 5 of 5 pass each |
+
+Glide trio (`testTimelineSwipesSeekUnderFixedPlayhead`, `testQuickSwipeStartingOnTextScrubsWithoutMovingBlock`,
+`testLongPressMovesTextTimingWithoutOpeningInspector`, `-test-iterations 3`):
+
+| Commit | Result |
+| --- | --- |
+| 89c03eb21 (#2317 parent) | 3 of 3 pass, each |
+| 741617e17 (#2317) | all three fail on the first iteration (0:01.2, 0:01.8, 0:01.2 where 0:00.0 was expected) |
+| 63da5ce11 (nightly) | fail, same numbers as CI (0:02.0, 0:03.3, 0:01.1 to 0:02.0) |
+| c97850fbb (main, has #2344) | 3 of 3 pass each, and 5 of 5 on this branch |
+
+`docs/reviews/kri-1450-timeline-glide-tests.md` has the same bisect for the first test and the #2344 fix.

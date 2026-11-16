@@ -107,3 +107,50 @@ def test_without_item_17_only_a_marked_label_is_left_unpinned(monkeypatch):
     pinned = _pinned(monkeypatch, flag=True, follows_talk=False)
     assert MARKED not in pinned
     assert NAMED in pinned
+
+
+# --- KRI-1471: the numbered example filed per clip (Q1 run 3) ----------------------------
+#
+# The same list ask can arrive as a `per_clip` text whose literal is the example ("1. Spec-kit").
+# The contract then looked for the clip it belongs on, found none on a Talking edit and refused
+# the whole draft ("I couldn't tell which clip ..."). Ways the fix can go wrong:
+#  K1 the marked per-clip literal is still looked up on a clip;  K2 the switch off is not today;
+#  K3 a montage's dictated shot words stop being placed on their clip;
+#  K4 unmarked shot words on a Talking edit stop being asked about.
+
+SHOT = "the spec kit screenshot"
+
+
+def _shot(text: str) -> BriefRequirement:
+    return BriefRequirement(
+        id="s1", kind="text", scope="per_clip", description=SHOT, literal=text, facts={}
+    )
+
+
+def _shot_contract(monkeypatch, text: str, *, example: bool = True, edit_format="subtitled"):
+    monkeypatch.setattr(rollout, "phone_list_labels_supported", lambda: True)
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", example)
+    brief = CreativeBrief(version=1, requirements=[_shot(text)])
+    contract = build_render_contract(_strategy(edit_format), generation_id="g1", brief=brief)
+    assert contract is not None
+    return contract
+
+
+def test_k1_a_marked_per_clip_literal_on_talking_is_the_workers_label(monkeypatch):
+    contract = _shot_contract(monkeypatch, MARKED)
+    assert list(contract.unresolved) == []
+    assert MARKED not in [t.text for t in contract.exact_texts]
+
+
+def test_k2_switch_off_asks_which_clip_as_before(monkeypatch):
+    assert list(_shot_contract(monkeypatch, MARKED, example=False).unresolved)
+
+
+def test_k3_a_montage_keeps_looking_for_the_shot(monkeypatch):
+    on = _shot_contract(monkeypatch, MARKED, edit_format="montage")
+    off = _shot_contract(monkeypatch, MARKED, example=False, edit_format="montage")
+    assert list(on.unresolved) == list(off.unresolved) and list(on.unresolved)
+
+
+def test_k4_unmarked_shot_words_on_talking_are_still_asked_about(monkeypatch):
+    assert list(_shot_contract(monkeypatch, "Mutfak").unresolved)

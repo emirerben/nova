@@ -92,6 +92,9 @@ class KriaTurnPlan(_KriaModel):
     )
     # KRI-282: conflict-choice payload (options to tap). Same omit-when-unset rule.
     choice_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
+    # A typed "paste the lines you want on the video" ask: the answer is video text, not the
+    # chat's language (`reply_language.asks_for_video_text`). Same omit-when-unset rule.
+    asks_video_text: SkipJsonSchema[bool] = Field(default=False, exclude_if=lambda value: not value)
     # KRI-738: tappable lengths for a "how short/long?" question. Plain text answers (the tap
     # sends the chip's text), unlike ``choice_question``. Same omit-when-unset rule.
     reply_options: list[str] | None = Field(

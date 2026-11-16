@@ -249,9 +249,19 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("make_split_full_screen",),
         fields=("section_id", "at_s", "side", "panel"),
     ),
+    # KRI-1457: Fill with blank puts a colour block after the panel's last member (the phone fills
+    # the free time under the playhead; chat has no playhead, so it uses the time after the last
+    # member). Block colour recolours the selected block by its slot index.
+    "split_screen_blank": _g(
+        "agent_ops",
+        "fillSplitPanelWithBlank setSelectedBlankColor",
+        ("add_split_blank", "set_split_blank_color"),
+        fields=("offset_s", "duration_s", "color", "grow_section"),
+    ),
     "split_screen_queries": _g(
         "not_an_edit",
-        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved",
+        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved "
+        "canFillSplitPanelWithBlank",
         reason="Read-only checks the Split panel uses to decide what to offer.",
     ),
     # ---------------------------------------------------------------- audio
@@ -438,7 +448,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "pollVisualLibrary retryLibraryVisual loadSoundEffectCatalog end set "
         "auditPreviewWindow configureClipAudioForTesting configureReplacementSourcesForTesting "
         "discardPlaybackForNewJobForTesting finishScrubFramesForTesting "
-        "setResolvedSourcesForTesting stageSplitPanelPlacementForTesting",
+        "setResolvedSourcesForTesting setPendingAddAdmissionForTesting previewSourceURLForTesting",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
     ),
     "background_tool_navigation": _g(
@@ -467,8 +477,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
-        "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
-        "tiltBackdropIsMissing "
+        "textElement textAnchor captionPosition captionStyleSize captionStill clipTilt "
+        "tiltBlockedReason tiltBackdropIsMissing "
         "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame "
         "speakerEditingFrame speakerFrame speakerFrameRect speakerSelection speakerViewport "
         "usesScopedSpeakerFrame ownsTimingGesture",

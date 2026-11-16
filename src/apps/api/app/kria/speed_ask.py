@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.kria.brief_route import loose_text
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 
 if TYPE_CHECKING:
     from app.kria.brief import BriefRequirement
@@ -38,8 +39,8 @@ RATE_FACT_KEYS = ("playback_rate", "speed")
 
 # The native range (`GuidedStoryMoment.playback_rate`, `phone_guided_plan`): a rate outside it
 # is held at the bound and the receipt says so.
-MIN_PLAYBACK_RATE = 0.25
-MAX_PLAYBACK_RATE = 4.0
+MIN_PLAYBACK_RATE = PLAYBACK_RATE_MIN
+MAX_PLAYBACK_RATE = PLAYBACK_RATE_MAX
 # "speed up" / "slow motion" with no number.
 DEFAULT_FAST_RATE = 2.0
 DEFAULT_SLOW_RATE = 0.5

@@ -55,6 +55,8 @@ from app.services.spoken_quotes import (
 from tests.pipeline.test_unified_montage import clip
 from tests.tasks.test_selected_clip_dispatch import _verify
 
+pytestmark = pytest.mark.journey("kri-681-named-line-windows")
+
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri681_tigre_night_m1_clips.json"
 CLIPS = json.loads(_FIXTURE.read_text(encoding="utf-8"))["clips"]
 FIRST, BOAT, LAST = "m1_11", "m1_02", "m1_03"

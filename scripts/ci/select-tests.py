@@ -9,6 +9,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import journey_registry
 import render_evidence
 import ui_tests
 
@@ -55,16 +57,16 @@ JOURNEY_PREFIXES = (
 
 # CI-visible corpus: a mapped change must execute its incident's fixture-backed
 # tests. Broad journey inputs without a mapping block the stable required check.
-JOURNEYS = json.loads((Path(__file__).with_name("journey-manifest.json")).read_text())[
-    "journeys"
-]
+JOURNEYS = journey_registry.journeys()
 JOURNEY_POLICY_PATHS = (
     ".github/workflows/ci.yml",
     ".github/workflows/ci-changes.yml",
     "scripts/ci/select-tests.py",
     "scripts/ci/journey-gate.py",
     "scripts/ci/journey-manifest.json",
+    "scripts/ci/journey_registry.py",
     "scripts/ci/test_journey_gate.py",
+    "scripts/ci/test_journey_registry.py",
     "scripts/ci/test_select_tests.py",
     "scripts/ci/wait-for-jobs.py",
     "scripts/ios/render_evidence.py",
@@ -150,8 +152,7 @@ def journey_native_for_ids(ids):
     )
 
 
-def matches_journey_path(path, prefix):
-    return path.startswith(prefix) if prefix.endswith("/") else path == prefix
+matches_journey_path = journey_registry.matches_journey_path
 
 
 def journey_affected(path):

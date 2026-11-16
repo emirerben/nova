@@ -453,5 +453,6 @@
       "cut_restarts": true,
       "speech_cleanup": true
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

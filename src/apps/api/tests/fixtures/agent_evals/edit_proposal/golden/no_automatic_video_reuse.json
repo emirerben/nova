@@ -36,5 +36,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Three videos must appear once each, even when longer cuts are needed"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

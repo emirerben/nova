@@ -29,6 +29,8 @@ from tests.pipeline.test_phone_subtitled_plan import (
     _video_overlay_card,
 )
 
+pytestmark = pytest.mark.journey("kri-841-talking-ending-clip")
+
 
 def _pinned_assembly_plan(recipe, *, variant_id="subtitled", visuals=()):
     import uuid
@@ -565,6 +567,139 @@ def test_a_sound_only_save_recompiles_an_edit_carrying_a_video_card():
     )
 
     assert "visualVideos" in recompiled.required_capabilities
+
+
+# --- KRI-1478: a strip card in the editor --------------------------------------
+#
+# The first render draws a wide card as a full-width strip cut to its text column
+# (`source_crop` on the card clip). The phone editor draws a card from the lanes the server
+# derives from that recipe: x / y / scale, the whole picture, no crop. Written BEFORE the fix.
+# Ways this goes wrong:
+# - the derived card keeps the strip's 0.94 width without its crop, so the editor shows (and a
+#   Save bakes in) the whole page 0.94 wide and 0.30 tall, over her forehead;
+# - the derived card keeps "no fade", so a Save is neither the strip nor today's card;
+# - a Save re-emits a crop or a strip for a card the creator may have moved;
+# - a card with no crop comes back changed (every existing edit).
+
+_STRIP_COLUMN = {
+    "left": 0.197,
+    "right": 0.613,
+    "line_pitch": 37 / 1080,
+    "source_width": 1920,
+    "source_height": 1080,
+}
+# Run 3: the whole 16:9 page fits 0.553 wide in the 0.175 of headroom above her face.
+_TODAY_WIDTH = 0.175 * (16 / 9) / (1080 / 1920)
+_TODAY_CARD = {
+    "x_frac": 0.5,
+    "y_frac": 0.1075,
+    "scale": _TODAY_WIDTH,
+    "fade": True,
+    "caption_clear": True,
+}
+_STRIP = {"strip": {"scale": 0.94, "height": 0.175}}
+
+
+def _card_recipe(kind: str, **card):
+    if kind == "video":
+        visual = _pool_video_visual(text_column=_STRIP_COLUMN, orientation_degrees=0)
+        lane_card = _video_overlay_card(**card)
+    else:
+        visual = _photo_visual(text_column=_STRIP_COLUMN)
+        lane_card = _overlay_card(**card)
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),),
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[lane_card]),
+    )
+    return recipe, visual
+
+
+def _card_clip(recipe):
+    return next(t for t in recipe.tracks if t.id == "subtitled-overlays").clips[0]
+
+
+def _saved(recipe, visual):
+    """The recipe an untouched editor Save recompiles from ``recipe``."""
+    previous = lanes_from_recipe(recipe, visuals=(visual,))
+    sections = sections_from_lanes(previous, labels={})["media_overlays"]
+    lanes = lanes_from_editor_sections(
+        previous=previous, sound_effects=None, media_overlays=sections, visuals=(visual,)
+    )
+    saved = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),), caption_cues=[], visuals=(visual,), lanes=lanes
+    )
+    return saved, lanes, sections
+
+
+def _wire(recipe, *, round_width: bool = False) -> dict:
+    import json
+
+    document = json.loads(recipe.model_dump_json())
+    document["required_capabilities"] = sorted(document["required_capabilities"])
+    if round_width:  # the crop is stored to six decimals, so the width comes back to ~1e-6
+        for track in document["tracks"]:
+            for clip in track["clips"]:
+                placement = clip.get("visual_placement") or {}
+                if placement.get("width_fraction") is not None:
+                    placement["width_fraction"] = round(placement["width_fraction"], 5)
+    return document
+
+
+@pytest.mark.parametrize("kind", ["image", "video"])
+def test_a_strip_card_opens_in_the_editor_as_todays_whole_picture_card(kind):
+    strip_recipe, visual = _card_recipe(kind, **_TODAY_CARD, **_STRIP)
+    today_recipe, _ = _card_recipe(kind, **_TODAY_CARD)
+    clip = _card_clip(strip_recipe)
+    assert clip.source_crop is not None and clip.visual_placement.width_fraction == 0.94
+
+    (derived,) = lanes_from_recipe(strip_recipe, visuals=(visual,)).overlays
+    (today,) = lanes_from_recipe(today_recipe, visuals=(visual,)).overlays
+
+    assert _TODAY_WIDTH == pytest.approx(0.553, abs=1e-4)
+    assert derived.scale == pytest.approx(_TODAY_WIDTH, abs=1e-5), "the whole page, not 0.94"
+    assert derived.strip is None
+    assert derived.model_dump() | {"scale": 0.0} == today.model_dump() | {"scale": 0.0}
+    (section,) = sections_from_lanes(PhoneSubtitledLanes(overlays=[derived]), labels={})[
+        "media_overlays"
+    ]
+    assert section["scale"] == pytest.approx(_TODAY_WIDTH, abs=1e-5)
+    assert (section["x_frac"], section["y_frac"]) == (0.5, pytest.approx(0.1075))
+    assert "source_crop" not in section and "strip" not in section
+    MediaOverlay.model_validate(section)
+
+
+@pytest.mark.parametrize("kind", ["image", "video"])
+def test_a_save_from_a_strip_card_is_the_flag_off_card(kind):
+    from app.kria.recipes_v2 import EditRecipeV2
+
+    strip_recipe, visual = _card_recipe(kind, **_TODAY_CARD, **_STRIP)
+    today_recipe, _ = _card_recipe(kind, **_TODAY_CARD)
+
+    saved, lanes, _sections = _saved(strip_recipe, visual)
+
+    assert lanes.overlays[0].strip is None
+    clip = _card_clip(saved)
+    assert clip.source_crop is None and "sourceCrop" not in saved.required_capabilities
+    assert clip.visual_placement.fade_in is True and clip.visual_placement.fade_out is True
+    assert EditRecipeV2.model_validate_json(saved.model_dump_json()) == saved
+    # Exactly today's (flag-off) recipe, to the sixth decimal of the card's width.
+    assert _wire(saved, round_width=True) == _wire(today_recipe, round_width=True)
+
+
+@pytest.mark.parametrize("kind", ["image", "video"])
+@pytest.mark.parametrize("fade", [True, False])
+def test_a_card_without_a_crop_is_untouched_by_the_strip_path(kind, fade):
+    recipe, visual = _card_recipe(kind, **_TODAY_CARD | {"fade": fade})
+    placement = _card_clip(recipe).visual_placement
+
+    (derived,) = lanes_from_recipe(recipe, visuals=(visual,)).overlays
+
+    assert derived.scale == placement.width_fraction == _TODAY_WIDTH  # exact, not approximately
+    assert (derived.x_frac, derived.y_frac, derived.fade) == (0.5, 0.1075, fade)
+    saved, _lanes, _sections = _saved(recipe, visual)
+    assert _wire(saved) == _wire(recipe), "an untouched Save recompiles the very same recipe"
 
 
 def test_projected_video_card_reports_kind_video_and_validates():

@@ -85,6 +85,7 @@ MAIN_CREATOR_PROMPT_SOURCES = (
     "app/agents/main_creator.py",
     "app/agents/prompt_vocab.py",
     "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/services/editor_limits.py",  # {{PLAYBACK_RATE_MIN}} {{PLAYBACK_RATE_MAX}}
     "app/agents/_writing_context.py",
     "app/kria/reply_language.py",
     "app/kria/brief.py",
@@ -1156,7 +1157,8 @@ in their words, or null>", "hold_s": 2.0 or null}}; a photo at a SPOKEN word is 
 timed_card. Play footage faster or
 slower ("speed the river shots up 2x", "slow motion on the pour", "klipleri 2 kat hızlandır",
 "time-lapse") => a `style` requirement with {"playback_rate": 2}: source seconds per output
-second, 2 = twice as fast, 0.5 = half speed, between 0.25 and 4; "slow motion" / "ağır çekim"
+second, 2 = twice as fast, 0.5 = half speed, between {{PLAYBACK_RATE_MIN}} and \
+{{PLAYBACK_RATE_MAX}}; "slow motion" / "ağır çekim"
 with no number = 0.5, "speed up" / "time-lapse" with no number = 2. Scope it `clip:<media_id>`
 when the creator names one attached clip, else "global" with the creator's words for the footage
 kept in `description` ("the river shots"); the server picks the clips from those words. Never
@@ -1171,6 +1173,8 @@ requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under 
 not a mute and records no audio_intent.
 "No music" / "without music" / "müzik olmasın" / "müziksiz" => an `audio` requirement with
 {"audio_intent": "no_music"}; it never mutes the footage's own sound.
+"No sound effects" / "keine Soundeffekte" / "efekt sesi olmasın" => an `audio` requirement with
+{"audio_intent": "no_sound_effects"}; it never mutes the footage's own sound or the music.
 Research, fact checking or sources for the on-screen explanations ("include sources for the
 historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
 "global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
@@ -1183,7 +1187,10 @@ as a SEPARATE requirement with its complete description; never certify those cha
 {"noise_reduction": "engine"}; never for music, muting or keeping the noise. For "original
 camera audio, remove only the wind noise", record both the unchanged-source intent and a
 separate wind-removal requirement. After an explicit simpler
-choice drops wind removal, preserve the source-audio requirement and its typed intent.
+choice drops wind removal, preserve the source-audio requirement and its typed intent. When the
+creator, after choosing the simpler version, answers that one of the asks it leaves out stays
+("keep the captions", "Untertitel behalten"), restate that requirement as a `change` of the same
+id with its full description and facts: that keeps it in the video.
 On a voiceover edit (the creator records their own voice over the clips), the creator may want
 ONE clip's own sound kept: that clip's sound faintly under the voice => an `audio` requirement
 scoped `clip:<media_id>` of THAT clip with {"clip_sound": "under_voice"} (only the named clips

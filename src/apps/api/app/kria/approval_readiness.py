@@ -20,8 +20,7 @@ from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.brief_checks import (
-    _REASON_TR,
-    RENDER_PROMISE_REASONS,
+    RENDER_PROMISE_TEXTS,
     _has_checker,
     _wants_source_sound_kept,
     _wants_whole_take,
@@ -32,6 +31,8 @@ from app.kria.brief_checks import (
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     speaker_background_waits_for_render,
+    talking_caption_promise,
+    unsaid_cue_reason,
     with_planned_cuts,
 )
 from app.kria.contracts import RequirementReceipt
@@ -41,6 +42,7 @@ from app.kria.reply_language import say
 from app.kria.route_disclosure import ask_declines, draft_route
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
+from app.services.choice_questions import SIMPLER_VERSION_REASON
 from app.services.clip_order_sequence import stated_anchors
 from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
@@ -121,12 +123,9 @@ async def resolve_readiness_manifest(db, item, strategy):  # noqa: ANN001, ANN20
     return manifest
 
 
-# Each promise in English and as its Turkish twin: a receipt is written in its turn's language.
-_PROMISE_TEXTS = frozenset(
-    text
-    for promise in RENDER_PROMISE_REASONS
-    for text in (promise, _REASON_TR.get(promise, promise))
-)
+# Each promise in every reply language (English, the Turkish twin, German...): a receipt is
+# written in its turn's language (KRI-1405: a German Talking draft held over its own promises).
+_PROMISE_TEXTS = RENDER_PROMISE_TEXTS
 
 
 def _selected_clip_audible(strategy: Mapping[str, Any], media: Mapping[str, Any]) -> bool:
@@ -158,10 +157,11 @@ def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, fact
     is always the "if offered" one; the draft reply's receipt can, and says when it does not.
 
     Only a `partial` receipt whose reason is entirely `RENDER_PROMISE_REASONS` texts (each part
-    exactly, joined by "; ") counts, or exactly the pinned spoken-text promise re-derived for
-    this requirement. Anything else keeps the hold: cleanup unavailable, a named line that "may
-    still be in your video", a restarted sentence that stays in because retake detection is off,
-    only the long pauses cut, an arrow the creator has to draw, a length the take cannot reach.
+    exactly, joined by "; ", in any reply language) counts, or exactly the pinned spoken-text
+    promise or (KRI-1405) the Talking captions plan re-derived for this requirement. Anything
+    else keeps the hold: cleanup unavailable, a named line that "may still be in your video", a
+    restarted sentence that stays in because retake detection is off, only the long pauses cut,
+    an arrow the creator has to draw, a length the take cannot reach.
     """
     # Receipts localize and cap public copy at 300 characters. Only complete evidence can
     # distinguish long triggers/times or retain a shortfall appended past that boundary.
@@ -171,7 +171,11 @@ def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, fact
     return (
         _only_promises(reason)
         or reason == _pinned_promise(req, facts)
+        or reason == talking_caption_promise(req, facts)
         or speaker_background_waits_for_render(req, facts)
+        # KRI-1486: a visual asked for words the take never says. Nothing is shown and the
+        # reply says so; there is no choice to hold the draft for.
+        or reason == unsaid_cue_reason(req, facts)
     )
 
 
@@ -520,6 +524,7 @@ def assess_readiness(
     requirements = brief.live() if brief is not None else []
     strategy = strategy or {}
     policy_problem = None
+    refusal: RefusedStrategy | None = None
     # S3 Yorum2 (Bug F): contract lines that are one order ask's own, by its id. That ask is
     # held; every other ask keeps its own verdict, so one reply names every blocker.
     order_problems: dict[str, str] = {}
@@ -539,12 +544,12 @@ def assess_readiness(
     else:
         try:
             typed = CreativeStrategy.model_validate(strategy)
-            checked = check_strategy_for_runtime_v2(
-                manifest, typed, ask_before_simplifying=True, ask_about_stated_settings=True
-            )
+            checked = _policy_check(manifest, typed)
             # Re-running policy must not silently repair an approved promise.
             if isinstance(checked, RefusedStrategy):
                 policy_problem = checked.question
+                if checked.code == SIMPLER_VERSION_REASON and checked.fields:
+                    refusal = checked
             elif checked.strategy.model_dump(mode="json") != typed.model_dump(mode="json"):
                 policy_problem = say(
                     en=(
@@ -707,11 +712,16 @@ def assess_readiness(
         if isinstance(answer, Mapping) and answer.get("source") == "creator_delegated"
         for req_id in answer.get("requirement_ids") or []
     }
+    # Tadic (KRI-1447): readiness's own "simpler version?" refusal still holds the draft. Each
+    # ask's own verdict is worked out beside it, so the card is offered only when that refusal
+    # is all that holds the draft, and an ask held for its own reason is still named.
+    simplification_hold = refusal is not None and policy_problem == refusal.question
+    own_verdicts = not policy_problem or simplification_hold
     # The unified montage draft says what its route cannot read (animated text outside the
     # title) and approves the closest thing instead of holding the draft.
     on_unified_montage = (
         settings.kria_route_disclosure_enabled
-        and not policy_problem
+        and own_verdicts
         and editor_payload is None
         and _defers_to_unified_montage(strategy, media, manifest, creator_id)
     )
@@ -725,15 +735,16 @@ def assess_readiness(
             clip_paths=[str(path) for path in media.get("clip_paths") or []],
             phone_montage=on_unified_montage,
         )
-        if settings.kria_route_disclosure_enabled and not policy_problem and editor_payload is None
+        if settings.kria_route_disclosure_enabled and own_verdicts and editor_payload is None
         else None
     )
     declined = (
         {d.requirement_id: d for d in ask_declines(requirements, strategy, route=decline_route)}
-        if not policy_problem
+        if own_verdicts
         else {}
     )
     rows = []
+    own_rows = []  # each ask's verdict without the policy problem (only a simplification's)
     for req in requirements:
         receipt = receipts.get(req.id)
         proven = (
@@ -768,10 +779,8 @@ def assess_readiness(
         ):
             proven, owner = True, FIELD_MATRIX["audio_strategy"].owner
         checked = receipt is not None and receipt.verification == "checked"
-        disposition = (
-            "unsupported"
-            if policy_problem
-            else "delegated"
+        own = (
+            "delegated"
             if proven and req.id in delegated
             else "executable"
             if proven
@@ -789,32 +798,33 @@ def assess_readiness(
             and _no_pre_render_checker(req, facts)
             else "evidence_missing"
         )
-        if req.id in declined and disposition in {"unverified", "evidence_missing"}:
+        if req.id in declined and own in {"unverified", "evidence_missing"}:
             # Nothing checked this ask, and the route cannot read it: said plainly, approvable.
             # (A checker's own verdict, e.g. the words are missing, is never hidden by this.)
-            disposition = "declined"
-        reason = policy_problem or (
+            own = "declined"
+        disposition = "unsupported" if policy_problem else own
+        own_reason = (
             declined[req.id].text
-            if disposition == "declined"
+            if own == "declined"
             else receipt.reason
             if checked
             else say(
                 en="I'll show these words one at a time when I prepare the video, then check.",
                 tr="Bu kelimeleri videoyu hazırlarken tek tek göstereceğim, sonra kontrol ederim.",
             )
-            if disposition == "unverified" and req.kind == "text_sequence"
+            if own == "unverified" and req.kind == "text_sequence"
             else say(
                 en="I can't check this before the video is made; I'll point it out after.",
                 tr="Bunu video hazırlanmadan önce kontrol edemiyorum; sonra sana göstereceğim.",
             )
-            if disposition == "unverified"
+            if own == "unverified"
             else say(
                 en="I can't confirm this draft does it yet.",
                 tr="Bu taslağın bunu yaptığını henüz doğrulayamıyorum.",
             )
         )
         if proven and owner == "prepared_collection_story":
-            reason = say(
+            own_reason = say(
                 en=(
                     "The reviewed story's source windows, wording and sound "
                     "match its frozen execution."
@@ -825,22 +835,37 @@ def assess_readiness(
                 ),
             )
         elif owner == "prepared_collection_story":
-            reason = policy_problem or say(
+            own_reason = say(
                 en="I need the selected idea's unchanged execution evidence before approval.",
                 tr="Onaydan önce seçilen fikrin değişmemiş düzen kanıtına ihtiyacım var.",
             )
         elif proven and owner != "brief_checks":
-            reason = say(
+            own_reason = say(
                 en="Original camera audio is required by the render contract.",
                 tr="Oluşturma sözleşmesi kameranın özgün sesini zorunlu tutuyor.",
             )
+        # A policy problem is every ask's reason, except the proofs that name their own owner.
+        reason = (
+            own_reason
+            if not policy_problem or (proven and owner != "brief_checks")
+            else policy_problem
+        )
         if req.id in order_problems:
             disposition, reason = "unsupported", order_problems[req.id]
+            own, own_reason = disposition, reason
         rows.append(
             {
                 "requirement_id": req.id,
                 "disposition": disposition,
                 "reason": reason,
+                "evidence_owner": owner,
+            }
+        )
+        own_rows.append(
+            {
+                "requirement_id": req.id,
+                "disposition": own,
+                "reason": own_reason,
                 "evidence_owner": owner,
             }
         )
@@ -855,7 +880,37 @@ def assess_readiness(
     if on_unified_montage:
         # Only the route whose render judges the ask itself (the phone unified montage) may
         # approve what no draft check can decide; every other route keeps its hold.
-        rows = _approve_undecidable(rows, requirements)
+        if policy_problem:
+            own_rows = _approve_undecidable(own_rows, requirements)
+        else:
+            rows = _approve_undecidable(rows, requirements)
+    refusal_ids: list[str] = []
+    if simplification_hold:
+        # The asks the refusal itself holds: every ask nothing else holds, and an ask about a
+        # setting the simpler version changes. Any other ask is held for its own reason.
+        refused = _refusal_requirement_ids(refusal.fields, requirements)
+        own_held = {
+            row["requirement_id"]
+            for row in own_rows
+            if row["disposition"] not in APPROVABLE and row["requirement_id"] not in refused
+        }
+        refusal_ids = [
+            row["requirement_id"] for row in rows if row["requirement_id"] not in own_held
+        ]
+        if own_held:
+            # No card can answer this hold, so say what the refusal changes without asking it,
+            # and keep each other blocker's own reason under it.
+            policy_problem = refusal.detail or policy_problem
+            own_by_id = {row["requirement_id"]: row for row in own_rows}
+            rows = [
+                {
+                    **row,
+                    "reason": own_by_id[row["requirement_id"]]["reason"]
+                    if row["requirement_id"] in own_held
+                    else policy_problem,
+                }
+                for row in rows
+            ]
     report = {
         "schema_version": 1,
         "ready": not policy_problem
@@ -882,6 +937,17 @@ def assess_readiness(
         ),
         "requirements": rows,
         "policy_problem": policy_problem,
+        # Only while that refusal is still the problem: its fields are what a simpler-version
+        # card offers to leave out (`simplified_strategy` drafts them once the creator agrees),
+        # and `requirement_ids` the asks it alone holds. The card is offered only when that is
+        # every held ask (a mixed hold names its other blockers and asks nothing).
+        "policy_refusal": {
+            "code": refusal.code,
+            "fields": list(refusal.fields),
+            "requirement_ids": refusal_ids,
+        }
+        if simplification_hold
+        else None,
         # KRI-901: an input, not a verdict (the dispositions above carry it into the
         # digest). Saved so approval re-checks with the client the draft was made for.
         "protected_marks": bool(protected_marks),
@@ -889,6 +955,61 @@ def assess_readiness(
     # Pydantic values in capability records are serialized without model text.
     report["digest"] = digest(_identity(report))
     return report
+
+
+def _refusal_requirement_ids(
+    fields: Sequence[str], requirements: Sequence[BriefRequirement]
+) -> set[str]:
+    """The asks about a setting a simplification refusal changes, by id.
+
+    Only the whole-video length today (a stated "30 seconds" the clips cannot fill is the
+    refusal's own subject). A field with no mapping maps to no ask, so an ask held for its own
+    reason always keeps the card away."""
+    from app.kria.brief_checks import _has_duration_target  # noqa: PLC0415
+
+    if "target_duration_s" not in fields:
+        return set()
+    return {req.id for req in requirements if req.kind == "timing" and _has_duration_target(req)}
+
+
+def _policy_check(manifest: ResolvedCreatorManifest, typed: CreativeStrategy):  # noqa: ANN202
+    return check_strategy_for_runtime_v2(
+        manifest, typed, ask_before_simplifying=True, ask_about_stated_settings=True
+    )
+
+
+def simplification_refusal(
+    manifest: ResolvedCreatorManifest | None, strategy: Mapping[str, Any] | None
+) -> RefusedStrategy | None:
+    """The "simpler version?" refusal readiness would hold this strategy on, if any."""
+    if manifest is None or not strategy:
+        return None
+    try:
+        checked = _policy_check(manifest, CreativeStrategy.model_validate(strategy))
+    except ValueError:
+        return None
+    if (
+        isinstance(checked, RefusedStrategy)
+        and checked.code == SIMPLER_VERSION_REASON
+        and checked.fields
+    ):
+        return checked
+    return None
+
+
+def simplified_strategy(
+    manifest: ResolvedCreatorManifest, strategy: Mapping[str, Any]
+) -> tuple[dict[str, Any], tuple[str, ...]] | None:
+    """What the creator agreed to on that refusal's card: the strategy the same check keeps
+    without asking, and its notices. Drafting it (not the asked one) is what lets the approval
+    re-check, which reads only the saved strategy, agree with the draft."""
+    try:
+        checked = check_strategy_for_runtime_v2(manifest, CreativeStrategy.model_validate(strategy))
+    except ValueError:
+        return None
+    if isinstance(checked, RefusedStrategy):
+        return None
+    return checked.strategy.model_dump(mode="json", exclude_none=True), tuple(checked.notices)
 
 
 def _defers_to_unified_montage(
@@ -1071,7 +1192,9 @@ def readiness_matches(saved: object, current: dict[str, Any]) -> bool:
         return False
 
 
-def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
+def readiness_reply(
+    brief: CreativeBrief | None, report: dict[str, Any], *, offers_choice: bool = False
+) -> str:
     """Display identified blocked requirements; never derive execution from prose.
 
     A ``policy_problem`` blocks the whole draft and is every requirement's reason (KRI-1123:
@@ -1079,21 +1202,36 @@ def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
     "Skip the dark photo" and every label). It is said once, ahead of the list; a requirement
     whose reason is that problem is named without repeating it, and one with a reason of its
     own keeps it. A refused first / last clip says what to do next: name the clip.
+
+    KRI-1405: when the reply goes on to offer the "Make it without these" card
+    (``offers_choice``) and every blocked ask is a choice, not a refusal, it opens "Before I
+    make this, please choose:"; otherwise "I can't make this yet:".
     """
     by_id = {r.id: r for r in brief.live()} if brief else {}
-    lines = [say(en="I can't make this yet:", tr="Bunu henüz yapamıyorum:")]
     policy = report.get("policy_problem")
+    blocked = [r for r in report["requirements"] if r["disposition"] not in APPROVABLE]
+    lines = [
+        # KRI-1405: an ask Kria can do but the creator has to decide on ("only the long pauses
+        # are cut") is a choice, not a "can't"; "can't" stays for what truly can't be made.
+        say(en="Before I make this, please choose:", tr="Bunu yapmadan önce bir seçim yap:")
+        if offers_choice
+        and blocked
+        and not policy
+        and all(r["disposition"] == "needs_choice" for r in blocked)
+        else say(en="I can't make this yet:", tr="Bunu henüz yapamıyorum:")
+    ]
     if policy:
         lines.append(f"{policy} {_pin_next_step(brief, str(policy))}".rstrip())
     for row in report["requirements"]:
         if row["disposition"] in APPROVABLE:
             continue
-        name = by_id[row["requirement_id"]].text()
+        req = by_id[row["requirement_id"]]
         reason = str(row["reason"] or "")
         lines.append(
-            f"- {name}"
+            f"- {req.text()}"
             if policy and reason == policy
-            else f"- {name}: {reason} {_pin_next_step(brief, reason)}".rstrip()
+            # KRI-1465: `listed()`, so a requirement that is a sentence never reads ".:".
+            else f"- {req.listed()}: {reason} {_pin_next_step(brief, reason)}".rstrip()
         )
     return "\n".join(lines)
 

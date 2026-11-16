@@ -149,9 +149,14 @@ def test_draft_flag_off_is_todays_receipt(monkeypatch):
 
 
 def test_draft_with_a_spoken_trigger_keeps_the_kri707_plan(monkeypatch):
+    """A numbered text on ANOTHER word is a text on a word. (A label named by its own trigger
+    is the list lane's since KRI-1480; with that switch off it is KRI-707's as before.)"""
     _flag(monkeypatch, True)
-    receipt = _draft(_req("l1", "1. Spec-kit", facts={"triggers": ["spec kit"]}))
-    assert receipt.reason != PLAN_EN
+    assert _draft(_req("l1", "1. Spec-kit", facts={"triggers": ["github"]})).reason != PLAN_EN
+    named = _req("l1", "1. Spec-kit", facts={"triggers": ["spec kit"]})
+    assert _draft(named).reason == PLAN_EN
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
+    assert _draft(named).reason != PLAN_EN
 
 
 def _row(status: str, **kw) -> dict:
@@ -434,3 +439,172 @@ def test_r6_a_whole_list_and_a_whole_label_are_still_met():
     rows = [_typed(face_collision=False, list_found=3), _item(2), _item(3)]
     assert _after(LIST_REQ, rows).status == "met"
     assert _drawn(_req("l1", LONG), LONG, texts=(LONG,)).status == "met"
+
+
+# --- KRI-1471: the example filed in the description (Q1 run 3, prod 2026-11-14) -----------
+#
+# "When I list the five repos, show each one as big text, like “1. Spec-kit”." arrived as one
+# `text / per_clip` row with no literal. The per-clip check answered "None of the 11 clips got
+# its own text in this draft." (`not_possible`), readiness held the draft and "Make it without
+# these" dropped her labels.
+#
+# Ways the receipt can go wrong, written before the code:
+#  X1 the prod row still gets the clip-text refusal;      X2 the Turkish turn still does;
+#  X3 a marked literal filed per-clip still does;
+#  X4 the example switch off, or item 19's own switch off, is not today's receipt;
+#  X5 a montage / cloud draft (not the phone Talking writer) loses its per-clip check;
+#  X6 a per-clip ask with no numbered example stops being refused on Talking;
+#  X7 after the render the row is judged as clip text, not by its own labels;
+#  X8 one label of five is called met;                    X9 a label never heard is called met.
+
+Q1_ASK = "When I list the five repos, show each one as big text, like “1. Spec-kit”."
+NO_CLIP_TEXT = "None of the 11 clips got its own text in this draft."
+CLIPS = [f"clip-{n}" for n in range(11)]
+
+
+def _example(literal: str | None = None, description: str = Q1_ASK) -> BriefRequirement:
+    return BriefRequirement(
+        id="r5",
+        kind="text",
+        scope="per_clip",
+        description=description,
+        literal=literal,
+        facts={"numbered": True, "text_size": "large", "show_when_mentioned": True},
+    )
+
+
+def _example_switch(monkeypatch, value: bool) -> None:
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", value)
+
+
+def _clip_draft(req: BriefRequirement, *, phone_talking: bool = True, lang: str | None = None):
+    facts = dataclasses.replace(
+        plan_facts_from_strategy(STRATEGY, clip_ids=CLIPS), phone_talking=phone_talking
+    )
+    token = bind_reply_language(lang) if lang else None
+    try:
+        [receipt] = build_receipts([req], facts, include_unchecked=True)
+    finally:
+        if token is not None:
+            release_reply_language(token)
+    return receipt
+
+
+def test_x1_the_prod_row_is_the_list_label_promise(monkeypatch):
+    _flag(monkeypatch, True)
+    _example_switch(monkeypatch, True)
+    receipt = _clip_draft(_example())
+    assert (receipt.status, receipt.reason) == ("partial", PLAN_EN)
+    assert receipt.requirement_id == "r5" and receipt.verification == "checked"
+
+
+def test_x2_x3_in_turkish_and_as_a_marked_per_clip_literal(monkeypatch):
+    _flag(monkeypatch, True)
+    _example_switch(monkeypatch, True)
+    assert _clip_draft(_example(), lang="tr").reason == PLAN_TR
+    assert _clip_draft(_example(literal="1. Spec-kit")).reason == PLAN_EN
+
+
+@pytest.mark.parametrize(("master", "example"), [(True, False), (False, True), (False, False)])
+def test_x4_either_switch_off_is_todays_receipt(monkeypatch, master, example):
+    _flag(monkeypatch, master)
+    _example_switch(monkeypatch, example)
+    receipt = _clip_draft(_example())
+    assert (receipt.status, receipt.reason) == ("not_possible", NO_CLIP_TEXT)
+
+
+def test_x5_a_draft_off_the_phone_talking_writer_keeps_its_per_clip_check(monkeypatch):
+    _flag(monkeypatch, True)
+    _example_switch(monkeypatch, True)
+    receipt = _clip_draft(_example(), phone_talking=False)
+    assert (receipt.status, receipt.reason) == ("not_possible", NO_CLIP_TEXT)
+
+
+def test_x6_a_per_clip_ask_with_no_numbered_example_is_still_refused(monkeypatch):
+    _flag(monkeypatch, True)
+    _example_switch(monkeypatch, True)
+    for description in ("the landmark shown in each clip", "name each place, like “Paris”"):
+        receipt = _clip_draft(_example(description=description))
+        assert (receipt.status, receipt.reason) == ("not_possible", NO_CLIP_TEXT), description
+
+
+def _q1_rows(found: int, **typed) -> list[dict]:
+    names = ["Impeccable", "Trading Agents", "The Agents Marketplace", "Cloud Code Game Studios"]
+    first = {"requirement_id": "r5", "text": "1. Spec-kit", "item": "Spec-kit", "status": "placed"}
+    return [
+        {**first, "face_collision": False, "list_found": found, **typed},
+        *(
+            {
+                "requirement_id": "r5",
+                "list_item": number,
+                "text": f"{number}. {name}",
+                "status": "placed",
+                "basis": "spoken_list",
+                "face_collision": False,
+            }
+            for number, name in enumerate(names[: found - 1], 2)
+        ),
+    ]
+
+
+def test_x7_after_the_render_five_placed_labels_are_met(monkeypatch):
+    _example_switch(monkeypatch, True)
+    assert _after(_example(), _q1_rows(5)).status == "met"
+    assert _after(_example(literal="1. Spec-kit"), _q1_rows(5)).status == "met"
+
+
+def test_x8_only_the_typed_label_found_is_partial(monkeypatch):
+    _example_switch(monkeypatch, True)
+    receipt = _after(_example(), _q1_rows(1))
+    assert (receipt.status, receipt.reason) == (
+        "partial",
+        "I showed this one, but couldn't find the rest of your list in the take",
+    )
+
+
+def test_x9_a_label_never_heard_says_so(monkeypatch):
+    _example_switch(monkeypatch, True)
+    row = {"requirement_id": "r5", "text": "1. Spec-kit", "item": "Spec-kit", "status": "not_heard"}
+    receipt = _after(_example(), [row])
+    assert (receipt.status, receipt.reason) == (
+        "partial",
+        "I didn't hear where that part starts, so the label isn't in",
+    )
+
+
+def test_after_the_render_switch_off_judges_the_row_as_before(monkeypatch):
+    _example_switch(monkeypatch, False)
+    assert _after(_example(), _q1_rows(5)).status != "met"
+
+
+# --- KRI-1471: a label left on a card or a caption line is never "Done" -------------------
+#
+# The Q1 run 3 replay: every label was drawn over its screenshot card and the done-list said
+# "Done". When the worker finds no clear spot it now records ``text_overlap`` on the row. Ways
+# the receipt can go wrong: O1 it still says met; O2 the Turkish turn does; O3 an overlap on
+# one of the spoken items (rows 2..) is lost; O4 a clear label stops being met.
+
+OVERLAP_EN = "“1. Spec-kit” sits over something else on screen; I couldn't find a clear spot for it"
+OVERLAP_TR = "“1. Spec-kit” ekranda başka bir şeyin üstünde duruyor; ona boş bir yer bulamadım"
+
+
+def test_o1_o2_a_label_left_on_a_card_is_partial_and_says_so(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows = _q1_rows(5, text_overlap=True)
+    receipt = _after(_example(), rows)
+    assert (receipt.status, receipt.reason) == ("partial", OVERLAP_EN)
+    assert _after(_example(), rows, lang="tr").reason == OVERLAP_TR
+    assert _after(_req("r5", "1. Spec-kit"), rows).status == "partial"  # item 19's own row too
+
+
+def test_o3_an_overlapping_spoken_item_makes_the_list_partial(monkeypatch):
+    _example_switch(monkeypatch, True)
+    rows = _q1_rows(5)
+    rows[3] = {**rows[3], "text_overlap": True}
+    receipt = _after(_example(), rows)
+    assert (receipt.status, receipt.reason) == ("partial", OVERLAP_EN)
+
+
+def test_o4_clear_labels_are_still_met(monkeypatch):
+    _example_switch(monkeypatch, True)
+    assert _after(_example(), _q1_rows(5, text_overlap=False)).status == "met"

@@ -347,9 +347,15 @@ def test_constraints_allow_only_nfc_and_whitespace_normalization(monkeypatch):
 
 @pytest.mark.parametrize("language", ["en", "tr"])
 def test_text_preparation_failure_is_actionable_and_never_blames_device(language):
+    from types import SimpleNamespace
+
+    from app.tasks.content_plan_build import creator_failure_detail
     from app.tasks.kria_runtime import _job_failure_copy
 
+    job = SimpleNamespace(
+        failure_reason="creation_text_failed", error_detail="PRIVATE DIAGNOSTICS", assembly_plan={}
+    )
     with reply_language_for(language):
-        message = _job_failure_copy("creation_text_failed", "PRIVATE DIAGNOSTICS")
+        message = _job_failure_copy("creation_text_failed", creator_failure_detail(job))
     assert message and "iPhone" not in message and "PRIVATE" not in message
     assert ("wording" if language == "en" else "yazı") in message

@@ -169,5 +169,6 @@
     "source": "legacy_fixture_semantic_projection",
     "case": "barcelona_shot_labels",
     "note": "Prod job ac795019: exact creator shot labels must bind verbatim, one per shot."
-  }
+  },
+  "prompt_sha": "214f232ebcf17538"
 }

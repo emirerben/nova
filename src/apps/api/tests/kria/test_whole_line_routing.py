@@ -37,6 +37,8 @@ from app.kria.brief_checks import (
     wants_whole_line,
 )
 
+pytestmark = pytest.mark.journey("kri-760-whole-line-ask")
+
 LINE = "Hi, I'm Karolina, I'm from Ecuador"
 TR_ASK = f'"{LINE}" dediği cümle baştan sona duyulsun'
 # What phone montage reports (reaction beats are not offered there).

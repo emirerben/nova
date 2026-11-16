@@ -11,7 +11,8 @@ is not a violation; a real shortfall (90 ms) still is.
 
 from __future__ import annotations
 
-EDITOR_MIN_CLIP_S = 0.1
+from app.services.editor_limits import EDITOR_MIN_CLIP_S
+
 EDITOR_WINDOW_EPSILON_S = 1e-6
 
 

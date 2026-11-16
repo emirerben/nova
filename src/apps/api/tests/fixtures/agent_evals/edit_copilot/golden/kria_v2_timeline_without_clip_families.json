@@ -37,8 +37,11 @@
     "capability_contract": {
       "intent": "reject",
       "needs_clarification": false,
-      "reply_contains": ["length"],
+      "reply_contains": [
+        "length"
+      ],
       "suggestions_empty": true
     }
-  }
+  },
+  "prompt_sha": "unpinned"
 }

@@ -65,6 +65,8 @@ from app.kria.reply_language import reply_language_for
 from app.kria.strategy_policy import CheckedStrategy, RefusedStrategy, check_strategy_for_runtime_v2
 from app.services import creator_capabilities as capabilities
 
+pytestmark = pytest.mark.journey("kri-841-talking-ending-clip")
+
 USER = uuid.uuid4()
 FOOTAGE_A = "analysis-proxy-ios-A.mp4"  # Cafe: Caro's take / Don Julio: Lucas speaking
 FOOTAGE_B = "analysis-proxy-ios-B.mp4"  # Don Julio: the overhead table (a muted cutaway)

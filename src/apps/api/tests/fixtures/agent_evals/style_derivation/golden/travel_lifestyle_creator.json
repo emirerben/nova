@@ -2,7 +2,7 @@
   "agent": "nova.plan.style_derivation",
   "prompt_version": "2026-06-28",
   "input": {
-    "persona_summary": "Budget travel creator showing how to explore Europe for under $50/day. Shares real hostel finds, free walking tours, and street food spots. Calm, observational voice \u2014 feels like a friend guiding you through a city.",
+    "persona_summary": "Budget travel creator showing how to explore Europe for under $50/day. Shares real hostel finds, free walking tours, and street food spots. Calm, observational voice — feels like a friend guiding you through a city.",
     "persona_pillars": [
       "budget travel",
       "European cities",
@@ -24,7 +24,7 @@
       },
       {
         "id": "travel_editorial",
-        "label": "Travel \u2014 Editorial Serif",
+        "label": "Travel — Editorial Serif",
         "tags": [
           "agentic",
           "generative",
@@ -36,7 +36,7 @@
       },
       {
         "id": "lifestyle_clean",
-        "label": "Lifestyle \u2014 Minimal Serif",
+        "label": "Lifestyle — Minimal Serif",
         "tags": [
           "agentic",
           "generative",
@@ -60,7 +60,7 @@
       },
       {
         "id": "high_fashion",
-        "label": "High Fashion \u2014 Bodoni",
+        "label": "High Fashion — Bodoni",
         "tags": [
           "agentic",
           "generative",
@@ -72,7 +72,7 @@
       },
       {
         "id": "bold_statement",
-        "label": "Bold Statement \u2014 Fraunces",
+        "label": "Bold Statement — Fraunces",
         "tags": [
           "agentic",
           "generative",
@@ -84,7 +84,7 @@
       },
       {
         "id": "film_mono",
-        "label": "Film / Indie \u2014 Mono",
+        "label": "Film / Indie — Mono",
         "tags": [
           "agentic",
           "generative",
@@ -96,7 +96,7 @@
       },
       {
         "id": "typewriter",
-        "label": "Typewriter \u2014 Letter by Letter",
+        "label": "Typewriter — Letter by Letter",
         "tags": [
           "agentic",
           "generative",
@@ -108,7 +108,7 @@
       },
       {
         "id": "ai_answer",
-        "label": "AI Answer \u2014 Streaming",
+        "label": "AI Answer — Streaming",
         "tags": [
           "agentic",
           "generative",
@@ -301,6 +301,7 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "Budget travel creator with cinematic TikTok presence \u2014 strong signal from TikTok analysis toward travel_editorial set and Playfair Display serif. Montage-dominant edit format mix reflects their proven content format."
-  }
+    "case": "Budget travel creator with cinematic TikTok presence — strong signal from TikTok analysis toward travel_editorial set and Playfair Display serif. Montage-dominant edit format mix reflects their proven content format."
+  },
+  "prompt_sha": "unpinned"
 }

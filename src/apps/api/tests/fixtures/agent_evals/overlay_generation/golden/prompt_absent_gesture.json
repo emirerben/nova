@@ -1,0 +1,87 @@
+{
+  "agent": "nova.editor.overlay_generation",
+  "prompt_version": "2026-11-02.4",
+  "prompt_sha": "ed0362c6ba91526c",
+  "input": {
+    "language": "en",
+    "mode": "prompt",
+    "prompt": "Add fireworks when I wave at the camera",
+    "taste_notes": "",
+    "duration_s": 20.0,
+    "evidence": [
+      {
+        "kind": "speech",
+        "reference_id": "speech-0",
+        "quote": "welcome back to the channel today we are making pasta",
+        "start_s": 1.0,
+        "end_s": 4.95,
+        "words": [
+          {
+            "quote": "welcome",
+            "start_s": 1.0,
+            "end_s": 1.35
+          },
+          {
+            "quote": "back",
+            "start_s": 1.4,
+            "end_s": 1.75
+          },
+          {
+            "quote": "to",
+            "start_s": 1.8,
+            "end_s": 2.15
+          },
+          {
+            "quote": "the",
+            "start_s": 2.2,
+            "end_s": 2.55
+          },
+          {
+            "quote": "channel",
+            "start_s": 2.6,
+            "end_s": 2.95
+          },
+          {
+            "quote": "today",
+            "start_s": 3.0,
+            "end_s": 3.35
+          },
+          {
+            "quote": "we",
+            "start_s": 3.4,
+            "end_s": 3.75
+          },
+          {
+            "quote": "are",
+            "start_s": 3.8,
+            "end_s": 4.15
+          },
+          {
+            "quote": "making",
+            "start_s": 4.2,
+            "end_s": 4.55
+          },
+          {
+            "quote": "pasta",
+            "start_s": 4.6,
+            "end_s": 4.95
+          }
+        ]
+      }
+    ],
+    "assets": [],
+    "existing_overlays": [],
+    "insertion_base": null
+  },
+  "raw_text": "{\n  \"overlays\": [],\n  \"message\": \"No visual evidence or explicit time was provided for \\\"waving at the camera\\\" to trigger fireworks. Please provide visual evidence or an explicit timestamp for the wave.\"\n}",
+  "output": {
+    "overlays": [],
+    "message": "No visual evidence or explicit time was provided for \"waving at the camera\" to trigger fireworks. Please provide visual evidence or an explicit timestamp for the wave."
+  },
+  "meta": {
+    "source": "provider_smoke_capture",
+    "expect_overlays": "none",
+    "kri": "KRI-1428",
+    "test_run_id": "kri1428-overlay-generation-20261115e"
+  }
+}

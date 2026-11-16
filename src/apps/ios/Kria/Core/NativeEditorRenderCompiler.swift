@@ -122,6 +122,8 @@ enum NativeEditorRenderError: Error, Equatable {
             return activeSlots.indices.contains(index) ? activeSlots[index] : nil
         }
         for (index, clip) in clips.enumerated() {
+            // A blank block has no source: it rides on its section as `blanks` (below), never as a track clip.
+            if slot(for: clip, index: index)?.isBlank == true { continue }
             guard let sourceIndex = clip.sourceClipIndex, let source = sources[sourceIndex],
                   let fingerprint = source.asset.fingerprint else {
                 throw NativeEditorRenderError.missingSource(clip.sourceClipIndex ?? index)
@@ -211,9 +213,10 @@ enum NativeEditorRenderError: Error, Equatable {
             var freezeHold = authoredSlot?.raw["freeze_hold_s"]?.numberValue ?? 0
             if freezeHold > 0, let frame = authoredSlot?.raw["freeze_frame_s"]?.numberValue, frame.isFinite {
                 let motion = (frame - sourceStart) / (explicitRate ?? 1)
-                let hold = ((authoredMovingDuration - motion) * 30).rounded() / 30
-                let minimumMotion = authoredSlot?.parentSegmentID != nil ? 1.0 / 30 : 0.1
-                freezeHold = motion >= minimumMotion - 0.000_001 && hold >= 1.0 / 30 - 0.000_001 ? hold : 0
+                let fps = Double(EditorLimits.outputFPS)
+                let hold = ((authoredMovingDuration - motion) * fps).rounded() / fps
+                let minimumMotion = authoredSlot?.parentSegmentID != nil ? 1 / fps : EditorLimits.minClipSeconds
+                freezeHold = motion >= minimumMotion - 0.000_001 && hold >= 1 / fps - 0.000_001 ? hold : 0
             }
             let freezes = freezeHold.isFinite && freezeHold > 0
                 && authoredMovingDuration - freezeHold > 0
@@ -576,7 +579,7 @@ enum NativeEditorRenderError: Error, Equatable {
             let sourceStart = source.asset.duration == nil ? 0 : (overlay.raw["clip_trim_start_s"]?.numberValue ?? 0)
             let sourceEnd = source.asset.duration.map { min($0, overlay.raw["clip_trim_end_s"]?.numberValue ?? $0) }
             let playbackRate = overlay.raw["playback_rate"]?.numberValue ?? 1
-            guard playbackRate.isFinite, (0.25...4).contains(playbackRate) else { throw RecipeError.invalidTimeline }
+            guard playbackRate.isFinite, EditorLimits.playbackRate.contains(playbackRate) else { throw RecipeError.invalidTimeline }
             let moving = min(window * playbackRate, sourceEnd.map { $0 - sourceStart } ?? window * playbackRate)
             guard moving > 0 else { throw RecipeError.invalidTimeline }
             overlays.append(TimelineClip(id: id, sourceAssetID: id, sourceStart: sourceStart, sourceDuration: moving,
@@ -957,7 +960,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 let timelineLength = min(end - shotStart, isMedia ? end - start : shot["duration_s"]?.numberValue ?? end - start)
                 let sourceStart = image ? 0 : shot["trim_start_s"]?.numberValue ?? 0
                 let playbackRate = shot["playback_rate"]?.numberValue ?? 1
-                guard playbackRate.isFinite, (0.25...4).contains(playbackRate), timelineLength > 0 else { throw RecipeError.invalidTimeline }
+                guard playbackRate.isFinite, EditorLimits.playbackRate.contains(playbackRate), timelineLength > 0 else { throw RecipeError.invalidTimeline }
                 let length = image ? timelineLength : min(timelineLength * playbackRate, max(0, (source.asset.duration ?? 0) - sourceStart))
                 guard image || length > 0 else { throw RecipeError.invalidTimeline }
                 let crop = shot[isMedia ? "transform" : "crop"]?.objectValue ?? [:]
@@ -1101,9 +1104,14 @@ enum NativeEditorRenderError: Error, Equatable {
             guard let index = document.clips.firstIndex(where: { $0.splitSectionID == section.id }),
                   let window = splitProjection.clipWindows.first(where: { $0.sourceIndex == index }) else { return nil }
             let start = window.start - document.clips[index].splitOffsetS
+            let blanks = document.clips.compactMap { slot -> SplitScreenBlank? in
+                guard !slot.removed, slot.isBlank, slot.splitSectionID == section.id, let panel = slot.splitPanelIndex,
+                      let id = slot.id, let color = slot.blankColor, let length = slot.durationS else { return nil }
+                return SplitScreenBlank(id: id, panelIndex: panel, start: start + slot.splitOffsetS, end: start + slot.splitOffsetS + length, color: color)
+            }
             return SplitScreenSection(id: section.id, start: start, end: start + section.durationS,
                                       panelWeights: section.panelWeights, gutter: section.gutter, backgroundColor: section.backgroundColor,
-                                      collapseEmptyPanels: section.collapseEmptyPanels)
+                                      collapseEmptyPanels: section.collapseEmptyPanels, blanks: blanks)
         }
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
         // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.
@@ -1659,14 +1667,14 @@ enum KriaTextCase {
 
 /// KRI-813: which playback rates the editor preview accepts for a video slot.
 ///
-/// The creator-facing range is 0.25...4 (retime control, explicit `playback_rate`, cards, shots). A phone
+/// The creator-facing range is `EditorLimits.playbackRate` (retime control, explicit `playback_rate`, cards, shots). A phone
 /// narrated edit is different: the server's `phone_narrated_plan._fit_step_window` slows short footage to
 /// fill each voiceover step with no rate floor (the C7 museum sculpture plays at ~0.165x), and the export
 /// engine plays exactly that. The preview must match it exactly -- clamping would freeze-hold the picture
-/// and drift it from the narration -- so only narrated-derived rates may go below 0.25x, down to the
+/// and drift it from the narration -- so only narrated-derived rates may go below that range, down to the
 /// server's own minimum of `minimumSourceSpanS` source seconds over the step.
 enum NarratedRateGate {
-    static let creatorRange: ClosedRange<Double> = 0.25...4
+    static let creatorRange = EditorLimits.playbackRate
     /// Mirrors the server's `_MIN_USABLE_S` / `_EOF_GUARD_S` (phone_narrated_plan.py).
     static let minimumSourceSpanS = 0.05
 

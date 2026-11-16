@@ -43,6 +43,7 @@ from app.pipeline.phone_recipe_shared import (
 )
 from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
 from app.schemas.user_song import USER_SONG_REQUIRED_CAPABILITIES, USER_SONG_TRACK_ID
+from app.services.editor_limits import PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 from app.services.phone_sources import (
     PhoneSourceBinding,
     PhoneVisualBinding,
@@ -79,7 +80,18 @@ class UnsupportedPhonePlan(ValueError):
         self.reason = reason
 
 
-class UserSongPlanDeclined(UnsupportedPhonePlan):
+class _AuthoredForCreator(UnsupportedPhonePlan):
+    """An unsupported plan whose message is itself the copy the creator reads.
+
+    ``creator_detail`` is what a failure may show instead of the code's generic sentence.
+    """
+
+    @property
+    def creator_detail(self) -> str:
+        return str(self)
+
+
+class UserSongPlanDeclined(_AuthoredForCreator):
     """The creator's own song could not be planned into an edit (KRI-466).
 
     The message is creator-facing copy (what to do next), stored on the job's
@@ -87,7 +99,7 @@ class UserSongPlanDeclined(UnsupportedPhonePlan):
     """
 
 
-class SilentAudioPlanDeclined(UnsupportedPhonePlan):
+class SilentAudioPlanDeclined(_AuthoredForCreator):
     """The talking take has no sound at all (KRI-653).
 
     A dead microphone records a valid audio track of zeros; captions and a speech cut over it
@@ -430,7 +442,7 @@ def compile_phone_guided_plan(
             ):
                 raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
         rate = float(moment.playback_rate if moment.playback_rate is not None else 1)
-        if not math.isfinite(rate) or not 0.25 <= rate <= 4:
+        if not math.isfinite(rate) or not PLAYBACK_RATE_MIN <= rate <= PLAYBACK_RATE_MAX:
             raise UnsupportedPhonePlan(
                 "unsupported phone playback rate", capability="variableSpeed"
             )

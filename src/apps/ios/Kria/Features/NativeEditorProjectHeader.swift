@@ -87,7 +87,8 @@ struct NativeEditorProjectHeader: View {
     }
 
     private var saveButton: some View {
-        let control = NativeEditorSaveControl(isSaving: session.showsSavingIndicator, hasUnsavedChanges: session.hasUnsavedChanges)
+        let control = NativeEditorSaveControl(isSaving: session.showsSavingIndicator, hasUnsavedChanges: session.hasUnsavedChanges,
+                                              finishingUploads: session.finishingUploadCount)
         return Button { beforeSave(); Task { await session.save() } } label: {
             Group {
                 switch control {
@@ -100,6 +101,13 @@ struct NativeEditorProjectHeader: View {
                         .fixedSize()
                 case .saving:
                     ProgressView().tint(KriaColor.ink)
+                case .finishing:
+                    Text(control.title ?? "")
+                        .font(KriaFont.body(14).weight(.semibold))
+                        .foregroundStyle(KriaColor.mutedInk)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 12)
                 }
             }
             .frame(minWidth: 44, minHeight: 44)

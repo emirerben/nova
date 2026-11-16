@@ -31,7 +31,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import structlog
@@ -66,6 +66,7 @@ from app.services.phone_card_layout import (
     blockers_for_card,
     place_card,
     shift_past_text_windows,
+    strip_for,
 )
 
 log = structlog.get_logger()
@@ -144,6 +145,90 @@ class GroundedOverlayCards:
 
     cards: list[SubtitledOverlayCard] = field(default_factory=list)
     receipt: dict[str, Any] = field(default_factory=dict)
+    # KRI-1478: ``(first_start, first_end, midpoint)`` of every ``shareable`` window one of
+    # ``cards`` now takes the second half of; the caller ends the first card at the midpoint
+    # (`share_beat_windows`). Empty unless the caller offered windows to share.
+    shared_windows: tuple[tuple[float, float, float], ...] = ()
+
+
+def talking_card_strip_planned_for(client_protocol: int | None) -> bool:
+    """May a laid-out card be drawn as a full-width strip cut to its text column (KRI-1478)?
+
+    True iff the kill switch is on, the card layout itself is planned for this build
+    (`phone_rollout.talking_card_layout_planned_for`: its flag, ``cardLayout``, its protocol
+    floor) and the phone verified ``sourceCrop`` and ``mediaCards``, the two features a cropped
+    card needs. The engine has drawn a cropped placed clip since KRI-140, before the card
+    layout's protocol floor, so no newer build is required. Any gate off: cards are today's.
+    """
+    from app.services.phone_rollout import talking_card_layout_planned_for  # noqa: PLC0415
+
+    return bool(
+        settings.talking_card_strip_enabled
+        and talking_card_layout_planned_for(client_protocol)
+        and {"sourceCrop", "mediaCards"} <= set(settings.phone_render_verified_features)
+    )
+
+
+def with_card_strip(
+    card_layout: CardLayoutContext | None, client_protocol_stamp: object
+) -> CardLayoutContext | None:
+    """``card_layout`` with the strip opened when `talking_card_strip_planned_for` says so for
+    the job's stored app-protocol stamp; otherwise the very same object (``None`` stays
+    ``None``: no layout, no strip)."""
+    from app.services.phone_rollout import stamped_client_protocol  # noqa: PLC0415
+
+    if card_layout is None or not talking_card_strip_planned_for(
+        stamped_client_protocol(client_protocol_stamp)
+    ):
+        return card_layout
+    return replace(card_layout, strip=True)
+
+
+def strip_card_windows(cards: Iterable[Any]) -> list[tuple[float, float]]:
+    """KRI-1478: the ``(start_s, end_s)`` of every card the layout gave a strip: the windows a
+    second visual for the same mention may share (``shareable``). Empty without the strip."""
+    return [
+        (float(card.start_s), float(card.end_s))
+        for card in cards
+        if getattr(card, "strip", None) is not None
+    ]
+
+
+def share_beat_windows(
+    cards: list[SubtitledOverlayCard],
+    receipt: dict[str, Any] | None,
+    shared_windows: Sequence[tuple[float, float, float]],
+) -> tuple[list[SubtitledOverlayCard], dict[str, Any] | None]:
+    """KRI-1478: end each first card, and its ``placed`` receipt row, at the midpoint its
+    window now shares with a second visual (`GroundedOverlayCards.shared_windows`).
+
+    Nothing shared returns the same objects; the caller's receipt is never mutated.
+    """
+    ends = {(round(s, 3), round(e, 3)): mid for s, e, mid in shared_windows}
+    if not ends:
+        return cards, receipt
+
+    def new_end(start: object, end: object) -> float | None:
+        try:
+            return ends.get((round(float(start), 3), round(float(end), 3)))
+        except (TypeError, ValueError):
+            return None
+
+    out_cards = [
+        card.model_copy(update={"end_s": mid})
+        if card.strip is not None and (mid := new_end(card.start_s, card.end_s)) is not None
+        else card
+        for card in cards
+    ]
+    if receipt is None:
+        return out_cards, None
+    placed = [
+        {**row, "end_s": mid}
+        if isinstance(row, dict) and (mid := new_end(row.get("at_s"), row.get("end_s"))) is not None
+        else row
+        for row in receipt.get("placed") or []
+    ]
+    return out_cards, {**receipt, "placed": placed}
 
 
 def _label_for_asset(asset: dict) -> str:
@@ -874,23 +959,25 @@ def _lay_out_cards(
         asset = assets_by_id.get(str(suggestion_by_id[oid]["asset_id"])) or {}
         start, end = float(overlay["start_s"]), float(overlay["end_s"])
         spot = None
+        strip = None
         if not (asset.get("analysis") or {}).get("has_alpha"):
-            spot = place_card(
-                footprints_by_id[oid].aspect_ratio,
-                blockers_for_card(
-                    start,
-                    end,
-                    face_regions=face_regions,
-                    face_sampling=face_sampling,
-                    fallback_face_box=_FALLBACK_FACE_BOX,
-                    caption_box=caption_box,
-                    placed=placed_boxes,
-                    complete=complete,
-                    **({"marked": marked} if marked else {}),
-                ),
-                # KRI-548: the phone's wordmark keeps its corner; a card sits beside it.
-                side_blockers=(WATERMARK_BOX,),
+            aspect = footprints_by_id[oid].aspect_ratio
+            blockers = blockers_for_card(
+                start,
+                end,
+                face_regions=face_regions,
+                face_sampling=face_sampling,
+                fallback_face_box=_FALLBACK_FACE_BOX,
+                caption_box=caption_box,
+                placed=placed_boxes,
+                complete=complete,
+                **({"marked": marked} if marked else {}),
             )
+            # KRI-548: the phone's wordmark keeps its corner; a card sits beside it.
+            spot = place_card(aspect, blockers, side_blockers=(WATERMARK_BOX,))
+            if spot is not None and card_layout.strip:
+                # KRI-1478: the same band, full width; the compile cuts the picture to fit.
+                strip = strip_for(spot, aspect, blockers, side_blockers=(WATERMARK_BOX,))
         if spot is None:
             fallback.append(overlay)
             continue
@@ -899,9 +986,15 @@ def _lay_out_cards(
             "x_frac": spot.x_frac,
             "y_frac": spot.y_frac,
             "scale": spot.scale,
+            **(
+                {"strip": {"x_frac": strip.x_frac, "scale": strip.scale, "height": strip.height}}
+                if strip
+                else {}
+            ),
         }
         clear_ids.add(oid)
-        placed_boxes.append((start, end, spot.box))
+        # A later card sharing time stays out of the whole strip, not just the smaller card.
+        placed_boxes.append((start, end, (strip or spot).box))
 
     if fallback:
         fb_resolved, fb_reasons, _sampling = resolve_phone_card_geometry(
@@ -952,9 +1045,15 @@ def ground_phone_subtitled_overlays(
     spoken_language: str = "",
     card_layout: CardLayoutContext | None = None,
     protected_regions: Sequence[ProtectedRegion] = (),
+    shareable: Iterable[tuple[float, float]] = (),
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
     and resolve face-aware, caption-safe PiP card geometry (KRI-176).
+
+    ``shareable`` (KRI-1478, default none = unchanged): the ``occupied`` windows of the strip
+    cards already placed. A Visual matched to the same mention takes the second half of that
+    window (`overlay_autoplace.build_suggestions`) instead of being reported ``overlap``;
+    ``shared_windows`` on the result says which first cards must end at the midpoint.
 
     ``video_supported`` (KRI-183, default ``False`` for byte-identical
     pre-KRI-183 behavior) widens the candidate pool to `kind == "video"` pool
@@ -1108,6 +1207,14 @@ def ground_phone_subtitled_overlays(
         if asset_id and asset_id not in drop_reasons:
             drop_reasons[asset_id] = str(fields.get("reason") or "")
 
+    # KRI-1478: only a laid-out strip card's window is ever shared.
+    shareable_windows = (
+        [(float(s), float(e)) for s, e in shareable]
+        if card_layout is not None and card_layout.strip
+        else []
+    )
+    shared: dict[str, tuple[float, float, float]] = {}
+    shared_windows: list[tuple[float, float, float]] = []
     suggestions = build_suggestions(
         raw,
         assets_by_id=assets_by_id,
@@ -1120,6 +1227,7 @@ def ground_phone_subtitled_overlays(
         caption_cues=None,
         stats=None,
         **({"ceiling": _LAYOUT_CEILING, "hook_any_tier": True} if card_layout is not None else {}),
+        **({"shareable": shareable_windows, "shared_out": shared} if shareable_windows else {}),
     )
 
     # Default upper-right corner geometry for arbitration -- the cloud slot's
@@ -1231,8 +1339,12 @@ def ground_phone_subtitled_overlays(
                 else 0.0
             ),
             caption_clear=caption_clear,
+            **({"strip": resolved_overlay["strip"]} if resolved_overlay.get("strip") else {}),
         )
         cards.append(card)
+        if oid in shared:
+            # Only now is the second card real: the first one ends at the midpoint.
+            shared_windows.append(shared[oid])
         placed.append(
             {
                 "media_id": asset_id,
@@ -1271,4 +1383,6 @@ def ground_phone_subtitled_overlays(
         "unplaced": unplaced,
         "wishlist": list(wishlist)[:_MAX_WISHLIST],
     }
-    return GroundedOverlayCards(cards=cards, receipt=receipt)
+    return GroundedOverlayCards(
+        cards=cards, receipt=receipt, shared_windows=tuple(sorted(shared_windows))
+    )

@@ -379,6 +379,22 @@ public struct PreviewComposition: @unchecked Sendable {
                 image: CIImage(color: color).cropped(to: CGRect(origin: .zero, size: canvas)),
                 transform: .identity, start: section.start, end: section.end, fadeIn: 0,
                 isPrimary: false, visualOrder: -1))
+            for blank in section.blanks {
+                guard let rgb = ClipBackdrop.components(blank.color), let space = CGColorSpace(name: CGColorSpace.sRGB),
+                      let fill = CIColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1, colorSpace: space) else { throw RecipeError.invalidTimeline }
+                // The window is clipped to the edit, and a collapsing section redraws the block at each layout it spans.
+                let end = min(blank.end, total)
+                guard end > blank.start else { continue }
+                for placement in recipe.panelPlacements(membership: .init(sectionID: section.id, panelIndex: blank.panelIndex),
+                                                        start: blank.start, end: end, canvas: canvasRect) {
+                    let size = placement.viewport?.size ?? canvas
+                    var layer = RecipeVideoLayer(trackID: nil, image: CIImage(color: fill).cropped(to: CGRect(origin: .zero, size: size)),
+                        transform: .identity, start: placement.start, end: placement.end, fadeIn: 0, isPrimary: false,
+                        clipID: blank.id, naturalSize: size, visualOrder: 0)
+                    layer.panelViewport = placement.viewport
+                    layers.append(layer)
+                }
+            }
         }
         for fill in recipe.visualFills {
             try Task.checkCancellation()

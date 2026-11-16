@@ -11,7 +11,7 @@ import dataclasses
 import threading
 import time
 import uuid
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -117,6 +117,8 @@ from app.kria.request_budget import creator_request_text_sync, request_over_budg
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     Disclosure,
+    approval_card_disclosures,
+    approval_card_text,
     card_disclosures,
     card_text,
     card_text_within,
@@ -127,6 +129,7 @@ from app.kria.route_disclosure import (
     with_route_declines,
 )
 from app.kria.select_asks import exclusion_facts, only_video_ask
+from app.kria.text_trim import trim_at_word
 from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
@@ -169,6 +172,7 @@ from app.services.choice_questions import (
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_refusal_consent,
     simpler_version_answer,
     simpler_version_ask,
     simpler_version_question,
@@ -1111,6 +1115,42 @@ _EDIT_FORMAT_TR = {
     "slides": "Slayt",
 }
 
+# Whole chips and words per machine value, so German never shows the English value (KRI-1362).
+_PACING_CHIPS = {
+    "relaxed": ("Relaxed pacing", "Tempo: Sakin"),
+    "balanced": ("Balanced pacing", "Tempo: Dengeli"),
+    "fast": ("Fast pacing", "Tempo: Hızlı"),
+}
+_EDIT_FORMAT_CHIPS = {
+    "montage": ("Montage format", "Format: Montaj"),
+    "talking_head": ("Talking Head format", "Format: Kameraya konuşma"),
+    "day_vlog": ("Day Vlog format", "Format: Günlük vlog"),
+    "single_hero": ("Single Hero format", "Format: Tek kahraman klip"),
+    "subtitled": ("Subtitled format", "Format: Altyazılı"),
+    "narrated": ("Narrated format", "Format: Seslendirmeli"),
+    "narrated_planned": ("Narrated Planned format", "Format: Seslendirmeli"),
+    "narrated_ready": ("Narrated Ready format", "Format: Seslendirmeli"),
+    "slides": ("Slides format", "Format: Slayt"),
+}
+# The Turkish summary leaves these words out, so their Turkish side is the English word (the same
+# keys as `route_capabilities._lines._VALUE_NAMES`, one translation each).
+_PACING_WORDS = {
+    "relaxed": ("relaxed", "relaxed"),
+    "balanced": ("balanced", "balanced"),
+    "fast": ("fast", "fast"),
+}
+_EDIT_FORMAT_WORDS = {
+    "montage": ("montage", "montage"),
+    "talking_head": ("talking head", "talking head"),
+    "day_vlog": ("day vlog", "day vlog"),
+    "single_hero": ("single hero", "single hero"),
+    "subtitled": ("subtitled", "subtitled"),
+    "narrated": ("narrated", "narrated"),
+    "narrated_planned": ("narrated planned", "narrated planned"),
+    "narrated_ready": ("narrated ready", "narrated ready"),
+    "slides": ("slides", "slides"),
+}
+
 
 def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
     """The card's chips. With ``route`` (the draft's render route) a pace the route does not
@@ -1121,23 +1161,30 @@ def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
     pacing = strategy.pacing.replace("_", " ").title()
     edit_format = strategy.edit_format.replace("_", " ").title()
     pace_shown = route is None or not asked_only() or not route_ignores(route, "pacing")
-    values = [
-        arguments.summary,
-        say(
+    if strategy.pacing in _PACING_CHIPS:
+        pacing_chip = say(
+            en=_PACING_CHIPS[strategy.pacing][0], tr=_PACING_CHIPS[strategy.pacing][1]
+        )
+    else:
+        pacing_chip = say(
             en="{pacing} pacing",
             tr="Tempo: {v1}",
             pacing=pacing,
             v1=_PACING_TR.get(strategy.pacing, pacing),
         )
-        if pace_shown
-        else None,
-        say(
+    if strategy.edit_format in _EDIT_FORMAT_CHIPS:
+        format_chip = say(
+            en=_EDIT_FORMAT_CHIPS[strategy.edit_format][0],
+            tr=_EDIT_FORMAT_CHIPS[strategy.edit_format][1],
+        )
+    else:
+        format_chip = say(
             en="{edit_format} format",
             tr="Format: {v1}",
             edit_format=edit_format,
             v1=_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format),
-        ),
-    ]
+        )
+    values = [arguments.summary, pacing_chip if pace_shown else None, format_chip]
     return list(dict.fromkeys(value for value in values if value))[:3]
 
 
@@ -1207,17 +1254,32 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
         ):
             if intent.tool_name == "draft.apply_editor_ops":
                 count = len(arguments.get("operations") or [])
-                suffix = "s" if count != 1 else ""
                 arguments["summary"] = say(
-                    en="I prepared {count} reversible editor change{suffix}.",
+                    en=(
+                        "I prepared {count} reversible editor change."
+                        if count == 1
+                        else "I prepared {count} reversible editor changes."
+                    ),
                     tr="Editörde {count} geri alınabilir değişiklik hazırladım.",
                     count=count,
-                    suffix=suffix,
                 )
             else:
                 strategy = arguments.get("strategy") or {}
-                pacing = str(strategy.get("pacing") or "focused").replace("_", " ")
-                edit_format = str(strategy.get("edit_format") or "video").replace("_", " ")
+                raw_pacing = str(strategy.get("pacing") or "focused")
+                raw_format = str(strategy.get("edit_format") or "video")
+                pacing = (
+                    say(en=_PACING_WORDS[raw_pacing][0], tr=_PACING_WORDS[raw_pacing][1])
+                    if raw_pacing in _PACING_WORDS
+                    else raw_pacing.replace("_", " ")
+                )
+                edit_format = (
+                    say(
+                        en=_EDIT_FORMAT_WORDS[raw_format][0],
+                        tr=_EDIT_FORMAT_WORDS[raw_format][1],
+                    )
+                    if raw_format in _EDIT_FORMAT_WORDS
+                    else raw_format.replace("_", " ")
+                )
                 arguments["summary"] = say(
                     en="I prepared a {pacing} {edit_format} draft around the available footage.",
                     # The pace and format words are machine values (English), so the
@@ -1539,7 +1601,8 @@ def _simpler_version_offer(
     if not named:
         return "", question
     kept = {req.id for req in named if req.id in arrow_only_ids}
-    listed = "; ".join(_arrow_label(req) if req.id in kept else req.text() for req in named)
+    # KRI-1465: `listed()`, so asks that are sentences never read ".;" or end the list "..".
+    listed = "; ".join(_arrow_label(req) if req.id in kept else req.listed() for req in named)
     sentence = say(
         en="The simpler version leaves out: {listed}.",
         tr="Daha basit sürümde çıkarılacak: {listed}.",
@@ -1580,14 +1643,22 @@ def _fit_reply(
     """``body``, then ``tail`` on its own line, within the turn plan's response limit. The
     tail (what is held back, what the simpler version leaves out, the question) stays whole;
     the receipt lines above it are shortened first. The route heads-up (``notice``, the end of
-    ``body``) keeps whole sentences and names the ones that do not fit on its compact line."""
+    ``body``) keeps whole sentences and names the ones that do not fit on its compact line.
+
+    KRI-1485: the receipt lines are fitted line by line (`brief_checks.fit_reply_text`): rows
+    that only differ in their quoted text fold into one, then the last rows become "…and N
+    more"; no line is cut in the middle. KRIA_REPLY_LINE_FIT_ENABLED=false: the old cut."""
     room = _MAX_TURN_RESPONSE_CHARS - len(tail) - 1
     if notice and len(body) > room and body.endswith(notice):
         head = body[: -len(notice)].rstrip("\n")
         fitted = card_text_within(disclosures, room - len(head) - 1)
         body = f"{head}\n{fitted}" if head else fitted
-    if len(body) > room:
-        body = body[: max(0, room - 1)].rstrip() + "…"
+    if len(body) > room and settings.kria_reply_line_fit_enabled:
+        from app.kria.brief_checks import fit_reply_text  # noqa: PLC0415
+
+        body = fit_reply_text(body, room)
+    elif len(body) > room:
+        body = trim_at_word(body, max(0, room))
     return f"{body}\n{tail}"
 
 
@@ -1609,6 +1680,32 @@ def _left_out_line(req: BriefRequirement, *, agreed: bool, label: str | None = N
     )
 
 
+def _card_summary(reply: str) -> str:
+    """The approval card's copy of the draft reply (KRI-1403).
+
+    Two or more "Left out as agreed" lines become one line with their count: the creator chose
+    them on the question just before, and the card has to fit on one screen (ylab, build 1977:
+    a 14-line card blanked the chat). The draft reply itself keeps every line.
+    """
+    prefix = say(
+        en="- Left out as agreed: {what}",
+        tr="- Kararlaştırdığımız gibi çıkarıldı: {what}",
+        what="",
+    )
+    lines = reply.split("\n")
+    agreed = [index for index, line in enumerate(lines) if line.startswith(prefix)]
+    if len(agreed) < 2:
+        return reply
+    count = say(
+        en="- Left out as agreed: {count} of your asks",
+        tr="- Kararlaştırdığımız gibi çıkarıldı: {count} isteğin",
+        count=len(agreed),
+    )
+    kept = [line for index, line in enumerate(lines) if index not in agreed[1:]]
+    kept[agreed[0]] = count
+    return "\n".join(kept)
+
+
 # KRI-1236: an ending the simpler version keeps without its arrow. The draft's coverage maps
 # each such id to the facets left out, so the after-render review can say so (the ask stays
 # live, so the superseded-ids rule of `_left_out_lines` never lists it).
@@ -1628,12 +1725,15 @@ def _arrow_only_ids(
     Prod thread b931bc4e (Qendresa Q1): "Make it without these" removed r10, "End with comment
     REPO and an arrow", so the words went with the arrow.
     """
-    from app.kria.brief_checks import _CLOSING_ARROW_MISSING, _REASON_TR  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CLOSING_ARROW_MISSING,
+        reason_in_every_language,
+    )
     from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
 
     if brief is None:
         return frozenset()
-    missing = {_CLOSING_ARROW_MISSING, _REASON_TR.get(_CLOSING_ARROW_MISSING) or ""} - {""}
+    missing = set(reason_in_every_language(_CLOSING_ARROW_MISSING))
     reasons = {str(row.get("requirement_id")): row.get("reason") for row in rows}
     wanted = set(unmet_ids)
     return frozenset(
@@ -1750,6 +1850,31 @@ def _offered_brief_revision(
     )
 
 
+def _kept_after_tap(
+    updates: Sequence[BriefUpdate],
+    offered_ids: Sequence[str],
+    source_event: CreationThreadEvent | None,
+) -> frozenset[str]:
+    """KRI-1405: the offered asks the creator kept after tapping "Make it without these".
+
+    Prod thread 8044373b (ylab, 2026-11-13): the tap turn asked whether the captions go too,
+    the creator tapped "Untertitel wie gewünscht behalten", and the draft still left the
+    captions out under the earlier tap (KRI-1323) while the video had them. An answer on a
+    LATER card that restates an offered ask (a `change` of its id) keeps it: it comes off the
+    drop list and the rest stay left out. A restatement on the tap's own turn says nothing new
+    (KRI-1113), so only a choice on another card counts.
+    """
+    selection = (source_event.payload or {}).get("choice_selection") if source_event else None
+    if not isinstance(selection, Mapping) or selection.get("option_key") == "simpler_version":
+        return frozenset()
+    offered = {str(req_id) for req_id in offered_ids}
+    return frozenset(
+        str(update.target_requirement_id)
+        for update in updates
+        if update.operation == "change" and str(update.target_requirement_id) in offered
+    )
+
+
 def _without_tap_removals(planned: PlannedKriaTurn, snapshot: Mapping[str, Any]) -> PlannedKriaTurn:
     """KRI-1236: a "Make it without these" answer states nothing but the tap.
 
@@ -1813,6 +1938,103 @@ def _without_tap_removals(planned: PlannedKriaTurn, snapshot: Mapping[str, Any])
     )
 
 
+def _restates_live_asks(brief: CreativeBrief | None, updates: Iterable[BriefUpdate]) -> bool:
+    """Every update repeats a live ask unchanged: same kind, scope and literal, no fact the
+    ask lacks, and (for an ask with no literal) the same description. A remove never does."""
+    from app.kria.brief import _complete_change  # noqa: PLC0415
+
+    live = {req.id: req for req in brief.live()} if brief is not None else {}
+
+    def words(value: str | None) -> str:
+        return " ".join((value or "").casefold().split())
+
+    def same(req: BriefRequirement, update: BriefUpdate) -> bool:
+        return (
+            update.kind == req.kind
+            and update.scope == req.scope
+            and update.literal == req.literal
+            and all(key in req.facts and req.facts[key] == v for key, v in update.facts.items())
+            and (
+                bool(req.literal)
+                or not update.description
+                or words(update.description) == words(req.description)
+            )
+        )
+
+    for update in updates:
+        if update.operation == "remove":
+            return False
+        if update.operation == "change":
+            target = live.get(update.target_requirement_id or "")
+            if target is None or not same(target, _complete_change(target, update)):
+                return False
+        elif not any(same(req, update) for req in live.values()):
+            return False
+    return True
+
+
+def _consented_policy_simplification(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread_id: uuid.UUID,
+    strategy: Mapping[str, Any] | None,
+    planned: PlannedKriaTurn,
+    *,
+    source_event: CreationThreadEvent | None,
+) -> tuple[dict[str, Any], tuple[str, ...]] | None:
+    """Tadic (prod thread aa36d140): approval readiness's own re-check held the draft on a
+    "Should I make a simpler version?" refusal the planner's check never raised, so the
+    planner's KRI-759 consent never ran and each "Evet" re-planned into the same hold. The
+    simplified strategy (and its notices) when the creator took that card for exactly the
+    fields readiness drops now, at the brief revision it was offered at."""
+    from app.kria.approval_readiness import (  # noqa: PLC0415
+        simplification_refusal,
+        simplified_strategy,
+    )
+
+    if not settings.kria_choice_questions_enabled or source_event is None:
+        return None
+    manifest = planned.readiness_manifest
+    refusal = simplification_refusal(manifest, strategy)
+    if refusal is None:
+        return None
+    rows = db.execute(
+        select(
+            CreationThreadEvent.role,
+            CreationThreadEvent.payload,
+            CreationThreadEvent.event_type,
+            CreationThreadEvent.content,
+        )
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role.in_({"user", "assistant"}),
+            CreationThreadEvent.sequence <= source_event.sequence,
+        )
+        .order_by(CreationThreadEvent.sequence)
+    ).all()
+    card = simpler_refusal_consent(
+        [tag_event(*row) for row in rows],
+        refusal.fields,
+        carried=settings.narrated_simpler_consent_fixes_enabled,
+    )
+    if card is None:
+        return None
+    offered = card.get("brief_version")
+    if offered is not None:
+        latest = load_latest_brief_sync(db, thread_id)
+        # The card covers strategy fields only: a new, changed or withdrawn ask on this turn is
+        # a request it never answered. A plan that only restates the asks already saved (the
+        # model often repeats them beside an "Evet") changes nothing the card was offered on.
+        if offered != (latest.version if latest is not None else 0) or not _restates_live_asks(
+            latest, planned.brief_updates
+        ):
+            return None
+    simplified = simplified_strategy(manifest, strategy) if manifest is not None else None
+    if simplified is None:
+        return None
+    # The same done-deal line the planner's KRI-759 consent says.
+    return simplified[0], (*simplified[1], *([refusal.agreed] if refusal.agreed else []))
+
+
 def _simpler_version_consent(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -1874,6 +2096,13 @@ def _simpler_version_consent(
         }:
             continue
         question = payload.get("choice_question") or simpler_version_question()
+        if (
+            coverage.get("reason") == "approval_requirements_not_ready"
+            and question.get("dropped_fields") is not None
+        ):
+            # A readiness policy refusal's card agrees to strategy fields
+            # (`_consented_policy_simplification`), never to leaving brief asks out.
+            return None
         named = question.get(SIMPLER_OMITTED_IDS_KEY)
         if isinstance(named, list):
             # KRI-968: consent covers exactly what the reply named, at that revision. A
@@ -2807,6 +3036,37 @@ def _complete_draft_turn(
             thread.creator_id
         )
         readiness_report = None
+        # KRI-1405: the readiness hold reply as first written, so the card can re-head it.
+        readiness_hold_text: str | None = None
+        consented = None
+        if readiness_required and apply_intent.tool_name == "draft.apply_strategy":
+            consented = _consented_policy_simplification(
+                db,
+                thread.id,
+                document.strategy,
+                planned,
+                source_event=db.get(CreationThreadEvent, turn.source_event_id),
+            )
+            if consented is not None:
+                simplified, simplified_notices = consented
+                # Its brief updates only restate saved asks (`_restates_live_asks`): saving
+                # them would add a second copy of an ask, so the brief stays as the card saw it.
+                effective_brief_updates = ()
+                document = document.model_copy(update={"strategy": simplified})
+                snapshot, snapshot_hash = canonical_snapshot(document)
+                added = [n for n in simplified_notices if n not in planned.policy_notices]
+                planned = replace(planned, policy_notices=(*planned.policy_notices, *added))
+                # The reply says what the simpler version changed: receipts keep the summary,
+                # which carries the policy notices (as the planner's KRI-759 summary does).
+                arguments = arguments.model_copy(
+                    update={"summary": " ".join([arguments.summary.strip(), *added]).strip()[:1000]}
+                )
+                reply_text = " ".join([reply_text, *added]).strip()
+                log.info(
+                    "kria_readiness_simpler_version_drafted",
+                    thread_id=str(thread.id),
+                    turn_id=str(turn.id),
+                )
         # KRI-901: one answer for the mark gate and readiness (an app with the mark card and a
         # draft the phone Talking writer renders); off it neither asks nor promises.
         _marks_route = render_intent is not None and _marks_route_sync(
@@ -3357,6 +3617,7 @@ def _complete_draft_turn(
             ]
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
+                readiness_hold_text = reply_text
             elif document.prepared_collection_story is not None:
                 # The frozen execution checker owns this selected requirement;
                 # persist its checked verdict in the receipt as well as approval.
@@ -3469,6 +3730,25 @@ def _complete_draft_turn(
             )
             else None
         )
+        kept_after_tap = (
+            _kept_after_tap(
+                planned.brief_updates,
+                unmet_ids,
+                db.get(CreationThreadEvent, turn.source_event_id),
+            )
+            if simpler_consent is not None
+            else frozenset()
+        )
+        if kept_after_tap:
+            # KRI-1405: what the creator kept after the tap is not left out; the rest still is.
+            log.info(
+                "kria_simpler_kept_after_tap",
+                thread_id=str(thread.id),
+                requirement_ids=sorted(kept_after_tap),
+            )
+            unmet_ids = [req_id for req_id in unmet_ids if req_id not in kept_after_tap]
+            if not unmet_ids:
+                simpler_consent = None
         simpler_version_chosen = simpler_consent is not None
         # KRI-968: only an offer that named these requirements lets a reply say "as agreed".
         agreed_omission_ids = list(unmet_ids) if simpler_consent == "named" else []
@@ -3710,7 +3990,24 @@ def _complete_draft_turn(
                 # brief revision this reply never writes.
                 reply_text = readiness_reply(brief, readiness_report)
                 requirement_receipts = receipts_before_omission
-            can_offer_simpler = (
+            # Tadic: readiness's own "Should I make a simpler version?" needs its card, or a
+            # "yes" re-plans into the same hold.
+            policy_refusal = (readiness_report or {}).get("policy_refusal")
+            refusal_card = (
+                bool(policy_refusal)
+                # The card answers only the refusal: every held ask must be one readiness
+                # says the refusal alone holds. An ask held for its own reason is not
+                # something "yes" can agree to (readiness then names it and asks nothing).
+                and all(
+                    row["disposition"] in APPROVABLE
+                    or row["requirement_id"] in policy_refusal.get("requirement_ids", ())
+                    for row in readiness_report["requirements"]
+                )
+                and _choice_questions_on
+                and not simpler_version_chosen
+                and planned.suggestion_pin is None
+            )
+            can_offer_simpler = refusal_card or (
                 simpler_keeps_an_ask
                 and not simpler_version_chosen
                 and (not readiness_required or bool(unmet_ids) and not policy_problem)
@@ -3721,12 +4018,23 @@ def _complete_draft_turn(
             # KRI-968: name what the simpler version leaves out before the creator picks it,
             # and record those ids on the question so a tap consents to exactly them.
             leaves_out, simpler_question = (
-                _simpler_version_offer(brief, unmet_ids, arrow_only_ids=arrow_only_ids)
+                (
+                    "",
+                    {
+                        **simpler_version_question(policy_refusal["fields"]),
+                        "brief_version": brief.version if brief is not None else 0,
+                    },
+                )
+                if refusal_card
+                else _simpler_version_offer(brief, unmet_ids, arrow_only_ids=arrow_only_ids)
                 if can_offer_simpler
                 else ("", None)
             )
             # KRI-1236: a list too long to name whole gets no card, never an unnamed one.
             can_offer_simpler = can_offer_simpler and simpler_question is not None
+            if can_offer_simpler and reply_text == readiness_hold_text:
+                # KRI-1405: the card follows, so asks it can leave out read as a choice.
+                reply_text = readiness_reply(brief, readiness_report, offers_choice=True)
             ask = (
                 simpler_version_ask()
                 if can_offer_simpler
@@ -3747,7 +4055,11 @@ def _complete_draft_turn(
                 mode="respond",
                 turn_value="question",
                 choice_question=simpler_question,
-                response=_fit_reply(
+                # The refusal names what the simpler version changes and asks once, as the
+                # planner's own refusal does; the brief rows under it are not what "yes" drops.
+                response=policy_problem
+                if refusal_card
+                else _fit_reply(
                     reply_text,
                     " ".join(part for part in (draft_state, leaves_out, ask) if part),
                     notice=route_notice,
@@ -4200,6 +4512,8 @@ def _complete_draft_turn(
         db.add(render_execution)
         db.flush()
         copy_notice = _restored_copy_notice(db, thread.id, planned)
+        card_shown = approval_card_disclosures(route_disclosures)
+        card_notice = card_text(card_shown) if card_shown else None
         approval = CreatorAgentApproval(
             creator_id=thread.creator_id,
             thread_id=thread.id,
@@ -4216,13 +4530,18 @@ def _complete_draft_turn(
             # KRI-689: the speed heads-up rides on the card too, unless the KRI-700 reply
             # (which already ends with it) became the summary. KRI-1352: words the server
             # restored to the brief are shown on the card before anyone approves them.
+            # KRI-1403: the card fits one screen: no plan notes the route won't use, and one
+            # line for the asks the creator just agreed to leave out.
             consequence_summary=" ".join(
                 part
                 for part in (
-                    f"Render this draft: {approval_summary}",
+                    "Render this draft: "
+                    + approval_card_text(_card_summary(approval_summary), route_disclosures),
                     copy_notice,
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
-                    route_notice if route_notice and route_notice not in approval_summary else None,
+                    card_notice
+                    if card_notice and route_notice and route_notice not in approval_summary
+                    else None,
                 )
                 if part
             ),
@@ -8353,10 +8672,11 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    "{count} take{v1} no usable singing or "
-                    "words, so {v2} in as short muted "
-                    "clip{v3}. Trim or remove "
-                    "{v4} in the editor."
+                    "{count} take has no usable singing or words, so it is in as short muted "
+                    "clip. Trim or remove it in the editor."
+                    if count == 1
+                    else "{count} takes have no usable singing or words, so they are in as short "
+                    "muted clips. Trim or remove them in the editor."
                 ),
                 tr=(
                     "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve "
@@ -8364,10 +8684,6 @@ def _user_song_note(job: Job) -> str:
                     "kaldırabilirsin."
                 ),
                 count=count,
-                v1=" has" if count == 1 else "s have",
-                v2="it is" if count == 1 else "they are",
-                v3="" if count == 1 else "s",
-                v4="it" if count == 1 else "them",
             )
         )
     low = receipt.get("low_confidence_ids")
@@ -8376,17 +8692,17 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    "{count} take{v1} placed by my best guess "
-                    "and may be slightly off; check {v2} in the "
-                    "editor."
+                    "{count} take is placed by my best guess and may be slightly off; check it "
+                    "in the editor."
+                    if count == 1
+                    else "{count} takes are placed by my best guess and may be slightly off; "
+                    "check them in the editor."
                 ),
                 tr=(
                     "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; "
                     "editörde kontrol et."
                 ),
                 count=count,
-                v1=" is" if count == 1 else "s are",
-                v2="it" if count == 1 else "them",
             )
         )
     outside = receipt.get("placed_outside_ids")
@@ -8394,13 +8710,16 @@ def _user_song_note(job: Job) -> str:
         count = len(outside)
         notes.append(
             say(
-                en=("{count} take{v1} later in the song than a 2-minute video can hold."),
+                en=(
+                    "{count} take sits later in the song than a 2-minute video can hold."
+                    if count == 1
+                    else "{count} takes sit later in the song than a 2-minute video can hold."
+                ),
                 tr=(
                     "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha "
                     "geride kalıyor."
                 ),
                 count=count,
-                v1=" sits" if count == 1 else "s sit",
             )
         )
     placed = receipt.get("placed")
@@ -8412,10 +8731,13 @@ def _user_song_note(job: Job) -> str:
     if by_lyrics:
         notes.append(
             say(
-                en="I matched {by_lyrics} take{v1} by your singing.",
+                en=(
+                    "I matched {by_lyrics} take by your singing."
+                    if by_lyrics == 1
+                    else "I matched {by_lyrics} takes by your singing."
+                ),
                 tr="{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim.",
                 by_lyrics=by_lyrics,
-                v1="" if by_lyrics == 1 else "s",
             )
         )
     return " ".join(notes)
@@ -8505,6 +8827,21 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
         if isinstance(original, dict):
             take(row.get("media_id"), original.get("sha256"))
     return {media_id: sha for media_id, sha in found.items() if media_id not in conflicted}
+
+
+def _phone_source_video_count(job: Any) -> int | None:
+    """KRI-1488: how many of the creator's own videos a phone render was made from (the job's
+    `_phone_sources_v1`; Visuals live apart, in `_phone_visuals_v1`). None when not recorded."""
+    sources = (job.assembly_plan or {}).get("_phone_sources_v1")
+    if not isinstance(sources, list):
+        return None
+    return sum(
+        1
+        for source in sources
+        if isinstance(source, dict)
+        and isinstance(source.get("original"), dict)
+        and source["original"].get("kind") == "video"
+    )
 
 
 def _cleanup_note_retake_cut_possible(contract: object) -> bool:
@@ -8664,7 +9001,9 @@ def _approved_generation_requirements_review(
         from app.routes.generative_jobs import original_audio_recovery  # noqa: PLC0415
 
         facts = dataclasses.replace(
-            facts, original_audio_control=original_audio_recovery(job, variant)
+            facts,
+            original_audio_control=original_audio_recovery(job, variant),
+            attached_video_count=_phone_source_video_count(job),
         )
         if narrated is not None:
             # KRI-1357: which clip played under a named cue that had no pop-in.
@@ -8845,6 +9184,29 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
     "artifact_eligibility_revoked": "Bu dışa aktarma artık kullanılamıyor.",
     "eligibility_changed_during_export": "Dışa aktarma sırasında bir şey değişti. Tekrar dene.",
 }
+# `content_plan_build.JOB_FAILURE_REASONS` in Turkish: the sentences without their retry invitation.
+_JOB_FAILURE_REASONS_TR: dict[str, str] = {
+    "creation_text_failed": (
+        "Onayladığın yazıyı koruyarak metni hazırlayamadım. Taslağın ve çekimlerin kayıtlı."
+    ),
+    "phone_capability_unavailable": (
+        "Bu düzenleme için gereken bir iPhone oluşturma özelliği şu anda kapalı. Düzenlemen ve "
+        "çekimlerin kayıtlı."
+    ),
+    "creation_text_timeout": (
+        "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden "
+        "uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Daha az "
+        "klip ya da daha az yazı işe yarar."
+    ),
+    "plan_ai_timeout": (
+        "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. "
+        "Düzenlemen ve çekimlerin kayıtlı."
+    ),
+    "phone_plan_failed": (
+        "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. "
+        "Düzenlemen ve çekimlerin kayıtlı."
+    ),
+}
 _JOB_FAILURE_DEFAULT_TR = (
     "Bir şeyler ters gitti ve bu video tamamlanmadı. Yönün ve çekimlerin hâlâ kayıtlı; tekrar dene."
 )
@@ -8874,30 +9236,40 @@ def _failure_title(failure_code: str | None, *, device_failed: bool = False) -> 
     return say(en=en, tr=tr)
 
 
-def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | None:
+def _job_failure_copy(
+    failure_code: str | None, creator_detail: str | None, *, retry: bool = True
+) -> str | None:
     """`content_plan_build.job_failure_message` in the chat's language.
 
-    A Turkish chat gets the Turkish line for the code. The job's own ``error_detail`` for
-    the creator-facing codes is English-only text, so Turkish prefers the code's line.
+    A Turkish chat gets the Turkish line for the code. The job's own ``creator_detail`` is free
+    text with no Turkish line, so Turkish prefers the code's line. ``retry`` is whether the
+    failure's final recovery is a retry: when it is not, the sentence never invites one.
     """
     from app.tasks.content_plan_build import (  # noqa: PLC0415
         DEFAULT_JOB_FAILURE_MESSAGE,
         JOB_FAILURE_MESSAGES,
+        JOB_FAILURE_REASONS,
         job_failure_message,  # noqa: PLC0415
     )
 
-    english = job_failure_message(failure_code, detail)
+    english = job_failure_message(failure_code, creator_detail, retry=retry)
     if english is None:
         return None
     code = failure_code or ""
     # The code's own sentence and the default are catalog keys (KRI-1362); the creator-facing
-    # ``error_detail`` is free English text with no key, so German shows it as written.
+    # ``creator_detail`` is free text with no key, so German shows it as written.
     if (
         code in JOB_FAILURE_MESSAGES
         and code in _JOB_FAILURE_MESSAGES_TR
         and english == JOB_FAILURE_MESSAGES[code]
     ):
         return say(en=JOB_FAILURE_MESSAGES[code], tr=_JOB_FAILURE_MESSAGES_TR[code])
+    if (
+        code in JOB_FAILURE_REASONS
+        and code in _JOB_FAILURE_REASONS_TR
+        and english == JOB_FAILURE_REASONS[code]
+    ):
+        return say(en=JOB_FAILURE_REASONS[code], tr=_JOB_FAILURE_REASONS_TR[code])
     if code not in _JOB_FAILURE_MESSAGES_TR and english == DEFAULT_JOB_FAILURE_MESSAGE:
         return say(en=DEFAULT_JOB_FAILURE_MESSAGE, tr=_JOB_FAILURE_DEFAULT_TR)
     return say(en=english, tr=_JOB_FAILURE_MESSAGES_TR.get(code, _JOB_FAILURE_DEFAULT_TR))
@@ -9439,17 +9811,19 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         session.status = "awaiting_feedback"
         session.last_error = execution.error
         from app.tasks.content_plan_build import (  # noqa: PLC0415
-            CREATOR_FACING_DETAIL_CODES,
             JOB_FAILURE_MESSAGES,
+            creator_failure_detail,
         )
 
         # KRI-673/KRI-765: every code with a sentence of its own says why the render stopped.
         cause_codes = {
             "phone_capability_unavailable",
             "creation_text_failed",
-            *CREATOR_FACING_DETAIL_CODES,
             *JOB_FAILURE_MESSAGES,
         }
+        # The sentence follows the recovery chosen above, never the other way round: a card that
+        # offers no Retry never reads "try again" (KRI-1456).
+        creator_detail = creator_failure_detail(job)
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
         raw_recovery = (job.assembly_plan or {}).get("request_recovery")
@@ -9564,7 +9938,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # No exact retry exists for this render, but the cause is known: name it, then
             # the real way forward (KRI-765: "creation_text_failed" read as a generic stop).
             failure_content = (
-                f"{_job_failure_copy(failure_code, getattr(job, 'error_detail', None))} "
+                f"{_job_failure_copy(failure_code, creator_detail, retry=recovery == 'retry')} "
                 + say(
                     en="To try again, ask for a new version and review its approval.",
                     tr="Tekrar denemek için yeni bir sürüm isteyip onayını gözden geçir.",
@@ -9626,7 +10000,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
             # KRI-673: every code with a table sentence says why; the generic line is
             # only for codes nothing has words for.
-            failure_content = _job_failure_copy(failure_code, getattr(job, "error_detail", None))
+            failure_content = _job_failure_copy(
+                failure_code, creator_detail, retry=recovery == "retry"
+            )
         else:
             failure_content = say(
                 en=(

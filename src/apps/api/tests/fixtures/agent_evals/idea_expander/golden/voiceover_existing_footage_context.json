@@ -39,5 +39,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "context-aware voiceover on existing footage; guidance should say what to find/use in existing clips, not ask the creator to film new shots."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

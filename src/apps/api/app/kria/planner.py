@@ -92,6 +92,7 @@ from app.kria.brief_checks import (
     _fact_flag,
     _wants_whole_take,
     ask_text,
+    brief_asks_no_captions,
     spoken_text_literals,
     whole_line_quotes,
 )
@@ -132,7 +133,12 @@ from app.kria.narration_notes import (
 from app.kria.order_replacement import OrderReplacementProof
 from app.kria.paid_call_scope import paid_call_request_id
 from app.kria.removed_messages import is_removed, removed_turn_ids
-from app.kria.reply_language import current_reply_language, is_client_stock_message, say
+from app.kria.reply_language import (
+    asks_for_video_words,
+    current_reply_language,
+    is_client_stock_message,
+    say,
+)
 from app.kria.strategy_policy import (
     RefusedStrategy,
     check_strategy_for_runtime_v2,
@@ -212,6 +218,7 @@ from app.services.clip_intent_planning import (
     sequence_text_literals,
     shot_captions_safe,
     whole_video_text_asks,
+    withdrawn_clip_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_order_sequence import stated_anchors
@@ -801,10 +808,11 @@ def _moment_count_notice(
     else:
         return None
     return say(
-        en="I could fit {planned} {v1}, not {count}.",
+        en="I could fit {planned} moment, not {count}."
+        if planned == 1
+        else "I could fit {planned} moments, not {count}.",
         tr="{count} değil, {planned} an sığdırabildim.",
         planned=planned,
-        v1="moment" if planned == 1 else "moments",
         count=count,
     )
 
@@ -1272,6 +1280,42 @@ def brief_order_fields(
     return confirm_unordered_groups(resolved_intents, brief), ordering_choice
 
 
+def _pins_without_caption_repeats(
+    pins: Sequence[PinnedText], resolved: Sequence[ResolvedClipIntent]
+) -> list[PinnedText]:
+    """Drop a run of pins whose words, in order, are a placed caption's creator text.
+
+    Prod thread 6db7ecd4: pasted lyrics came back as one caption plus the same words split
+    into three pins, so the contract demanded both layouts and the text pass refused the
+    overlap. The caption is kept: it is what the brief's literal check reads.
+    """
+
+    def words(text: str) -> tuple[str, ...]:
+        return tuple("".join(c if c.isalnum() else " " for c in _pin_key(text)).split())
+
+    captions = {
+        words(intent.creator_text)
+        for intent in resolved
+        if intent.op in {"caption", "label"}
+        and intent.status == "resolved"
+        and intent.assignments
+        and intent.creator_text
+    }
+    captions.discard(())
+    kept = list(pins)
+    for caption in captions:
+        for start in range(len(kept)):
+            joined: tuple[str, ...] = ()
+            for end in range(start, len(kept)):
+                joined += words(kept[end].text)
+                if len(joined) >= len(caption):
+                    break
+            if joined == caption:
+                kept[start : end + 1] = []
+                break
+    return kept
+
+
 def adapt_creator_action(
     action: AskUser | ProposeStrategy | ReviewDecision | DraftVoiceoverScript,
     *,
@@ -1305,6 +1349,7 @@ def adapt_creator_action(
             mode="respond",
             turn_value="question",
             response=action.question,
+            asks_video_text=asks_for_video_words(action.reason_code),
         )
     if isinstance(action, DraftVoiceoverScript):
         # KRI-815: planned by `_plan_voiceover_script`; never a strategy or a draft.
@@ -1388,7 +1433,10 @@ def adapt_creator_action(
                 en="The earlier story outline is saved for review and is not part of this plan.",
                 tr="Önceki hikâye taslağı inceleme için saklandı ve bu planın parçası değil.",
             )
+    pins = action.strategy.pinned_texts or []
+    kept_pins = _pins_without_caption_repeats(pins, server_resolved_clip_intents or [])
     strategy_update = {
+        **({"pinned_texts": kept_pins or None} if len(kept_pins) != len(pins) else {}),
         "story_structure": reconciled_story,
         "selection_reconciliation": selection_reconciliation,
         "confirmed_order_replacement": server_order_replacement,
@@ -4177,7 +4225,23 @@ _TR_HOLD_WORDS = {
     "dokuz": 9.0,
     "on": 10.0,
 }
-_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS}
+# German (KRI-1453), with and without umlauts ("fünf"/"funf"). It shares the Turkish
+# words' pattern below, so each stays paired with a non-English seconds unit.
+_DE_HOLD_WORDS = {
+    "eine": 1.0,
+    "einer": 1.0,
+    "zwei": 2.0,
+    "drei": 3.0,
+    "vier": 4.0,
+    "fünf": 5.0,
+    "funf": 5.0,
+    "sechs": 6.0,
+    "sieben": 7.0,
+    "acht": 8.0,
+    "neun": 9.0,
+    "zehn": 10.0,
+}
+_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS, **_DE_HOLD_WORDS}
 
 
 def _words(table: dict[str, float]) -> str:
@@ -4200,8 +4264,8 @@ _HOLD_SECONDS = (
         r"(?:\s+|\s*-\s*)(?:secs?|seconds?)" + _TAIL_HALF
     ),
     re.compile(
-        rf"(?<![\w.:])(?P<num>{_words(_TR_HOLD_WORDS)})(?:\s+(?P<half>bu[çc]uk))?"
-        r"\s+(?:saniye\w*|sn)(?!\w)(?P<tail>)"
+        rf"(?<![\w.:])(?P<num>{_words({**_TR_HOLD_WORDS, **_DE_HOLD_WORDS})})"
+        r"(?:\s+(?P<half>bu[çc]uk))?\s+(?:saniye\w*|sn|sekunden?|sek)(?!\w)(?P<tail>)"
     ),
 )
 # Half-second phrases with no leading number.
@@ -4405,6 +4469,8 @@ async def _plan_turn_clip_intents(
     brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
     # KRI-1111: the creator withdrew every ask for clip text Kria writes ("leave the names out").
     text_withdrawn = authored_text_withdrawn(effective_brief)
+    # KRI-1464: the clips the creator took out of the request ("... without the screen recordings").
+    withdrawn_asks = withdrawn_clip_asks(effective_brief)
     await _kick_clip_understanding(item_id, intent_clips)
     # KRI-1125: one photo is never silently the answer for two ordered beats, and a typed
     # correction newer than the tap that caused it sends the beat back to the resolver.
@@ -4453,6 +4519,7 @@ async def _plan_turn_clip_intents(
         **({"checked_inventory": checked_inventory} if checked_inventory else {}),
         **({"brief_anchors": brief_anchors} if brief_anchors else {}),
         **({"authored_text_asks_withdrawn": True} if text_withdrawn else {}),
+        **({"withdrawn_asks": withdrawn_asks} if withdrawn_asks else {}),
         # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
         # never a clip question; its receipt tells the creator.
         **(
@@ -4920,6 +4987,15 @@ async def _plan_creator_action(
         # silently drops what it can't draw while the reply claims it.
         check_kwargs: dict[str, Any] = {
             "simplify_unsupported": True,
+            # KRI-1465: a plan that turns captions off when no live ask wants that keeps them
+            # with a notice, never a second "simpler version?" question. Omitted otherwise.
+            **(
+                {"creator_asked_no_captions": False}
+                if action.strategy.caption_style == "none"
+                and effective_brief is not None
+                and not brief_asks_no_captions(effective_brief)
+                else {}
+            ),
             # KRI-1365: on footage with no sound, a camera-audio strategy falls back to the
             # draft's sound (or music), unless the creator asked for the camera sound.
             **(

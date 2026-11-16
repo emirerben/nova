@@ -156,8 +156,10 @@ def test_the_t1_draft_answers_every_live_row():
     receipts = build_receipts(T1_BRIEF.live(), _draft_facts(), include_unchecked=True)
     assert [r.requirement_id for r in receipts] == ["r1", "r2", "r3", "r4", "r5", "r6"]
     reply = reply_from_receipts(T1_BRIEF, receipts)
-    for req in T1_BRIEF.live():
-        assert req.text() in reply, req.id
+    for req, receipt in zip(T1_BRIEF.live(), receipts, strict=True):
+        # KRI-1485: in a reply over the cap a Done row may be counted ("…and 1 more done");
+        # a row that is not Done is always there.
+        assert req.text() in reply or (receipt.status == "met" and "more done" in reply), req.id
 
 
 def test_turkish_chat_reads_the_line_in_turkish():
@@ -386,17 +388,23 @@ def test_a_word_never_said_is_not_called_misspelled():
     assert "The captions write" not in receipt.reason
 
 
+@pytest.mark.parametrize("line_fit", [False, True])
 @pytest.mark.parametrize("reason_size", [200, 800])
-def test_overflow_keeps_each_request_and_status_without_mutating_receipts(reason_size):
+def test_overflow_keeps_each_request_and_status_without_mutating_receipts(
+    monkeypatch, reason_size, line_fit
+):
     from app.kria.brief_checks import MAX_REPLY_CHARS
 
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", line_fit)
     receipts = build_receipts(T1_BRIEF.live(), _draft_facts(), include_unchecked=True)
     receipts = [row.model_copy(update={"reason": "Explanation " * reason_size}) for row in receipts]
     before = [row.model_dump(mode="json") for row in receipts]
     reply = reply_from_receipts(T1_BRIEF, receipts, summary="Everything was done.")
-    assert len(reply) <= MAX_REPLY_CHARS
     assert reply.startswith("Not everything you asked for made it in:\n")
     assert "Everything was done." not in reply
+    # KRI-1485: the Partly rows alone fill the chat, so the line fitter (`line_fit`) hands this
+    # text to the same shortening as with the switch off.
+    assert len(reply) <= MAX_REPLY_CHARS
     assert reply.endswith("…")
     for req, receipt in zip(T1_BRIEF.live(), receipts, strict=True):
         assert req.text() in reply, req.id

@@ -2,6 +2,7 @@
 
 import uuid
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -9,6 +10,8 @@ from app.auth import get_current_user, is_native_client, kria_client_protocol
 from app.config import settings
 from app.models import User
 from app.routes.generated_media import router
+
+pytestmark = pytest.mark.journey("native-generated-overlay-review")
 
 
 def test_disabled_and_non_native_requests_never_enter_service(monkeypatch):

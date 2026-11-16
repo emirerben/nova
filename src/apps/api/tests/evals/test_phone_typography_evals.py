@@ -8,6 +8,8 @@ from app.agents._runtime import SchemaError
 from app.agents.phone_typography import PhoneTypographyAgent, PhoneTypographyInput
 from app.schemas.phone_text_style import CURATED_PHONE_FONTS
 
+pytestmark = pytest.mark.journey("kri-648-phone-text")
+
 
 def test_role_palette_replay_and_untrusted_wording(live_model_client):
     input = PhoneTypographyInput(

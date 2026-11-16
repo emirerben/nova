@@ -5,31 +5,73 @@
     "utterance": "fix the typo in the second caption",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["text", "style", "timeline", "caption"],
+      "allowed_op_families": [
+        "text",
+        "style",
+        "timeline",
+        "caption"
+      ],
       "has_narrated_captions": false,
       "text_bars": [],
-      "slots": [{"output_start_s": 0, "output_end_s": 21.4, "duration_s": 21.4, "moment": "talking to camera at a desk"}],
+      "slots": [
+        {
+          "output_start_s": 0,
+          "output_end_s": 21.4,
+          "duration_s": 21.4,
+          "moment": "talking to camera at a desk"
+        }
+      ],
       "total_duration_s": 21.4,
       "captions": {
         "total_cues": 14,
         "truncated": false,
         "cues_editable": true,
         "cues": [
-          {"index": 0, "id": "caption-0", "text": "first caption is fine", "start_s": 0, "end_s": 1.2},
-          {"index": 1, "id": "caption-1", "text": "second capshun has typo", "start_s": 1.2, "end_s": 2.4}
+          {
+            "index": 0,
+            "id": "caption-0",
+            "text": "first caption is fine",
+            "start_s": 0,
+            "end_s": 1.2
+          },
+          {
+            "index": 1,
+            "id": "caption-1",
+            "text": "second capshun has typo",
+            "start_s": 1.2,
+            "end_s": 2.4
+          }
         ],
-        "meta": {"enabled": true, "style": "sentence", "font": "TikTok Sans Bold", "y_frac": 0.8}
+        "meta": {
+          "enabled": true,
+          "style": "sentence",
+          "font": "TikTok Sans Bold",
+          "y_frac": 0.8
+        }
       }
     }
   },
   "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"edit_caption\",\"cue_index\":1,\"text\":\"second caption has typo\"}],\"confidence\":0.86,\"reply\":\"Fixed the typo in the second caption.\",\"suggestions\":[\"Move captions lower\",\"Make captions word-by-word\"],\"needs_clarification\":false}",
   "output": {
     "intent": "edit",
-    "ops": [{"op": "edit_caption", "cue_index": 1, "text": "second caption has typo"}],
+    "ops": [
+      {
+        "op": "edit_caption",
+        "cue_index": 1,
+        "text": "second caption has typo"
+      }
+    ],
     "confidence": 0.86,
     "reply": "Fixed the typo in the second caption.",
-    "suggestions": ["Move captions lower", "Make captions word-by-word"],
+    "suggestions": [
+      "Move captions lower",
+      "Make captions word-by-word"
+    ],
     "needs_clarification": false
   },
-  "meta": {"source": "hand_authored_golden", "case": "subtitled editable captions: transcript cue edits emit edit_caption"}
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "subtitled editable captions: transcript cue edits emit edit_caption"
+  },
+  "prompt_sha": "unpinned"
 }

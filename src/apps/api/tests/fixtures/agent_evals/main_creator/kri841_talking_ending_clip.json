@@ -340,5 +340,6 @@
       "keep_audio": true
     },
     "note": "KRI-841: a video added after the talk with its own sound is `ending_clip` (never a reaction beat or closing_media) and the brief records it as a `style` requirement with the `ending_clip` fact, never `last_clip`."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

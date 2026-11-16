@@ -12,6 +12,7 @@ from typing import Any
 from app.config import settings
 from app.kria.reply_language import say
 from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._lines import direction_line, pacing_line, stated_length
 from app.kria.route_capabilities._types import (
     Applied,
     AskDecline,
@@ -26,14 +27,14 @@ FIELD_HANDLING: dict[str, Handling] = {
     "story_structure": NotApplied(lines.story),
     # `creator_pacing` keeps only "fast" and "relaxed"; anything else plays the preset's cuts.
     "pacing": NotApplied(
-        lines.pacing_line(
+        pacing_line(
             lambda value, _s: value in {"fast", "relaxed"},
             "the cuts keep their usual length",
             "kesimler her zamanki uzunluğunda",
         )
     ),
     "direction": NotApplied(
-        lines.direction_line(
+        direction_line(
             "fast_montage",
             "it is cut as a montage under your voiceover",
             "seslendirmenin altında bir montaj olarak kesiliyor",
@@ -41,9 +42,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     ),
     "caption_style": NotApplied(lines.caption_style),
     "target_duration_s": NotApplied(
-        lines.stated_length(
-            "its length follows your voiceover", "uzunluğu seslendirmeni takip ediyor"
-        )
+        stated_length("its length follows your voiceover", "uzunluğu seslendirmeni takip ediyor")
     ),
     "title_animation": NotApplied(lines.title_animation),
     "label_position": NotApplied(lines.label_position),

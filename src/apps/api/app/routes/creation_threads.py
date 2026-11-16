@@ -2251,7 +2251,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
-    from app.tasks.content_plan_build import job_failure_message
+    from app.tasks.content_plan_build import creator_failure_detail, job_failure_message
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
     # the client instead of returning an expired or stale playback URL.
@@ -2273,9 +2273,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
         # A sentence, never the raw taxonomy code -- the failure card used to
         # print `failure_reason` itself verbatim (KRI-163). `failure_reason`
         # stays above for admin/debug consumers that still want the code.
-        "failure_message": job_failure_message(
-            job.failure_reason, getattr(job, "error_detail", None)
-        ),
+        "failure_message": job_failure_message(job.failure_reason, creator_failure_detail(job)),
         "variants": variants,
     }
 
@@ -2972,6 +2970,23 @@ async def _load_status_reconciliation_rows(
     return item, session, job
 
 
+# A job's live phase as the status line names it. Turkish never shows it (its line leaves the
+# phase out), so its half repeats the English.
+_PHASE_NAMES: dict[str, tuple[str, str]] = {
+    "queued": ("queued", "queued"),
+    "download_clips": ("download clips", "download clips"),
+    "analyze_clips": ("analyze clips", "analyze clips"),
+    "match_clips": ("match clips", "match clips"),
+    "match_song": ("match song", "match song"),
+    "assemble": ("assemble", "assemble"),
+    "mix_audio": ("mix audio", "mix audio"),
+    "generate_copy": ("generate copy", "generate copy"),
+    "render_variants": ("render variants", "render variants"),
+    "upload": ("upload", "upload"),
+    "finalize": ("finalize", "finalize"),
+}
+
+
 def _status_message(
     *, thread: CreationThread, session: CreatorAgentSession | None, job: Job | None
 ) -> str:
@@ -2981,7 +2996,12 @@ def _status_message(
             tr="Videon sırada. Takipteyim, başlayınca bu sohbete yazacağım.",
         )
     if job is not None and job.status not in PLAN_ITEM_JOB_TERMINAL:
-        phase = str(job.current_phase or "").replace("_", " ").strip()
+        raw_phase = str(job.current_phase or "")
+        if raw_phase in _PHASE_NAMES:
+            # German reads a known phase in German (KRI-1408).
+            phase = say(en=_PHASE_NAMES[raw_phase][0], tr=_PHASE_NAMES[raw_phase][1])
+        else:
+            phase = raw_phase.replace("_", " ").strip()
         # The phase is an English pipeline name, so the Turkish line leaves it out.
         if phase:
             return say(
