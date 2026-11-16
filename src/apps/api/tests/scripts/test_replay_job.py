@@ -81,12 +81,13 @@ def stubbed(monkeypatch, tmp_path):
         destination.write_bytes(b"x")
         copied.append(object_path)
 
-    def run(job_debug, item_debug):
-        monkeypatch.setattr(
-            replay_job,
-            "prod_get",
-            lambda path: job_debug if "/jobs/" in path else item_debug,
-        )
+    def run(job_debug, item_debug, thread_events=None):
+        def prod_get(path):
+            if "/creation-threads/" in path:
+                return {"events": thread_events or [], "next_cursor": None}
+            return job_debug if "/jobs/" in path else item_debug
+
+        monkeypatch.setattr(replay_job, "prod_get", prod_get)
         monkeypatch.setattr(replay_job, "storage_copy", fake_copy)
         return replay_job.collect_inputs("89fefe4d-137a-409c-b846-760161dc5063", tmp_path, "b")
 
@@ -221,6 +222,98 @@ def test_voiceover_outside_the_owner_prefix_is_refused(stubbed) -> None:
     item["item"]["voiceover_gcs_path"] = "users/someone-else/vo/voice.m4a"
     with pytest.raises(replay_job.ReplayJobError, match="outside the job owner"):
         stubbed(_job(None), item)
+
+
+JOB = "89fefe4d-137a-409c-b846-760161dc5063"
+THREAD = "fefccf5c-ab19-4fc8-8730-191b773fa28b"
+FIRST_TURN = "262bdd35-d3f1-47c1-be7c-df886d01ba5b"
+QUEUING_TURN = "51853185-f7ba-4544-84df-383dfa17d656"
+
+
+def _chat_job(kria_turn_id: str | None) -> dict:
+    job = _job({"clip_assignments": [{"media_id": CLIP}]})
+    return {**job, "runtime_version": 2, "thread_id": THREAD, "kria_turn_id": kria_turn_id}
+
+
+def _thread_events(*queued: tuple[str, str]) -> list[dict]:
+    """7b14c641's thread shape (prod, 2026-10-15): two creator messages, the second approved;
+    its render_queued event names the job and the turn, while the job debug has no turn id."""
+
+    events = [
+        {
+            "kind": "user_message",
+            "content": message,
+            "created_at": at,
+            "payload": {"turn_id": turn, "runtime_version": 2},
+        }
+        for turn, message, at in (
+            (FIRST_TURN, "Make a video of my run", "2026-10-15T21:06:36Z"),
+            (QUEUING_TURN, "Yes, make it", "2026-10-15T21:31:36Z"),
+        )
+    ]
+    events.append(
+        {
+            "kind": "approval_approved",
+            "created_at": "2026-10-15T21:32:39.316Z",
+            "payload": {"turn_id": QUEUING_TURN, "approval_id": "80df9fc5"},
+        }
+    )
+    events.extend(
+        {
+            "kind": "render_queued",
+            "created_at": "2026-10-15T21:32:39.605Z",
+            "payload": {"turn_id": turn, "job_id": job_id, "status": "queued"},
+        }
+        for job_id, turn in queued
+    )
+    return [{**event, "sequence": number} for number, event in enumerate(events, 1)]
+
+
+def test_a_chat_job_without_a_recorded_turn_id_replays_up_to_the_turn_that_queued_it(
+    stubbed,
+) -> None:
+    """11 of 29 failed chat jobs from 2026-10-08 to 10-15 (38caaebd, 7b14c641, ...) have a thread
+    but no kria_turn_id in their job debug, and were refused before any spend. Each thread's
+    render_queued event names the job and the turn that queued it.
+
+    Ways this goes wrong: the job is still refused; the turn of another job's render_queued is
+    taken; the turn is found but not written to the job debug replay_creator reads, so it stops
+    at "no creator message for turn ''"; the recovered turn is not said to be recovered.
+    """
+
+    import json
+
+    events = _thread_events(
+        ("0c9f0a82-85c4-4ac1-b3b9-99ab08471dbc", FIRST_TURN), (JOB, QUEUING_TURN)
+    )
+    info = stubbed(_chat_job(None), _item(), events)
+    written = json.loads((stubbed.tmp / "job-debug.json").read_text())
+    assert written["kria_turn_id"] == QUEUING_TURN
+    assert info["target_turn"] == {"turn_id": QUEUING_TURN, "from": "render_queued"}
+    turns = replay_creator.recorded_turns(events, written["kria_turn_id"])
+    assert [turn.turn_id for turn in turns] == [FIRST_TURN, QUEUING_TURN]
+
+    recorded = stubbed(_chat_job(QUEUING_TURN), _item(), events)
+    assert recorded["target_turn"] == {"turn_id": QUEUING_TURN, "from": "job_debug"}
+
+
+@pytest.mark.parametrize(
+    ("queued", "named"),
+    [
+        ([("0c9f0a82-85c4-4ac1-b3b9-99ab08471dbc", FIRST_TURN)], "no render_queued event"),
+        ([(JOB, FIRST_TURN), (JOB, QUEUING_TURN)], "2 turns"),
+    ],
+)
+def test_a_chat_job_whose_queuing_turn_is_unknown_is_refused_naming_the_turn(
+    stubbed, queued: list[tuple[str, str]], named: str
+) -> None:
+    """Ways this goes wrong: a job no render_queued event names is replayed to some other turn;
+    two events naming different turns are resolved by picking one; the refusal blames a missing
+    thread the job has."""
+
+    with pytest.raises(replay_job.ReplayJobError, match=named) as refused:
+        stubbed(_chat_job(None), _item(), _thread_events(*queued))
+    assert "turn" in str(refused.value) and "without a thread" not in str(refused.value)
 
 
 def _plan(events: list[dict], preparation: dict | None) -> dict:
@@ -510,6 +603,79 @@ def test_a_reproduced_failure_stands_even_on_another_model() -> None:
     assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
 
 
+def test_a_replay_plans_on_the_main_creator_model_production_ran_for_the_job(monkeypatch) -> None:
+    """Verifier, 40684a25: production planned on gemini-3.1-pro-preview and the replay on the
+    snapshot's gpt-6.1-sol (production since 2026-11-14). The replay's Main Creator answered in
+    words where production asked a clip question, so the creator's tap could not be sent and
+    the replay diverged at message 1, short of the failing render.
+
+    Ways this goes wrong: the replay still plans on the snapshot's model; a Gemini fallback run
+    (ok_fallback) is taken for the model production was configured with; a run after the job
+    ended (the later switch to Sol) is taken; Sol's thinking level (medium) goes with Gemini, a
+    pairing production never ran; replay_creator gets production's model and the worker the
+    snapshot's; the committed snapshot is rewritten; a job with no Main Creator run on record
+    claims production's model; `snapshot` stops giving today's model and level.
+    """
+
+    import json
+    import tempfile
+
+    runs = [
+        {"agent_name": "nova.creator.main", "outcome": outcome, "model": model, "created_at": at}
+        for outcome, model, at in (
+            ("ok", GEMINI, "2026-10-25T23:05:00Z"),
+            ("ok_fallback", "gemini-2.5-flash", "2026-10-25T23:10:00Z"),
+            ("ok", SOL, "2026-11-14T07:00:00Z"),
+        )
+    ]
+    monkeypatch.setattr(
+        replay_job, "prod_get", lambda path: {"agent_runs": runs, "next_cursor": None}
+    )
+    production = replay_job.production_agents(
+        ITEM, [], until="2026-10-25T23:11:44Z", began="2026-10-25T23:04:00Z"
+    )
+    committed = replay_job.SNAPSHOT.read_text()
+    settings = json.loads(committed)["settings"]
+    assert settings["main_creator_model"]["value"] == SOL
+    assert settings["main_creator_thinking_level"]["value"] == "medium"
+
+    with tempfile.TemporaryDirectory(dir="/private/tmp") as tmp:
+        inputs = Path(tmp) / "inputs"
+        inputs.mkdir()
+        (inputs / "source-manifest.json").write_text("{}")
+
+        def environments(choice: dict, name: str) -> list[dict]:
+            run_dir = Path(tmp) / name
+            flags = replay_job.write_replay_flags(choice, run_dir)
+            worker = replay_job._creator_environment(
+                {"DATABASE_URL": "postgresql://u@localhost/nova_creator_fidelity_test_abc"},
+                run_dir,
+                inputs,
+                flags,
+            )
+            return [replay_creator.snapshot_environment(flags), worker]
+
+        reproduce = replay_job.choose_main_creator(production, settings, "production")
+        assert reproduce["from"] == "production" and GEMINI in reproduce["why"]
+        for env in environments(reproduce, "production"):
+            assert env["MAIN_CREATOR_MODEL"] == GEMINI
+            assert "MAIN_CREATOR_THINKING_LEVEL" not in env
+
+        today = replay_job.choose_main_creator(production, settings, "snapshot")
+        assert today["from"] == "snapshot"
+        for env in environments(today, "snapshot"):
+            assert (env["MAIN_CREATOR_MODEL"], env["MAIN_CREATOR_THINKING_LEVEL"]) == (
+                SOL,
+                "medium",
+            )
+
+        unrecorded = replay_job.ProductionAgents(models={}, prompt_versions={}, trace_complete=True)
+        fallback = replay_job.choose_main_creator(unrecorded, settings, "production")
+        assert (fallback["model"], fallback["from"]) == (SOL, "snapshot")
+        assert "no nova.creator.main run" in fallback["why"]
+    assert replay_job.SNAPSHOT.read_text() == committed
+
+
 RESEARCH = "nova.research.public_facts"
 TEXT_LAYERS = "nova.research.text_layers"
 PRODUCTION_PLAN_FAILURE = {
@@ -727,6 +893,10 @@ SILENT_9734ED83 = (
     "I couldn't hear anyone talking in your clips, so I can't play what you say. Add a clip "
     "where you talk to the camera, or tell me to make it without speech."
 )
+# A bare `assert` in a phone_* module (phone_card_layout.py, phone_captions.py) records its
+# class and an empty message.
+BARE_ASSERT = {"error_class": "AssertionError", "error_tail": ""}
+NO_MESSAGE = {"error_class": "AssertionError"}
 GENERIC = object()
 
 
@@ -849,6 +1019,22 @@ def _production_render(reason: str, planning: dict | None = None, *, detail: obj
             "reproduction_unproven",
             ["no planning error"],
         ),
+        (
+            "two bare asserts: one class, an empty message on both sides (verifier Q1)",
+            "phone_plan_failed",
+            (BARE_ASSERT, GENERIC),
+            (BARE_ASSERT, GENERIC),
+            "reproduction_unproven",
+            ["AssertionError", "no message"],
+        ),
+        (
+            "one class, no message recorded on either side",
+            "phone_plan_failed",
+            (NO_MESSAGE, GENERIC),
+            (NO_MESSAGE, GENERIC),
+            "reproduction_unproven",
+            ["AssertionError", "no message"],
+        ),
     ],
 )
 def test_only_the_cause_production_recorded_makes_a_replay_its_failure(
@@ -871,7 +1057,8 @@ def test_only_the_cause_production_recorded_makes_a_replay_its_failure(
     it, counts as a matching cause; production recording no cause at all reads as reproduced;
     the gap hides either side's message, so a model-worded difference cannot be judged; the
     same gate failing again (07efa44c and 51f7124f), or an older job's same refusal, stops
-    reading as reproduced.
+    reading as reproduced; two bare asserts, whose empty messages are equal, match on the
+    class alone.
     """
 
     route = replay_job.compare_routes(
