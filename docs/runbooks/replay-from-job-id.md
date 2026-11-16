@@ -134,7 +134,9 @@ The driver reads every agent name production recorded for the plan item
 (`GET /admin/plan-items/<id>/proposal-trace`, all pages, plus the job's own agent runs) and the
 same slice of the replay's scratch database: runs linked to the replay's plan item, plus the runs
 of the replay's last job. Two kinds of run appear in no production read, so they are listed in
-`replay_uncompared_agents`, counted in `replay_spend_usd`, and never compared:
+`replay_uncompared_agents`, counted in `replay_spend_usd`, and never compared on route (one whose
+last run failed is listed in `failed_uncompared_agents`, and keeps a matching failure from
+reading as production's):
 
 * Runs scoped to the Creator session alone. On the Main Creator route the clip-intent agents
   run without a plan item (`creator_agent.py`).
@@ -256,25 +258,49 @@ and failed its second `nova.research.public_facts` search (`terminal_schema`). B
 `phone_plan_failed`. So a failed replay carries `reproduction`:
 
 * `reproduced`: the reason matches, production's trace is complete, the replay ran no agent
-  production did not, every agent whose last replay run failed also has a failed run in
-  production's trace (`failed_only_in_replay` is empty), and when both jobs recorded a
-  planning error (`planning_failure`, the job's last `phone_plan_failed` pipeline event; the
-  production one is in `compared_production_render`) the error class is the same. Only then is
-  `production_failure_reproduced` true.
+  production did not, every agent whose last replay run failed also failed on its last run in
+  production (`failed_only_in_replay` is empty), no agent production's trace cannot show failed
+  on its last replay run (`failed_uncompared_agents` is empty), and the replay recorded
+  production's exact cause (below). Only then is `production_failure_reproduced` true.
 * `failure_reason_matched_route_differs`: the reason matches, but the replay ran agents
   production never ran for the item.
 * `reproduction_unproven`: the reason matches on production's route, but an agent failed in
-  the replay that production got through, the planning error class differs, or production's
-  trace was cut off.
+  the replay that production got through or whose production outcome is unknown, the cause
+  differs or production recorded none, or production's trace was cut off.
 * `failure_reason_differs`: another failure than production's (see above for when that is a
   divergence).
 
-`reproduction_gaps` says, in one sentence each, which agents and errors stand in the way.
+The cause is compared exactly, because an error class is as much a catch-all as a reason.
+`CreatorRenderContractError` is 51f7124f's "This text cannot fit clearly in the requested area"
+and 40684a25's "The eligible fonts cannot draw all text"; `CreationTextCompositionError` is
+every `creation_text_failed` job, each with its own message. Which record is compared depends on
+what production holds (`compared_production_render`):
+
+* A planning error (`planning_failure`, the job's last `phone_plan_failed` pipeline event): the
+  replay must record the same error class and the same message (`error_tail`). A replay with no
+  planning error is not production's failure.
+* No planning error (jobs from before the event was recorded, such as 0701fcc9, 9734ed83 and
+  1e79ff4f): the replay's `error_detail` must equal production's. A detail that is only the
+  app's generic sentence for the reason (`generic_error_detail`, which the replay's receipt
+  carries) is the same for every failure with that reason, so it proves nothing, and neither
+  does a job with no detail at all.
+
+A message a model wrote ("Text composition is incomplete: <the model's reason>") rarely repeats
+word for word, so such a replay usually reads `reproduction_unproven`. The gap prints both
+messages; a reviewer may judge them the same failure, but the PR then says so in its own words
+and does not cite `reproduced`.
+
+`reproduction_gaps` says, in one sentence each, which agents and causes stand in the way.
 Neither of the two middle verdicts says the failure is gone or that it remains; a fix PR cannot
-use them as its replay result. A job whose trace holds no `phone_plan_failed` event (a render
-failure, or a production job like f88555bc with an empty trace) has no `planning_failure`; then
-only the route and the agents are compared. A replay that stopped
-early is compared with production's render at that message, whose planning error is not read.
+use them as its replay result. A replay that stopped early is compared with production's render
+at that message, whose cause is not read.
+
+A `diverged_from_production` replay that failed after agents production never ran names
+production's own failure next to the replay's. Production's trace ends where its job failed, so
+those agents may lie past that point rather than on another route: on 1e79ff4f production
+failed on a provider timeout ("gemini provider outcome unknown after 90.0s") before planning
+further, and the replay got past it to fail elsewhere. A timeout or provider error there means
+production stopped earlier; only otherwise is the flag snapshot the first suspect.
 
 ### Stalls
 
