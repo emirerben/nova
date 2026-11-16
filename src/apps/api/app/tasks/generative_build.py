@@ -4762,7 +4762,7 @@ def _phone_pin_contract(snapshot: dict, variant_id: str = "guided_story") -> Any
 def _phone_repair_notes(
     snapshot: dict, contract: Any, duration_s: float, notes: list[str]
 ) -> list[str]:
-    """Every "What Kria changed" line for a phone plan, recorded in the job's trace.
+    """Every "What Kria changed" line for a phone plan; the worker traces them once pinned.
 
     ``notes`` are the compile repairs; the planner's own (``unified_montage.repair_notes``:
     asks the approved draft could not meet, KRI-129) and a confirmed length the footage
@@ -4771,7 +4771,6 @@ def _phone_repair_notes(
     """
     from app.services.creator_render_contract import creator_length_note  # noqa: PLC0415
     from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
-    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     planned = (snapshot.get("unified_montage") or {}).get("repair_notes") or []
     merged = [note for note in planned if isinstance(note, str) and note]
@@ -4784,12 +4783,6 @@ def _phone_repair_notes(
         length_note = creator_length_note(contract, duration_s, length_policy=policy)
         if length_note is not None and length_note not in merged:
             merged.append(length_note)
-    if merged:
-        record_pipeline_event(
-            "phone_plan",
-            "phone_plan_repaired",
-            {"generation_id": snapshot.get("creator_generation_id"), "notes": merged},
-        )
     return merged
 
 
@@ -4966,6 +4959,7 @@ def _run_phone_guided_job(
         UnsupportedPhonePlan,
         guided_sfx_requests,
     )
+    from app.pipeline.phone_plan_degrade import record_recoveries  # noqa: PLC0415
     from app.pipeline.phone_plan_repair import compile_phone_guided_repaired  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
@@ -5090,6 +5084,8 @@ def _run_phone_guided_job(
             raise UnsupportedPhonePlan(
                 "phone rendering does not yet support guided-story narration",
                 capability="narrationAudio",
+                reason="narration_unavailable",
+                lane="narration",
             )
         narration_bed = _resolve_phone_voiceover_bed(
             job_id, plan.narration.gcs_path, narration=plan.narration
@@ -5098,6 +5094,8 @@ def _run_phone_guided_job(
             raise UnsupportedPhonePlan(
                 "the approved voiceover was replaced since approval",
                 capability="narrationAudio",
+                reason="narration_replaced",
+                lane="narration",
             )
     song_bed = None
     if plan.user_song is not None:
@@ -5109,6 +5107,8 @@ def _run_phone_guided_job(
             raise UnsupportedPhonePlan(
                 "phone rendering of your own song is currently unavailable",
                 capability="musicBed",
+                reason="song_unavailable",
+                lane="song",
             )
         song_bed = _resolve_phone_song_bed(job_id, plan.user_song)
     # KRI-608: the plan's sound effects (licensed ones were materialized into placements
@@ -5120,6 +5120,8 @@ def _run_phone_guided_job(
             raise UnsupportedPhonePlan(
                 "phone rendering of sound effects is currently unavailable",
                 capability="soundEffects",
+                reason="sfx_unavailable",
+                lane="sfx",
             )
         sound_effects = tuple(
             _resolve_phone_sound_effect(request) for request in guided_sfx_requests(plan)
@@ -5129,16 +5131,17 @@ def _run_phone_guided_job(
     # The pinned contract lets the repair put back confirmed text the plan lost, which
     # the pin-time check below would otherwise refuse (KRI-129: the creator's words win).
     contract = _phone_pin_contract(snapshot)
-    compiled = compile_phone_guided_repaired(
-        plan,
-        bindings,
-        contract=contract,
-        visuals=visuals,
-        narration=narration_bed,
-        song=song_bed,
-        sound_effects=sound_effects,
-        landscape_fit="fit" if landscape_fit == "fit" else "fill",
-    )
+    with _worker_reply_language(snapshot):
+        compiled = compile_phone_guided_repaired(
+            plan,
+            bindings,
+            contract=contract,
+            visuals=visuals,
+            narration=narration_bed,
+            song=song_bed,
+            sound_effects=sound_effects,
+            landscape_fit="fit" if landscape_fit == "fit" else "fill",
+        )
     recipe, repair_notes = compiled.recipe, list(compiled.notes)
     # Exact-timed small cards: the first compile fixes where every clip really starts on
     # the output clock (transitions, refits); the cards are grounded against that and the
@@ -5157,18 +5160,19 @@ def _run_phone_guided_job(
         if timed_cards:
             visuals = _merge_visual_bindings(visuals, card_visuals)
             try:
-                compiled = compile_phone_guided_repaired(
-                    plan,
-                    bindings,
-                    contract=contract,
-                    visuals=visuals,
-                    narration=narration_bed,
-                    song=song_bed,
-                    sound_effects=sound_effects,
-                    landscape_fit="fit" if landscape_fit == "fit" else "fill",
-                    timed_cards=timed_cards,
-                    allow_editor_media=True,
-                )
+                with _worker_reply_language(snapshot):
+                    compiled = compile_phone_guided_repaired(
+                        plan,
+                        bindings,
+                        contract=contract,
+                        visuals=visuals,
+                        narration=narration_bed,
+                        song=song_bed,
+                        sound_effects=sound_effects,
+                        landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                        timed_cards=timed_cards,
+                        allow_editor_media=True,
+                    )
                 recipe, repair_notes = compiled.recipe, list(compiled.notes)
             except (UnsupportedPhonePlan, ValueError) as exc:
                 # The lane never costs the creator their video: render without it, say so.
@@ -5215,21 +5219,22 @@ def _run_phone_guided_job(
                 break
             try:
                 candidate_plan = GuidedStoryExecutionPlan.model_validate(candidate.raw_plan)
-                candidate_compiled = compile_phone_guided_repaired(
-                    candidate_plan,
-                    bindings,
-                    contract=contract,
-                    visuals=visuals,
-                    narration=narration_bed,
-                    song=song_bed,
-                    sound_effects=sound_effects,
-                    landscape_fit="fit" if landscape_fit == "fit" else "fill",
-                    **(
-                        {"timed_cards": timed_cards, "allow_editor_media": True}
-                        if timed_cards
-                        else {}
-                    ),
-                )
+                with _worker_reply_language(snapshot):
+                    candidate_compiled = compile_phone_guided_repaired(
+                        candidate_plan,
+                        bindings,
+                        contract=contract,
+                        visuals=visuals,
+                        narration=narration_bed,
+                        song=song_bed,
+                        sound_effects=sound_effects,
+                        landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                        **(
+                            {"timed_cards": timed_cards, "allow_editor_media": True}
+                            if timed_cards
+                            else {}
+                        ),
+                    )
                 validate_phone_pilot_recipe(
                     candidate_compiled.recipe, allow_editor_media=bool(timed_cards)
                 )
@@ -5284,6 +5289,10 @@ def _run_phone_guided_job(
                 element.model_dump(mode="json", exclude_none=False)
                 for element in getattr(compiled.plan, field)
             ]
+        # KRI-1376: a degraded row (a look or animation the phone cannot draw) shows as rendered.
+        for field in ("story_timeline", "narration_label_text_elements"):
+            if getattr(compiled.plan, field) != getattr(plan, field):
+                raw_plan[field] = repaired_plan_payload[field]
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe
@@ -5428,6 +5437,17 @@ def _run_phone_guided_job(
         job.failure_reason = None
         db.commit()
 
+    # Only the compile this render pinned (never a refused candidate or the pre-card compile),
+    # and never under the job's row lock.
+    if repair_notes:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "phone_plan",
+            "phone_plan_repaired",
+            {"generation_id": generation, "notes": repair_notes},
+        )
+    record_recoveries(compiled.recoveries)
     # The look chip names the face the typography step really picked (not the plan default).
     _emit_burned_look_block(job_id, raw_plan)
     # KRI-448: the pinned plan's blocks went out above with `post_caption` deciding; the
@@ -5539,6 +5559,9 @@ def _resolve_phone_sound_effect(sfx: Any) -> Any:
             raise UnsupportedPhonePlan(
                 "sound effect is no longer available for phone rendering",
                 capability="soundEffects",
+                reason="sfx_unpublished",
+                lane="sfx",
+                item_id=sfx.id,
             )
         path = str(row.audio_gcs_path)
         duration_s = float(row.duration_s) if getattr(row, "duration_s", None) else None
@@ -5546,6 +5569,9 @@ def _resolve_phone_sound_effect(sfx: Any) -> Any:
         raise UnsupportedPhonePlan(
             "sound effect format cannot play on the iPhone (needs m4a/wav/mp3/aac)",
             capability="soundEffects",
+            reason="sfx_format",
+            lane="sfx",
+            item_id=sfx.id,
         )
     # Even a corrupt catalog row cannot grant access to a differently-prefixed
     # path -- mirrors `render_library.catalog_path`'s exact check.
@@ -5562,6 +5588,9 @@ def _resolve_phone_sound_effect(sfx: Any) -> Any:
         raise UnsupportedPhonePlan(
             "sound effect has no usable duration for phone rendering",
             capability="soundEffects",
+            reason="sfx_duration",
+            lane="sfx",
+            item_id=sfx.id,
         )
     return ResolvedSoundEffect(request=sfx, asset=asset, duration_s=duration_s)
 
@@ -5643,6 +5672,8 @@ def _resolve_phone_voiceover_bed(
             raise UnsupportedPhonePlan(
                 "recorded voiceover is no longer available for phone rendering",
                 capability="narrationAudio",
+                reason="voiceover_missing",
+                lane="narration",
             )
         path = voiceover_gcs_path if cleaned else str(item.voiceover_gcs_path)
         plan_item_id = str(item.id)
@@ -5655,6 +5686,8 @@ def _resolve_phone_voiceover_bed(
         raise UnsupportedPhonePlan(
             "recorded voiceover is no longer available for phone rendering",
             capability="narrationAudio",
+            reason="voiceover_missing",
+            lane="narration",
         ) from exc
     return PhoneNarrationBed(
         plan_item_id=plan_item_id,
@@ -6988,13 +7021,17 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
             or not item.song_duration_s
             or float(item.song_duration_s) <= 0
         ):
-            raise UnsupportedPhonePlan(_SONG_MISSING_MESSAGE, capability="musicBed")
+            raise UnsupportedPhonePlan(
+                _SONG_MISSING_MESSAGE, capability="musicBed", reason="song_missing", lane="song"
+            )
         if (
             str(item.id) != str(user_song.plan_item_id)
             or str(item.song_generation) != str(user_song.generation)
             or abs(float(item.song_duration_s) - float(user_song.duration_s)) > 0.05
         ):
-            raise UnsupportedPhonePlan(_SONG_REPLACED_MESSAGE, capability="musicBed")
+            raise UnsupportedPhonePlan(
+                _SONG_REPLACED_MESSAGE, capability="musicBed", reason="song_replaced", lane="song"
+            )
         path = str(item.song_gcs_path)
         plan_item_id = str(item.id)
         duration_s = float(item.song_duration_s)
@@ -7007,7 +7044,9 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
             expected_generation=expected_generation,
         )
     except (FileNotFoundError, ValueError) as exc:
-        raise UnsupportedPhonePlan(_SONG_REPLACED_MESSAGE, capability="musicBed") from exc
+        raise UnsupportedPhonePlan(
+            _SONG_REPLACED_MESSAGE, capability="musicBed", reason="song_replaced", lane="song"
+        ) from exc
     return PhoneSongBed(
         plan_item_id=plan_item_id,
         generation=asset.generation,
@@ -17505,7 +17544,16 @@ def _run_phone_narrated_job(
         narrated_title_entrance,
         narrated_title_text_elements,
     )
-    from app.pipeline.phone_subtitled_lanes import SubtitledLaneError, drop_lane  # noqa: PLC0415
+    from app.pipeline.phone_plan_degrade import (  # noqa: PLC0415
+        Recovery,
+        captions_dropped_note,
+        record_recoveries,
+    )
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        SubtitledLaneError,
+        drop_lane,
+        lane_names,
+    )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
@@ -17535,6 +17583,8 @@ def _run_phone_narrated_job(
     generation = snapshot.get("creator_generation_id")
     # "What Kria changed" lines for asks the approved edit could not meet (KRI-129).
     narrated_repair_notes: list[str] = []
+    # Word-timed texts shrunk to find a clear spot, captions left out; recorded once pinned.
+    phone_recoveries: list = []
     if not isinstance(generation, str) or not generation:
         raise ValueError("Phone rendering requires an immutable approved generation")
     bindings = tuple(
@@ -17599,7 +17649,11 @@ def _run_phone_narrated_job(
     raw_audio = strategy.get("montage_audio")
     if isinstance(raw_audio, dict):
         if not phone_voiceover_source_audio_supported(require_client=False):
-            raise UnsupportedPhonePlan("Selected clip sound under narration is not enabled yet")
+            raise UnsupportedPhonePlan(
+                "Selected clip sound under narration is not enabled yet",
+                reason="source_audio_unavailable",
+                lane="source_audio",
+            )
         from app.schemas.edit_proposal import MontageAudioPlan  # noqa: PLC0415
 
         selected_audio = MontageAudioPlan.model_validate(raw_audio)
@@ -17701,6 +17755,8 @@ def _run_phone_narrated_job(
         raise UnsupportedPhonePlan(
             "recorded voiceover is no longer available for phone rendering",
             capability="narrationAudio",
+            reason="voiceover_missing",
+            lane="narration",
         )
 
     with pipeline_trace_for(job_id):
@@ -17756,7 +17812,12 @@ def _run_phone_narrated_job(
                 gcs_path = clip_id_to_gcs.get(clip_id)
                 media_id = bindings_by_gcs.get(gcs_path) if gcs_path else None
                 if media_id is None:
-                    raise UnsupportedPhonePlan("narrated step has no phone source binding")
+                    raise UnsupportedPhonePlan(
+                        "narrated step has no phone source binding",
+                        reason="step_unbound",
+                        lane="step",
+                        item_id=clip_id,
+                    )
                 return media_id
 
             script_steps = _narrated_script_steps(filming_guide)
@@ -17773,17 +17834,29 @@ def _run_phone_narrated_job(
                 if len(clip_assignments) < len(script_steps):
                     raise UnsupportedPhonePlan(
                         f"narrated variant has {len(clip_assignments)} clips for "
-                        f"{len(script_steps)} scripted steps"
+                        f"{len(script_steps)} scripted steps",
+                        reason="step_clips",
+                        lane="step",
                     )
                 assignment_by_step = {a.step_id: a for a in clip_assignments}
                 step_timings = align_script_to_voiceover(script_steps, transcript.words)
                 for timing in step_timings:
                     assignment = assignment_by_step.get(timing.step_id)
                     if assignment is None:
-                        raise UnsupportedPhonePlan("narrated step has no clip assignment")
+                        raise UnsupportedPhonePlan(
+                            "narrated step has no clip assignment",
+                            reason="step_unassigned",
+                            lane="step",
+                            item_id=timing.step_id,
+                        )
                     clip_id = clip_path_to_id.get(assignment.clip_path)
                     if clip_id is None:
-                        raise UnsupportedPhonePlan("narrated step has no phone source binding")
+                        raise UnsupportedPhonePlan(
+                            "narrated step has no phone source binding",
+                            reason="step_unbound",
+                            lane="step",
+                            item_id=timing.step_id,
+                        )
                     steps.append(
                         NarratedPhoneStep(
                             step_id=timing.step_id,
@@ -17801,7 +17874,9 @@ def _run_phone_narrated_job(
                     phrases = [{"speech_start_s": 0.0, "speech_end_s": total_s}]
                 ordered_ids = list(narrative_order)
                 if not ordered_ids:
-                    raise UnsupportedPhonePlan("narrated_ready variant has no clips")
+                    raise UnsupportedPhonePlan(
+                        "narrated_ready variant has no clips", reason="no_clips", lane="step"
+                    )
                 timeline_end = max(total_s, vo_dur)
                 # KRI-456: let the alignment agent pick where each clip starts
                 # (voice-vs-footage), instead of equal-duration buckets. Any
@@ -17889,7 +17964,9 @@ def _run_phone_narrated_job(
                     )
 
             if not steps:
-                raise UnsupportedPhonePlan("narrated phone plan has no steps")
+                raise UnsupportedPhonePlan(
+                    "narrated phone plan has no steps", reason="no_steps", lane="step"
+                )
             # `narration.duration_s` (the server-pinned, registration-time
             # probed voiceover duration -- see `_resolve_phone_voiceover_bed`)
             # is the AUTHORITATIVE voiceover length, not the locally
@@ -17904,7 +17981,11 @@ def _run_phone_narrated_job(
             voiceover_duration_s = float(narration.duration_s)
             last_step = steps[-1]
             if voiceover_duration_s <= last_step.start_s:
-                raise UnsupportedPhonePlan("recorded voiceover is too short for its narrated steps")
+                raise UnsupportedPhonePlan(
+                    "recorded voiceover is too short for its narrated steps",
+                    reason="voiceover_too_short",
+                    lane="narration",
+                )
             steps[-1] = last_step.model_copy(update={"end_s": voiceover_duration_s})
 
             cues: list[dict] | None = None
@@ -18120,6 +18201,26 @@ def _run_phone_narrated_job(
                     steps = clip_sound_plan.steps
                     _record_clip_sound_event("clip_sound", None, clip_sound_plan)
 
+            def _leave_out_captions(exc: Exception) -> None:
+                """KRI-1376: the caption style is a preference the contract does not pin, so
+                captions the phone cannot draw are left out and the creator told."""
+                log.warning("phone_narrated.captions_dropped", job_id=job_id, error=str(exc))
+                phone_recoveries.append(
+                    Recovery(
+                        reason="captions_compile", lane="captions", item_id=None, action="dropped"
+                    )
+                )
+                narrated_record["caption_language"] = None
+                narrated_record["spoken_language"] = None
+                with _worker_reply_language(snapshot):
+                    narrated_repair_notes.append(captions_dropped_note())
+                    # The receipts read the record's caption language: stamp them again.
+                    _narrated_alignment_receipts(
+                        narrated_record,
+                        narrated_brief,
+                        bound=bool(snapshot.get("creator_brief_binding")),
+                    )
+
             opening_title_end_s = narrated_title_end_s(
                 transcript.words[0].end_s if transcript.words else None
             )
@@ -18142,17 +18243,25 @@ def _run_phone_narrated_job(
                         canvas=canvas,
                         entrance=title_entrance,
                     )
-                    spoken_rows, spoken_receipt = narrated_spoken_text_rows(
-                        asks,
-                        words=transcript.words,
-                        cues=cues,
-                        caption_style=caption_style,
-                        timeline_duration_s=voiceover_duration_s,
-                        canvas=canvas,
-                        shown_rows=[title.model_dump(mode="json", exclude_none=True)]
-                        if title
-                        else [],
-                    )
+                    while True:
+                        try:
+                            spoken_rows, spoken_receipt = narrated_spoken_text_rows(
+                                asks,
+                                words=transcript.words,
+                                cues=cues,
+                                caption_style=caption_style,
+                                timeline_duration_s=voiceover_duration_s,
+                                canvas=canvas,
+                                shown_rows=[title.model_dump(mode="json", exclude_none=True)]
+                                if title
+                                else [],
+                            )
+                            break
+                        except UnsupportedPhonePlan as exc:
+                            if exc.reason != "captions_compile" or not cues:
+                                raise
+                            _leave_out_captions(exc)
+                            cues = detected_lang = None
                     misses = [row for row in spoken_receipt["rows"] if row["status"] != "placed"]
                     if misses:
                         with _worker_reply_language(snapshot):
@@ -18179,8 +18288,36 @@ def _run_phone_narrated_job(
                             job_id, snapshot, ownership_epoch=ownership_epoch, message=message
                         ):
                             return None
-                        raise UnsupportedPhonePlan(message)
+                        raise UnsupportedPhonePlan(
+                            message,
+                            reason="spoken_text_unplaced",
+                            lane="spoken_text",
+                            item_id=misses[0]["requirement_id"] if len(misses) == 1 else None,
+                        )
                     record_pipeline_event("narrated", "spoken_text", spoken_receipt)
+                    from app.pipeline.phone_plan_degrade import (  # noqa: PLC0415
+                        shrunk_on_screen_note,
+                    )
+
+                    shrunk = [
+                        row
+                        for row in spoken_receipt["rows"]
+                        if "shrunk_from_px" in (row.get("placement") or {})
+                    ]
+                    shown_text = {row["id"]: row["text"] for row in spoken_rows}
+                    with _worker_reply_language(snapshot):
+                        narrated_repair_notes.extend(
+                            shrunk_on_screen_note(shown_text[row["element_id"]]) for row in shrunk
+                        )
+                    phone_recoveries.extend(
+                        Recovery(
+                            reason="spoken_text_fit",
+                            lane="spoken_text",
+                            item_id=row["element_id"],
+                            action="shrunk",
+                        )
+                        for row in shrunk
+                    )
             # KRI-519: beats become the Voiceover overlay / sound-effect lanes,
             # the same ones an editor Save recompiles (KRI-281).
             lanes: Any = None
@@ -18255,6 +18392,14 @@ def _run_phone_narrated_job(
                     )
                     break
                 except ValueError as exc:
+                    if (
+                        isinstance(exc, UnsupportedPhonePlan)
+                        and exc.reason == "captions_compile"
+                        and cues
+                    ):
+                        _leave_out_captions(exc)
+                        cues = detected_lang = None
+                        continue
                     # An ask for one clip's own sound never costs the creator their video: the
                     # compile that refused it is retried without the tail, then without the
                     # gains (a lane error is the lane's, below).
@@ -18274,10 +18419,19 @@ def _run_phone_narrated_job(
                     if not isinstance(exc, UnsupportedPhonePlan):
                         raise
                     # A beat lane never fails the job: drop the lane that failed
-                    # (every lane when the error names none), then recompile.
-                    if lanes is None or (beat_receipt is None and timed_receipt is None):
+                    # (every lane when the error names none), then recompile. A reject that
+                    # names another part (the title, a step) is not the beats' to fix.
+                    if (
+                        lanes is None
+                        or (beat_receipt is None and timed_receipt is None)
+                        or (
+                            not isinstance(exc, SubtitledLaneError)
+                            and exc.lane is not None
+                            and exc.lane not in lane_names(lanes)
+                        )
+                    ):
                         raise
-                    lane = exc.lane if isinstance(exc, SubtitledLaneError) else None
+                    lane = exc.lane
                     log.warning("phone_narrated_beats.lane_dropped", job_id=job_id, lane=lane)
                     dropped = (
                         drop_lane(lanes, lane)
@@ -18497,6 +18651,8 @@ def _run_phone_narrated_job(
         job.failure_reason = None
         db.commit()
 
+    # Only a pinned render's recoveries, and never under the job's row lock.
+    record_recoveries(phone_recoveries)
     # KRI-443: pinned + committed, no lock held: report the decided sections. The
     # voiceover is the soundtrack; the title counts only when the recipe carries it.
     _emit_phone_blocks_best_effort(

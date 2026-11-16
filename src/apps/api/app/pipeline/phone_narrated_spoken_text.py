@@ -16,6 +16,7 @@ from typing import Any, Protocol
 import structlog
 
 from app.kria.spoken_text_ask import SpokenTextAsk
+from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_spoken_text import (
     SPOKEN_TEXT_FIELD,
     _text_boxes,
@@ -114,6 +115,31 @@ def _place_clear_of_text(
     return placed, {"status": "clear_of_text", "face_protection": face_protection, **decision}
 
 
+def _place_or_shrink(
+    row: dict,
+    avoid: Sequence[Any],
+    *,
+    canvas: _Canvas,
+    face_regions: Sequence[NormalizedBox] | None,
+) -> tuple[dict | None, dict]:
+    """`_place_clear_of_text` at the row's own size, else at the largest smaller readable size
+    that has a clear spot (KRI-1376: the creator's words render smaller instead of the video
+    stopping to ask). ``placement["shrunk_from_px"]`` names the size the row had."""
+    from app.pipeline.phone_plan_degrade import shrink_sizes  # noqa: PLC0415
+
+    placed, placement = _place_clear_of_text(row, avoid, canvas=canvas, face_regions=face_regions)
+    if placed is not None:
+        return placed, placement
+    own, *smaller = shrink_sizes(row.get("size_px"))
+    for size in smaller:
+        placed, fitted = _place_clear_of_text(
+            {**row, "size_px": size}, avoid, canvas=canvas, face_regions=face_regions
+        )
+        if placed is not None:
+            return placed, {**fitted, "shrunk_from_px": own}
+    return None, placement
+
+
 def narrated_spoken_text_rows(
     asks: Sequence[SpokenTextAsk],
     *,
@@ -174,14 +200,13 @@ def narrated_spoken_text_rows(
                         cues, window=window, caption_style=caption_style, canvas=canvas
                     )
                 except Exception as exc:  # noqa: BLE001 - never place across unmeasured captions
-                    log.warning(
-                        "phone_narrated_spoken_text.caption_boxes_failed", error=str(exc)[:200]
-                    )
-                    receipt_rows.append(
-                        {**entry, "status": "error", "error": "caption_boxes_failed"}
-                    )
-                    continue
-            placed, placement = _place_clear_of_text(
+                    # The captions are at fault, not this ask: the caller leaves them out.
+                    raise UnsupportedPhonePlan(
+                        f"unable to measure captions: {exc}",
+                        reason="captions_compile",
+                        lane="captions",
+                    ) from exc
+            placed, placement = _place_or_shrink(
                 row, avoid, canvas=canvas, face_regions=face_regions
             )
             if placed is None:
@@ -190,6 +215,8 @@ def narrated_spoken_text_rows(
                 )
                 continue
         except Exception as exc:  # noqa: BLE001 - one ask must not abort a render
+            if isinstance(exc, UnsupportedPhonePlan) and exc.lane == "captions":
+                raise
             log.warning("phone_narrated_spoken_text.failed", error=str(exc)[:200])
             receipt_rows.append({**entry, "status": "error", "error": str(exc)[:200]})
             continue

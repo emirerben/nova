@@ -3936,13 +3936,13 @@ def test_semantic_planning_failure_keeps_its_retryability(monkeypatch) -> None:
 # --- KRI-286: phone destinations dry-run the phone compiler at planning time ---
 
 
-def _phone_draft(monkeypatch, validator, *, phone: bool):
+def _phone_draft(monkeypatch, validator, *, phone: bool, db: _Db | None = None):
     """Run one auto-approved draft with the phone dry-run stubbed to ``validator``."""
 
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()
     item = _prod_item(item_id, approval_mode="auto")
-    db = _Db(_Result(rows=[]))
+    db = db or _Db(_Result(rows=[]))
 
     @contextmanager
     def _session():
@@ -3983,6 +3983,40 @@ def test_phone_dry_run_repair_notes_reach_the_proposal_adjustments(monkeypatch) 
     snapshot = persisted.last_approved.snapshot
     assert "Changed a text font to Inter so it renders on your iPhone" in snapshot.adjustments
     assert persisted.planner_fallback is None
+
+
+def test_phone_dry_run_notes_follow_the_chat_language(monkeypatch) -> None:
+    """KRI-1376: a degrade note on the approval card reads in the chat's language, like the
+    note on the finished video, though this task runs with no chat turn bound."""
+    from app.models import CreationThread
+    from app.pipeline.phone_plan_degrade import Recovery, degrade_notes
+
+    class _TurkishChatDb(_Db):
+        def execute(self, query):  # noqa: ANN001
+            entity = (getattr(query, "column_descriptions", None) or [{}])[0].get("entity")
+            if entity is CreationThread:
+                return _Result(rows=[SimpleNamespace(state={"reply_language": "tr"})])
+            return super().execute(query)
+
+    def validator(_snapshot, _assignments):  # noqa: ANN001
+        lost_look = Recovery(
+            reason="look_source",
+            lane="moment",
+            item_id="moment-1",
+            action="dropped",
+            lost=("look",),
+            subject="clip",
+            number=1,
+        )
+        return degrade_notes([lost_look])
+
+    persisted = _phone_draft(
+        monkeypatch, validator, phone=True, db=_TurkishChatDb(_Result(rows=[]))
+    )
+
+    assert persisted.last_approved.snapshot.adjustments == [
+        "1. klibi görünüm olmadan gösterdim: iPhone'un bunu henüz çizemiyor"
+    ]
 
 
 def test_phone_dry_run_reject_takes_the_deterministic_fallback(monkeypatch) -> None:
