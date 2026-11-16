@@ -78,6 +78,13 @@ Added with the sixth verifier's findings, before the fix:
  32. once the captions are left out the variant still names a caption language, or the
      captions note or recovery is lost or said twice;
  33. a clip or photo with an empty color adjustment or a 1x speed is told it lost them.
+
+Added with the seventh verifier's findings, before the fix:
+ 34. a caption the phone itself refuses (a script face this app build cannot draw, more caption
+     layers than a recipe holds) reaches the Voiceover worker naming no reason, so every beat
+     card is dropped and then the whole video is refused; only an injected non-phone error
+     ever left the captions out;
+ 35. the same job with the face verified loses its captions too (the trigger is not the fault).
 """
 
 from __future__ import annotations
@@ -1041,6 +1048,63 @@ def test_a_caption_fault_under_a_word_timed_text_leaves_out_the_captions_not_the
     assert not [layer for layer in recipe.text_layers if layer.id.startswith("caption")]
     recovered = [data for stage, event, data in events if stage == "phone_plan"]
     assert [r for r in recovered if r["reason"] == "captions_compile"] == [
+        {
+            "decision": "render_with_notes",
+            "reason": "captions_compile",
+            "lane": "captions",
+            "item_id": None,
+            "action": "dropped",
+        }
+    ]
+
+
+# --- the seventh verifier's findings ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("face_verified", [False, True])
+def test_a_caption_the_phone_refuses_drops_the_captions_not_the_video_or_its_beats(
+    face_verified, monkeypatch
+):
+    """Failure modes 34 and 35: an Arabic sentence needs a script face that only a verified app
+    build draws; nothing in the caption compile is patched."""
+    from tests.tasks.test_phone_subtitled_narrated_dispatch import (
+        _MARATHON_WORDS,
+        _setup_voiceover_beats,
+        _words,
+    )
+
+    job, snapshot, _bind_calls, transcribe = _setup_voiceover_beats(monkeypatch)
+    transcribe.return_value.words = _words(
+        *_MARATHON_WORDS, ("مرحبا", 8.8, 9.2), ("بكم.", 9.2, 9.6)
+    )
+    verified = [*settings.phone_render_verified_features]
+    if face_verified:
+        verified.append("scriptFonts")
+    monkeypatch.setattr(settings, "phone_render_verified_features", verified)
+    events = _captured_events(monkeypatch)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    [variant] = job.assembly_plan["variants"]
+    receipt = variant["phone_beat_receipt"]
+    assert [entry["beat_id"] for entry in receipt["placed"]] == ["medal", "finish-time"]
+    assert receipt["unplaced"] == []
+    recipe = device_status(job, "narrated").request.recipe
+    assert "subtitled-overlays" in {track.id for track in recipe.tracks}
+    captions = [layer for layer in recipe.text_layers if layer.id.startswith("caption")]
+    note = "Left out the captions: your iPhone can't draw them yet"
+    recovered = [data for stage, _event, data in events if stage == "phone_plan"]
+    if face_verified:
+        assert captions
+        assert variant["caption_cues"]
+        assert note not in (variant.get("phone_repair_notes") or [])
+        assert recovered == []
+        return
+    assert not captions
+    assert (variant["caption_cues"], variant["caption_language"]) == (None, None)
+    assert variant["phone_repair_notes"].count(note) == 1
+    assert recovered == [
         {
             "decision": "render_with_notes",
             "reason": "captions_compile",
