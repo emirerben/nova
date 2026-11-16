@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
+import structlog
 from pydantic import BaseModel
 
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
@@ -63,6 +64,138 @@ NOT_READY = "approval_requirements_not_ready"
 # `declined`: the route that renders this draft cannot do the ask; the draft says so plainly
 # (`route_disclosure`), and the creator approves the closest thing, never a dead end.
 APPROVABLE = frozenset({"executable", "delegated", "unverified", "declined"})
+
+log = structlog.get_logger()
+
+
+def _recheck_changed() -> str:
+    return say(
+        en=(
+            "This renderer would change the proposed edit. "
+            "I need to prepare the supported version first."
+        ),
+        tr=(
+            "Bu oluşturucu önerilen düzenlemeyi değiştirir. "
+            "Önce desteklenen sürümü hazırlamam gerekiyor."
+        ),
+    )
+
+
+# 59f3707e: the strategy fields an ask of each kind is about. A re-check rewrite of any other
+# field is the renderer's normalization and is adopted before approval; a rewrite of one of
+# these changes what the creator asked for, so it is asked. A kind not listed here (or a
+# field list that grows) ties every field: unknown is never a normalization.
+_TEXT_FIELDS = frozenset(
+    {
+        "opening_title",
+        "opening_title_duration_s",
+        "closing_title",
+        "pinned_texts",
+        "shot_labels",
+        "intro_hook",
+        "clip_intents",
+        "resolved_clip_intents",
+        "omitted_copy_targets",
+        "caption_style",
+        "song_captions",
+        "font_family",
+        "text_color",
+        "title_animation",
+        "label_position",
+    }
+)
+_MEDIA_FIELDS = frozenset(
+    {
+        "selected_media_ids",
+        "media_scope",
+        "hero_media_id",
+        "clip_intents",
+        "resolved_clip_intents",
+        "ordering_choice",
+        "confirmed_order_replacement",
+        "selection_reconciliation",
+        "story_structure",
+        "editorial_plan",
+        "reaction_beats",
+        "timed_cards",
+        "insert_clips",
+        "closing_media",
+        "ending_clip",
+        "closing_visual_id",
+        "closing_badge_id",
+        "background_media",
+        "split_screen",
+    }
+)
+_REQUIREMENT_FIELDS: dict[str, frozenset[str]] = {
+    "text": _TEXT_FIELDS,
+    "text_sequence": _TEXT_FIELDS,
+    "order": _MEDIA_FIELDS,
+    "select": _MEDIA_FIELDS,
+    "timing": frozenset(
+        {
+            "target_duration_s",
+            "target_duration_requested",
+            "creator_duration_s",
+            "pacing",
+            "pacing_requested",
+            "opening_title_duration_s",
+            "mixed_media_timing",
+            "reaction_beats",
+            "timed_cards",
+            "clip_intents",
+            "resolved_clip_intents",
+        }
+    ),
+    "audio": frozenset(
+        {
+            "audio_strategy",
+            "montage_audio",
+            "selected_music_section",
+            "song_sync",
+            "resolved_song_takes",
+            "voice_mode",
+            "licensed_sfx",
+            "execution_contract",
+        }
+    ),
+}
+# What the edit is: never a normalization, whatever the brief says.
+_ALWAYS_TIED = frozenset({"edit_format", "audio_strategy"})
+
+
+def recheck_changed_fields(before: CreativeStrategy, after: CreativeStrategy) -> tuple[str, ...]:
+    """The top-level strategy fields the policy re-check rewrote, by name (empty = fixed point)."""
+    prior, checked = before.model_dump(mode="json"), after.model_dump(mode="json")
+    return tuple(sorted(k for k in prior.keys() | checked.keys() if prior.get(k) != checked.get(k)))
+
+
+def requirement_tied_fields(
+    fields: Sequence[str], requirements: Sequence[BriefRequirement]
+) -> tuple[str, ...]:
+    """Of ``fields``, the ones a live ask is about (or that change what the edit is)."""
+    tied: set[str] = set(_ALWAYS_TIED)
+    for req in requirements:
+        own = _REQUIREMENT_FIELDS.get(req.kind)
+        if own is None:
+            return tuple(fields)
+        tied |= own
+    return tuple(field for field in fields if field in tied)
+
+
+def recheck_refusal(fields: Sequence[str]) -> RefusedStrategy:
+    """The KRI-1447 "simpler version?" refusal for a re-check that rewrites an ask's fields."""
+    detail = say(
+        en="This renderer would change part of what you asked for in this edit.",
+        tr="Bu oluşturucu bu düzenlemede istediğin şeylerin bir kısmını değiştirir.",
+    )
+    return RefusedStrategy(
+        question=f"{detail} "
+        + say(en="Should I make a simpler version?", tr="Daha sade bir sürüm yapayım mı?"),
+        code=SIMPLER_VERSION_REASON,
+        fields=tuple(fields),
+        detail=detail,
+    )
 
 
 def _json(value: Any) -> Any:
@@ -504,8 +637,16 @@ def assess_readiness(
     order_execution: Mapping[str, Any] | None = None,
     order_source_context: OrderReplacementSourceContext | None = None,
     plan_blockers: Sequence[RequirementReceipt] = (),
+    adopt_recheck: bool = False,
 ) -> dict[str, Any]:
     """Account for every live ID using existing policy, checkers and contract.
+
+    ``adopt_recheck`` is for the draft being offered for approval only, never for
+    a saved or approved draft. When the policy re-check rewrites fields no live ask is about,
+    the report is the assessment of the checked strategy, which it carries as
+    ``adopted_strategy`` for the caller to save; a rewrite of an ask's field asks the
+    KRI-1447 "simpler version?" question instead. Either way ``recheck`` names the fields.
+    Without it any rewrite holds the draft, as before: approval protects a made promise.
 
     ``plan_blockers`` (Leverkusen M2 run 3) are checked receipts the phone montage plan the
     worker will build falls short on (``phone_montage_preflight.readiness_plan_blockers``): a
@@ -529,6 +670,8 @@ def assess_readiness(
     # held; every other ask keeps its own verdict, so one reply names every blocker.
     order_problems: dict[str, str] = {}
     contract = None
+    recheck: dict[str, Any] | None = None
+    adopted: dict[str, Any] | None = None
     if manifest is None:
         policy_problem = say(
             en="I haven't established which renderer can make this edit yet.",
@@ -550,17 +693,28 @@ def assess_readiness(
                 policy_problem = checked.question
                 if checked.code == SIMPLER_VERSION_REASON and checked.fields:
                     refusal = checked
-            elif checked.strategy.model_dump(mode="json") != typed.model_dump(mode="json"):
-                policy_problem = say(
-                    en=(
-                        "This renderer would change the proposed edit. "
-                        "I need to prepare the supported version first."
-                    ),
-                    tr=(
-                        "Bu oluşturucu önerilen düzenlemeyi değiştirir. "
-                        "Önce desteklenen sürümü hazırlamam gerekiyor."
-                    ),
-                )
+            elif changed := recheck_changed_fields(typed, checked.strategy):
+                # 59f3707e: the fields that moved, by name, so a hold is never opaque again.
+                tied = requirement_tied_fields(changed, requirements)
+                recheck = {"changed_fields": list(changed), "requirement_fields": list(tied)}
+                if adopt_recheck and not tied:
+                    # Planning only: a rewrite no live ask is about is the renderer's own
+                    # normalization. Draft the checked strategy (re-assessed strictly below).
+                    adopted = checked.strategy.model_dump(mode="json", exclude_none=True)
+                elif adopt_recheck:
+                    # A rewrite of what an ask is about is the creator's call: the KRI-1447
+                    # "simpler version?" card, whose yes drafts this same checked strategy.
+                    refusal = recheck_refusal(tied)
+                    policy_problem = refusal.question
+                else:
+                    policy_problem = _recheck_changed()
+                if not adopt_recheck or tied:
+                    log.info(
+                        "kria_readiness_recheck_changed",
+                        changed_fields=list(changed),
+                        requirement_fields=list(tied),
+                        planning=adopt_recheck,
+                    )
             dispatch = manifest.capabilities.get("dispatch_render")
             if dispatch is None or not dispatch.available:
                 policy_problem = say(
@@ -584,6 +738,36 @@ def assess_readiness(
                 en="The proposed edit isn't supported by the current renderer or footage.",
                 tr="Önerilen düzenleme mevcut oluşturucu veya çekimlerle desteklenmiyor.",
             )
+    if adopted is not None and policy_problem is None:
+        # The strict assessment of the strategy the draft will save, exactly as approval will
+        # re-run it: one that the check would rewrite again is held there, never adopted twice.
+        report = assess_readiness(
+            brief,
+            adopted,
+            media=media,
+            manifest=manifest,
+            editor_payload=editor_payload,
+            editor_text_diff=editor_text_diff,
+            creator_request=creator_request,
+            protected_regions=protected_regions,
+            protected_marks=protected_marks,
+            prepared_collection_story=prepared_collection_story,
+            creator_id=creator_id,
+            prepared_research=prepared_research,
+            order_execution=order_execution,
+            order_source_context=order_source_context,
+            plan_blockers=plan_blockers,
+        )
+        again = report.get("recheck")
+        report["recheck"] = {
+            **(recheck or {}),
+            "adopted": again is None,
+            **({"again": again} if again is not None else {}),
+        }
+        if again is None:
+            report["adopted_strategy"] = adopted
+        log.info("kria_readiness_recheck_adopted", **report["recheck"])
+        return report
     if brief is None and not is_open_request(creator_request):
         policy_problem = say(
             en="I need to establish the requested changes before offering approval.",
@@ -951,6 +1135,8 @@ def assess_readiness(
         # KRI-901: an input, not a verdict (the dispositions above carry it into the
         # digest). Saved so approval re-checks with the client the draft was made for.
         "protected_marks": bool(protected_marks),
+        # 59f3707e: diagnostics only (outside the digest): the fields the re-check rewrote.
+        **({"recheck": recheck} if recheck is not None else {}),
     }
     # Pydantic values in capability records are serialized without model text.
     report["digest"] = digest(_identity(report))
@@ -979,21 +1165,27 @@ def _policy_check(manifest: ResolvedCreatorManifest, typed: CreativeStrategy):  
 
 
 def simplification_refusal(
-    manifest: ResolvedCreatorManifest | None, strategy: Mapping[str, Any] | None
+    manifest: ResolvedCreatorManifest | None,
+    strategy: Mapping[str, Any] | None,
+    *,
+    brief: CreativeBrief | None = None,
 ) -> RefusedStrategy | None:
-    """The "simpler version?" refusal readiness would hold this strategy on, if any."""
+    """The "simpler version?" refusal readiness would hold this strategy on, if any.
+
+    59f3707e: with ``brief``, also the one a planning re-check asks when it rewrites a field
+    one of the brief's live asks is about (`recheck_refusal`)."""
     if manifest is None or not strategy:
         return None
     try:
-        checked = _policy_check(manifest, CreativeStrategy.model_validate(strategy))
+        typed = CreativeStrategy.model_validate(strategy)
+        checked = _policy_check(manifest, typed)
     except ValueError:
         return None
-    if (
-        isinstance(checked, RefusedStrategy)
-        and checked.code == SIMPLER_VERSION_REASON
-        and checked.fields
-    ):
-        return checked
+    if isinstance(checked, RefusedStrategy):
+        return checked if checked.code == SIMPLER_VERSION_REASON and checked.fields else None
+    if brief is not None and (changed := recheck_changed_fields(typed, checked.strategy)):
+        tied = requirement_tied_fields(changed, brief.live())
+        return recheck_refusal(tied) if tied else None
     return None
 
 
@@ -1004,7 +1196,12 @@ def simplified_strategy(
     without asking, and its notices. Drafting it (not the asked one) is what lets the approval
     re-check, which reads only the saved strategy, agree with the draft."""
     try:
-        checked = check_strategy_for_runtime_v2(manifest, CreativeStrategy.model_validate(strategy))
+        typed = CreativeStrategy.model_validate(strategy)
+        # 59f3707e: a re-check that rewrote an ask's field without refusing drafts exactly
+        # what it kept, so approval's re-check finds that strategy unchanged.
+        checked = _policy_check(manifest, typed)
+        if isinstance(checked, RefusedStrategy):
+            checked = check_strategy_for_runtime_v2(manifest, typed)
     except ValueError:
         return None
     if isinstance(checked, RefusedStrategy):

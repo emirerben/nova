@@ -2220,6 +2220,16 @@
    "app/services/creation_text_degrade.py",
    "Left out {count} explanations that didn't fit their part of the video",
    "Videonun ilgili kısımlarına sığmayan {count} açıklamayı eklemedim"
+  ],
+  [
+   "app/kria/approval_readiness.py",
+   "Should I make a simpler version?",
+   "Daha sade bir sürüm yapayım mı?"
+  ],
+  [
+   "app/kria/approval_readiness.py",
+   "This renderer would change part of what you asked for in this edit.",
+   "Bu oluşturucu bu düzenlemede istediğin şeylerin bir kısmını değiştirir."
   ]
  ],
  "retired": [

@@ -1407,6 +1407,7 @@
     "This render path can't keep that requirement.": "Bu video hazırlama yolu bu isteği koruyamıyor.",
     "This render was cancelled.": "Bu video iptal edildi.",
     "This renderer can't combine the confirmed soundtracks.": "Bu video hazırlama yolu onayladığın sesleri birleştiremiyor.",
+    "This renderer would change part of what you asked for in this edit.": "Bu oluşturucu bu düzenlemede istediğin şeylerin bir kısmını değiştirir.",
     "This renderer would change the proposed edit. I need to prepare the supported version first.": "Bu oluşturucu önerilen düzenlemeyi değiştirir. Önce desteklenen sürümü hazırlamam gerekiyor.",
     "This single hero edit cuts your footage down; a Talking edit keeps the whole take.": "Bu düzenleme (tek kahraman) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur.",
     "This slides edit cuts your footage down; a Talking edit keeps the whole take.": "Bu düzenleme (slayt) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur.",
