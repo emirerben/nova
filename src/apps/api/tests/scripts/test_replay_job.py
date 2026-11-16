@@ -330,7 +330,7 @@ def test_a_session_scoped_agent_failure_does_not_relabel_a_reproduced_failure() 
     assert route["replay_uncompared_agents"] == ["nova.plan.clip_request_resolver"]
     assert route["replay_spend_usd"] == 0.004
     result = {"outcome": "failed", "failure_reason": "phone_plan_unsupported", "error_detail": None}
-    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    replay_job.classify_failure(result, route, {"failure_reason": "phone_plan_unsupported"})
     assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
 
 
@@ -485,7 +485,7 @@ def test_a_main_creator_on_another_model_is_named_and_its_new_failure_is_not_pro
         {"agent": "nova.creator.main", "production": [SOL], "replay": [GEMINI]}
     ]
     result = {"outcome": "failed", "failure_reason": "creation_text_failed", "error_detail": None}
-    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    replay_job.classify_failure(result, route, {"failure_reason": "phone_plan_unsupported"})
     assert result["outcome"] == "diverged_from_production"
     assert result["replay_failure"]["failure_reason"] == "creation_text_failed"
 
@@ -495,7 +495,7 @@ def test_a_reproduced_failure_stands_even_on_another_model() -> None:
         _production(main_model=SOL), _runs(("nova.creator.main", "ok"), model=GEMINI)
     )
     result = {"outcome": "failed", "failure_reason": "phone_plan_unsupported", "error_detail": None}
-    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    replay_job.classify_failure(result, route, {"failure_reason": "phone_plan_unsupported"})
     assert result["outcome"] == "failed" and result["production_failure_reproduced"] is True
 
 
@@ -665,7 +665,12 @@ def test_a_matching_failure_reason_is_production_failure_only_on_production_rout
     route = replay_job.compare_routes(production, recorded)
     production_job = {"pipeline_trace": _plan_failed_trace(production_failure)}
     replay_job.classify_failure(
-        result, route, "phone_plan_failed", replay_job.planning_failure(production_job)
+        result,
+        route,
+        {
+            "failure_reason": "phone_plan_failed",
+            "planning_failure": replay_job.planning_failure(production_job),
+        },
     )
 
     assert result["outcome"] == "failed", case
@@ -682,7 +687,7 @@ def test_a_failure_inside_an_agent_production_never_ran_is_not_reproduced() -> N
         _production(), _runs(("nova.plan.semantic_edit_proposal", "terminal_schema"))
     )
     result = {"outcome": "failed", "failure_reason": "phone_plan_unsupported", "error_detail": None}
-    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    replay_job.classify_failure(result, route, {"failure_reason": "phone_plan_unsupported"})
     assert result["outcome"] == "diverged_from_production"
     assert result["production_failure_reproduced"] is False
 
@@ -700,7 +705,7 @@ def test_a_stalled_turn_is_not_reported_as_a_route_divergence(tmp_path) -> None:
     result = replay_job.summarize(receipt, tmp_path)
     route = replay_job.compare_routes(_production(), _runs(("nova.creator.main", "ok")))
     route["replay_only_agents"] = ["nova.edit.copilot"]
-    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    replay_job.classify_failure(result, route, {"failure_reason": "phone_plan_unsupported"})
     assert result["outcome"] == "stalled"
     assert result["stalled"]["lease_lapsed"] is True
 
@@ -759,7 +764,7 @@ def test_seeded_clips_that_do_not_bind_are_an_input_error_not_a_route_result(tmp
     )
     result = replay_job.summarize(receipt, tmp_path)
     route = replay_job.compare_routes(_production(), _runs())
-    replay_job.classify_failure(result, route, "phone_plan_unsupported")
+    replay_job.classify_failure(result, route, {"failure_reason": "phone_plan_unsupported"})
     assert result["outcome"] == "input_error"
     assert "phone sources" in result["failure_reason"]
 

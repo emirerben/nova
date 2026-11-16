@@ -1241,12 +1241,12 @@ def _reproduction_gaps(
 
 
 def classify_failure(
-    result: dict[str, Any],
-    route: dict[str, Any],
-    production_reason: str | None,
-    production_failure: dict[str, Any] | None = None,
+    result: dict[str, Any], route: dict[str, Any], production: dict[str, Any]
 ) -> None:
     """Say whether a failed replay is the production job's failure or one of its own.
+
+    ``production`` is the production render the replay is compared with
+    (``compared_production_render``): its ``failure_reason`` and ``planning_failure``.
 
     ``reproduction`` is ``reproduced`` only when the reason matches, the replay ran no agent
     production did not, every agent that failed in the replay also failed in production, and
@@ -1261,11 +1261,14 @@ def classify_failure(
 
     if result["outcome"] != "failed":
         return
+    production_reason = production.get("failure_reason")
     reasons_differ = result["failure_reason"] != production_reason
     gaps = (
         []
         if reasons_differ
-        else _reproduction_gaps(route, production_failure, result.get("planning_failure"))
+        else _reproduction_gaps(
+            route, production.get("planning_failure"), result.get("planning_failure")
+        )
     )
     if reasons_differ:
         verdict = "failure_reason_differs"
@@ -1508,7 +1511,7 @@ def main(argv: list[str] | None = None) -> int:
             planning_failure(info["job"]) if compared["job_id"] == job_id else None
         )
         result["compared_production_render"] = compared
-        classify_failure(result, route, compared["failure_reason"], compared["planning_failure"])
+        classify_failure(result, route, compared)
         result["source_job"] = {
             "id": job_id,
             "failure_reason": info["job"].get("failure_reason"),
