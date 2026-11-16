@@ -261,6 +261,69 @@ class CreationTextComposer(EditCopilotAgent):
             ]
         )
 
+    def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
+        return super().parse(_windows_in_video(raw_text, input.variant_snapshot), input)
+
+
+# The composer ops that place text in a window of the video (start_s / end_s, in seconds).
+_WINDOWED_OPS = frozenset({"add_text", "set_text_timing", "set_texts_timing"})
+
+
+def _seconds(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _windows_in_video(raw_text: str, snapshot: Mapping[str, Any] | None) -> str:
+    """The composer's answer with each text window inside the video (KRI-1376).
+
+    The text tools document a clip's label as ``add_text`` with ``clip_id`` and that clip's
+    output window. Prod d4f1b2d8's composer wrote the clip and no window, and the parser
+    refused both of her labels as missing a detail. A clip the cut plays once has exactly one
+    window, so a missing bound is that window's; a clip it plays twice or not at all is left
+    for the parser to refuse. A window past either end of the video is cut to the video (it
+    ended 0.04 s past 20.003 s there), unless nothing of it is inside, which the replay still
+    rejects.
+    """
+    try:
+        data = json.loads(raw_text)
+    except (TypeError, ValueError):
+        return raw_text
+    ops = data.get("ops") if isinstance(data, dict) else None
+    if not isinstance(ops, list) or not isinstance(snapshot, Mapping):
+        return raw_text
+    clips: dict[str, list[tuple[float, float]]] = {}
+    total = 0.0
+    for slot in snapshot.get("slots") or ():
+        if not isinstance(slot, Mapping):
+            continue
+        start, end = _seconds(slot.get("output_start_s")), _seconds(slot.get("output_end_s"))
+        total = max(total, end or 0.0)
+        if slot.get("media_id") and start is not None and end is not None:
+            clips.setdefault(str(slot["media_id"]), []).append((start, end))
+    changed = False
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op") not in _WINDOWED_OPS:
+            continue
+        windows = clips.get(str(op.get("clip_id"))) if op.get("op") == "add_text" else None
+        if windows is not None and len(windows) == 1:
+            for key, bound in zip(("start_s", "end_s"), windows[0], strict=True):
+                if op.get(key) is None:
+                    op[key] = bound
+                    changed = True
+        start, end = _seconds(op.get("start_s")), _seconds(op.get("end_s"))
+        inside = [None if value is None else min(max(value, 0.0), total) for value in (start, end)]
+        if total <= 0 or inside == [start, end]:
+            continue
+        if start is not None and end is not None and not inside[0] < inside[1]:
+            continue
+        for key, value in zip(("start_s", "end_s"), inside, strict=True):
+            if value is not None:
+                op[key] = value
+        changed = True
+    return json.dumps(data, ensure_ascii=False) if changed else raw_text
+
 
 class CreationTextCompositionError(ValueError):
     """The text pass could not produce the creator's text.
@@ -2433,6 +2496,11 @@ def _compose_creation_text(
         )
         return program, replay_text_composition(plan, program)
 
+    confirmed_rows = [
+        row
+        for row in (shaping_lane if full_lane_ops else texts_for_model)
+        if any(_owns(row, source_id) for source_id in constraints)
+    ]
     degraded = degrade_text_ops(
         composer_ops,
         program_for,
@@ -2442,7 +2510,10 @@ def _compose_creation_text(
             if full_lane_ops
             else model_texts
         ),
-        protected=literal_ops(text_requirements),
+        literals=literal_ops(
+            text_requirements,
+            held=lambda literal: _literal_shown({"text_elements": confirmed_rows}, literal),
+        ),
         text_asked=_may_own_added_text(text_requirements),
     )
     program, composed = degraded.result

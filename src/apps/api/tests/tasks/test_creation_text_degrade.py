@@ -56,6 +56,19 @@ Rebase onto the composer's question (KRI-1456, #2357), written before the merge 
      for one that asks which layout she wants, so the same plan renders or blocks on the
      composer's wording (prod d6c58d7b), or a drop of the asking candidate is said beside the
      video made as planned.
+
+Seventh review of #2314 (prod d4f1b2d8 replayed live), written before the fixes:
+ 24. a label the composer ties to a clip (``clip_id``) without a window is refused as missing a
+     detail, so her two approved labels become a question and no video is made;
+ 25. a window is guessed for a clip the cut does not play, or plays twice;
+ 26. a window the composer did write is replaced by its clip's window;
+ 27. her literal ending a few hundredths of a second past the video (0.02 to 0.04 s past
+     20.003 s) fails the whole video, because the op placing it is never dropped;
+ 28. fitting windows into the video turns a row it cannot show at all (it starts after the end)
+     into an empty window the parser refuses, so a droppable row becomes a question;
+ 29. her title, already on screen as confirmed copy, written again by the composer as a second
+     line when she asked only for the title and its style, fails the video because that op is
+     protected as her literal; or the only op placing her literal becomes droppable.
 """
 
 from __future__ import annotations
@@ -90,7 +103,7 @@ from app.services.device_render import device_status
 from app.tasks import generative_build as gb
 from app.tasks import kria_runtime
 from tests.kria import test_approved_long_sequence_copy as base
-from tests.tasks.test_unified_montage_dispatch import harness  # noqa: F401
+from tests.tasks.test_unified_montage_dispatch import CLIPS, harness  # noqa: F401
 
 TITLE = "Morning run"
 GOOD = "Bebek sahili"
@@ -239,10 +252,13 @@ class Gate:
     pinned: tuple[str, ...] = ()
     # Fields of the composer's answer that differ from a plain edit.
     answer: dict = field(default_factory=dict)
+    # Fields Main Creator's approved strategy adds (`creator_strategy`).
+    strategy: dict = field(default_factory=dict)
 
 
-def _past_end(text: str) -> Callable[[dict], dict]:
-    return lambda snap: _add(text, 1.0, snap["total_duration_s"] + 5)
+def _after_end(text: str) -> Callable[[dict], dict]:
+    """A row the video cannot show at all: it starts after the video ends."""
+    return lambda snap: _add(text, snap["total_duration_s"] + 1, snap["total_duration_s"] + 5)
 
 
 GATES = [
@@ -259,7 +275,7 @@ GATES = [
     ),
     Gate(
         "replay_failed",
-        lambda snap: [_add(GOOD), _add("Past the end", 1.0, snap["total_duration_s"] + 5)],
+        lambda snap: [_add(GOOD), _after_end("Past the end")(snap)],
         note="Left out one text change for “Past the end” because I couldn't make it fit",
         gone="Past the end",
     ),
@@ -302,14 +318,14 @@ GATES = [
     ),
     Gate(
         "replay_failed_twice",
-        lambda snap: [_add(GOOD), _past_end("Past the end")(snap), _past_end("Also past")(snap)],
+        lambda snap: [_add(GOOD), _after_end("Past the end")(snap), _after_end("Also past")(snap)],
         note="Left out one text change for “Past the end” because I couldn't make it fit",
         gone="Also past",
         reasons=("replay_failed", "replay_failed"),
     ),
     Gate(
         "replay_failed_five_times",
-        lambda snap: [_add(GOOD), *(_past_end(f"Past {n}")(snap) for n in range(5))],
+        lambda snap: [_add(GOOD), *(_after_end(f"Past {n}")(snap) for n in range(5))],
         note="Left out 5 text changes I couldn't make fit",
         gone="Past 4",
         reasons=("replay_failed",) * 5,
@@ -411,6 +427,7 @@ def _job(harness, monkeypatch, gate: Gate):  # noqa: F811
     job.assembly_plan["creator_brief_binding"] = BriefBinding.create(THREAD, gate.brief).model_dump(
         mode="json"
     )
+    job.all_candidates["creator_strategy"].update(gate.strategy)
     if gate.pinned:
         job.all_candidates["creator_strategy"]["pinned_texts"] = [
             {"text": line, "corner": "bottom_center"} for line in gate.pinned
@@ -541,11 +558,12 @@ def test_without_the_degrade_each_row_fails_the_video_as_in_prod(harness, monkey
 
 
 def test_a_bad_row_only_the_creators_own_words_could_fix_still_fails(harness, monkeypatch):  # noqa: F811
-    """Failure mode 6: the op that places her literal is never dropped, so the video fails."""
+    """Failure modes 6 and 29: the only op that places her literal is never dropped, so a row of
+    hers the video cannot show at all still fails the video."""
     literal = BriefRequirement(id="place", kind="text", scope="per_clip", literal=GOOD)
     gate = Gate(
         "confirmed",
-        lambda snap: [_add(GOOD, 1.0, snap["total_duration_s"] + 5)],
+        lambda snap: [_after_end(GOOD)(snap)],
         note=None,
         brief=_brief(literal),
     )
@@ -559,6 +577,237 @@ def test_a_bad_row_only_the_creators_own_words_could_fix_still_fails(harness, mo
     assert job.assembly_plan.get("variants") is None
 
 
+# Prod d4f1b2d8 (2026-10-19): her title and a label for each of two clips, each placed by a
+# resolved label intent. The harness labels every third clip with no place, as prod had none.
+BITE = "Atakan'ın ilk ısırığı"
+PLATE_CLIP = "clip-2"
+BITE_CLIP = "clip-11"
+LAST_CLIP = f"clip-{CLIPS - 1}"
+
+
+def _slot(snap: dict, media_id: str) -> dict:
+    return next(slot for slot in snap["slots"] if slot["media_id"] == media_id)
+
+
+def _labelled(*labels: tuple[str, str], extra: tuple[BriefRequirement, ...] = ()) -> dict:
+    """The Gate fields for her words on named clips: one described shot text per clip, which a
+    resolved label intent places on it (prod d4f1b2d8's brief and strategy)."""
+    brief = _brief(
+        *(
+            BriefRequirement(
+                id=media, kind="text", scope="per_clip", literal=text, description=f"{media} shot"
+            )
+            for media, text in labels
+        ),
+        *extra,
+    )
+    intents = [
+        {
+            "op": "label",
+            "status": "resolved",
+            "intent_id": f"label_{media}",
+            "attribute": f"{media} shot",
+            "assignments": [{"value": text, "media_id": media, "confidence": 1.0}],
+        }
+        for media, text in labels
+    ]
+    return {"brief": brief, "strategy": {"resolved_clip_intents": intents}}
+
+
+def _label(slot: dict, text: str, **window: float) -> dict:
+    """Prod d4f1b2d8's label op: tied to its clip by id, styled like the title."""
+    return {
+        "op": "add_text",
+        "text": text,
+        "clip_id": slot["media_id"],
+        "style_from": "title",
+        "patch": {"position": "bottom"},
+        **window,
+    }
+
+
+def _rows(job, text: str) -> list[dict]:
+    rows = job.assembly_plan["variants"][0]["text_elements"]
+    return [row for row in rows if row["text"] == text]
+
+
+def _text_recoveries(events) -> list[str]:
+    return [
+        data["reason"]
+        for _stage, event, data in events
+        if event == "requirement_recovery" and data.get("lane") == "text"
+    ]
+
+
+def _renders(harness, monkeypatch, gate: Gate):  # noqa: F811
+    job, contract = _job(harness, monkeypatch, gate)
+    events = _events(monkeypatch)
+    failure = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", failure)
+
+    gb._run_generative_job(str(job.id))
+
+    failure.assert_not_called()
+    assert job.status == "awaiting_device"
+    assert job.assembly_plan.get("request_recovery") is None
+    verify_phone_recipe(
+        contract, device_status(job, "guided_story").request.recipe, source_audio={"source": True}
+    )
+    return job, events
+
+
+def test_her_clip_labels_without_a_window_show_over_their_clips(harness, monkeypatch):  # noqa: F811
+    """Failure modes 24 and 26 (prod d4f1b2d8, replayed live): the composer tied her two labels
+    to their clips and wrote no window. Each shows over its clip, the one bound it did write is
+    kept, and nothing is asked or left out."""
+    clips: dict[str, dict] = {}
+
+    def ops(snap: dict) -> list[dict]:
+        plate, bite = _slot(snap, PLATE_CLIP), _slot(snap, BITE_CLIP)
+        clips.update(plate=plate, bite=bite)
+        return [_label(plate, GOOD), _label(bite, BITE, start_s=bite["output_start_s"] + 0.2)]
+
+    gate = Gate("labels", ops, note=None, **_labelled((PLATE_CLIP, GOOD), (BITE_CLIP, BITE)))
+    job, events = _renders(harness, monkeypatch, gate)
+
+    [plate] = _rows(job, GOOD)
+    [bite] = _rows(job, BITE)
+    assert (plate["start_s"], plate["end_s"]) == pytest.approx(
+        (clips["plate"]["output_start_s"], clips["plate"]["output_end_s"])
+    )
+    assert (bite["start_s"], bite["end_s"]) == pytest.approx(
+        (clips["bite"]["output_start_s"] + 0.2, clips["bite"]["output_end_s"])
+    )
+    assert {_squash(GOOD), _squash(BITE)} <= _drawn(job)
+    assert _text_recoveries(events) == []
+
+
+def test_windows_past_the_video_end_show_until_it_ends(harness, monkeypatch):  # noqa: F811
+    """Failure mode 27 (prod d4f1b2d8): her literal ends 0.04 s past the video, another line
+    5 s past. Both show until the video ends and nothing is left out."""
+    total: list[float] = []
+
+    def ops(snap: dict) -> list[dict]:
+        total.append(snap["total_duration_s"])
+        last = _slot(snap, LAST_CLIP)
+        return [
+            _add(BITE, last["output_start_s"], total[0] + 0.04),
+            _add("Until the end", 2.0, total[0] + 5),
+        ]
+
+    gate = Gate("past_end", ops, note=None, **_labelled((LAST_CLIP, BITE), extra=(_EXPLAIN,)))
+    job, events = _renders(harness, monkeypatch, gate)
+
+    for text in (BITE, "Until the end"):
+        [row] = _rows(job, text)
+        assert row["end_s"] == pytest.approx(total[0])
+    assert _text_recoveries(events) == []
+
+
+_YELLOW = BriefRequirement(id="style", kind="style", scope="title", description="Make it yellow")
+# Prod 3c312af4's second ask: described, so a line it wanted is said when left out.
+_DESCRIBED = BriefRequirement(
+    id="r2",
+    kind="text_sequence",
+    scope="title",
+    description="the same but for the english translation at the bottom",
+)
+
+
+@pytest.mark.parametrize("extra", [_YELLOW, _DESCRIBED], ids=["title_and_style", "described"])
+def test_her_title_written_again_is_left_out_and_the_video_renders(harness, monkeypatch, extra):  # noqa: F811
+    """Failure mode 29: she asked only for her title, and its colour or a described line. The
+    composer coloured the title and wrote it again as a second line; the second copy goes
+    without a note, since her title still shows, once."""
+    gate = Gate(
+        "title_again",
+        lambda snap: [
+            {
+                "op": "patch_text",
+                "selector": {"ids": [_title_id(snap)]},
+                "patch": {"color": "#FFD400"},
+            },
+            _add(TITLE, 0.0, 2.0),
+        ],
+        note=None,
+        brief=_brief(extra),
+    )
+    job, events = _renders(harness, monkeypatch, gate)
+
+    assert len(_rows(job, TITLE)) == 1
+    assert _squash(TITLE) in _drawn(job)
+    assert _text_recoveries(events) == ["unasked_text"]
+    variant = job.assembly_plan["variants"][0]
+    assert not variant.get("phone_repair_notes")
+    assert "Left out" not in _finished_reply(job, variant)
+
+
+@pytest.mark.parametrize(
+    ("asks", "held", "protected"),
+    [
+        ((("title", TITLE),), True, False),
+        ((("per_clip", TITLE),), True, True),
+        ((("title", TITLE), ("global", TITLE)), True, True),
+        ((("title", TITLE),), False, True),
+    ],
+    ids=["asked_once_and_shown", "on_every_clip", "asked_twice", "not_shown_yet"],
+)
+def test_only_a_second_copy_of_her_words_may_be_dropped(asks, held, protected):
+    """Failure mode 29, its other side: an op writing her literal is droppable only when
+    confirmed rows already show it and she asked for it once, not on every clip."""
+    from app.services.creation_text_degrade import literal_ops
+
+    requirements = [
+        BriefRequirement(id=f"r{n}", kind="text", scope=scope, literal=literal)
+        for n, (scope, literal) in enumerate(asks)
+    ]
+    literals = literal_ops(requirements, held=lambda _literal: held)
+
+    assert literals.protected(_add(TITLE)) is protected
+    assert literals.protected({**_add("Something else"), "research": {"id": "r"}})
+    assert not literals.protected(_add("Something else"))
+
+
+def test_a_label_on_a_clip_played_twice_gets_no_guessed_window():
+    """Failure mode 25: a clip the cut plays twice has two windows, so a label tied to it
+    without one is refused as before instead of guessing which."""
+    from app.agents.edit_copilot import EditCopilotInput
+
+    slots = [
+        {
+            "slot_id": f"cut-{n}",
+            "media_id": media,
+            "output_start_s": n * 2.0,
+            "output_end_s": n * 2.0 + 2,
+        }
+        for n, media in enumerate(["clip-a", "clip-b", "clip-a"])
+    ]
+    snapshot = {
+        "allowed_op_families": ["text", "text_timeline"],
+        "editor_ops_version": 2,
+        "text_bars": [],
+        "slots": slots,
+        "total_duration_s": 6.0,
+    }
+    answer = {
+        "intent": "edit",
+        "confidence": 0.9,
+        "reply": "Labelled.",
+        "ops": [
+            {"op": "add_text", "text": "Twice", "clip_id": "clip-a"},
+            {"op": "add_text", "text": "Once", "clip_id": "clip-b"},
+        ],
+    }
+    composer = composition.CreationTextComposer(Mock())
+
+    output = composer.parse(
+        json.dumps(answer), EditCopilotInput(utterance="Label them", variant_snapshot=snapshot)
+    )
+
+    assert [(op["text"], op["start_s"], op["end_s"]) for op in output.ops] == [("Once", 2.0, 4.0)]
+    assert output.unmet_requests
+
+
 _QUESTIONS = [
     Gate(
         "unmet_with_its_reason",
@@ -569,6 +818,12 @@ _QUESTIONS = [
     Gate(
         "an_op_the_parser_refused",
         lambda snap: [_add(GOOD), {"op": "remove_text", "selector": {"ids": [_title_id(snap)]}}],
+        note="I couldn't change the text",
+    ),
+    # Failure mode 25: no window is guessed for a clip the cut does not play.
+    Gate(
+        "a_label_on_a_clip_the_cut_does_not_play",
+        lambda snap: [_add(GOOD), {"op": "add_text", "text": "Ghost", "clip_id": "clip-gone"}],
         note="I couldn't change the text",
     ),
     Gate(

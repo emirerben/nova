@@ -12,7 +12,8 @@ fail:
 * everything else is re-raised unchanged, so ``_classify_phone_plan_failure`` maps it as before.
 
 The copy, layer and replay checks still run on every candidate program, so a drop can never
-take the creator's confirmed words off screen; an op carrying a brief literal is never dropped.
+take the creator's confirmed words off screen; an op placing a brief literal is never dropped
+(``LiteralOps``), unless confirmed rows already show it and the op only writes it again.
 Every drop is a ``TextDrop``: the note the creator reads and the admin trace event.
 """
 
@@ -276,26 +277,57 @@ def shrink(
     return TextDrop(reason=error.reason, action=action, text=text, asked=asked)  # type: ignore[arg-type]
 
 
-def literal_ops(
-    requirements: Sequence[BriefRequirement] | None,
-) -> Callable[[dict], bool]:
-    """Whether a composer op places the creator's own words (a live brief literal): never dropped.
+@dataclass(frozen=True)
+class LiteralOps:
+    """Which composer ops write the creator's own words, the live brief literals (folded).
 
-    A line holding confirmed copy is already kept by the copy check every candidate replays; a
-    literal the brief asked for has no such row before the composer adds it.
+    ``on_screen``: the literals that confirmed rows already show, each asked for once. The copy
+    check keeps those rows on every candidate, so an op writing one again is a second copy.
     """
-    from app.text_fold import fold_text  # noqa: PLC0415
 
-    literals = {
-        fold_text(req.literal) for req in requirements or () if req.live and req.literal
-    } - {""}
+    literals: frozenset[str]
+    on_screen: frozenset[str] = frozenset()
 
-    def protected(op: dict) -> bool:
+    def _text(self, op: Mapping[str, Any]) -> str | None:
+        from app.text_fold import fold_text  # noqa: PLC0415
+
+        return fold_text(str(op.get("text") or "")) if op.get("op") == "add_text" else None
+
+    def protected(self, op: Mapping[str, Any]) -> bool:
+        """Never dropped: approved research, or the op that places her literal on screen."""
         if isinstance(op.get("research"), dict):
             return True
-        return op.get("op") == "add_text" and fold_text(str(op.get("text") or "")) in literals
+        text = self._text(op)
+        return text in self.literals and text not in self.on_screen
 
-    return protected
+    def repeats(self, op: Mapping[str, Any]) -> bool:
+        """Writes her literal again where it is already on screen: left out as an unasked line,
+        it loses nothing she asked for, so that drop is not said (``TextDrop.asked``)."""
+        return self._text(op) in self.on_screen
+
+
+def literal_ops(
+    requirements: Sequence[BriefRequirement] | None,
+    *,
+    held: Callable[[str], bool] = lambda _literal: False,
+) -> LiteralOps:
+    """The live brief literals, and those ``held`` (confirmed rows read it) that she asked for
+    once, not on every clip."""
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    asks = [req for req in requirements or () if req.live and fold_text(req.literal or "")]
+    copies = Counter(fold_text(req.literal or "") for req in asks)
+    per_clip = {fold_text(req.literal or "") for req in asks if req.scope == "per_clip"}
+    return LiteralOps(
+        literals=frozenset(copies),
+        on_screen=frozenset(
+            literal
+            for req in asks
+            if copies[literal := fold_text(req.literal or "")] == 1
+            and literal not in per_clip
+            and held(req.literal or "")
+        ),
+    )
 
 
 def op_text(op: Mapping[str, Any], lane: Sequence[Mapping[str, Any]]) -> str | None:
@@ -320,7 +352,7 @@ def degrade_text_ops(
     attempt: Callable[[list[dict]], T],
     *,
     lane: Sequence[Mapping[str, Any]],
-    protected: Callable[[dict], bool],
+    literals: LiteralOps,
     text_asked: bool = True,
 ) -> Degraded[T]:
     """``attempt(ops)``, narrowing ``ops`` one rejected item at a time until it passes.
@@ -336,7 +368,8 @@ def degrade_text_ops(
     rejection unchanged.
 
     ``text_asked``: the creator has a live text ask, so an ``unasked_text`` line may be hers
-    and leaving it out is said (``TextDrop.asked``).
+    and leaving it out is said (``TextDrop.asked``). ``literals``: the ops never dropped, and
+    the second copies of her words whose drop is not said.
     """
     from app.services.creation_text_composition import (  # noqa: PLC0415 - imports this module
         CreationTextCompositionError,
@@ -354,7 +387,7 @@ def degrade_text_ops(
     drops: list[TextDrop] = []
 
     def dropped_items(reason: str | None, indexes: frozenset[int]) -> list[TextDrop]:
-        return _dropped(reason, kept, indexes, lane, asked=text_asked)
+        return _dropped(reason, kept, indexes, lane, asked=text_asked, literals=literals)
 
     for _ in range(len(ops)):
         strategy = _STRATEGY.get(error.reason or "")
@@ -364,7 +397,7 @@ def degrade_text_ops(
         # What each single drop still fails with: the next round's rejection after a culprit
         # found by `_first_failing` (its own single drop was tried here).
         failures: dict[frozenset[int], CreationTextCompositionError] = {}
-        for dropped in _candidates(strategy, kept, protected, named=error.op_index):
+        for dropped in _candidates(strategy, kept, literals.protected, named=error.op_index):
             trial = [op for index, op in enumerate(kept) if index not in dropped]
             try:
                 result = attempt(trial)
@@ -376,7 +409,7 @@ def degrade_text_ops(
                     progress = (dropped, exc)
                 continue
             drops.extend(dropped_items(error.reason, dropped))
-            stand_ins = _stand_ins(kept, dropped, lane, protected)
+            stand_ins = _stand_ins(kept, dropped, lane, literals.protected)
             if stand_ins:
                 # The composer moved the confirmed text and reworded it on the way: the reworded
                 # line goes too, so no invented words stay next to the creator's. It is the same
@@ -498,6 +531,7 @@ def _dropped(
     lane: Sequence[Mapping[str, Any]],
     *,
     asked: bool,
+    literals: LiteralOps,
 ) -> list[TextDrop]:
     reason = reason if reason in _STRATEGY else "replay_failed"
     return [
@@ -506,7 +540,7 @@ def _dropped(
             action="dropped",
             text=op_text(ops[index], lane),
             op=str(ops[index].get("op") or "") or None,
-            asked=asked,
+            asked=asked and not literals.repeats(ops[index]),
         )
         for index in sorted(dropped)
     ]
