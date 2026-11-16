@@ -80,7 +80,7 @@
     "{count} clips": [
       {
         "file": "app/pipeline/phone_plan_degrade.py",
-        "line": 264,
+        "line": 276,
         "tr": "{count} klibi"
       },
       {
