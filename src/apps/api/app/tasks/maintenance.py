@@ -25,8 +25,10 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
-from sqlalchemy import and_, case, or_, select, text
+from sqlalchemy import and_, case, exists, func, or_, select, text
+from sqlalchemy.orm import aliased
 
+from app.config import settings
 from app.database import sync_session
 from app.models import Job, PlanItem, PlanItemAsset
 from app.services import pool_analysis_deadline as pool_deadline
@@ -48,6 +50,15 @@ log = structlog.get_logger()
 # `uploaded` rows were never dispatched (the route crashed between commit and
 # publish); they get a fresh deadline-bearing attempt, at most this many times.
 _POOL_UNDISPATCHED_AFTER = timedelta(minutes=60)
+# KRI-1469: a `queued` attempt nobody claimed (Q1 runs 11-14 and 11-17: 9 of 10 Visuals ready
+# in seconds, the 10th `queued` with no error until its ~1 h deadline). Its broker message is
+# sent again as the SAME attempt (token, count, deadline), so a copy that was only delayed
+# loses nothing and the claim fence turns the second one into a no-op. Sent again 2 min after
+# a later Visual of the same item was claimed (the FIFO line moved past it), else 10 min after
+# the last send (a lone upload); never more than once per window, so a batch that is only
+# waiting behind a busy lane is not re-sent on every sweep.
+_POOL_UNCLAIMED_PASSED_AFTER = timedelta(minutes=2)
+_POOL_UNCLAIMED_RESEND_AFTER = timedelta(minutes=10)
 _POOL_MAX_ATTEMPTS = 3
 _POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS = 2
 _POOL_RECONCILE_BATCH = 100
@@ -113,6 +124,54 @@ def _heif_decoder_recovery_predicate():
     )
 
 
+def _pool_sent_at():
+    return func.coalesce(PlanItemAsset.analysis_last_dispatched_at, PlanItemAsset.created_at)
+
+
+def _unclaimed_queued_predicate(current: datetime):
+    """KRI-1469: `queued` attempts inside their deadline that are due to be sent again."""
+    later = aliased(PlanItemAsset)
+    sent_at = _pool_sent_at()
+    line_moved = (
+        exists()
+        .where(
+            later.plan_item_id == PlanItemAsset.plan_item_id,
+            later.id != PlanItemAsset.id,
+            later.status.in_(("analyzing", "ready")),
+            later.analysis_last_dispatched_at > sent_at,
+        )
+        .correlate(PlanItemAsset)
+    )
+    return and_(
+        PlanItemAsset.status == "queued",
+        PlanItemAsset.analysis_started_at.is_(None),
+        PlanItemAsset.analysis_attempt_token.is_not(None),
+        PlanItemAsset.analysis_deadline_at > current,
+        or_(
+            sent_at <= current - _POOL_UNCLAIMED_RESEND_AFTER,
+            and_(sent_at <= current - _POOL_UNCLAIMED_PASSED_AFTER, line_moved),
+        ),
+    )
+
+
+def _is_unclaimed_resend(asset, current: datetime) -> bool:  # noqa: ANN001
+    """The selected row is a re-send, not a deadline/legacy row (see the predicate above)."""
+    sent_at = getattr(asset, "analysis_last_dispatched_at", None) or getattr(
+        asset, "created_at", None
+    )
+    deadline = getattr(asset, "analysis_deadline_at", None)
+    return (
+        settings.pool_unclaimed_resend_enabled
+        and asset.status == "queued"
+        and getattr(asset, "analysis_started_at", None) is None
+        and bool(getattr(asset, "analysis_attempt_token", None))
+        and deadline is not None
+        and deadline > current
+        and sent_at is not None
+        and sent_at <= current - _POOL_UNCLAIMED_PASSED_AFTER
+    )
+
+
 def _pool_reconcile_priority():
     """Current creator work sorts ahead of historical decoder recovery."""
     return case((PlanItemAsset.status == "failed", 1), else_=0)
@@ -137,13 +196,13 @@ def _preview_backfill_predicate():
 
 
 def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
-    """Terminalize analyses past their declared deadline; requeue undispatched rows.
+    """Terminalize analyses past their declared deadline; requeue undispatched rows;
+    re-send unclaimed queued attempts (KRI-1469).
 
     A fresh token fences a late worker from overwriting the retry. Publication
     happens after commit so a worker can always observe and atomically claim its
     queued row.
     """
-    from app.config import settings  # noqa: PLC0415
     from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
 
     current = now or datetime.now(UTC)
@@ -153,6 +212,8 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
     # decide per row in Python.
     legacy_cutoff = current - min(pool_deadline.run_window(kind) for kind in ("image", "video"))
     to_publish: list[tuple[str, str, str | None, datetime | None]] = []
+    # KRI-1469: same attempt sent again; a failed publish leaves the row `queued`.
+    to_resend: list[tuple[str, str, str | None, datetime | None, float]] = []
     timed_out = 0
     expired_reservations: list[
         tuple[
@@ -201,6 +262,11 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                             PlanItemAsset.status == "uploaded",
                             PlanItemAsset.created_at <= undispatched_cutoff,
                         ),
+                        *(
+                            (_unclaimed_queued_predicate(current),)
+                            if settings.pool_unclaimed_resend_enabled
+                            else ()
+                        ),
                         # HEIC/HEIF pool analysis shipped without registering
                         # Pillow's decoder, so every valid iPhone photo was
                         # terminalized as unreadable on its first attempt. Give
@@ -234,6 +300,26 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                 # registration time. The row is only a bounded idempotency
                 # receipt and has no render/pool-path references of its own.
                 db.delete(asset)
+                continue
+            if not pool_deadline.is_expired(asset, current) and _is_unclaimed_resend(
+                asset, current
+            ):
+                # KRI-1469: same token and deadline, so the claim fence keeps one owner.
+                # The new send time is the cooldown before another copy.
+                waited_s = (
+                    current - (asset.analysis_last_dispatched_at or asset.created_at)
+                ).total_seconds()
+                asset.analysis_last_dispatched_at = current
+                to_resend.append(
+                    (
+                        str(asset.id),
+                        asset.analysis_attempt_token,
+                        getattr(asset, "correlation_id", None),
+                        asset.analysis_deadline_at,
+                        waited_s,
+                    )
+                )
+                touched += 1
                 continue
             if asset.status in pool_deadline.IN_FLIGHT_STATUSES and not pool_deadline.is_expired(
                 asset, current
@@ -416,11 +502,32 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                 asset_id=asset_id,
                 error_type=type(exc).__name__,
             )
+    for asset_id, token, correlation_id, deadline, waited_s in to_resend:
+        try:
+            task_headers = {"pool_asset_attempt_token": token}
+            if correlation_id:
+                task_headers["x-correlation-id"] = correlation_id
+            analyze_pool_asset.apply_async(
+                args=[asset_id, False],
+                queue=settings.pool_asset_visuals_queue,
+                headers=task_headers,
+                expires=deadline,
+            )
+            log.info("pool_asset_unclaimed_resent", asset_id=asset_id, waited_s=round(waited_s))
+        except Exception as exc:  # noqa: BLE001
+            # The first copy may still be in line: the row stays `queued` and the
+            # next window sends again; the deadline still bounds it.
+            log.warning(
+                "pool_asset_unclaimed_resend_failed",
+                asset_id=asset_id,
+                error_type=type(exc).__name__,
+            )
     if touched:
         log.info(
             "pool_asset_reconciled",
             count=touched,
             republished=len(to_publish),
+            resent=len(to_resend),
             timed_out=timed_out,
             expired_reservations=expired_cleaned,
         )
