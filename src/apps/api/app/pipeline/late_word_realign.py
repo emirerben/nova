@@ -271,6 +271,21 @@ def follow_late_runs(words: Sequence[Any], late_runs: Sequence[Any] | None) -> l
     return out
 
 
+def recorded_late_runs(snapshot: Any) -> list[Any]:
+    """The moves a speech-cleanup snapshot's analysis recorded (``diagnostics["late_words"]``).
+
+    Empty when there are none, or when the snapshot carries no diagnostics at all (an opening-cut
+    snapshot built without the cleanup analysis): there is then nothing for another pass to
+    follow."""
+
+    analysis = getattr(snapshot, "analysis", None)
+    diagnostics = getattr(analysis, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        return []
+    runs = diagnostics.get("late_words")
+    return list(runs) if isinstance(runs, list) else []
+
+
 __all__ = [
     "LATE_RUN_EDGE_TOL_S",
     "LATE_RUN_IN_SILENCE_FRAC",
@@ -284,4 +299,5 @@ __all__ = [
     "find_late_runs",
     "follow_late_runs",
     "realign_late_words",
+    "recorded_late_runs",
 ]

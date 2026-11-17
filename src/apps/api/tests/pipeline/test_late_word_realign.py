@@ -197,3 +197,17 @@ def test_fm15_a_moved_word_never_starts_before_the_word_before_it():
     assert starts == sorted(starts)
     assert moved[1]["start_s"] >= moved[0]["end_s"] - 1e-9
     assert moved[1]["end_s"] >= moved[1]["start_s"]
+
+
+def test_fm16_a_snapshot_without_recorded_moves_has_nothing_to_follow():
+    """An opening-cut snapshot can carry an analysis with no diagnostics at all (CI #2374:
+    `tests/tasks/test_title_look_worker.py`): nothing to follow, never a crash."""
+    from types import SimpleNamespace
+
+    from app.pipeline.late_word_realign import recorded_late_runs
+
+    assert recorded_late_runs(SimpleNamespace(analysis=SimpleNamespace(language="en"))) == []
+    assert recorded_late_runs(SimpleNamespace(analysis=SimpleNamespace(diagnostics={}))) == []
+    assert recorded_late_runs(None) == []
+    with_move = SimpleNamespace(analysis=SimpleNamespace(diagnostics={"late_words": [T2_RUN]}))
+    assert recorded_late_runs(with_move) == [T2_RUN]

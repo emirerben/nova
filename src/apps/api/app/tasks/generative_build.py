@@ -10788,10 +10788,13 @@ def _run_phone_subtitled_job(
                     # into the same pause again, and the plan cuts that pause: they follow the
                     # move instead of dropping out of the captions. The analysis's own words
                     # are already on their voice (a no-op).
-                    from app.pipeline.late_word_realign import follow_late_runs  # noqa: PLC0415
+                    from app.pipeline.late_word_realign import (  # noqa: PLC0415
+                        follow_late_runs,
+                        recorded_late_runs,
+                    )
 
                     caption_words = follow_late_runs(
-                        caption_words, words_snapshot.analysis.diagnostics.get("late_words")
+                        caption_words, recorded_late_runs(words_snapshot)
                     )
                 # Raw float mapping, no frame grid: the phone recipe plays
                 # each keep segment at its exact float offsets.
@@ -37331,9 +37334,12 @@ def _render_subtitled_variant(
         so the cut never drops them from the captions. Legacy (non-preflight) cuts: as is."""
         if active_snapshot is None:
             return words
-        from app.pipeline.late_word_realign import follow_late_runs  # noqa: PLC0415
+        from app.pipeline.late_word_realign import (  # noqa: PLC0415
+            follow_late_runs,
+            recorded_late_runs,
+        )
 
-        return follow_late_runs(words, active_snapshot.analysis.diagnostics.get("late_words"))
+        return follow_late_runs(words, recorded_late_runs(active_snapshot))
 
     def _resolve_verbatim_caption_language(detected: str, *, words: list) -> tuple[str, list]:
         """Resolve the caption language for an already-extracted verbatim word list
