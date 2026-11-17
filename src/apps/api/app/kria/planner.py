@@ -7738,15 +7738,10 @@ async def _plan_live_turn(
                 for clip in clips
                 if understanding_incomplete(clip.analysis, kind=clip.kind)
             ]
-            go_without = (
-                pending_visuals.visuals_to_go_without(clips, missing, user_message)
-                if missing
-                else None
-            )
-            if go_without is not None:
-                # KRI-1470: only Visuals are pending and this is the turn's last run, or
-                # the creator said to skip them. Plan without them and name each file.
-                left_out, why = go_without
+            left_out = pending_visuals.visuals_to_go_without(clips, missing) if missing else None
+            if left_out is not None:
+                # KRI-1470: only Visuals are pending and this is the turn's last run (the
+                # earlier runs gave them time to land). Plan without them, name each file.
                 turn_left_out_visuals.set(
                     (
                         frozenset(clip.media_id for clip in left_out),
@@ -7757,7 +7752,6 @@ async def _plan_live_turn(
                     "kria_pending_visual_left_out",
                     stage="main_creator",
                     media_ids=[clip.media_id for clip in left_out],
-                    reason=why,
                 )
                 missing = []
             if missing:

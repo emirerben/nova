@@ -15,7 +15,7 @@ Ways this can fail, written before the fix:
   P1  the incident: on the turn's last run, with only a Visual pending, the reply is still
       "I'm still checking 1 of your clips" and no draft is made.
   P2  the follow-up: "Skip that clip and continue with the rest" waits again and gets the
-      same reply.
+      same reply (it needs no words read: its own last run goes on, KRI-667).
   P3  over-reach: pending footage (a talking take / phone clip) is planned without; footage
       must still hold the turn.
   P4  over-reach: a Visual is dropped on an early run while it may still land within the
@@ -25,8 +25,8 @@ Ways this can fail, written before the fix:
       every clip it is handed and answers "still checking ... against that request").
   P7  the left-out Visual is taken out of the manifest, so the approval fence later rejects
       "Footage or capabilities changed".
-  P8  the still-checking reply's own "ask me to continue" (a plain "continue") drops the
-      Visual on an early run; only skip wording or the last run may.
+  P8  any message ("continue", "skip it") drops the Visual on an early run; only the
+      turn's last run may, so a Visual that lands a minute later is still used.
   P9  with the kill switch off the old behaviour changes.
   P10 a Turkish chat gets the English sentence.
   P11 every item on the edit is a pending Visual: nothing would be left to plan, so it waits.
@@ -217,10 +217,10 @@ async def test_last_run_drafts_without_the_pending_visual_and_names_it(
 
 
 @pytest.mark.asyncio
-async def test_skip_after_the_still_checking_reply_drafts_on_its_first_run(
+async def test_skip_after_the_still_checking_reply_drafts_on_its_last_run(
     monkeypatch, clip_intents
 ) -> None:
-    """P2, P9: the switch off reproduces 11-14 exactly; on, the creator's skip is honoured."""
+    """P2, P9: the switch off reproduces 11-14 exactly; on, the skip turn drafts."""
     user_id, thread_id, _pending_id = _seed()
     lyrics._model(monkeypatch)
     _publishes(monkeypatch)
@@ -232,38 +232,27 @@ async def test_skip_after_the_still_checking_reply_drafts_on_its_first_run(
     assert _thread_replies(thread_id)[-1].content.startswith(STILL_CHECKING_EN)
 
     monkeypatch.setattr(settings, "kria_pending_visual_go_ahead_enabled", True)
-    assert await _turn(user_id, thread_id, SKIP) == ["awaiting_approval"]
+    assert await _turn(user_id, thread_id, SKIP) == ["continued"] * 3 + ["awaiting_approval"]
     reply = _thread_replies(thread_id)[-1]
     assert reply.event_type == "draft_applied"
     assert SHOWN in reply.content
 
 
 @pytest.mark.asyncio
-async def test_a_plain_continue_still_waits_on_an_early_run(monkeypatch, clip_intents) -> None:
+@pytest.mark.parametrize("message", ["continue", "skip it", SKIP])
+async def test_no_message_drops_the_visual_on_an_early_run(
+    monkeypatch, clip_intents, message
+) -> None:
     """P8."""
     user_id, thread_id, _pending_id = _seed()
     lyrics._model(monkeypatch)
     _publishes(monkeypatch)
     with sync_session() as db:
         revision = int(db.get(CreationThread, thread_id).revision)
-    accepted = await _submit(user_id, thread_id, "continue", revision)
+    accepted = await _submit(user_id, thread_id, message, revision)
     result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
     assert result["status"] == "continued"
     assert _thread_replies(thread_id) == []
-
-
-@pytest.mark.asyncio
-async def test_a_bare_skip_it_is_not_read_as_dropping_the_visual(monkeypatch, clip_intents) -> None:
-    """P8: "skip it" may be about a title or a part; only wording naming the file or "the
-    rest" drops the pending Visual on an early run."""
-    user_id, thread_id, _pending_id = _seed()
-    lyrics._model(monkeypatch)
-    _publishes(monkeypatch)
-    with sync_session() as db:
-        revision = int(db.get(CreationThread, thread_id).revision)
-    accepted = await _submit(user_id, thread_id, "skip it", revision)
-    result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
-    assert result["status"] == "continued"
 
 
 @pytest.mark.asyncio
@@ -308,8 +297,8 @@ async def test_a_turkish_chat_hears_it_in_turkish(monkeypatch, clip_intents) -> 
     _publishes(monkeypatch)
 
     assert await _turn(user_id, thread_id, "O klibi atla, kalanlarla devam et") == [
-        "awaiting_approval"
-    ]
+        "continued"
+    ] * 3 + ["awaiting_approval"]
     reply = _thread_replies(thread_id)[-1]
     assert SHOWN in reply.content
     assert "olmadan planladım" in reply.content
