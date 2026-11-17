@@ -517,3 +517,13 @@ def test_s6_a_second_pass_already_on_the_voice_is_left_alone():
     # Even reaching further into the pause, a straddler with no word in the pause after it stays.
     second = _pass(("and", 36.85, 37.20), ("fourth", 37.20, 37.70), ("Incas", 38.48, 39.0))
     assert follow_late_runs(second, [run.to_diagnostic()]) == second
+
+
+def test_s6_a_drifting_end_before_a_late_word_is_not_a_straddler_in_a_second_pass():
+    """The pass has "fourth" on the voice with its end drifting 0.04 s into the pause, and
+    "Incas" stamped in the pause: "fourth" keeps its times; only "Incas" follows the move."""
+    _times, [run] = _straddled()
+    second = _pass(("and", 36.85, 37.20), ("fourth", 37.20, 37.45), ("Incas", 37.60, 38.30))
+    moved = follow_late_runs(second, [run.to_diagnostic()])
+    assert moved[:2] == second[:2]
+    assert moved[2] != second[2]
