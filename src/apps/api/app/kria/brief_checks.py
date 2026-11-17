@@ -9018,7 +9018,11 @@ def _names_join(items: Sequence[str]) -> str:
 # Why a Visual stayed off screen, from `phone_overlay_receipt.unplaced[].reason` (EN, TR). An
 # unknown reason claims no cause (`_CARD_MISS_OTHER`).
 _CARD_MISS_WHY: dict[str, tuple[str, str]] = {
-    "no_spoken_match": ("no spoken moment", "konuşmanda uygun an yoktu"),
+    "no_spoken_match": ("I didn't find a moment for it", "uygun bir an bulamadım"),
+    "overlap": (
+        "another card was already on screen then",
+        "o sırada ekranda başka bir kart vardı",
+    ),
     "hook_window": (
         "it only fit the opening seconds, which stay clear",
         "yalnızca boş kalan açılışa uyuyordu",
@@ -9082,7 +9086,8 @@ def _check_grounded_cards(
             missed,
             prefix=say(en="; not shown: ", tr="; çıkmadı: "),
         )
-        return _receipt(req, "met", reason, verification="checked")
+        # A Visual left out is a miss to say, never a "Done" (Q1 run 4).
+        return _receipt(req, "partial" if missed else "met", reason, verification="checked")
     if missed:
         lead = say(
             en="None of your Visuals showed as a card",
@@ -9265,8 +9270,42 @@ def unsaid_cue_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
     )
 
 
+def _unshown_visuals_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """Q1 run 4: the Visuals the finished video's card matcher left out, said next to the pop-ins.
+
+    On a phone Talking edit the creator's pinned screenshots are word-triggered pop-ins (the beat
+    receipt) and the screen recordings the card matcher's (`phone_overlay_receipt`). The beats
+    checker alone judged "show the matching screenshot or recording" and said "Done" for
+    recordings the render named as left out. Only after a render (`grounded_cards`), only for the
+    no-named-word ask, and only the Visuals the receipt lists as unplaced (never one a beat shows).
+    """
+    if (
+        not facts.reaction_beats
+        or facts.grounded_cards is None
+        or not _asks_spoken_cards(req)
+        or _closing_photo_ask(req, facts)
+    ):
+        return None
+    beat_labels = {_card_label(beat.visual_id) for beat in facts.reaction_beats if beat.visual_id}
+    missed = [
+        card
+        for card in facts.grounded_cards
+        if card.status == "unplaced" and card.label not in beat_labels
+    ]
+    if not missed:
+        return None
+    reason = _fit_card_reason(say(en="Not shown: ", tr="Çıkmadı: "), [], missed, prefix="")
+    return _receipt(req, "partial", reason, verification="checked")
+
+
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
+    receipt = _check_reaction_beats_core(req, facts)
+    unshown = _unshown_visuals_receipt(req, facts)
+    return receipt if unshown is None else combine_receipts(receipt, unshown)
+
+
+def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     cards = _spoken_cards_receipt(req, facts)
     if cards is not None:
         return cards  # KRI-1237: the phone Talking card matcher's Visuals

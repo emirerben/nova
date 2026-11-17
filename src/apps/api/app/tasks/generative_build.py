@@ -14851,7 +14851,23 @@ def _style_rows_keeping_title_look(rows: list[dict], *, job_id: str, canvas: Any
             row["id"]: row
             for row in generation_style_rows(others, job_id=job_id, excluded_boxes=excluded)
         }
-    return [row if is_title_look_row(row) else restyled[row["id"]] for row in rows]
+    styled = [row if is_title_look_row(row) else restyled[row["id"]] for row in rows]
+    # Q1 run 4: nothing measured the pixels under the final title block; outline a line the
+    # footage swallows (`TITLE_LEGIBILITY_ENABLED`). Off or unmeasured: the rows as they were.
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_title_legibility import title_legibility_pass  # noqa: PLC0415
+    from app.services.phone_text_styling import (  # noqa: PLC0415
+        generation_title_frames,
+        register_title_legibility,
+    )
+
+    styled, legibility_receipt = title_legibility_pass(
+        styled,
+        generation_title_frames(),
+        canvas=canvas if canvas is not None else _STORY_CANVAS,
+    )
+    register_title_legibility(legibility_receipt)
+    return styled
 
 
 def _protected_style_rows(

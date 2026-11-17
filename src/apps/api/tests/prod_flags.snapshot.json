@@ -73,6 +73,10 @@
       "source": "default",
       "value": false
     },
+    "brief_closing_title_fill_enabled": {
+      "source": "default",
+      "value": true
+    },
     "brief_long_request_enabled": {
       "source": "default",
       "value": false
@@ -1620,6 +1624,10 @@
       "value": true
     },
     "title_hold_not_length_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "title_legibility_enabled": {
       "source": "default",
       "value": true
     },

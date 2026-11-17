@@ -210,16 +210,57 @@ def strip_for(
 
     ``placement``'s band made `STRIP_WIDTH` wide when `place_card` centred the card, it is
     narrower than that and the wider box is clear of every blocker and mark (the band spans x
-    by construction; checked anyway). Otherwise ``placement`` itself: a card moved beside the
-    watermark, or already wider, keeps its box and only its picture is cut.
+    by construction; checked anyway). A card moved beside the watermark becomes a centred strip
+    past the mark (`_strip_clear_of_marks`). Otherwise ``placement`` itself: a card already
+    wider keeps its box and only its picture is cut.
     """
     if not aspect or float(aspect) <= 1.0:
         return None
-    if abs(placement.x_frac - 0.5) > _EPS or placement.scale >= STRIP_WIDTH - _EPS:
+    if placement.scale >= STRIP_WIDTH - _EPS:
         return placement
-    strip = CardPlacement(0.5, placement.y_frac, STRIP_WIDTH, placement.zone, placement.height)
+    if abs(placement.x_frac - 0.5) <= _EPS:
+        strip = CardPlacement(0.5, placement.y_frac, STRIP_WIDTH, placement.zone, placement.height)
+        if not any(boxes_intersect(strip.box, b) for b in (*blockers, *side_blockers)):
+            return strip
+    return _strip_clear_of_marks(placement, blockers, side_blockers) or placement
+
+
+def _strip_clear_of_marks(
+    placement: CardPlacement,
+    blockers: Sequence[NormalizedBox],
+    side_blockers: Sequence[NormalizedBox],
+) -> CardPlacement | None:
+    """A CENTRED `STRIP_WIDTH` strip in ``placement``'s zone, past the marks (the Kria wordmark)
+    a full-width strip would cover, or ``None`` (the caller keeps ``placement``).
+
+    `place_card` moves a card beside the mark, which leaves it right-shifted. A strip is cut to
+    its text anyway, so it stays centred and starts below the mark (bottom zone) or ends above
+    it (top zone): the same edge inset, the card's own height at most, never a box shorter than
+    `MIN_ZONE_HEIGHT`. ``None`` too when no mark is in the way, or the box would touch anything.
+    """
+    left = (1.0 - STRIP_WIDTH) / 2
+    bottom_zone = placement.zone == "bottom"
+    lo, hi = (
+        (placement.box.top, 1.0 - EDGE_INSET) if bottom_zone else (EDGE_INSET, placement.box.bottom)
+    )
+    probe = NormalizedBox(left, lo, 1.0 - left, hi)
+    hit = [m for m in side_blockers if boxes_intersect(probe, m)]
+    if not hit:
+        return None
+    if bottom_zone:
+        top = max(lo, max(m.bottom for m in hit) + GAP)
+        bottom = hi
+    else:
+        top = lo
+        bottom = min(hi, min(m.top for m in hit) - GAP)
+    height = min(bottom - top, placement.height)
+    if height < MIN_ZONE_HEIGHT:
+        return None
+    if not bottom_zone:
+        top = EDGE_INSET
+    strip = CardPlacement(0.5, top + height / 2, STRIP_WIDTH, placement.zone, height)
     if any(boxes_intersect(strip.box, b) for b in (*blockers, *side_blockers)):
-        return placement
+        return None
     return strip
 
 

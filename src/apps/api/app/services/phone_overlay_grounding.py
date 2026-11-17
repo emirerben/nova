@@ -987,7 +987,15 @@ def _lay_out_cards(
             "y_frac": spot.y_frac,
             "scale": spot.scale,
             **(
-                {"strip": {"x_frac": strip.x_frac, "scale": strip.scale, "height": strip.height}}
+                {
+                    "strip": {
+                        "x_frac": strip.x_frac,
+                        "scale": strip.scale,
+                        "height": strip.height,
+                        # Only a strip moved past the wordmark sits at its own height.
+                        **({"y_frac": strip.y_frac} if strip.y_frac != spot.y_frac else {}),
+                    }
+                }
                 if strip
                 else {}
             ),
@@ -995,6 +1003,9 @@ def _lay_out_cards(
         clear_ids.add(oid)
         # A later card sharing time stays out of the whole strip, not just the smaller card.
         placed_boxes.append((start, end, (strip or spot).box))
+        if strip is not None and strip.y_frac != spot.y_frac:
+            # A strip moved past the wordmark falls back to the card where it was laid out.
+            placed_boxes.append((start, end, spot.box))
 
     if fallback:
         fb_resolved, fb_reasons, _sampling = resolve_phone_card_geometry(

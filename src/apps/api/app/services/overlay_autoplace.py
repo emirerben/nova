@@ -117,7 +117,8 @@ def _shared_half(
     of ONE shareable window it overlaps, else ``None`` (it is dropped as "overlap", as before).
 
     Only a card that starts in the first half (the same mention), and only when both halves
-    stay on screen `_MIN_ON_SCREEN_S`: otherwise the first card keeps its whole window.
+    stay on screen `_MIN_ON_SCREEN_S`: otherwise the first card keeps its whole window, and a
+    card whose own window still has the minimum after it starts at the first card's end.
     """
     hits = [(s, e) for s, e, _ in taken if start < e and s < end]
     # Matched to the millisecond (`_window_key`): `taken` and `shareable` are separate floats.
@@ -125,7 +126,16 @@ def _shared_half(
         return None
     first_start, first_end = hits[0]
     mid = round((first_start + first_end) / 2, 3)
-    if start >= mid or min(mid - first_start, first_end - mid) < _MIN_ON_SCREEN_S:
+    if start >= mid:
+        return None
+    if min(mid - first_start, first_end - mid) < _MIN_ON_SCREEN_S:
+        # A window too short for two parts (Q1 run 4: 2.72 s): the first card keeps ALL of it
+        # and this one starts where it ends, if its own window still has the minimum left
+        # there. The midpoint reported equals the first card's end, so it is not cut short;
+        # the caller reads ``mid == first_end`` as "start at the end, keep your own end".
+        # Anything else on screen there is checked by the caller's overlap test.
+        if end - first_end >= _MIN_ON_SCREEN_S:
+            return first_start, first_end, first_end
         return None
     return first_start, first_end, mid
 
@@ -498,7 +508,7 @@ def build_suggestions(
         shared = None if is_fs else _shared_half(start, end, taken, shareable_left)
         others = taken
         if shared is not None:
-            start, end = shared[2], shared[1]
+            start, end = shared[2], (end if shared[2] == shared[1] else shared[1])
             if asset.get("kind") == "video" and asset_dur:
                 end = min(end, start + float(asset_dur) + _FREEZE_ALLOWANCE_S)
             if end - start < _MIN_ON_SCREEN_S:

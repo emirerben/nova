@@ -229,13 +229,17 @@ def test_her_confirmed_hold_wins_and_is_clamped_to_the_timeline():
 # --- stacked placement (F4) --------------------------------------------------------------
 
 
-def _assert_stacked_and_inside(placed):
+def _assert_stacked_and_inside(placed, *, ink_stacked=False):
     boxes = _boxes(placed)
+    # An ink-stacked block (status "squeezed") lays its lines ink to ink: the measured line
+    # boxes overlap in their empty ascent / descent, the drawn glyphs do not.
     for upper, lower in zip(boxes, boxes[1:], strict=False):
-        assert upper.bottom <= lower.top + 1e-3, (upper, lower)
+        if not ink_stacked:
+            assert upper.bottom <= lower.top + 1e-3, (upper, lower)
     for box in boxes:
         assert box.left >= 0.03 - 1e-3 and box.right <= 0.97 + 1e-3
-        assert box.top >= 0.06 - 1e-3 and box.bottom <= 0.95 + 1e-3
+        if not ink_stacked:  # an ink-stacked block's bounds are asserted on its ink (the receipt)
+            assert box.top >= 0.06 - 1e-3 and box.bottom <= 0.95 + 1e-3
     return boxes
 
 
@@ -254,7 +258,7 @@ def test_no_face_centres_the_block_at_the_top_and_keeps_line_order():
 def test_the_block_never_covers_her_face(face):
     placed, receipt = _place(_rows(), face)
 
-    boxes = _assert_stacked_and_inside(placed)
+    boxes = _assert_stacked_and_inside(placed, ink_stacked=receipt["status"] == "squeezed")
     face_box = NormalizedBox(*face)
     for box in boxes:
         assert box.coverage_by(face_box) <= 0.05
@@ -863,21 +867,92 @@ def _q1_caption_line(y_frac):
     return NormalizedBox(0.21, y_frac - 0.0156, 0.79, y_frac + 0.0234)
 
 
-@pytest.mark.parametrize(
-    ("caption_y", "scale"),
-    [
-        (0.62, 1.0),  # no face ask: her asked spot kept (run 2)
-        (0.66, 0.85),  # a face ask (run 3 as filed): the captions step just under her chin
-        (0.86, 0.72),  # run 3 as rendered: the captions in the lower third
-    ],
-)
-def test_her_title_is_as_big_as_her_captions_leave_room_for(caption_y, scale):
+@pytest.mark.parametrize("caption_y", [0.66, 0.86])
+def test_a_shrunk_title_sits_above_her_face_at_least_as_big_as_before(caption_y):
+    # Run 4 (2026-11-17): a title that would shrink under her chin beside the captions now takes
+    # the band above her face (stacked ink to ink) at 0.85 of its size or more instead.
     caption = _q1_caption_line(caption_y)
     placed, receipt = _place(_rows(Q1_TITLE), Q1_FACE, avoid=[caption])
 
-    assert receipt["scale"] == scale
+    assert receipt["scale"] >= 0.85
     assert receipt["text_overlap"] is False and receipt["face_collision"] is False
+    block = NormalizedBox(**receipt["block"])
+    assert block.bottom <= Q1_FACE[1], "above her face"
+    assert block.coverage_by(NormalizedBox(*Q1_FACE)) == 0.0
+    assert block.coverage_by(caption) == 0.0 and caption.coverage_by(block) == 0.0
+    _assert_stacked_and_inside(placed, ink_stacked=True)
+
+
+def test_a_full_size_title_under_her_chin_keeps_its_spot():
+    # Captions keep her asked spot (0.62): the title fits full size under her chin. Not part of
+    # the run 4 incident, so it is neither shrunk nor moved onto her hair.
+    caption = _q1_caption_line(0.62)
+    placed, receipt = _place(_rows(Q1_TITLE), Q1_FACE, avoid=[caption])
+
+    assert receipt["scale"] == 1.0 and receipt["status"] != "squeezed"
     block = title_block_box(placed, canvas=CANVAS)
     assert block.top >= Q1_FACE[3], "under her chin"
     assert block.bottom <= caption.top or block.top >= caption.bottom, "off her captions"
+    _assert_stacked_and_inside(placed)
+
+
+# --- Q1 run 4 (job 8f2ef818, 2026-11-17): the title under the captions on her shirt ----------
+#
+# Written before the code. Ways the top-band retry could go wrong, and the test for each:
+#
+# * R1: the title lands on a face box or a caption box (any of the six sampled faces, any of the
+#   five caption lines): `test_run4_title_takes_the_band_above_her_face`.
+# * R2: it runs off the frame edge or above the header margin: the same test (frame bounds).
+# * R3: it shrinks below what the old placement gave (0.85): the same test (scale >= 0.85).
+# * R4: it overrides an explicit position ask or the logo-above-title room:
+#   `test_an_asked_spot_and_a_logo_keep_the_old_placement`.
+# * R5: no clear band above her face (a close selfie) and the old result is lost:
+#   `test_a_close_selfie_keeps_the_old_placement`.
+
+RUN4_FACES = [
+    (0.22519, 0.21958, 0.84519, 0.60083),
+    (0.21778, 0.23625, 0.83778, 0.6175),
+    (0.20667, 0.23, 0.83778, 0.6175),
+    (0.22889, 0.22792, 0.82667, 0.59667),
+    (0.22889, 0.21125, 0.82667, 0.58),
+    (0.21037, 0.21958, 0.82296, 0.59667),
+]
+RUN4_CAPTIONS = [
+    NormalizedBox(0.27593, 0.64177, 0.725, 0.685),
+    NormalizedBox(0.39398, 0.64281, 0.59861, 0.67771),
+    NormalizedBox(0.37778, 0.64177, 0.62315, 0.67771),
+    NormalizedBox(0.20741, 0.64177, 0.79167, 0.685),
+    NormalizedBox(0.29028, 0.64177, 0.70602, 0.68552),
+]
+
+
+def test_run4_title_takes_the_band_above_her_face():
+    placed, receipt = _place(_rows(Q1_TITLE), *RUN4_FACES, avoid=RUN4_CAPTIONS)
+
+    assert receipt["scale"] >= 0.85
+    block = NormalizedBox(**receipt["block"])
+    assert block.top >= 0.06 - 1e-6 and block.bottom <= 0.95
+    assert block.left >= 0.03 and block.right <= 0.97
+    for face in RUN4_FACES:
+        assert block.coverage_by(NormalizedBox(*face)) == 0.0
+    for caption in RUN4_CAPTIONS:
+        assert block.coverage_by(caption) == 0.0 and caption.coverage_by(block) == 0.0
+    assert block.bottom <= min(face[1] for face in RUN4_FACES)
+    assert receipt["face_collision"] is False and receipt["text_overlap"] is False
+    assert [row["text"] for row in placed] == ["5 repos", "I'd build with", "this weekend!!"]
+
+
+@pytest.mark.parametrize("kwargs", [{"position": "middle"}, {"reserve_logo": True}])
+def test_an_asked_spot_and_a_logo_keep_the_old_placement(kwargs):
+    _placed, receipt = _place(_rows(Q1_TITLE), *RUN4_FACES, avoid=RUN4_CAPTIONS, **kwargs)
+
+    assert receipt["status"] != "squeezed"
+
+
+def test_a_close_selfie_keeps_the_old_placement():
+    # No band above this face (top 0.06) fits the title at any size: nothing new is tried.
+    placed, receipt = _place(_rows(Q1_TITLE), SELFIE_FACE)
+
+    assert receipt["status"] != "squeezed"
+    assert receipt["face_collision"] is False
     _assert_stacked_and_inside(placed)

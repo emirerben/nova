@@ -75,6 +75,10 @@ _FACE_GAP = 0.01
 _MAX_COVERAGE = title_mod._MAX_FACE_COVERAGE
 _SHRINK = (1.0, 0.85, 0.72, 0.6)
 _Y_DECIMALS = 4
+# The spots in the band above her face (`_candidates` kinds), and the smallest size (of the
+# authored one) the ink-stacked retry may take there instead of a bigger spot under her face.
+_TOP_KINDS = frozenset({"preset", "above_face"})
+_TOP_BAND_MIN_FACTOR = 0.85
 
 # KRI-1305 (coordinator review): when no spot clears her face AND her captions, the title
 # squeezes in before the captions are asked to wait (the kit's `captions_on` rule needs captions
@@ -299,6 +303,21 @@ def pinned_title_look_ask(
 # --- rows --------------------------------------------------------------------------------
 
 
+def _readable_title_enabled() -> bool:
+    """`TITLE_LEGIBILITY_ENABLED`: the kill switch of both run-4 title fixes (the band-above-
+    her-face retry here and the measured outline in `phone_title_legibility`)."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.title_legibility_enabled)
+
+
+def _colour_asked(index: int, ask: TitleLookAsk) -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    line_color = ask.line_colors[index] if index < len(ask.line_colors) else None
+    return bool(settings.title_legibility_enabled and (line_color or ask.color))
+
+
 def _line_look(index: int, text: str, ask: TitleLookAsk) -> tuple[str, dict[str, Any]]:
     """The kind label and the font / size / colour fields for line ``index`` (0-based)."""
     from app.pipeline.phone_text_style import drawable_family  # noqa: PLC0415
@@ -366,7 +385,13 @@ def title_look_rows(
             },
             source_params={
                 "source": title_mod.TALKING_TITLE_SOURCE,
-                TITLE_LOOK_PARAM: {"line": index + 1, "lines": len(lines), "style": kind},
+                TITLE_LOOK_PARAM: {
+                    "line": index + 1,
+                    "lines": len(lines),
+                    "style": kind,
+                    # Her own colour for this line: the legibility pass never overrides it.
+                    **({"colour_asked": True} if _colour_asked(index, ask) else {}),
+                },
             },
         )
         rows.append(element.model_dump(mode="json", exclude_none=True))
@@ -406,10 +431,14 @@ def _candidates(
     *,
     logo: bool = False,
     avoid: Sequence[NormalizedBox] = (),
+    top_band: bool = False,
 ) -> list[tuple[str, float]]:
-    """(kind, block top) in the order to try them."""
+    """(kind, block top) in the order to try them. ``top_band`` (the ink-stacked retry, see
+    `_top_band_squeeze`) adds the highest spot the frame margin allows."""
     first = 0.5 - height / 2 if position == "middle" else _BLOCK_TOP
     found = [("preset", first)]
+    if top_band:
+        found.append(("top_band", _Y_MIN + _INK_PAD_PX / 1920 + 0.001))
     if logo and first < _LOGO_ROOM_TOP:
         # The same spot, lowered just enough for a logo above it.
         found.append(("logo_room", _LOGO_ROOM_TOP))
@@ -499,6 +528,9 @@ def _squeeze(
     reserve_logo: bool,
     logo_fits: Any,
     canvas: _Canvas,
+    kinds: frozenset[str] | None = None,
+    min_factor: float = 0.0,
+    top_band: bool = False,
 ) -> tuple[float, list[dict], list[NormalizedBox], str] | None:
     """KRI-1305: the biggest size (never below the cap-height floor) and spot where the title,
     its lines stacked ink to ink, clears every face, object and caption line as drawn (and leaves
@@ -506,6 +538,8 @@ def _squeeze(
     gap = _TIGHT_GAP_PX / canvas.height
     pad = _INK_PAD_PX / canvas.height
     for factor in _SQUEEZE:
+        if factor < min_factor - 1e-9:
+            return None  # every smaller size is under the asked floor too
         sized = _sized(base, factor)
         if min(_cap_px(row) for row in sized) < _MIN_CAP_PX - 1e-6:
             return None  # every smaller size is under the floor too
@@ -515,7 +549,11 @@ def _squeeze(
             box.height - top - bottom for box, (top, bottom) in zip(layout, insets, strict=True)
         ]
         height = sum(heights) + gap * (len(heights) - 1)
-        for kind, top in _candidates(height, faces, position, logo=reserve_logo, avoid=avoid):
+        for kind, top in _candidates(
+            height, faces, position, logo=reserve_logo, avoid=avoid, top_band=top_band
+        ):
+            if kinds is not None and kind not in kinds:
+                continue
             inks: list[NormalizedBox] = []
             cursor = top
             for box, ink_h in zip(layout, heights, strict=True):
@@ -655,8 +693,33 @@ def place_title_look(
                 )
         chosen = min(options, key=lambda option: option[0])[1] if options else None
         logo_room = bool(chosen and chosen[6]) if reserve_logo else None
-        squeezed = (
-            _squeeze(
+        squeezed = None
+        if (
+            chosen is not None
+            and position is None
+            and not reserve_logo
+            and chosen[1] < 1.0
+            and _readable_title_enabled()
+        ):
+            # Run 4 (2026-11-17): a 3-line title could not fit the band above her face as full
+            # line boxes, so it shrank to 0.85 under the captions on her shirt. Stacked ink to
+            # ink it fits that band at the same size: prefer it over a SHRUNK spot under her face. A
+            # full-size title (factor 1.0) keeps its spot.
+            squeezed = _squeeze(
+                base,
+                faces=faces,
+                hard=hard,
+                avoid=avoid,
+                position=position,
+                reserve_logo=False,
+                logo_fits=logo_fits,
+                canvas=canvas,
+                kinds=_TOP_KINDS | {"top_band"},
+                min_factor=min(_TOP_BAND_MIN_FACTOR, chosen[1]),
+                top_band=True,
+            )
+        if squeezed is None and avoid and (chosen is None or chosen[5]):
+            squeezed = _squeeze(
                 base,
                 faces=faces,
                 hard=hard,
@@ -666,9 +729,6 @@ def place_title_look(
                 logo_fits=logo_fits,
                 canvas=canvas,
             )
-            if avoid and (chosen is None or chosen[5])
-            else None
-        )
         if squeezed is not None:
             # Text on text otherwise: smaller, tighter lines between her face and her captions
             # beat captions that wait (KRI-1305 coordinator review).

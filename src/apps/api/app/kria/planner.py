@@ -4170,6 +4170,71 @@ def _with_title_picture_beats(
     return strategy.model_copy(update={"reaction_beats": beats}) if added else None
 
 
+def _fold_words(text: str) -> str:
+    return " ".join(str(text).split()).casefold()
+
+
+def _with_brief_closing_title(
+    strategy: Any, brief: CreativeBrief | None, manifest: Any
+) -> Any | None:
+    """Qendresa Q1 run 4: the strategy with ``closing_title`` set to the brief's ending words,
+    or None when nothing is filled.
+
+    The Main Creator files 'End with "comment REPO"' as a text/global row whose ``closing``
+    fact is its literal, but may leave ``closing_title`` empty; readiness then holds the draft
+    ("That exact text isn't in this draft.") although the phone Talking lane draws that text.
+    Filled only from exactly one live such row (never a picture or clip ending, a colour
+    closing card or ``closing_media``), only when no title, pin or label already holds the
+    words, and only on a phone Talking edit whose closing-title lane is on. Runs before the
+    wording grounding, so the words still have to be the creator's own.
+    """
+    if (
+        not settings.brief_closing_title_fill_enabled
+        or brief is None
+        or strategy.closing_title
+        or strategy.closing_media is not None
+        or strategy.edit_format != "subtitled"
+    ):
+        return None
+    from app.agents._schemas.creator_policy import CAPABILITY_PHONE_SOURCE_AUDIO  # noqa: PLC0415
+    from app.kria.brief_checks import _contains_text as brief_checks_contains_text  # noqa: PLC0415
+    from app.kria.brief_checks import _fold as brief_checks_fold  # noqa: PLC0415
+    from app.pipeline.phone_talking_closing_card import asks_closing_card  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_subtitled_closing_title_supported,
+    )
+
+    phone = getattr(manifest, "capabilities", {}).get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if phone is None or not phone.available or not phone_subtitled_closing_title_supported():
+        return None
+    endings = [req for req in brief.live() if req.facts.get("closing")]
+    if len(endings) != 1:
+        return None
+    (req,) = endings
+    literal = (req.literal or "").strip()
+    closing = req.facts.get("closing")
+    if (
+        req.kind != "text"
+        or req.scope != "global"
+        or not literal
+        or not isinstance(closing, str)
+        or _fold_words(closing) != _fold_words(literal)
+        or asks_closing_card(req)
+    ):
+        return None
+    # The same whole-words test readiness uses to find a text in the draft: a title, label or
+    # pin that already holds her words answers the ask, so the ending is never drawn twice.
+    wanted = brief_checks_fold(literal)
+    planned = [
+        strategy.opening_title,
+        *(strategy.shot_labels or ()),
+        *(pin.text for pin in strategy.pinned_texts or ()),
+    ]
+    if any(text and brief_checks_contains_text(text, wanted) for text in planned):
+        return None
+    return strategy.model_copy(update={"closing_title": literal})
+
+
 def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -> PlannedKriaTurn:
     """KRI-802: ask a held title-wording question in the same reply as a clip picker.
 
@@ -4851,6 +4916,10 @@ async def _plan_creator_action(
         if titled is not None:
             log.info("kria_title_picture_beat_added", thread_id=str(thread_id))
             action = action.model_copy(update={"strategy": titled})
+        ending = _with_brief_closing_title(action.strategy, effective_brief, manifest)
+        if ending is not None:
+            log.info("kria_brief_closing_title_filled", thread_id=str(thread_id))
+            action = action.model_copy(update={"strategy": ending})
         # KRI-1286: the drawn arrow already points at "comment WORD"; an arrow emoji the model
         # added to the words is not the creator's text, and would make her confirm words she
         # gave exactly (and show two arrows). Drop it when she asked for an arrow.
