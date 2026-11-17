@@ -2305,6 +2305,26 @@
    "app/kria/brief_checks.py",
    "Each caption has a smaller line in {language} under it.",
    "Her altyazının altında daha küçük bir {language} satır var."
+  ],
+  [
+   "app/kria/pending_visuals.py",
+   "I planned this without {names}: it's still being checked. Ask me to add it once it's ready.",
+   "Bunu {names} olmadan planladım: hâlâ kontrol ediliyor. Hazır olunca eklememi iste."
+  ],
+  [
+   "app/kria/pending_visuals.py",
+   "I planned this without {names}: they're still being checked. Ask me to add them once they're ready.",
+   "Bunu {names} olmadan planladım: hâlâ kontrol ediliyorlar. Hazır olduklarında eklememi iste."
+  ],
+  [
+   "app/kria/pending_visuals.py",
+   "one of your Visuals",
+   "görsellerinden biri"
+  ],
+  [
+   "app/kria/pending_visuals.py",
+   "some of your Visuals",
+   "bazı görsellerin"
   ]
  ],
  "retired": [

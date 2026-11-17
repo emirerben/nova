@@ -565,6 +565,10 @@
       "source": "default",
       "value": 2
     },
+    "kria_pending_visual_go_ahead_enabled": {
+      "source": "default",
+      "value": true
+    },
     "kria_phone_montage_preflight_enabled": {
       "source": "default",
       "value": true
@@ -1185,6 +1189,10 @@
     },
     "pool_asset_queued_status_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
+      "value": true
+    },
+    "pool_unclaimed_resend_enabled": {
+      "source": "default",
       "value": true
     },
     "poster_ondemand_repair_enabled": {

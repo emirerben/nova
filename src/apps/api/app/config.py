@@ -1473,6 +1473,12 @@ class Settings(BaseSettings):
     # byte-identical to the pre-fix behaviour.
     # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
     kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
+    # KRI-1470: when only Visuals (screenshots/recordings) are still being checked, the turn's
+    # last run, or a creator's "skip that", goes on without them and names each file left
+    # out. Pending footage still waits. False: every pending Visual holds the turn with "I'm
+    # still checking N of your clips", exactly as before.
+    # Apply: fly secret KRIA_PENDING_VISUAL_GO_AHEAD_ENABLED=false + restart (api + worker).
+    kria_pending_visual_go_ahead_enabled: bool = True
     # A continued run takes its earlier run's Main Creator, brief-extractor and clip-intent
     # answers for the same input instead of paying again (`app.services.turn_checkpoint`).
     # False: every continued run calls the models again, exactly as before the checkpoint.
@@ -3379,6 +3385,12 @@ class Settings(BaseSettings):
     # Keep response compatibility during the backend-first rollout. Set true
     # only after both queued-aware upload surfaces are deployed.
     pool_asset_queued_status_enabled: bool = False
+    # KRI-1469: the 5-min reaper re-sends a `queued` Visuals analysis nobody has claimed
+    # (a later Visual of the same item was claimed 2 min after it was sent, or 10 min
+    # passed). Same attempt token and deadline, so a second copy is a no-op. False: an
+    # unclaimed row waits for its deadline (~1 h for a photo), exactly as before.
+    # Apply: fly secret POOL_UNCLAIMED_RESEND_ENABLED=false + restart the light process.
+    pool_unclaimed_resend_enabled: bool = True
 
     poster_ondemand_repair_enabled: bool = Field(
         default=False,
