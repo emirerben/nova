@@ -697,6 +697,10 @@
       "source": "default",
       "value": true
     },
+    "left_out_recheck_enabled": {
+      "source": "default",
+      "value": true
+    },
     "lipsync_route_follows_prompt_enabled": {
       "source": "default",
       "value": true
@@ -861,6 +865,10 @@
       "source": "default",
       "value": true
     },
+    "narrated_draft_promises_enabled": {
+      "source": "default",
+      "value": true
+    },
     "narrated_footage_cue_promise_enabled": {
       "source": "default",
       "value": true
@@ -896,6 +904,10 @@
     "narrated_whisper_model": {
       "source": "default",
       "value": "small.en"
+    },
+    "narrated_whole_voiceover_promise_enabled": {
+      "source": "default",
+      "value": true
     },
     "native_notifications_enabled": {
       "source": "default",

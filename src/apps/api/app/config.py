@@ -3195,6 +3195,22 @@ class Settings(BaseSettings):
     # phone drew, not off the Voiceover record's language alone. false = the hold and the
     # language-only review, byte-identical.
     narrated_caption_render_promise_enabled: bool = True
+    # Tahini (prod job 1d062f21, 2026-11-17): "Keep my whole voiceover" (an `audio` row typed
+    # `keep_whole_take`) on a phone Voiceover draft is a render promise ("Your whole voiceover
+    # plays and the pictures are cut to it"), never "This narrated planned edit cuts your
+    # footage down; a Talking edit keeps the whole take."; the finished video is judged by
+    # its speech cleanup outcome. false = the format sentence, byte-identical.
+    narrated_whole_voiceover_promise_enabled: bool = True
+    # Tahini: three phone Voiceover DRAFT asks that read "I can't confirm this draft does it
+    # yet": a typed caption look ("White captions") is drawn by that writer too and said as
+    # done; "<x> sounds ... under my voice" is the footage bed like "the crowd" (KRI-1465);
+    # and a first/last clip the draft's resolved order intents pin is a render promise.
+    # false = all three as before, byte-identical.
+    narrated_draft_promises_enabled: bool = True
+    # Tahini: the finished video's review re-checks each ask the simpler version left out
+    # against the render; one the video does anyway reads "Done anyway: ..." instead of "Left
+    # out as agreed: ...". false = every left-out line as before, byte-identical.
+    left_out_recheck_enabled: bool = True
     # KRI-1354 (de1): "Make it without these" looped. A "simpler version" tap on a strategy
     # refusal still counts on later turns that are only choice taps (e.g. the readiness hold's
     # card), with no draft since, for the same dropped fields. false = per-turn consent only,

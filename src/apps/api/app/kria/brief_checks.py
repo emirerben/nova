@@ -573,6 +573,10 @@ class PlanFacts:
     # read off the same outcomes. None = this plan cannot say (not a unified montage), so a
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
     sequence_spots_met: tuple[str, ...] | None = None
+    # Tahini: the spots ("first" / "last") a strategy draft's resolved order intents seat at
+    # least one clip in, which the phone Voiceover worker pins (`_narrated_brief_labels`).
+    # Only `plan_facts_from_strategy` sets it; empty = none, or not a strategy draft.
+    sequence_pinned_spots: tuple[str, ...] = ()
     texts: tuple[str, ...] = ()
     # 29 Ekim: the whole text of every complete fragment sequence on screen (a title shown a
     # piece at a time), so a `text_sequence` ask is judged by how the words are SHOWN, not by
@@ -1788,13 +1792,20 @@ def plan_facts_from_strategy(
     edit_format = strategy.get("edit_format")
     caption_style = strategy.get("caption_style")
     audio_strategy = strategy.get("audio_strategy")
+    rows = sequence_rows(strategy.get("resolved_clip_intents"))
     last_seats = [
         members[0]
-        for position, _name, members, status in sequence_rows(strategy.get("resolved_clip_intents"))
+        for position, _name, members, status in rows
         if position == "last" and status == "resolved" and len(members) == 1
     ]
+    pinned_spots = {
+        position
+        for position, _name, members, status in rows
+        if position in ("first", "last") and status == "resolved" and members
+    }
     return PlanFacts(
         last_clip_id=str(last_seats[-1]) if last_seats else None,
+        sequence_pinned_spots=tuple(sorted(pinned_spots)),
         clip_ids=tuple(str(c) for c in clip_ids),
         title=str(title) if title else None,
         per_clip_text=per_clip,
@@ -4577,6 +4588,22 @@ def _check_random_order(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     return _receipt(req, "met", None)
 
 
+def _narrated_order_promised(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """Tahini (prod job 1d062f21): a stated first / last clip on a phone Voiceover draft.
+
+    That draft has no ordering basis (the voice sets when each clip plays), so the order checker
+    could only say "I can't confirm the order this draft uses" and approval was held. The worker
+    pins exactly the clips the draft's resolved ``first`` / ``last`` order intents seat, and the
+    finished video's record judges the seat (`_check_narrated_order`). So when every spot the
+    ask names is seated that way, the draft promises that seat, and only it: the order inside
+    an opening group and "while I say the first two sentences" are the alignment agent's, read
+    by nothing. A filming-order key (the caller) or a spot nothing seats keeps today's answer."""
+    if not (_narrated_draft(facts) and _narrated_draft_promises_on()):
+        return False
+    spots = [spot for key, spot, _verb in _ORDER_ANCHOR_FACTS if req.facts.get(key)]
+    return bool(spots) and all(spot in facts.sequence_pinned_spots for spot in spots)
+
+
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A required order is met, partly met (an honest fallback), or FAILED. Neutral
     (unchecked) is only for an optional preference, and for a draft that has not been
@@ -4636,6 +4663,8 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if not facts.ordering_basis:
         if required and facts.rendered_output:
             return _receipt(req, "not_possible", _ORDER_NOT_RECORDED)
+        if not key and _narrated_order_promised(req, facts):
+            return _receipt(req, "partial", _NARRATED_ORDER_PLAN)
         return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
     basis = facts.ordering_basis
     reversed_reason = _route_reversed_reason(req, facts)
@@ -7065,12 +7094,20 @@ _FOOTAGE_SOUND_LOOSE = (
 # footage") are left out: "the clips under my voiceover" is which pictures play.
 _BED_BARE_SOURCE = r"(?:crowd|wind|traffic|street)"
 _OWN_VOICE = r"(?:my|the|our) (?:voice(?:[ -]?over)?|narration)"
+# Tahini (prod job 1d062f21): any other source named with "sounds" / "noises" ("Keep kitchen
+# sounds quiet under my voice."), on the same terms as the bare sources. Only the source word is
+# consumed (the noun is a lookahead), so every match the pattern made before is still made; a
+# voice ("my voice sounds clear") or music is never the footage's sound. Counted only with
+# `narrated_draft_promises_enabled` (`_names_footage_sound`).
+_BED_SOURCE_WORD = r"(?!(?:voice\w*|narration|music|songs?)\b)[^\W\d_]+(?= (?:sounds|noises)\b)"
 # The named sound first, so "crowd noise" is never the ``bare`` group; the bare alternatives
 # consume only their own word, so a named sound later in the sentence is still found.
 _BED_NOISE_RE = re.compile(
     rf"\b{_FOOTAGE_SOUND_LOOSE}\b|\bg[üu]r[üu]lt[üu]"
     rf"|(?P<bare>\b{_BED_BARE_SOURCE}\b(?=.*\b{_OWN_VOICE}\b)"
     rf"|\b{_OWN_VOICE}\b(?=.*\b{_BED_BARE_SOURCE}\b))"
+    rf"|(?P<sounds>\b{_BED_SOURCE_WORD}(?=.*\b{_OWN_VOICE}\b)"
+    rf"|\b{_OWN_VOICE}\b(?=.*\b{_BED_SOURCE_WORD}))"
 )
 _BED_NAMED_RE = re.compile(rf"\b{_FOOTAGE_SOUND_STRICT}\b")
 # Quiet wording about the bed. Bare adjectives ("soft", "calm") only count with
@@ -7120,9 +7157,17 @@ def _names_footage_sound(req: BriefRequirement, text: str) -> bool:
     the creator's own voice in the sentence) counts only on a row the brief filed as `audio`
     (the crowd in a `style` or `select` row is a picture) and never beside mute wording (a
     mute is `_wants_bed_muted`'s, KRI-821).
+
+    Tahini: "kitchen sounds" (the ``sounds`` group) counts on the same terms as a bare source,
+    with `narrated_draft_promises_enabled`; off, its matches are dropped, which leaves exactly
+    the matches the pattern made before it had the group.
     """
-    found = list(_BED_NOISE_RE.finditer(text))
-    if any(match.group("bare") is None for match in found):
+    found = [
+        match
+        for match in _BED_NOISE_RE.finditer(text)
+        if match.group("sounds") is None or _narrated_draft_promises_on()
+    ]
+    if any(match.group("bare") is None and match.group("sounds") is None for match in found):
         return True
     return bool(found) and req.kind == "audio" and not _BED_MUTE_RE.search(text)
 
@@ -7687,6 +7732,18 @@ _NARRATED_CAPTIONS_PLAN = (
     "A voiceover edit always shows captions of what you say, and I'll check them against "
     "your request in the finished video"
 )
+# Tahini (prod job 1d062f21, 2026-11-17): "Keep my whole voiceover" on a phone Voiceover DRAFT
+# (`_whole_voiceover_receipt`). That writer plays the recorded voiceover whole and cuts the
+# footage to it; only a speech cleanup the creator turns on at approval, or a line they asked
+# to cut, takes anything out, so the finished video is judged by what its cleanup did.
+_NARRATED_WHOLE_VOICEOVER_PLAN = "Your whole voiceover plays and the pictures are cut to it"
+_VOICEOVER_CUT = "Some pauses or lines were cut from your voiceover, so it doesn't play whole."
+# Tahini: a first / last clip on a phone Voiceover DRAFT that the draft's resolved order intents
+# pin (`_narrated_order_promised`). The worker seats them (`_narrated_brief_labels`) and the
+# finished video's record judges the seat (`_check_narrated_order`).
+_NARRATED_ORDER_PLAN = (
+    "I'll put the clips you named first or last as you asked, and check it in the finished video"
+)
 # KRI-1235: what a draft promises the render (or the approval card's Clean up speech choice)
 # does with an ask, and says after: never a shortfall to hold the first draft over. Approval
 # readiness approves a checked partial receipt whose reason is only these, each part exact and
@@ -7728,6 +7785,9 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _DESCRIBED_POPINS_PLAN,
     # KRI-1465: a phone Voiceover draft's captions wait for the render too.
     _NARRATED_CAPTIONS_PLAN,
+    # Tahini: its whole voiceover and its pinned first / last clips as well.
+    _NARRATED_WHOLE_VOICEOVER_PLAN,
+    _NARRATED_ORDER_PLAN,
 )
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
@@ -8093,6 +8153,14 @@ _REASON_TR: dict[str, str] = {
         "Seslendirmeli düzenleme söylediklerini her zaman altyazı olarak gösterir, bitmiş "
         "videoda da isteğine uyup uymadıklarını kontrol edeceğim"
     ),
+    _NARRATED_WHOLE_VOICEOVER_PLAN: "Seslendirmenin tamamı oynar, görüntüler ona göre kesilir",
+    _VOICEOVER_CUT: (
+        "Seslendirmenden bazı duraklamalar ya da cümleler kesildi, o yüzden tamamı oynamıyor."
+    ),
+    _NARRATED_ORDER_PLAN: (
+        "Adını verdiğin klipleri istediğin gibi başa ya da sona koyacağım ve bitmiş videoda "
+        "kontrol edeceğim"
+    ),
     _TALKING_CAPTIONS_EVERY_VOICE: (
         "Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de"
     ),
@@ -8306,6 +8374,9 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _VOICEOVER_SPOKEN_TEXT_PLAN,
     # KRI-1465: that a Voiceover edit always captions is the format's, never a simpler plan.
     _NARRATED_CAPTIONS_PLAN,
+    # Tahini: so is its whole voiceover and where its pinned clips sit.
+    _NARRATED_WHOLE_VOICEOVER_PLAN,
+    _NARRATED_ORDER_PLAN,
     *_SB_FORMAT_LIMITS,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = reasons_in_every_language(_FORMAT_LIMIT_EN)
@@ -8409,6 +8480,9 @@ def _one_clip_take_receipt(req: BriefRequirement, facts: PlanFacts) -> Requireme
 def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A single-clip subtitled edit renders its one clip full-length; a one-clip plan with
     known windows is judged on what they keep (Qendresa case 2)."""
+    voiceover = _whole_voiceover_receipt(req, facts)
+    if voiceover is not None:
+        return voiceover
     judged = _one_clip_take_receipt(req, facts)
     if judged is not None:
         return judged
@@ -8448,19 +8522,58 @@ def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
             ),
         )
     if facts.speech_cleanup_enabled:
-        return _receipt(
-            req,
-            "partial",
-            say(
-                # KRI-551: consented cleanup cuts pauses and filler sounds, never a retake.
-                en="Speech cleanup is on, so some long pauses or filler sounds may be cut.",
-                tr=(
-                    "Konuşma temizliği açık, o yüzden bazı uzun duraklamalar ya da dolgu "
-                    "sesleri kesilebilir."
-                ),
-            ),
-        )
+        return _cleanup_may_cut(req)
     return _receipt(req, "met", None)
+
+
+def _cleanup_may_cut(req: BriefRequirement) -> RequirementReceipt:
+    return _receipt(
+        req,
+        "partial",
+        say(
+            # KRI-551: consented cleanup cuts pauses and filler sounds, never a retake.
+            en="Speech cleanup is on, so some long pauses or filler sounds may be cut.",
+            tr=(
+                "Konuşma temizliği açık, o yüzden bazı uzun duraklamalar ya da dolgu "
+                "sesleri kesilebilir."
+            ),
+        ),
+    )
+
+
+def _whole_voiceover_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """Tahini (prod job 1d062f21, 2026-11-17): "Keep my whole voiceover" on a Voiceover edit.
+
+    The brief writer types one generic ``keep_whole_take`` for any take kept whole, and KRI-971
+    reads only the fact, never the words. What tells the recorded voiceover from a clip is the
+    row's kind: an ``audio`` row is about sound, so on a Voiceover edit it is the voiceover. The
+    phone Voiceover writer plays it whole and cuts the pictures to it; only a speech cleanup or a
+    line the creator asked to cut takes anything out. Before the render that is a promise; after
+    it, the render's cleanup outcome decides. A Voiceover edit is never sent to a Talking edit
+    for this ask (the old `_CUTS_FOOTAGE` sentence). None = not this ask, or nothing to judge it
+    by (the usual checks answer)."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.narrated_whole_voiceover_promise_enabled or req.kind != "audio":
+        return None
+    if _fact_flag(req, "speech_cleanup") is True:
+        return None
+    if _narrated_draft(facts):
+        if facts.speech_cleanup_enabled:
+            return _cleanup_may_cut(req)
+        return _receipt(req, "partial", _NARRATED_WHOLE_VOICEOVER_PLAN)
+    if facts.rendered_variant and facts.edit_format in NARRATED_EDIT_FORMATS:
+        if facts.speech_cleanup_outcome == "applied" or any(
+            cut.status == "applied" for cut in facts.explicit_speech_cuts
+        ):
+            return _receipt(req, "partial", _VOICEOVER_CUT)
+        if facts.speech_cleanup_outcome in {"not_run", "no_change"}:
+            return _receipt(req, "met", None)
+        return None
+    if not facts.editor and _is_voiceover_edit(facts):
+        # A Voiceover draft another writer renders: unknown here, said as "can't check".
+        return _receipt(req, "partial", _CANT_CHECK_TAKE)
+    return None
 
 
 def _unheard_for(facts: PlanFacts, names: Sequence[str]) -> list[str]:
@@ -10699,7 +10812,12 @@ def _check_caption_look(
     from app.config import settings  # noqa: PLC0415
 
     if (
-        facts.caption_words_at_render
+        (
+            facts.caption_words_at_render
+            # Tahini: the phone Voiceover writer draws the same stamped look
+            # (`generation_caption_look` in its caption compile) and records the same receipt.
+            or (_narrated_draft(facts) and _narrated_draft_promises_on())
+        )
         and not facts.editor
         and settings.phone_text_styling_enabled
         and facts.caption_style != "none"
@@ -10786,6 +10904,13 @@ def _narrated_caption_promise_on() -> bool:
     from app.config import settings  # noqa: PLC0415
 
     return bool(settings.narrated_caption_render_promise_enabled)
+
+
+def _narrated_draft_promises_on() -> bool:
+    """Tahini: the caption look, the "<x> sounds" bed and the pinned order on a Voiceover draft."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.narrated_draft_promises_enabled)
 
 
 def _stated_voice_language(requirements: Iterable[BriefRequirement]) -> str | None:
