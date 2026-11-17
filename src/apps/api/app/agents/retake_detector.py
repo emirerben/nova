@@ -34,7 +34,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import unicodedata
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
@@ -44,6 +43,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from app.agents._runtime import Agent, AgentSpec, ModelClient, RunContext, SchemaError
 from app.agents.music_matcher import _sanitize_text
 from app.pipeline.prompt_loader import load_prompt
+from app.text_fold import loose_text
 
 log = structlog.get_logger()
 
@@ -185,8 +185,7 @@ def _word_stem(text: str) -> str:
 
     Turkish capitals and marks fold to plain letters ("İŞTE" → "iste", "ı" → "i") and the
     first ``_STEM_CHARS`` letters stand for the word, so "Cusco" and "Cusco'ya" match."""
-    decomposed = unicodedata.normalize("NFKD", text.casefold().replace("ı", "i"))
-    letters = "".join(ch for ch in decomposed if ch.isalnum())
+    letters = "".join(ch for ch in loose_text(text) if ch.isalnum())
     return letters[:_STEM_CHARS]
 
 
