@@ -1190,7 +1190,13 @@ def _build_clip_question(
             and work.intent.op in _LAST_CLIP_LEFT_OPS
             and not work.intent.exclusive
         ):
-            unclaimed = [m for m in candidates if m not in claimed_elsewhere]
+            # A clip another open row already found is that row's, not this one's.
+            found_by_others = {
+                a.media_id for other in creator_work if other is not work for a in other.kept
+            }
+            unclaimed = [
+                m for m in candidates if m not in claimed_elsewhere and m not in found_by_others
+            ]
             if len(unclaimed) == 1:
                 near_misses = set(unclaimed)
         categories.append(

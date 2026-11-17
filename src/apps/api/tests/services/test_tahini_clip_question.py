@@ -7,7 +7,7 @@ for the yogurt shard every time; it matched the yogurt-swirl clip (0.8) in runs 
 dropped it in run 3, and run 3's answer was the one the chat used. Every other described clip
 was matched, so the yogurt clip was the only one no description claimed.
 
-Failure modes, written before the code:
+Failure modes (the red controls below show each test fails without its fix):
 
 - a continued run re-asks the resolver for the same shard and a flapping model answer turns
   a found clip into a question (the incident);
@@ -177,6 +177,29 @@ async def test_a_clip_another_description_claimed_is_never_pre_ticked(
     result = await _resolve()
 
     assert _yogurt_row(result)["suggested_media_ids"] == []
+
+
+async def test_a_clip_another_open_row_found_is_never_pre_ticked() -> None:
+    """Self-review: every clip but the yogurt one is claimed by resolved rows, and the lemon
+    row is still open with the yogurt clip found. That clip is the lemon row's, so the yogurt
+    row pre-ticks nothing (before the fix it pre-ticked the lemon row's clip)."""
+    clips = _clips()
+    claimed = frozenset(c.media_id for c in clips if c.media_id != YOGURT)
+    yogurt = R._IntentWork(
+        intent=ClipIntent(intent_id="show_yogurt_spread", op="include", attribute="yogurt")
+    )
+    lemon = R._IntentWork(
+        intent=ClipIntent(intent_id="show_lemon", op="include", attribute="lemon grated"),
+        kept=[R.ClipAssignment(media_id=YOGURT, confidence=0.9, evidence="bowl")],
+    )
+
+    alone = R._build_clip_question([yogurt], clips, claimed_elsewhere=claimed)
+    both = R._build_clip_question([yogurt, lemon], clips, claimed_elsewhere=claimed)
+
+    assert alone is not None and both is not None
+    assert alone["categories"][0]["suggested_media_ids"] == [YOGURT]  # control: left alone
+    rows = {r["intent_id"]: r for c in both["categories"] for r in answered_rows(c)}
+    assert rows["show_yogurt_spread"]["suggested_media_ids"] == []
 
 
 def test_use_every_file_claims_nothing_and_described_clips_do() -> None:

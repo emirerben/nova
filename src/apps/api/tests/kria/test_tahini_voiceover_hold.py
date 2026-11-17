@@ -47,7 +47,8 @@ r4, r17, r20 (``narrated_draft_promises_enabled``)
  F9  r4 promised when nothing seats it, under a filming-order key, or for an unordered group.
  F10 r17 still held; or the look is promised with phone text styling off (nothing is drawn).
  F11 r20 still held; or "Make sure my voice sounds clear.", "Keep the music quiet under my
-     voice." or "kitchen sounds" in a ``style`` row is read as the footage bed.
+     voice.", "it sounds too quiet" or "kitchen sounds" in a ``style`` row is read as the
+     footage bed.
  F12 switch off is not byte-identical, or one switch moves another switch's rows.
 
 The review (``left_out_recheck_enabled``)
@@ -289,10 +290,13 @@ WHOLE_CLEANED = _req(
 VOICE_QUALITY = _req("x3", "audio", "Make sure my voice sounds clear.")
 MUSIC_QUIET = _req("x4", "audio", "Keep the music quiet under my voice.")
 SOUNDS_AS_PICTURE = _req("x5", "style", "Keep kitchen sounds quiet under my voice.")
+# Self-review: a pronoun before "sounds" is the voice, never the footage's sound.
+PRONOUN_SOUNDS = _req("x6", "audio", "Make my voiceover louder, it sounds too quiet.")
 
 
 @pytest.mark.parametrize(
-    "extra", [WHOLE_CLIP, WHOLE_CLEANED, VOICE_QUALITY, MUSIC_QUIET, SOUNDS_AS_PICTURE]
+    "extra",
+    [WHOLE_CLIP, WHOLE_CLEANED, VOICE_QUALITY, MUSIC_QUIET, SOUNDS_AS_PICTURE, PRONOUN_SOUNDS],
 )
 def test_neighbouring_asks_answer_as_today(tahini, monkeypatch, extra) -> None:
     """F3 / F4 / F11: the same draft, one more ask, the same verdict as with every switch off."""

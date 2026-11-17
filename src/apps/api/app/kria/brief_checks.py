@@ -7099,9 +7099,13 @@ _OWN_VOICE = r"(?:my|the|our) (?:voice(?:[ -]?over)?|narration)"
 # Tahini (prod job 1d062f21): any other source named with "sounds" / "noises" ("Keep kitchen
 # sounds quiet under my voice."), on the same terms as the bare sources. Only the source word is
 # consumed (the noun is a lookahead), so every match the pattern made before is still made; a
-# voice ("my voice sounds clear") or music is never the footage's sound. Counted only with
+# voice ("my voice sounds clear"), a pronoun ("it sounds quiet") or music is never the footage's
+# sound. Counted only with
 # `narrated_draft_promises_enabled` (`_names_footage_sound`).
-_BED_SOURCE_WORD = r"(?!(?:voice\w*|narration|music|songs?)\b)[^\W\d_]+(?= (?:sounds|noises)\b)"
+_BED_SOURCE_WORD = (
+    r"(?!(?:voice\w*|narration|music|songs?|it|this|that|everything|something|nothing"
+    r"|which|what|who|he|she|they|i|you|we)\b)[^\W\d_]+(?= (?:sounds|noises)\b)"
+)
 # The named sound first, so "crowd noise" is never the ``bare`` group; the bare alternatives
 # consume only their own word, so a named sound later in the sentence is still found.
 _BED_NOISE_RE = re.compile(
