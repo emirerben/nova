@@ -18,6 +18,7 @@ docs/reviews/kri-1512-stretched-words-failure-modes.md.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from app.pipeline.speech_voice_guard import quiet_floor_db, voiced_runs
 from tests.tasks.test_kri1502_cusco_t2_replay import (
     DURATION_S,
     FIXTURE,
+    WORDS,
     _analysis,
     _kept_s,
     _label,
@@ -248,12 +250,68 @@ def test_control_voice_under_the_straddled_stamps_moves_nothing(monkeypatch):
     assert _word(on, "Ve")[0] == pytest.approx(37.0)
 
 
+def test_control_voice_running_into_the_straddle_pause_moves_nothing(monkeypatch):
+    """The voice of "dörtte" runs 0.06 s into the silence span where "4'te" is stamped. Read over
+    the stamps alone it is too short to be heard; read whole, it is voice under the stamps, so the
+    run stays where whisper put it."""
+    voiced = [run if run[0] != 37.265 else (37.265, 37.47) for run in VOICED]
+    on = _on(monkeypatch, pcm=_pcm(voiced=voiced))
+    assert all("straddle" not in run for run in on.diagnostics.get("late_words", []))
+    assert _word(on, "Ve")[0] == pytest.approx(37.0)
+
+
 def test_control_no_voice_on_the_straddle_island_moves_nothing(monkeypatch):
     """The sound before the pause is not a voice: "Ve 4'te" has nowhere proven to go."""
     voiced = _without(VOICED, 36.8, 37.4)
     on = _on(monkeypatch, pcm=_pcm(voiced=voiced, noise_spans=((36.82, 37.33),)))
     assert all("straddle" not in run for run in on.diagnostics.get("late_words", []))
     assert _word(on, "Ve")[0] == pytest.approx(37.0)
+
+
+def test_a_take_that_cannot_be_decoded_changes_no_word_and_is_decoded_once(monkeypatch):
+    """Failure mode 13: a decode fault moves and trims nothing, and the late-word check, the
+    stretched-head check and the voice guard share one failed attempt (a hung ffmpeg times out
+    once, not three times)."""
+    from app.config import settings
+    from app.pipeline.speech_cleanup_analysis import (
+        SpeechCleanupAnalysisInput,
+        analyze_speech_cleanup,
+    )
+    from app.services.clip_speech import SilenceDetectionResult
+
+    monkeypatch.setattr(settings, "speech_cleanup_late_words_enabled", True)
+    monkeypatch.setattr(settings, "speech_cleanup_stretched_words_enabled", True)
+    attempts = []
+
+    def failing_loader(path):
+        attempts.append(path)
+        raise OSError("ffmpeg timed out")
+
+    result = analyze_speech_cleanup(
+        SpeechCleanupAnalysisInput(
+            source_fingerprint="c" * 64,
+            local_media_path="preflight.wav",
+            duration_s=DURATION_S,
+            source_window_start_s=0.0,
+            source_window_end_s=DURATION_S,
+            mixed_gap_mode="apply",
+            over_budget_policy="clamp",
+            max_removal_frac_required=1.0,
+            filler_check=False,
+        ),
+        transcribe_fn=lambda *_a, **_k: {"language": "tr", "words": copy.deepcopy(WORDS)},
+        silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(
+            spans=[tuple(span) for span in FIXTURE["silence_spans"]], status="ok"
+        ),
+        pcm_loader=failing_loader,
+    )
+    assert attempts == ["preflight.wav"]
+    assert [(w.start_s, w.end_s) for w in result.timed_words] == [
+        (w["start_s"], w["end_s"]) for w in WORDS
+    ]
+    assert "late_words" not in result.diagnostics
+    assert "stretched_heads" not in result.diagnostics
+    assert result.diagnostics["voice_guard"]["status"] == "audio_unavailable"
 
 
 # ------------------------------------------------------------------ the worker: labels + captions

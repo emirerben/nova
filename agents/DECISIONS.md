@@ -3987,9 +3987,12 @@ byte-identical to KRI-1506 alone), `DETECTOR_VERSION` → `mixed-gap-v11-stretch
   <= 12 syllables/s), and the voicing detector hears <= 0.05 s of voice in the whole span, the
   word's voice within 0.2 s after it, and >= 30% voice in the rest of the stamp.
 - `find_late_runs(straddle=True)`: the word before a late run joins it when it starts on the island
-  (0.1 s slack) and ends in the pause; such a run may be up to 2.5x the island (2.0 for runs wholly
-  in the pause), every other gate unchanged. `follow_late_runs` moves a second caption pass's
-  straddler only for a run recorded with `straddle: true`.
+  (0.1 s slack) and reaches >= 0.1 s into the pause, and the word after the run starts by the pause
+  end + 0.2 s (so the voice after the pause is that word's: a word stamped into the pause BEFORE
+  its voice never moves); such a run may be up to 2.5x the island (2.0 for runs wholly in the
+  pause), every other gate unchanged. `follow_late_runs` moves a second caption pass's straddler
+  only for a run recorded with `straddle: true`, with the same reach, and only when the pass's next
+  word lies in the pause (the analysis's own moved words, re-followed by the worker, stay put).
 - With the switch on, voicing is read with the voice guard's 0.1 s context on each side: the
   detector band-passes the window it reads, and on Çiğdem S2 0.17 s of voicing inside a 0.65 s pause
   read as none over the pause alone.

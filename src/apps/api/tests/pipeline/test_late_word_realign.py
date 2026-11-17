@@ -453,3 +453,67 @@ def test_s7_the_straddling_run_never_starts_before_the_word_before_it_ends():
     assert times[run.first][0] == pytest.approx(36.90)
     starts = [start for start, _end in times]
     assert starts == sorted(starts)
+
+
+# ------------------------------------------------------------------ review of the KRI-1512 commit
+
+
+def test_h4_voice_only_at_the_onset_of_a_long_stamp_trims_nothing():
+    """The voice starts right after the pause (the onset gate passes) but fills under 30% of the
+    rest of the stamp: the stamp is not this word's voice, so nothing is trimmed."""
+    voicing = _voice((4.895, 5.545), (6.565, 6.715), (8.595, 9.265), (10.30, 10.40))
+    times, heads = _heads(voicing=voicing)
+    assert C_WORD not in [head.index for head in heads]
+    assert times[C_WORD] == H_WORDS[C_WORD][1:]
+
+
+def test_s8_a_word_stamped_into_the_pause_before_its_voice_is_not_a_late_run():
+    """The mirror shape the module leaves alone: "bir" is stamped in the pause but said AFTER it
+    (voice 6.565 s, no word on it), and "bunlar?"'s end drifts 0.06 s into the pause. Taking
+    "bunlar?" as a straddler would move "bir" onto "bunlar?"'s voice."""
+    words = [("öğrendi.", 4.0, 4.6), ("bunlar?", 4.92, 5.64), ("bir", 5.90, 6.40)]
+    words += [("Eşeklik", 6.90, 7.40)]
+    silences = [(4.6, 4.9), (5.582, 6.547), (6.75, 6.88)]
+    assert find_late_runs(words, silences, 8.0, straddle=True) == []
+
+
+def test_s9_a_straddler_must_reach_into_the_pause_more_than_a_drifting_end():
+    drifting = _replace(S_WORDS, 2, 37.00, 37.48)  # 0.067 s into the pause
+    assert find_late_runs(drifting, S_SILENCES, S_DURATION_S, straddle=True) == []
+    assert find_late_runs(
+        _replace(S_WORDS, 2, 37.00, 37.52), S_SILENCES, S_DURATION_S, straddle=True
+    )
+
+
+def test_s10_the_voice_after_the_pause_must_be_the_next_words():
+    """A straddling run moves only when the next word's stamp starts by the pause end (plus the
+    onset reach): otherwise the voice after the pause has no word and may be the run's own."""
+    late_next = _replace(S_WORDS, 4, 38.80, 39.40)
+    assert find_late_runs(late_next, S_SILENCES, S_DURATION_S, straddle=True) == []
+    assert find_late_runs(S_WORDS[:4], S_SILENCES, S_DURATION_S, straddle=True) == []
+    near_next = _replace(S_WORDS, 4, 38.60, 39.40)
+    assert find_late_runs(near_next, S_SILENCES, S_DURATION_S, straddle=True)
+
+
+def test_s6_following_the_analysis_own_moved_words_changes_nothing():
+    """The worker follows the recorded moves on caption words that can be the analysis's own.
+    The receipt rounds the pause start to 3 decimals; a moved word ending exactly at the true
+    pause start (37.4132 s, recorded 37.413) must not read as a straddler."""
+    silences = [(34.38, 34.951), (35.785, 36.839), (37.4132, 38.486)]
+    times, [run] = _straddled(silences=silences)
+    own = [
+        {"text": text, "start_s": start, "end_s": end}
+        for (text, _s, _e), (start, end) in zip(S_WORDS, times, strict=True)
+    ]
+    assert follow_late_runs(own, [run.to_diagnostic()]) == own
+
+
+def test_s6_a_second_pass_already_on_the_voice_is_left_alone():
+    """A correctly stamped second pass whose end drifts a little into the pause, with no word in
+    the pause, keeps its times."""
+    _times, [run] = _straddled()
+    second = _pass(("and", 36.85, 37.20), ("fourth", 37.20, 37.45), ("Incas", 38.48, 39.0))
+    assert follow_late_runs(second, [run.to_diagnostic()]) == second
+    # Even reaching further into the pause, a straddler with no word in the pause after it stays.
+    second = _pass(("and", 36.85, 37.20), ("fourth", 37.20, 37.70), ("Incas", 38.48, 39.0))
+    assert follow_late_runs(second, [run.to_diagnostic()]) == second

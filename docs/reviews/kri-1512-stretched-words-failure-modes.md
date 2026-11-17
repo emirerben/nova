@@ -57,7 +57,8 @@ Stretched heads (B, C), `tests/pipeline/test_late_word_realign.py` (`hN`) and th
 3. **Sound between the silence and the voice** (a click, a breath, a long unvoiced syllable):
    the voice starts too late after the silence, refused (`h3`).
 4. **The remainder is not the word's voice** (no voicing after the silence inside the stamp):
-   refused (`h4`, replay control "no voice after the pause").
+   refused (`h4`, both tests: no voice at all, and voice at the onset filling under 30% of the
+   rest; replay control "no voice after the pause").
 5. **The pause is already visible to rule 3** (stamped gap of 0.6 s or more): left alone; the
    step only reveals hidden pauses and never lengthens a cut rule 3 already makes (`h5`).
 6. **Both edges in one pause** (the previous word overlaps the silence by 0.3 s or more):
@@ -76,7 +77,8 @@ Stretched heads (B, C), `tests/pipeline/test_late_word_realign.py` (`hN`) and th
 12. **Rule 0 carves again**: after the trim no long span overlaps the word, so the KRI-1492 head
     carve cannot double-trim it (replay: no `trim_sentence_head` at B).
 13. **Decoding fails or silence detection is not `ok`**: nothing changes (code path shared with
-    the late-word move).
+    the late-word move). A failed decode is remembered, so a hung ffmpeg times out once for the
+    three readers, not three times (replay "cannot be decoded").
 14. **A second caption pass** stamps the same head into the now-cut pause: a word only partly
     in a removal survives `remap_words`, starting at the cut, so no follow step is needed
     (`h14`).
@@ -91,14 +93,24 @@ Straddling late runs (D), `sN`:
 17. **The straddler starts before the island** (in or before the previous pause): it is not a
     straddler, refused (`s3`).
 18. **A word that ends on the island without reaching the pause**: not a straddler; the
-    earlier-word refusal of #2374 stands (`s4`).
+    earlier-word refusal of #2374 stands (`s4`). A word whose end only drifts into the pause
+    (under `LATE_RUN_EDGE_TOL_S`, the slack #2374 already gives a drifting end) is not one either
+    (`s9`).
+18a. **The mirror shape** (review of this commit): a word stamped in the pause BEFORE its voice,
+    after a word whose end drifts into the pause. Taking that word as a straddler would move the
+    late word onto the wrong voice and leave its own voice wordless. Beyond the reach above, the
+    word after the run must start by the pause end plus `LATE_RUN_STRADDLE_NEXT_REACH_S`
+    (0.2 s), so the voice after the pause is that word's, never the run's (`s8`, `s10`).
 19. **Length**: a straddling run is its voice stretched over its pause, so its stamps run longer
     than the island (D: 2.09 times). Straddlers get `LATE_RUN_STRADDLE_LENGTH_RATIO` 2.5; the
     syllable gate still binds and whole-in-pause runs keep 2.0 (`s5`).
 20. **A second caption pass** puts the straddler on the voice and the next word in the pause:
     `follow_late_runs` moves a word that starts after the recorded stamps' start and ends inside
-    the pause only for a run recorded as a straddle; #2374's runs follow exactly as before
-    (`s6`).
+    the pause only for a run recorded as a straddle, only when it reaches into the pause by the
+    same slack, and only when the pass's next word lies in the pause. The worker also runs the
+    follow on the analysis's own words, whose moved run ends exactly at the pause start the
+    receipt rounds to 3 decimals: those must not read as straddlers and shrink to nothing. A
+    correctly stamped pass is left alone. #2374's runs follow exactly as before (`s6`).
 21. **Order**: the run never starts before the word before it ends (`s7`).
 
 Both:
@@ -110,10 +122,21 @@ Both:
     context on each side and counts the voicing inside the span (replay control "voice running
     into the pause").
 22. **Switch off changes anything**: the replay with `SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED`
-    off reproduces #2374's ten cuts exactly.
+    off reproduces #2374's ten cuts exactly. (The `DETECTOR_VERSION` bump and the fingerprint
+    entry re-analyze every source on deploy either way, as with every detector change; the
+    analysis output with the switch off is #2374's.)
 23. **Other takes change**: the 12 recorded word/silence sets in `tests/fixtures` and the Cusco
     T3, Çiğdem S2 and S4 kit runs, replayed on their real audio where the audio exists.
 24. **A cut lands in the hum at A** (the guard is what keeps A): replay asserts A is still kept.
+
+## Self-review
+
+An independent reviewer read this commit's diff. Real findings, each fixed with a test written
+first: the mirror shape (18a), a second pass or the analysis's own words shrunk by the straddle
+follow (20), failure mode 4 and the late step's context read not pinned by any test (`h4`, replay
+"voice running into the straddle pause"), and a hung decode timing out three times (13). A
+mutation pass then broke each gate in turn: every one fails a test except the first-word guard
+(mode 10), which mode 7 duplicates.
 
 ## Evidence (offline, no paid calls)
 

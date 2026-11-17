@@ -1600,12 +1600,20 @@ def analyze_speech_cleanup(
         silence_status = "parse_failed"
     silences = tuple(_value(silence_result, "spans") or ())
     language = str(_value(transcript, "language") or "")[:32]
-    # The take is decoded once: the late-word check and the voice guard read the same samples.
+    # The take is decoded once: the late-word check, the stretched-head check and the voice guard
+    # read the same samples. A failed decode is remembered too, so a hung ffmpeg times out once.
     decoded: dict[str, np.ndarray] = {}
+    decode_failed: dict[str, subprocess.SubprocessError | OSError] = {}
 
     def load_pcm(path: str) -> np.ndarray:
+        if path in decode_failed:
+            raise decode_failed[path]
         if path not in decoded:
-            decoded[path] = (pcm_loader or decode_pcm_f32)(path)
+            try:
+                decoded[path] = (pcm_loader or decode_pcm_f32)(path)
+            except (subprocess.SubprocessError, OSError) as exc:
+                decode_failed[path] = exc
+                raise
         return decoded[path]
 
     late_words: list[dict[str, Any]] = []

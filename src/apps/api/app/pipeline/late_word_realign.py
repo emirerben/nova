@@ -84,6 +84,9 @@ LATE_RUN_MAX_STAMP_VOICED_S = 0.05
 # A stretched head is trimmed only when the word's voice starts this soon after the silence:
 # PAD_S plus the 80 ms the ambient spans keep clear of sound, as rule 0's sentence carves.
 STRETCHED_HEAD_ONSET_REACH_S = SENTENCE_TAIL_REACH_S
+# A straddling run moves only when the word after it starts by the pause end plus this reach, so
+# the voice after the pause is that word's and cannot be the run's own (the mirror shape).
+LATE_RUN_STRADDLE_NEXT_REACH_S = SENTENCE_TAIL_REACH_S
 _EPS = 1e-9
 
 # ``voicing(lo_s, hi_s)``: seconds of sustained voicing the decoded audio holds in the span.
@@ -192,13 +195,16 @@ def find_late_runs(
         ]
         island_lo = earlier_pauses[-1] if earlier_pauses else 0.0
         straddles = False
-        if straddle and first > 0:
+        if straddle and first > 0 and last + 1 < count:
             _text, lead_start, lead_end = words[first - 1]
-            # The word before the run starts on the island and ends in the pause: whisper
-            # stretched it over the pause too, so it is the run's first word (T2 "Ve").
+            # The word before the run starts on the island and reaches into the pause further
+            # than a drifting end stamp: whisper stretched it over the pause too, so it is the
+            # run's first word (T2 "Ve"). The word after the run must own the voice after the
+            # pause, or that voice may be the run's own (the mirror shape, left alone).
             if (
                 island_lo - LATE_RUN_EDGE_TOL_S - _EPS <= lead_start < pause_lo - _EPS
-                and pause_lo + _EPS < lead_end <= pause_hi + _EPS
+                and pause_lo + LATE_RUN_EDGE_TOL_S - _EPS <= lead_end <= pause_hi + _EPS
+                and words[last + 1][1] <= pause_hi + LATE_RUN_STRADDLE_NEXT_REACH_S + _EPS
             ):
                 first -= 1
                 straddles = True
@@ -425,16 +431,22 @@ def follow_late_runs(words: Sequence[Any], late_runs: Sequence[Any] | None) -> l
             return dataclasses.replace(word, start_s=start, end_s=end)
         return word.model_copy(update={"start_s": start, "end_s": end})
 
+    words = list(words)
     out: list[Any] = []
     previous_end: float | None = None
-    for word in words:
+    for index, word in enumerate(words):
         start, end = times(word)
         new_start, new_end = start, end
         for pause_lo, pause_hi, stamped_lo, stamped_hi, island_lo, island_hi, straddle in maps:
+            # As in `find_late_runs`: it reaches into the pause further than a drifting end (the
+            # analysis's own moved words end at the pause start, which the receipt rounds), and
+            # the pass has a word in the pause right after it.
             straddler = (
                 straddle
                 and stamped_lo - LATE_RUN_EDGE_TOL_S - _EPS <= start < pause_lo - _EPS
-                and pause_lo + _EPS < end <= pause_hi + _EPS
+                and pause_lo + LATE_RUN_EDGE_TOL_S - _EPS <= end <= pause_hi + _EPS
+                and index + 1 < len(words)
+                and _in_dead_air(*times(words[index + 1]), pause_lo, pause_hi)
             )
             if not (straddler or _in_dead_air(start, end, pause_lo, pause_hi)):
                 continue
@@ -475,6 +487,7 @@ __all__ = [
     "LATE_RUN_MIN_LEFT_PAUSE_S",
     "LATE_RUN_MIN_VOICED_FRAC",
     "LATE_RUN_STRADDLE_LENGTH_RATIO",
+    "LATE_RUN_STRADDLE_NEXT_REACH_S",
     "STRETCHED_HEAD_ONSET_REACH_S",
     "LateRun",
     "StretchedHead",
