@@ -43,6 +43,7 @@ dropped via ``drop_lane`` -- see `lane_names`/`drop_lane` below.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Literal, TypeVar
 
 from pydantic import (
@@ -562,7 +563,11 @@ def lane_names(lanes: PhoneSubtitledLanes | None) -> tuple[str, ...]:
 
 
 def remap_lanes_for_cut(
-    lanes: PhoneSubtitledLanes | None, plan: CutPlan
+    lanes: PhoneSubtitledLanes | None,
+    plan: CutPlan,
+    *,
+    held_card_ids: Collection[str] = frozenset(),
+    hold_stops_s: Collection[float] = (),
 ) -> tuple[PhoneSubtitledLanes | None, frozenset[str]]:
     """Shift every lane's main-timeline placement into a `CutPlan`'s cut time.
 
@@ -595,6 +600,15 @@ def remap_lanes_for_cut(
         0.5 s minimum by it) is dropped. ``source_start_s`` and ``speaker_frame`` are
         untouched.
 
+    ``held_card_ids`` (KRI-1511): overlay cards held for a set time from their spoken word (a
+    sticker on its word). A removal inside such a card's window would shorten its time on
+    screen (Cusco T3: the puma's 2.5 s became 1.27 s), so after the remap it keeps its source
+    length in cut time from its new start, ending early only where the next card starts or
+    the cut take ends, and never earlier than the plain remap (`_hold_in_cut_time`).
+    ``hold_stops_s`` are source-time instants that also end a held card (the start of a marked
+    object's protected window, which grounding kept the card clear of only for its original
+    window). Empty ``held_card_ids`` (the default) is byte-identical.
+
     Returns ``(lanes, dropped_ids)``. ``dropped_ids`` holds the ids of the dropped
     overlay cards AND the ``media_id`` of every dropped background window that no
     surviving window still shows (a media id, not a card id: the caller writes a
@@ -614,6 +628,7 @@ def remap_lanes_for_cut(
 
     kept_cards: list[SubtitledOverlayCard] = []
     dropped_card_ids: set[str] = set()
+    source_lengths: list[float] = []
     for card in lanes.overlays:
         mapped = remap_range(card.start_s, card.end_s, plan)
         if mapped is None:
@@ -621,6 +636,13 @@ def remap_lanes_for_cut(
             continue
         new_start, new_end = mapped
         kept_cards.append(card.model_copy(update={"start_s": new_start, "end_s": new_end}))
+        source_lengths.append(card.end_s - card.start_s)
+    if held_card_ids:
+        cut_end_s = sum(end - start for start, end in plan.keep_segments)
+        stops = [remap_time(stop, plan) for stop in hold_stops_s]
+        kept_cards = _hold_in_cut_time(
+            kept_cards, source_lengths, held_card_ids, cut_end_s, stops=stops
+        )
 
     remapped_sfx: list[ResolvedSoundEffect] = []
     for resolved in lanes.sound_effects:
@@ -651,6 +673,32 @@ def remap_lanes_for_cut(
         )
     remapped = lanes.model_copy(update=update)
     return remapped, frozenset(dropped_card_ids)
+
+
+def _hold_in_cut_time(
+    cards: list[SubtitledOverlayCard],
+    source_lengths: list[float],
+    held_card_ids: Collection[str],
+    cut_end_s: float,
+    *,
+    stops: Collection[float] = (),
+) -> list[SubtitledOverlayCard]:
+    """KRI-1511: each held card (already in cut time) ends its source length after its start,
+    capped at the next card's start and the end of the cut take; never earlier than now.
+
+    Any later card caps it, in whatever corner: the hold never makes two pictures share the
+    screen that did not before. A card starting at the same moment is already on screen with
+    it, so it is no cap. ``stops`` (cut time) end it the same way."""
+    starts = sorted([*(card.start_s for card in cards), *stops])
+    out: list[SubtitledOverlayCard] = []
+    for card, length in zip(cards, source_lengths, strict=True):
+        if card.id not in held_card_ids:
+            out.append(card)
+            continue
+        cap = min((start for start in starts if start > card.start_s), default=cut_end_s)
+        end_s = max(card.end_s, min(card.start_s + length, cap, cut_end_s))
+        out.append(card if end_s == card.end_s else card.model_copy(update={"end_s": end_s}))
+    return out
 
 
 def _remap_background_windows(

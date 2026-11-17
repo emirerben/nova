@@ -760,12 +760,18 @@ def test_u4_without_a_transcript_or_off_the_phone_talking_writer_nothing_changes
     assert _trending_draft(TAKE_SAYS).reason == NO_POP_IN
 
 
-def test_u5_a_cue_that_is_said_or_has_its_pop_in_is_judged_as_before():
+def test_u5_a_cue_that_is_said_or_has_its_pop_in_is_judged_as_before(monkeypatch):
     two = _TRENDING.model_copy(
         update={"facts": {"triggers": ["what’s hot this week", "agents marketplace"]}}
     )
     assert "No pop-in for" in _trending_draft(TAKE_SAYS, req=two).reason
     shown = [*_LOGO_BEAT, _beat("hot", "what’s hot this week", "Pizza")]
+    said = f"{TAKE_SAYS} And what's hot this week."
+    assert _trending_draft(said, beats=shown).status == "met"
+    # KRI-1510: a pop-in planned on words the take never says is not "met" on the draft; the
+    # finished video would say "I never heard ...". Its switch off: "met", as KRI-1486 left it.
+    assert _trending_draft(TAKE_SAYS, beats=shown).reason == UNSAID_EN
+    monkeypatch.setattr(settings, "unsaid_planned_cue_report_enabled", False)
     assert _trending_draft(TAKE_SAYS, beats=shown).status == "met"
 
 
