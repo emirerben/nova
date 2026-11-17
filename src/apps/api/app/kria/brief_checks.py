@@ -798,6 +798,11 @@ class PlanFacts:
     # KRI-1488: the creator's own videos a finished phone render was made from (the job's
     # `_phone_sources_v1`); None = not known. Read only by `_check_single_take_pointer`.
     attached_video_count: int | None = None
+    # KRI-1515: the clips and photos the creator attached (`attached_media_count`) and the ones
+    # the plan or the finished video leaves out (`unused_media_ids`), for "use all these clips".
+    # None = not known (no manifest, no approved media snapshot, or ids that match nothing).
+    attached_media_count: int | None = None
+    unused_media_ids: tuple[str, ...] | None = None
     # KRI-547: how a phone Talking render framed a sideways speaker clip for a
     # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
     # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
@@ -1585,6 +1590,32 @@ def _draft_talking_cards(strategy: Mapping[str, Any], manifest: ResolvedCreatorM
     )
 
 
+def media_use_facts(attached: Sequence[str], used: Iterable[str]) -> dict[str, Any]:
+    """KRI-1515: ``attached_media_count`` / ``unused_media_ids`` for "use all these clips".
+
+    ``attached`` are the creator's own clips and photos, ``used`` the media ids the plan or the
+    finished timeline holds. Nothing is claimed ({}) without attached media, or when not one
+    attached id is used: ids written in another form must never read as "left out all 8".
+    """
+    own = list(dict.fromkeys(str(media_id) for media_id in attached if media_id))
+    taken = {str(media_id) for media_id in used if media_id}
+    if not own or not taken.intersection(own):
+        return {}
+    return {
+        "attached_media_count": len(own),
+        "unused_media_ids": tuple(media_id for media_id in own if media_id not in taken),
+    }
+
+
+def _draft_media_use(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> dict:
+    """The creator's clips and photos the strategy leaves out (KRI-1515), as the plan says."""
+    own = [m.media_id for m in manifest.media if m.kind in ("video", "image")]
+    selected = {str(x) for x in strategy.get("selected_media_ids") or []}
+    if not selected or strategy.get("media_scope") == "all":
+        return media_use_facts(own, own)
+    return media_use_facts(own, selected)
+
+
 def _video_clip_count(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> int:
     videos = [m.media_id for m in manifest.media if m.kind == "video"]
     selected = {str(x) for x in strategy.get("selected_media_ids") or []}
@@ -1776,6 +1807,7 @@ def plan_facts_from_strategy(
         extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
         extra["talking_cards_at_render"] = _draft_talking_cards(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
+        extra.update(_draft_media_use(strategy, manifest))
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
         spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
         extra["phone_voiceover_spoken_text"] = bool(spoken_cap and spoken_cap.available)
@@ -16953,9 +16985,80 @@ def text_sequence_shown(req: BriefRequirement, facts: PlanFacts) -> bool:
     return _check_text_sequence(req, facts).status == "met"
 
 
+# KRI-1515: an asked edit format and the format the plan / finished video has; names in one set
+# are the same format to the creator (a day vlog is a montage, "talking head" is Talking).
+_SAME_FORMATS: tuple[frozenset[str], ...] = (
+    frozenset({"montage", "day_vlog", "single_hero"}),
+    frozenset({"subtitled", "talking_head"}),
+)
+
+
+def _format_ask(req: BriefRequirement) -> str | None:
+    """The typed "make it a montage" (``style {edit_format}``) when it is the row's only fact."""
+    facts = req.facts if isinstance(req.facts, Mapping) else {}
+    asked = facts.get("edit_format")
+    if req.kind != "style" or set(facts) != {"edit_format"} or not isinstance(asked, str):
+        return None
+    return asked.strip().casefold() or None
+
+
+def _check_format_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1515: "Make a montage from these clips." on a plan or video that is a montage.
+
+    Met only when the plan's / finished video's format is the asked one; any other format, an
+    unknown one, or an editor turn (its diff names its changes) keeps today's answer (None).
+    """
+    asked = _format_ask(req)
+    if asked is None or (facts.editor and not (facts.rendered_variant or facts.rendered_montage)):
+        return None
+    made = facts.edit_format or ("montage" if facts.rendered_montage else None)
+    if made is None:
+        return None
+    made = made.casefold()
+    if made == asked or any(asked in group and made in group for group in _SAME_FORMATS):
+        return _receipt(req, "met", None, verification="checked", stage="checked")
+    return None
+
+
+def _check_all_clips_used(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1515: "use all these clips" against the clips the plan / finished video holds.
+
+    A Talking edit keeps its own answer (KRI-1405: every clip is a speaker or a cutaway), an
+    editor turn names its changes from the diff, and unknown attached clips claim nothing.
+    """
+    if (
+        not is_select_all_requirement(req)
+        or facts.phone_talking
+        or facts.edit_format in _TALKING_FORMATS
+        or (facts.editor and not (facts.rendered_variant or facts.rendered_montage))
+        or facts.unused_media_ids is None
+        or not facts.attached_media_count
+    ):
+        return None
+    missing = len(facts.unused_media_ids)
+    if not missing:
+        return _receipt(req, "met", None, verification="checked", stage="checked")
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en="Left out {missing} of your {total} clips",
+            tr="{total} klibinden {missing} tanesi dışarıda kaldı",
+            missing=missing,
+            total=facts.attached_media_count,
+        ),
+        verification="checked",
+        stage="checked",
+    )
+
+
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if req.kind == "text_sequence" and compose_unmet_with_ops():
         return _check_text_sequence(req, facts)
+    # KRI-1515: the typed format and whole-set asks own their rows.
+    typed = _check_format_ask(req, facts) or _check_all_clips_used(req, facts)
+    if typed is not None:
+        return typed
     if _insert_clip_fact(req) and facts.edit_format in _TALKING_FORMATS:
         # Parent KRI-1151: the typed `insert_clip` fact is the ask, whatever words its description
         # uses ("... in full screen ..." must not send it to the framing check).
@@ -17504,6 +17607,16 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     ):
         # KRI-994: a `select` ask the typed link / finished timeline settled.
         return receipt.reason not in _NEUTRAL_REASONS
+    if (
+        req is not None
+        and receipt.status == "met"
+        and receipt.verification == "checked"
+        and receipt.stage == "checked"
+        and _format_ask(req) is not None
+    ):
+        # KRI-1515: only the met format verdict is judged; any other answer for the row keeps
+        # today's path (no `_has_checker` entry, so no fallback reason turns into "Partly").
+        return True
     if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
         # KRI-558: a change proven by the before/after edit diff, not by a value check.
         return receipt.reason not in _NEUTRAL_REASONS
@@ -18218,6 +18331,58 @@ def ask_text(req: BriefRequirement) -> str:
     return text.strip()
 
 
+def _row_severity(receipt: RequirementReceipt) -> int:
+    """Lower is worse: Couldn't, Partly, Will do at render, Done."""
+    if receipt.status == "not_possible":
+        return 0
+    if receipt.status == "partial":
+        return 2 if _planned_at_render(receipt) else 1
+    return 3
+
+
+def _one_row_per_ask(
+    judged: Sequence[RequirementReceipt],
+    unchecked: Sequence[RequirementReceipt],
+    by_id: Mapping[str, BriefRequirement],
+) -> tuple[list[RequirementReceipt], list[RequirementReceipt]]:
+    """KRI-1515: one reply row per sentence the creator wrote.
+
+    The brief may file one sentence as several asks ("Make a montage from these clips." became a
+    format ask and a whole-set ask), each with its receipt. A sentence is said once: its worst
+    verdict with the reasons of every part not done (a miss is never hidden), all the reasons
+    when every part is done, and under "Have a look" alone when any part is unchecked and the
+    rest is done. A sentence filed once keeps its receipt untouched.
+    """
+
+    def key(receipt: RequirementReceipt) -> str:
+        req = by_id.get(receipt.requirement_id)
+        if req is None:  # a route decline names no ask: its own row
+            return f"\0{receipt.requirement_id}"
+        return " ".join(ask_text(req).split()).casefold()
+
+    groups: dict[str, list[RequirementReceipt]] = {}
+    for receipt in judged:
+        groups.setdefault(key(receipt), []).append(receipt)
+    merged: dict[str, RequirementReceipt] = {}
+    for text, group in groups.items():
+        worst = min(group, key=_row_severity)
+        if len(group) == 1:
+            merged[text] = worst
+            continue
+        done = _row_severity(worst) == 3
+        parts = [worst, *(r for r in group if r is not worst and (done or _row_severity(r) < 3))]
+        reasons = [r.full_reason for r in parts if r.full_reason]
+        merged[text] = worst.with_reason("; ".join(dict.fromkeys(reasons)) or None)
+    look: dict[str, RequirementReceipt] = {}
+    for receipt in unchecked:
+        text = key(receipt)
+        if text in merged and _row_severity(merged[text]) < 3:
+            continue  # the miss row already says to look at it
+        look.setdefault(text, receipt)
+    rows = [merged[text] for text in groups if text not in look]
+    return rows, list(look.values())
+
+
 def reply_from_receipts(
     brief: CreativeBrief,
     receipts: list[RequirementReceipt],
@@ -18273,6 +18438,12 @@ def reply_and_lead_from_receipts(
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
+    unchecked = [
+        r
+        for r in receipts
+        if r.verification == "unchecked" and by_id.get(r.requirement_id) is not None
+    ]
+    judged, unchecked = _one_row_per_ask(judged, unchecked, by_id)
     misses = [
         r
         for r in judged
@@ -18283,11 +18454,6 @@ def reply_and_lead_from_receipts(
             and r.status == "not_possible"
             and is_route_decline_reason(r.reason)
         )
-    ]
-    unchecked = [
-        r
-        for r in receipts
-        if r.verification == "unchecked" and by_id.get(r.requirement_id) is not None
     ]
     lines: list[str] = []
     guesses: list[str] = []

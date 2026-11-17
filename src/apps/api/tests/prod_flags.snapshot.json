@@ -833,6 +833,10 @@
       "source": "default",
       "value": 20
     },
+    "montage_person_fill_enabled": {
+      "source": "default",
+      "value": true
+    },
     "motion_scenes_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
