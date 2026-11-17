@@ -845,8 +845,10 @@
     {
       "id": "lev-m2-found-clip-picker",
       "needs_native": false,
-      "api_tests": "tests/kria/test_lev_m2_found_clip_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/services/test_clip_intent_resolution.py",
+      "api_tests": "tests/services/test_tahini_clip_question.py tests/kria/test_lev_m2_found_clip_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/services/test_clip_intent_resolution.py",
       "paths": [
+        "src/apps/api/tests/services/test_tahini_clip_question.py",
+        "src/apps/api/tests/fixtures/tahini_1d062f21_clip_resolver_runs.json",
         "src/apps/api/tests/fixtures/lev_m2_picker_turns.json",
         "src/apps/api/tests/kria/test_lev_m2_found_clip_picker.py"
       ]
@@ -1561,8 +1563,10 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py tests/kria/test_green3_pr1_receipts.py tests/tasks/test_green3_caption_look_worker.py tests/agents/test_green3_brief_prompt.py tests/kria/test_reply_consistency.py",
+      "api_tests": "tests/kria/test_tahini_voiceover_hold.py tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py tests/kria/test_green3_pr1_receipts.py tests/tasks/test_green3_caption_look_worker.py tests/agents/test_green3_brief_prompt.py tests/kria/test_reply_consistency.py",
       "paths": [
+        "src/apps/api/tests/kria/test_tahini_voiceover_hold.py",
+        "src/apps/api/tests/fixtures/tahini_voiceover_hold.json",
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/reply_consistency.py",
         "src/apps/api/tests/fixtures/kria_reply_consistency/",
