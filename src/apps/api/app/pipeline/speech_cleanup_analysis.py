@@ -32,7 +32,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.config import settings
 from app.pipeline.audio_pcm import decode_pcm_f32
 from app.pipeline.caption_language import crosscheck_detected_language, infer_language_from_text
-from app.pipeline.late_word_realign import find_late_runs, realign_late_words
+from app.pipeline.late_word_realign import (
+    find_late_runs,
+    find_stretched_heads,
+    realign_late_words,
+    realign_stretched_heads,
+)
 from app.pipeline.silence_cut import (
     REASON_RETAKE,
     SILENCE_CUT_VERBATIM_PROMPT,
@@ -44,6 +49,7 @@ from app.pipeline.silence_cut import (
     squeezed_filler_indices,
 )
 from app.pipeline.speech_cleanup_alignment import AlignerUnavailable, align_words
+from app.pipeline.speech_voice_guard import CONTEXT_S as VOICE_CONTEXT_S
 from app.pipeline.speech_voice_guard import apply_voice_guard, quiet_floor_db, voiced_runs
 from app.pipeline.transcribe import TranscribeError, Transcript, Word
 from app.services import mixed_language_transcript
@@ -1089,6 +1095,44 @@ _NUMBER_WORDS = {
 }  # fmt: skip
 
 
+def _voicing_reader(
+    audio_path: str, load_pcm: Callable[[str], np.ndarray], *, context_s: float = 0.0
+) -> Callable[[float, float], float] | None:
+    """Seconds of sustained voicing (the KRI-1017 detector) in a span of the decoded take.
+
+    ``context_s`` reads that much more audio on each side and counts only the voicing inside
+    the span, as the voice guard does (``CONTEXT_S``): the detector band-passes the window it
+    reads, so voice within about 0.1 s of a window edge can go unheard (Çiğdem S2, KRI-1512:
+    0.17 s of voicing inside a 0.65 s pause read as none over the pause alone).
+    ``None`` when the take cannot be decoded: the caller then changes nothing.
+    """
+
+    try:
+        samples = load_pcm(audio_path)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if samples.size == 0:
+        return None
+    floor_db = quiet_floor_db(samples)
+
+    def voicing(lo_s: float, hi_s: float) -> float:
+        runs = voiced_runs(samples, lo_s - context_s, hi_s + context_s, floor_db=floor_db)
+        return sum(max(0.0, min(hi, hi_s) - max(lo, lo_s)) for lo, hi in runs)
+
+    return voicing
+
+
+def _with_times(
+    words: tuple[SpeechCleanupTimedWord, ...], times: Sequence[tuple[float, float]]
+) -> tuple[SpeechCleanupTimedWord, ...]:
+    return tuple(
+        word
+        if (word.start_s, word.end_s) == (start, end)
+        else word.model_copy(update={"start_s": start, "end_s": end})
+        for word, (start, end) in zip(words, times, strict=True)
+    )
+
+
 def _late_words_realigned(
     words: tuple[SpeechCleanupTimedWord, ...],
     silences: Sequence[Any],
@@ -1096,38 +1140,54 @@ def _late_words_realigned(
     audio_path: str,
     duration_s: float,
     load_pcm: Callable[[str], np.ndarray],
+    straddle: bool = False,
 ) -> tuple[tuple[SpeechCleanupTimedWord, ...], list[dict[str, Any]]]:
     """``words`` with each confirmed late-stamped run moved onto its voice (KRI-1506).
 
     The take is decoded only when a run matches the shape; a decode fault moves nothing.
+    ``straddle`` also takes a run whose first word starts on the voice (KRI-1512).
     Returns the content-safe receipt of every moved run (empty when nothing moved).
     """
 
     triples = [(word.text, word.start_s, word.end_s) for word in words]
     spans = [(float(span[0]), float(span[1])) for span in silences]
-    if not find_late_runs(triples, spans, duration_s):
+    if not find_late_runs(triples, spans, duration_s, straddle=straddle):
         return words, []
-    try:
-        samples = load_pcm(audio_path)
-    except (subprocess.SubprocessError, OSError):
+    # With the stretched-word switch on, voicing is read like the voice guard reads it.
+    voicing = _voicing_reader(audio_path, load_pcm, context_s=VOICE_CONTEXT_S if straddle else 0.0)
+    if voicing is None:
         return words, []
-    if samples.size == 0:
-        return words, []
-    floor_db = quiet_floor_db(samples)
-
-    def voicing(lo_s: float, hi_s: float) -> float:
-        return sum(hi - lo for lo, hi in voiced_runs(samples, lo_s, hi_s, floor_db=floor_db))
-
-    times, runs = realign_late_words(triples, spans, duration_s, voicing=voicing)
+    times, runs = realign_late_words(triples, spans, duration_s, voicing=voicing, straddle=straddle)
     if not runs:
         return words, []
-    moved = tuple(
-        word
-        if (word.start_s, word.end_s) == (start, end)
-        else word.model_copy(update={"start_s": start, "end_s": end})
-        for word, (start, end) in zip(words, times, strict=True)
-    )
-    return moved, [run.to_diagnostic() for run in runs]
+    return _with_times(words, times), [run.to_diagnostic() for run in runs]
+
+
+def _stretched_heads_realigned(
+    words: tuple[SpeechCleanupTimedWord, ...],
+    silences: Sequence[Any],
+    *,
+    audio_path: str,
+    duration_s: float,
+    load_pcm: Callable[[str], np.ndarray],
+) -> tuple[tuple[SpeechCleanupTimedWord, ...], list[dict[str, Any]]]:
+    """``words`` with each confirmed stretched head trimmed to its pause end (KRI-1512).
+
+    The take is decoded only when a word matches the shape; a decode fault changes nothing.
+    Returns the content-safe receipt of every trimmed head (empty when nothing changed).
+    """
+
+    triples = [(word.text, word.start_s, word.end_s) for word in words]
+    spans = [(float(span[0]), float(span[1])) for span in silences]
+    if not find_stretched_heads(triples, spans, duration_s):
+        return words, []
+    voicing = _voicing_reader(audio_path, load_pcm, context_s=VOICE_CONTEXT_S)
+    if voicing is None:
+        return words, []
+    times, heads = realign_stretched_heads(triples, spans, duration_s, voicing=voicing)
+    if not heads:
+        return words, []
+    return _with_times(words, times), [head.to_diagnostic() for head in heads]
 
 
 def _filler_aligned_words(
@@ -1549,10 +1609,23 @@ def analyze_speech_cleanup(
         return decoded[path]
 
     late_words: list[dict[str, Any]] = []
+    stretched_heads: list[dict[str, Any]] = []
+    stretched_words = settings.speech_cleanup_stretched_words_enabled
     if settings.speech_cleanup_late_words_enabled and silence_status == "ok":
         # KRI-1506: words whisper stamped into a pause go back onto their voice before anything
         # reads them: the cut plan, and the stored words the captions and list labels follow.
         words, late_words = _late_words_realigned(
+            words,
+            silences,
+            audio_path=analysis_input.local_media_path,
+            duration_s=analysis_input.duration_s,
+            load_pcm=load_pcm,
+            straddle=stretched_words,
+        )
+    if stretched_words and silence_status == "ok":
+        # KRI-1512: a word whose head whisper stretched back over the pause before it starts
+        # at its voice, so rule 3 sees the pause.
+        words, stretched_heads = _stretched_heads_realigned(
             words,
             silences,
             audio_path=analysis_input.local_media_path,
@@ -1681,6 +1754,8 @@ def analyze_speech_cleanup(
         diagnostics["filler_check"] = filler_report
     if late_words:
         diagnostics["late_words"] = late_words
+    if stretched_heads:
+        diagnostics["stretched_heads"] = stretched_heads
     return SpeechCleanupAnalysisResult(
         source_fingerprint=analysis_input.source_fingerprint,
         detector_version=analysis_input.detector_version,

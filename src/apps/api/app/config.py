@@ -2283,6 +2283,20 @@ class Settings(BaseSettings):
         "`fly secrets set SPEECH_CLEANUP_LATE_WORDS_ENABLED=false --app nova-video` + api and "
         "worker restart (the fingerprint is computed in the API, the analysis in the worker).",
     )
+    speech_cleanup_stretched_words_enabled: bool = Field(
+        default=True,
+        description="Speech-cleanup stretched-word fix (KRI-1512, Cusco T2). whisper-1 can stretch "
+        "a word over a pause so rule 3 never sees it: the head of the word after the pause "
+        '("1." and "sertlikten" started 0.3-0.7 s inside the silence before their voice), or a '
+        'late run whose first word starts on its voice and runs into the pause ("Ve 4\'te"). On: '
+        "the preflight analysis trims such a head to the silence end, and the late-word move "
+        "(needs SPEECH_CLEANUP_LATE_WORDS_ENABLED) also takes such a straddling run, only "
+        "when silencedetect and the KRI-1017 voicing detector agree "
+        "(app/pipeline/late_word_realign.py). "
+        "Off is byte-identical to the late-word fix alone. Part of the source policy fingerprint, "
+        "so a flip re-analyzes. Kill switch: `fly secrets set "
+        "SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED=false --app nova-video` + api and worker restart.",
+    )
 
     speech_cleanup_aligner_model_dir: str = Field(
         default="/opt/models/wav2vec2-base-960h",

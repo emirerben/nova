@@ -3964,3 +3964,57 @@ has "kilitli" at about 11.25 s. No move on 12 recorded word/silence fixtures or 
 `tests/pipeline/test_late_word_realign.py`. Failure modes:
 `docs/reviews/kri-1502-late-words-failure-modes.md`. Not covered: ~1 s pauses whose stamps stretch
 over a mid-sentence pause (T2 keeps four), a follow-up.
+
+## [2026-11-17] Cleanup trims a word's head stretched back over a pause, and moves straddling late runs (KRI-1512, job 887f89d6)
+
+Context. After KRI-1506, the same Cusco T2 take still kept four ~1 s pauses. In three the stamps
+hid the pause from rule 3: the head of the word AFTER the pause was stamped back over it ("1."
+6.20 s over the silence 5.582–6.547 s, voice from 6.565 s; "sertlikten" 9.50 s over 9.241–10.243 s
+mid-sentence, voice from 10.305 s), so the stamped gaps were 0.56 s and 0 s; and "Ve" 37.00–37.60 s
+started on the wordless voice (36.84–37.41 s) and ran into the pause that "4'te" lay wholly in, so
+the late-word move saw an earlier word reaching into the voice. Rule 0 refused each by design: its
+sentence-head carve missed "1." by 18 ms (the 0.3 s floor for the sentence's last word) and never
+trims a mid-sentence edge (KRI-969).
+
+Decision. Two preflight steps in `app/pipeline/late_word_realign.py`, switch
+`SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED` (default on, in the policy fingerprint; off is
+byte-identical to KRI-1506 alone), `DETECTOR_VERSION` → `mixed-gap-v11-stretched-words`:
+- `realign_stretched_heads`: a word whose head lies in exactly one silence span >= 0.6 s (by
+  >= 0.3 s, the word's end outside it) starts at the span end, and the previous word's stamped end
+  inside the span moves back to its start. Only when the stamped gap before it is under
+  `MAX_PAUSE_S` (rule 3 is blind to that pause), the previous word starts before the span and
+  overlaps it by < 0.3 s, no other word is stamped in it, the rest holds the word (>= 0.15 s,
+  <= 12 syllables/s), and the voicing detector hears <= 0.05 s of voice in the whole span, the
+  word's voice within 0.2 s after it, and >= 30% voice in the rest of the stamp.
+- `find_late_runs(straddle=True)`: the word before a late run joins it when it starts on the island
+  (0.1 s slack) and ends in the pause; such a run may be up to 2.5x the island (2.0 for runs wholly
+  in the pause), every other gate unchanged. `follow_late_runs` moves a second caption pass's
+  straddler only for a run recorded with `straddle: true`.
+- With the switch on, voicing is read with the voice guard's 0.1 s context on each side: the
+  detector band-passes the window it reads, and on Çiğdem S2 0.17 s of voicing inside a 0.65 s pause
+  read as none over the pause alone.
+
+Why it is safe enough. The two-witness argument of KRI-1506: silencedetect's spans and the
+periodicity detector must both call the trimmed stamps dead air, so KRI-969's "quiet onset" (a
+voiced onset under the floor) refuses itself. An unvoiced onset under the floor is covered by the
+80 ms ambient edge guard, the 0.2 s onset reach and rule 3's 125 ms pre-roll; whispered speech
+longer than that is the residual risk. Trimming never cuts; the voice guard still judges every cut.
+
+Kept on purpose. Pause A (1.35–2.10 s, after "bahsettik."): the voice guard drops the cut because
+1.45–2.03 s holds a steady quiet periodic sound (103–125 Hz, 3–6 dB over the floor, lower than the
+speaker's ~140 Hz) that no other pause of the take has. The guard exists for quiet voiced sound it
+cannot tell from speech (KRI-1017); a rule letting a cut through it would weaken that everywhere.
+
+Evidence. T2 replayed on the real clip: pauses B, C, D kept 0.34, 0.30, 0.56 s (were 1.00, 1.05,
+1.10), no cut overlaps a voiced run, the four list labels on the same source moment. Geometry never
+matches on the 12 recorded word/silence fixtures. Real-audio replays: Cusco T3 gains two cuts
+(30.609–31.052 s "taş … işçiliğinden", 38.848–39.357 s "sizi … Cusco"), Çiğdem S4 one
+(51.233–51.782 s "ve … yaşam"); each lies in a voice-band gap of 0.70–0.85 s, at the floor (voice
+band <= 4.2 dB over it, hiss as in the cuts prod already made), far from T3's stickers. Çiğdem S2
+unchanged. Guards: `tests/tasks/test_kri1512_cusco_t2_pauses_replay.py`,
+`tests/pipeline/test_late_word_realign.py` (`h*`/`s*`). Failure modes:
+`docs/reviews/kri-1512-stretched-words-failure-modes.md`.
+
+Reversal condition. "Cleanup clipped the start of a word" traced to a `diagnostics.stretched_heads`
+entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED
+=false` + api and worker restart (analyses redo through the fingerprint).

@@ -1459,6 +1459,10 @@
       "source": "default",
       "value": false
     },
+    "speech_cleanup_stretched_words_enabled": {
+      "source": "default",
+      "value": true
+    },
     "speech_excerpt_montage_enabled": {
       "source": "default",
       "value": true

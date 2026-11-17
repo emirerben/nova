@@ -305,6 +305,16 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   Kill switch: `fly secrets set SPEECH_CLEANUP_LATE_WORDS_ENABLED=false --app nova-video` +
   api and worker restart (part of the source policy fingerprint, so analyses redo).
   Failure modes: `docs/reviews/kri-1502-late-words-failure-modes.md`.
+- "cleanup kept a ~1 s pause mid-sentence / right after a question" on a take whose other pauses
+  were cut → whisper-1 stretched the next word's start back over the pause (Cusco T2 "1.",
+  "sertlikten"), or a late run started on its voice and ran into the pause ("Ve 4'te", KRI-1512).
+  `SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED` (default on) trims such a head to the silence end and
+  lets the late-word move take such a straddling run, with the same two-witness check;
+  `diagnostics.stretched_heads` lists each trim and a `straddle: true` entry in
+  `diagnostics.late_words` each such move (times only). A pause the voice guard dropped for its
+  voicing (`diagnostics.voice_guard.dropped`) stays on purpose. Kill switch:
+  `fly secrets set SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED=false --app nova-video` + api and worker
+  restart. Failure modes: `docs/reviews/kri-1512-stretched-words-failure-modes.md`.
 - "cleanup cut whole words / a quiet second speaker" on a take with no real pause (two
   people talking, one far from the mic; a wrong-language or partial transcript) → the
   ambient silence floor sat above the quiet voice and the transcript had no token there.

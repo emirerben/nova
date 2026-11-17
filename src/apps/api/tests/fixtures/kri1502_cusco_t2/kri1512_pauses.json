@@ -1,0 +1,52 @@
+{
+  "about": "KRI-1512 (follow-up to KRI-1507): the four ~1 s pauses Clean up speech still kept on the Cusco DJI T2 'list 1' take (prod job 887f89d6) after #2374. Independent truth, measured on the kit clip T2_numbered_labels/airdrop/T2_01.mp4 (16 kHz mono), never from whisper-1 or the silence spans: `voice_band` = voice-band level (highpass 300 Hz, lowpass 3400 Hz, 50 ms RMS, speech = 10 dB or more over the 10th-percentile floor); `voice_before` / `voice_after` = the KRI-1017 voicing detector's runs bounding the pause (`speech_voice_guard.voiced_runs` at the take's quiet floor); `heard` = local whisper.cpp large-v3-turbo (-l tr, -ml 1) on a short excerpt around the pause. `hum` (pause A) = per-frame (40 ms, 10 ms hop) level over the quiet floor, normalised autocorrelation in 80-1000 Hz and its pitch, over the stretch the voice guard heard; `other_pauses` = the same read over pauses B, C, D and the 2 s pause (13.5-15.2 s). `after_2374` = the cleanup plan with the late-word move (#2374) and without the stretched-word step, replayed on the real clip with the job's words (no paid call). Failure modes: docs/reviews/kri-1512-stretched-words-failure-modes.md.",
+  "pauses": {
+    "A": {
+      "voice_band": [1.35, 2.1],
+      "words": ["bahsettik.", "Modern"],
+      "silence_span": [1.175, 2.061],
+      "voice_before": [0.955, 1.005],
+      "voice_after": [2.065, 2.725],
+      "heard": "Evet tabii şundan bahsettik, modern mühendislik.",
+      "heard_pause_alone_plus_20db": "Evet",
+      "hum": {
+        "span": [1.45, 2.03],
+        "pitch_hz": [103, 125],
+        "periodicity": [0.6, 0.82],
+        "over_floor_db": [2.7, 6.1]
+      },
+      "other_pauses": {"mean_over_floor_db": [1.0, 2.0], "mean_periodicity": [0.4, 0.42]},
+      "speaker_pitch_hz": [135, 148]
+    },
+    "B": {
+      "voice_band": [5.55, 6.55],
+      "words": ["bunlar?", "1."],
+      "silence_span": [5.582, 6.547],
+      "voice_before": [4.895, 5.545],
+      "voice_after": [6.565, 6.715],
+      "heard": "bu şeyi öğrendi ne bunlar? 1"
+    },
+    "C": {
+      "voice_band": [9.25, 10.3],
+      "words": ["mütemadiyen", "sertlikten"],
+      "silence_span": [9.241, 10.243],
+      "voice_before": [8.995, 9.265],
+      "voice_after": [10.305, 10.385],
+      "heard": "Sertlik mütemadiyen Sertlikten daha güçlü"
+    },
+    "D": {
+      "voice_band": [37.4, 38.5],
+      "words": ["Ve", "4'te", "İNKA'lar"],
+      "silence_span": [37.413, 38.486],
+      "voice_before": [36.82, 37.325],
+      "voice_after": [38.475, 38.665],
+      "heard": "Ve dörtte İnkalar belki betonlarında"
+    }
+  },
+  "after_2374": {
+    "removed": [
+      [6.965, 7.39], [11.565, 12.181], [13.509, 15.115], [17.965, 18.915], [25.025, 25.753],
+      [29.845, 30.95], [31.885, 32.555], [35.965, 36.7], [45.205, 45.743], [51.64, 51.9]
+    ]
+  }
+}
