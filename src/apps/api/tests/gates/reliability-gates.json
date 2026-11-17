@@ -2917,7 +2917,8 @@
       "id": "kri-551-consented-retakes",
       "tickets": [
         "KRI-551",
-        "KRI-829"
+        "KRI-829",
+        "KRI-1518"
       ],
       "symptom": "Consented voiceover preflight never called the existing retake detector, retaining the N3 abandoned kilometer-30 delivery.",
       "boundary": "planner",
@@ -2954,6 +2955,7 @@
       ],
       "regression_tests": [
         "tests/agents/test_retake_detector.py",
+        "tests/agents/test_kri1518_retake_needs_kept_redelivery.py",
         "tests/services/test_speech_cleanup_preflight.py",
         "tests/services/test_speech_cleanup_retakes_consent.py",
         "tests/services/test_speech_cleanup_decision.py",
@@ -2984,6 +2986,7 @@
         "malformed detector positions",
         "detector failure",
         "EN/TR repetition",
+        "retake span with no kept re-delivery (KRI-1518)",
         "legacy client refusal",
         "keep original",
         "same-analysis reapproval",
