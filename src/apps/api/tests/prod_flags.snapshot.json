@@ -1523,6 +1523,10 @@
       "source": "default",
       "value": false
     },
+    "talking_fit_caption_geometry_enabled": {
+      "source": "default",
+      "value": true
+    },
     "talking_head_route_follows_prompt_enabled": {
       "source": "default",
       "value": true
