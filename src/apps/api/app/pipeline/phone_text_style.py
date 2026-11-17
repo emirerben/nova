@@ -681,6 +681,10 @@ _RELAXED_FIT = _FitStrategy(
 # Roles that choose their own spot; label and pinned keep the spot their lane gave the row.
 AUTO_PLACED_ROLES = frozenset({"title", "caption", "lyric"})
 PLACEMENT_CASCADE = ("bottom_left", "top_left", "middle", "top_right")
+# ``source_params`` key (`phone_narrated_plan.narrated_title_element`): a `LABEL_ANCHORS` name
+# the row tries before `PLACEMENT_CASCADE`. A writer's preference, never the creator's spot
+# (hers is ``creator_style_fields``, which pins it).
+PREFERRED_POSITION = "preferred_position"
 
 
 @dataclass(frozen=True)
@@ -774,6 +778,12 @@ def _place(
     pinned_position = bool(authored & {"position", "x_frac", "y_frac", "alignment"})
     if pinned_position:
         positions = ["authored"]
+    elif "position" not in wanted and (
+        (preferred := (row.get("source_params") or {}).get(PREFERRED_POSITION)) in LABEL_ANCHORS
+    ):
+        # Tahini run: the phone narrated title tries its writer's spot (the top band) before
+        # the cascade; a face or the wordmark there still sends it down the cascade.
+        positions = [preferred, *(p for p in positions if p != preferred)]
     fixed = pinned_position or position_fixed or lane_fixed
     # Only a caption position the creator asked for this turn goes to the real bottom; an
     # unasked or saved caption keeps clear above the wordmark (the obstacle fit relies on it).

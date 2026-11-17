@@ -18219,7 +18219,15 @@ def _run_phone_narrated_job(
                     variant_id="narrated",
                     glossary=_caption_glossary(snapshot, all_candidates),
                 )
-                cues = build_plain_cues(caption_transcript.words, attach_words=True)
+                # Tahini run: a spoken list's "2." stays with its words (off: as before).
+                from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+                    narrated_caption_blocks,
+                    narrated_cue_blocks,
+                )
+
+                cues = build_plain_cues(
+                    caption_transcript.words, attach_words=True, **narrated_cue_blocks()
+                )
                 cues = correct_caption_cues(
                     cues,
                     detected_lang,
@@ -18244,6 +18252,9 @@ def _run_phone_narrated_job(
                     cues = _apply_creator_spellings(
                         cues, _caption_glossary(snapshot, all_candidates)
                     )
+                # Tahini run: the finished sentences cut into short blocks (the phone Talking
+                # budget); off keeps the 14-word sentence cues.
+                cues = narrated_caption_blocks(cues)
                 # KRI-1177: this writer draws the typed caption look too, so the asked case is
                 # the cue text here as well (else its receipt reads as a look later changed).
                 cues = generation_caption_cues(cues, language=detected_lang)
@@ -18416,8 +18427,14 @@ def _run_phone_narrated_job(
                         bound=bool(snapshot.get("creator_brief_binding")),
                     )
 
-            opening_title_end_s = narrated_title_end_s(
-                transcript.words[0].end_s if transcript.words else None
+            # Tahini run: held to the end of the first sentence (2.5-3 s); off: a second
+            # after the first word, as the cloud narrated intro.
+            from app.pipeline.phone_narrated_plan import narrated_title_hold_end_s  # noqa: PLC0415
+
+            opening_title_end_s = (
+                narrated_title_hold_end_s(transcript.words)
+                if settings.narrated_title_legibility_enabled
+                else narrated_title_end_s(transcript.words[0].end_s if transcript.words else None)
             )
             spoken_rows: list[dict] = []
             spoken_receipt: dict | None = None

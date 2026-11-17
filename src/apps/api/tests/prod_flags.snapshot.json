@@ -857,6 +857,10 @@
       "source": "default",
       "value": true
     },
+    "narrated_caption_blocks_enabled": {
+      "source": "default",
+      "value": true
+    },
     "narrated_caption_render_promise_enabled": {
       "source": "default",
       "value": true
@@ -899,6 +903,10 @@
     },
     "narrated_storyboard_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
+      "value": true
+    },
+    "narrated_title_legibility_enabled": {
+      "source": "default",
       "value": true
     },
     "narrated_whisper_model": {

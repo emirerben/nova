@@ -511,6 +511,24 @@ class Settings(BaseSettings):
     # False: byte-identical rows and placement. Apply: `fly secrets set
     # TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
     title_legibility_enabled: bool = True
+    # Tahini run (2026-11-17, phone Voiceover): the narrated captions came out as whole
+    # sentences (14 words, 4 lines, 6 s on screen) and a spoken list's "2." / "3." each became
+    # a caption of its own. With this on, the phone narrated writer cuts its captions with the
+    # phone Talking budget (`captions.PHONE_CUE_BUDGET`: 8 words, 40 characters, 3 s) and a
+    # bare list number joins the words after it ("2. The topping."). Default TRUE. False:
+    # byte-identical cues. Apply: `fly secrets set NARRATED_CAPTION_BLOCKS_ENABLED=false`
+    # (api + worker) + restart.
+    narrated_caption_blocks_enabled: bool = True
+    # Tahini run: the phone narrated opening title was grey (#767676, the automatic fill's
+    # mid tone), dropped from its top spot to the middle of the food and gone after 1.56 s.
+    # With this on (`phone_narrated_plan.narrated_title_element`): white unless the creator
+    # chose a colour, a dark outline where the footage under it reads under 4.5:1 (the title
+    # legibility measurement, also behind TITLE_LEGIBILITY_ENABLED), its own top spot first
+    # when that is clear of faces and the wordmark (the captions then keep clear of the
+    # title), and held to the end of the first spoken sentence, 2.5-3 s. Default TRUE. False:
+    # byte-identical title and caption placement. Apply: `fly secrets set
+    # NARRATED_TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
+    narrated_title_legibility_enabled: bool = True
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
