@@ -256,8 +256,6 @@ def _strip_clear_of_marks(
     height = min(bottom - top, placement.height)
     if height < MIN_ZONE_HEIGHT:
         return None
-    if not bottom_zone:
-        top = EDGE_INSET
     strip = CardPlacement(0.5, top + height / 2, STRIP_WIDTH, placement.zone, height)
     if any(boxes_intersect(strip.box, b) for b in (*blockers, *side_blockers)):
         return None

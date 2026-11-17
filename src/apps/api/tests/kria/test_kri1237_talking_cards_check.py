@@ -714,7 +714,7 @@ def test_removing_one_card_names_it_as_removed(monkeypatch: pytest.MonkeyPatch) 
         media_overlays=[_card_payload("pip-0", "users/owner/plan/item/pool/shot-a.png", 1.0, 3.0)],
     )
     receipt = _final(job)
-    assert receipt.status == "partial"
+    assert receipt.status == "met"  # she removed it herself: said, but not a miss
     assert "0:01 Screenshot A" in receipt.reason
     shown, missed = receipt.reason.split("; not shown: ")
     assert "Screenshot B" in missed and "removed" in missed and "Screenshot B" not in shown
@@ -993,3 +993,27 @@ def test_a_render_receipt_never_reaches_approval_readiness() -> None:
     _receipt(CARDS, plan_facts_from_phone_variant(_run4_variant()))  # a partial finished receipt
     assert _readiness()["r4"] == before
     assert before["disposition"] in APPROVABLE
+
+
+def test_a_card_she_removed_in_the_editor_is_said_but_is_not_a_miss() -> None:
+    """Self-review of the run-4 fix: "Partly" is for what Kria left out. A card the creator
+    deleted in the editor is her own choice, with or without pop-ins next to it."""
+    import dataclasses
+
+    from app.kria.brief_checks import GroundedCardFact
+
+    facts = plan_facts_from_phone_variant(_run4_variant(unplaced=[]))
+    removed = GroundedCardFact(
+        label="Screen Recording 9", status="unplaced", reason="removed_in_editor"
+    )
+    with_beats = dataclasses.replace(facts, grounded_cards=(*facts.grounded_cards, removed))
+    assert _receipt(CARDS, with_beats).status == "met"
+
+    cards_only = dataclasses.replace(with_beats, reaction_beats=())
+    receipt = _receipt(CARDS, cards_only)
+    assert receipt.status == "met", receipt
+    assert "removed in the editor" in (receipt.reason or "")
+    # ...and one Kria left out next to it is still a miss.
+    dropped = GroundedCardFact(label="Screen Recording 5", status="unplaced", reason="overlap")
+    both = dataclasses.replace(cards_only, grounded_cards=(*cards_only.grounded_cards, dropped))
+    assert _receipt(CARDS, both).status == "partial"

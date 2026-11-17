@@ -144,3 +144,24 @@ def test_the_worker_hook_outlines_the_title_and_records_the_receipt(monkeypatch)
         off = _style_rows_keeping_title_look(rows, job_id="j", canvas=CANVAS)
         assert "title_legibility" not in generation_style_fields()
     assert off == rows
+
+
+def test_the_outline_goes_once_the_line_reads_without_it():
+    """Self-review of the run-4 fix: an outline this pass drew is its own to remove. A title
+    outlined on a light frame and re-compiled on a dark one must not keep a stale outline."""
+    outlined, _ = title_legibility_pass(_rows(), [_frame(235)], canvas=CANVAS)
+    assert all("stroke_width" in row for row in outlined)
+
+    again, receipt = title_legibility_pass(outlined, [_frame(30)], canvas=CANVAS)
+
+    assert again == _rows()
+    assert all(not line["treated"] for line in receipt["lines"])
+
+
+def test_her_own_outline_stays_on_a_dark_frame():
+    rows = _rows()
+    rows[0] = {**rows[0], "stroke_color": "#FF0000", "stroke_width": 5.0}
+
+    again, _ = title_legibility_pass(rows, [_frame(30)], canvas=CANVAS)
+
+    assert (again[0]["stroke_color"], again[0]["stroke_width"]) == ("#FF0000", 5.0)

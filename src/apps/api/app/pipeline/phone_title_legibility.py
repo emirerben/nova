@@ -58,6 +58,16 @@ def _creator_styled(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _without_own_outline(row: dict) -> dict:
+    params = dict(row.get("source_params") or {})
+    look = dict(params.get(look_mod.TITLE_LOOK_PARAM) or {})
+    if not look.pop(_MARK, False):
+        return row
+    params[look_mod.TITLE_LOOK_PARAM] = look
+    bare = {k: v for k, v in row.items() if k not in ("stroke_color", "stroke_width")}
+    return {**bare, "source_params": params}
+
+
 def title_legibility_pass(
     rows: list[dict], frames: Sequence[legibility.GreyFrame], *, canvas: Any
 ) -> tuple[list[dict], dict[str, Any] | None]:
@@ -91,7 +101,9 @@ def title_legibility_pass(
             }
             lines.append(entry)
             if contrast is None or contrast >= legibility.MIN_CONTRAST:
-                out.append(row)
+                # An outline this pass drew on an earlier compile goes once the line reads
+                # without it (the title moved, or the footage changed); hers always stays.
+                out.append(_without_own_outline(row) if contrast is not None else row)
                 continue
             if _creator_styled(row):
                 entry["skipped"] = "creator_styled"

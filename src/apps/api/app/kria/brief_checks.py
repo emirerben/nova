@@ -9072,6 +9072,11 @@ def _spoken_cards_receipt(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return None
 
 
+def _left_out_by_kria(missed: Sequence[GroundedCardFact]) -> bool:
+    """Any unshown Visual the creator did not remove herself."""
+    return any(card.reason != "removed_in_editor" for card in missed)
+
+
 def _check_grounded_cards(
     req: BriefRequirement, cards: Sequence[GroundedCardFact]
 ) -> RequirementReceipt:
@@ -9086,8 +9091,10 @@ def _check_grounded_cards(
             missed,
             prefix=say(en="; not shown: ", tr="; çıkmadı: "),
         )
-        # A Visual left out is a miss to say, never a "Done" (Q1 run 4).
-        return _receipt(req, "partial" if missed else "met", reason, verification="checked")
+        # A Visual left out is a miss to say, never a "Done" (Q1 run 4); one she removed in the
+        # editor herself is said, but is her choice, not a miss.
+        status = "partial" if _left_out_by_kria(missed) else "met"
+        return _receipt(req, status, reason, verification="checked")
     if missed:
         lead = say(
             en="None of your Visuals showed as a card",
@@ -9292,8 +9299,8 @@ def _unshown_visuals_receipt(req: BriefRequirement, facts: PlanFacts) -> Require
         for card in facts.grounded_cards
         if card.status == "unplaced" and card.label not in beat_labels
     ]
-    if not missed:
-        return None
+    if not _left_out_by_kria(missed):
+        return None  # nothing unshown, or only cards she removed in the editor herself
     reason = _fit_card_reason(say(en="Not shown: ", tr="Çıkmadı: "), [], missed, prefix="")
     return _receipt(req, "partial", reason, verification="checked")
 

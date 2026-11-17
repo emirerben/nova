@@ -433,8 +433,8 @@ def _candidates(
     avoid: Sequence[NormalizedBox] = (),
     top_band: bool = False,
 ) -> list[tuple[str, float]]:
-    """(kind, block top) in the order to try them. ``top_band`` (the ink-stacked retry, see
-    `_top_band_squeeze`) adds the highest spot the frame margin allows."""
+    """(kind, block top) in the order to try them. ``top_band`` (the ink-stacked retry in
+    `place_title_look`) adds the highest spot the frame margin allows."""
     first = 0.5 - height / 2 if position == "middle" else _BLOCK_TOP
     found = [("preset", first)]
     if top_band:
