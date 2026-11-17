@@ -36,7 +36,7 @@ _FILLERS = _phrases(
 # A whole clause that drops the pending file or goes on with the rest. A plain "continue" /
 # "go ahead" is NOT one: the still-checking reply asks for exactly that once the clip is ready.
 _GO_WITHOUT = _phrases(
-    "skip", "skip it", "skip that", "skip this", "skip that one", "skip this one",
+    # Each names the file or "the rest": a bare "skip it" / "drop it" may be about anything.
     "skip that clip", "skip this clip", "skip the clip", "skip that file", "skip the file",
     "skip that photo", "skip the photo", "skip that screenshot", "skip the screenshot",
     "skip that visual", "skip the visual", "skip that image", "skip the image",
@@ -45,15 +45,11 @@ _GO_WITHOUT = _phrases(
     "do it with the rest", "make it with the rest", "use the others",
     "continue without it", "go ahead without it", "go on without it", "carry on without it",
     "do it without it", "make it without it", "continue without that", "go without it",
-    "leave it out", "leave that out", "drop it", "drop that", "ignore it", "ignore that",
-    "forget it", "forget that", "never mind it", "never mind that one",
-    "atla", "onu atla", "atla onu", "o klibi atla", "bu klibi atla", "o dosyayı atla",
-    "geç", "onu geç", "geç onu", "boşver", "onu boşver", "onu çıkar", "çıkar onu",
+    "o klibi atla", "bu klibi atla", "o dosyayı atla", "o görseli atla",
     "kalanlarla devam et", "diğerleriyle devam et", "geri kalanlarla devam et",
     "onsuz devam et", "onsuz yap", "onsuz hazırla",
-    "überspringen", "überspring es", "überspring das", "lass es weg", "lass das weg",
-    "ohne weitermachen", "mach ohne weiter", "mach mit dem rest weiter",
-    "mit dem rest weitermachen", "mach ohne es weiter",
+    "mach mit dem rest weiter", "mit dem rest weitermachen", "ohne weitermachen",
+    "mach ohne weiter", "überspring die datei", "überspring das bild",
 )  # fmt: skip
 _CLAUSE_BREAK = re.compile(r"[,.;!?\n]+|\s(?:and|then|ve|sonra|und|dann)\s", re.IGNORECASE)
 

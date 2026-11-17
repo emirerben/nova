@@ -253,6 +253,20 @@ async def test_a_plain_continue_still_waits_on_an_early_run(monkeypatch, clip_in
 
 
 @pytest.mark.asyncio
+async def test_a_bare_skip_it_is_not_read_as_dropping_the_visual(monkeypatch, clip_intents) -> None:
+    """P8: "skip it" may be about a title or a part; only wording naming the file or "the
+    rest" drops the pending Visual on an early run."""
+    user_id, thread_id, _pending_id = _seed()
+    lyrics._model(monkeypatch)
+    _publishes(monkeypatch)
+    with sync_session() as db:
+        revision = int(db.get(CreationThread, thread_id).revision)
+    accepted = await _submit(user_id, thread_id, "skip it", revision)
+    result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+    assert result["status"] == "continued"
+
+
+@pytest.mark.asyncio
 async def test_pending_footage_still_holds_the_turn(monkeypatch, clip_intents) -> None:
     """P3: the phone take is not analysed yet; the last run keeps the old reply."""
     user_id, thread_id, _pending_id = _seed(footage_pending=True)
