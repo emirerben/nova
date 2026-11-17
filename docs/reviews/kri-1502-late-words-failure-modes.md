@@ -53,6 +53,14 @@ Late-word move (`tests/pipeline/test_late_word_realign.py`, replay in
     cuts and label time exactly.
 12. **Other takes change**: no move on 12 recorded word/silence sets in `tests/fixtures`, nor on
     the Cusco T3, Çiğdem S2 and S4 kit runs replayed on their real audio (offline, below).
+13. **The clamp outruns the gates** (review of #2374): the run may not start before the word
+    before it ends, so the size, ratio and syllable gates judge the island left after that
+    word, never the whole of it (`fm14`).
+14. **A second pass of the same take loses the words** (review of #2374): captions asked in
+    another language come from a hinted re-transcription; if it stamps the moved words into
+    the same pause, the new cut would drop them. They follow the recorded move
+    (`follow_late_runs`, `diagnostics.late_words`) in the phone and cloud caption paths
+    (`fm15`, worker test "late-stamped second caption pass").
 
 Draft reply (`tests/kria/test_kri1508_draft_promises_reply.py`):
 
