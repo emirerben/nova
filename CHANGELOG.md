@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.1.0] - 2026-11-17
+
+### Fixed
+- fix: a stuck Visual is re-sent and no longer blocks the chat (KRI-1469, KRI-1470) (#2380) <!-- release-pr: 2380 -->
+
 ## [0.89.0.0] - 2026-11-16
 
 ### Added
