@@ -441,8 +441,10 @@ def _review(monkeypatch: pytest.MonkeyPatch, language: str | None = None) -> tup
 
 
 def test_switch_off_reproduces_the_prod_review_word_for_word(tahini, monkeypatch) -> None:
-    """F15 (red control)."""
+    """F15 (red control). The word-cue and pace receipts (NARRATED_CUE_RECEIPTS_ENABLED, same
+    PR) also change this review, so prod's text needs both switches off."""
     _off(monkeypatch, "left_out_recheck_enabled")
+    _off(monkeypatch, "narrated_cue_receipts_enabled")
     text, _receipts = _review(monkeypatch)
     assert text == FIXTURE["review"]["reply"]
 
