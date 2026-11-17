@@ -42,6 +42,11 @@ from app.services import edit_direction_planner as planner
         ("Stop looping the clips", "allow_repeat", "once"),
         ("Use every video only once", "allow_repeat", "once"),
         ("Don't repeat the footage", "allow_repeat", "once"),
+        # Tahini run (job 1d062f21): "a clip" read as no permission, so nothing could repeat.
+        ("Change the picture about once a second; reuse a clip if needed.", None, "allow_repeat"),
+        ("Feel free to repeat any shot", None, "allow_repeat"),
+        ("Don't reuse a clip", "allow_repeat", "once"),
+        ("Repeat a word in the title", None, "once"),
     ],
 )
 def test_permission_is_grounded_in_creator_words(words, previous, expected):

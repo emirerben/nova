@@ -309,6 +309,7 @@ class NarratedStepFact:
     text: str = ""
     out_of_sequence: bool = False
     moment: tuple[str, float | None] | None = None  # (words, shown at)
+    clip: str = ""  # Tahini run: the clip's proxy basename, a clip-scoped ask's other id
 
 
 @dataclass(frozen=True)
@@ -2535,6 +2536,7 @@ def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> Plan
                 text=" ".join(str(row.get("text") or "").split()),
                 out_of_sequence=row.get("out_of_sequence") is True,
                 moment=moment,
+                clip=str(row.get("clip") or ""),
             )
         )
     basis = record.get("ordering_basis")
@@ -15823,7 +15825,21 @@ def judged_at_render(req: BriefRequirement) -> bool:
         # Review of #2129: keep-whole is judged again on the finished montage's cuts; a stored
         # plan receipt can be stale (a freeze or speed changes the cuts).
         or _wants_whole_take(req)
+        # Tahini run: a typed cut pace is read off the finished Voiceover cut's steps.
+        or _judged_on_narrated_render(req)
     )
+
+
+def _judged_on_narrated_render(req: BriefRequirement) -> bool:
+    from app.kria.narrated_render_checks import judged_on_narrated_render  # noqa: PLC0415
+
+    return judged_on_narrated_render(req)
+
+
+def _narrated_render_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    from app.kria.narrated_render_checks import check_narrated_render_ask  # noqa: PLC0415
+
+    return check_narrated_render_ask(req, facts)
 
 
 def _asks_landscape_fit(req: BriefRequirement) -> bool:
@@ -17291,6 +17307,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         return _check_whole_line(req, facts)
     if req.kind != "timing" and _wants_whole_take(req):
         return _check_whole_take(req, facts)
+    if (narrated := _narrated_render_receipt(req, facts)) is not None:
+        # Tahini run: a clip named on a word, or a typed cut pace, read off the finished
+        # Voiceover cut's own steps (render-time only), ahead of the generic style check.
+        return narrated
     if req.kind == "text":
         req = _as_list_label(req, facts)  # KRI-1471: the example, not clip text
         researched = None if req.literal else _check_research(req, facts)

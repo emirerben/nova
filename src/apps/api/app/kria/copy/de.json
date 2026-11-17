@@ -2132,6 +2132,10 @@
     "I planned this without {names}: it's still being checked. Ask me to add it once it's ready.": "Ich habe das ohne {names} geplant, weil es noch geprüft wird. Sag mir, dass ich es hinzufügen soll, sobald es fertig ist.",
     "I planned this without {names}: they're still being checked. Ask me to add them once they're ready.": "Ich habe das ohne {names} geplant, weil sie noch geprüft werden. Sag mir, dass ich sie hinzufügen soll, sobald sie fertig sind.",
     "one of your Visuals": "eines deiner Visuals",
-    "some of your Visuals": "einige deiner Visuals"
+    "some of your Visuals": "einige deiner Visuals",
+    "{shots} shots in {total:.1f} s, about one every {average:.1f} s; the longest is {longest:.1f} s": "{shots} Einstellungen in {total:.1f} s, etwa alle {average:.1f} s eine; die längste dauert {longest:.1f} s",
+    "{shots} shots in {total:.1f} s, about one every {average:.1f} s, not every {asked:.1f} s; the longest is {longest:.1f} s": "{shots} Einstellungen in {total:.1f} s, etwa alle {average:.1f} s eine, nicht alle {asked:.1f} s; die längste dauert {longest:.1f} s",
+    "When you say {v1}, the clip you named is on screen ({step_start_s:.1f}–{step_end_s:.1f} s)": "Wenn du {v1} sagst, ist der Clip, den du genannt hast, im Bild ({step_start_s:.1f}–{step_end_s:.1f} s)",
+    "When you say {v1}, another clip is on screen ({step_start_s:.1f}–{step_end_s:.1f} s); the clip you named plays at {shown_at} s": "Wenn du {v1} sagst, ist ein anderer Clip im Bild ({step_start_s:.1f}–{step_end_s:.1f} s); der Clip, den du genannt hast, läuft bei {shown_at} s"
   }
 }

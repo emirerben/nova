@@ -1969,6 +1969,20 @@ class Settings(BaseSettings):
     # (`narrated_footage_fit`). Edits that follow a filming guide are left as they were.
     # false = every clip from its first frame, slowed to fill its step, byte-identical.
     narrated_footage_fit_enabled: bool = True
+    # Tahini run (job 1d062f21, 2026-11-17) kill switch. On a phone Voiceover edit with no
+    # filming guide: a typed cut pace on the approved brief ("change the picture about once a
+    # second", `approximate_cut_duration_s`) cuts every long step into shots of about that
+    # length from footage not yet shown, instead of one long or slowed clip per step; a clip
+    # the creator named on a word ("the fork bite on "grab a fork"") that plays elsewhere is
+    # shown again on that word from a part of it not yet shown; and a named moment a hair
+    # short of a cut of its own is no longer refused (`narrated_footage_fit`). Needs
+    # NARRATED_FOOTAGE_FIT_ENABLED. false = byte-identical.
+    narrated_cut_pace_enabled: bool = True
+    # Tahini run kill switch. The finished phone Voiceover review judges a clip named on a word
+    # (which clip is on screen when the word is said) and a typed cut pace (shots, average and
+    # longest from the render's steps) instead of listing them under "Have a look". Render-time
+    # only: a draft is never held for them. false = byte-identical.
+    narrated_cue_receipts_enabled: bool = True
 
     # KRI-889: cut the lines a creator named ("cut the line 'with bread, no'") out of a
     # narrated edit's recorded voiceover, phone and cloud, and promise it on the draft.

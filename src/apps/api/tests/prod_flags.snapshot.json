@@ -869,6 +869,14 @@
       "source": "default",
       "value": true
     },
+    "narrated_cue_receipts_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "narrated_cut_pace_enabled": {
+      "source": "default",
+      "value": true
+    },
     "narrated_draft_promises_enabled": {
       "source": "default",
       "value": true
