@@ -18347,8 +18347,9 @@ def _one_row_per_ask(
 ) -> tuple[list[RequirementReceipt], list[RequirementReceipt]]:
     """KRI-1515: one reply row per sentence the creator wrote.
 
-    The brief may file one sentence as several asks ("Make a montage from these clips." became a
-    format ask and a whole-set ask), each with its receipt. A sentence is said once: its worst
+    The brief may file one sentence of a message as several asks ("Make a montage from these
+    clips." became a format ask and a whole-set ask), each with its receipt; asks from the same
+    message with the same words are that sentence. A sentence is said once: its worst
     verdict with the reasons of every part not done (a miss is never hidden), all the reasons
     when every part is done, and under "Have a look" alone when any part is unchecked and the
     rest is done. A sentence filed once keeps its receipt untouched.
@@ -18356,9 +18357,11 @@ def _one_row_per_ask(
 
     def key(receipt: RequirementReceipt) -> str:
         req = by_id.get(receipt.requirement_id)
-        if req is None:  # a route decline names no ask: its own row
+        if req is None or not req.source_turn_id:
+            # A route decline names no ask, and an ask with no message of its own cannot be
+            # told to be the same sentence: each keeps its own row.
             return f"\0{receipt.requirement_id}"
-        return " ".join(ask_text(req).split()).casefold()
+        return f"{req.source_turn_id}\0" + " ".join(ask_text(req).split()).casefold()
 
     groups: dict[str, list[RequirementReceipt]] = {}
     for receipt in judged:
@@ -18371,7 +18374,7 @@ def _one_row_per_ask(
             continue
         done = _row_severity(worst) == 3
         parts = [worst, *(r for r in group if r is not worst and (done or _row_severity(r) < 3))]
-        reasons = [r.full_reason for r in parts if r.full_reason]
+        reasons = [r.full_reason.rstrip(". ") for r in parts if r.full_reason]
         merged[text] = worst.with_reason("; ".join(dict.fromkeys(reasons)) or None)
     look: dict[str, RequirementReceipt] = {}
     for receipt in unchecked:

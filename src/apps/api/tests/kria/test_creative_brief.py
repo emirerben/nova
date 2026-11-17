@@ -715,7 +715,10 @@ def test_requirement_without_a_checker_is_never_reported_met() -> None:
 def test_reply_never_claims_an_unmet_requirement() -> None:
     brief = apply_updates(
         None,
-        [_upd("text", "per_clip"), _upd("order", "global", facts={"key": "capture_time"})],
+        [
+            _upd("text", "per_clip", description="label each clip"),
+            _upd("order", "global", facts={"key": "capture_time"}, description="in filming order"),
+        ],
         source_turn_id="t",
     )
     facts = PlanFacts(clip_ids=_CLIPS, ordering_basis="attachment")

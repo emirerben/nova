@@ -278,8 +278,10 @@ def test_talking_use_all_clips_keeps_its_own_answer():
 # ── one row per sentence ──────────────────────────────────────────────────────────────
 
 
-def _row(rid: str, text: str, kind: str = "style") -> BriefRequirement:
-    return BriefRequirement(id=rid, kind=kind, scope="global", description=text)
+def _row(rid: str, text: str, kind: str = "style", turn: str | None = "t1") -> BriefRequirement:
+    return BriefRequirement(
+        id=rid, kind=kind, scope="global", description=text, source_turn_id=turn
+    )
 
 
 def _receipt(rid: str, status: str, reason: str | None = None, *, checked: bool = True):
@@ -299,6 +301,21 @@ def test_one_sentence_filed_twice_and_unchecked_is_listed_once():
         brief, [_receipt("r1", "partial", checked=False), _receipt("r2", "partial", checked=False)]
     )
     assert _lines_with(text, "Make it pop.") == ["- Make it pop."]
+
+
+def test_the_same_words_from_another_message_or_no_message_stay_apart():
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            _row("r1", "Make it pop.", "order"),
+            _row("r2", "Make it pop.", "order", turn="t2"),
+            _row("r3", "Make it pop.", "order", turn=None),
+        ],
+    )
+    text = reply_from_receipts(
+        brief, [_receipt("r1", "met"), _receipt("r2", "met"), _receipt("r3", "met")]
+    )
+    assert len(_lines_with(text, "Make it pop.")) == 3
 
 
 def test_a_part_not_done_wins_and_different_sentences_stay_apart():
