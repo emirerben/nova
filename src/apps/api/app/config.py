@@ -3102,6 +3102,16 @@ class Settings(BaseSettings):
     # full-frame face boxes, byte-identical (`phone_text_styling._faces_where_drawn`).
     speaker_frame_caption_faces_enabled: bool = True
 
+    # KRI-1525: phone Talking chooses its caption look before the plan is compiled (KRI-632 face
+    # band, KRI-827 protected text), so the faces and background frames it measures against were
+    # sampled with no clip transform: a sideways take drawn with black bars was read as filling the
+    # screen. Captions then shrank into the top strip (34-38 px) and took black ink from the
+    # footage while drawn on the black bar. On: the take's letterbox scale is known before the first
+    # sample, and a centred, scaled-down take is sampled as drawn (picture over black). Default TRUE
+    # (bug fix); false + worker restart = today's sampling, byte-identical
+    # (`phone_text_styling._ensure_generation_environment`).
+    talking_fit_caption_geometry_enabled: bool = True
+
     # Qendresa item 21: a pin may sit in the middle and carry TikTok's native text look.
     # Default off; with it off a stray middle_center pin is drawn as top_center, no look.
     clip_text_tiktok_look_enabled: bool = False

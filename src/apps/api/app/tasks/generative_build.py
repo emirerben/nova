@@ -10598,6 +10598,14 @@ def _run_phone_subtitled_job(
             # Everything placed against the face (title, closing text, cards) maps
             # it through the same crop the recipe draws.
             framed_fit = "fill" if speaker_position_x is not None else landscape_fit
+            # KRI-1525: the caption look is chosen below (face band / protected text) before the
+            # plan is compiled; tell caption styling now how each take will be drawn, so a
+            # letterboxed take's faces and background are sampled where the phone draws them.
+            from app.services.phone_text_styling import (  # noqa: PLC0415
+                register_generation_speaker_fit,
+            )
+
+            register_generation_speaker_fit(framed_fit)
             face_box_to_canvas = (
                 _phone_face_box_mapper(binding, speaker_position_x, **text_canvas)
                 if speaker_position_x is not None
