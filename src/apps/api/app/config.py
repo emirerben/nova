@@ -499,6 +499,18 @@ class Settings(BaseSettings):
     # phone Talking edit becomes one styled row per line, stacked off her face, with an
     # optional logo above it. Off = byte-identical single title row.
     title_look_enabled: bool = False
+    # Q1 run 4 (2026-11-17): the stacked title look's lines keep a fixed cream / yellow fill and no
+    # step looked at the pixels under them, so cream text on her cream t-shirt read as nothing.
+    # With this on, the final title block is measured on the take frames
+    # (`pipeline/phone_title_legibility.py`) and a line under 4.5:1 gets a dark outline (the
+    # `stroke_color` / `stroke_width` row fields the numbered labels already draw), unless she
+    # set that line's colour or an outline. Receipt: `variant["title_legibility"]`. The same
+    # switch covers the placement half of that fix: a title that had to SHRINK to fit under her
+    # face is retried, lines stacked ink to ink, in the band above her face
+    # (`phone_title_look.place_title_look`); a full-size title keeps its spot. Default TRUE.
+    # False: byte-identical rows and placement. Apply: `fly secrets set
+    # TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
+    title_legibility_enabled: bool = True
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
@@ -514,6 +526,14 @@ class Settings(BaseSettings):
     # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_closing_title_enabled: bool = True
+    # Qendresa Q1 run 4 (2026-11-17): the brief filed her ending ('End with "comment REPO"',
+    # a text row whose `closing` fact is its literal) but the Main Creator's strategy had no
+    # `closing_title`, so the draft was held ("That exact text isn't in this draft."). With
+    # this on, the planner fills `closing_title` from that one live row on a phone Talking
+    # edit that draws closing text (`planner._with_brief_closing_title`). Default TRUE.
+    # False: byte-identical strategy. Rollback: `fly secrets set
+    # BRIEF_CLOSING_TITLE_FILL_ENABLED=false --app nova-video` + restart api + worker.
+    brief_closing_title_fill_enabled: bool = True
     # Item 14 (Qendresa's ending): when the creator asks to end on "comment <KEYWORD>"
     # (optionally with an arrow), a phone Talking edit draws her look instead of the
     # lime tag: a small white handwritten "comment", the keyword big in cream under it,

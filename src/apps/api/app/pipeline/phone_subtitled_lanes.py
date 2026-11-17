@@ -106,6 +106,9 @@ class SubtitledCardStrip(_LaneModel):
     x_frac: float = Field(default=0.5, ge=0, le=1)
     scale: float = Field(gt=0, le=1)
     height: float = Field(gt=0, le=1)
+    # Set only when the strip sits at a different height than the card (a strip moved past the
+    # watermark); None = the card's own ``y_frac``. Omitted from the dump while None.
+    y_frac: float | None = Field(default=None, ge=0, le=1)
 
 
 class SubtitledOverlayCard(_LaneModel):
@@ -208,6 +211,8 @@ class SubtitledOverlayCard(_LaneModel):
             payload.pop("animation", None)
         if self.strip is None:
             payload.pop("strip", None)
+        elif isinstance(payload.get("strip"), dict) and payload["strip"].get("y_frac") is None:
+            payload["strip"].pop("y_frac", None)
         return payload
 
 

@@ -1974,6 +1974,29 @@ def _ensure_generation_environment(canvas):
     )
 
 
+def generation_title_frames() -> list:
+    """The sampled take backgrounds of this generation as grey frames (`GreyFrame`), for the
+    title legibility pass; empty with no policy or no sampled frames."""
+    policy = _POLICY.get()
+    if not policy:
+        return []
+    from app.pipeline import caption_legibility as legibility
+    from app.pipeline.phone_text_background import HEIGHT, WIDTH
+
+    return [
+        legibility.GreyFrame(f["pixels"], WIDTH, HEIGHT, f["start_s"], f["end_s"])
+        for f in policy.get("_background_frames") or []
+    ]
+
+
+def register_title_legibility(receipt: dict | None) -> None:
+    """Hold the title legibility receipt `generation_style_fields` writes as
+    ``variant["title_legibility"]``."""
+    policy = _POLICY.get()
+    if policy is not None and receipt is not None:
+        policy["_title_legibility_receipt"] = receipt
+
+
 def generation_style_fields() -> dict:
     policy = _POLICY.get()
     if not policy:
@@ -2027,6 +2050,8 @@ def generation_style_fields() -> dict:
         )
     if policy.get("_caption_legibility_receipt") is not None:
         result["caption_legibility"] = copy.deepcopy(policy["_caption_legibility_receipt"])
+    if policy.get("_title_legibility_receipt") is not None:
+        result["title_legibility"] = copy.deepcopy(policy["_title_legibility_receipt"])
     return result
 
 

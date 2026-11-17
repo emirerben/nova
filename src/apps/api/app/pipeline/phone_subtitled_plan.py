@@ -1646,6 +1646,8 @@ def _compile_overlay_track(
         crop = _strip_source_crop(card, visual, canvas)
         if crop is not None:
             width_frac, x_frac = card.strip.scale, card.strip.x_frac
+            if card.strip.y_frac is not None:
+                y_frac = card.strip.y_frac
         clips.append(
             TimelineClip(
                 id=f"subtitled-overlay-{card.id}",
@@ -1860,6 +1862,8 @@ def _compile_video_overlay_clip(
     crop = _strip_source_crop(card, visual, canvas)
     if crop is not None:
         width_frac, x_frac = card.strip.scale, card.strip.x_frac
+        if card.strip.y_frac is not None:
+            y_frac = card.strip.y_frac
     return TimelineClip(
         id=f"subtitled-overlay-{card.id}",
         source_asset_id=asset.id,

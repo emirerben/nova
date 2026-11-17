@@ -1165,9 +1165,10 @@
     {
       "id": "qendresa-20-title-look",
       "needs_native": false,
-      "api_tests": "tests/tasks/test_title_look_worker.py tests/pipeline/test_phone_title_look.py tests/pipeline/test_phone_title_look_lines.py tests/kria/test_title_look_receipts.py tests/agents/test_title_look_prompt.py tests/test_raw_chat_text_readers.py",
+      "api_tests": "tests/tasks/test_title_look_worker.py tests/pipeline/test_phone_title_look.py tests/pipeline/test_phone_title_look_lines.py tests/pipeline/test_phone_title_legibility.py tests/kria/test_title_look_receipts.py tests/agents/test_title_look_prompt.py tests/test_raw_chat_text_readers.py",
       "paths": [
-        "src/apps/api/app/pipeline/phone_title_look.py"
+        "src/apps/api/app/pipeline/phone_title_look.py",
+        "src/apps/api/app/pipeline/phone_title_legibility.py"
       ]
     },
     {

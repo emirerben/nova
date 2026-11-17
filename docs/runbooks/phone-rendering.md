@@ -4263,10 +4263,16 @@ check plus its negative control and the watermark check must hold.
 A wide (landscape) layout card is cut to its measured text column (`source_crop` on the card
 clip, from `background_text_focus.measure_text_column` at bind) so the page is readable, and it
 cuts in and out with no fade. Where its band is free it is 0.94 of the frame wide
-(`phone_card_layout.strip_for`); beside the Kria wordmark it keeps its box. The band is always
-the card's own (same top, same height), so nothing new is covered. A second Visual for a mention
-a strip card already holds takes the second half of that window (each part >= 1.5 s in source
-seconds) instead of `overlap`; otherwise it stays unplaced and is named as not shown, as before.
+(`phone_card_layout.strip_for`). A card the layout moved beside the Kria wordmark (Q1 run 4:
+x 0.21-0.97, off-centre) becomes a centred 0.94 strip in the part of the same band that is clear
+of the wordmark (below it in the bottom band: y 0.789-0.98 in that run), when that part has the
+layout's minimum height and touches nothing the card avoided; otherwise it keeps its box. The
+strip never leaves the card's own band, so nothing new is covered, and the bottom edge of the
+band (item 15) is unchanged. A second Visual for a mention a strip card already holds takes the
+second half of that window (each part >= 1.5 s in source seconds) instead of `overlap`. When
+the mention is too short for two such parts, the first card keeps all of it and the second
+follows it to the end of its own proposed window, if at least 1.5 s is left there and nothing
+else is on screen; otherwise it stays unplaced and is named as not shown, with its reason.
 
 Gate (all required): `TALKING_CARD_STRIP_ENABLED` (default off) + the whole card layout gate
 above (its flag, `cardLayout`, protocol >= 40) + `sourceCrop` and `mediaCards` in

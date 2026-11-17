@@ -334,16 +334,19 @@ def test_worker_draws_wide_cards_as_strips_in_the_band_they_already_had(monkeypa
     for clip_id, clip in on.items():
         today, place = off[clip_id].visual_placement, clip.visual_placement
         assert (place.window_start, place.window_end) == (today.window_start, today.window_end)
-        assert place.y_fraction == today.y_fraction, "same band"
+        beside_mark = today.x_fraction != 0.5 and today.width_fraction < 0.94
+        if not beside_mark:
+            assert place.y_fraction == today.y_fraction, "same band"
         aspect = worker.ASPECT[clip.source_asset_id]
         if clip.source_crop is None:  # her portrait sign-up screenshot stays whole
             assert place == today and aspect < 1
             continue
         strips += 1
         assert (place.fade_in, place.fade_out) == (False, False)
-        if today.x_fraction == 0.5 and today.width_fraction < 0.94:
+        if today.x_fraction == 0.5 and today.width_fraction < 0.94 or beside_mark:
+            # full width and centred; beside the Kria mark it starts below the mark instead
             assert (place.width_fraction, place.x_fraction) == (pytest.approx(0.94), 0.5)
-        else:  # beside the Kria mark in the bottom band: the same box, the picture cut
+        else:  # already as wide as its spot: the same box, the picture cut
             assert (place.width_fraction, place.x_fraction) == (
                 today.width_fraction,
                 today.x_fraction,
@@ -356,7 +359,13 @@ def test_worker_draws_wide_cards_as_strips_in_the_band_they_already_had(monkeypa
             * (crop.height * source_h)
             / (crop.width * source_w)
         )
+        today_h = today.width_fraction * (1080 / 1920) / aspect
+        if beside_mark:  # moved past the mark: never taller than the card it replaces
+            assert drawn_h <= today_h + 1e-4
+            top = place.y_fraction - drawn_h / 2
+            assert top >= 0.7745 + 0.015 - 1e-3 and top + drawn_h <= 0.98 + 1e-3
+            continue
         # as tall as the whole-picture card it replaces: nothing new above or below it
-        assert drawn_h == pytest.approx(today.width_fraction * (1080 / 1920) / aspect, abs=1e-4)
+        assert drawn_h == pytest.approx(today_h, abs=1e-4)
         assert crop.width < 0.5, "cut to the text column: over twice the text size"
     assert strips >= 10, "her wide screenshots and recordings are cut to their text"
