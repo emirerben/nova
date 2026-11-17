@@ -66,7 +66,7 @@ from app.agents.main_creator import (
     MainCreatorOutput,
 )
 from app.config import settings
-from app.kria import ask_refusals, voiceover_script
+from app.kria import ask_refusals, pending_visuals, voiceover_script
 from app.kria.ask_refusals import is_refusal_code, stale_capability_refusal
 from app.kria.brief import (
     BriefCoverageError,
@@ -2565,6 +2565,12 @@ async def _last_ready_render(
 turn_excluded_anchors: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
     "kria_turn_excluded_anchors", default=None
 )
+# KRI-1470: the pending Visuals this turn goes on without (their media ids, the sentence
+# naming them), set by `_plan_live_turn`'s analysis gate. Their clip matching skips them; the
+# manifest keeps them. None = nothing left out.
+turn_left_out_visuals: contextvars.ContextVar[tuple[frozenset[str], str] | None] = (
+    contextvars.ContextVar("kria_turn_left_out_visuals", default=None)
+)
 # Why the last `_load_editor_target` in this task returned None (None = it did not miss).
 _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "kria_editor_target_miss", default=None
@@ -3273,10 +3279,14 @@ async def _load_creator_inputs(
             )
         # Capture DB-backed clip identity before releasing the transaction for
         # the external planner/resolver calls below.
-        intent_clips = await load_intent_clips_for_item(db, item, persona)
+        intent_clips = _without_left_out_visuals(
+            await load_intent_clips_for_item(db, item, persona)
+        )
     raw_creator_request: str | None = None
     if settings.clip_intents_enabled and brief_on:
-        intent_clips = await load_intent_clips_for_item(db, item, persona)
+        intent_clips = _without_left_out_visuals(
+            await load_intent_clips_for_item(db, item, persona)
+        )
         # Over the bound is not an error here: the brief still carries the ask.
         raw_creator_request = await _load_raw_creator_request(
             db, thread_id=thread_id, user_message=user_message
@@ -3633,6 +3643,14 @@ def _clip_understanding_wait_until() -> float:
     return until
 
 
+def _without_left_out_visuals(clips: list[IntentClip]) -> list[IntentClip]:
+    """KRI-1470: this turn's clips minus the pending Visuals it goes on without."""
+    left_out = turn_left_out_visuals.get()
+    if not left_out:
+        return clips
+    return [clip for clip in clips if clip.media_id not in left_out[0]]
+
+
 async def _reload_intent_clips(
     db: AsyncSession, *, item_id: uuid.UUID, creator_id: uuid.UUID
 ) -> list[IntentClip]:
@@ -3651,7 +3669,7 @@ async def _reload_intent_clips(
         )
         if item is None or persona is None or persona.user_id != creator_id:
             return []
-        return await load_intent_clips_for_item(db, item, persona)
+        return _without_left_out_visuals(await load_intent_clips_for_item(db, item, persona))
     finally:
         await db.rollback()
 
@@ -7703,6 +7721,7 @@ async def _plan_live_turn(
     if changing is not None:
         return changing
     pending_analysis_ids: list[str] = []
+    turn_left_out_visuals.set(None)
     if settings.brief_binding_for(creator_id) and settings.kria_clip_understanding_enabled:
         from app.services.clip_intent_planning import wait_for_clip_understanding  # noqa: PLC0415
 
@@ -7719,6 +7738,28 @@ async def _plan_live_turn(
                 for clip in clips
                 if understanding_incomplete(clip.analysis, kind=clip.kind)
             ]
+            go_without = (
+                pending_visuals.visuals_to_go_without(clips, missing, user_message)
+                if missing
+                else None
+            )
+            if go_without is not None:
+                # KRI-1470: only Visuals are pending and this is the turn's last run, or
+                # the creator said to skip them. Plan without them and name each file.
+                left_out, why = go_without
+                turn_left_out_visuals.set(
+                    (
+                        frozenset(clip.media_id for clip in left_out),
+                        pending_visuals.left_out_notice(left_out),
+                    )
+                )
+                log.info(
+                    "kria_pending_visual_left_out",
+                    stage="main_creator",
+                    media_ids=[clip.media_id for clip in left_out],
+                    reason=why,
+                )
+                missing = []
             if missing:
                 # Extract and persist this turn's requirements before pausing.
                 # Otherwise a later "continue" would replace a long original
@@ -8252,6 +8293,9 @@ async def _plan_live_turn(
     updates, pin_notices = await _withdraw_stuck_pins(
         db, thread_id=thread_id, prior=prior_brief, updates=updates, user_message=user_message
     )
+    if (left_out := turn_left_out_visuals.get()) is not None:
+        # KRI-1470: said with the draft (and every reply that carries pin notices).
+        pin_notices = (left_out[1], *pin_notices)
     if answers_clip_question and updates:
         # KRI-966: a tapped length answer is the server's own option label, already applied by
         # the gate; the model's restatement of it is never the creator's length ask.

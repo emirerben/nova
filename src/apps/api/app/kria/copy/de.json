@@ -2122,6 +2122,10 @@
     "{count} caption has no line in {language} under it.": "{count} Untertitel hat keine Zeile auf {language} darunter.",
     "{count} captions have no line in {language} under them.": "{count} Untertitel haben keine Zeile auf {language} darunter.",
     "I couldn't check the line in {language} under the captions.": "Ich konnte die Zeile auf {language} unter den Untertiteln nicht prüfen.",
-    "Each caption has a smaller line in {language} under it.": "Unter jedem Untertitel steht eine kleinere Zeile auf {language}."
+    "Each caption has a smaller line in {language} under it.": "Unter jedem Untertitel steht eine kleinere Zeile auf {language}.",
+    "I planned this without {names}: it's still being checked. Ask me to add it once it's ready.": "Ich habe das ohne {names} geplant, weil es noch geprüft wird. Sag mir, dass ich es hinzufügen soll, sobald es fertig ist.",
+    "I planned this without {names}: they're still being checked. Ask me to add them once they're ready.": "Ich habe das ohne {names} geplant, weil sie noch geprüft werden. Sag mir, dass ich sie hinzufügen soll, sobald sie fertig sind.",
+    "one of your Visuals": "eines deiner Visuals",
+    "some of your Visuals": "einige deiner Visuals"
   }
 }
