@@ -39,6 +39,7 @@ pause BEFORE their voice) has not been seen in a job and is left alone.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -137,14 +138,17 @@ def find_late_runs(
             if hi < pause_lo - _EPS and hi - lo >= LATE_RUN_MIN_LEFT_PAUSE_S - _EPS
         ]
         island_lo = earlier_pauses[-1] if earlier_pauses else 0.0
+        if first > 0:
+            earlier_end = max(end for _t, _s, end in words[:first])
+            if earlier_end > island_lo + LATE_RUN_EDGE_TOL_S + _EPS:
+                continue  # an earlier word reaches into the voice: it may be that word's
+            # The run never starts before an earlier word ends, so the words keep their order
+            # (retake spans index them) and every gate below judges what is left of the island.
+            island_lo = max(island_lo, earlier_end)
         island_hi = pause_lo
         island_len = island_hi - island_lo
         if island_len < LATE_RUN_MIN_ISLAND_S - _EPS:
             continue
-        if first > 0 and max(end for _t, _s, end in words[:first]) > (
-            island_lo + LATE_RUN_EDGE_TOL_S + _EPS
-        ):
-            continue  # an earlier word reaches into the voice: it may be that word's
         run_lo = words[first][1]
         run_hi = max(end for _t, _s, end in words[first : last + 1])
         run_len = run_hi - run_lo
@@ -197,11 +201,6 @@ def realign_late_words(
         ):
             continue
         run_lo, run_hi = run.stamped
-        if run.first > 0:
-            # Never start before an earlier word ends (its end may drift LATE_RUN_EDGE_TOL_S into
-            # the island): the words keep their order, so retake spans keep indexing them.
-            island_lo = max(island_lo, max(times[index][1] for index in range(run.first)))
-            island_len = island_hi - island_lo
         scale = island_len / (run_hi - run_lo)
         for index in range(run.first, run.last + 1):
             start, end = times[index]
@@ -210,6 +209,66 @@ def realign_late_words(
             times[index] = (new_start, new_end)
         moved.append(run)
     return times, moved
+
+
+def follow_late_runs(words: Sequence[Any], late_runs: Sequence[Any] | None) -> list[Any]:
+    """Another pass's words of the same take, moved the way the analysis moved its own.
+
+    A caption pass in another language (or a re-transcription in the heard language) runs
+    whisper on the same take again, and it can stamp the same words into the same pause. The
+    cleanup plan now cuts that pause, so `silence_cut.remap_words` would drop them from the
+    captions. ``late_runs`` is the analysis's ``diagnostics["late_words"]``: pauses that the
+    silence spans and the voicing detector proved wordless. A word lying in one of them (as
+    `find_late_runs` reads "in dead air") is mapped onto that run's voice with the run's own
+    linear map; every other word keeps its times, and no word starts before the one before it
+    ends. Words are ``Word``-like objects or dicts with ``start_s``/``end_s``, in time order;
+    the same kinds come back. Without runs the list comes back as given.
+    """
+
+    maps: list[tuple[float, float, float, float, float, float]] = []
+    for run in late_runs or ():
+        try:
+            pause_lo, pause_hi = (float(v) for v in run["pause_s"])
+            stamped_lo, stamped_hi = (float(v) for v in run["stamped_s"])
+            island_lo, island_hi = (float(v) for v in run["moved_to_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if stamped_hi - stamped_lo > _EPS and island_hi - island_lo > _EPS:
+            maps.append((pause_lo, pause_hi, stamped_lo, stamped_hi, island_lo, island_hi))
+    if not maps:
+        return list(words)
+
+    def times(word: Any) -> tuple[float, float]:
+        if isinstance(word, dict):
+            return float(word["start_s"]), float(word["end_s"])
+        return float(word.start_s), float(word.end_s)
+
+    def with_times(word: Any, start: float, end: float) -> Any:
+        if isinstance(word, dict):
+            return {**word, "start_s": start, "end_s": end}
+        if dataclasses.is_dataclass(word):
+            return dataclasses.replace(word, start_s=start, end_s=end)
+        return word.model_copy(update={"start_s": start, "end_s": end})
+
+    out: list[Any] = []
+    previous_end: float | None = None
+    for word in words:
+        start, end = times(word)
+        new_start, new_end = start, end
+        for pause_lo, pause_hi, stamped_lo, stamped_hi, island_lo, island_hi in maps:
+            if not _in_dead_air(start, end, pause_lo, pause_hi):
+                continue
+            scale = (island_hi - island_lo) / (stamped_hi - stamped_lo)
+            new_start = min(island_hi, max(island_lo, island_lo + (start - stamped_lo) * scale))
+            new_end = min(island_hi, max(new_start, island_lo + (end - stamped_lo) * scale))
+            if previous_end is not None and new_start < previous_end:
+                new_start = previous_end
+                new_end = max(new_end, new_start)
+            break
+        moved = (new_start, new_end) != (start, end)
+        out.append(with_times(word, new_start, new_end) if moved else word)
+        previous_end = new_end if previous_end is None else max(previous_end, new_end)
+    return out
 
 
 __all__ = [
@@ -223,5 +282,6 @@ __all__ = [
     "LateRun",
     "Voicing",
     "find_late_runs",
+    "follow_late_runs",
     "realign_late_words",
 ]

@@ -351,12 +351,19 @@ def _faces(_path, anchors, **_kwargs):
     return regions, {"attempted": len(anchors), "decoded": len(anchors), "detected": len(regions)}
 
 
-def _render(monkeypatch, *, late_words: bool) -> tuple[dict, SpeechCleanupAnalysisResult]:
-    """The phone Talking worker on the cleaned take, as the approved draft ran it."""
+def _render(
+    monkeypatch, *, late_words: bool, caption_request: str = "tr", hinted=None
+) -> tuple[dict, SpeechCleanupAnalysisResult]:
+    """The phone Talking worker on the cleaned take, as the approved draft ran it.
+
+    ``caption_request`` other than the spoken "tr" makes the worker transcribe the take again
+    with that hint; ``hinted`` is what that pass hears."""
     apply_prod_profile(monkeypatch)
     clear_request_context()
     result = _analysis(monkeypatch, late_words=late_words)
-    job, snapshot, _session, binding = _setup_subtitled(monkeypatch, duration_s=DURATION_S)
+    job, snapshot, _session, binding = _setup_subtitled(
+        monkeypatch, duration_s=DURATION_S, transcript_words=hinted
+    )
     _enable_beats(monkeypatch)  # the media lanes the list labels ride (on in prod)
     for name in PROD_ON:
         monkeypatch.setattr(settings, name, True)
@@ -373,7 +380,7 @@ def _render(monkeypatch, *, late_words: bool) -> tuple[dict, SpeechCleanupAnalys
                 "Turkish captions."
             ),
             "creator_strategy": {"edit_format": "subtitled", "audio_strategy": "original_audio"},
-            "caption_language_request": "tr",
+            "caption_language_request": caption_request,
             "landscape_fit": "fit",
         }
     )
@@ -460,3 +467,31 @@ def test_removal_type_is_unchanged_for_the_new_cut(monkeypatch):
     [new] = [r for r in result.cut_plan.removed if PAUSE[0] <= r.start_s < PAUSE[1]]
     assert new.reason == Removal(0.0, 1.0, "silence").reason
     assert result.public_receipt.category_counts.long_pauses == len(result.cut_plan.removed)
+
+
+# ------------------------------------------------------------------ a second caption pass
+
+
+def test_a_late_stamped_second_caption_pass_keeps_its_words_on_the_voice(monkeypatch):
+    """Review of #2374: captions asked in another language than the one spoken come from a second
+    whisper pass of the take. When that pass stamps "Kilitli sistemler" into the pause again, the
+    pause the plan now cuts must not take those words out of the captions: they follow the
+    analysis's move onto the voice. (The translation step is the provider's: replayed as is.)"""
+    from types import SimpleNamespace
+
+    from app.pipeline.transcribe import Word
+
+    hinted = [
+        Word(text=w["text"], start_s=w["start_s"], end_s=w["end_s"], confidence=1.0) for w in WORDS
+    ]
+    monkeypatch.setattr(
+        gb,
+        "_ensure_requested_caption_language",
+        lambda words, *, requested, **_k: SimpleNamespace(words=words, language=requested),
+    )
+    variant, result = _render(monkeypatch, late_words=True, caption_request="en", hinted=hinted)
+    words = [w for cue in variant["caption_cues"] for w in cue.get("words") or []]
+    texts = [w["text"].strip(".,") for w in words]
+    assert "Kilitli" in texts and "sistemler" in texts
+    said_at = remap_time(KILITLI[0], _plan(result))
+    assert words[texts.index("Kilitli")]["start_s"] == pytest.approx(said_at, abs=0.15)

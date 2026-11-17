@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.pipeline.late_word_realign import find_late_runs, realign_late_words
+from app.pipeline.late_word_realign import find_late_runs, follow_late_runs, realign_late_words
 
 DURATION_S = 20.0
 # T2 around the incident, in source seconds: "güçlü." ends, a pause, the wordless voice of
@@ -142,3 +142,58 @@ def test_a_short_pause_is_never_a_late_run_pause():
     split = [(11.343, 12.306), (13.384, 13.90), (13.95, 15.288)]
     assert find_late_runs(WORDS, silences, DURATION_S)  # touching spans merge
     assert find_late_runs(WORDS, split, DURATION_S) == []
+
+
+def test_fm14_gates_judge_the_island_left_after_the_word_before_it():
+    """Review of #2374: the word before the run may reach 0.1 s into the island. The size and
+    syllable gates must judge what is LEFT of the island, never the whole of it: here the whole
+    is 0.30 s (10 syllables/s) but only 0.21 s is left (14 syllables/s), so nothing moves."""
+    words = [("ve", 0.5, 1.79), ("kilitli", 2.1, 2.4), ("son", 3.05, 3.4)]
+    silences = [(1.0, 1.7), (2.0, 3.0)]
+    assert find_late_runs(words, silences, 4.0) == []
+    _times, runs = realign_late_words(words, silences, 4.0, voicing=_voice((1.7, 2.0)))
+    assert runs == []
+
+
+# ------------------------------------------------------------------ another pass of the same take
+
+# What the T2 analysis records for its one moved run (`diagnostics.late_words`).
+T2_RUN = {
+    "words": 2,
+    "stamped_s": [13.96, 15.24],
+    "moved_to_s": [12.306, 13.384],
+    "pause_s": [13.384, 15.288],
+}
+
+
+def _pass(*rows):
+    return [{"text": t, "start_s": s, "end_s": e} for t, s, e in rows]
+
+
+def test_fm15_a_second_pass_stamped_into_the_same_pause_follows_the_move():
+    """A caption pass in another language transcribes the take again; whisper can stamp the same
+    words into the same proven-dead pause. They move onto the voice like the analysis's own."""
+    second = _pass(("strong.", 11.0, 11.44), ("Locked", 13.9, 14.5), ("systems", 14.5, 15.2))
+    second += _pass(("make", 15.3, 15.6))
+    moved = follow_late_runs(second, [T2_RUN])
+    assert [w["text"] for w in moved] == ["strong.", "Locked", "systems", "make"]
+    assert moved[0] == second[0] and moved[3] == second[3]
+    assert ISLAND[0] - 1e-6 <= moved[1]["start_s"] < moved[2]["start_s"] <= ISLAND[1]
+    assert moved[2]["end_s"] <= ISLAND[1] + 1e-6
+
+
+def test_fm15_a_second_pass_already_on_the_voice_is_left_alone():
+    second = _pass(("Locked", 12.3, 12.9), ("systems", 12.9, 13.4), ("make", 15.3, 15.6))
+    assert follow_late_runs(second, [T2_RUN]) == second
+    assert follow_late_runs(second, None) == second
+    assert follow_late_runs(second, []) == second
+
+
+def test_fm15_a_moved_word_never_starts_before_the_word_before_it():
+    # The pass put "Locked" on the voice but "systems" in the pause: it lands after "Locked".
+    second = _pass(("Locked", 12.3, 13.3), ("systems", 13.9, 14.6), ("make", 15.3, 15.6))
+    moved = follow_late_runs(second, [T2_RUN])
+    starts = [w["start_s"] for w in moved]
+    assert starts == sorted(starts)
+    assert moved[1]["start_s"] >= moved[0]["end_s"] - 1e-9
+    assert moved[1]["end_s"] >= moved[1]["start_s"]

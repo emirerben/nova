@@ -10783,6 +10783,16 @@ def _run_phone_subtitled_job(
                 caption_words, detected_lang = _requested_language_caption_words(
                     words, detected_lang
                 )
+                if words_snapshot is not None:
+                    # KRI-1506: a second (hinted) pass can stamp the words the analysis moved
+                    # into the same pause again, and the plan cuts that pause: they follow the
+                    # move instead of dropping out of the captions. The analysis's own words
+                    # are already on their voice (a no-op).
+                    from app.pipeline.late_word_realign import follow_late_runs  # noqa: PLC0415
+
+                    caption_words = follow_late_runs(
+                        caption_words, words_snapshot.analysis.diagnostics.get("late_words")
+                    )
                 # Raw float mapping, no frame grid: the phone recipe plays
                 # each keep segment at its exact float offsets.
                 cut_words = [
@@ -37315,6 +37325,16 @@ def _render_subtitled_variant(
         )
         return retranscribed if retranscribed.words else None
 
+    def _follow_late_words(words: list) -> list:
+        """KRI-1506: a re-transcription's words stamped into a pause the preflight analysis
+        proved wordless follow its move onto the voice (`late_word_realign.follow_late_runs`),
+        so the cut never drops them from the captions. Legacy (non-preflight) cuts: as is."""
+        if active_snapshot is None:
+            return words
+        from app.pipeline.late_word_realign import follow_late_runs  # noqa: PLC0415
+
+        return follow_late_runs(words, active_snapshot.analysis.diagnostics.get("late_words"))
+
     def _resolve_verbatim_caption_language(detected: str, *, words: list) -> tuple[str, list]:
         """Resolve the caption language for an already-extracted verbatim word list
         (silence-cut / checked-uncut), honoring an explicit creator override.
@@ -37800,6 +37820,7 @@ def _render_subtitled_variant(
                 detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                     sc_language, words=sc_words
                 )
+                resolved_sc_words = _follow_late_words(resolved_sc_words)
                 caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
                 ensured = _ensure_cloud_caption_words(
                     detected_lang, caption_words, spoken=sc_language
@@ -38088,6 +38109,7 @@ def _render_subtitled_variant(
             detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                 sc_language, words=sc_words
             )
+            resolved_sc_words = _follow_late_words(resolved_sc_words)
             caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
             ensured = _ensure_cloud_caption_words(detected_lang, caption_words, spoken=sc_language)
             detected_lang, caption_words = ensured.language, ensured.words
