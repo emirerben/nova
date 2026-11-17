@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.2.0] - 2026-11-17
+
+### Changed
+- fix(kria): Qendresa Q1 run 4: ending no longer held, readable title above her face, centred card strip, done-list names unshown Visuals (KRI-1234) (#2381) <!-- release-pr: 2381 -->
+
 ## [0.89.1.0] - 2026-11-17
 
 ### Fixed
