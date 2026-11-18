@@ -937,6 +937,12 @@ async def _device_render_status(
     from app.services.device_render import device_export_maximum  # noqa: PLC0415
 
     response_fields = status.model_dump()
+    if settings.phone_watermark_exempt_for(user_id):
+        from app.kria.device_render import WatermarkExemption
+
+        response_fields["request"]["watermark_exemption"] = WatermarkExemption.for_account(
+            user_id
+        ).model_dump()
     maximum = device_export_maximum(job, variant_id)
     if maximum is not None:
         response_fields["request"]["max_export_duration_s"] = maximum
