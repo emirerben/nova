@@ -1175,6 +1175,10 @@
       "source": "default",
       "value": true
     },
+    "phone_watermark_exempt_user_ids": {
+      "source": "default",
+      "value": []
+    },
     "plan_item_advisor_enabled": {
       "source": "default",
       "value": true

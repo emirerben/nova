@@ -21,3 +21,9 @@ Independent review found that the text-only composition update could retain old 
 `BrandingTests/testPreviewRefusesBrandingChangesButReusesSameBranding` passes with the correction. Removing only the branding guard makes both grant and revoke assertions fail (2 expected assertion failures); the guard was restored. The same-policy update retains the existing player item. A focused package run covering this case, the synthetic export and both entitlement tests passed 4 tests with no failures.
 
 After the preview correction, the same 16 focused iOS app tests passed again on the dedicated empty simulator with the regenerated OpenAPI contract. Physical-device verification remains pending.
+
+## API CI contract corrections
+
+Current-head hosted API shards exposed five failures: absent entitlements added a null key to the capability response (three contract assertions), three export/lifetime helpers lacked a non-edit parity registration, and the new default-empty allowlist was absent from the static settings snapshot. Absent entitlements are now omitted, preserving the established wire shape. The helper methods are classified as lifecycle/export, not creative edits. The settings snapshot was refreshed locally without `--live`; its only change records the new empty default, not an observed production value.
+
+All five failed cases plus both entitlement tests passed locally (7 tests, 298 deselected). The authoritative generated-contract check still passes. These corrections do not change enabled-account grants, native render code or production settings.

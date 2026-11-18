@@ -4258,7 +4258,7 @@ async def capabilities(
             ),
             recipe_versions=[2] if phone_enabled else [],
             verified_features=(settings.phone_render_verified_features if phone_enabled else []),
-        ).model_dump(),
+        ).model_dump(exclude_none=True),
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),

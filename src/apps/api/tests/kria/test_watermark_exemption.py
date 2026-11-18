@@ -31,9 +31,15 @@ async def test_capabilities_do_not_exempt_other_accounts_or_web(monkeypatch):
         result["phone_rendering"]["watermark_exemption"]["owner_hash"]
         == WatermarkExemption.for_account(owner).owner_hash
     )
-    assert (await capabilities(SimpleNamespace(id=other), native_client=True))["phone_rendering"][
+    assert (
         "watermark_exemption"
-    ] is None
-    assert (await capabilities(SimpleNamespace(id=owner), native_client=False))["phone_rendering"][
+        not in (await capabilities(SimpleNamespace(id=other), native_client=True))[
+            "phone_rendering"
+        ]
+    )
+    assert (
         "watermark_exemption"
-    ] is None
+        not in (await capabilities(SimpleNamespace(id=owner), native_client=False))[
+            "phone_rendering"
+        ]
+    )
