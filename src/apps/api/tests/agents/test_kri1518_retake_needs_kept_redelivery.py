@@ -36,6 +36,11 @@ F5  An echo far away counts as the re-delivery: only the opening of what stays r
     span can re-say it, never a recap later in the clip.
 F6  The guard reaches the creator-decided `review_candidates` list. Those are asked, not cut,
     so they keep today's rules (the existing overlap filter still runs against the auto list).
+F7  Short words alone make two different sentences a "re-say" (review on #2378): "I" + "a",
+    or Turkish "ve" + "bir", are shared by most neighbouring sentences. Short words may help
+    reach the count ("At kilometer 30… sorry. At kilometer 32" shares "at" + "kilometer"),
+    but at least one shared word must be a real word of four letters or more. Control: the
+    prod KRI-1288 Q2 retake ("Five projects the AI builder." said twice) still cuts.
 """
 
 from __future__ import annotations
@@ -226,3 +231,53 @@ def test_kri1518_review_candidates_are_not_judged_by_the_guard(mock_client) -> N
     )
     assert out.retakes == []
     assert [(s.start_word, s.end_word) for s in out.review_candidates] == [(FIRST, LAST_ALTINLAR)]
+
+
+# ── F7: short words alone are no re-say ──────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("tokens", "span", "language"),
+    [
+        pytest.param(
+            "I went to a market today. I bought a new phone there and left.",
+            (0, 5),
+            "en",
+            id="en-only-I-and-a",
+        ),
+        pytest.param(
+            "Sabah ve bir kahve içtik. Akşam ve bir film izledik sonra eve döndük.",
+            (0, 4),
+            "tr",
+            id="tr-only-ve-and-bir",
+        ),
+    ],
+)
+def test_kri1518_sentences_sharing_only_short_words_are_not_a_re_say(
+    mock_client, tokens: str, span: tuple[int, int], language: str
+) -> None:
+    out = _run(mock_client, _plain(tokens), {"retakes": [_span(*span)]}, language=language)
+    assert _spans(out) == []
+
+
+_KRI1288_Q2 = Path(__file__).resolve().parents[1] / "fixtures/kri1288_q2_run2_tight_pauses.json"
+
+
+def test_kri1518_the_prod_kri1288_q2_retake_still_cuts(mock_client) -> None:
+    fixture = json.loads(_KRI1288_Q2.read_text())
+    words = [
+        {"i": i, "text": w["text"], "start_s": w["start_s"], "end_s": w["end_s"]}
+        for i, w in enumerate(fixture["words"])
+    ]
+    retake = next(r for r in fixture["consented"] if r["reason"] == "retake")
+    inside = [w["i"] for w in words if w["end_s"] <= retake["end_s"] + 0.05]
+    span = (inside[0], inside[-1])
+    assert [w["text"] for w in words[: span[1] + 1]] == [
+        "Five",
+        "projects",
+        "the",
+        "AI",
+        "builder.",
+    ]
+    out = _run(mock_client, words, {"retakes": [_span(*span)]}, language="en")
+    assert _spans(out) == [span]

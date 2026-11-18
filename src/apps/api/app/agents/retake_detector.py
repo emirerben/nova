@@ -178,6 +178,9 @@ def normalize_retake_spans(raw_entries: Sequence[Any], n_words: int) -> list[Ret
 _REDELIVERY_OPENING_WORDS = 4
 _REDELIVERY_MIN_SHARED = 2
 _STEM_CHARS = 5
+# Short words ("I", "a", "at", "ve", "bir", "the") are shared by most neighbouring sentences:
+# they may help reach the count, but one shared word must have at least this many letters.
+_MEANINGFUL_LETTERS = 4
 
 
 def _word_stem(text: str) -> str:
@@ -196,7 +199,8 @@ def spans_with_kept_redelivery(
 
     For each span, the first ``_REDELIVERY_OPENING_WORDS`` words AFTER it that no span cuts
     are its re-delivery's opening; at least ``_REDELIVERY_MIN_SHARED`` of them (or every word
-    of a shorter span) must also be words of the span. Another cut span never counts as the
+    of a shorter span) must also be words of the span, and at least one of the shared words
+    must have ``_MEANINGFUL_LETTERS`` letters or more. Another cut span never counts as the
     re-delivery, and a later recap is out of reach. Spans are expected normalized (sorted,
     merged, in range)."""
     cut = {i for span in spans for i in range(span.start_word, span.end_word + 1)}
@@ -216,7 +220,12 @@ def spans_with_kept_redelivery(
                 opening.append(stem)
             if len(opening) == _REDELIVERY_OPENING_WORDS:
                 break
-        if said and len(said & set(opening)) >= min(_REDELIVERY_MIN_SHARED, len(said)):
+        shared = said & set(opening)
+        if (
+            said
+            and len(shared) >= min(_REDELIVERY_MIN_SHARED, len(said))
+            and any(len(stem) >= _MEANINGFUL_LETTERS for stem in shared)
+        ):
             kept.append(span)
     return kept
 
