@@ -1165,9 +1165,10 @@
     {
       "id": "qendresa-20-title-look",
       "needs_native": false,
-      "api_tests": "tests/tasks/test_title_look_worker.py tests/pipeline/test_phone_title_look.py tests/pipeline/test_phone_title_look_lines.py tests/kria/test_title_look_receipts.py tests/agents/test_title_look_prompt.py tests/test_raw_chat_text_readers.py",
+      "api_tests": "tests/tasks/test_title_look_worker.py tests/pipeline/test_phone_title_look.py tests/pipeline/test_phone_title_look_lines.py tests/pipeline/test_phone_title_legibility.py tests/kria/test_title_look_receipts.py tests/agents/test_title_look_prompt.py tests/test_raw_chat_text_readers.py",
       "paths": [
-        "src/apps/api/app/pipeline/phone_title_look.py"
+        "src/apps/api/app/pipeline/phone_title_look.py",
+        "src/apps/api/app/pipeline/phone_title_legibility.py"
       ]
     },
     {
@@ -3911,6 +3912,16 @@
         "src/apps/api/tests/fixtures/narrated_alignment/kri1466_tor_moment.json",
         "src/apps/api/tests/pipeline/test_narrated_footage_fit.py",
         "src/apps/api/tests/tasks/test_kri1466_narrated_named_moment.py"
+      ]
+    },
+    {
+      "id": "kri-1470-pending-visual-go-ahead",
+      "needs_native": false,
+      "paths": [
+        "src/apps/api/app/kria/pending_visuals.py",
+        "src/apps/api/app/tasks/maintenance.py",
+        "src/apps/api/tests/kria/test_pending_visual_go_ahead_postgres.py",
+        "src/apps/api/tests/integration/test_pool_asset_unclaimed_resend_postgres.py"
       ]
     }
   ]

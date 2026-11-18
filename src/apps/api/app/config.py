@@ -499,6 +499,18 @@ class Settings(BaseSettings):
     # phone Talking edit becomes one styled row per line, stacked off her face, with an
     # optional logo above it. Off = byte-identical single title row.
     title_look_enabled: bool = False
+    # Q1 run 4 (2026-11-17): the stacked title look's lines keep a fixed cream / yellow fill and no
+    # step looked at the pixels under them, so cream text on her cream t-shirt read as nothing.
+    # With this on, the final title block is measured on the take frames
+    # (`pipeline/phone_title_legibility.py`) and a line under 4.5:1 gets a dark outline (the
+    # `stroke_color` / `stroke_width` row fields the numbered labels already draw), unless she
+    # set that line's colour or an outline. Receipt: `variant["title_legibility"]`. The same
+    # switch covers the placement half of that fix: a title that had to SHRINK to fit under her
+    # face is retried, lines stacked ink to ink, in the band above her face
+    # (`phone_title_look.place_title_look`); a full-size title keeps its spot. Default TRUE.
+    # False: byte-identical rows and placement. Apply: `fly secrets set
+    # TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
+    title_legibility_enabled: bool = True
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
@@ -514,6 +526,14 @@ class Settings(BaseSettings):
     # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_closing_title_enabled: bool = True
+    # Qendresa Q1 run 4 (2026-11-17): the brief filed her ending ('End with "comment REPO"',
+    # a text row whose `closing` fact is its literal) but the Main Creator's strategy had no
+    # `closing_title`, so the draft was held ("That exact text isn't in this draft."). With
+    # this on, the planner fills `closing_title` from that one live row on a phone Talking
+    # edit that draws closing text (`planner._with_brief_closing_title`). Default TRUE.
+    # False: byte-identical strategy. Rollback: `fly secrets set
+    # BRIEF_CLOSING_TITLE_FILL_ENABLED=false --app nova-video` + restart api + worker.
+    brief_closing_title_fill_enabled: bool = True
     # Item 14 (Qendresa's ending): when the creator asks to end on "comment <KEYWORD>"
     # (optionally with an arrow), a phone Talking edit draws her look instead of the
     # lime tag: a small white handwritten "comment", the keyword big in cream under it,
@@ -1453,6 +1473,12 @@ class Settings(BaseSettings):
     # byte-identical to the pre-fix behaviour.
     # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
     kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
+    # KRI-1470: when only Visuals (screenshots/recordings) are still being checked, the turn's
+    # last run, or a creator's "skip that", goes on without them and names each file left
+    # out. Pending footage still waits. False: every pending Visual holds the turn with "I'm
+    # still checking N of your clips", exactly as before.
+    # Apply: fly secret KRIA_PENDING_VISUAL_GO_AHEAD_ENABLED=false + restart (api + worker).
+    kria_pending_visual_go_ahead_enabled: bool = True
     # A continued run takes its earlier run's Main Creator, brief-extractor and clip-intent
     # answers for the same input instead of paying again (`app.services.turn_checkpoint`).
     # False: every continued run calls the models again, exactly as before the checkpoint.
@@ -3369,6 +3395,12 @@ class Settings(BaseSettings):
     # Keep response compatibility during the backend-first rollout. Set true
     # only after both queued-aware upload surfaces are deployed.
     pool_asset_queued_status_enabled: bool = False
+    # KRI-1469: the 5-min reaper re-sends a `queued` Visuals analysis nobody has claimed
+    # (a later Visual of the same item was claimed 2 min after it was sent, or 10 min
+    # passed). Same attempt token and deadline, so a second copy is a no-op. False: an
+    # unclaimed row waits for its deadline (~1 h for a photo), exactly as before.
+    # Apply: fly secret POOL_UNCLAIMED_RESEND_ENABLED=false + restart the light process.
+    pool_unclaimed_resend_enabled: bool = True
 
     poster_ondemand_repair_enabled: bool = Field(
         default=False,

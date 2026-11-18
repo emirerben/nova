@@ -73,6 +73,10 @@
       "source": "default",
       "value": false
     },
+    "brief_closing_title_fill_enabled": {
+      "source": "default",
+      "value": true
+    },
     "brief_long_request_enabled": {
       "source": "default",
       "value": false
@@ -560,6 +564,10 @@
     "kria_minimum_client_protocol": {
       "source": "default",
       "value": 2
+    },
+    "kria_pending_visual_go_ahead_enabled": {
+      "source": "default",
+      "value": true
     },
     "kria_phone_montage_preflight_enabled": {
       "source": "default",
@@ -1183,6 +1191,10 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "pool_unclaimed_resend_enabled": {
+      "source": "default",
+      "value": true
+    },
     "poster_ondemand_repair_enabled": {
       "source": "default",
       "value": false
@@ -1624,6 +1636,10 @@
       "value": true
     },
     "title_hold_not_length_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "title_legibility_enabled": {
       "source": "default",
       "value": true
     },

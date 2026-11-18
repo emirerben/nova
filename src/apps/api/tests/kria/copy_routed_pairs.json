@@ -168,6 +168,11 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "I didn't find a moment for it",
+   "uygun bir an bulamadım"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "I found that moment ({start}–{end}s into the clip) but not the exact frame to hold, so it plays normally. Tell me the second to freeze on, like \"freeze at {middle} seconds\"",
    "{v1} (klibin {start}–{end}. saniyeleri) ama tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede donsun, söyle; örneğin \"{middle}. saniyede dondur\""
   ],
@@ -225,6 +230,11 @@
    "app/kria/brief_checks.py",
    "None of the {total} clips got its own text in this draft.",
    "Bu taslakta {total} klibin hiçbirine kendi yazısı gelmedi."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Not shown: ",
+   "Çıkmadı: "
   ],
   [
    "app/kria/brief_checks.py",
@@ -425,6 +435,11 @@
    "app/kria/brief_checks.py",
    "You're full screen in your own take for the first {seconds} s, then {corner_0}.",
    "{v2}, sonra {corner_1}sın."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "another card was already on screen then",
+   "o sırada ekranda başka bir kart vardı"
   ],
   [
    "app/kria/brief_checks.py",
@@ -2290,6 +2305,26 @@
    "app/kria/brief_checks.py",
    "Each caption has a smaller line in {language} under it.",
    "Her altyazının altında daha küçük bir {language} satır var."
+  ],
+  [
+   "app/kria/pending_visuals.py",
+   "I planned this without {names}: it's still being checked. Ask me to add it once it's ready.",
+   "Bunu {names} olmadan planladım: hâlâ kontrol ediliyor. Hazır olunca eklememi iste."
+  ],
+  [
+   "app/kria/pending_visuals.py",
+   "I planned this without {names}: they're still being checked. Ask me to add them once they're ready.",
+   "Bunu {names} olmadan planladım: hâlâ kontrol ediliyorlar. Hazır olduklarında eklememi iste."
+  ],
+  [
+   "app/kria/pending_visuals.py",
+   "one of your Visuals",
+   "görsellerinden biri"
+  ],
+  [
+   "app/kria/pending_visuals.py",
+   "some of your Visuals",
+   "bazı görsellerin"
   ]
  ],
  "retired": [
@@ -2367,6 +2402,11 @@
    "app/kria/brief_checks.py",
    "This draft is about {round_s_facts_duration_s}s{outro}; you asked for {asked_en}.",
    "Bu taslak yaklaşık {round_s_facts_duration_s} saniye{outro}; sen {asked_tr} istedin."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "no spoken moment",
+   "konuşmanda uygun an yoktu"
   ],
   [
    "app/kria/brief_checks.py",

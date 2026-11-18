@@ -371,14 +371,21 @@ async def test_reaper_never_extends_or_loops_past_the_deadline(env, owner) -> No
     assert row.status == "queued"
     assert row.analysis_attempt_token == queued.analysis_attempt_token
     assert row.analysis_attempt_count == queued.analysis_attempt_count
-    assert len(env.published) == publishes_before
+    # KRI-1469: the unclaimed message is sent again by the 10-minute sweep, as the SAME
+    # attempt: its token, and a broker `expires` equal to the row's deadline at that sweep
+    # (`timeline[1]`; only our time travel moves it after that).
+    resent = env.published[publishes_before:]
+    assert len(resent) == 1
+    assert resent[0]["headers"]["pool_asset_attempt_token"] == queued.analysis_attempt_token
+    assert resent[0]["expires"] == timeline[1][1]
+    publishes_before = len(env.published)
     _age(asset_id, window - timedelta(minutes=15) + timedelta(seconds=1))
     for _ in range(3):
         maintenance.reconcile_stale_pool_assets()
     row = _row(asset_id)
     assert (row.status, row.error_code) == ("failed", "analysis_timed_out")
     assert row.analysis_attempt_count == queued.analysis_attempt_count
-    assert len(env.published) == publishes_before
+    assert len(env.published) == publishes_before  # nothing is sent past the deadline
     _step(
         "reaper_bounded",
         asset_id=asset_id,

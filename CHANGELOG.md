@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.3.0] - 2026-11-18
+
+### Fixed
+- fix(ios): removed media stays in chat; swipe a chat media row to delete it (KRI-1454) (#2351) <!-- release-pr: 2351 -->
+
+## [0.89.2.0] - 2026-11-17
+
+### Changed
+- fix(kria): Qendresa Q1 run 4: ending no longer held, readable title above her face, centred card strip, done-list names unshown Visuals (KRI-1234) (#2381) <!-- release-pr: 2381 -->
+
+## [0.89.1.0] - 2026-11-17
+
+### Fixed
+- fix: a stuck Visual is re-sent and no longer blocks the chat (KRI-1469, KRI-1470) (#2380) <!-- release-pr: 2380 -->
+
 ## [0.89.0.0] - 2026-11-16
 
 ### Added
