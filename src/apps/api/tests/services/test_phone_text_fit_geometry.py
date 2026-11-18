@@ -72,9 +72,11 @@ def _simulate_io(monkeypatch, take_face, *, calls: list | None = None):
     import app.storage as storage_mod
 
     monkeypatch.setattr(storage_mod, "download_to_file", lambda *a, **k: None)
-    raw = NormalizedBox(*take_face)
+    raw = NormalizedBox(*take_face) if take_face is not None else None
 
     def faces(path, points, *, raw_boxes=False, **kwargs):
+        if raw is None:  # a take with nobody in it
+            return [], {"decoded": len(points), "attempted": len(points), "detected": 0}
         # As `sample_face_regions` returns them: padded for protection unless asked raw.
         box = raw if raw_boxes else geometry_mod._face_protection_box(raw)
         region = ProtectedRegion(0.0, 1800.0, box, "face")
@@ -340,3 +342,254 @@ def test_the_switch_off_leaves_the_environment_byte_identical(monkeypatch):
         off_faces = [f["box"] for f in policy["_face_boxes"]]
     assert off_faces == [], "today's cover crop drops a face outside the middle third"
     assert on_faces
+
+
+# --------------------------------------------------- a tilted take (review follow-up, 14-21)
+#
+# The phone turns the whole cover-filled take clockwise about the canvas centre (after its scale,
+# before its shift: `KriaMediaEngine` `Composition.transform`). Every window below is registered the
+# way a writer's compile registers it (`register_generation_timeline`, real `TimelineClip`s).
+
+TILT_DEG = 8.0
+# Just outside the cover crop's middle third of a sideways take: still off the canvas after 8 deg.
+OFF_CROP_FACE = (0.05, 0.25, 0.22, 0.55)
+# Straddles the cover crop's left edge (x 0.342 of the take): only its right part is on screen.
+EDGE_FACE = (0.30, 0.30, 0.40, 0.50)
+# Small and central: stays whole on screen through every tilt below, so no clipping hides the math.
+CENTRE_FACE = (0.48, 0.42, 0.52, 0.50)
+CUES = [
+    {"start_s": 0.0, "end_s": 2.0, "text": "Evet, tabii şundan bahsettik."},
+    {"start_s": 2.2, "end_s": 5.0, "text": "Esneklik mütemadiyen sertlikten daha güçlü."},
+    {"start_s": 5.2, "end_s": 8.0, "text": "Kilitli sistemler yıkılmayı zorlaştırıyor."},
+]
+
+
+def _tilted_clip(media_id, *, rotation=TILT_DEG, scale=1.0, x=0.0, y=0.0):
+    from app.kria.recipes import MediaTransform, TimelineClip
+
+    return TimelineClip(
+        id="clip-0",
+        source_asset_id=media_id,
+        source_start=0.0,
+        source_duration=10.0,
+        timeline_start=0.0,
+        rate=1.0,
+        transform=MediaTransform(
+            scale=scale, rotation_degrees=rotation, position_x=x, position_y=y
+        ),
+    )
+
+
+def _tilted_faces(monkeypatch, binding, clip, take_face, *, switch=True):
+    monkeypatch.setattr(settings, "talking_fit_caption_geometry_enabled", switch)
+    _simulate_io(monkeypatch, take_face)
+    with styling.phone_text_policy_scope({"version": 1, "preferences": {}, "requested": {}}):
+        policy = styling._POLICY.get()
+        policy["_source_bindings"] = [binding.model_dump(mode="json")]
+        styling.register_generation_timeline([clip])
+        styling._ensure_generation_environment(PORTRAIT)
+        return [f["box"] for f in policy["_face_boxes"]]
+
+
+def _wide():
+    return _binding("wide", duration_s=10.0, width=1920, height=1080)
+
+
+def test_a_face_the_tilt_leaves_off_the_picture_is_not_protected(monkeypatch):
+    """Item 14 (Tadic): an off-crop face on a tilted, cover-filled sideways take is not drawn, so
+    it must not be protected at all, let alone as the whole canvas."""
+    faces = _tilted_faces(monkeypatch, _wide(), _tilted_clip("wide"), OFF_CROP_FACE)
+    assert faces == []
+
+
+def test_the_switch_off_keeps_todays_tilted_take_byte_identical(monkeypatch):
+    """Item 20, and the control for the test above. Today (main) the cover crop drops the off-crop
+    face before the tilt is looked at, and a face inside the crop is protected as the whole canvas.
+    The first version of this PR mapped every face from the whole take first, so the off-crop face
+    reached the whole-canvas branch: that is the regression Tadic found."""
+    off_crop = _tilted_faces(
+        monkeypatch, _wide(), _tilted_clip("wide"), OFF_CROP_FACE, switch=False
+    )
+    in_crop = _tilted_faces(monkeypatch, _wide(), _tilted_clip("wide"), T2_FACE, switch=False)
+    assert off_crop == []
+    assert in_crop == [(0.0, 0.0, 1.0, 1.0)]
+
+
+def test_a_tilted_face_is_protected_where_the_turn_draws_it(monkeypatch):
+    """Items 15 and 17: a vertical take fills a vertical canvas exactly, so a quarter turn has a
+    known answer. Clockwise on screen, a face just above the centre swings to just right of it
+    (counter-clockwise would put it on the left)."""
+    tall = _binding("tall", duration_s=10.0, width=1080, height=1920)
+    face = (0.40, 0.42, 0.60, 0.50)
+    faces = _tilted_faces(monkeypatch, tall, _tilted_clip("tall", rotation=90.0), face)
+
+    left, top, right, bottom = _padded(face)
+    width, height = PORTRAIT.width, PORTRAIT.height
+    # A clockwise quarter turn about the centre (y down): (dx, dy) -> (-dy, dx), in pixels.
+    expected = (
+        0.5 - (bottom - 0.5) * height / width,
+        0.5 + (left - 0.5) * width / height,
+        0.5 - (top - 0.5) * height / width,
+        0.5 + (right - 0.5) * width / height,
+    )
+    assert len(faces) == 1
+    assert faces[0] == pytest.approx(expected, abs=1e-6)
+    # The face's centre sits above the canvas centre, so clockwise swings it to the right.
+    assert (faces[0][0] + faces[0][2]) / 2 > 0.5, "turned the wrong way"
+
+
+def test_a_face_half_off_the_tilted_picture_keeps_its_visible_part(monkeypatch):
+    """Item 16: clipped to the canvas, not dropped and not widened."""
+    faces = _tilted_faces(monkeypatch, _wide(), _tilted_clip("wide"), EDGE_FACE)
+    assert len(faces) == 1
+    left, top, right, bottom = faces[0]
+    assert left == 0.0 and 0.0 < right < 0.5
+    assert 0.0 < top < bottom < 1.0
+    assert (right - left) * (bottom - top) < 0.25
+
+
+@pytest.mark.parametrize(
+    ("scale", "x", "y"),
+    [(FIT_SCALE, 0.0, 0.0), (FIT_SCALE * 1.4, 0.0, 0.0), (1.0, 140.0, -90.0)],
+    ids=["tilted letterbox", "tilted letterbox with a zoom", "tilted and shifted"],
+)
+def test_a_tilt_composes_with_the_scale_and_the_shift(monkeypatch, scale, x, y):
+    """Item 18: scale about the centre, then the turn, then the shift. With no turn the same
+    window must land exactly where the untilted mapping puts it; with the turn its centre moves
+    by the turn of its offset from the canvas centre."""
+    import math
+
+    flat = _tilted_faces(
+        monkeypatch,
+        _wide(),
+        _tilted_clip("wide", rotation=0.0, scale=scale, x=x, y=y),
+        CENTRE_FACE,
+    )
+    turned = _tilted_faces(
+        monkeypatch,
+        _wide(),
+        _tilted_clip("wide", rotation=30.0, scale=scale, x=x, y=y),
+        CENTRE_FACE,
+    )
+    assert len(flat) == len(turned) == 1
+    assert all(0.0 < v < 1.0 for v in (*flat[0], *turned[0])), (flat, turned)
+    w, h = PORTRAIT.width, PORTRAIT.height
+    # Undo the shift to get the centre's offset from the canvas centre, in pixels, before the turn.
+    cx = ((flat[0][0] + flat[0][2]) / 2 - 0.5) * w - x
+    cy = ((flat[0][1] + flat[0][3]) / 2 - 0.5) * h - y
+    angle = math.radians(30.0)
+    want = (
+        0.5 + (cx * math.cos(angle) - cy * math.sin(angle) + x) / w,
+        0.5 + (cx * math.sin(angle) + cy * math.cos(angle) + y) / h,
+    )
+    got = ((turned[0][0] + turned[0][2]) / 2, (turned[0][1] + turned[0][3]) / 2)
+    assert got == pytest.approx(want, abs=1e-6)
+
+
+def _caption_and_title(monkeypatch, take_face, *, switch=True):
+    """The caption look and the title a writer places on a tilted, cover-filled sideways take:
+    the REAL environment, caption placement and title fit (`generation_caption_look`,
+    `generation_style_rows`), with the caption block reserved for the title as the compile does."""
+    from app.pipeline.phone_text_style import measure_box
+
+    monkeypatch.setattr(settings, "talking_fit_caption_geometry_enabled", switch)
+    _simulate_io(monkeypatch, take_face)
+    policy = {
+        "version": 1,
+        "preferences": {},
+        "requested": {},
+        "selected_fonts": {"caption": "Inter", "title": "Inter"},
+        "selection_roles": ["caption", "title"],
+        "selection_calls": 2,
+    }
+    with styling.phone_text_policy_scope(policy):
+        scoped = styling._POLICY.get()
+        scoped["_source_bindings"] = [_wide().model_dump(mode="json")]
+        styling.register_generation_timeline([_tilted_clip("wide")])
+        look = styling.generation_caption_look(CUES, canvas=PORTRAIT)
+        block = None
+        for cue in CUES:
+            row = {
+                "id": "caption-measure",
+                "text": cue["text"],
+                "start_s": 0.0,
+                "end_s": 8.0,
+                "position": "custom",
+                "font_family": look.font_family,
+                "size_px": look.text_size_px,
+                "x_frac": look.position_x_frac,
+                "y_frac": look.position_y_frac,
+                "alignment": look.text_anchor,
+                "max_width_frac": look.max_width_frac,
+                "stroke_width": look.outline_px,
+                "shadow_enabled": look.shadow_enabled,
+                "effect": "static",
+            }
+            box = measure_box(row, PORTRAIT)
+            block = (
+                box
+                if block is None
+                else (
+                    min(block[0], box[0]),
+                    min(block[1], box[1]),
+                    max(block[2], box[2]),
+                    max(block[3], box[3]),
+                )
+            )
+        title = {
+            "id": "title-hook",
+            "text": "Cusco'da bir gün",
+            "start_s": 0.0,
+            "end_s": 3.0,
+            "position": "custom",
+            "x_frac": 0.5,
+            "y_frac": 0.16,
+            "font_family": "Inter",
+            "size_px": 76,
+            "color": "#FFFFFF",
+            "stroke_width": 0,
+            "shadow_enabled": False,
+            "alignment": "center",
+            "max_width_frac": 0.8,
+            "effect": "static",
+        }
+        [placed] = styling.generation_style_rows(
+            [title],
+            canvas=PORTRAIT,
+            excluded_boxes=[{"start_s": 0.0, "end_s": 8.0, "box": block, "kind": "caption"}],
+        )
+        return look, block, placed, measure_box(placed, PORTRAIT)
+
+
+def _overlap(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def test_an_off_picture_face_on_a_tilted_take_changes_neither_captions_nor_title(monkeypatch):
+    """Item 19 (Tadic): readable captions that do not crowd the title. The invisible face must
+    leave both exactly as on the same take with nobody in it."""
+    look, block, title, title_box = _caption_and_title(monkeypatch, OFF_CROP_FACE)
+    bare_look, bare_block, bare_title, _ = _caption_and_title(monkeypatch, None)
+
+    assert look == bare_look
+    assert block == bare_block
+    assert title == bare_title
+    assert look.text_size_px >= 48, f"captions shrank to {look.text_size_px} px"
+    assert not _overlap(block, title_box), (block, title_box)
+
+
+def test_a_visible_face_on_a_tilted_take_is_dodged_not_the_whole_frame(monkeypatch):
+    """Items 15 and 19: a face the tilt keeps on screen is avoided where it is drawn. Today (switch
+    off) the same face is the whole canvas, so the captions are fitted around a frame "full of
+    face"; on, they stay readable, off the turned face and clear of the title. (A face that really
+    fills the frame, like the cover-filled T2 close-up, leaves no clear spot tilted or not: a named
+    gap.)"""
+    look, block, _title, title_box = _caption_and_title(monkeypatch, CENTRE_FACE)
+    off_look, *_ = _caption_and_title(monkeypatch, CENTRE_FACE, switch=False)
+    faces = _tilted_faces(monkeypatch, _wide(), _tilted_clip("wide"), CENTRE_FACE)
+
+    assert faces and faces[0] != (0.0, 0.0, 1.0, 1.0)
+    assert look != off_look
+    assert look.text_size_px >= 48, f"captions shrank to {look.text_size_px} px"
+    assert not _overlap(block, title_box), (block, title_box)
+    assert not _overlap(block, faces[0]), (block, faces[0])

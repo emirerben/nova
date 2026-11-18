@@ -1516,6 +1516,32 @@ def _whole_take_box(box, *, source_width, source_height, canvas) -> tuple[float,
     )
 
 
+def _drawn_face_box(box, *, scale, rotation, x, y, canvas) -> tuple[float, ...] | None:
+    """KRI-1525 review: ``box`` (a face on the take's whole cover-filled layer, `_whole_take_box`)
+    where the phone draws a tilted take: scaled about the canvas centre, turned ``rotation``
+    degrees clockwise on screen about it, then shifted by ``x``/``y`` (canvas fractions), as
+    `KriaMediaEngine` `Composition.transform` composes them. The turn is done in pixels (the
+    canvas is not square). Returns the box around the turned corners clipped to the canvas, or
+    None when none of the face is on screen."""
+    import math
+
+    angle = math.radians(rotation)
+    cos, sin = math.cos(angle), math.sin(angle)
+    width, height = canvas.width, canvas.height
+    xs, ys = [], []
+    for fx in (box[0], box[2]):
+        for fy in (box[1], box[3]):
+            dx, dy = (fx - 0.5) * width * scale, (fy - 0.5) * height * scale
+            # Clockwise on screen with y pointing down.
+            xs.append(0.5 + (dx * cos - dy * sin) / width + x)
+            ys.append(0.5 + (dx * sin + dy * cos) / height + y)
+    left, top = max(0.0, min(xs)), max(0.0, min(ys))
+    right, bottom = min(1.0, max(xs)), min(1.0, max(ys))
+    if right <= left or bottom <= top:
+        return None
+    return (left, top, right, bottom)
+
+
 def _drawn_over_black(window: dict) -> bool:
     """KRI-1525: a centred, unrotated take scaled below the canvas with nothing behind it is drawn
     over the engine's black base, so its background is the fitted picture with black bars."""
@@ -1998,7 +2024,21 @@ def _ensure_generation_environment(canvas):
                             # KRI-1525: a scaled-down take shows its whole width, so its faces map
                             # from the whole layer; the cover crop would trim or drop a side face.
                             source = whole if whole is not None and float(scale) < 1 else cropped
-                            if window["rotation"]:
+                            if window["rotation"] and whole is not None:
+                                # KRI-1525 review: a tilt turns the whole take, so the face is
+                                # protected where the turn draws it, and dropped when it is off
+                                # the picture (never the whole canvas for an unseen face).
+                                box = _drawn_face_box(
+                                    whole,
+                                    scale=float(scale),
+                                    rotation=float(window["rotation"]),
+                                    x=x,
+                                    y=y,
+                                    canvas=canvas,
+                                )
+                                if box is None:
+                                    continue
+                            elif window["rotation"]:
                                 box = (0.0, 0.0, 1.0, 1.0)  # conservative rotated-frame protection
                             elif source is None:
                                 continue

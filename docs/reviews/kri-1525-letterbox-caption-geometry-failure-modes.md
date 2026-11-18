@@ -97,3 +97,48 @@ inside it, and the captions sit under it on the bar in light ink.
 
 Not covered by this fix (still open on KRI-1407): the left anchor, the face-filled take's shift, and
 T4's faces counted on scenery clips (KRI-1517).
+
+## Follow-up: a tilted take (review on #2379, written before the code)
+
+Tadic's review: on a tilted take the environment still protects **the whole canvas** for every face it
+samples (`window["rotation"]` → box `(0, 0, 1, 1)`), even a face the tilt leaves outside the picture.
+One invisible face then makes the fitter treat the frame as full of face: the captions drop to the
+relaxed rung (small, in the top strip) and the title has to dodge them.
+
+How the phone draws a tilted clip (`KriaMediaEngine` `Composition.transform`): cover-fill the whole
+take about the canvas centre, scale by `transform.scale` (letterbox and/or tilt zoom), rotate by
+`rotation_degrees` **clockwise on screen**, then shift by `position_x/position_y`. The whole layer is
+turned, not just the cover crop, so a tilt can bring a sliver past the crop into view.
+
+Today no first-draft writer passes a tilt (the editor's Save keeps tilts but does not re-sample), so
+this is a latent path; it is fixed now because every montage/Talking writer already registers its
+windows (`register_generation_timeline`) with the rotation, and a tilt asked in a first draft would hit it.
+
+14. **Face outside the picture after the tilt** (e.g. the side of a sideways take that is cover-filled):
+    must be dropped, not protected as the whole canvas.
+15. **Face inside the picture**: protected where the tilt draws it, i.e. the box around its four corners
+    turned about the canvas centre, in pixels (the canvas is not square), then clipped to the canvas.
+    Neither the whole canvas nor the untilted box.
+16. **Face partly outside**: only the visible part is kept (clipped to the canvas).
+17. **Direction**: clockwise on screen. A sign error mirrors the face to the other side; a quarter turn
+    of an off-centre face has a known answer that tells the two apart.
+18. **Tilt with a letterbox or a zoom, and a shifted tilt**: scale before the turn, shift after, as the
+    engine composes them.
+19. **Captions and title**: with an off-picture face on a tilted take, the captions and the title are
+    drawn exactly as with no face at all: captions at a readable size (≥ 48 px) and clear of the title.
+20. **Switch off**: a tilted window keeps today's whole-canvas protection, byte-identical.
+21. **Background of a tilted take**: still not sampled (unchanged; item 9).
+
+Found while writing the tests: the off-picture case was **introduced by the first version of this PR**.
+On main the cover crop drops an off-crop face before the tilt is looked at; this PR mapped every face
+from the whole take first, so the off-crop face reached the whole-canvas branch. The switch-off control
+(`test_the_switch_off_keeps_todays_tilted_take_byte_identical`) pins main's behaviour.
+
+Checks (2026-11-18): 8 new tests in `tests/services/test_phone_text_fit_geometry.py` (items 14-19)
+fail on the previous head and pass with the fix; the switch-off control passes on both. The
+caption/title test runs the real environment, caption placement (`generation_caption_look`) and
+title fit (`generation_style_rows`) on a cover-filled sideways take tilted 8°.
+
+Still not covered (named): a face that genuinely fills the frame (the cover-filled T2 close-up spans
+the full width, y 0.10–0.77) leaves no clear spot, tilted or not, and the fitter then draws the
+captions and the title over it. Same on main for an untilted take; out of scope here.
