@@ -86,6 +86,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
 enum NativeEditorVideoDownloadRoute: Equatable {
     case sourcePreview
+    case savedRecipe
     case localFile(URL)
     case server(NativeEditorVideoDownloadTarget)
 }
@@ -93,6 +94,15 @@ enum NativeEditorVideoDownloadRoute: Equatable {
 struct NativeEditorTemporaryVideo: Sendable {
     let fileURL: URL
     let cleanupURL: URL
+
+    @MainActor func handingOff(after validation: () async throws -> Void) async throws -> Self {
+        var handedOff = false
+        defer { if !handedOff { try? FileManager.default.removeItem(at: cleanupURL) } }
+        try await validation()
+        try Task.checkCancellation()
+        handedOff = true
+        return self
+    }
 }
 
 @MainActor final class NativeEditorPlaybackClock: ObservableObject {
@@ -1193,6 +1203,10 @@ enum EditorOpenIntent { case warm, open }
         await resumePendingEditorPlacements()
     }
 
+    private var exportBranding: KriaBranding.Options {
+        lastPhoneRenderingCapabilities?.watermarkExemption?.branding(for: api?.mediaLibraryOwner) ?? .standard
+    }
+
     /// The last phone-rendering answer the server actually gave. A failed read says nothing new.
     private var lastPhoneRenderingCapabilities: PhoneRenderingCapabilities?
     /// A reconcile was skipped because capabilities were never readable; the preview poll retries it.
@@ -1855,8 +1869,72 @@ enum EditorOpenIntent { case warm, open }
         }
     }
 
+    func prepareVideoDownloadRoute(deviceLocalFile: URL?) async throws -> NativeEditorVideoDownloadRoute {
+        guard let api else { return try videoDownloadRoute(deviceLocalFile: deviceLocalFile) }
+        let owner = api.mediaLibraryOwner
+        let identity = editorOperationIdentity
+        let previouslyExempt = !exportBranding.watermark
+        let capabilities: CreationCapabilities
+        do { capabilities = try await api.creationCapabilities() }
+        catch {
+            guard api.mediaLibraryOwner == owner, editorOperationIdentity == identity else { throw CancellationError() }
+            guard !previouslyExempt else { throw error }
+            return try videoDownloadRoute(deviceLocalFile: deviceLocalFile)
+        }
+        guard api.mediaLibraryOwner == owner, editorOperationIdentity == identity else { throw CancellationError() }
+        let previous = exportBranding
+        lastPhoneRenderingCapabilities = capabilities.phoneRendering ?? .disabled
+        if previous != exportBranding { scheduleSourcePreviewUpdate() }
+        return try videoDownloadRoute(deviceLocalFile: deviceLocalFile)
+    }
+
+    func exportSavedRecipe(progress: (@Sendable (Double) -> Void)? = nil) async throws -> NativeEditorTemporaryVideo {
+        guard let api, let owner = api.mediaLibraryOwner, let key = deviceRenderKey,
+              !exportBranding.watermark, !hasUnsavedChanges, !isSaving, chatStagedDocument == nil,
+              pendingPreviewGeneration == nil, !document.revision.baseGeneration.isEmpty else {
+            throw NativeEditorVideoDownloadError.unavailable
+        }
+        let identity = editorOperationIdentity
+        let generation = document.revision.baseGeneration
+        let status = try await api.deviceRender(jobID: key.jobID, variantID: key.variantID)
+        func stillCurrent() -> Bool {
+            api.mediaLibraryOwner == owner && editorOperationIdentity == identity
+                && document.revision.baseGeneration == generation && !hasUnsavedChanges && !isSaving
+                && chatStagedDocument == nil && pendingPreviewGeneration == nil && !Task.isCancelled
+        }
+        guard stillCurrent(), status.request.identity.jobID == key.jobID,
+              status.request.identity.variantID == key.variantID,
+              status.phase == "published", status.publishedGeneration == generation,
+              let grant = status.request.watermarkExemption,
+              !grant.branding(for: owner).watermark else { throw NativeEditorVideoDownloadError.unavailable }
+        let project = BackgroundUploadCoordinator.projectDirectory(key.projectID)
+        let resolver = AuthorizedDeviceSourceResolver(api: api, request: status.request,
+            originals: SourceAssetStore(project: project),
+            library: RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory)))
+        let sources = try await resolver.resolve(for: status.request.recipe)
+        guard stillCurrent() else { throw CancellationError() }
+        pausePlayback()
+        let exported = try await performLocalExport(recipe: status.request.recipe, assetURLs: sources,
+            branding: grant.branding(for: owner), progress: progress)
+        return try await exported.handingOff {
+            guard stillCurrent() else { throw CancellationError() }
+            let current = try await api.deviceRender(jobID: key.jobID, variantID: key.variantID)
+            guard stillCurrent(), current.phase == "published", current.request == status.request,
+                  current.publishedGeneration == generation else {
+                throw NativeEditorVideoDownloadError.unavailable
+            }
+        }
+    }
+
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
         guard !isShowingPreviousPreview else { throw NativeEditorVideoDownloadError.unavailable }
+        if !exportBranding.watermark {
+            guard rendersOnDevice, !hasUnsavedChanges, !isSaving, chatStagedDocument == nil,
+                  pendingPreviewGeneration == nil, !document.revision.baseGeneration.isEmpty else {
+                throw NativeEditorVideoDownloadError.unavailable
+            }
+            return .savedRecipe
+        }
         let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile)
         if let rendered, case .localFile = rendered { return rendered }
         if let own = savedEditDeviceRenderFile() { return .localFile(own) }
@@ -1958,13 +2036,15 @@ enum EditorOpenIntent { case warm, open }
         }
     }
 
-    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo {
+    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], branding: KriaBranding.Options? = nil, progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo {
+        let branding = branding ?? exportBranding
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "kria-editor-download-\(UUID().uuidString)", directoryHint: .isDirectory)
         let output = directory.appending(path: "current-preview.mp4")
         do {
             let checkpoint = try await AVFoundationLocalExporter(
-                stateStore: FileExportStateStore(directory: directory.appending(path: "state", directoryHint: .isDirectory))
+                stateStore: FileExportStateStore(directory: directory.appending(path: "state", directoryHint: .isDirectory)),
+                branding: branding
             ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output, progress: progress)
             guard checkpoint.status == .completed, checkpoint.outputURL == output else {
                 throw NativeEditorVideoDownloadError.unavailable
@@ -5018,7 +5098,7 @@ enum EditorOpenIntent { case warm, open }
             #if DEBUG
             NativePreviewDiagnostics.record("composition-start")
             #endif
-            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: .standard)
+            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: exportBranding)
             guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             // The finished render is playing: ready the live item on its own player first, so the swap below is not
             // a pause, a detach, a seek and a resume in front of the creator's eyes.

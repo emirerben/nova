@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     phone_editor_media_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
     phone_render_user_ids: list[UUID] = Field(default_factory=list)
+    phone_watermark_exempt_user_ids: list[UUID] = Field(default_factory=list)
     # Kill switch for the 2026-09-18 font/effect qualification relaxation in
     # `app/services/phone_rollout.py`. False (default): any bundled-registry
     # font (assets/fonts/font-registry.json) with correct variation
@@ -623,6 +624,11 @@ class Settings(BaseSettings):
         if self.clip_facts_enabled:
             return True
         return user_id is not None and str(user_id) in {str(u) for u in self.clip_facts_user_ids}
+
+    def phone_watermark_exempt_for(self, user_id: object) -> bool:
+        return user_id is not None and str(user_id) in map(
+            str, self.phone_watermark_exempt_user_ids
+        )
 
     def phone_rendering_for(self, user_id: object) -> bool:
         """Apply the rollout cohort, or enroll every account in device-only mode.

@@ -33,8 +33,9 @@ public struct DeviceRenderRequest: Codable, Equatable, Sendable {
     /// servers and local receipts, which deliberately preserves their legacy
     /// export behavior.
     public let maxExportDurationS: Double?
-    public init(identity: DeviceRenderIdentity, recipe: EditRecipe, recovery: DeviceRepairInstruction? = nil, maxExportDurationS: Double? = nil) {
-        self.identity = identity; self.recipe = recipe; self.recovery = recovery; self.maxExportDurationS = maxExportDurationS
+    public let watermarkExemption: WatermarkExemption?
+    public init(identity: DeviceRenderIdentity, recipe: EditRecipe, recovery: DeviceRepairInstruction? = nil, maxExportDurationS: Double? = nil, watermarkExemption: WatermarkExemption? = nil) {
+        self.identity = identity; self.recipe = recipe; self.recovery = recovery; self.maxExportDurationS = maxExportDurationS; self.watermarkExemption = watermarkExemption
     }
 }
 

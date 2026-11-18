@@ -364,6 +364,37 @@ final class BrandingTests: XCTestCase {
         XCTAssertEqual(KriaBranding.Options.standard.contractTail, "standard")
     }
 
+    @MainActor func testAccountExemptionRemovesWatermarkButPreservesOutro() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (recipe, urls) = try blackPhotoRecipe(in: directory)
+        let output = directory.appendingPathComponent("exempt.mp4")
+        let owner = String(repeating: "a", count: 64)
+        let branding = WatermarkExemption(ownerHash: owner).branding(for: owner)
+        _ = try await AVFoundationLocalExporter(
+            stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")),
+            branding: branding).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        let asset = AVURLAsset(url: output)
+        let duration = try await asset.load(.duration).seconds
+        let outro = AVURLAsset(url: try XCTUnwrap(KriaBranding.outroURL()))
+        let outroDuration = try await outro.load(.duration).seconds
+        XCTAssertEqual(duration, 2 + outroDuration, accuracy: 0.1)
+        let canvas = CGRect(x: 0, y: 0, width: 1080, height: 1920)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let context = CIContext()
+        for time in [0.1, 1.0, 1.9] {
+            let frame = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
+            XCTAssertEqual(brightPixels(in: frame, rect: CGRect(x: 60, y: 1475 - 59, width: 133, height: 59),
+                                        canvas: canvas, context: context), 0)
+        }
+        let tail = try await generator.image(at: CMTime(seconds: duration - 0.2, preferredTimescale: 600)).image
+        XCTAssertGreaterThan(brightPixels(in: tail, rect: canvas, canvas: canvas, context: context),
+                             Int(canvas.width * canvas.height) / 2)
+    }
+
     @MainActor func testUnbrandedExportHasNeitherMarkNorOutro() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

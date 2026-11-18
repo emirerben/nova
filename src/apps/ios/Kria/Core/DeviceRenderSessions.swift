@@ -362,7 +362,8 @@ enum DeviceRenderGate: Equatable {
                 let library = RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
                 return try DeviceRenderCoordinator(
                     directory: directory,
-                    exporter: AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory)),
+                    exporter: AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory),
+                        branding: request.watermarkExemption?.branding(for: owner) ?? .standard),
                     sources: AuthorizedDeviceSourceResolver(api: api, request: request, originals: SourceAssetStore(project: project), library: library),
                     publisher: DeviceExportPublisher(api: api, isAuthorized: isAuthorized),
                     failureReporter: APIDeviceRenderFailureReporter(api: api, isAuthorized: isAuthorized)
