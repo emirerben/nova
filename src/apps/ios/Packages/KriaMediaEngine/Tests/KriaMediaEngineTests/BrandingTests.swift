@@ -364,6 +364,23 @@ final class BrandingTests: XCTestCase {
         XCTAssertEqual(KriaBranding.Options.standard.contractTail, "standard")
     }
 
+    @MainActor func testPreviewRefusesBrandingChangesButReusesSameBranding() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (recipe, urls) = try blackPhotoRecipe(in: directory)
+        let exempt = KriaBranding.Options(watermark: false, outro: true)
+        for (applied, requested) in [(KriaBranding.Options.standard, exempt), (exempt, .standard)] {
+            let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: urls, branding: applied)
+            let originalItem = preview.preview.playerItem
+            XCTAssertThrowsError(try preview.updateText(recipe: recipe, assetURLs: urls, branding: requested)) {
+                XCTAssertEqual(($0 as? NativePreviewFeatureError)?.feature, "LivePreviewComposition-branding-changed")
+            }
+            XCTAssertNoThrow(try preview.updateText(recipe: recipe, assetURLs: urls, branding: applied))
+            XCTAssertTrue(preview.preview.playerItem === originalItem)
+        }
+    }
+
     @MainActor func testAccountExemptionRemovesWatermarkButPreservesOutro() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -4992,6 +4992,8 @@ enum EditorOpenIntent { case warm, open }
     private func rebuildSourcePreview(sequence: Int) async {
         guard let compiler = sourceCompiler, var sources = resolvedSources else { return }
         let workTicket = currentPreviewWork
+        let branding = exportBranding
+        let owner = api?.mediaLibraryOwner
         guard workTicket.sequence == sequence, !Task.isCancelled else { return }
         if !previewWork.isPending(workTicket) { previewWork.begin(workTicket) }
         var awaitingFrame = false
@@ -5014,7 +5016,7 @@ enum EditorOpenIntent { case warm, open }
             if !needed.isSubset(of: Set(sources.keys)), let pool = sourcePool, let resolver = sourceResolver {
                 sourcePreviewState = .preparing
                 sources = try await resolver.resolve(pool, generation: baseline.revision.baseGeneration, requiredIndices: needed.subtracting(pendingClipIndices))
-                guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline else { return }
+                guard branding == exportBranding, owner == api?.mediaLibraryOwner, workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline else { return }
                 resolvedSources = sources
                 sources = resolvedSources ?? sources
             }
@@ -5037,7 +5039,7 @@ enum EditorOpenIntent { case warm, open }
             NativePreviewDiagnostics.record("prepare-media")
             #endif
             let media = try await preparePreviewMedia(document: snapshot, sequence: sequence)
-            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            guard branding == exportBranding, owner == api?.mediaLibraryOwner, workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             #if DEBUG
             sourcePreviewCompileCount += 1
             NativePreviewDiagnostics.record("compile", fields: [
@@ -5098,8 +5100,8 @@ enum EditorOpenIntent { case warm, open }
             #if DEBUG
             NativePreviewDiagnostics.record("composition-start")
             #endif
-            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: exportBranding)
-            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: branding)
+            guard branding == exportBranding, owner == api?.mediaLibraryOwner, workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             // The finished render is playing: ready the live item on its own player first, so the swap below is not
             // a pause, a detach, a seek and a resume in front of the creator's eyes.
             // KRI-1404: once the warm-up has built its player on the live item, `warmHolder` is the only player that may
@@ -5111,7 +5113,7 @@ enum EditorOpenIntent { case warm, open }
                 let attempt = await prerolledPlayerProvider(preview.preview.playerItem, target)
                 warmHolder = attempt?.player
                 if let attempt, attempt.isPrerolled { warmed = (attempt.player, target) }
-                guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
+                guard branding == exportBranding, owner == api?.mediaLibraryOwner, workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
                     warmHolder?.replaceCurrentItem(with: nil)
                     return
                 }
@@ -5121,7 +5123,7 @@ enum EditorOpenIntent { case warm, open }
                 let target = currentTime
                 let reached = await candidate.player.seek(to: CMTime(seconds: max(0, target), preferredTimescale: 600),
                                                           toleranceBefore: .zero, toleranceAfter: .zero)
-                guard workTicket == currentPreviewWork, !Task.isCancelled,
+                guard branding == exportBranding, owner == api?.mediaLibraryOwner, workTicket == currentPreviewWork, !Task.isCancelled,
                       document == baseline, pendingText == pending else {
                     candidate.player.replaceCurrentItem(with: nil)
                     return
@@ -5173,7 +5175,7 @@ enum EditorOpenIntent { case warm, open }
             NativePreviewDiagnostics.record("preview-ready")
             #endif
         } catch {
-            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled else { return }
+            guard branding == exportBranding, owner == api?.mediaLibraryOwner, workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled else { return }
             player?.pause()
             isPlaying = false
             #if DEBUG
@@ -5201,7 +5203,7 @@ enum EditorOpenIntent { case warm, open }
             let callback: @Sendable (Double) -> Void = { [weak self] _ in
                 Task { @MainActor [weak self] in self?.playbackFrameWasComposed(ticket) }
             }
-            try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs, onPlaybackFrame: callback)
+            try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs, branding: exportBranding, onPlaybackFrame: callback)
             guard let player, let item = player.currentItem, let composition = item.videoComposition else { return false }
             inPlacePreviewFrame = InPlacePreviewFrame(ticket: ticket, player: player, item: item, composition: composition)
             NativePreviewDiagnostics.note("preview-updated-in-place")

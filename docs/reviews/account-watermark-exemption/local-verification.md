@@ -13,3 +13,11 @@ Implementation tested at commit `4c140226ec0ebac644389ccaa4117519bf3e0d96` on 20
 ## Limits
 
 These are local synthetic and simulator checks, not a production replay or physical-device result. No customer data or footage was used. No account was enabled, production setting changed, server render started, deployment performed or published media overwritten. The paired physical iPhone was unavailable. Full account-transition integration and revocation policy remain review items. Missing original media or an unknown saved generation intentionally blocks export.
+
+## Preview entitlement refresh correction
+
+Independent review found that the text-only composition update could retain old branding after an entitlement change. The composition now retains its applied branding and refuses in-place updates for a different branding policy. The editor then rebuilds. The rebuild captures account and branding and checks both after asynchronous work before installation.
+
+`BrandingTests/testPreviewRefusesBrandingChangesButReusesSameBranding` passes with the correction. Removing only the branding guard makes both grant and revoke assertions fail (2 expected assertion failures); the guard was restored. The same-policy update retains the existing player item. A focused package run covering this case, the synthetic export and both entitlement tests passed 4 tests with no failures.
+
+After the preview correction, the same 16 focused iOS app tests passed again on the dedicated empty simulator with the regenerated OpenAPI contract. Physical-device verification remains pending.
