@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.3.0] - 2026-11-18
+
+### Fixed
+- fix(ios): removed media stays in chat; swipe a chat media row to delete it (KRI-1454) (#2351) <!-- release-pr: 2351 -->
+
 ## [0.89.2.0] - 2026-11-17
 
 ### Changed
