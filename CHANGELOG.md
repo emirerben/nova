@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.4.0] - 2026-11-18
+
+### Changed
+- feat(ios): account-only watermark exemptions (KRI-1533) (#2383) <!-- release-pr: 2383 -->
+
 ## [0.89.3.0] - 2026-11-18
 
 ### Fixed
