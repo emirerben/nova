@@ -389,7 +389,11 @@ final class SplitFlowGapsUITests: XCTestCase {
 
     func testSplitImportsFromTheUploadGallery() throws {
         XCUIApplication().resetAuthorizationStatus(for: .photos)
-        let app = launch(["-ui-testing-editor-split-screen"])
+        let app = launch(["-ui-testing-editor-split-screen", "-ui-testing-editor-gameday-add",
+                          "-ui-testing-editor-split-import", "-ui-testing-editor-split-persistence-reset"])
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "current=true"),
+                                              object: app.staticTexts["gameday-fixture-state"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed)
         createSplit(panels: 3, scope: .clip, in: app)
         let choose = panelControl("native-editor-split-system-picker", in: app)
         choose.tap()
@@ -406,7 +410,10 @@ final class SplitFlowGapsUITests: XCTestCase {
         let tile = app.buttons["gallery-tile-\(index)"]
         let grid = app.descendants(matching: .any)["gallery-grid"].firstMatch
         XCTAssertTrue(grid.waitForExistence(timeout: 10))
-        for _ in 0..<30 where !tile.isHittable { grid.swipeUp() }
+        for _ in 0..<30 {
+            if tile.exists && tile.isHittable { break }
+            grid.swipeUp()
+        }
         XCTAssertTrue(tile.isHittable, "Photos item \(index + 1) is reachable")
         attach(app, "Split gallery at item \(index + 1)")
         tile.tap()
