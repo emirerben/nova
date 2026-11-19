@@ -505,6 +505,9 @@ struct NativeSplitMediaPicker: View {
 
     private var api: any KriaAPIClient { model.uploads.libraryAPI }
     private var working: Bool { busy || session.isAddingClip }
+    private var photoSelectionLimit: Int {
+        multi ? max(0, NativeEditorSession.maxTimelineClips - session.document.clips.count - picked.count) : 1
+    }
     private var hasLibrary: Bool {
         #if DEBUG
         if NativeSplitPickerFixture.isActive { return true }
@@ -569,19 +572,19 @@ struct NativeSplitMediaPicker: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(KriaButtonStyle(role: .secondary, size: .large, fullWidth: true))
-        .disabled(working)
+        .disabled(working || photoSelectionLimit == 0)
         .accessibilityIdentifier("native-editor-split-system-picker")
         .sheet(isPresented: $showsGallery) {
             LibraryPhotosPickerSheet(
                 heading: String(localized: "Choose photos and videos"), offersSaved: false,
-                selection: $galleryPicks, limit: multi ? 10 : 1, filter: .any(of: [.videos, .images]),
+                selection: $galleryPicks, limit: photoSelectionLimit, filter: .any(of: [.videos, .images]),
                 kinds: [.images, .videos], onRecord: nil, onSwitch: nil, cancel: { showsGallery = false }
             ) { _ in
                 showsGallery = false
                 addPhotos(galleryPicks)
             }
         }
-        .photosPicker(isPresented: $showsSystemPicker, selection: $fallbackPicks, maxSelectionCount: multi ? 10 : 1,
+        .photosPicker(isPresented: $showsSystemPicker, selection: $fallbackPicks, maxSelectionCount: max(1, photoSelectionLimit),
                       selectionBehavior: .ordered, matching: .any(of: [.videos, .images]))
         .onChange(of: fallbackPicks) { _, items in
             guard !items.isEmpty else { return }
