@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.14.0] - 2026-11-19
+
+### Changed
+- fix(kria): Talking captions measure a letterboxed take where the phone draws it (KRI-1525) (#2379) <!-- release-pr: 2379 -->
+
 ## [0.89.13.0] - 2026-11-19
 
 ### Changed
